@@ -215,7 +215,10 @@ cd local-development && .venv/bin/python -m pytest tests -q \
 
 and `tests/test_ui.py` with the exact CI flags when the page changed; `helm lint` and
 `helm template` for every switch state the spec names; the image built locally when anything reaches
-it; `local-development/release-crc.sh` and the spec's live checks; the spec's own verification
+it; `local-development/release-crc.sh` and the spec's live checks — the bare script (Helm, from the
+worktree) while iterating, and `--argocd` on the pushed head before the PR is called ready, since Argo
+reads the chart and the values file from GitHub and that is what an install does (the mode matrix is in
+the script's header and in `local-development/README.md`); the spec's own verification
 commands repeated (a dry run undone, a probe, a count read back from the CI log). "Compiles" or
 "looks right" is not validation. Commit with a message that names the review, push, comment on the PR
 with the decisions and the re-validation, and wait for CI green on that commit.

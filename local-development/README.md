@@ -52,18 +52,33 @@ follows you into a cluster that matters.
 
 ## Release to CRC's internal registry
 
-```bash
-./release-crc.sh              # build + push + deploy
-./release-crc.sh --build-only
-```
+Two managers, one release, never both. The bare script is the **safe local loop**: Helm, from this
+worktree, nothing has to be on GitHub. `--argocd` is the **gate**: the Argo CD Application
+(`gitops/argocd-application-dashboard.yaml`, same release name and namespace) reads the chart and
+the values file from GitHub at a commit — what a real install does. Each mode hands the release
+over from the other (the Application is deleted, or the Helm release uninstalled; the PVCs and the
+minted Secrets survive either way). `--values` applies to both modes.
 
-Same tagging and verification rules as the external script: `<version>-<git-sha>`, refuses a
-dirty tree, verifies the commit stamp inside the image before pushing, and reads it back out
-of the running pod afterwards.
+| Invocation | Manager | Chart from | Image | Values | Needs |
+|---|---|---|---|---|---|
+| `./release-crc.sh` | Helm | this worktree | built `<ver>-<sha>`; an existing clean tag is reused | `environments/crc.yaml` (`-f`) | clean tree, token session |
+| `--allow-dirty` | Helm | worktree | `<ver>-<sha>-dirty`, never reused | same | — |
+| `--values X` | Helm | worktree | as above | `X` via `-f`; `X` may be untracked or edited (outside the build context, so not "dirty") | `X` exists |
+| `--argocd` | Argo | GitHub at HEAD | built, handed to the Application as `helm.parameters` | the Application's default | commit on a remote branch |
+| `--argocd --values X` | Argo | GitHub at HEAD | same | `valueFiles: [../../X]` | `X` committed, clean, pushed |
+| `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main | default | branch on origin |
+| `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
+| `--build-only` | untouched | — | built + pushed | — | — |
+| `--allow-dirty --argocd` | **refused** | | | | Argo deploys a commit; a dirty tree has none |
 
-It deploys with `helm upgrade --install`, passing the released tag with `--set`. Nothing is
-written back into the tree: `helm get values` already records what is deployed, so there is
-no manifest to pin and no commit to remember.
+`X` is repository-relative (`environments/other.yaml`). Same tagging and verification rules as the
+external script: `<version>-<git-sha>`, the commit stamp verified inside the image before the push
+and read back out of the running pod afterwards. Helm mode deploys with `helm upgrade --install
+-f <values> --set image.*`; nothing is written back into the tree — `helm get values`, or the
+Application's spec, records what is deployed. The typical loop: iterate with the bare script (or
+`--values` for a local variant), `--argocd` on the pushed head before the PR is called ready,
+`--argocd main` after a merge once the app release is cut. `./argocd-wait.sh` is the waiter the
+Argo modes use (Synced/Healthy, or the sync's failure).
 
 ## Tests
 

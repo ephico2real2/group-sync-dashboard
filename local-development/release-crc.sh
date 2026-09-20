@@ -12,16 +12,40 @@
 # both were called "0.3.1". A commit-derived tag makes that impossible to miss: the tag
 # changes when the source does.
 #
-#   ./local-development/release-crc.sh              build + push + deploy through Helm (the no-git loop)
-#   ./local-development/release-crc.sh --build-only
-#   ./local-development/release-crc.sh --allow-dirty   uncommitted tree (tagged -dirty)
-#   ./local-development/release-crc.sh --argocd        build + push, then deploy through the Argo CD
-#                                                      Application at THIS commit with THIS image
-#   ./local-development/release-crc.sh --argocd main   the Application back on main (its chart's default image)
-#   ./local-development/release-crc.sh [--argocd] --values environments/other.yaml
-#                                                      a different values file, in BOTH modes: Helm's -f, and the
-#                                                      Application's valueFiles (the file must be committed and
-#                                                      pushed — Argo reads it from the repository, not this tree)
+# THE MODES AND THEIR COMBINATIONS. Two managers, one release: the bare script is the safe local
+# loop (Helm, from this worktree); --argocd is the gate (Argo CD, from GitHub — what a real install
+# does at that commit). --values applies to both. Each row says where the chart, the image and the
+# values come from, and what the run needs; anything not in the table is refused.
+#
+#   invocation                      manager  chart from          image                 values             needs
+#   (none)                          Helm     this worktree       built <ver>-<sha>;    environments/      clean tree,
+#                                                                an existing clean     crc.yaml (-f)      token session
+#                                                                tag is reused
+#   --allow-dirty                   Helm     worktree            <ver>-<sha>-dirty,    same               —
+#                                                                never reused
+#   --values X                      Helm     worktree            as above              X (-f); X may be   X exists
+#                                                                                      untracked/edited —
+#                                                                                      it is outside the
+#                                                                                      build context, so
+#                                                                                      it is not "dirty"
+#   --argocd                        Argo     GitHub @ HEAD       built, handed to the  the Application's  commit on a
+#                                                                Application as        default (crc.yaml) remote branch
+#                                                                helm.parameters
+#   --argocd --values X             Argo     GitHub @ HEAD       same                  valueFiles          X committed,
+#                                                                                      [../../X]          clean, pushed
+#   --argocd <branch>               Argo     GitHub @ <branch>   the chart's default   default            branch on
+#                                                                (the PUBLISHED quay                      origin
+#                                                                image — lags main)
+#   --argocd <branch> --values X    Argo     GitHub @ <branch>   same                  [../../X]          X present at
+#                                                                                                         origin/<branch>
+#   --build-only                    (none)   —                   built + pushed        —                  —
+#   --allow-dirty --argocd          REFUSED: Argo deploys a commit and a dirty tree has none — the image
+#                                   would not match the chart Argo reads, and uncommitted chart edits
+#                                   would silently not deploy.
+#
+# Typical loop: iterate with the bare script (or --values for a local variant); before merging,
+# --argocd on the pushed head; after a merge, --argocd main — once the app release is cut, because
+# the published images lag main (measured: report schema 12 against main's 17, readyz 503).
 #
 # TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
 # Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
@@ -70,6 +94,11 @@ for arg in "$@"; do
   esac
 done
 [ "$expect" = values ] && { echo "--values needs a path" >&2; exit 2; }
+if [ "$ARGOCD" = true ] && [ "$ALLOW_DIRTY" = true ]; then
+  echo "ERROR: --allow-dirty and --argocd do not combine: Argo CD deploys a commit, and a dirty tree has none." >&2
+  echo "       Commit (and push) to test through Argo, or drop --argocd for the local Helm loop." >&2
+  exit 2
+fi
 
 # The values file, repository-relative (this script runs in local-development/). Helm reads it from
 # this tree; Argo reads it from the repository at the revision it tracks, as a path relative to the
