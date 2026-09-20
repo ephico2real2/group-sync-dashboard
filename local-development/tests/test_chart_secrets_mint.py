@@ -105,6 +105,16 @@ class TestRender:
         assert not [d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"].endswith(("-oauth-session", "-shared-token"))], "off = you create them"
 
 
+def test_current_docs_describe_the_minted_secrets_not_the_lookup_era():
+    """Review of #215 (Codex M9): two design paragraphs still described `lookup` as current."""
+    reference = (REPO / "docs" / "reference-architecture.md").read_text()
+    design = (REPO / "docs" / "DESIGN_reporting_service.md").read_text()
+    assert "reused across upgrades by `lookup`" not in reference and "oauth-secret.yaml#lookup" not in reference
+    assert "oauth-secret.yaml#lookup" not in design
+    assert "<fullname>-oauth-session" in reference and "<reportName>-shared-token" in design
+    assert "templates/secrets-mint.yaml" in reference and "templates/secrets-mint.yaml" in design
+
+
 class TestTheScript:
     def test_absent_secrets_are_minted_with_the_right_keys_and_lengths(self, tmp_path):
         _, argv, env = _job(_render())

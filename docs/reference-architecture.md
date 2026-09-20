@@ -1268,10 +1268,14 @@ the Route by name (`oauth-redirectreference`) instead of a literal callback URL.
 set deliberately is used as given. That is what lets ArgoCD and Flux, which render with no
 cluster connection at all, deploy the chart with no per-cluster value.
 
-The oauth cookie secret (`templates/oauth-secret.yaml#lookup`) — generated once, then reused
-across upgrades by `lookup`ing the existing Secret. Generating it inline in the container
-args, as several published examples do, silently regenerates on every `helm upgrade` and logs
-every user out.
+The generated-once authentication Secrets are created by `templates/secrets-mint.yaml`, never by
+the renderer: a pre-/post-install and -upgrade hook creates `<fullname>-oauth-session` (the oauth
+cookie key) and `<reportName>-shared-token` only when absent, and on the first upgrade to 0.37.0
+copies the values from the legacy `-oauth-cookie` and `-report-token` before Helm removes those
+objects. Until 0.37.0 the cookie was reused through Helm's `lookup`, which is empty under Argo CD's
+and Kustomize's `helm template`, so every render minted a new key and every sync signed everyone
+out. A configured `oauthProxy.cookieSecret` renders the deterministic `-oauth-session` Secret
+directly instead.
 
 ### Probes
 
