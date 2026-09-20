@@ -638,6 +638,10 @@ class Poller:
         self.elector = elector
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        # Per-cluster stop events (SPEC_S1 C3): a Secret-sourced cluster whose Secret vanished stops
+        # its own thread without stopping the poller. Keyed by cluster name; the host's is never set.
+        self._cluster_stops: dict[str, threading.Event] = {}
+        self._threads_lock = threading.Lock()
         # 0 so the first cycle after start takes one immediately: a pod that
         # has just come up is exactly when you want a copy on disk.
         self._next_backup = 0.0
@@ -937,7 +941,11 @@ class Poller:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
         # shows nothing for its first interval is indistinguishable from a broken one.
         next_binding_refresh = 0.0
-        while not self._stop.is_set():
+        own_stop = self._cluster_stops.setdefault(cluster.name, threading.Event())
+        while not self._stop.is_set() and not own_stop.is_set():
+            # The current config for this name: a Secret-sourced cluster whose token was rotated or
+            # whose server moved takes effect here, on its next cycle, with no restart (SPEC_S1 C3).
+            cluster = self.settings.cluster(cluster.name) or cluster
             started = datetime.now(UTC)
             if self.elector is not None and not self.elector.is_leader:
                 # Standby: serve reads, write nothing. Checked every cycle rather than once,
@@ -1033,27 +1041,135 @@ class Poller:
                 "%s poll cycle took %.2fs; next binding refresh in %.0fs",
                 cluster.name, elapsed, max(0.0, next_binding_refresh - time.monotonic()),
             )
-            self._stop.wait(max(1.0, self.settings.poll_interval_seconds - elapsed))
+            wait = max(1.0, self.settings.poll_interval_seconds - elapsed)
+            # Either event ends the wait: the poller's, or this cluster's own.
+            deadline = time.monotonic() + wait
+            while not self._stop.is_set() and not own_stop.is_set() and time.monotonic() < deadline:
+                self._stop.wait(min(1.0, max(0.0, deadline - time.monotonic())))
+        if own_stop.is_set():
+            log.info("%s: its Secret is gone; the poll thread stops (history kept)", cluster.name)
 
-    def start(self) -> None:
-        # Reconcile the stored clusters against the configuration BEFORE polling: a cluster the
-        # config no longer names is retired (enabled=0, history kept), so it leaves the served set
-        # instead of lingering as `ok` with frozen data and stale alerts (#96). Config changes roll
-        # the pod, so this runs on every change — retire/add on the fly.
-        retired = self.store.retire_absent_clusters([c.name for c in self.settings.clusters])
-        if retired:
-            log.info("retired %d cluster(s) no longer in the configuration", retired)
-        for cluster in self.settings.clusters:
-            self.store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
-            if not cluster.enabled:
-                log.info("cluster %s is disabled, not polling", cluster.name)
-                continue
+    def _start_cluster_thread(self, cluster: ClusterConfig) -> None:
+        with self._threads_lock:
+            self._cluster_stops[cluster.name] = threading.Event()
             thread = threading.Thread(
                 target=self._run_cluster, args=(cluster,), name=f"poll-{cluster.name}", daemon=True
             )
             thread.start()
             self._threads.append(thread)
-        log.info("poller started for %d cluster(s)", len(self._threads))
+
+    def _discover_once(self) -> None:
+        """One discovery of the labelled cluster Secrets (SPEC_S1 C3): the host's client LISTs the pod's
+        own namespace by label; the registry is replaced on success and keeps the previous set on a
+        failed LIST, which becomes the cycle's one finding. Only the leader writes the cluster rows."""
+        from .clusterconfig import discover
+        registry = self.settings.cluster_registry
+        host = self.settings.host_cluster()
+        namespace = own_namespace()
+        registry.namespace = namespace
+        at = now_iso()
+        if host is None or not namespace:
+            registry.fail(at, "no host cluster or no namespace: the pod's ServiceAccount mount names neither")
+            return
+        try:
+            clusters, findings = discover(
+                ClusterClient(host, timeout=self.settings.request_timeout_seconds), namespace,
+                host_name=host.name, values_names=tuple(c.name for c in self.settings.clusters))
+        except ClusterError as exc:
+            registry.fail(at, f"{exc.outcome}: {exc.message}")
+            log.warning("cluster Secret discovery failed (%s: %s); the previous set stands", exc.outcome, exc.message)
+            return
+        before = {c.name for c in registry.discovered()}
+        registry.replace(clusters, findings, at=at)
+        after = {c.name for c in clusters}
+        if before != after or findings:
+            log.info("cluster Secrets: %d cluster(s) discovered in %s (%s), %d finding(s)",
+                     len(clusters), namespace, ", ".join(sorted(after)) or "none", len(findings))
+        if self.elector is not None and not self.elector.is_leader:
+            return
+        for cluster in clusters:
+            self.store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled,
+                                      source=cluster.source, credential=cluster.credential_kind)
+        for name in before - after:
+            if name not in {c.name for c in self.settings.clusters}:
+                # Retired, never deleted (#96): the rows stay, the thread stops.
+                row = next((r for r in self.store.clusters() if r["id"] == name), None)
+                if row is not None:
+                    self.store.upsert_cluster(name, row["api_url"], False, source=row["source"], credential=row["credential"])
+
+    def _reconcile_threads(self) -> None:
+        """A thread per effective cluster that should poll and has none; a stop for one that should not."""
+        wanted = {c.name: c for c in self.settings.effective_clusters()
+                  if c.enabled and c.credential_kind != "oauth"}
+        with self._threads_lock:
+            running = {name for name, ev in self._cluster_stops.items() if not ev.is_set()}
+        for name, cluster in wanted.items():
+            if name not in running:
+                self._start_cluster_thread(cluster)
+                log.info("cluster %s: polling started (%s)", name, cluster.source)
+        for name in running - set(wanted):
+            if name in {c.name for c in self.settings.clusters}:
+                continue    # a values cluster is never stopped at runtime: its config rolls the pod
+            self._cluster_stops[name].set()
+
+    def _run_discovery(self) -> None:
+        """The discovery stage on the binding cadence (SPEC_S1 C3), after the synchronous one in start()."""
+        while not self._stop.is_set():
+            self._stop.wait(self.settings.binding_interval_seconds)
+            if self._stop.is_set():
+                return
+            try:
+                self._discover_once()
+                self._reconcile_threads()
+            except Exception:  # noqa: BLE001 - the discovery thread must never die silently
+                log.exception("unhandled error discovering cluster Secrets")
+
+    def start(self) -> None:
+        # The runtime cluster source first (SPEC_S1): one synchronous discovery so a restart does not
+        # retire a Secret-sourced cluster for a cycle. A failed LIST is the registry's error, not a
+        # failed start.
+        discovery_failed = False
+        if self.settings.cluster_secrets_enabled:
+            try:
+                self._discover_once()
+            except Exception:  # noqa: BLE001
+                log.exception("cluster Secret discovery raised at start; the values clusters poll")
+                discovery_failed = True
+            else:
+                # A LIST that came back with an error is a failure too: `_discover_once` swallows
+                # ClusterError into registry.fail, which keeps the PREVIOUS set — and on a fresh
+                # process the previous set is empty (review of #235, Grok C6).
+                discovery_failed = bool(self.settings.cluster_registry.error)
+        # Reconcile the stored clusters against the configuration BEFORE polling: a cluster the
+        # config no longer names is retired (enabled=0, history kept), so it leaves the served set
+        # instead of lingering as `ok` with frozen data and stale alerts (#96). Config changes roll
+        # the pod, so this runs on every change — retire/add on the fly.
+        effective = self.settings.effective_clusters()
+        # When the discovery could not look, absence proves nothing about a Secret-sourced cluster:
+        # spare those rows rather than retiring the whole fleet on one failed LIST (Grok C6).
+        keep = ("secret:",) if discovery_failed else ()
+        retired = self.store.retire_absent_clusters([c.name for c in effective], keep_sources=keep)
+        if retired:
+            log.info("retired %d cluster(s) no longer in the configuration", retired)
+        if discovery_failed:
+            log.warning("cluster Secret discovery failed at start (%s); Secret-sourced clusters keep "
+                        "their rows and are left for the next cycle rather than retired",
+                        self.settings.cluster_registry.error or "raised")
+        for cluster in effective:
+            self.store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled,
+                                      source=cluster.source, credential=cluster.credential_kind)
+            if not cluster.enabled:
+                log.info("cluster %s is disabled, not polling", cluster.name)
+                continue
+            if cluster.credential_kind == "oauth":
+                log.info("cluster %s declares oauth (#119 P2, not built), not polling", cluster.name)
+                continue
+            self._start_cluster_thread(cluster)
+        if self.settings.cluster_secrets_enabled:
+            thread = threading.Thread(target=self._run_discovery, name="cluster-secrets", daemon=True)
+            thread.start()
+            self._threads.append(thread)
+        log.info("poller started for %d cluster(s)", len(self._cluster_stops))
 
     def stop(self) -> None:
         self._stop.set()

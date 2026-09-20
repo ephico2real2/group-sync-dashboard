@@ -1,0 +1,26 @@
+# mock-selfsigned: a BARE self-signed leaf — cert-manager's selfSigned issuer directly on the serving
+# Certificate, no CA above it. Nothing can be handed as caData that verifies it as a chain; only
+# tlsClientConfig.insecure: true polls it — TLS mode 3.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mock-selfsigned-leaf
+  namespace: group-sync-dashboard
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mock-selfsigned-tls
+  namespace: group-sync-dashboard
+spec:
+  secretName: mock-selfsigned-tls
+  duration: 2160h
+  renewBefore: 360h
+  dnsNames:
+    - mock-selfsigned
+    - mock-selfsigned.group-sync-dashboard.svc
+    - mock-selfsigned.group-sync-dashboard.svc.cluster.local
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: mock-selfsigned-leaf, kind: Issuer}

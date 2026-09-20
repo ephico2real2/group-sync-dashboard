@@ -22,7 +22,9 @@ INDEX = SPECS / "README.md"
 # The programme's thirteen (A–D) carry a milestone R1–R7; a spec after the programme (E…) carries `—`
 # there and rides the next release instead (E1, #229).
 INDEX_ROW = re.compile(
-    r"^\| (?P<id>[A-E]\d) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
+    # ids A–D are the 2026-09 programme's batches on its R1–R7 ladder; a later batch (E, #229; S, #230) sits
+    # after the ladder with `—` for its release, and its header's Release row starts with the same dash
+    r"^\| (?P<id>[A-Z]\d) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
     r"(?P<release>R\d|—) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
     re.M,
 )
@@ -32,12 +34,15 @@ HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \
 def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
     programme = sorted(fid for fid in rows if fid[0] in "ABCD")
+    post = sorted(fid for fid in rows if fid[0] not in "ABCD")
     assert len(programme) == 13, f"expected the programme's thirteen index rows, matched {programme}"
-    # the alternation admits `—` for the E batch only; a programme row must still carry its milestone
-    # (review of #233, Codex — A1's R1 mutated to `—` passed before this line)
+    # the alternation admits `—` for the post-programme batches only; a programme row must still carry its
+    # milestone (review of #233, Codex — A1's R1 mutated to `—` passed before this line)
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
-    assert all(rows[fid]["release"] == "—" for fid in rows if fid[0] == "E"), "a post-programme row carries `—`"
+    assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230)
+    assert len(rows) == 15, f"expected fifteen index rows (the programme's thirteen, E1 and S1), matched {sorted(rows)}"
     return rows
 
 

@@ -1,0 +1,193 @@
+# Clusters as labelled Secrets on CRC — S1's validation (#230)
+
+Two scripts, both run against the deployed head `5513242` (`feat/230-cluster-secrets`; the code of
+`d84ab3f` + the TLS-mode ruling `d001982`; through the Argo Application, `running : 5513242772 —
+verified in-pod`, both Deployments 1/1, the report service `{"status":"ready","schema":19}`) through
+`oc` and the dashboard pod's loopback as `kubeadmin`. No page: S1 has no page; the tab is S2. Every
+line below is a script's own output, cut only for width.
+
+## 1. The lifecycle — `validate.sh` (the lab's mock cluster as a labelled Secret)
+
+Before: the mock is a **values** entry the Argo-managed Deployment cannot read (the #119 gap, measured):
+
+```
+{"id":"mock","source":"values","credential":"","status":"auth_failed",
+ "error":"cluster 'mock': cannot read tokenFile '/etc/gsd/mock/token': [Errno 2] No such file or directory"}
+```
+
+The same cluster as `gsd-cluster-mock` (its token and CA from `mock-cluster-creds`) beside a deliberately
+broken Secret (`config: '{not json'`). The next discovery cycle (the binding cadence, 300 s):
+
+```
+2026-09-20 13:18:42,166 WARNING gsd.clusterconfig.reader cluster Secret gsd-cluster-broken refused: config-not-json (Expecting property name enclosed in double quotes: line 1 column 2)
+2026-09-20 13:18:42,169 INFO    gsd.poller cluster mock: polling started (secret:gsd-cluster-mock)
+```
+
+`GET /api/clusterconfigs` at `last_discovery 2026-09-20T17:18:42Z` — the Secret wins over the values entry
+(`shadows-values-entry` is the informational finding for it), the broken one is a finding, not a crash:
+
+```
+{"id":"mock","source":"secret:gsd-cluster-mock","credential":"bearer","labels":{"environment":"lab"},
+ "visibility":"inherit","identity":"same-as-host","status":"ok"}
+"findings":[{"secret":"gsd-cluster-broken","code":"config-not-json","detail":"Expecting property name enclosed in double quotes: line 1 column 2"}]
+```
+
+Polled like a values cluster (`GET /api/clusters`): `{"id":"mock","status":"ok","last_poll":"2026-09-20T17:18:42Z","group_count":7,"groupsync_count":1}`
+— the fixture's seven groups and one GroupSync.
+
+The token in nothing (a grep for the Secret's bearer token): `/api/clusterconfigs: 0 · /api/clusters: 0 ·
+/metrics: 0 · /readyz: 0 · the pod's log: 0`.
+
+Both Secrets deleted → the finding gone, the cluster retired with its rows:
+
+```
+2026-09-20 13:23:42,206 INFO    gsd.poller mock: its Secret is gone; the poll thread stops (history kept)
+{"id":"mock","source":"secret:gsd-cluster-mock","enabled":false,"retired":true}
+```
+
+## 2. The three TLS trust modes — `local-development/mock-app/deploy/tls-modes/deploy-tls-modes.sh`
+
+The operator's ruling (2026-09-20): each mode is proven against a copy of the mock API whose serving
+certificate is signed differently (the rig's README says what each copy is). The lab's trusted bundle
+carries exactly one non-system root, `CN=LDAP Enterprise Root CA` (the ClusterIssuer `ldap-enterprise-ca`),
+and not `CN=mock-privateca-root`:
+
+
+### A. mock-trusted — DEFAULT (no caData): the enterprise-signed leaf verifies against the trusted bundle
+{"id":"mock-trusted","source":"secret:gsd-cluster-mock-trusted","credential":"bearer","tls":{"insecure":false,"ca":"trusted-bundle"},"status":"ok","last_poll":"2026-09-20T16:58:42Z","error":null}
+
+
+### B1. mock-privateca — DEFAULT (no caData): the x509 error, as a poll outcome
+{"id":"mock-privateca","source":"secret:gsd-cluster-mock-privateca","credential":"bearer","tls":{"insecure":false,"ca":"trusted-bundle"},"status":"unreachable","last_poll":"2026-09-20T16:58:42Z","error":"ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)
+2026-09-20 12:58:42,137-0400 WARNING gsd.poller binding refresh for mock-privateca failed: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) (unreachable) — group data is unaffected
+
+
+### B2. mock-privateca — OVERRIDE: the same Secret with tlsClientConfig.caData = the private CA's PEM
+secret/gsd-cluster-mock-privateca configured
+{"id":"mock-privateca","source":"secret:gsd-cluster-mock-privateca","credential":"bearer","tls":{"insecure":false,"ca":"caData"},"status":"ok","last_poll":"2026-09-20T17:04:42Z","error":null}
+
+
+### C. mock-selfsigned — INSECURE: insecure: true polls the bare self-signed leaf
+{"id":"mock-selfsigned","source":"secret:gsd-cluster-mock-selfsigned","credential":"bearer","tls":{"insecure":true,"ca":null},"status":"ok","last_poll":"2026-09-20T17:04:42Z","error":null}
+
+
+### D. the refusal — caData AND insecure on one Secret: a finding naming both fields, no cluster, the pod alive
+{"findings":[{"secret":"gsd-cluster-mock-refusal","code":"insecure-with-ca","detail":"tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}],"listed":[]}
+group-sync-dashboard-6f6f9cf84-xhpkf   true   0
+
+
+### E. the three beside crc-local, with the fixture's counts (GET /api/clusters)
+{"id":"crc-local","status":"ok","groupsync_count":3,"group_count":62}
+{"id":"mock-privateca","status":"ok","groupsync_count":1,"group_count":7}
+{"id":"mock-selfsigned","status":"ok","groupsync_count":1,"group_count":7}
+{"id":"mock-trusted","status":"ok","groupsync_count":1,"group_count":7}
+
+
+### F. the token in no response and no log line
+/api/clusterconfigs: 0
+/api/clusters: 0
+/metrics: 0
+log: 0
+
+
+### TLS MODES DONE
+
+The rig stays deployed: S2's walk uses it. The four Secrets from an earlier CRC-API probe of the same
+modes (`crc-tls-*`, since deleted) show as retired rows — the "history kept" rule, visible.
+
+## 3. The cluster-configuration tier — `validate-tier.sh` (the auditor is refused, live)
+
+The operator's ruling (2026-09-20): this surface is cluster-admin only and the reporting auditor may
+neither view nor change it. The route first shipped on `require_admin_tier` — the WIDE tier, which
+`gsd/api.py` says in its own words that `cluster-reader`, the deliberate auditor persona, also passes.
+The tier is now two levels of its own, modelled on Argo CD's first-class `clusters` resource and asked
+natively as SubjectAccessReviews about the Secrets this surface exposes. Run against the deployed head
+through the pod's loopback (the dashboard trusts `X-Forwarded-User` from its proxy, so the loopback can
+put any identity in front of the gate — which is what makes the auditor probe possible).
+
+**The two questions, and who answers yes** — `oc` on the lab:
+
+```
+cluster-reader rules covering core/secrets: 0 of 172 rules
+kubeadmin  can-i get    secrets -n group-sync-dashboard : yes
+lateef.o   can-i get    secrets -n group-sync-dashboard : no
+kubeadmin  can-i create secrets -n group-sync-dashboard : yes
+lateef.o   can-i create secrets -n group-sync-dashboard : no
+```
+
+**The wide tier admits the reader; the new tier does not** — the same identity, two routes:
+
+```
+lateef.o  /api/clusters       -> 200  ...,"dangling_bindings":0,"unresolved_bindings":0,...
+lateef.o  /api/clusterconfigs -> 403  {"detail":"For cluster-configuration administrators only. This view
+                                       reports how this instance is wired to its clusters — which Secret
+                                       configures each one, the kind of credential it holds and how its
+                                       certificate is trusted."}
+kubeadmin /api/clusterconfigs -> 200
+```
+
+**The refusal names nothing** — no cluster, no Secret, no namespace (`leaks: none`), so the sentence that
+reaches the refused person is not a map for the next attempt. **And no other route carries the wiring**:
+`secret:gsd-cluster` appears 0 times in `/api/clusters`, `/api/kpi` and `/metrics` for that reader.
+
+**The fleet still polls under the gate**, and the retired rows prove the other half of the contract —
+four clusters from earlier probes whose Secrets are gone are `retired: true, enabled: false`, their rows
+kept (#96), not deleted:
+
+```
+crc-local        values                           tls {"insecure":false,"ca":"serviceAccount"}  ok
+mock-trusted     secret:gsd-cluster-mock-trusted  tls {"insecure":false,"ca":"trusted-bundle"}  ok
+mock-privateca   secret:gsd-cluster-mock-privateca tls {"insecure":false,"ca":"caData"}         ok
+mock-selfsigned  secret:gsd-cluster-mock-selfsigned tls {"insecure":true,"ca":null}             ok
+crc-tls-cadata / crc-tls-default / crc-tls-insecure / mock   retired=True enabled=False
+findings: [{"secret":"gsd-cluster-mock-refusal","code":"insecure-with-ca",
+            "detail":"tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}]
+```
+
+**The tier is on `/metrics`**, pre-seeded and counting — the two probes above are the `allowed` and
+`denied` of this run:
+
+```
+gsd_visibility_tier_checks_total{outcome="allowed",threshold="clusterconfig_view"} 1.0
+gsd_visibility_tier_checks_total{outcome="denied",threshold="clusterconfig_view"}  1.0
+gsd_visibility_tier_checks_total{outcome="unreachable",threshold="clusterconfig_view"} 0.0
+```
+
+### The tier after the operator's reversal — and what the lab measured on the way
+
+**The rule as it now stands (2026-09-20):** each level asks its own question alone — view `get secrets`,
+manage `create secrets`, in the dashboard's namespace — and composes with no other tier. The ordering
+recorded below was added earlier the same day and then reversed; its measurements are kept because they
+are what the questions do and do not claim.
+
+### What this lab measured
+
+Re-run on the reviewed head `cce529b` (`running : cce529befc — verified in-pod`), the section above
+unchanged. The ladder (the administrator rung, then the level's own question) is pinned by tests; what
+the lab adds is the measurement the finding rests on and one honest limit.
+
+**The auditor case is proven live.** `lateef.o` passes the WIDE tier on this lab — `oc auth can-i list
+clusterrolebindings` with his groups answers **yes**, and the admin-gated
+`/api/clusters/crc-local/bindings/findings` serves him **200** — and is refused **403** on
+`/api/clusterconfigs`, because `get secrets` answers **no** for him. That is exactly the operator's
+ruling: the reader the wide tier admits does not get this surface.
+
+**The persona the ordering was about — now admitted by design.**
+`jane.smith` is the shape the finding describes — a member of `app-ocp-rbac-alpha-cluster-admin`, bound
+to `ClusterRole/admin` by one of the lab's seven such ClusterRoleBindings, so `get secrets` and `create
+secrets` answer **yes** for her while the stock role grants neither `list` nor `update
+clusterrolebindings`. But on THIS lab she also holds other group bindings that answer **yes** to `list
+clusterrolebindings`, so she passes the administrator rung too and the surface serves her **200** —
+consistent with the configured policy, and not a counter-example. Under the rule as it now stands she is admitted deliberately: she can create that Secret
+with `oc`, so refusing her in the UI would protect nothing. `lateef.o` — the pure auditor — remains
+refused by the plain question, which is the ruling that had to hold.
+
+```
+lateef.o    list clusterrolebindings (with groups) : yes    get secrets : no    /api/clusterconfigs : 403
+jane.smith  list clusterrolebindings (with groups) : yes    get secrets : yes   /api/clusterconfigs : 200
+            (stock ClusterRole/admin alone: list no, update no, get secrets yes, create secrets yes)
+```
+
+A probe with `oc auth can-i --as=<user>` **without** `--as-group` answers `no` to `get secrets` for
+jane.smith: user impersonation does not carry OpenShift Group membership, while the dashboard's
+resolver supplies the viewer's groups to its SubjectAccessReview. Any future probe must pass the groups.

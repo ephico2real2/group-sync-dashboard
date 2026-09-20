@@ -386,6 +386,31 @@ update
 {{- end -}}
 {{- end -}}
 
+{{/*
+The cluster-configuration tier's two SAR blocks (#230): visibility.clusterConfigViewSar and
+visibility.clusterConfigManageSar. ONE parameterised helper rather than eight near-identical ones —
+the two blocks and their four fields validate identically, and a copy per field is four more places
+for a guard to drift. Call it with a dict: {ctx, block, field, default}.
+
+Same discipline as the adminSar helpers: nil-safe (commenting out the sub-keys leaves
+`visibility:` present-but-nil, which a bare field access panics on), and a malformed value FAILS
+THE RENDER rather than silently answering no for every viewer — which here would not demote an
+administrator but lock everyone out of the surface, including the person trying to fix it.
+*/}}
+{{- define "gsd.clusterConfigSarField" -}}
+{{- $sar := (index (.ctx.Values.visibility | default dict) .block) | default dict -}}
+{{- if or (not (hasKey $sar .field)) (kindIs "invalid" (index $sar .field)) -}}
+{{- .default -}}
+{{- else -}}
+{{- $v := trim (toString (index $sar .field)) -}}
+{{- $ok := dict "apiGroup" "^[a-z0-9.-]*$" "resource" "^[a-z0-9-]+(/[a-z0-9-]+)?$" "verb" "^[a-z]+$" "namespace" "^[a-z0-9-]*$" -}}
+{{- if not (regexMatch (index $ok .field) $v) -}}
+{{- fail (printf "visibility.%s.%s %q is not a %s. RBAC matching is exact, so anything else would answer no for every viewer and close the Cluster Configurations surface to everyone." .block .field $v .field) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+{{- end -}}
+
 # How long a decided tier is cached, per viewer. Whole seconds, and 0 disables caching.
 #
 # This is the ONE knob whose wrong value is a security consequence rather than a broken render, so
