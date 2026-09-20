@@ -6,7 +6,9 @@ set -euo pipefail
 APP="${1:?application name}"; NS="${2:-openshift-gitops}"; TIMEOUT="${3:-900}"
 start=$(date +%s)
 while :; do
-  read -r sync health phase msg < <(oc get application "$APP" -n "$NS" -o jsonpath='{.status.sync.status} {.status.health.status} {.status.operationState.phase} {.status.operationState.message}' 2>/dev/null || echo "")
+  # `read` returns 1 at EOF without a newline — jsonpath prints none — and set -e would end the
+  # script on it; the echo supplies the newline.
+  read -r sync health phase msg < <(oc get application "$APP" -n "$NS" -o jsonpath='{.status.sync.status} {.status.health.status} {.status.operationState.phase} {.status.operationState.message}' 2>/dev/null; echo)
   printf '%s  %-10s %-12s %-10s %s\n' "$(date -u +%H:%M:%SZ)" "${sync:-?}" "${health:-?}" "${phase:-?}" "$(printf '%s' "${msg:-}" | cut -c1-100)"
   if [ "${sync:-}" = Synced ] && [ "${health:-}" = Healthy ] && [ "${phase:-}" = Succeeded ]; then
     echo "argocd  : ${APP} Synced/Healthy"; exit 0
