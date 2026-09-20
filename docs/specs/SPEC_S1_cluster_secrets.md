@@ -57,30 +57,36 @@ the same pull request, under "Orchestrator's notes", with the reason.
   means the pod's own, the opposite of the wide tier's empty, because these questions are namespaced by
   nature.
 
-  *THE LADDER IS ORDERED* (design review, OB2, 2026-09-20 — the second ruling on this tier). Each rung
-  asks the rung below first, then its own question: the cluster-configuration gate is **the
-  administrator rung AND** (`get secrets` for view / `create secrets` for manage). Asked alone, the
-  secrets questions are not a HIGHER bar than the wide tier but a DIFFERENT one — `get`/`create secrets`
-  in a namespace is held by the stock `admin` ClusterRole. Measured on CRC 2026-09-20, a member of
-  `app-ocp-rbac-alpha-cluster-admin`, bound to `ClusterRole/admin` by one of the lab's **seven** such
-  ClusterRoleBindings:
+  *NO COMPOSITION WITH ANOTHER TIER — the ruling of 2026-09-20, which REVERSED an ordering added
+  earlier the same day.* Each level asks **its own** question and nothing else: view = `get secrets`,
+  manage = `create secrets`, in the dashboard's namespace. The operator: *"A user with cluster admin and
+  auditor is fine. That is how Kubernetes RBAC works. As long as the user has the role needed or can get
+  the right SAR needed, we are good."* Three reasons, in the order they settle the question:
 
-  ```
-  oc auth can-i list clusterrolebindings   --as-group=app-ocp-rbac-alpha-cluster-admin  -> no
-  oc auth can-i update clusterrolebindings --as-group=app-ocp-rbac-alpha-cluster-admin  -> no
-  oc auth can-i get    secrets -n group-sync-dashboard                                   -> yes
-  oc auth can-i create secrets -n group-sync-dashboard                                   -> yes
-  ```
+  1. **RBAC is additive.** Holding the auditor role *and* a namespace- or cluster-admin grant is not a
+     contradiction for the dashboard to resolve — it is the ordinary shape of a person with two jobs.
+  2. **The SAR asks the ACTION'S OWN question.** Whoever passes `create secrets` in this namespace can
+     write the cluster Secret with `oc` directly, so refusing them in the UI protects nothing; and
+     because the gate *is* the action, the ServiceAccount that performs the write is not a confused
+     deputy — it does only what the asker was already entitled to do.
+  3. **The auditor ruling is satisfied without composition, measured.** On CRC 2026-09-20 the pure
+     auditor persona — `lateef.o`, whose groups are `app-ocp-rbac-groupsync-ns-auditor`,
+     `…-lateef-ns-developer`, `app-ssb-autobahnusers` — answers `no` to both `get secrets` and `create
+     secrets` with those groups carried, while passing the WIDE tier (`list clusterrolebindings`: yes,
+     and the admin-gated `/bindings/findings` serves him 200). The plain question already excludes him;
+     an ordering would only have excluded identities that ALSO hold namespace `admin`/`edit`, who can
+     write the Secret by hand.
 
-  That reader is narrowed to `self` on every other tab and would have held the fleet's credential
-  store. The ordering also closes the other direction: `cluster-reader` is an AGGREGATED ClusterRole,
-  so a site that aggregates `get secrets` into it cannot thereby hand auditors this surface.
+  What the earlier ordering was reacting to is still worth recording, because it is what the questions
+  do NOT claim: `get`/`create secrets` in a namespace is held by the stock `admin` ClusterRole, so these
+  are not a *higher* bar than the wide tier — they are the bar that matches the action. A site that wants
+  a narrower door repoints either question at its own (a dedicated `fleet-admin` ClusterRole, say).
 
-  The rung is asked **directly**, not through `viewer_scope` or `usage_scope`: each carries a widening
-  escape hatch that would dissolve it — `viewer_scope` widens when `visibility.enabled` is off, and
-  `usage_scope` widens for every viewer when `userActivity.visibility: all`. Neither is a statement
-  about who administers the cluster, which is all this rung asks. A site may repoint either question
-  but cannot grant the top rung to a reader the administrator rung refuses.
+  *What the review DID earn, and is kept:* no `restrict` short-circuit (turning `visibility.enabled` off
+  must not widen this tier, and `userActivity.visibility: all` must not either); fail closed on no
+  identity, no resolver, a junk answer or an API-server blip; each level its own resolver instance and
+  cache; `manage` never inferred from `view`; and an unknown pod namespace refuses rather than silently
+  asking a CLUSTER-SCOPED `get secrets`.
 
   *Division of labour.* **S1 ships both resolvers** and gates its read route on `view`; **S2 gates the
   write routes on `manage` and the tab's very existence on `view`** — a reader who fails `view` gets no tab

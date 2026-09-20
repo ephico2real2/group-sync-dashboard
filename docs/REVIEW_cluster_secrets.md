@@ -28,7 +28,20 @@ proposed mechanism did not hold.
 | C11 | Tests as mutant pins | REFUTED — 2 survive | REFUTED — the shared-resolver mutant survived | — | **Accepted**: both surviving mutants are now pinned, and every pin in this record was re-run against its mutant before being called a pin. |
 | — | **The ladder is not ordered** | — | — | **OB2 design pass, REFUTED** | **Accepted, re-implemented.** See below. |
 
-## The ordering finding, and the one deviation
+## The ordering finding — accepted, then reversed by the operator
+
+**Superseded (2026-09-20, later the same day).** The operator: *"A user with cluster admin and auditor
+is fine. That is how Kubernetes RBAC works. As long as the user has the role needed or can get the right
+SAR needed, we are good."* The composition below was removed; each level asks its own question alone.
+The reasons are in `docs/specs/SPEC_S1_cluster_secrets.md` — RBAC is additive; the SAR asks the action's
+own question, so anyone who passes it can do the thing with `oc` and the ServiceAccount is not a confused
+deputy; and the auditor ruling holds without composition, measured. **Everything else the review earned
+is kept** (C2, C4, C7, C8, C6, the duplicate-name and Argo-key refusals) — those are the real protections.
+
+The finding is recorded because what it measured is still true and still shapes the contract: these
+questions are not a *higher* bar than the wide tier, they are the bar that matches the action.
+
+## The ordering finding as it was argued, and the one deviation
 
 OB2's design pass measured what the other seats did not ask: `get`/`create secrets` in a namespace is
 held by the stock `admin` ClusterRole, so asked **alone** the two questions are not a higher bar than

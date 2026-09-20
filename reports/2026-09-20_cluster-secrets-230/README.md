@@ -153,7 +153,14 @@ gsd_visibility_tier_checks_total{outcome="denied",threshold="clusterconfig_view"
 gsd_visibility_tier_checks_total{outcome="unreachable",threshold="clusterconfig_view"} 0.0
 ```
 
-### The ordered ladder — what this lab can and cannot prove
+### The tier after the operator's reversal — and what the lab measured on the way
+
+**The rule as it now stands (2026-09-20):** each level asks its own question alone — view `get secrets`,
+manage `create secrets`, in the dashboard's namespace — and composes with no other tier. The ordering
+recorded below was added earlier the same day and then reversed; its measurements are kept because they
+are what the questions do and do not claim.
+
+### What this lab measured
 
 Re-run on the reviewed head `cce529b` (`running : cce529befc — verified in-pod`), the section above
 unchanged. The ladder (the administrator rung, then the level's own question) is pinned by tests; what
@@ -165,16 +172,15 @@ clusterrolebindings` with his groups answers **yes**, and the admin-gated
 `/api/clusterconfigs`, because `get secrets` answers **no** for him. That is exactly the operator's
 ruling: the reader the wide tier admits does not get this surface.
 
-**The ordering case cannot be demonstrated with a live persona here, and is not claimed to be.**
+**The persona the ordering was about — now admitted by design.**
 `jane.smith` is the shape the finding describes — a member of `app-ocp-rbac-alpha-cluster-admin`, bound
 to `ClusterRole/admin` by one of the lab's seven such ClusterRoleBindings, so `get secrets` and `create
 secrets` answer **yes** for her while the stock role grants neither `list` nor `update
 clusterrolebindings`. But on THIS lab she also holds other group bindings that answer **yes** to `list
 clusterrolebindings`, so she passes the administrator rung too and the surface serves her **200** —
-consistent with the configured policy, and not a counter-example. The rung's effect is pinned instead by
-`TestClusterConfigTier::test_a_namespace_admin_who_is_not_a_cluster_admin_is_refused_the_ordered_ladder`
-and `…_asked_directly_past_both_escape_hatches`, both of which fail when the rung is removed
-(mutant-checked).
+consistent with the configured policy, and not a counter-example. Under the rule as it now stands she is admitted deliberately: she can create that Secret
+with `oc`, so refusing her in the UI would protect nothing. `lateef.o` — the pure auditor — remains
+refused by the plain question, which is the ruling that had to hold.
 
 ```
 lateef.o    list clusterrolebindings (with groups) : yes    get secrets : no    /api/clusterconfigs : 403

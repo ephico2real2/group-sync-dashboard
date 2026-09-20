@@ -585,7 +585,10 @@ class TestClusterConfigTier:
         is wired. Usage made the same call (usage_scope stays self); we go further and still ask,
         so a cluster-admin keeps the tab (review of #235, Grok C2)."""
         db = str(tmp_path / "off.db"); _seed(db)
-        settings = _settings(db, view_restrictions_enabled=False)
+        # BOTH widening switches at once: `visibility.enabled=false` widens the wide views, and
+        # `userActivity.visibility: all` widens Usage for every viewer. Neither is a statement about
+        # who may read this namespace's Secrets, so neither may widen this tier.
+        settings = _settings(db, view_restrictions_enabled=False, user_activity_visibility="all")
         settings.cluster_registry.namespace = "ns"
         settings.cluster_registry.replace(
             [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
@@ -610,62 +613,35 @@ class TestClusterConfigTier:
         assert v._attributes["resource"] == "secrets" == m._attributes["resource"]
         assert v._cache is not m._cache
 
-    def test_a_namespace_admin_who_is_not_a_cluster_admin_is_refused_the_ordered_ladder(self, make_app):
-        """The privilege INVERSION the ordering prevents (design review of #235, OB2).
+    def test_a_namespace_admin_who_can_create_the_secret_is_admitted(self, make_app):
+        """Each level asks ITS OWN question and nothing else (the operator's ruling of 2026-09-20,
+        reversing an earlier ordering).
 
-        `get`/`create secrets` in the dashboard's namespace is held by the stock `admin`
-        ClusterRole, so asked alone it is not a higher bar than the wide tier — it is a different
-        one. Measured on CRC 2026-09-20, a member of `app-ocp-rbac-alpha-cluster-admin` (bound to
-        ClusterRole/admin by one of the lab's seven such ClusterRoleBindings):
+        A reader who passes `create secrets` in this namespace — a namespace admin, say — can write
+        the cluster Secret with `oc` whether or not the dashboard lets them; refusing them in the UI
+        protects nothing, and because the gate IS the action's own question the ServiceAccount that
+        performs the write is not acting beyond what the asker could do. RBAC is additive: holding
+        the auditor role and a namespace-admin grant is not a contradiction to resolve.
 
-            oc auth can-i list clusterrolebindings   --as-group=…  -> no
-            oc auth can-i update clusterrolebindings --as-group=…  -> no
-            oc auth can-i get    secrets -n <ns>     --as-group=…  -> yes
-            oc auth can-i create secrets -n <ns>     --as-group=…  -> yes
-
-        That reader is narrowed to `self` on every other tab; without the ordering they would hold
-        the fleet's credential store. The mutant that drops the admin rung fails here.
+        What still excludes the auditor is the plain question, measured on CRC 2026-09-20 with the
+        persona's groups carried (`--as=lateef.o` plus his three groups): `get secrets` no,
+        `create secrets` no.
         """
-        # `nsadmin` passes the secrets questions and NOT the administrator rung — the measured shape.
         app = make_app(view=_MapResolver({"root": "all", "nsadmin": "all"}),
                        manage=_MapResolver({"root": "all", "nsadmin": "all"}))
         app.state.tier_resolver = _MapResolver({"root": "all"})       # nsadmin is self on the wide tier
         with TestClient(app) as c:
-            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 403
+            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 200
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
 
-    def test_the_admin_rung_is_asked_directly_past_both_escape_hatches(self, tmp_path):
-        """The rung is not `viewer_scope` or `usage_scope`: each carries a widening escape hatch
-        that would dissolve it — viewer_scope widens when `visibility.enabled` is off, and
-        usage_scope widens for EVERY viewer when `userActivity.visibility: all`. Neither is a
-        statement about who administers the cluster, which is all this rung asks."""
-        db = str(tmp_path / "hatch.db"); _seed(db)
-        settings = _settings(db, view_restrictions_enabled=False, user_activity_visibility="all")
-        settings.cluster_registry.namespace = "ns"
-        settings.cluster_registry.replace(
-            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
-        app = build_app(settings, run_poller=False)
-        app.state.tier_resolver = _MapResolver({"root": "all"})        # nsadmin: self
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "nsadmin": "all"})
+    def test_the_auditor_is_excluded_by_the_plain_question_without_composing_tiers(self, make_app):
+        """The operator's ruling — the reporting auditor may neither view nor change this — holds
+        with NO composition: the auditor simply fails `get secrets`."""
+        app = make_app(view=_MapResolver({"root": "all"}), manage=_MapResolver({"root": "all"}))
+        app.state.tier_resolver = _MapResolver({"root": "all", "auditor": "all"})   # wide admits them
         with TestClient(app) as c:
-            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 403
-            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
-
-    def test_an_unknown_namespace_refuses_rather_than_asking_a_cluster_scoped_question(self, tmp_path, monkeypatch):
-        """`get secrets` with no namespace is a CLUSTER-SCOPED question — broader than the one the
-        operator configured, and passed by identities the namespaced one refuses. Outside a cluster
-        (no ServiceAccount mount, no GSD_NAMESPACE) the tier must refuse, not widen (review of #235,
-        Codex C4)."""
-        monkeypatch.delenv("GSD_NAMESPACE", raising=False)
-        monkeypatch.setattr("gsd.api.own_namespace", lambda: None)
-        db = str(tmp_path / "nons.db"); _seed(db)
-        settings = _settings(db)
-        settings.cluster_registry.replace(
-            [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
-        app = build_app(settings, run_poller=False)
-        app.state.tier_resolver = _MapResolver({"root": "all"})
-        with TestClient(app) as c:
-            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
+            assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
+            assert c.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
 
     def test_the_two_levels_have_their_own_defaults_and_caches(self):
         """`manage` is not derived from `view`: separate settings, separate questions."""
