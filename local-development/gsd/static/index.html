@@ -2013,7 +2013,7 @@ function groupsPage() {
   // tier narrows (#153; the contract's whole-set rule). Empty and unattributed carry the warning rail
   // when they hold any group: each is a problem state the state filter can open.
   const cl = (data.clusters || []).find((c) => c.id === view.cluster);
-  const kpis = cl && !self && typeof cl.group_count === "number" ? `<div class="kpis" id="groups-kpis">
+  const kpis = cl && !self && typeof cl.group_count === "number" ? `<div class="kpis mb-5" id="groups-kpis">
       <div class="kpi"><div class="label">Groups on this cluster</div><div class="value">${cl.group_count}</div></div>
       <div class="kpi${cl.empty_groups ? " flag-warning" : ""}"><div class="label">Empty</div><div class="value${cl.empty_groups ? "" : " muted"}">${cl.empty_groups}</div></div>
       <div class="kpi${cl.unattributed_groups ? " flag-warning" : ""}"><div class="label">Unattributed</div><div class="value${cl.unattributed_groups ? "" : " muted"}">${cl.unattributed_groups}</div></div>
