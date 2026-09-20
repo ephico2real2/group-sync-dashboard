@@ -77,13 +77,16 @@ Three things the Reports tab does around a manual run (#143):
 - **The reviewer is you.** `access-certification`'s `reviewer` opens as the signed-in name; an edit, even a
   blank one, is kept until the page is reloaded. A schedule names its reviewer in `params:`.
 - **The totals before the run.** Beside Generate, the form shows what the run would produce — for
-  `namespace-access` "1 namespaces · 4 group bindings · 2 user bindings", with "· will truncate" when a cap
-  bites — from `POST /report/api/preview` (`{"report", "cluster", "params"}` → `{"totals", "truncated",
-  "snapshot"}`): the report's own `build()` over the newest snapshot, nothing rendered or stored, one at a
+  `namespace-access` "1 namespace · 4 group bindings · 2 user bindings", with "· will truncate" when the
+  report's row limit cuts a table (the 50-namespace cap on an explicit list is not a truncation: it changes
+  the `namespaces` figure and the artefact's Coverage note says so) — from `POST /report/api/preview`
+  (`{"report", "cluster", "params"}` → `{"report", "cluster", "totals", "truncated", "snapshot"}`): the
+  report's own `build()` over the newest snapshot, nothing rendered or stored, one at a
   time (a second preview while one runs gets `429`, and the form simply waits for its next change). A
   parameter the run would refuse shows the refusal there first ("preview: select at least one
   namespace…"); Generate is never disabled by it. String parameters are trimmed on the way in, so a
-  required field holding only spaces is refused as blank.
+  required field holding only spaces is refused as blank. The picker offers `(cluster-scoped)` first — the
+  one explicit name the poll never lists.
 
 ## Scheduling
 

@@ -2664,7 +2664,7 @@ function reportFormCard(spec, cat) {
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
       <span class="filterbar-note">json is always written · cluster <span class="mono">${esc(view.cluster || "")}</span></span>
-      <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name ? view.reportTotals.text : "")}</span>
+      <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name && view.reportTotals.cluster === view.cluster ? view.reportTotals.text : "")}</span>
     </div>
     ${status}
   </section>`;
@@ -2730,7 +2730,7 @@ function lookupControl(spec, p, form) {
   const chosen = Array.isArray(form[p.name]) ? form[p.name] : (typeof form[p.name] === "string" && form[p.name] ? form[p.name].split(",").map((x) => x.trim()).filter(Boolean) : []);
   const id = `report-lookup-${spec.name}-${p.name}`;
   const found = p.source && data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][p.source];
-  const values = found ? found.values : [];
+  const values = lookupValues(p.source, found);
   const typed = (view.reportLookupText || {})[id] || "";
   const settled = !!(data.reportDiscovered && (view.cluster in data.reportDiscovered));   // the cluster's answer is in, whatever it held
   return `<div class="rp-lookup" data-lookup="${esc(p.name)}">
@@ -2741,6 +2741,13 @@ function lookupControl(spec, p, form) {
       <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
     </div>` : ""}
   </div>`;
+}
+
+// The discovered values a lookup offers; the namespaces picker also offers `(cluster-scoped)`, the one
+// explicit name the poll never lists (review of #224, Grok).
+function lookupValues(source, found) {
+  const values = found ? found.values : [];
+  return source === "namespaces" && values.length ? ["(cluster-scoped)"].concat(values) : values;
 }
 
 // The menu's options for one query — the first 200 matches of the discovered set. One function for the
@@ -2975,14 +2982,15 @@ function scheduleTotals(spec) {
     try {
       const r = await (await reportFetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" },
                                                             body: JSON.stringify({ report: spec, cluster, params }) })).json();
-      const parts = Object.entries(r.totals || {}).filter(([, v]) => typeof v === "number").map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`);
+      // the key is the noun, plural in every report's totals; one of a thing drops the s (review of #224, Codex: "1 namespaces")
+      const parts = Object.entries(r.totals || {}).filter(([, v]) => typeof v === "number").map(([k, v]) => `${v} ${v === 1 ? k.replace(/_/g, " ").replace(/s$/, "") : k.replace(/_/g, " ")}`);
       text = parts.join(" · ") + (r.truncated ? " · will truncate" : "");
     } catch (e) {
       text = e.status === 422 ? `preview: ${e.detail || "the parameters were refused"}` : "";   // a preview error never blocks Generate
     }
     if (version !== _totalsVersion || view.cluster !== cluster || view.report !== spec) return;
-    view.reportTotals = { spec, text };
-    const el = $("report-totals"); if (el) el.textContent = text;   // in place: no repaint under the reader
+    view.reportTotals = { spec, cluster, text };                      // keyed by cluster too: a switch must not paint A's totals beside B (review of #224, Grok)
+    const el = $("report-totals"); if (el && el.textContent !== text) el.textContent = text;   // in place: no repaint under the reader
   }, 500);
 }
 
@@ -3069,6 +3077,7 @@ function clearNamespaceAccessSelectors() {
   const f = view.reportForm["namespace-access"];
   if (f) delete f.selectors;
   schedulePreview("namespace-access");
+  scheduleTotals("namespace-access");     // the totals beside Generate follow the selection too (review of #224, Grok)
   closeNsPreview();   // empty-selection arm blanks the count; it does not close the names dialog
 }
 
@@ -3156,7 +3165,7 @@ function wireReports() {
       view.reportLookupText[el.id] = el.value;
       const body = document.querySelector(`#${CSS.escape(el.id)}-menu [data-menu-body]`); if (!body) return;
       const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][el.dataset.lookupSource];
-      body.innerHTML = lookupMenuBody(name, found ? found.values : [], listOf(name), el.value.trim());
+      body.innerHTML = lookupMenuBody(name, lookupValues(el.dataset.lookupSource, found), listOf(name), el.value.trim());
       wireLookupOptions(body);
     };
     el.onkeydown = (e) => {
@@ -3195,7 +3204,7 @@ function wireReports() {
     adv.ontoggle = () => rec(adv.open);
   }
   const clearSubject = $("report-subject-clear");
-  if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; render(); refocusLookup("users"); };
+  if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; scheduleTotals(view.report); render(); refocusLookup("users"); };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).

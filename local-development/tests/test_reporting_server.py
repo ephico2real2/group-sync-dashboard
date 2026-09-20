@@ -1537,6 +1537,14 @@ class TestPreviewAndNamespacePicker:
                 th.join()
             finally:
                 srv.REGISTRY["groups"] = (srv.REGISTRY["groups"][0], orig)
+            # the slot is released when the build ends (review of #224, Grok: the test never pinned it) — and on a
+            # refused path too: a 422 raised inside build() must not hold it
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 200
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER}, headers=ticket).status_code == 422
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 200
+            # an unconfigured selector label is refused as a run refuses it
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"selectors": {"x/y": ["a"]}}}, headers=ticket)
+            assert r.status_code == 422 and "not configured" in r.json()["detail"]
 
     def test_the_discovered_namespaces_feed_the_picker_and_a_str_is_trimmed(self, tmp_path):
         from gsd.reporting.catalogue import REGISTRY, ValidationError, validate_params as vp

@@ -6993,7 +6993,7 @@ class TestReportsTab:
             page.click("details.report-advanced summary")
             page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
             listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
-            assert listed == sorted(listed) and len(listed) >= 1, listed                 # the poll's namespaces, in order
+            assert listed == ["(cluster-scoped)", "klt-pass-both", *[f"ns{i}" for i in range(6)], "prod-ns", "quiet-corner"], listed   # the seed's namespaces, in order, behind the one name the poll never lists
             # the preview runs for the form as it opened: this report needs a scope, so it says so — the
             # refusal beside Generate before the run is refused, with Generate untouched
             page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
@@ -7001,12 +7001,20 @@ class TestReportsTab:
             assert previews and previews[0] == {"report": "namespace-access", "cluster": "crc-local", "params": {}}, previews
             assert page.locator("#report-generate").is_enabled()
             # picking one namespace gives the totals of that run
-            page.click(f'[data-lookup-opt="namespaces"][data-value="{listed[0]}"]')
-            page.wait_for_selector(f'.rp-tag[data-name="{listed[0]}"]')
-            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespaces')", timeout=15_000)
+            page.click('[data-lookup-opt="namespaces"][data-value="prod-ns"]')
+            page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespace ·')", timeout=15_000)
             totals = page.locator("#report-totals").inner_text()
-            assert _re.fullmatch(r"1 namespaces · \d+ group bindings · \d+ user bindings", totals), (totals, previews)
-            assert previews[-1]["params"]["namespaces"] == [listed[0]], previews[-1]
+            assert totals == "1 namespace · 2 group bindings · 1 user binding", (totals, previews)   # the seed's prod-ns; one of a thing is singular
+            assert previews[-1]["params"]["namespaces"] == ["prod-ns"], previews[-1]
+            assert page.locator("#report-generate").is_enabled()
+            # Clear (the selectors') and a cluster switch leave no confident wrong count beside Generate (Grok)
+            page.evaluate("() => { view.reportForm['namespace-access'] = {}; clearNamespaceAccessSelectors(); }")
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
+            page.evaluate("() => { view.reportForm['namespace-access'] = { namespaces: ['prod-ns'] }; scheduleTotals('namespace-access'); }")
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespace ·')", timeout=15_000)
+            page.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); render(); }")
+            assert page.locator("#report-totals").inner_text() == "", "cluster A's totals must not sit beside cluster B's form"
             # the reviewer prefill
             page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
             page.wait_for_selector("#report-form.r-compliance")
@@ -7214,7 +7222,7 @@ class TestReportFormsReview:
     went, what a refused parameter told the reader, and what the lookups' arrival did to a reader who
     had scrolled. Every case here was measured failing on 7fa4a6e (the Grok pass at 57b2c5c fixed four
     of them without a UI test; the menu rebuild, the loading head and the ×/Clear/segment focus paths are
-    OB3's)."""
+    OB3's); the reviewer default is #143's prefill."""
 
     def _open(self, browser, base, report="access-matrix", cls="r-access"):
         ctx, page, errors = _reports_page(browser, base, "root")
@@ -7352,6 +7360,30 @@ class TestReportFormsReview:
             page.evaluate("() => { reportGet = () => new Promise(() => {}); delete data.reportDiscovered['crc-local']; render(); }")
             heads = page.locator(".rp-menu-head").all_inner_texts()
             assert heads and all(h.lower().endswith("loading…") for h in heads), heads
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+    def test_the_certification_reviewer_defaults_to_the_signed_in_reader(self, browser, reporting_server):
+        # R7: "reviewer/users (ocp_user, default = the signed-in user for a manual run)" — the field was a bare
+        # required string, so a manual run without typing one's own name was a 422
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base, "access-certification", "r-compliance")
+        try:
+            assert page.input_value("#report-param-access-certification-reviewer") == "root"
+            page.fill("#report-param-access-certification-campaign", "Q4"); page.locator("#report-param-access-certification-campaign").dispatch_event("change")
+            page.fill("#report-param-access-certification-due", "2026-12-31"); page.locator("#report-param-access-certification-due").dispatch_event("change")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            import json as _json
+            body = _json.loads(info.value.post_data)
+            assert body["params"]["reviewer"] == "root" and body["params"]["campaign"] == "Q4"
+            page.wait_for_function("() => view.reportRun && view.reportRun.status === 'done'", timeout=30_000)
+            # overtyped, the reader's word wins and survives a repaint
+            page.fill("#report-param-access-certification-reviewer", "Jane"); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
+            page.evaluate("() => render()")
+            assert page.input_value("#report-param-access-certification-reviewer") == "Jane"
             assert not errors, errors
         finally:
             ctx.close()
