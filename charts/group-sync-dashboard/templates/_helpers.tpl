@@ -626,6 +626,20 @@ The catalogue names this deployment enables, comma-joined for GSD_REPORT_ENABLED
 switch is a boolean; loginActivity is a tri-state ("" follows loginCapture.enabled). Misspelt values
 refuse, and loginActivity=true with capture off refuses — a report over a table nothing writes.
 */}}
+{{- /* The reporting.schedules[] entries the report pod's status page describes: name, schedule, report,
+enabled and any per-schedule retention override, as one JSON array (#149 R6). Params, cluster and
+formats are the CronJob's business and stay out of it. */ -}}
+{{- define "gsd.reportSchedulesJson" -}}
+{{- $out := list -}}
+{{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
+{{- $entry := dict "name" $s.name "schedule" $s.schedule "report" $s.report -}}
+{{- if hasKey $s "enabled" -}}{{- $_ := set $entry "enabled" $s.enabled -}}{{- end -}}
+{{- with $s.retention -}}{{- $_ := set $entry "retention" . -}}{{- end -}}
+{{- $out = append $out $entry -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
 {{- define "gsd.reportEnabledReports" -}}
 {{- $r := (.Values.reporting | default dict).reports | default dict -}}
 {{- $names := dict "namespaceAccess" "namespace-access" "accessMatrix" "access-matrix" "privilegedAccess" "privileged-access" "bindingFindings" "binding-findings" "groups" "groups" "users" "users" "dormantAccess" "dormant-access" "groupsyncHealth" "groupsync-health" "complianceSnapshot" "compliance-snapshot" "accessCertification" "access-certification" -}}

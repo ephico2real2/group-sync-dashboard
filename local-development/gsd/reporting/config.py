@@ -34,6 +34,24 @@ class ReportConfigError(Exception):
     pass
 
 
+def _schedules_env() -> tuple[dict, ...]:
+    """GSD_REPORT_SCHEDULES: a JSON array of {name, schedule, report, enabled?, retention?} rendered by
+    the chart from reporting.schedules[]. Unset or empty = no schedules. A shape that is not that is a
+    startup error, like every other config typo here."""
+    raw = os.environ.get("GSD_REPORT_SCHEDULES", "").strip()
+    if not raw:
+        return ()
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"GSD_REPORT_SCHEDULES is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list) or not all(isinstance(x, dict) and isinstance(x.get("name"), str)
+                                                and isinstance(x.get("schedule"), str) and isinstance(x.get("report"), str)
+                                                for x in parsed):
+        raise SystemExit("GSD_REPORT_SCHEDULES must be a JSON array of objects with name, schedule and report")
+    return tuple(parsed)
+
+
 def _formats_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     """A comma list of html/pdf (json is always written, so a listed `json` is accepted and dropped);
     unset or empty keeps the default. Anything else is a startup error — a typo must not silently
@@ -151,6 +169,9 @@ class ReportSettings:
     #: Origin-aware formats (design R3): what a run stores when the request names none. A schedule
     #: fires unattended and its document is printed from the HTML on demand, so no PDF by default;
     #: a person's manual run gets the PDF. `json` is always written and is not listed here.
+    #: The chart's reporting.schedules[] (name, schedule, report, enabled, retention) as JSON, so the
+    #: status page can show cadence, next fire and effective retention without a cluster call (R6).
+    schedules: tuple[dict, ...] = ()
     formats_scheduled: tuple[str, ...] = ("html",)
     formats_manual: tuple[str, ...] = ("html", "pdf")
     marking: str = "Handling: internal — access review evidence"
@@ -206,6 +227,7 @@ def load_report_settings() -> ReportSettings:
         scheduled_retention_days=_int_env("GSD_REPORT_SCHEDULED_RETENTION_DAYS", 90, lo=0, hi=3650),
         manual_retention_days=_int_env("GSD_REPORT_MANUAL_RETENTION_DAYS", 3, lo=0, hi=3650),
         manual_retention_max_runs=_int_env("GSD_REPORT_MANUAL_RETENTION_MAX_RUNS", 500, lo=0, hi=100000),
+        schedules=_schedules_env(),
         formats_scheduled=_formats_env("GSD_REPORT_FORMATS_SCHEDULED", ReportSettings.formats_scheduled),
         formats_manual=_formats_env("GSD_REPORT_FORMATS_MANUAL", ReportSettings.formats_manual),
         marking=os.environ.get("GSD_REPORT_MARKING", ReportSettings.marking),

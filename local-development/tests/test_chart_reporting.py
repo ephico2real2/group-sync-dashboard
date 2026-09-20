@@ -321,6 +321,25 @@ class TestDerivations:
                        "reporting.schedules[0].report=groups", "reporting.schedules[0].enabled=true")
         assert "suspend" not in _exact(docs, "CronJob", "t-group-sync-dashboard-report-live")["spec"]
 
+    def test_the_schedules_reach_the_report_pod_as_json(self):
+        # #149 R6: the status page reads cadence, enabled and retention from the chart's own values.
+        import json as _json
+        env = {e["name"]: e.get("value") for d in _render(
+            "reporting.schedules[0].name=quarterly", "reporting.schedules[0].schedule=0 6 1 1\,4\,7\,10 *",
+            "reporting.schedules[0].report=compliance-snapshot", "reporting.schedules[0].retention.keepPerSchedule=12",
+            "reporting.schedules[1].name=paused", "reporting.schedules[1].schedule=0 6 1\,16 * *",
+            "reporting.schedules[1].report=namespace-access", "reporting.schedules[1].enabled=false",
+            "reporting.schedules[1].params.foo=bar")
+            if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+            for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+        got = _json.loads(env["GSD_REPORT_SCHEDULES"])
+        assert got == [
+            {"name": "quarterly", "schedule": "0 6 1 1,4,7,10 *", "report": "compliance-snapshot", "retention": {"keepPerSchedule": 12}},
+            {"name": "paused", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False},
+        ], got                                                    # params stay out; enabled only when set
+        assert _json.loads({e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+                            for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}["GSD_REPORT_SCHEDULES"]) == []
+
     def test_the_origin_formats_reach_the_report_pod(self):
         env = {e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}

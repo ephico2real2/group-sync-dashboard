@@ -1239,3 +1239,108 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
         monkeypatch.setenv("GSD_REPORT_FORMATS_SCHEDULED", "html,pfd")
         with pytest.raises(SystemExit):
             _formats_env("GSD_REPORT_FORMATS_SCHEDULED", ("html",))
+
+
+class TestReportingStatus:
+    """#149 R5/R6: the status endpoint's three cards from what the service already holds, and the
+    history's server-side filters."""
+
+    SCHEDULES = [
+        {"name": "quarterly-compliance", "schedule": "0 6 1 1,4,7,10 *", "report": "compliance-snapshot",
+         "retention": {"keepPerSchedule": 12, "days": 2555}},
+        {"name": "biweekly-namespace-access", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False},
+        {"name": "nightly", "schedule": "0 2 * * *", "report": "groups"},
+    ]
+
+    def _client(self, tmp_path, at=None, **over):
+        from gsd.reporting.window import ReportingWindow
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        w = ReportingWindow.from_strings(enabled=True, timezone="America/New_York", start="02:00", end="06:00",
+                                         days=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+        clock = {"now": at or datetime(2026, 9, 20, 7, 30, tzinfo=UTC)}     # 03:30 EDT: the window is open
+        app = build_report_app(_settings(snapshots, artifacts, window=w, schedules=tuple(self.SCHEDULES), **over),
+                               secret=SECRET, clock=lambda: clock["now"])
+        return TestClient(app), clock
+
+    def test_the_three_cards_come_from_config_window_store_and_signals(self, tmp_path):
+        client, clock = self._client(tmp_path)
+        with client:
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            for _ in range(50):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["runs"] and r["runs"][0]["status"] in ("done", "failed"):
+                    break
+                time.sleep(0.1)
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert s["service"]["pdf"] == {"enabled": True, "variant": "pdf/a-2b"} and s["service"]["reports_enabled"] == 11
+        assert s["service"]["formats"] == {"scheduled": ["html", "json"], "manual": ["html", "pdf", "json"]}
+        assert s["window"]["open_now"] is True and s["window"]["next_change"] == "closes"
+        assert s["window"]["next_change_at"] == "2026-09-20T10:00:00Z"        # 06:00 EDT
+        assert s["window"]["days"] == ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        assert s["retention"] == {"scheduled": {"keepPerSchedule": 2, "days": 90}, "manual": {"days": 3, "maxRuns": 500}}
+        by = {x["name"]: x for x in s["schedules"]}
+        q = by["quarterly-compliance"]
+        assert q["cadence"] == "Quarterly 06:00" and q["retention"] == {"keepPerSchedule": 12, "days": 2555, "overridden": True}
+        assert q["next_fire"] == "2026-10-01T10:00:00Z" and q["status"] == "never"      # no run of it yet
+        p = by["biweekly-namespace-access"]
+        assert p["enabled"] is False and p["next_fire"] is None and p["status"] == "disabled"
+        assert p["retention"] == {"keepPerSchedule": 2, "days": 90, "overridden": False}
+        n = by["nightly"]
+        assert n["cadence"] == "Daily 02:00" and n["last_success"] is not None and n["status"] == "ok"
+
+    def test_a_schedule_whose_last_fire_passed_without_a_success_is_late(self, tmp_path):
+        client, clock = self._client(tmp_path)
+        with client:
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            for _ in range(50):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["runs"] and r["runs"][0]["status"] == "done":
+                    break
+                time.sleep(0.1)
+            clock["now"] = clock["now"] + timedelta(days=2)      # two fires later, no new success
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert {x["name"]: x["status"] for x in s["schedules"]}["nightly"] == "late"
+
+    def test_a_disabled_window_reports_never_changing(self, tmp_path):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert s["window"] == {"enabled": False, "open_now": True, "timezone": None, "start": None, "end": None,
+                               "days": [], "next_change": "never", "next_change_at": None, "refused_since_start": 0}
+        assert s["schedules"] == []
+
+    def test_the_history_filters_run_across_the_whole_history(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts, max_queued_runs=100), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            for i in range(3):
+                client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "users", "cluster": CLUSTER}, headers=ticket)
+            for _ in range(100):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["total"] == 4 and all(x["status"] in ("done", "failed") for x in r["runs"]):
+                    break
+                time.sleep(0.1)
+            sched = client.get(f"{REPORT_PREFIX}/api/runs?origin=schedule&limit=2", headers=SERVICE).json()
+            assert sched["total"] == 3 and len(sched["runs"]) == 2 and sched["truncated"] is True
+            person = client.get(f"{REPORT_PREFIX}/api/runs?origin=person", headers=SERVICE).json()
+            assert person["total"] == 1 and person["runs"][0]["report"] == "users"
+            assert client.get(f"{REPORT_PREFIX}/api/runs?status=done&cluster={CLUSTER}", headers=SERVICE).json()["total"] == 4
+            assert client.get(f"{REPORT_PREFIX}/api/runs?cluster=nope", headers=SERVICE).json()["total"] == 0
+            assert r["facets"] == {"reports": ["groups", "users"], "clusters": [CLUSTER]}
+            assert client.get(f"{REPORT_PREFIX}/api/runs?origin=robot", headers=SERVICE).status_code == 422
+
+    def test_the_schedules_env_is_validated(self, monkeypatch):
+        from gsd.reporting.config import _schedules_env
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", "")
+        assert _schedules_env() == ()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", '[{"name":"n","schedule":"0 2 * * *","report":"groups"}]')
+        assert _schedules_env()[0]["name"] == "n"
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", '[{"name":"n"}]')
+        with pytest.raises(SystemExit):
+            _schedules_env()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", "not json")
+        with pytest.raises(SystemExit):
+            _schedules_env()

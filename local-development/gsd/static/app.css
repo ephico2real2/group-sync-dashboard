@@ -1411,3 +1411,17 @@ td.state-cell { min-width: 210px; }
   .kpi-page .meter-row { grid-template-columns: 72px 1fr; }
   .kpi-page .meter-val { grid-column: 2; text-align: left; min-width: 0; }
 }
+
+/* #149 R5: the Reporting status page. The strip is four tiles on a hairline grid (two per row on a
+   phone); each tile is a label, a badge and one mono line of detail. */
+.status-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border);
+  border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; margin-top: var(--space-5); }
+.status-strip .kv { background: var(--surface-1); padding: var(--space-6) var(--space-7); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.status-strip .k { font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.status-strip .v { font-size: var(--text-md); font-weight: 600; display: flex; align-items: center; gap: var(--space-3); }
+.status-strip .d { font-size: var(--text-sm); color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.history-filters { flex-wrap: wrap; gap: var(--space-5); align-items: center; }
+.history-filters select { font: inherit; font-size: var(--text-sm); }
+.history-filters .pager { padding-top: 0; margin-left: auto; }
+#reporting-schedules tr.paused td { color: var(--text-muted); }
+@media (max-width: 720px) { .status-strip { grid-template-columns: repeat(2, 1fr); } }

@@ -6133,6 +6133,8 @@ def reporting_server(tmp_path_factory):
     # of it (OB1, review 2 of #179). A test that needs a fixed instant sets clock["now"] and clears it.
     clock = {"now": None}
     report_settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=True, pdf_variant="pdf/a-2b",
+                                     schedules=({"name": "weekly", "schedule": "0 6 * * 1", "report": "groups"},
+                                                {"name": "paused-ns", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False}),   # #149 R5
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
                                      login_capture_enabled=False)
@@ -6257,8 +6259,10 @@ class TestReportsTab:
             path = dl.value.path()
             from pathlib import Path
             assert Path(path).read_bytes().startswith(b"%PDF") and dl.value.suggested_filename.endswith(".pdf")
-            page.wait_for_selector("#report-runs tbody tr")
-            assert "namespace-access" in page.locator("#report-runs").inner_text() and "root" in page.locator("#report-runs").inner_text()
+            # #149 R5: the history lives on the Reporting status page, linked from the catalogue
+            page.click("#report-status-link")
+            page.wait_for_selector("#reporting-history tbody tr")
+            assert "namespace-access" in page.locator("#reporting-history").inner_text() and "root" in page.locator("#reporting-history").inner_text()
             assert not errors, errors
         finally:
             ctx.close()
@@ -6618,6 +6622,49 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
+        # #149 R5/R6: the strip (service, window, retention, in flight), the schedules (cadence, retention,
+        # enabled, last success, next, status), and the history with server-side filters and paging.
+        base, _, report_app = reporting_server
+        from gsd.reporting.artifacts import Run
+        for i in range(3):
+            report_app.state.store.create(Run(id=f"2099010{i + 1}T000000.000000Z-aaa{i}", report="groups", cluster="crc-local", params={},
+                                              formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended",
+                                              schedule="weekly", requested_at=f"2099-01-0{i + 1}T00:00:00Z", status="done",
+                                              finished_at=f"2099-01-0{i + 1}T00:00:01Z", sha256="ab" * 32))
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-status-link")
+            page.click("#report-status-link")
+            page.wait_for_selector("#reporting-status .status-strip")
+            assert page.evaluate("() => location.hash") == "#page=reporting&cluster=crc-local"
+            assert page.locator("#reporting-status .kv").count() == 4
+            strip = page.locator("#reporting-status").inner_text()
+            assert "reports enabled" in strip and "2-tier" in strip and "refused by the window" in strip
+            assert page.locator("#back").inner_text() == "← reports"
+            # the history: scheduled-only narrows to the three seeded runs, server-side (total, not the page)
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-origin", "schedule")
+            page.wait_for_function("() => document.getElementById('history-count') && document.getElementById('history-count').textContent.startsWith('3 runs')")
+            assert page.locator("#reporting-history tbody tr").count() == 3
+            assert page.locator("#reporting-history tbody").inner_text().count("schedule:weekly") == 3
+            page.select_option("#history-status", "failed")
+            page.wait_for_function("() => document.getElementById('history-count') && document.getElementById('history-count').textContent.startsWith('0 runs')")
+            assert "No run matches these filters." in page.locator("#reporting-history").inner_text()
+            # Back rises to the Reports page
+            page.click("#back")
+            page.wait_for_selector("#report-picker")
+            # 375 px: no horizontal overflow, the strip two per row
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.wait_for_selector("#reporting-status .status-strip")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            assert page.evaluate("() => getComputedStyle(document.querySelector('.status-strip')).gridTemplateColumns.split(' ').length") == 2
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_clearing_the_namespace_selector_deselects_everything(self, browser, reporting_server):
         # #147: a <select multiple> has no easy deselect. Clear drops every #report-selector-N,
         # deletes view.reportForm["namespace-access"].selectors, blanks the count, hides the
@@ -6734,16 +6781,16 @@ class TestReportsTab:
         from gsd.reporting.artifacts import Run
         ctx, page, errors = _reports_page(browser, base, "root", fake_clock=True)
         try:
-            page.click('button.tab:text-is("Reports")')
-            page.wait_for_selector("#report-runs")
-            before = page.locator("#report-runs tbody tr").count()
+            page.goto(base + "#page=reporting&cluster=crc-local")           # #149 R5: the history page
+            page.wait_for_selector("#reporting-history")
+            before = page.locator("#reporting-history tbody tr").count()
             run = Run(id="20990101T000000.000000Z-ffff", report="groups", cluster="crc-local", params={}, formats=["html"],
                       generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
                       requested_at="2099-01-01T00:00:00Z", status="done", finished_at="2099-01-01T00:00:01Z", sha256="cd" * 32)
             report_app.state.store.create(run)
             page.clock.fast_forward(61_000)
-            page.wait_for_function(f"document.querySelectorAll('#report-runs tbody tr').length > {before}", timeout=10_000)
-            assert "schedule:weekly" in page.locator("#report-runs").inner_text()
+            page.wait_for_function(f"document.querySelectorAll('#reporting-history tbody tr').length > {before}", timeout=10_000)
+            assert "schedule:weekly" in page.locator("#reporting-history").inner_text()
             assert not errors, errors
         finally:
             ctx.close()

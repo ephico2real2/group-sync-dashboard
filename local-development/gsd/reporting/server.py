@@ -16,7 +16,7 @@ import os
 import re
 import secrets
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -373,12 +373,90 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
     @app.get(f"{REPORT_PREFIX}/api/runs")
     def list_runs(p: Principal = Depends(principal),
                   report: str | None = Query(default=None, description="Only runs of this report."),
-                  limit: int = Query(default=100, ge=1, le=1000, description="Page size, newest first. `total` and `truncated` describe the whole set."),
+                  origin: str | None = Query(default=None, pattern="^(schedule|person)$", description="Scheduled runs, or a person's manual runs."),
+                  status: str | None = Query(default=None, pattern="^(queued|running|done|failed)$", description="Only runs in this state."),
+                  cluster: str | None = Query(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$", description="Only runs against this cluster."),
+                  limit: int = Query(default=100, ge=1, le=1000, description="Page size, newest first. `total` and `truncated` describe the filtered set."),
                   offset: int = Query(default=0, ge=0, description="Page offset.")) -> dict:
-        """Runs, newest first, with status, sizes and the data sha256 — the Reports tab's recent-runs table."""
-        rows, total = store.list(report=report, limit=limit, offset=offset)
+        """Runs, newest first, with status, sizes and the data sha256 — the Reports tab's recent-runs table and
+        the status page's history (#149 R5: every filter runs across the whole history, server-side; `facets`
+        lists the reports and clusters the history holds, for the menus)."""
+        rows, total = store.list(report=report, origin=origin, status=status, cluster=cluster, limit=limit, offset=offset)
         return {"runs": [r.public() for r in rows], "total": total, "limit": limit, "offset": offset,
-                "truncated": offset + len(rows) < total, "queued": runs.queued()}
+                "truncated": offset + len(rows) < total, "queued": runs.queued(), "facets": store.facets()}
+
+    _DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")   # Python weekday(): Monday is 0
+
+    @app.get(f"{REPORT_PREFIX}/api/status")
+    def reporting_status(p: Principal = Depends(principal)) -> dict:
+        """The status page's three cards (#149 R5/R6), assembled from what the service already holds — its
+        configuration, the run window, the run store, the signals — and the schedules the chart handed it.
+        No cluster call: next and previous fire instants come from each schedule's cron expression, the
+        suspend state from its `enabled`; kube-state-metrics would need Prometheus access and RBAC the
+        service does not have, and would only restate what the expression already determines."""
+        from . import cron
+        at = now()
+        change, when = settings.window.next_change(at)
+        sig = signals.snapshot()
+        counts = {"queued": 0, "running": 0}
+        rows, _ = store.list(limit=1000)
+        for r in rows:
+            if r.status in counts:
+                counts[r.status] += 1
+        tz = settings.window.timezone if settings.window.enabled else None
+        schedules = []
+        for sch in settings.schedules:
+            enabled = sch.get("enabled", True) is not False
+            keep, days = settings.scheduled_keep_per_schedule, settings.scheduled_retention_days
+            override = sch.get("retention") or {}
+            keep, days = int(override.get("keepPerSchedule", keep)), int(override.get("days", days))
+            try:
+                spec = cron.parse(sch["schedule"])
+                nxt = cron.next_fire(spec, at, tz) if enabled else None
+                prv = cron.prev_fire(spec, at, tz)
+                cadence = cron.describe(sch["schedule"])
+            except cron.CronError:
+                spec, nxt, prv, cadence = None, None, None, sch["schedule"]
+            last = sig["schedule_last_success"].get(sch["name"])
+            last_dt = datetime.fromtimestamp(last, UTC) if last else None
+            if not enabled:
+                state = "disabled"
+            elif last_dt is None:
+                state = "never"
+            elif prv is not None and last_dt < prv - timedelta(minutes=30):
+                # the last expected fire has passed (with half an hour's grace for the queue and the
+                # render) and nothing succeeded since it
+                state = "late"
+            else:
+                state = "ok"
+            schedules.append({
+                "name": sch["name"], "report": sch["report"], "schedule": sch["schedule"], "cadence": cadence,
+                "enabled": enabled, "retention": {"keepPerSchedule": keep, "days": days,
+                                                  "overridden": bool(override)},
+                "last_success": last_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if last_dt else None,
+                "next_fire": nxt.strftime("%Y-%m-%dT%H:%M:%SZ") if nxt else None,
+                "previous_fire": prv.strftime("%Y-%m-%dT%H:%M:%SZ") if prv else None,
+                "status": state,
+            })
+        w = settings.window
+        return {
+            "service": {"version": __version__, "pdf": {"enabled": settings.pdf_enabled, "variant": settings.pdf_variant},
+                        "reports_enabled": len(settings.enabled_reports),
+                        "formats": {"scheduled": list(settings.formats_scheduled) + ["json"],
+                                    "manual": list(settings.formats_manual) + ["json"]}},
+            "window": {"enabled": w.enabled, "open_now": w.is_open(at),
+                       "timezone": w.timezone if w.enabled else None,
+                       "start": w.start.strftime("%H:%M") if w.enabled else None,
+                       "end": w.end.strftime("%H:%M") if w.enabled else None,
+                       "days": [_DAY_NAMES[d] for d in sorted(w.days)] if w.enabled else [],
+                       "next_change": change, "next_change_at": when.strftime("%Y-%m-%dT%H:%M:%SZ") if when else None,
+                       "refused_since_start": sum(sig["outside_window"].values())},
+            "retention": {"scheduled": {"keepPerSchedule": settings.scheduled_keep_per_schedule, "days": settings.scheduled_retention_days},
+                          "manual": {"days": settings.manual_retention_days, "maxRuns": settings.manual_retention_max_runs}},
+            "in_flight": {"running": counts["running"], "queued": counts["queued"]},
+            "schedules": schedules,
+            "as_of": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
 
     @app.get(f"{REPORT_PREFIX}/api/runs/{{run_id}}")
     def get_run(run_id: str, p: Principal = Depends(principal)) -> dict:
