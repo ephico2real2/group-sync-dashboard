@@ -585,3 +585,82 @@ taken **on the fact but re-implemented** because the proposed mechanism did not 
 - Final: hermetic **4066 passed, 15 skipped**; UI **486**; `helm lint` clean, both switch states; CI green
   on `f3081db`; `running : f3081dbd6b — verified in-pod`.
 
+
+---
+
+## Part 13 — #229 E1, the report library tab (08:3x → 17:4x) — PR #233 (CI green on `317b5b5`, merge pending)
+
+The spec, the service's expiry contract, the page from the agreed mock, three seats, two merges of main
+forced by the lab's schema guard, and the re-walk on the merged head. The fork that carried it died on the
+Opus session limit after `871128f` (committed, never pushed — the deploy chain refused it: *"commit 871128fe22
+is not on any remote branch; Argo CD pulls from GitHub"*); a Fable fork resumed from that head.
+
+### The spec and the page (08:39 → 10:19) — commits `fb1ce88`, `586e763`, `f3d63af`, `6133ca5`
+
+- `docs/specs/SPEC_E1_report_library.md` from the gap measured on CRC: 8 runs, 3 schedules; the
+  Reporting-status history table shows seven columns and none of the manifest's `params`, `started_at`,
+  `render_seconds`, `snapshot_stamp`, `bytes`, `error`; no run says when it goes or why it stays; no
+  position for a run.
+- The service: `expires_at` and `retained_by` on every run of `GET /report/api/runs` and `/runs/{id}`,
+  computed by the one ranking `prune()` deletes by — `prune()` refactored onto it with every retention
+  test unchanged. The page: one section per configured report (the enabled catalogue × `reporting.schedules[]`),
+  runs as cards with formats, sizes, reason and expiry, the run as a position (`#page=library&run=<id>`).
+- **Refined on the first render** against the fixture's `weekly` schedule: "Weekly Mon groups" is not how
+  anyone says it — the heading takes the cadence's named word alone; the weekday and the clock stay in the
+  sub-line (the spec's notes). **Found by the type-scale guard**: the drawer's inline `--rk` style is refused
+  by `test_inline_styles_carry_no_literal_at_all` — a `class="drawer r-<kind>"` instead.
+- Measured on `586e763`: hermetic 3986 passed, 15 skipped; UI 489 (`TestLibraryPage`); deployed and walked
+  (`reports/2026-09-20_report-library/`): eleven sections, the eight runs' expiry on the wire and on the cards.
+  **Found by the walk**: "Copy link" writes `#page=library&cluster=crc-local&run=<id>` — the app's full
+  position, recorded as such in the spec (`6133ca5`), later contested and held (C8).
+
+### The three seats (10:19 → 11:43) — commits `b534805`, `d78b042`; record `docs/REVIEW_report_library.md`
+
+- **Grok** (ask mode, no shell): two schedules on one report minted one `lib-gen-<report>` id —
+  **Accepted**, the id is the section's; the PR's poll test never changed the store — **Accepted**;
+  `manual:cap`'s words deviate from the mock, unrecorded — **Accepted** as a spec note (later superseded by F4).
+- **Codex** (a clone with the base commit; the old `prune()` extracted and diffed over 108 settings × 37 runs =
+  3 996 decisions, **0 differences**; 2 268-case property run on `expires_at`, 0 violations): a run past the
+  listing's 1 000-row page read "Run not found" while `/runs/{id}` answered 200 — **Accepted**, fetched by id
+  and joined; `prune(overrides=None)` survived the pin — **Accepted**, the override boundary test; the index
+  guard's `(R\d|—)` admitted `—` on A1 — **Accepted**, A–D require `R\d`. **Rejected**: the router rewrite
+  stripping `cluster` from the position (a two-cluster reader must land on the right cluster); re-basing
+  `ago()`/`untilShort()` on the service's `as_of` (every page reads the browser clock — one page drifting is the
+  worse defect). Measured on the merged head `8081320`: hermetic 3995 / 15 skipped; UI 491.
+- **OB3** (a 216-settings × 70-runs × 3-instants harness, 14 688 standings, 0 differences; 17 mutants against
+  the pins; a Playwright drive with a render counter and a cold document per case, on the deployed head then the
+  fixed one): F1 a drawer opened by click or Enter left the focus on the card behind the overlay — Escape did
+  nothing, Tab walked the chips behind the dialog; the cold-URL path, the one the earlier seats drove, held —
+  **Accepted**, the card blurs before the repaint, a test reads `activeElement` for both paths. F2 a report with
+  two schedules listed its manual runs under both sections, every card and chip twice under one id — **Accepted**,
+  manual runs sit under the report's first section only; this closes Grok's not-asked #2, first marked
+  DEBT-ACCEPTED, once the duplicate ids were measured. F3, volunteered: the positioned run's fetch (Codex's fix)
+  was the one library request outside `guard403`, so a 403 painted the API-error panel — **Accepted**. F4
+  `manual:cap` was emitted for two fates, a run beyond the cap (gone on the next prune) and one under it with no
+  age bound (kept) — the page said "held" for a run the next prune deleted — **Accepted**: `manual:<days>d` within
+  the cap (`manual:0d` the mirror of `age:0d`), `manual:cap` only beyond it; API.md, §3, three tests. Measured on
+  `d78b042`: hermetic 3996 / 15 skipped; UI 495; `helm lint` clean.
+
+### The schema guard, the merge order and the re-walk (12:52 → 17:45) — commits `3304366`, `871128f`, `fef153d`, `317b5b5`
+
+- **Found by the lab**: between OB3's two deploys the S1 branch (#235) had put the shared `/data/gsd.db` at
+  `PRAGMA user_version 19`; this branch's schema-18 report service refused it by design — `GET /report/readyz`
+  503 *"snapshot schema 19 is newer than this report service understands"*. The guard working, not a defect;
+  the merge order became #235 first, then main into this branch (`871128f`, 14:11 — suites 4093 / 15 skipped,
+  UI 496).
+- `fef153d` (17:33): main `95b8c0f` merged (#241, #243, #242). One conflict,
+  `local-development/tests/test_specs_index.py`'s row count — sixteen after the merge (the programme's thirteen,
+  E1, S1, T1), both sides' index rows kept. Suites on it: hermetic **4147 passed, 15 skipped**; UI **496 passed**
+  (serially); `helm lint` clean.
+- Deployed through the Argo Application: `running : fef153d753 — verified in-pod`; walked at 17:41 through the
+  OAuth proxy as kubeadmin — `total 8`, `Library 8 runs · 3 schedules · 1 paused`, eleven sections, the failed
+  run's drawer from a cold URL with focus on `drawer-close`, Copy link, Escape back to the card, `no-x-overflow
+  True` at 375 px at rest and with the drawer, `errors []`. Seven cards from eight runs: the fourth nightly sits
+  behind `all 4 →` — read from `libraryClusterBlocks` (the featured run plus two earlier per cluster block), not
+  assumed. The README rewritten from those lines (`317b5b5`, 17:45); evidence with the four pictures posted on
+  #229 against its Definition of Done, pinned to the full sha.
+- CI on `317b5b5`: 8 of 8 checks SUCCESS, `mergeStateStatus CLEAN` (checked on the rollup, not the flag).
+  `gh pr merge 233 --merge` was **refused by the auto-mode permission classifier** ("Merge Without Review")
+  although the three seats and their decisions are on the PR; the refusal was respected, not worked around.
+  Left to the operator: the merge, `release-crc.sh --argocd main`, the re-walk of main and the tick on #229.
+- Not chased: the two CI-load flakes of #246 did not occur on this head.
