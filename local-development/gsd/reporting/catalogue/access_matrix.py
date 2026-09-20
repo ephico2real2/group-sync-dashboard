@@ -52,4 +52,8 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     matrix = Table("Matrix", ["kind", "subject", "namespace", "role", "binding", "source", "classification"], shown,
                    note="Ordered subject, then cluster scope first, then role rank. Role rank: cluster-admin > admin > edit > other — a NAME ranking, not an evaluation of rules.")
     sections = [Section("Summary", [summary]), Section("Matrix", [matrix], page_break=True)]
+    missing = sorted((set(only_groups or ()) - {k[1] for k in per_subject if k[0] == "group"})
+                     | (set(only_users or ()) - {k[1] for k in per_subject if k[0] == "user"}))
+    if missing:   # a named subject with no binding is said, not silently absent (review of #222, Grok)
+        sections.insert(1, Section("Named but not bound", [Note("No binding was observed for: " + ", ".join(missing) + ".", "caveat")]))
     return Built(sections, {"rows": len(rows), "subjects": len(per_subject)}, truncated, False)

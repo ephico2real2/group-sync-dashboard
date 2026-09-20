@@ -2498,7 +2498,12 @@ async function reportFetch(path, init = {}, retried = false) {
   const res = await fetch(prefix + path, Object.assign({}, init, { headers }));
   if (res.redirected) { const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err; }
   if (res.status === 401 && !retried) return reportFetch(path, init, true);
-  if (!res.ok) { const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status; throw err; }
+  if (!res.ok) {
+    const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status;
+    // A 422 names the parameter it refused; carry that detail so the form can say it (review of #222, Grok).
+    if (res.status === 422) { try { const body = await res.json(); err.detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail); } catch (e) { /* no body */ } }
+    throw err;
+  }
   return res;
 }
 async function reportGet(path) { return (await reportFetch(path)).json(); }
@@ -2638,7 +2643,8 @@ function reportFormCard(spec, cat) {
   const subject = spec.params.filter((p) => p.group === "subject");
   const main = spec.params.filter((p) => !p.group && !p.advanced);   // `mnemonics`/`selectors` render through field()'s own cases
   const advanced = spec.params.filter((p) => !p.group && p.advanced);
-  const advancedSet = advanced.some((p) => form[p.name] !== undefined && form[p.name] !== "" && String(form[p.name]) !== String(Array.isArray(p.default) ? p.default.join(",") : p.default));
+  const advancedSet = advanced.some((p) => form[p.name] !== undefined && form[p.name] !== "" && String(form[p.name]) !== String(Array.isArray(p.default) ? p.default.join(",") : p.default))
+    || !!(view.reportAdvancedOpen || {})[spec.name];   // opened by the reader: a repaint (the lookups' arrival) must not close it (review of #222, Grok)
   const formats = [cat.pdf && cat.pdf.enabled ? "PDF" : "", "HTML", "JSON"].filter(Boolean).join(" · ");
   return `<section class="card report-panel r-${esc(kcat)}" id="report-form">
     <div class="panelbar"><button type="button" class="back" id="report-back">${backLabel()}</button>
@@ -2647,7 +2653,7 @@ function reportFormCard(spec, cat) {
     <div class="filterbar-note">${esc(spec.summary)}</div>
     ${subject.length ? subjectBlock(spec, subject, form) : ""}
     <div class="report-fields">${main.map(field).join("")}</div>
-    ${advanced.length ? `<details class="report-advanced"${advancedSet ? " open" : ""}><summary>Advanced</summary>
+    ${advanced.length ? `<details class="report-advanced" id="report-advanced"${advancedSet ? " open" : ""}><summary>Advanced</summary>
       <div class="report-fields">${advanced.map(field).join("")}</div></details>` : ""}
     <div class="ns-controls mt-4 report-actions">
       <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
@@ -2743,10 +2749,10 @@ function ensureDiscovered() {
     .catch(() => { data.reportDiscovered[forCluster] = {}; })            // a 404/503: the menus say "none discovered"
     .finally(() => {
       delete data.reportDiscovered[`pending:${forCluster}`];
-      // The lookups' arrival repaints the form moments after the click that opened it; measured, that
-      // repaint reset the scroll the landing's smooth scroll was still travelling to. The repaint is an
-      // arrival at the form too, so it lands once more.
-      if (view.page === "reports" && view.report) { view.reportLanded = null; render(); }
+      // The lookups' arrival repaints the menus; it does NOT land again — the landing is instant now,
+      // so nothing is in flight for a repaint to cancel, and a reader who scrolled in the meantime
+      // keeps their place (review of #222, Grok).
+      if (view.page === "reports" && view.report) render();
     });
 }
 
@@ -3122,6 +3128,8 @@ function wireReports() {
       formOf()[name] = list.includes(v) ? list.filter((x) => x !== v) : list.concat([v]);
       const input = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (input) view.reportLookupText[input.id] = "";
       after(name);
+      // the option had no id, so render()'s by-id restore would leave a keyboard reader on <body>
+      const again = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (again) again.focus({ preventScroll: true });
     };
     el.onclick = pick;
     el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
@@ -3129,6 +3137,8 @@ function wireReports() {
   document.querySelectorAll("[data-lookup-remove]").forEach((el) => {
     el.onclick = () => { const name = el.dataset.lookupRemove; formOf()[name] = listOf(name).filter((x) => x !== el.dataset.value); after(name); };
   });
+  const adv = $("report-advanced");
+  if (adv) adv.ontoggle = () => { view.reportAdvancedOpen = view.reportAdvancedOpen || {}; view.reportAdvancedOpen[view.report] = adv.open; };
   const clearSubject = $("report-subject-clear");
   if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; render(); };
   const back = $("report-back");
@@ -3190,7 +3200,7 @@ async function generateReport(refocus = false) {
     }
     data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
-    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? "the parameters were refused (see the fields)" : e.message };
+    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message };
   } finally {
     view.reportSubmitting = false; render();
     if (refocus) { const g = $("report-generate"); if (g) g.focus({ preventScroll: true }); }

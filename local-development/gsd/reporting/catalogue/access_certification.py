@@ -88,6 +88,11 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
                 Note("A direct grant is outside group governance; certifying it means accepting that it will not be revoked by removing the person from any group.", "caveat"),
             ], page_break=True))
             n_users += 1
+    seen_groups = {s.title[len("Group: "):] for s in sections if s.title.startswith("Group: ")}
+    seen_users = {s.title[len("User (direct grants): "):] for s in sections if s.title.startswith("User (direct grants): ")}
+    missing = sorted((set(only_groups or ()) - seen_groups) | (set(only_users or ()) - seen_users))
+    if missing:   # a named subject with no binding is said, not silently absent (review of #222, Grok)
+        sections.append(Section("Named but not bound", [Note("No binding was observed for: " + ", ".join(missing) + " — nothing to certify.", "caveat")]))
     sections.append(Section("Sign-off", [KeyValues("Reviewer attestation", [
         ("Campaign", params["campaign"]), ("Reviewer", params["reviewer"]), ("Due", params["due"]),
         ("Reviewed on", "______________________"), ("Signature", "______________________"),

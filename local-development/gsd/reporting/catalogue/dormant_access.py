@@ -16,9 +16,15 @@ SPEC = ReportSpec(
 
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
-    never = snap.never_logged_in_members(cid)
-    awl = snap.access_without_login(cid)
-    lwa = snap.login_without_access(cid)
+    # The Subject scope (#149 R7): the named users and the members of the named groups, applied to EVERY
+    # person-keyed table and count below — a scope that narrowed only the last table answered "everyone"
+    # to a reader who asked for one person (review of #222, Grok).
+    keep = set(params["users"]) | (snap.members_of_groups(cid, params["groups"]) if params["groups"] else set())
+    scoped = bool(params["users"] or params["groups"])
+    inside = (lambda name: name in keep) if scoped else (lambda name: True)
+    never = [m for m in snap.never_logged_in_members(cid) if inside(m["user_name"])]
+    awl = [a for a in snap.access_without_login(cid) if inside(a["user_name"])]
+    lwa = [a for a in snap.login_without_access(cid) if inside(a["user_name"])]
     gate = snap.access_group(cid)
     never_rows, t1 = cut([[m["user_name"], m["group_count"], m["first_seen_at"], m["why"]] for m in never])
     sections = [Section("Summary", [KeyValues("Counts", [
@@ -44,12 +50,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     if ctx.settings.login_capture_enabled:
         last = snap.last_successful_login(cid)
         cutoff = window_start(ctx.now, params["dormant_days"])
-        keep = set(params["users"]) | (snap.members_of_groups(cid, params["groups"]) if params["groups"] else set())
-        scoped = bool(params["users"] or params["groups"])
         capture = snap.login_capture_status(cid)
         rosters = snap.group_rosters(cid, [g["name"] for g in snap.groups(cid)])
         members = {m["user_name"] for ms in rosters.values() for m in ms if m.get("logged_in") == 1}
-        dormant = sorted((u, last.get(u)) for u in members if (not scoped or u in keep) and (last.get(u) is None or last[u] < cutoff))
+        dormant = sorted((u, last.get(u)) for u in members if inside(u) and (last.get(u) is None or last[u] < cutoff))
         rows, t2 = cut([[u, l or "no success recorded since capture began"] for u, l in dormant])
         truncated = truncated or t2
         dormant_count = len(dormant)

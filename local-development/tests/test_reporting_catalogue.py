@@ -361,10 +361,37 @@ class TestSubjectScopeAndLookups:
         assert snapshot.members_of_groups(CLUSTER, ["team-a", "hand-made"]) == {"alice", "bob", "erin"}
         assert snapshot.members_of_groups(CLUSTER, []) == set()
 
-    def test_namespace_access_groups_its_sections_by_a_label(self, snapshot):
+    def test_namespace_access_groups_its_sections_by_a_label(self, snapshot, tmp_path):
         spec, build = REGISTRY["namespace-access"]
+        # nothing captured for this cluster (the seed carries no namespace labels): the headings stay as
+        # they were — the default group_by must not rewrite every heading on a deployment without labels
+        # (review of #222, Grok)
         built = build(snapshot, _ctx(snapshot, **self.LABELS), validate_params(spec, {"namespaces": "prod-ns,dev-ns,(cluster-scoped)", "group_by": "oud-group"}))
         titles = [s.title for s in built.sections if "Namespace:" in s.title or s.title == "Cluster-scoped bindings"]
-        # no exact-group label captured in the seed: every namespace falls under the same bucket, cluster scope last
-        assert titles[-1] == "Cluster-scoped bindings"
-        assert all(t.startswith("(no oud-group) · Namespace: ") for t in titles[:-1]), titles
+        assert titles == ["Namespace: dev-ns", "Namespace: prod-ns", "Cluster-scoped bindings"]
+        # with the label captured on one namespace: that one bucketed first, the rest under "(no oud-group)"
+        from reporting_seed import seed_store, write_snapshot
+        store = seed_store(str(tmp_path / "w.db"))
+        store.replace_namespaces(CLUSTER, [
+            {"name": "prod-ns", "created_at": None, "phase": "Active", "metadata": {"company.net/oud-group": "app-ocp-rbac-prod-ns-admin"}},
+            {"name": "dev-ns", "created_at": None, "phase": "Active", "metadata": {}}], "2026-09-14T00:00:00Z")
+        d = tmp_path / "snap"; d.mkdir(); path = write_snapshot(store, d); store.close()
+        with Snapshot(path) as snap:
+            built = build(snap, _ctx(snap, **self.LABELS), validate_params(spec, {"namespaces": "prod-ns,dev-ns,(cluster-scoped)", "group_by": "oud-group"}))
+        titles = [s.title for s in built.sections if "Namespace:" in s.title or s.title == "Cluster-scoped bindings"]
+        assert titles == ["app-ocp-rbac-prod-ns-admin · Namespace: prod-ns", "(no oud-group) · Namespace: dev-ns", "Cluster-scoped bindings"], titles
+
+    def test_a_named_subject_with_no_binding_is_said_and_dormant_access_is_scoped_throughout(self, snapshot):
+        # Review of #222 (Grok): a named group with no binding vanished; dormant-access narrowed only its
+        # last table; the groups report's scope did not narrow the membership changes.
+        matrix = self._built(snapshot, "access-matrix", groups="team-a,no-such-group")
+        assert any(s.title == "Named but not bound" and "no-such-group" in str(s.blocks[0].text) for s in matrix.sections)
+        cert = self._built(snapshot, "access-certification", users="nobody")
+        assert cert.totals == {"groups": 0, "users": 0} and any(s.title == "Named but not bound" for s in cert.sections)
+        everyone = self._built(snapshot, "dormant-access")
+        one = self._built(snapshot, "dormant-access", users="erin")
+        assert everyone.totals["never_logged_in"] >= 1 and one.totals["never_logged_in"] <= everyone.totals["never_logged_in"]
+        counts = lambda b: dict(b.sections[0].blocks[0].items)
+        assert counts(one)["Members who have never logged in"] == one.totals["never_logged_in"]
+        grp = self._built(snapshot, "groups", groups="team-b")
+        assert grp.totals["groups"] == 1 and grp.totals["changes"] <= self._built(snapshot, "groups").totals["changes"]

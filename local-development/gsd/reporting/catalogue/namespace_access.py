@@ -106,6 +106,8 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
               "oud-group": ctx.settings.namespace_group_label}
     group_label = by_key.get(params["group_by"], "")
     label_map = snap.namespace_label_map(cid, group_label) if group_label else {}
+    if not label_map:
+        group_label = ""     # nothing captured for this cluster: the headings stay as they were (review of #222, Grok)
     pairs = sorted(zip(names, keys), key=lambda nk: (nk[0] == CLUSTER_SCOPE, label_map.get(nk[0]) is None, label_map.get(nk[0], ""), nk[0]))
     for n, key in pairs:
         bucket = "cluster-scoped" if n == CLUSTER_SCOPE else (label_map.get(n) or f"(no {params['group_by']})") if group_label else ""

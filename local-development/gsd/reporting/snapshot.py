@@ -271,17 +271,25 @@ class Snapshot:
         read per set; a form load pays six small queries, not a scan per keystroke."""
         def cut(values: list[str]) -> dict:
             return {"values": values[:self.DISCOVERED_CAP], "truncated": len(values) > self.DISCOVERED_CAP}
+        # Bounded reads (review of #222, Grok): LIMIT cap+1 on the two name lists, so a cluster with
+        # fifty thousand users costs the form 5,001 rows, not all of them; the providers come from
+        # the same bounded read, and a blob that is not JSON counts as no provider rather than a 500.
+        limit = self.DISCOVERED_CAP + 1
         providers: set[str] = set()
         users: list[str] = []
         if self.has_table("ocp_user"):
-            for r in self._rows("SELECT user_name, providers FROM ocp_user WHERE cluster_id = ? ORDER BY user_name", (cluster_id,)):
-                providers.update(json.loads(r["providers"] or "[]"))
+            for r in self._rows("SELECT user_name, providers FROM ocp_user WHERE cluster_id = ? ORDER BY user_name LIMIT ?", (cluster_id, limit)):
                 users.append(r["user_name"])
+                try:
+                    providers.update(json.loads(r["providers"] or "[]"))
+                except ValueError:
+                    pass
         roles: set[str] = set()
         for table in ("rbac_group_binding", "user_binding"):
             if self.has_table(table):
                 roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?", (cluster_id,)))
-        groups = [g["name"] for g in self.groups(cluster_id)]
+        groups = [g["name"] for g in self._rows("SELECT name FROM group_state WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit))] \
+            if self.has_table("group_state") else []
         return {"providers": cut(sorted(providers)), "roles": cut(sorted(roles)), "users": cut(users), "groups": cut(groups),
                 "mnemonics": cut(self.namespace_metadata_values(cluster_id, mnemonic_key)),
                 "oud-groups": cut(self.namespace_metadata_values(cluster_id, group_key))}
