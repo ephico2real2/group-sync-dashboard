@@ -1248,7 +1248,8 @@ kyverno:
   # cluster: http://kyverno-svc-metrics.kyverno.svc:8000/metrics (admission reports),
   # http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics (background scan reports),
   # http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics (background-scan reports).
-  # "" leaves the truncation state unknown (said on the page). One GET per endpoint per poll.
+  # "" leaves the truncation state unknown (said on the page). One GET per endpoint per poll, for the
+  # host cluster only: a remote cluster's breaker is unmeasured, and the page says so.
   metricsUrl: ""
   # The appeared/cleared history of problem results, pruned like the other event tables (days;
   # 0 keeps forever). Reports carry no history of their own — a report dies with its resource.

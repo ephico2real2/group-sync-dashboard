@@ -6515,6 +6515,39 @@ class TestKyvernoPage:
         p.wait_for_function("() => document.body.innerText.includes('No policy-report API group is served')")
         assert p.locator("#main .kpis").count() == 0
 
+    def test_a_policy_button_keeps_focus_across_its_refetch(self, page, scoped_server, kyverno_store):
+        # OB3 (#228): the drill buttons carried no id, so the by-id restore had nothing to put a keyboard reader back on
+        from test_kyverno import _FakeClient, _lab_table, read
+        kyverno_store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-policy-0")
+        p.focus("#kyverno-policy-0")
+        with p.expect_request(lambda r: "policy=restrict-nco-config-writers" in r.url):
+            p.keyboard.press("Enter")
+        p.wait_for_selector("#kyverno-all-policies")
+        p.wait_for_function("() => !document.getElementById('main').classList.contains('stale')")
+        assert p.evaluate("() => document.activeElement.id") == "kyverno-policy-0"
+
+    def test_a_failing_condition_is_visible_text_and_the_breaker_note_names_its_cause(self, page, scoped_server, kyverno_store):
+        # OB3 (#228): the note was a muted aside after "no" — an RBAC gap the reports controller names must read as the
+        # error it is; and a null breaker has two causes, "kyverno.metricsUrl is not set" and "set, the scrape failed"
+        from gsd.kyverno.reader import KyvernoRead, PolicyView
+        gap = PolicyView("ValidatingPolicy", None, "scan-groups", True, True, ("Audit",), "Fail", False, False,
+                         "RBACPermissionsGranted: reports-controller is missing RBAC to list/watch groups.user.openshift.io")
+        kyverno_store.replace_kyverno("crc-local", KyvernoRead("wgpolicyk8s.io/v1alpha2", policies=[gap], policy_kinds_served=("ValidatingPolicy",)),
+                                      "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("[data-kyverno-policy]")
+        cell = p.locator("#main section.card:nth-of-type(2) tbody tr td:nth-child(7)")
+        assert "no" in cell.inner_text() and "missing RBAC to list/watch groups.user.openshift.io" in cell.inner_text()
+        assert cell.locator(".err").count() == 2, "the note is not visible error text"
+        assert "is not set" in p.locator("#kyverno-breaker").inner_text()   # this server has no kyverno.metricsUrl
+        p.evaluate("() => { data.kyverno.breaker_configured = true; render(); }")   # the same nulls, with the URL configured
+        note = p.locator("#kyverno-breaker").inner_text()
+        assert "is set" in note and "scrape" in note and "is not set" not in note, note
+
 
 class TestReportsTab:
     def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):

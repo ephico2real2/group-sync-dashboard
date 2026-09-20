@@ -369,6 +369,16 @@ def _note_binding_changes(signals, cluster: str, subject_kind: str, counts: dict
                  cluster, counts.get("added", 0), subject_kind.lower(), counts.get("removed", 0))
 
 
+def kyverno_metrics_url_for(settings: Settings, cluster: ClusterConfig) -> str:
+    """The breaker endpoints to scrape for THIS cluster: `kyverno.metricsUrl` names in-cluster Services
+    (`…kyverno.svc:8000/metrics`, values.yaml), so it is the HOST cluster's controllers and nobody else's.
+    Handed to a remote cluster it would record the host's `kyverno_breaker_*` as that cluster's — "no drop
+    observed" printed for a breaker never read, or the host's drops charged to a remote (review of #228, OB3).
+    A remote cluster's breaker is unmeasured, which the page says, until the setting is per cluster."""
+    host = settings.host_cluster()
+    return settings.kyverno_metrics_url if host is not None and cluster.name == host.name else ""
+
+
 def refresh_bindings(
     store: StorageBackend,
     cluster: ClusterConfig,
@@ -1012,7 +1022,7 @@ class Poller:
                         namespace_metadata_labels=self.settings.namespace_metadata_labels,
                         signals=self.signals,
                         kyverno=self.settings.kyverno_enabled,
-                        kyverno_metrics_url=self.settings.kyverno_metrics_url,
+                        kyverno_metrics_url=kyverno_metrics_url_for(self.settings, cluster),
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("unhandled error refreshing bindings for %s", cluster.name)

@@ -106,17 +106,22 @@ def _bool(value, default: bool) -> bool:
 
 
 def policy_view(kind: str, obj: dict) -> PolicyView:
+    """One CEL policy as the page lists it. `ready` and `note` come from `status.conditionStatus` — the only
+    status the five CRDs define (`ready`, `conditions[]`, `message`; no CEL CRD has a top-level
+    `status.conditions`). `note` is a condition that is not True, as `type: message` — an RBAC gap says
+    `RBACPermissionsGranted: reports-controller is missing RBAC…` — and, when nothing failed but the policy is
+    still not ready, the controller's top-level `message`. That message is otherwise NOT a readiness note: the
+    CRD defines it as "details about the generation of ValidatingAdmissionPolicy" (`skip generating
+    ValidatingAdmissionPolicy: not enabled.` on a ready policy, measured on the lab; review of #228, OB3)."""
     spec = obj.get("spec") or {}
     meta = obj.get("metadata") or {}
     status = obj.get("status") or {}
     evaluation = spec.get("evaluation") or {}
-    ready = None
-    for cond in (status.get("conditions") or []):
-        if cond.get("type") == "Ready":
-            ready = cond.get("status") == "True"
     condition = status.get("conditionStatus") or {}
-    if ready is None and isinstance(condition.get("ready"), bool):
-        ready = condition["ready"]
+    ready = condition.get("ready") if isinstance(condition.get("ready"), bool) else None
+    failing = [f"{c.get('type') or '?'}: {c.get('message') or c.get('reason') or ''}".strip(": ")
+               for c in (condition.get("conditions") or []) if isinstance(c, dict) and c.get("status") != "True"]
+    note = "; ".join(failing) if failing else (str(condition.get("message") or "") if ready is False else "")
     return PolicyView(
         kind=kind, namespace=meta.get("namespace"), name=meta.get("name", ""),
         admission=_bool((evaluation.get("admission") or {}).get("enabled"), True),
@@ -125,7 +130,7 @@ def policy_view(kind: str, obj: dict) -> PolicyView:
         failure_policy=str(spec.get("failurePolicy") or "Fail"),
         ready=ready,
         generated=bool(status.get("generated")),
-        note=str(condition.get("message") or "")[:300],
+        note=note[:300],
     )
 
 
@@ -204,8 +209,13 @@ def read(cluster_client, metrics_url: str = "") -> KyvernoRead | None:
     """
     from ..kube import ClusterError  # local: kube imports nothing from here, and the module stays importable alone
 
+    # Every SERVED report group is read, not only the first found: which group a cluster serves is decided by
+    # which CRDs are installed, not by Kyverno's --openreportsEnabled flag, so openreports.io installed by
+    # another tool beside a Kyverno still writing wgpolicyk8s.io would otherwise read as "installed, 0
+    # reports" — a clean cluster that is not one (review of #228, OB3). Kyverno writes to exactly one group
+    # (finding 7), so `api_group` names the one carrying its reports, or the first served when none does yet.
     with cluster_client._client() as client:
-        group = None
+        served_groups: list[tuple[str, str, str, str]] = []
         for name, base, namespaced, cluster_scoped in REPORT_GROUPS:
             try:
                 cluster_client._get(client, base, {})
@@ -213,12 +223,10 @@ def read(cluster_client, metrics_url: str = "") -> KyvernoRead | None:
                 if exc.message.startswith(f"HTTP 404 on {base}"):
                     continue
                 raise
-            group = (name, base, namespaced, cluster_scoped)
-            break
-        if group is None:
+            served_groups.append((name, base, namespaced, cluster_scoped))
+        if not served_groups:
             return None
-        name, base, namespaced, cluster_scoped = group
-        out = KyvernoRead(api_group=name)
+        out = KyvernoRead(api_group=served_groups[0][0])
 
         served: list[str] = []
         for kind, path in POLICY_PATHS:
@@ -233,17 +241,24 @@ def read(cluster_client, metrics_url: str = "") -> KyvernoRead | None:
             out.policies.extend(policy_view(kind, obj) for obj in items)
         out.policy_kinds_served = tuple(served)
 
-        for collection in (cluster_scoped, namespaced):
-            path = f"{base}/{collection}"
-            for report in cluster_client._list_all(client, path):
-                labels = (report.get("metadata") or {}).get("labels") or {}
-                if labels.get(MANAGED_BY) != KYVERNO:
-                    continue
-                out.reports += 1
-                views, legacy, other = result_views(report)
-                out.results.extend(views)
-                out.legacy_results += legacy
-                out.other_results += other
+        carrying: list[str] = []
+        for name, base, namespaced, cluster_scoped in served_groups:
+            before = out.reports
+            for collection in (cluster_scoped, namespaced):
+                path = f"{base}/{collection}"
+                for report in cluster_client._list_all(client, path):
+                    labels = (report.get("metadata") or {}).get("labels") or {}
+                    if labels.get(MANAGED_BY) != KYVERNO:
+                        continue
+                    out.reports += 1
+                    views, legacy, other = result_views(report)
+                    out.results.extend(views)
+                    out.legacy_results += legacy
+                    out.other_results += other
+            if out.reports > before:
+                carrying.append(name)
+        if carrying:
+            out.api_group = carrying[0]
 
     urls = [u for u in re.split(r"[,\s]+", metrics_url or "") if u]
     if urls:

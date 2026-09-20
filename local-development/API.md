@@ -775,8 +775,8 @@ self): a finding names a resource cluster-wide and answers nothing a reader can 
 
 ```json
 {
-  "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin", "enabled": true,
-  "present": true, "api_group": "wgpolicyk8s.io/v1alpha2", "policy_kinds": ["ValidatingPolicy"],
+  "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin", "enabled": true, "breaker_configured": true,
+  "present": true, "api_group": "wgpolicyk8s.io/v1alpha2", "policy_kinds": ["ValidatingPolicy", "MutatingPolicy", "GeneratingPolicy", "DeletingPolicy", "ImageValidatingPolicy"],
   "reports": 115, "legacy_results": 667, "other_results": 0,
   "breaker_total": 3949, "breaker_drops": null, "observed_at": "2026-09-20T12:00:00Z",
   "results": {"pass": 9, "fail": 0, "warn": 0, "error": 0, "skip": 0}, "policies": 1,
@@ -791,8 +791,10 @@ Three states, rendered distinctly: **`present: null`** — never polled since th
 **`present: false`** — no policy-report API group is served, Kyverno is not installed (never
 "zero results"); **`present: true`** with **`legacy_results`** counting what the deprecated
 `ClusterPolicy`/`Policy` family wrote that this module does not read (a cluster carrying them is not a
-clean cluster), and **`breaker_drops`** — `kyverno_breaker_drops` as last scraped from the reports
-controller when `kyverno.metricsUrl` is set; `null` is "no drop observed, or not scraped", never 0.
+clean cluster), and **`breaker_drops`** — `kyverno_breaker_drops` as last scraped from the controllers'
+endpoints `kyverno.metricsUrl` names (the host cluster's only; a remote cluster's breaker is unmeasured);
+`null` is "no drop observed, or not scraped", never 0 — **`breaker_configured`** says whether a scrape is
+configured at all, so a null with it true is "the last scrape failed".
 `?problems=false` lists every result; `?controlled=true` includes Pods, ReplicaSets and Jobs (usually a
 controller's copies of one finding — off by default and said on the page); `?policy=` (the wire string —
 `namespace/name` for a namespaced policy) with `?kind=` narrows to one policy — a `ValidatingPolicy` and a

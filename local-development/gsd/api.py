@@ -1988,7 +1988,8 @@ def build_app(
         problems: bool = Query(default=True, description="Only fail/warn/error results (the page's default); false lists every result."),
         controlled: bool = Query(default=False, description="Include results on Pods, ReplicaSets and Jobs — usually a "
                                                             "controller's copies of one finding; off by default, said on the page."),
-        policy: str | None = Query(default=None, max_length=253, description="Only one policy's results (its wire string: "
+        # 63 + "/" + 253: a namespaced policy's wire string is `namespace/name`, both parts DNS names at their maxima (OB3)
+        policy: str | None = Query(default=None, max_length=317, description="Only one policy's results (its wire string: "
                                                                             "namespace/name for a namespaced policy)."),
         kind: str | None = Query(default=None, pattern=r"^[A-Za-z]{1,40}$", description="With `policy`, the policy's kind — "
                                                                                        "a ValidatingPolicy and a MutatingPolicy may share a name."),
@@ -2009,8 +2010,10 @@ def build_app(
         require_cluster(cluster_id)
         require_admin_tier(request, cluster_id)
         summary = store.kyverno_summary(cluster_id)
+        # `breaker_configured` lets the page tell "kyverno.metricsUrl is not set" from "set, and the last scrape
+        # failed": both leave the breaker fields null, and only one of them is a configuration gap (OB3).
         out = {"cluster": cluster_id, "scope": "all", "viewer": trusted_viewer(request),
-               "enabled": settings.kyverno_enabled, **summary}
+               "enabled": settings.kyverno_enabled, "breaker_configured": bool(settings.kyverno_metrics_url), **summary}
         if summary.get("present"):
             rows, total = store.kyverno_results(cluster_id, problems_only=problems, include_controlled=controlled,
                                                 policy=policy, kind=kind, limit=limit)

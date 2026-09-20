@@ -4989,9 +4989,13 @@ function kyvernoPage() {
       ? `<div class="filterbar-note" id="kyverno-breaker">No report has been dropped by the breaker
           (<code>kyverno_breaker_total</code> ${d.breaker_total}, no <code>kyverno_breaker_drops</code> exported — a counter
           appears on its first increment). The results below are the whole set the controller wrote.</div>`
-      : `<div class="filterbar-note" id="kyverno-breaker">Whether the reports controller dropped any report is
-          <strong>unknown</strong>: <code>kyverno.metricsUrl</code> is not set, so the breaker is not read. The results
-          below may be incomplete on a large cluster.</div>`;
+      : d.breaker_configured
+        ? `<div class="truncation-note" id="kyverno-breaker">Whether the reports controllers dropped any report is
+            <strong>unknown</strong>: <code>kyverno.metricsUrl</code> is set, but the last scrape of it failed (the poller's
+            log names the endpoint), so the breakers were not read this cycle. The results below may be incomplete.</div>`
+        : `<div class="filterbar-note" id="kyverno-breaker">Whether the reports controllers dropped any report is
+            <strong>unknown</strong>: <code>kyverno.metricsUrl</code> is not set, so the breakers are not read. The results
+            below may be incomplete on a large cluster.</div>`;
   const legacyNote = d.legacy_results
     ? `<div class="truncation-note" id="kyverno-legacy"><strong>${d.legacy_results}</strong> result${d.legacy_results === 1 ? "" : "s"}
         on this cluster come from the deprecated <code>ClusterPolicy</code>/<code>Policy</code> family and are
@@ -5030,14 +5034,14 @@ function kyvernoPage() {
       : `<div class="scroll-x"><table>
         <thead><tr><th>Kind</th><th>Policy</th><th>Admission</th><th>Background</th><th>Actions</th><th>Failure policy</th><th>Ready</th>
           <th class="num">Pass</th><th class="num">Fail</th><th class="num">Warn</th><th class="num">Error</th><th class="num">Skip</th></tr></thead>
-        <tbody>${policies.map((p) => `<tr class="rowlink" data-kyverno-policy="${esc(p.policy)}" data-kyverno-kind="${esc(p.kind)}">
-          <td><span class="chip mono">${esc(p.kind)}</span>${p.generated ? ` <span class="chip" title="status.generated: a Kubernetes ValidatingAdmissionPolicy stands in for this policy; Kyverno's own webhook and background scan stand down, and its rows come from the admission policy's reports.">generated</span>` : ""}</td>
-          <td><button type="button" class="drill mono">${esc(p.policy)}</button></td>
+        <tbody>${policies.map((p, i) => `<tr class="rowlink" data-kyverno-policy="${esc(p.policy)}" data-kyverno-kind="${esc(p.kind)}">
+          <td><span class="chip mono">${esc(p.kind)}</span>${p.namespace ? ` <span class="chip">namespaced</span>` : ""}${p.generated ? ` <span class="chip" title="status.generated: a Kubernetes ValidatingAdmissionPolicy stands in for this policy; Kyverno's own webhook and background scan stand down, and its rows come from the admission policy's reports.">generated</span>` : ""}</td>
+          <td><button type="button" class="drill mono" id="kyverno-policy-${i}">${esc(p.policy)}</button></td>
           <td>${p.admission ? "on" : `<span class="muted">off</span>`}</td>
           <td>${p.background ? "on" : `<span class="muted">off</span>`}</td>
           <td class="mono">${(p.actions || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
           <td class="mono">${esc(p.failure_policy)}</td>
-          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="err">no</span>`}${p.note ? ` <span class="muted">· ${esc(p.note)}</span>` : ""}</td>
+          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="err">no</span>`}${p.note ? ` <span class="err">${esc(p.note)}</span>` : ""}</td>
           <td class="num">${p.results.pass}</td>
           <td class="num${p.results.fail ? " warn" : ""}">${p.results.fail}</td>
           <td class="num">${p.results.warn}</td>
