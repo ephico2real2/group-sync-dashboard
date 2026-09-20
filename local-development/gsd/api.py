@@ -429,29 +429,46 @@ def build_app(
     #
     # An empty namespace setting means THE POD'S OWN — where the cluster Secrets live — because
     # these questions are namespaced by nature; the wide tier's empty means cluster-scoped.
-    cc_namespace = own_namespace() or ""
+    #
+    # INDEPENDENT OF THE WIDE-VIEW SWITCH, deliberately (review of #235, Grok C2). Building these
+    # only when `visibility.enabled` is on — and widening when it is off, as the wide views do —
+    # would mean that turning cluster-DATA restrictions off hands every proxy-admitted reader, the
+    # auditor included, the fleet's wiring. The operator's ruling is not conditional. Usage already
+    # made this call (usage_scope stays self when restrictions are off); this surface goes one step
+    # further and still ASKS, so a cluster-admin keeps the tab either way.
+    #
+    # THE CONSEQUENCE, stated where it bites: with restrictions off a site may not have granted the
+    # auth-delegator role, so the SubjectAccessReview fails and the surface refuses everyone until
+    # that grant exists. That is the fail-closed direction for a view naming cluster credentials,
+    # and the chart's README says so beside the two values.
+    # The wide tier's own instance under a name the gate can close over: `resolver` is assigned
+    # inside _clusterconfig_tier too, which would make the outer one unreachable there.
+    wide_tier_resolver = resolver
+    # The namespace the two questions are asked IN. Unknown (no ServiceAccount mount, no
+    # GSD_NAMESPACE) must not silently become a CLUSTER-SCOPED `get secrets` — a different and far
+    # broader question than the one the operator configured (review of #235, Codex C4). None here
+    # means "cannot ask", and the gate refuses rather than asking the wrong thing.
+    cc_namespace = own_namespace() or None
     clusterconfig_view_tier: TierResolver | None = None
     clusterconfig_manage_tier: TierResolver | None = None
-    if (clusterconfig_view_resolver is None and settings.view_restrictions_enabled
-            and local_cluster is not None):
+    if clusterconfig_view_resolver is None and local_cluster is not None:
         clusterconfig_view_tier = TierResolver(
             local_cluster,
             verb=settings.visibility_clusterconfig_view_sar_verb,
             resource=settings.visibility_clusterconfig_view_sar_resource,
             api_group=settings.visibility_clusterconfig_view_sar_api_group,
-            namespace=settings.visibility_clusterconfig_view_sar_namespace or cc_namespace,
+            namespace=settings.visibility_clusterconfig_view_sar_namespace or cc_namespace or "",
             subresource=settings.visibility_clusterconfig_view_sar_subresource,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
             observe=functools.partial(signals.note_tier_check, "clusterconfig_view"),
         )
-    if (clusterconfig_manage_resolver is None and settings.view_restrictions_enabled
-            and local_cluster is not None):
+    if clusterconfig_manage_resolver is None and local_cluster is not None:
         clusterconfig_manage_tier = TierResolver(
             local_cluster,
             verb=settings.visibility_clusterconfig_manage_sar_verb,
             resource=settings.visibility_clusterconfig_manage_sar_resource,
             api_group=settings.visibility_clusterconfig_manage_sar_api_group,
-            namespace=settings.visibility_clusterconfig_manage_sar_namespace or cc_namespace,
+            namespace=settings.visibility_clusterconfig_manage_sar_namespace or cc_namespace or "",
             subresource=settings.visibility_clusterconfig_manage_sar_subresource,
             ttl_seconds=float(settings.visibility_tier_ttl_seconds),
             observe=functools.partial(signals.note_tier_check, "clusterconfig_manage"),
@@ -706,19 +723,52 @@ def build_app(
         """One level of the cluster-configuration tier, resolved and counted. Returns TIER_ALL or
         TIER_SELF; never raises. FAIL CLOSED, which here means TIER_SELF — Argo's
         `policy.default: deny` in our vocabulary: no identity, no resolver, or an API-server blip
-        all refuse. A blip must not widen a surface that names cluster credentials."""
+        all refuse. A blip must not widen a surface that names cluster credentials.
+
+        NO `restrict` SHORT-CIRCUIT (review of #235, Grok C2): the wide views widen when
+        `visibility.enabled` is off, and copying that here would re-admit the very persona this
+        tier exists to exclude. Without the proxy there is no trustworthy identity either, and
+        `trusted_viewer` returns None — which refuses, for the same reason."""
         injected = (clusterconfig_view_resolver if level == "view" else clusterconfig_manage_resolver)
         built = (clusterconfig_view_tier if level == "view" else clusterconfig_manage_tier)
         state = getattr(app.state, f"clusterconfig_{level}_resolver", None)
         label = f"clusterconfig_{level}"
         viewer = trusted_viewer(request)
-        if not restrict:
-            # Restrictions off runs no tier machinery at all — the deployment has said it trusts
-            # everyone its proxy admits, and every other wide view already obeys that. Widening
-            # here keeps this surface consistent with them rather than inventing a second switch.
-            return TIER_ALL
         resolver = state if state is not None else (built if built is not None else injected)
+        # A question with no namespace is not this tier's question (Codex C4): refuse rather than
+        # widen it to the cluster. A substituted resolver (the test seam) carries its own scope.
+        if state is None and not (settings.visibility_clusterconfig_view_sar_namespace
+                                  or settings.visibility_clusterconfig_manage_sar_namespace
+                                  or cc_namespace):
+            log.warning("cluster-configuration tier: this pod's namespace is unknown and no "
+                        "visibility.clusterConfig*Sar.namespace is set, so the check cannot be "
+                        "asked in a namespace; refusing %s", level)
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
         if not viewer or resolver is None:
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        # THE LADDER IS ORDERED (design review of #235, OB2): the administrator rung is asked FIRST,
+        # and only then this level's own question. `get`/`create secrets` in this namespace is held by
+        # the stock `admin` ClusterRole, so asked alone it is not a higher bar than the wide tier but a
+        # DIFFERENT one — measured on CRC 2026-09-20: a member of `app-ocp-rbac-alpha-cluster-admin`,
+        # bound to ClusterRole/admin by a ClusterRoleBinding (the lab has seven such bindings), answers
+        #     list clusterrolebindings   no      <- narrowed to `self` on every tab
+        #     update clusterrolebindings no
+        #     get secrets    -n <ns>     yes     <- would have passed clusterconfig:view
+        #     create secrets -n <ns>     yes     <- and :manage
+        # so the fleet's credential store would open to a reader the dashboard narrows everywhere else.
+        # Ordering also holds the other way: `cluster-reader` is an AGGREGATED ClusterRole, so a site
+        # that aggregates `get secrets` into it cannot thereby hand auditors this surface.
+        #
+        # ASKED DIRECTLY, not through viewer_scope or usage_scope: each of those carries an escape
+        # hatch that would dissolve this rung — viewer_scope widens when `visibility.enabled` is off,
+        # and usage_scope widens for everyone when `userActivity.visibility: all`. Neither is a
+        # statement about who administers the cluster, which is the only thing this rung asks.
+        admin_state = getattr(app.state, "tier_resolver", None)
+        _, admin_scope = _decide(viewer, admin_state if admin_state is not None else wide_tier_resolver,
+                                 tier_resolver)
+        if admin_scope != TIER_ALL:
             signals.note_decision(label, TIER_SELF)
             return TIER_SELF
         try:

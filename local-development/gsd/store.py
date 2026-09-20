@@ -1869,19 +1869,27 @@ class Store:
                 ORDER BY c.id"""
         )
 
-    def retire_absent_clusters(self, configured_ids: list[str]) -> int:
+    def retire_absent_clusters(self, configured_ids: list[str], *, keep_sources: tuple[str, ...] = ()) -> int:
         """Retire — never delete — every stored cluster the configuration no longer names: set
         enabled=0 so its history and snapshot rows stay, but it leaves the served/active set (#96).
         A cluster disabled in config is already enabled=0 through upsert_cluster; this catches the
-        ones the config dropped entirely. Returns how many rows it retired."""
+        ones the config dropped entirely. Returns how many rows it retired.
+
+        `keep_sources` spares rows whose `source` starts with one of those prefixes, for the one
+        state where absence does not mean gone: the Secret discovery could not LIST (review of
+        #235, Grok C6). On a fresh process the registry has no previous set to stand on, so every
+        `secret:*` cluster would look absent and be retired by an outage we could not see past —
+        "we failed to look" must never read as "they were deleted"."""
         ids = list(configured_ids)
+        clauses, params = ["enabled=1"], []
+        if ids:
+            clauses.append(f"id NOT IN ({','.join('?' for _ in ids)})")
+            params += ids
+        for prefix in keep_sources:
+            clauses.append("(source IS NULL OR source NOT LIKE ?)")
+            params.append(f"{prefix}%")
         with self._tx() as conn:
-            if ids:
-                marks = ",".join("?" for _ in ids)
-                cur = conn.execute(
-                    f"UPDATE cluster SET enabled=0 WHERE enabled=1 AND id NOT IN ({marks})", ids)
-            else:
-                cur = conn.execute("UPDATE cluster SET enabled=0 WHERE enabled=1")
+            cur = conn.execute(f"UPDATE cluster SET enabled=0 WHERE {' AND '.join(clauses)}", params)
             return cur.rowcount
 
     # -- poll results ------------------------------------------------------------------

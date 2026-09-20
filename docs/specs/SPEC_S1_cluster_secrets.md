@@ -57,10 +57,35 @@ the same pull request, under "Orchestrator's notes", with the reason.
   means the pod's own, the opposite of the wide tier's empty, because these questions are namespaced by
   nature.
 
+  *THE LADDER IS ORDERED* (design review, OB2, 2026-09-20 — the second ruling on this tier). Each rung
+  asks the rung below first, then its own question: the cluster-configuration gate is **the
+  administrator rung AND** (`get secrets` for view / `create secrets` for manage). Asked alone, the
+  secrets questions are not a HIGHER bar than the wide tier but a DIFFERENT one — `get`/`create secrets`
+  in a namespace is held by the stock `admin` ClusterRole. Measured on CRC 2026-09-20, a member of
+  `app-ocp-rbac-alpha-cluster-admin`, bound to `ClusterRole/admin` by one of the lab's **seven** such
+  ClusterRoleBindings:
+
+  ```
+  oc auth can-i list clusterrolebindings   --as-group=app-ocp-rbac-alpha-cluster-admin  -> no
+  oc auth can-i update clusterrolebindings --as-group=app-ocp-rbac-alpha-cluster-admin  -> no
+  oc auth can-i get    secrets -n group-sync-dashboard                                   -> yes
+  oc auth can-i create secrets -n group-sync-dashboard                                   -> yes
+  ```
+
+  That reader is narrowed to `self` on every other tab and would have held the fleet's credential
+  store. The ordering also closes the other direction: `cluster-reader` is an AGGREGATED ClusterRole,
+  so a site that aggregates `get secrets` into it cannot thereby hand auditors this surface.
+
+  The rung is asked **directly**, not through `viewer_scope` or `usage_scope`: each carries a widening
+  escape hatch that would dissolve it — `viewer_scope` widens when `visibility.enabled` is off, and
+  `usage_scope` widens for every viewer when `userActivity.visibility: all`. Neither is a statement
+  about who administers the cluster, which is all this rung asks. A site may repoint either question
+  but cannot grant the top rung to a reader the administrator rung refuses.
+
   *Division of labour.* **S1 ships both resolvers** and gates its read route on `view`; **S2 gates the
   write routes on `manage` and the tab's very existence on `view`** — a reader who fails `view` gets no tab
   button, no dispatch and no fetch, and reaching `#page=clusters` by URL shows the refusal card naming
-  itself. Tests here: the auditor persona is refused with no cluster named while passing the wide tier;
+  itself. **S2 gates its writes on the same resolver — there is ONE definition of each level.** Tests here: the auditor persona is refused with no cluster named while passing the wide tier;
   `manage` alone does not open the read route; it fails closed on a missing resolver, a missing identity
   and an exploding check; and a mutant reverting the route to `require_admin_tier` fails
   (`tests/test_clusterconfig.py::TestClusterConfigTier`).
