@@ -148,6 +148,101 @@ The last row is why the failure line separates the two: **the fix depends on the
 cluster on the shared bundle is repaired fleet-wide; a cluster pinning its own CA is repaired alone;
 a cluster already running `insecure` cannot be failing verification at all.
 
+### The three modes, proven: the TLS verification record
+
+The picture above is a claim; this is its proof, and it lives beside the picture so the two are read
+together (the operator on #244, 2026-09-20: *"the verification must be documented, not just measured"*).
+The rig is `local-development/mock-app/deploy/tls-modes/` — three copies of the mock OpenShift API,
+identical except for who signed their serving certificate, one labelled Secret per mode and a fourth
+Secret that names two modes at once. **Re-running the rig (`deploy-tls-modes.sh --prove`) is how a
+future change to the trust logic is re-proved — not re-argued.** The record below is #244's,
+re-measured on the lab on 2026-09-20 from the worktree of PR #247 (pod
+`group-sync-dashboard-76d5bb4ff8-w8pbx`), and the numbers are the same.
+
+**1. The TLS handshake, from inside the dashboard pod, using only its own trust store**
+(`curl -w '%{ssl_verify_result}'`, nothing but the pod's bundle):
+
+| endpoint | `ssl_verify_result` | meaning |
+|---|---|---|
+| `mock-trusted` | **0** (HTTP 404 from the mock) | verified — the chain to the CA in the pod's bundle is real |
+| `mock-privateca` | **20** | *unable to get local issuer certificate* — correctly rejected |
+| `mock-selfsigned` | **18** | *self signed certificate* — correctly rejected |
+
+The three certificates are genuinely distinct chains, which is what makes the test meaningful:
+`mock-trusted-tls` ← issuer `ldap-enterprise-ca`; `mock-privateca-tls` ← its own bootstrapped CA;
+`mock-selfsigned-tls` ← a `selfSigned` issuer. cert-manager issues all three, and the dashboard trusts
+the first through the injected bundle.
+
+The commands, exactly as run. The pod's curl reads its `.curlrc` through `CURL_HOME=/etc/curl`
+(`cacert = /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt`, `capath = /etc/pki/tls/certs`),
+so a bare `curl` in the pod verifies against precisely the stores the dashboard's `trusted-bundle`
+mode does; the rig's Services listen on `6443`, the port its Secrets' `server` names:
+
+```sh
+NS=group-sync-dashboard
+for n in mock-trusted mock-privateca mock-selfsigned; do
+  printf '%-16s ' "$n"
+  oc -n "$NS" exec deploy/group-sync-dashboard -c dashboard -- \
+    sh -c "curl -s -o /dev/null --max-time 5 -w 'http=%{http_code} ssl_verify_result=%{ssl_verify_result} exit=' https://$n:6443/; echo \$?"
+done
+```
+
+```text
+mock-trusted     http=404 ssl_verify_result=0 exit=0
+mock-privateca   http=000 ssl_verify_result=20 exit=60
+mock-selfsigned  http=000 ssl_verify_result=18 exit=60
+```
+
+The chains, read off the cluster (`oc -n "$NS" get certificate -o custom-columns='NAME:.metadata.name,ISSUER_KIND:.spec.issuerRef.kind,ISSUER:.spec.issuerRef.name,READY:.status.conditions[?(@.type=="Ready")].status'`):
+
+```text
+NAME                  ISSUER_KIND     ISSUER                     READY
+mock-privateca-ca     Issuer          mock-privateca-bootstrap   True
+mock-privateca-tls    Issuer          mock-privateca-issuer      True
+mock-selfsigned-tls   Issuer          mock-selfsigned-leaf       True
+mock-trusted-tls      ClusterIssuer   ldap-enterprise-ca         True
+```
+
+(`mock-privateca-bootstrap` and `mock-selfsigned-leaf` are `selfSigned: {}` Issuers; `mock-privateca-issuer`
+signs from the `mock-privateca-ca` Secret — the manifests are `pki-trusted.yaml`, `pki-privateca.yaml`
+and `pki-selfsigned.yaml` in the rig.)
+
+**2. The application's own state** (`GET /api/clusterconfigs`, pod loopback):
+
+```text
+mock-trusted      {"insecure": false, "ca": "trusted-bundle"}   ok
+mock-privateca    {"insecure": false, "ca": "caData"}           ok
+mock-selfsigned   {"insecure": true,  "ca": null}               ok
+gsd-cluster-mock-refusal → finding insecure-with-ca:
+    "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"
+```
+
+All four claims hold and the pod served the request through the refusal. The command, and what it
+returned when re-run:
+
+```sh
+oc -n "$NS" exec deploy/group-sync-dashboard -c dashboard -- \
+  sh -c "curl -s --max-time 5 -H 'X-Forwarded-User: kubeadmin' 'http://127.0.0.1:8080/api/clusterconfigs'" \
+  | jq -c '(.clusters[] | select(.id|startswith("mock-")) | {id, tls, status}), (.findings[] | select(.code=="insecure-with-ca"))'
+```
+
+```text
+{"id":"mock-privateca","tls":{"insecure":false,"ca":"caData"},"status":"ok"}
+{"id":"mock-selfsigned","tls":{"insecure":true,"ca":null},"status":"ok"}
+{"id":"mock-trusted","tls":{"insecure":false,"ca":"trusted-bundle"},"status":"ok"}
+{"secret":"gsd-cluster-mock-refusal","code":"insecure-with-ca","detail":"tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}
+```
+
+**3. The gap this verification found** (#244 item 5, fixed with the S2 PR): four Secrets carrying
+**no `config` key** report `tls: null` — `crc-tls-default` among them, which is live and polling with
+`unreachable` / `CERTIFICATE_VERIFY_FAILED`. A cluster being polled but showing "—" for its mode is the
+ambiguity these three modes exist to remove; it is on the default store and should say so.
+
+Read against the log: the `mock-privateca` row under mode 1, before its `caData` was set, is exactly
+the `cluster-unreachable phase=tls outcome=cert-verify-failed … tls=trusted-bundle` line of
+[the worked example below](#reading-the-log-against-these-pictures), and `ssl_verify_result=20` is the
+OpenSSL code behind `unable to get local issuer certificate` in its `detail=`.
+
 ---
 
 ## 3. The credential modes
@@ -256,7 +351,7 @@ flowchart TD
 
 ## Reading the log against these pictures
 
-```
+```text
 gsd.clusterconfig INFO  discovery cycle=7 namespace=gsd seen=4 accepted=3 refused=1 added=ocp-east
 gsd.clusterconfig INFO  cluster-resolved cycle=7 cluster=ocp-east source=secret:gsd-cluster-ocp-east
                         credential=bearer tls=trusted-bundle visibility=self-only identity=none enabled=true
