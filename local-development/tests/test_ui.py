@@ -6186,6 +6186,52 @@ def _reports_page(browser, base, user, fake_clock=False):
     return ctx, page, errors
 
 
+class TestTabUplifts:
+    """#153: the trailing tabs brought to the Namespace-audit bar — presentation only, every feature of
+    docs/design/tab-feature-contract.md kept. The Groups KPIs are the cluster's whole-set counts (the
+    Overview card's, never the rows on screen); a group name is a real button, so the keyboard reaches
+    the drill-down; the problem KPIs carry the warning rail only when they hold anyone."""
+
+    def test_the_groups_kpis_are_the_clusters_counts_not_the_filtered_rows(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#groups-kpis")
+        tiles = lambda: dash.evaluate("() => [...document.querySelectorAll('#groups-kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')])")
+        assert tiles() == [["Groups on this cluster", "4", False], ["Empty", "2", True], ["Unattributed", "1", True]], tiles()
+        # the state filter narrows the rows and leaves the cluster's counts alone
+        dash.select_option("#f-state", "unattributed"); dash.locator("#f-state").dispatch_event("change")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 1")
+        assert tiles()[0] == ["Groups on this cluster", "4", False]
+        dash.select_option("#f-state", "all"); dash.locator("#f-state").dispatch_event("change")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 4")
+
+    def test_a_group_name_is_a_button_the_keyboard_can_drill_with(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        dash.focus("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill")
+        dash.keyboard.press("Enter")
+        dash.wait_for_function("() => view.group === 'app-ocp-rbac-alpha-ns-admin'")
+        assert "Owner" in dash.locator("#main").inner_text()                 # the group detail's KPI row
+        assert "keeps its colour when you filter" in dash.evaluate("() => { view.group = null; render(); return document.getElementById('main').textContent; }")
+
+    def test_the_users_problem_kpis_carry_the_rail_only_when_they_hold_anyone(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        flagged = dash.evaluate("() => [...document.querySelectorAll('.kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.classList.contains('flag-warning'), k.querySelector('.value').textContent !== '0'])")
+        labels = [f[0] for f in flagged]
+        assert labels == ["Have logged in", "In a synced group", "Logged in, no synced group", "Synced, never logged in"], labels
+        for label, rail, nonzero in flagged:
+            assert rail == (nonzero and label in ("Logged in, no synced group", "Synced, never logged in")), (label, rail, nonzero)
+        # the provider is a chip, one per provider the person logged in through
+        assert dash.locator("tr[data-user='alice'] td:nth-child(3) .chip").count() >= 1
+        assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_the_bindings_review_kpi_carries_the_rail_when_anything_needs_one(self, dash):
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector(".kpis .kpi")
+        review = dash.evaluate("() => { const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review'); return [k.querySelector('.value').textContent, k.classList.contains('flag-warning')]; }")
+        assert review[1] == (review[0] != "0"), review
+
+
 class TestReportsTab:
     def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
         """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a

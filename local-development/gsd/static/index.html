@@ -2008,11 +2008,22 @@ function groupsPage() {
     unattributed: "No sync-provider label, so not managed by any GroupSync CR.",
     all: "",
   }[view.groupFilter];
+  // The KPIs are the cluster's, from the server's whole-set counts (`/api/clusters`: the Overview card's
+  // and /metrics' numbers) — never counted from the rows on screen, which a state filter or the self
+  // tier narrows (#153; the contract's whole-set rule). Empty and unattributed carry the warning rail
+  // when they hold any group: each is a problem state the state filter can open.
+  const cl = (data.clusters || []).find((c) => c.id === view.cluster);
+  const kpis = cl && !self && typeof cl.group_count === "number" ? `<div class="kpis" id="groups-kpis">
+      <div class="kpi"><div class="label">Groups on this cluster</div><div class="value">${cl.group_count}</div></div>
+      <div class="kpi${cl.empty_groups ? " flag-warning" : ""}"><div class="label">Empty</div><div class="value${cl.empty_groups ? "" : " muted"}">${cl.empty_groups}</div></div>
+      <div class="kpi${cl.unattributed_groups ? " flag-warning" : ""}"><div class="label">Unattributed</div><div class="value${cl.unattributed_groups ? "" : " muted"}">${cl.unattributed_groups}</div></div>
+    </div>` : "";
   return `<section class="card">
     <h2>Groups <span class="muted fw-normal">· ${searching
       ? `${rows.length} of ${all.length} shown`
       : `${rows.length} shown`}</span></h2>
     ${scopeBanner("groups", meta)}
+    ${kpis}
     ${note ? `<div class="filterbar-note mt-2">${esc(note)}</div>` : ""}
     ${alsoLine("groups", view.groupSearch)}
     ${searching ? `<div class="filterbar-note mt-2">Filtered by
@@ -2044,7 +2055,7 @@ function groupsPage() {
           <thead><tr><th>Name</th><th class="num">Members</th><th class="num">Grants</th><th>Owner</th>
             <th>Last refreshed</th><th>Source DN</th></tr></thead>
           <tbody>${rows.map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
-            <td>${esc(g.name)}</td>
+            <td><button type="button" class="drill">${esc(g.name)}</button></td>
             <td class="num">${g.member_count}</td>
             <td class="num ${g.binding_count ? "" : "muted"}">${g.binding_count ?? "—"}</td>
             <td>${ownerCell(g.sync_provider)}</td>
@@ -2052,7 +2063,8 @@ function groupsPage() {
             <td class="muted"><code>${esc(g.ldap_uid || "—")}</code></td>
           </tr>`).join("")}</tbody>
         </table></div>
-        <div class="filterbar-note mt-4">Select a group to see its members.</div>`}
+        <div class="filterbar-note mt-4">Select a group to see its members. The <strong>Owner</strong> dot's colour is
+          assigned by the CR's position in the cluster's full provider list, so a group keeps its colour when you filter.</div>`}
   </section>`;
 }
 
@@ -2195,8 +2207,8 @@ function usersPage() {
     ${self ? "" : `<div class="kpis">
       <div class="kpi"><div class="label">Have logged in</div><div class="value">${total}</div></div>
       <div class="kpi"><div class="label">In a synced group</div><div class="value">${grouped}</div></div>
-      <div class="kpi"><div class="label">Logged in, no synced group</div><div class="value">${loggedInNoGroup}</div></div>
-      <div class="kpi"><div class="label">Synced, never logged in</div><div class="value">${never.count}</div></div>
+      <div class="kpi${loggedInNoGroup ? " flag-warning" : ""}"><div class="label">Logged in, no synced group</div><div class="value">${loggedInNoGroup}</div></div>
+      <div class="kpi${never.count ? " flag-warning" : ""}"><div class="label">Synced, never logged in</div><div class="value">${never.count}</div></div>
     </div>
     ${manual > 0
       ? `<div class="filterbar-note" id="manual-accounts-note">${manual} manual ${manual === 1 ? "account" : "accounts"}
@@ -2262,7 +2274,7 @@ function usersPage() {
             <td><button type="button" class="drill">${esc(u.user_name)}</button>${u.full_name
               ? ` <span class="muted">· ${esc(u.full_name)}</span>` : ""}</td>
             <td>${status(u)}</td>
-            <td class="mono">${provs(u).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
+            <td>${provs(u).length ? provs(u).map((pv) => `<span class="chip mono">${esc(pv)}</span>`).join(" ") : `<span class="muted">—</span>`}</td>
             <td class="num${(u.group_count || 0) === 0 ? " warn" : ""}">${u.group_count || 0}</td>
             <td>${lastLogin(u)}</td>
             <td class="mono">${u.first_seen_at
@@ -2371,17 +2383,22 @@ function usagePage() {
       rows. The counts above cover all of them.
     </div>` : ""}
     <div class="filterbar-note mt-4">
-      Times render in the server's timezone; the <strong>Day</strong> column is a
+      <strong>Times</strong> render in the server's timezone; the <strong>Day</strong> column is a
       <strong>UTC</strong> date. That split is deliberate rather than an oversight: the day
       is a stored bucket, computed server-side when the activity was recorded, so
       re-labelling it local would misstate rows already written, and re-bucketing would make
       the same column mean one thing before a deploy and another after. Near midnight a
       session can therefore sit on the following UTC day.
-      An interaction is one deliberate action — opening the dashboard,
+    </div>
+    <div class="filterbar-note mt-2">
+      <strong>An interaction</strong> is one deliberate action — opening the dashboard,
       switching tab, drilling in, changing a filter — not one HTTP request: the page
       refreshes itself every 60s and counting those measured how long a tab was left open
       rather than whether anyone used it. Reading time is invisible, so a long look at one
-      page counts once. These are not logins either: the proxy owns this dashboard's session, so
+      page counts once.
+    </div>
+    <div class="filterbar-note mt-2">
+      <strong>Not logins.</strong> The proxy owns this dashboard's session, so
       nothing here records a sign-in to it. Logins to the <strong>cluster</strong> are a separate
       record with a separate source — the oauth-server's own log — and they are on the
       <strong>Logins</strong> tab.
@@ -4318,7 +4335,7 @@ function bindingsPage() {
         <div class="value">${d.total || 0}</div></div>
       <div class="kpi"><div class="label">Grant a real group</div>
         <div class="value muted">${c.ok || 0}</div></div>
-      <div class="kpi"><div class="label">Need review</div>
+      <div class="kpi${review ? " flag-warning" : ""}"><div class="label">Need review</div>
         <div class="value ${review ? "" : "muted"}">${review}</div></div>
       <div class="kpi"><div class="label">Built-in</div>
         <div class="value muted">${c.built_in || 0}</div></div>
