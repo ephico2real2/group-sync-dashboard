@@ -467,19 +467,6 @@ administrator but lock everyone out of the surface, including the person trying 
 # The accepted set is exactly the five the values file documents. Python itself would take a few
 # more spellings, and they are refused on purpose: a level is a promise about what you will see, and
 # two ways to write one level — or a name whose effect is the opposite of how it reads — is not one.
-{{- define "gsd.httpLogLevel" -}}
-{{- $raw := .Values.httpLogLevel -}}
-{{- if or (not (hasKey .Values "httpLogLevel")) (kindIs "invalid" $raw) -}}
-WARNING
-{{- else -}}
-{{- $l := upper (trim (toString $raw)) -}}
-{{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
-{{- fail (printf "httpLogLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nThis value governs the HTTP REQUEST RECORD only — httpx (outbound API calls) and uvicorn.access (inbound requests). This app's own loggers are `logLevel`, a different value.\n\nINFO restores the per-request lines that were the default before #245; WARNING keeps the failures and drops the routine 200s." (toString $raw)) -}}
-{{- end -}}
-{{- $l -}}
-{{- end -}}
-{{- end -}}
-
 {{- define "gsd.logLevel" -}}
 {{- $raw := .Values.logLevel -}}
 {{- if or (not (hasKey .Values "logLevel")) (kindIs "invalid" $raw) -}}
@@ -488,6 +475,21 @@ INFO
 {{- $l := upper (trim (toString $raw)) -}}
 {{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
 {{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you are trying to raise the OAUTH-SERVER's verbosity so the Logins tab has something to read, that is the chart's `authLogLevel` value, not this one — a different setting on a different object.\n\nRefused here rather than passed through, because a release value can be corrected before anything is deployed. The app itself is more forgiving with a directly supplied GSD_LOG_LEVEL — it runs at INFO and logs a warning — so this is the stricter of two boundaries, not the only one." (toString $raw)) -}}
+{{- end -}}
+{{- $l -}}
+{{- end -}}
+{{- end -}}
+
+# The HTTP REQUEST RECORD's own level (#245): httpx and uvicorn.access, separately from the app's
+# reasoning. The same five values, refused the same way, defaulting to WARNING when unset or null.
+{{- define "gsd.httpLogLevel" -}}
+{{- $raw := .Values.httpLogLevel -}}
+{{- if or (not (hasKey .Values "httpLogLevel")) (kindIs "invalid" $raw) -}}
+WARNING
+{{- else -}}
+{{- $l := upper (trim (toString $raw)) -}}
+{{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
+{{- fail (printf "httpLogLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nThis value governs the HTTP REQUEST RECORD only — httpx (outbound API calls) and uvicorn.access (inbound requests). This app's own loggers are `logLevel`, a different value.\n\nINFO restores the per-request lines that were the default before #245; WARNING keeps the failures and drops the routine 200s." (toString $raw)) -}}
 {{- end -}}
 {{- $l -}}
 {{- end -}}

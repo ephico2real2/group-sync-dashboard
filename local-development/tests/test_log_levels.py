@@ -376,9 +376,22 @@ class TestPerLoggerOverridesDegradeRatherThanCrash:
         got = probe("INFO", levels="gsd.clusterconfig")
         assert got["levels_complaints"] and "name=LEVEL" in got["levels_complaints"][0]
 
-    def test_a_bad_level_leaves_that_logger_alone_and_says_which(self) -> None:
-        got = probe("INFO", levels="gsd.clusterconfig=CHATTY")
-        assert got["levels_complaints"] and "gsd.clusterconfig" in got["levels_complaints"][0]
+    def test_a_bad_level_leaves_that_logger_alone_without_echoing_the_pair(self) -> None:
+        """Neither half is repeated (review of #247, Grok C4). The first version echoed the logger
+        NAME, arguing it is structurally public — which assumes the value is a logger name, the very
+        assumption that fails when a credential has been miswired into the variable."""
+        got = probe("INFO", levels="sha256~a-token-miswired-here=CHATTY")
+        assert got["levels_complaints"], "a bad level must be reported"
+        complaint = got["levels_complaints"][0]
+        assert "sha256~" not in complaint and "CHATTY" not in complaint
+        assert "28-character" in complaint, "the length is the one fact it does report"
+
+    def test_the_root_logger_is_refused_rather_than_silently_set(self) -> None:
+        """`root=CRITICAL` set every logger at once with no complaint (review of #247, OB3 C4):
+        `logging.getLogger("root")` IS the root logger. That level is GSD_LOG_LEVEL's."""
+        got = probe("INFO", levels="root=CRITICAL")
+        assert got["emitted"] == LADDER["INFO"], "the root level must be GSD_LOG_LEVEL's, untouched"
+        assert got["levels_complaints"] and "GSD_LOG_LEVEL instead" in got["levels_complaints"][0]
 
     def test_a_good_entry_beside_a_bad_one_still_applies(self) -> None:
         """One typo must not discard the pairs that parsed."""

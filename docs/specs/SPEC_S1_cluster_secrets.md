@@ -26,6 +26,14 @@ read against is `gsd/clusterconfig/events.py` (#245).
 
 ## Orchestrator's notes
 
+- **The reader does not log (#245, PR #247, from its review).** `reader.discover` returns findings and
+  emits nothing: it runs every binding interval and knows nothing of the cycle before it, so a
+  `WARNING` per refused Secret there was one standing bad Secret writing a line every cycle forever —
+  the flood #245 exists to prevent. The poller, which holds the previous cycle's findings, announces
+  each one when it **appears** (`secret-refused` / `secret-shadows-values` / `credential-not-supported`,
+  the event name and phase chosen by `reader.finding_event`) and names it again in `refused_cleared=`
+  when it goes. The tab still shows every finding every cycle; only the line is a transition.
+
 - **The operator's ruling on the tier (2026-09-20, relayed during implementation):** this surface is
   **cluster-admin only — the reporting auditor may neither view nor change it**, and it gets *"a new tier
   boss — look at how argocd does it"* rather than borrowing an existing gate.

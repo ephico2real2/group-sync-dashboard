@@ -1,17 +1,20 @@
 """One discovery: LIST the labelled Secrets in the pod's namespace, parse each, apply the duplicate and
 shadow rules (SPEC_S1 C2/C3). Raises ClusterError when the LIST itself fails — the caller records it as
-the cycle's finding and keeps the previous set."""
+the cycle's finding and keeps the previous set.
+
+THIS FUNCTION DOES NOT LOG (review of #247, Grok C2). It ran every binding interval and knows nothing
+about the cycle before it, so a `log.warning` per refused Secret here meant one standing bad Secret
+wrote a line every cycle forever — the flood #245 exists to prevent. Findings are RETURNED; the
+poller, which holds the previous cycle, announces the ones that appeared and the ones that cleared.
+`_ACTIONS` and `finding_event` stay here because the fix, the event name and the phase belong beside
+the code that knows the refusal.
+"""
 
 from __future__ import annotations
 
-import logging
-
 from ..config import ClusterConfig
 from . import LABEL_SELECTOR
-from .events import failure
 from .parser import Finding, parse_secret
-
-log = logging.getLogger(__name__)
 
 #: What to do about each refusal, in the operator's terms rather than the parser's. `action=` is the
 #: fix, not the diagnosis (#245): a line that says only what broke leaves the reader to translate,
@@ -34,8 +37,26 @@ _ACTIONS = {
     "enabled-invalid": 'enabled must be "true" or "false"',
     "host-cluster-not-from-secret": "the host cluster comes from the chart's values, not a Secret",
     "duplicate-cluster-name": "remove one of the two Secrets, or rename the cluster in one",
+    "shadows-values-entry": "edit the Secret, or delete it to fall back to the values entry",
     "oauth-exchange-not-built": "use a bearerToken until the password exchange lands (#119 P2)",
 }
+
+#: How a finding is announced when it APPEARS (#245; the poller emits, this module decides): the
+#: event name and the phase. The default is the parser's refusal, `secret-refused` at `parse`. Two
+#: codes are not that: a shadowed values entry LOADS — the Secret wins, and the line exists so an
+#: operator does not edit the values entry for an hour — and an oauth Secret parses cleanly and
+#: stops one phase later, at the credential. Announcing either as a parse refusal would send the
+#: reader to the wrong step of flow 1 (`docs/DESIGN_cluster_connection_flows.md`).
+_EVENTS = {
+    "shadows-values-entry": ("secret-shadows-values", "parse"),
+    "oauth-exchange-not-built": ("credential-not-supported", "credential"),
+}
+
+
+def finding_event(code: str) -> tuple[str, str, str]:
+    """The (event name, phase, action) a finding code is announced with."""
+    name, phase = _EVENTS.get(code, ("secret-refused", "parse"))
+    return name, phase, _ACTIONS.get(code, "see the Cluster Configurations tab")
 
 
 def discover(cluster_client, namespace: str, *, host_name: str | None,
@@ -51,9 +72,6 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
         parsed = parse_secret(obj, host_name=host_name)
         if isinstance(parsed, Finding):
             findings.append(parsed)
-            failure(log, "secret-refused", phase="parse", outcome=parsed.code,
-                    action=_ACTIONS.get(parsed.code, "see the Cluster Configurations tab"),
-                    secret=parsed.secret, detail=parsed.detail)
             continue
         parsed_ok.append(parsed)
     # FAIL CLOSED ON A DUPLICATE NAME (design review of #230, OB2). "The first by metadata.name wins"
@@ -74,27 +92,14 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
                 others = ", ".join(n for n in names if n != mine)
                 findings.append(Finding(mine, "duplicate-cluster-name",
                                         f"{name} is also declared by Secret {others}; neither is loaded until one is removed"))
-                failure(log, "secret-refused", phase="parse", outcome="duplicate-cluster-name",
-                        action=_ACTIONS["duplicate-cluster-name"], secret=mine, cluster=name,
-                        detail=f"also declared by {others}; neither is loaded")
             continue
         parsed = group[0]
         secret_name = parsed.source.split(":", 1)[1]
         if parsed.name in values_names:
             findings.append(Finding(secret_name, "shadows-values-entry",
                                     f"{parsed.name} is also a values entry; the Secret wins"))
-            # Not a refusal — the cluster loads — but a silent shadow is how an operator edits the
-            # values entry for an hour and wonders why nothing changes.
-            failure(log, "secret-shadows-values", phase="parse", outcome="shadows-values-entry",
-                    action="edit the Secret, or delete it to fall back to the values entry",
-                    secret=secret_name, cluster=parsed.name,
-                    detail="both declare this cluster; the Secret wins")
         if parsed.credential_kind == "oauth":
             findings.append(Finding(secret_name, "oauth-exchange-not-built",
                                     f"{parsed.name} declares oauth; the exchange is #119 P2 and the cluster is not polled"))
-            failure(log, "credential-not-supported", phase="credential",
-                    outcome="oauth-exchange-not-built", action=_ACTIONS["oauth-exchange-not-built"],
-                    secret=secret_name, cluster=parsed.name, credential="oauth",
-                    detail="the password-for-token exchange is not built; this cluster is not polled")
         clusters.append(parsed)
     return clusters, findings

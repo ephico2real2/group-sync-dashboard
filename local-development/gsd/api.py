@@ -3177,8 +3177,20 @@ def _apply_per_logger_levels() -> list[str]:
 
     LAST ONE WINS for a repeated logger, and an unparseable pair is skipped with a complaint rather
     than failing the parse — the same degrade-and-say-so contract as every other log setting here.
-    A logger name is not a credential and IS echoed: it is the only way to say which pair was wrong,
-    and unlike a level's value it is structurally public (it names a module).
+
+    THE NAME IS NOT ECHOED EITHER (review of #247, Grok C4). The first version reported it, arguing
+    that a logger name is structurally public because it names a module. That argument assumes the
+    value IS a logger name — which is exactly the assumption that fails when something else has been
+    miswired into the variable, and "an environment variable is a place credentials get miswired" is
+    the whole reason `_resolve_log_level` refuses to repeat its own. The length and the accepted set
+    are enough to repair the setting; the operator can read their own values file.
+
+    A LEVEL SET HERE OVERRIDES THE ROOT LEVEL, in both directions: `Logger.isEnabledFor` consults the
+    logger's own level, and `callHandlers` walks ancestors' handlers without re-checking ancestors'
+    levels. So `gsd.clusterconfig=DEBUG` emits even at `GSD_LOG_LEVEL=ERROR`, which is the point —
+    and `gsd.poller=ERROR` silences that module even at `GSD_LOG_LEVEL=DEBUG`, which is the trap.
+    The root logger itself is refused here (`root=…` is skipped with a complaint): it is every
+    logger at once, and its level is GSD_LOG_LEVEL's.
     """
     raw = os.environ.get("GSD_LOG_LEVELS")
     if raw is None or not raw.strip():
@@ -3195,10 +3207,21 @@ def _apply_per_logger_levels() -> list[str]:
                 f"format is a comma-separated list, e.g. gsd.clusterconfig=DEBUG,httpx=INFO."
             )
             continue
+        if logging.getLogger(name) is logging.getLogger():
+            # `root=CRITICAL` would silence every logger at once — `logging.getLogger("root")` IS
+            # the root logger — with no complaint and no line saying so (review of #247, OB3 C4).
+            # The root's level is GSD_LOG_LEVEL's job, and one setting per level is the contract.
+            complaints.append(
+                "GSD_LOG_LEVELS names the root logger, which is skipped: that would set every "
+                "logger at once and override GSD_LOG_LEVEL silently. Set GSD_LOG_LEVEL instead."
+            )
+            continue
         if value not in LOG_LEVELS:
             complaints.append(
-                f"GSD_LOG_LEVELS sets logger {name!r} to a value that is not a log level this app "
-                f"accepts, so that logger is unchanged. Use one of {', '.join(LOG_LEVELS)}."
+                f"GSD_LOG_LEVELS has a {len(name)}-character logger name set to a value that is "
+                f"not a log level this app accepts, so that logger is unchanged. Neither the name "
+                f"nor the value is repeated here, in case something other than a log setting was "
+                f"wired into it. Use one of {', '.join(LOG_LEVELS)}."
             )
             continue
         logging.getLogger(name).setLevel(getattr(logging, value))

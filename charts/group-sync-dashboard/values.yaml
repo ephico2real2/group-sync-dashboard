@@ -527,15 +527,13 @@ config:
 #             the next binding refresh, row counts per read, which replica holds the Lease and how stale its
 #             renewal is, and why a given reader was put on the narrow tier.
 #
-# NOT HTTP REQUEST LINES. This value used to claim DEBUG added them; it does not. `httpx` logs
-# `HTTP Request: GET <url> "200 OK"` at INFO itself, so they are already present at the default —
-# measured identical at both levels. The layer below (`httpcore`, socket and TLS events) IS pinned to
-# WARNING, because unpinned it was 97% of DEBUG output: 356 lines of framing per 10 of the app's own.
-# Set GSD_DEBUG_HTTP=true to unpin it when diagnosing a handshake against a corporate CA.
-#
-# INBOUND REQUESTS ARE OUTSIDE THIS VALUE ENTIRELY. uvicorn logs one access line per request on its
-# own loggers, which carry propagate=False and their own handlers at INFO, so `logLevel` cannot raise
-# or lower them — at CRITICAL you still get a line per request and lose every app diagnostic.
+# NOT HTTP REQUEST LINES — THEY HAVE THEIR OWN VALUE NOW (#245). `httpx`'s
+# `HTTP Request: GET <url> "200 OK"` and uvicorn's inbound access lines are governed by
+# `httpLogLevel` below, default WARNING; this value does not raise or lower them. They used to sit
+# at INFO with no setting at all, which at four clusters was 61% of the pod's output. The layer
+# below (`httpcore`, socket and TLS events) is still pinned to WARNING here, because unpinned it was
+# 97% of DEBUG output: 356 lines of framing per 10 of the app's own. Set GSD_DEBUG_HTTP=true to
+# unpin it when diagnosing a handshake against a corporate CA.
 #
 # NOT TO BE CONFUSED WITH `authLogLevel` BELOW, which is a different setting on a different object:
 # it raises the oauth-server's own verbosity, which is what makes that server EMIT the login lines
@@ -568,6 +566,12 @@ httpLogLevel: WARNING
 # Before this, diagnosing one cluster's connection meant GSD_LOG_LEVEL=DEBUG, which turns on every
 # module at once across every polling cluster. An unparseable entry is skipped with a warning rather
 # than failing the pod; the last entry wins for a repeated logger.
+#
+# A LEVEL SET HERE OVERRIDES `logLevel` FOR THAT LOGGER, IN BOTH DIRECTIONS: `gsd.clusterconfig=DEBUG`
+# emits at `logLevel: ERROR`, which is the point — and `gsd.poller=ERROR` silences that module at
+# `logLevel: DEBUG`, which is the trap. `root` is refused with a warning: it is every logger at once,
+# and that level is `logLevel`. Set this in a values file rather than with --set, whose comma is a
+# list separator (escape it as `\,` if you must).
 clusterConfigLogLevels: ""
 
 # Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an

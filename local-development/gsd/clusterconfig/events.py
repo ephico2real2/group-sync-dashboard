@@ -42,11 +42,19 @@ PHASES = ("discovery", "parse", "credential", "tls", "connect", "poll")
 #: matching a pattern — patterns miss — it is redacted because the caller handed it here as one.
 _MASK = "<redacted>"
 
-#: A token long enough to be worth removing. Below this a "secret" is not one, and replacing a
-#: two-character string would corrupt every line it appeared in.
-_MIN_SECRET = 8
+#: The shortest caller-supplied value still worth removing. LOWERED FROM 8 (review of #247, Codex
+#: C1): a probe produced `detail="Bearer abc1234"` — a seven-character token from a test cluster
+#: reached the log intact, because the floor was written for pattern-guessing and applied to values
+#: the caller had explicitly named as credentials. The trade-off is real in both directions: below
+#: about four characters a "secret" cannot be told from ordinary text and replacing it would corrupt
+#: every line it appears in, so the floor stays — but a credential the caller handed us wins over
+#: readability at any length above that.
+_MIN_SECRET = 4
 
 _NEEDS_QUOTING = re.compile(r"[\s\"=]")
+
+#: Everything a terminal or a log pipeline reads as structure rather than text.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def redact(text: str, secrets: object) -> str:
@@ -77,7 +85,20 @@ def redact(text: str, secrets: object) -> str:
 
 
 def _format_value(value: object) -> str:
+    r"""One field's value, quoted when it needs to be and never able to forge a line.
+
+    CONTROL CHARACTERS ARE ESCAPED, NOT QUOTED AWAY (review of #247, Codex C8). A remote cluster
+    controls its error bodies, and that text reaches `detail=`: a body containing
+    `timeout
+cluster-resolved cycle=999 cluster=forged` produced TWO physical log lines, the second
+    of which reads exactly like a real event. Quoting does not help — a newline inside quotes is
+    still a newline to every terminal, `grep`, and key=value parser in the pipeline. So `
+`, ``,
+    `	` and the rest become their escapes, and the value stays one line whatever the remote sends.
+    """
     text = "" if value is None else str(value)
+    text = _CONTROL.sub(lambda m: {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(
+        m.group(), f"\\x{ord(m.group()):02x}"), text)
     if text == "" or _NEEDS_QUOTING.search(text):
         return '"' + text.replace('"', "'") + '"'
     return text
