@@ -462,8 +462,25 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         Every filter runs across the whole history, server-side (#149 R5); `facets` lists the reports and
         clusters the history holds, for the menus."""
         rows, total = store.list(report=report, origin=origin, status=status, cluster=cluster, limit=limit, offset=offset)
-        return {"runs": [r.public() for r in rows], "total": total, "limit": limit, "offset": offset,
+        return {"runs": _with_retention(rows), "total": total, "limit": limit, "offset": offset,
                 "truncated": offset + len(rows) < total, "queued": runs.queued(), "facets": store.facets()}
+
+    def _with_retention(rows: list[Run]) -> list[dict]:
+        """The public dicts with `expires_at`/`retained_by` from the store's own ranking (#229) — the
+        settings the prune applies, read the same way (`retention_overrides`)."""
+        plan = store.retention(scheduled_keep=settings.scheduled_keep_per_schedule,
+                               scheduled_days=settings.scheduled_retention_days,
+                               manual_days=settings.manual_retention_days,
+                               manual_max_runs=settings.manual_retention_max_runs,
+                               overrides=retention_overrides(settings))
+        out = []
+        for r in rows:
+            d = r.public()
+            standing = plan.get(r.id)
+            d["expires_at"] = standing.expires_at if standing else None
+            d["retained_by"] = standing.retained_by if standing else None
+            out.append(d)
+        return out
 
     _DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")   # Python weekday(): Monday is 0
 
@@ -548,7 +565,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         run = store.get(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="no such run")
-        return run.public()
+        return _with_retention([run])[0]
 
     @app.get(f"{REPORT_PREFIX}/api/runs/{{run_id}}/artifact")
     def get_artifact(run_id: str, p: Principal = Depends(principal),
