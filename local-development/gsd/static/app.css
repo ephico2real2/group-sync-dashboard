@@ -991,10 +991,12 @@ th { text-transform: uppercase; letter-spacing: 0.05em; }
    this page says "this one", and reusing it for hover keeps one vocabulary. */
 .rowlink:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* The rail is INSET because an outward shadow would be clipped by .scroll-x — so the first column
-   keeps its ink clear of it (#219: the "− left" glyph's ink began at x=1 under a rail spanning
-   x=0..2). Header and cells together, so the column stays aligned at rest; :where() keeps the
-   specificity at td:first-child's own so .kpi-page's wider padding, .risk-row's rail and
-   .report-table's cells still win. */
+   keeps its ink clear of it (#219: the user-History "− left" glyph's ink began at x=1 under a rail
+   spanning x=0..2). Header and cells together, so the column stays aligned at rest. :where() zeroes
+   the :has(), so this rule is (0,1,1) — td:first-child's own — and `.kpi-page th, .kpi-page td`, the
+   same specificity later in this file, still wins its 18px (review of #226, Grok: without :where()
+   the rule is (0,2,2) and would pull that column to 3px). .audit-table, .report-table and .risk-row
+   carry no tr.rowlink, so they never see this rule. */
 :where(table:has(tr.rowlink)) td:first-child, :where(table:has(tr.rowlink)) th:first-child { padding-left: 3px; /* optical: the rail's own width */ }
 
 /* Buttons and the disclosure lift very slightly. 1px, not the skill's 2px: these sit in

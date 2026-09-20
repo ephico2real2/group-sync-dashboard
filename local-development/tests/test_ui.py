@@ -582,20 +582,52 @@ class TestGroupDrilldown:
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
+    #: The first column's box model on one table: the ink's offset from the cell's edge (a Range over the
+    #: cell's contents), the computed padding, whether the table carries a rowlink row.
+    _FIRST_COL = """(sel) => {
+        const table = typeof sel === 'string' ? document.querySelector(sel) : sel;
+        const td = table.querySelector('tr.rowlink td:first-child') || table.querySelector('tbody tr td:first-child');
+        const th = table.querySelector('th:first-child');
+        const edge = (el) => { const r = document.createRange(); r.selectNodeContents(el); const b = [...r.getClientRects()].filter(b => b.width > 0)[0]; return b ? +(b.left - el.getBoundingClientRect().left).toFixed(2) : null; };
+        const pad = (el) => parseFloat(getComputedStyle(el).paddingLeft);
+        return { text: td.textContent.trim(), tdInk: edge(td), thInk: edge(th), tdPad: pad(td), thPad: pad(th), hasRowlink: !!table.querySelector('tr.rowlink') };
+    }"""
+
     def test_the_hover_rail_does_not_paint_under_the_first_cells_text(self, dash):
         # #219 (OB3, review of #204): the 3px inset hover rail sat under the first cell's ink — the glyph
         # began at x=1 with the rail spanning x=0..2. The first column keeps 3px clear, header and cells
-        # together, so the column stays aligned at rest.
+        # together, so the column stays aligned at rest. Groups: the cell holds a button, so its box IS the
+        # padding — 0.0px on main.
         dash.locator("button[data-nav='groups']").click()
         dash.wait_for_selector("tr[data-group]")
-        gap = dash.evaluate("""() => {
-            const td = document.querySelector('tr.rowlink td:first-child');
-            const th = td.closest('table').querySelector('th:first-child');
-            const edge = (el) => { const r = document.createRange(); r.selectNodeContents(el); const b = [...r.getClientRects()].filter(b => b.width > 0)[0]; return b.left - el.getBoundingClientRect().left; };
-            return [edge(td), edge(th)];
-        }""")
-        assert gap[0] >= 3, f"the first cell's text starts {gap[0]:.1f}px in, under the 3px hover rail"
-        assert abs(gap[0] - gap[1]) <= 0.5, gap                       # the header is aligned with its column
+        g = dash.evaluate(self._FIRST_COL, "#main table")
+        assert g["hasRowlink"] and g["tdPad"] == 3 and g["thPad"] == 3, g
+        assert g["tdInk"] >= 3, f"the first cell's text starts {g['tdInk']:.1f}px in, under the 3px hover rail"
+
+    def test_the_user_history_minus_left_glyph_clears_the_hover_rail(self, dash):
+        # The issue's own table (review of #226, Grok: the Groups test never opened it): the user page's
+        # History rows are rowlinks and their first cell is the "− left" text — ink, not a button box.
+        # No ink-to-ink alignment clause: a minus's sidebearing is ~1px and a capital's is not.
+        # bob left the group and never logged in, so he is not a row on the Users tab: his page is reached by position
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local&user=bob")
+        dash.wait_for_selector("td.change-removed")
+        h = dash.evaluate("""() => { const h2 = [...document.querySelectorAll('h2')].find(e => e.textContent.startsWith('History'));
+            const table = h2.closest('section').querySelector('table'); return (""" + self._FIRST_COL + """)(table); }""")
+        assert h["text"] == "− left" and h["hasRowlink"] and h["tdPad"] == 3, h
+        assert h["tdInk"] >= 3, f"− left starts {h['tdInk']:.1f}px in, under the rail"
+
+    def test_the_kpi_clusters_keep_their_padding_and_the_audit_table_takes_no_rule(self, dash):
+        # Preservation (Grok): :where() keeps the rule at (0,1,1), so .kpi-page's 18px — the same
+        # specificity, later in the file — still wins; the audit table carries no rowlink and never sees it.
+        dash.locator("button[data-nav='kpi']").click()
+        dash.wait_for_selector(".kpi-page table tr.rowlink")
+        assert dash.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.kpi-page tr.rowlink td:first-child')).paddingLeft)") == 18
+        dash.locator("button[data-nav='nsaudit']").click()
+        dash.wait_for_selector("table.audit-table")
+        a = dash.evaluate("""() => { const table = document.querySelector('table.audit-table'); const risk = table.querySelector('tr.risk-row td:first-child');
+            return { hasRowlink: !!table.querySelector('tr.rowlink'), pad: parseFloat(getComputedStyle(risk).paddingLeft), border: parseFloat(getComputedStyle(risk).borderLeftWidth),
+                     pillFromCell: risk.querySelector('.risk-pill').getBoundingClientRect().left - risk.getBoundingClientRect().left, hover: getComputedStyle(risk).boxShadow }; }""")
+        assert a["hasRowlink"] is False and a["pad"] == 10 and a["border"] == 4 and a["pillFromCell"] >= a["pad"] and "inset" not in a["hover"], a
 
     def test_members_are_listed_with_join_time(self, dash):
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
