@@ -93,6 +93,11 @@ loginCapture:
 rbac:
   namespaces: true
 
+# The Kyverno policy module (#170): the lab runs Kyverno v1.19.1 in `kyverno`; the three report breakers
+# live on three endpoints (discovery §4), all reachable from the pod's network.
+kyverno:
+  metricsUrl: "http://kyverno-svc-metrics.kyverno.svc:8000/metrics,http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics,http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics"
+
 reporting:
   namespaceMetadata:
     # The poller CAPTURES these label keys from every Namespace (bounded set).

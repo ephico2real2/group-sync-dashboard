@@ -193,6 +193,9 @@ INTERNAL_KPIS: tuple[Kpi, ...] = (
     Kpi("members_total", "Distinct people in at least one group.", GAUGE, ("cluster",), INTERNAL, _people("members")),
 )
 
+from ..kyverno.definitions import KYVERNO_KPIS  # noqa: E402  (the module's families ride the same renderers, #170)
+
+PUBLIC_KPIS = PUBLIC_KPIS + KYVERNO_KPIS
 ALL_KPIS = PUBLIC_KPIS + INTERNAL_KPIS
 
 #: What the daily rollup records per cluster (gsd/kpi/rollup.py): the counts with no history.

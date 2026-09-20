@@ -1,0 +1,253 @@
+"""Read one cluster's Kyverno state: the policies of the CEL kinds, the reports' results, the breaker.
+
+Runtime discovery, not configuration (finding 7): `openreports.io/v1alpha1` first, then
+`wgpolicyk8s.io/v1alpha2`; neither served means Kyverno is not installed, which is a state the caller
+records as absent — never as zero results. Every LIST follows the API server's continue tokens
+(`ClusterClient._list_all`), because reports carry only `managed-by: kyverno` and are filtered client-side
+(finding 8). A CEL result is keyed by policy and resource, never by rule (finding 5: `rule` is empty).
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+
+import httpx
+
+from . import CEL_KINDS, CEL_SOURCES, CONTROLLED_KINDS, GENERATED_SOURCES, LEGACY_SOURCE, RESULTS
+
+log = logging.getLogger(__name__)
+
+#: The report API groups, in the order tried. The first that answers is the one read.
+REPORT_GROUPS: tuple[tuple[str, str, str, str], ...] = (
+    ("openreports.io/v1alpha1", "/apis/openreports.io/v1alpha1", "reports", "clusterreports"),
+    ("wgpolicyk8s.io/v1alpha2", "/apis/wgpolicyk8s.io/v1alpha2", "policyreports", "clusterpolicyreports"),
+)
+#: The CEL policy kinds' collection paths. The discovery API's preferred version on 1.19.1 is `v1`
+#: (discovery §1: v1 served, v1beta1 storage); a cluster serving only an older version answers 404
+#: here and the family reads as absent — said, not hidden.
+POLICY_PATHS: tuple[tuple[str, str], ...] = tuple((kind, f"/apis/policies.kyverno.io/v1/{kind.lower()[:-1]}ies")
+                                                   for kind in CEL_KINDS)
+MANAGED_BY = "app.kubernetes.io/managed-by"
+KYVERNO = "kyverno"
+
+
+@dataclass(frozen=True)
+class PolicyView:
+    kind: str
+    namespace: str | None
+    name: str
+    admission: bool
+    background: bool
+    actions: tuple[str, ...]
+    failure_policy: str
+    ready: bool | None
+    #: `status.generated`: a generated ValidatingAdmissionPolicy stands in for this policy, and its rows carry
+    #: `source: ValidatingAdmissionPolicy` with `policy: vpol-<name>` (discovery §3).
+    generated: bool = False
+    #: `status.conditionStatus.message` — the controller's own word, e.g. "Policy is ready for reporting" or an
+    #: RBAC gap the policy's Ready condition does not say (discovery §2).
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class ResultView:
+    """One CEL result: what one policy decided about one resource. `controlled` marks a Pod/ReplicaSet/Job.
+
+    `policy` is the wire string — `namespace/name` for a namespaced policy (`cache.MetaNamespaceKeyFunc`,
+    `results.go:97`), the bare name for a cluster one, and a generated admission policy's `vpol-`/`mpol-`
+    prefix stripped so its rows are the policy's. `resource_uid` is the report's own name: a resource deleted
+    and recreated is a new row set, never merged into the old one's history (finding 4)."""
+    policy_kind: str
+    policy: str
+    resource_kind: str
+    resource_namespace: str
+    resource_name: str
+    resource_uid: str
+    resource_api_version: str
+    result: str
+    severity: str
+    category: str
+    message: str
+    process: str
+    at: int | None
+    controlled: bool
+
+
+@dataclass
+class BreakerView:
+    total: int | None = None
+    drops: int | None = None
+
+
+@dataclass
+class KyvernoRead:
+    api_group: str
+    policies: list[PolicyView] = field(default_factory=list)
+    policy_kinds_served: tuple[str, ...] = ()
+    results: list[ResultView] = field(default_factory=list)
+    reports: int = 0
+    legacy_results: int = 0
+    other_results: int = 0
+    breaker: BreakerView | None = None
+
+
+def _bool(value, default: bool) -> bool:
+    return default if value is None else bool(value)
+
+
+def policy_view(kind: str, obj: dict) -> PolicyView:
+    spec = obj.get("spec") or {}
+    meta = obj.get("metadata") or {}
+    status = obj.get("status") or {}
+    evaluation = spec.get("evaluation") or {}
+    ready = None
+    for cond in (status.get("conditions") or []):
+        if cond.get("type") == "Ready":
+            ready = cond.get("status") == "True"
+    condition = status.get("conditionStatus") or {}
+    if ready is None and isinstance(condition.get("ready"), bool):
+        ready = condition["ready"]
+    return PolicyView(
+        kind=kind, namespace=meta.get("namespace"), name=meta.get("name", ""),
+        admission=_bool((evaluation.get("admission") or {}).get("enabled"), True),
+        background=_bool((evaluation.get("background") or {}).get("enabled"), True),
+        actions=tuple(str(a) for a in (spec.get("validationActions") or ())),
+        failure_policy=str(spec.get("failurePolicy") or "Fail"),
+        ready=ready,
+        generated=bool(status.get("generated")),
+        note=str(condition.get("message") or "")[:300],
+    )
+
+
+def result_views(report: dict) -> tuple[list[ResultView], int, int]:
+    """The CEL results of one report, plus how many legacy and how many unknown-source results it held."""
+    scope = report.get("scope") or {}
+    meta = report.get("metadata") or {}
+    kind = str(scope.get("kind") or "")
+    out: list[ResultView] = []
+    legacy = other = 0
+    for r in report.get("results") or []:
+        source = str(r.get("source") or "")
+        if source == LEGACY_SOURCE:
+            legacy += 1
+            continue
+        policy = str(r.get("policy") or "")
+        policy_kind = CEL_SOURCES.get(source)
+        if policy_kind is None and source in GENERATED_SOURCES:
+            policy_kind, prefix = GENERATED_SOURCES[source]
+            policy = policy[len(prefix):] if policy.startswith(prefix) else policy
+        if policy_kind is None:
+            other += 1
+            policy_kind = "other"
+        result = str(r.get("result") or "")
+        stamp = r.get("timestamp") or {}
+        out.append(ResultView(
+            policy_kind=policy_kind, policy=policy,
+            resource_kind=kind, resource_namespace=str(scope.get("namespace") or meta.get("namespace") or ""),
+            resource_name=str(scope.get("name") or ""),
+            resource_uid=str(scope.get("uid") or meta.get("name") or ""),
+            resource_api_version=str(scope.get("apiVersion") or ""),
+            result=result if result in RESULTS else "error",
+            severity=str(r.get("severity") or ""), category=str(r.get("category") or ""),
+            message=str(r.get("message") or "")[:1000],
+            process=str((r.get("properties") or {}).get("process") or ""),
+            at=int(stamp["seconds"]) if isinstance(stamp, dict) and isinstance(stamp.get("seconds"), int) else None,
+            controlled=kind in CONTROLLED_KINDS,
+        ))
+    return out, legacy, other
+
+
+_BREAKER_LINE = re.compile(r'^(kyverno_breaker_(?:total|drops))\{([^}]*)\}\s+([0-9.eE+-]+)\s*$')
+
+
+def parse_breaker(text: str, into: BreakerView | None = None) -> BreakerView:
+    """The two breaker families from one Kyverno metrics scrape, every circuit summed — there are three, one
+    per controller (`admission reports`, `background scan reports`, `background-scan reports`), each on its
+    own endpoint (discovery §4), and a report dropped by any of them is a result the page cannot show.
+    `drops` stays None when the family is absent: OpenTelemetry exports a counter on its first increment, so
+    absence means no drop observed since that process started, and the caller says so rather than printing 0
+    as a measurement. `into` accumulates across endpoints."""
+    view = into if into is not None else BreakerView()
+    for line in text.splitlines():
+        m = _BREAKER_LINE.match(line)
+        if not m:
+            continue
+        family, _labels, value = m.groups()
+        try:
+            n = int(float(value))
+        except ValueError:
+            continue
+        if family.endswith("_total"):
+            view.total = (view.total or 0) + n
+        else:
+            view.drops = (view.drops or 0) + n
+    return view
+
+
+def read(cluster_client, metrics_url: str = "") -> KyvernoRead | None:
+    """One read of one cluster. None when no report API group is served (not installed).
+
+    `cluster_client` is a `gsd.kube.ClusterClient`; its `_client()`, `_get()` and `_list_all()` carry
+    the token, the CA, the paging and the outcome mapping every other read uses. A 403 on the reports
+    raises ClusterError(FORBIDDEN) like any other refused list — the poller records it. A 404 on a
+    policy kind is that kind absent (an older Kyverno), not an error.
+    """
+    from ..kube import ClusterError  # local: kube imports nothing from here, and the module stays importable alone
+
+    with cluster_client._client() as client:
+        group = None
+        for name, base, namespaced, cluster_scoped in REPORT_GROUPS:
+            try:
+                cluster_client._get(client, base, {})
+            except ClusterError as exc:
+                if exc.message.startswith(f"HTTP 404 on {base}"):
+                    continue
+                raise
+            group = (name, base, namespaced, cluster_scoped)
+            break
+        if group is None:
+            return None
+        name, base, namespaced, cluster_scoped = group
+        out = KyvernoRead(api_group=name)
+
+        served: list[str] = []
+        for kind, path in POLICY_PATHS:
+            try:
+                items = cluster_client._list_all(client, path)
+            except ClusterError as exc:
+                if exc.message.startswith(f"HTTP 404 on {path}"):
+                    continue
+                raise
+            served.append(kind)
+            out.policies.extend(policy_view(kind, obj) for obj in items)
+        out.policy_kinds_served = tuple(served)
+
+        for collection in (cluster_scoped, namespaced):
+            path = f"{base}/{collection}"
+            for report in cluster_client._list_all(client, path):
+                labels = (report.get("metadata") or {}).get("labels") or {}
+                if labels.get(MANAGED_BY) != KYVERNO:
+                    continue
+                out.reports += 1
+                views, legacy, other = result_views(report)
+                out.results.extend(views)
+                out.legacy_results += legacy
+                out.other_results += other
+
+    urls = [u for u in re.split(r"[,\s]+", metrics_url or "") if u]
+    if urls:
+        breaker = BreakerView()
+        for url in urls:
+            try:
+                response = httpx.get(url, timeout=10.0)
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                log.warning("%s: the Kyverno breaker scrape of %s failed (%s) — the truncation state is unknown this cycle",
+                            cluster_client.cluster.name, url, exc)
+                break
+            parse_breaker(response.text, breaker)
+        else:
+            out.breaker = breaker
+    return out

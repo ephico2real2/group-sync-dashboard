@@ -108,6 +108,7 @@
   --tab-usage: #c2410c;
   --tab-reports: #5b6470;      /* documents; 5.69:1 on --page (measured) */
   --tab-kpi: #4a55a3;          /* the KPI page (#157): instrument indigo; measured in tests/test_accessibility.py */
+  --tab-kyverno: #0b6e7a;      /* the Kyverno page (#170): guard-rail teal; measured in tests/test_accessibility.py */
   /* Report categories (#147 reports table): a chip label + a per-row rail/wash (--rk). NOT --tab-*
      (those are the active-tab label colours the contrast test audits); mid-tone on --surface-1. */
   --k-access: #4f6b57; --k-rbac: #8a5a3c; --k-identity: #4a5c7a; --k-activity: #7a5170; --k-compliance: #6a6440;
@@ -220,6 +221,7 @@
     --tab-usage: #d9490d;
     --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
     --tab-kpi: #9aa3e6;
+    --tab-kyverno: #5cc4cf;
     --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
 }
@@ -270,6 +272,7 @@
   --tab-usage: #d9490d;
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
   --tab-kpi: #9aa3e6;
+  --tab-kyverno: #5cc4cf;
   --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
 }
 }
@@ -919,6 +922,7 @@ body[data-page="logins"]   { --accent: var(--tab-logins); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 body[data-page="reports"]  { --accent: var(--tab-reports); }
 body[data-page="kpi"]      { --accent: var(--tab-kpi); }
+body[data-page="kyverno"]  { --accent: var(--tab-kyverno); }
 
 .tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
 .tab {

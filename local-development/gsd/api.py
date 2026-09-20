@@ -34,6 +34,7 @@ from .config import (
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
 )
 from .kube import TIER_ALL, TIER_SELF, TierResolver
+from .kyverno import CONTROLLED_KINDS
 from .leader import LeaderElector, own_namespace
 from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
@@ -1978,6 +1979,42 @@ def build_app(
             "viewer": trusted_viewer(request),
             **store.operator_configs(cluster_id),
         }
+
+    @app.get("/api/clusters/{cluster_id}/kyverno")
+    @consistent
+    def kyverno(
+        request: Request,
+        cluster_id: str,
+        problems: bool = Query(default=True, description="Only fail/warn/error results (the page's default); false lists every result."),
+        controlled: bool = Query(default=False, description="Include results on Pods, ReplicaSets and Jobs — usually a "
+                                                            "controller's copies of one finding; off by default, said on the page."),
+        policy: str | None = Query(default=None, max_length=253, description="Only one policy's results."),
+        limit: int = Query(default=500, ge=1, le=5000, description="Maximum result rows; `total` says how many match."),
+    ) -> dict:
+        """The Kyverno policy module (#165, #170): the CEL policies, their reports' results, the history.
+
+        Three states the page must render distinctly: `present: null` (never polled since the
+        module arrived), `present: false` (no policy-report API group is served — not installed),
+        and `present: true` with `legacy_results` saying how many results the deprecated family
+        wrote that this module does not read, and `breaker_drops` saying whether the reports
+        controller dropped reports (null: no drop observed, or no scrape configured).
+
+        ADMINISTRATOR TIER ONLY, like the operator configs: a policy finding names a resource and
+        says what is wrong with it, cluster-wide, and answers nothing a reader can ask about
+        themselves.
+        """
+        require_cluster(cluster_id)
+        require_admin_tier(request, cluster_id)
+        summary = store.kyverno_summary(cluster_id)
+        out = {"cluster": cluster_id, "scope": "all", "viewer": trusted_viewer(request),
+               "enabled": settings.kyverno_enabled, **summary}
+        if summary.get("present"):
+            rows, total = store.kyverno_results(cluster_id, problems_only=problems, include_controlled=controlled,
+                                                policy=policy, limit=limit)
+            out.update({"policies_list": store.kyverno_policies(cluster_id), "rows": rows, "total": total,
+                        "truncated": len(rows) < total, "events": store.kyverno_events(cluster_id),
+                        "controlled_kinds": list(CONTROLLED_KINDS)})
+        return out
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
     @consistent

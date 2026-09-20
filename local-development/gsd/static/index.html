@@ -157,6 +157,7 @@ const STATES = {
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
+                kyvernoControlled: false, kyvernoPolicy: null,   // #170: the Kyverno page's two filters (filters, not positions)
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
@@ -306,6 +307,7 @@ function applyPosition(pos) {
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null; data.myAccess = null;
       data.namespaces = null; data.ns = null;
+      data.kyverno = null; view.kyvernoPolicy = null;   // #170: a policy name is this cluster's
       data.home = null;   // #158: the answer is the selected cluster's
       // The Users-tab chips name providers and populations of THIS cluster; carried across, a
       // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
@@ -472,6 +474,7 @@ window.addEventListener("hashchange", () => {
 // flash "No groups match this filter" for the length of the fetch, a false claim about a
 // cluster nobody had asked yet.
 let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
+             kyverno: null,   // #170: the module's payload for the selected cluster
              reportCatalog: null, reportRuns: null, reportTicket: null,
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
@@ -596,11 +599,13 @@ function ago(iso) {
   if (!iso) return "never";
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (!isFinite(secs)) return "—";
-  if (secs < 0) return "in " + ago(new Date(Date.now() + (-secs * 1000)).toISOString());
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
+  // A future instant reads "in 40m". The first cut recursed on a mirrored ISO string, which is STILL
+  // in the future, so any value ahead of the browser's clock — a store stamped by a host whose clock
+  // runs ahead, a fixture's stamp — blew the stack and took the whole page with it (#170, measured:
+  // "Maximum call stack size exceeded" for a 40-minute lead).
+  const n = Math.abs(secs);
+  const word = n < 60 ? `${n}s` : n < 3600 ? `${Math.floor(n / 60)}m` : n < 86400 ? `${Math.floor(n / 3600)}h` : `${Math.floor(n / 86400)}d`;
+  return secs < 0 ? `in ${word}` : `${word} ago`;
 }
 
 function badge(state) {
@@ -1072,6 +1077,7 @@ function renderFilters() {
       ${tab("users", "Users")}
       ${tab("bindings", "Access granted")}
       ${tab("policy", "RBAC policy")}
+      ${tab("kyverno", "Kyverno")}
       ${tab("nsaudit", "Namespace audit")}
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
@@ -4934,6 +4940,182 @@ function wireLookup() {
   });
 }
 
+/* ── Kyverno (#165, #170) ──────────────────────────────────────────────────────────────────
+   The CEL policy family read through the policy reports. Three states are rendered distinctly and
+   never as zero: never polled, not installed (no report API group served), and installed — where the
+   deprecated family's results and the report breaker's drops are first-class states beside the counts.
+   Administrator tier: a finding names a resource cluster-wide. */
+const KYVERNO_REFUSAL = `A policy finding names a resource and says what is wrong with it, cluster-wide, and
+  answers nothing about your own access.`;
+const KYVERNO_RESULT_BADGE = { fail: "critical", error: "critical", warn: "warning", pass: "ok", skip: "unknown" };
+function kyvernoResultBadge(result) {
+  return `<span class="badge ${KYVERNO_RESULT_BADGE[result] || "unknown"}"><span class="glyph" aria-hidden="true"></span>${esc(result)}</span>`;
+}
+
+function kyvernoPage() {
+  const d = data.kyverno;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  if (d.forbidden) return refusalCard("Kyverno", KYVERNO_REFUSAL);
+  const head = `<h2>Kyverno <span class="muted fw-normal">· the CEL policy family</span></h2>`;
+  if (d.enabled === false) {
+    return `<section class="card">${head}
+      <div class="empty-note">The Kyverno module is switched off for this deployment (<code>kyverno.enabled: false</code>):
+        the poller reads no policy reports here.</div></section>`;
+  }
+  if (d.present === null || d.present === undefined) {
+    return `<section class="card">${head}
+      <div class="empty-note">Not polled yet — the binding refresh reads the policy reports, and this cluster has not been
+        read since the module arrived. Nothing here is a statement about the cluster.</div></section>`;
+  }
+  if (!d.present) {
+    return `<section class="card">${head}
+      <div class="empty-note">No policy-report API group is served on <code>${esc(view.cluster)}</code> — neither
+        <code>openreports.io/v1alpha1</code> nor <code>wgpolicyk8s.io/v1alpha2</code> — so Kyverno is not installed
+        there, or its reports API is not. This page reads reports, not policy objects: without them there is nothing
+        to say, and "no findings" would be the wrong thing to say.
+        <span class="muted">Last looked ${esc(ago(d.observed_at))}.</span></div></section>`;
+  }
+  const r = d.results || {};
+  const problems = (r.fail || 0) + (r.error || 0);
+  const policies = d.policies_list || [];
+  const kinds = d.policy_kinds || [];
+  const breakerNote = d.breaker_drops
+    ? `<div class="truncation-note" id="kyverno-breaker">The reports controller's breaker has dropped
+        <strong>${d.breaker_drops}</strong> report${d.breaker_drops === 1 ? "" : "s"} (<code>kyverno_breaker_drops</code>, read
+        ${esc(ago(d.observed_at))}) — results below are <strong>incomplete</strong>, and the missing ones are the
+        newest. Raise <code>--maxBackgroundReports</code> on the background controller or reduce what the policies
+        match.</div>`
+    : d.breaker_total !== null && d.breaker_total !== undefined
+      ? `<div class="filterbar-note" id="kyverno-breaker">No report has been dropped by the breaker
+          (<code>kyverno_breaker_total</code> ${d.breaker_total}, no <code>kyverno_breaker_drops</code> exported — a counter
+          appears on its first increment). The results below are the whole set the controller wrote.</div>`
+      : `<div class="filterbar-note" id="kyverno-breaker">Whether the reports controller dropped any report is
+          <strong>unknown</strong>: <code>kyverno.metricsUrl</code> is not set, so the breaker is not read. The results
+          below may be incomplete on a large cluster.</div>`;
+  const legacyNote = d.legacy_results
+    ? `<div class="truncation-note" id="kyverno-legacy"><strong>${d.legacy_results}</strong> result${d.legacy_results === 1 ? "" : "s"}
+        on this cluster come from the deprecated <code>ClusterPolicy</code>/<code>Policy</code> family and are
+        <strong>not shown</strong>. The API says that family will be removed in a future release; this page reads the
+        CEL kinds only (${CEL_KIND_WORDS}). A cluster carrying them is not a clean cluster.</div>`
+    : "";
+  const otherNote = d.other_results
+    ? `<div class="filterbar-note">${d.other_results} result${d.other_results === 1 ? "" : "s"} name a policy kind this page
+        does not know (a source other than the five CEL kinds and the deprecated family); they are listed under
+        <code>other</code>.</div>`
+    : "";
+  const status = `<section class="card">${head}
+    <div class="filterbar-note">Read through <code>${esc(d.api_group || "")}</code>
+      ${esc(ago(d.observed_at))}${kinds.length ? ` · the cluster serves ${kinds.map((k) => `<code>${esc(k)}</code>`).join(", ")}` : " · no CEL policy kind is served"}
+      · <strong>${d.reports}</strong> report${d.reports === 1 ? "" : "s"} written by Kyverno. Results are keyed by policy and
+      resource — the CEL engine writes no rule name.</div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">CEL policies</div><div class="value">${d.policies}</div></div>
+      <div class="kpi${problems ? " flag-critical" : ""}"><div class="label">Failing</div><div class="value${problems ? "" : " muted"}">${problems}</div></div>
+      <div class="kpi${r.warn ? " flag-warning" : ""}"><div class="label">Warnings</div><div class="value${r.warn ? "" : " muted"}">${r.warn || 0}</div></div>
+      <div class="kpi"><div class="label">Passing</div><div class="value">${r.pass || 0}</div></div>
+      <div class="kpi"><div class="label">Skipped</div><div class="value muted">${r.skip || 0}</div></div>
+      <div class="kpi${d.legacy_results ? " flag-warning" : ""}"><div class="label">Not shown (deprecated family)</div><div class="value${d.legacy_results ? "" : " muted"}">${d.legacy_results || 0}</div></div>
+    </div>
+    ${legacyNote}${otherNote}${breakerNote}
+  </section>`;
+
+  const policiesCard = `<section class="card">
+    <h2>Policies <span class="muted fw-normal">· ${policies.length}</span></h2>
+    <div class="filterbar-note">A policy with <strong>background off</strong> and <strong>Audit</strong> only is
+      evaluated at admission time: a resource that existed before the policy is never reported, and a resource it
+      admitted with a pass is its only trace. <strong>Deny</strong> builds no report at all — a blocked request
+      leaves the kube-apiserver audit log as its only record.</div>
+    ${policies.length === 0
+      ? `<div class="empty-note">No CEL policy on this cluster${kinds.length ? "" : " — and no CEL policy kind is served, so an older Kyverno may be installed"}.</div>`
+      : `<div class="scroll-x"><table>
+        <thead><tr><th>Kind</th><th>Policy</th><th>Admission</th><th>Background</th><th>Actions</th><th>Failure policy</th><th>Ready</th>
+          <th class="num">Pass</th><th class="num">Fail</th><th class="num">Warn</th><th class="num">Error</th><th class="num">Skip</th></tr></thead>
+        <tbody>${policies.map((p) => `<tr class="rowlink" data-kyverno-policy="${esc(p.policy)}">
+          <td><span class="chip mono">${esc(p.kind)}</span>${p.generated ? ` <span class="chip" title="status.generated: a Kubernetes ValidatingAdmissionPolicy stands in for this policy; Kyverno's own webhook and background scan stand down, and its rows come from the admission policy's reports.">generated</span>` : ""}</td>
+          <td><button type="button" class="drill mono">${esc(p.policy)}</button></td>
+          <td>${p.admission ? "on" : `<span class="muted">off</span>`}</td>
+          <td>${p.background ? "on" : `<span class="muted">off</span>`}</td>
+          <td class="mono">${(p.actions || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
+          <td class="mono">${esc(p.failure_policy)}</td>
+          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="warn">no</span>`}${p.note ? ` <span class="muted" title="${esc(p.note)}">·</span>` : ""}</td>
+          <td class="num">${p.results.pass}</td>
+          <td class="num${p.results.fail ? " warn" : ""}">${p.results.fail}</td>
+          <td class="num">${p.results.warn}</td>
+          <td class="num${p.results.error ? " warn" : ""}">${p.results.error}</td>
+          <td class="num muted">${p.results.skip}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+      <div class="filterbar-note mt-4">Select a policy to see its findings alone.</div>`}
+  </section>`;
+
+  const rows = d.rows || [];
+  const controlledOn = !!view.kyvernoControlled;
+  const findings = `<section class="card">
+    <h2>Findings <span class="muted fw-normal">· ${d.total}${view.kyvernoPolicy ? ` for <code>${esc(view.kyvernoPolicy)}</code>` : ""}</span></h2>
+    <div class="filterbar mt-2">
+      <button type="button" class="rp-switch${controlledOn ? " on" : ""}" id="kyverno-controlled" role="switch" aria-checked="${controlledOn}">
+        <span class="rp-track" aria-hidden="true"><span class="rp-knob"></span></span>
+        <span class="rp-lab">Include ${(d.controlled_kinds || []).join(", ")}</span></button>
+      ${view.kyvernoPolicy ? `<button type="button" class="linkish" id="kyverno-all-policies">every policy</button>` : ""}
+    </div>
+    <div class="filterbar-note">Results on ${(d.controlled_kinds || []).join(", ")} are usually a controller's copies of one
+      finding — a Deployment's failure repeats on every ReplicaSet and Pod under it. Kyverno's CLI collapses those by
+      rule name, which the CEL family has none of, so they are <strong>filtered here, visibly</strong>: the switch shows
+      them. Every count above includes them.</div>
+    ${d.truncated ? `<div class="truncation-note">Showing the worst <strong>${rows.length}</strong> of <strong>${d.total}</strong>
+        findings. The counts above cover all of them.</div>` : ""}
+    ${rows.length === 0
+      ? `<div class="empty-note">${d.total === 0 && !controlledOn && !view.kyvernoPolicy
+          ? "No failing, erroring or warning result on a resource the switch does not hide."
+          : "No finding matches the filters."}</div>`
+      : `<div class="scroll-x"><table>
+        <thead><tr><th>Result</th><th>Policy</th><th>Resource</th><th>Severity</th><th>Message</th><th title="Kyverno derives this from the policy's evaluation flags, background first — it says what the policy is, not which path wrote the row.">Evaluation</th><th title="The result's own timestamp: re-stamped by every background scan, so it is 'last evaluated', not 'first seen'.">Evaluated</th></tr></thead>
+        <tbody>${rows.map((x) => `<tr>
+          <td>${kyvernoResultBadge(x.result)}</td>
+          <td class="mono">${esc(x.policy)}${x.policy_kind !== "ValidatingPolicy" ? ` <span class="chip mono">${esc(x.policy_kind)}</span>` : ""}</td>
+          <td><span class="mono">${esc(x.resource_kind)}</span> ${esc(x.resource_namespace ? `${x.resource_namespace}/${x.resource_name}` : x.resource_name)}</td>
+          <td>${x.severity ? `<span class="chip">${esc(x.severity)}</span>` : `<span class="muted">—</span>`}${x.category ? ` <span class="muted">${esc(x.category)}</span>` : ""}</td>
+          <td class="muted">${esc(x.message)}</td>
+          <td class="muted">${esc(x.process || "—")}</td>
+          <td class="mono muted nowrap">${x.at ? esc(ago(new Date(x.at * 1000).toISOString())) : "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`}
+  </section>`;
+
+  const events = d.events || [];
+  const history = `<section class="card">
+    <h2>Changes <span class="muted fw-normal">· ${events.length}</span></h2>
+    <div class="filterbar-note">A report is owned by its resource and dies with it, so Kyverno keeps no history. The
+      dashboard records a problem that <strong>appeared</strong> or <strong>cleared</strong> between two reads —
+      a cleared one is either fixed or gone with its resource — for ${KYVERNO_HISTORY_WORDS}.</div>
+    ${events.length === 0
+      ? `<div class="empty-note">No change recorded yet: the first read of a cluster is a baseline, not a burst of appearances.</div>`
+      : `<div class="scroll-x"><table>
+        <thead><tr><th>Change</th><th>Result</th><th>Policy</th><th>Resource</th><th>Observed</th></tr></thead>
+        <tbody>${events.map((e) => `<tr>
+          <td class="${e.change === "appeared" ? "change-added" : "change-removed"}">${e.change === "appeared" ? "+ appeared" : "− cleared"}</td>
+          <td>${kyvernoResultBadge(e.result)}</td>
+          <td class="mono">${esc(e.policy)}</td>
+          <td><span class="mono">${esc(e.resource_kind)}</span> ${esc(e.resource_namespace ? `${e.resource_namespace}/${e.resource_name}` : e.resource_name)}${e.message ? ` <span class="muted">· ${esc(e.message)}</span>` : ""}</td>
+          <td class="mono">${esc(fmtTime(e.observed_at))}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`}
+  </section>`;
+  return status + policiesCard + findings + history;
+}
+const CEL_KIND_WORDS = "ValidatingPolicy, MutatingPolicy, GeneratingPolicy, DeletingPolicy, ImageValidatingPolicy";
+const KYVERNO_HISTORY_WORDS = "as long as the deployment's retention keeps them (<code>kyverno.eventsRetentionDays</code>)";
+
+function wireKyverno() {
+  const sw = $("kyverno-controlled");
+  if (sw) sw.onclick = () => { view.kyvernoControlled = !view.kyvernoControlled; data.kyverno = null; render(); refresh(); };
+  const all = $("kyverno-all-policies");
+  if (all) all.onclick = () => { view.kyvernoPolicy = null; data.kyverno = null; render(); refresh(); };
+  document.querySelectorAll("[data-kyverno-policy]").forEach((el) => {
+    el.onclick = () => { view.kyvernoPolicy = el.dataset.kyvernoPolicy; data.kyverno = null; render(); refresh(); };
+  });
+}
+
 function nsAuditPage() {
   const ub = data.userBindings;
   if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -5545,6 +5727,9 @@ function render() {
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
+  } else if (view.page === "kyverno") {
+    main.innerHTML = kyvernoPage();
+    wireKyverno();
   } else if (view.page === "kpi") {
     // The same tier rule as the Overview, in the same words: the page is about the clusters and
     // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
@@ -5961,6 +6146,13 @@ async function refresh(opts = {}) {
       if ((view.page === "overview" && !view.groupsync) || view.page === "policy") {
         want.operatorConfigs = clusterGone(guard403(get(`${base}/operator-configs`)));
       }
+      // The Kyverno page (#170): the module's one payload for the selected cluster, with the page's two
+      // filters on the wire (the controlled-kind switch, one policy) — the server does the narrowing.
+      if (view.page === "kyverno" && !narrowedReader()) {
+        const q = new URLSearchParams({ controlled: view.kyvernoControlled ? "true" : "false" });
+        if (view.kyvernoPolicy) q.set("policy", view.kyvernoPolicy);
+        want.kyverno = clusterGone(guard403(get(`${base}/kyverno?${q}`)));
+      }
       if (view.page === "nsaudit") {
         // The namespace filter is applied SERVER-side, not by filtering a full response in
         // the browser: the point is to stop shipping thousands of rows, and a client-side
@@ -6118,6 +6310,8 @@ async function refresh(opts = {}) {
       }
     }
     if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
+    if ("kyverno" in got) data.kyverno = got.kyverno;
+    if (view.page === "kyverno" && narrowedFor(got.whoami)) data.kyverno = { forbidden: true };   // the designed refusal, decided from the whoami that just arrived
     // #172: the fleet view's GroupSync and policy tables are the per-cluster payloads, fetched in
     // parallel AFTER the cluster list is known — one extra stage, and only up to the medium tier
     // (eight clusters): forty clusters must not cost eighty requests a minute for two tables that

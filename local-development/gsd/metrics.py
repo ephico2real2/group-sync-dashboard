@@ -66,7 +66,7 @@ TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbi
 REPORT_PULL_OUTCOMES = ("ok", "refused", "unreachable", "error")
 TIERS = ("all", "self")
 RETENTION_TABLES = ("login_event", "dashboard_user_activity", "membership_event", "sync_event",
-                    "binding_event", "kpi_daily")
+                    "binding_event", "kpi_daily", "kyverno_result_event")
 # binding_event's two vocabularies. subject_kind is the Kubernetes subject kind, bounded at two;
 # NO label ever carries the subject's name (the public-/metrics rule).
 BINDING_CHANGES = ("added", "removed")

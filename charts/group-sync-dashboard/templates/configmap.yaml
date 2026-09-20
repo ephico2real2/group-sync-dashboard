@@ -78,6 +78,10 @@ data:
     # comma or a space (review of C2), and the app accepts the list form as it is.
     usersProviders: {{ .Values.config.users.providers | toJson }}
     identitiesReadEnabled: {{ .Values.rbac.identities }}
+    # The Kyverno policy module (#170): the read switch, the breaker scrape and the history window.
+    kyvernoEnabled: {{ .Values.kyverno.enabled }}
+    kyvernoMetricsUrl: {{ .Values.kyverno.metricsUrl | quote }}
+    kyvernoEventsRetentionDays: {{ .Values.kyverno.eventsRetentionDays }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}

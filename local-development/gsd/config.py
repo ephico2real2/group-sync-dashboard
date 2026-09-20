@@ -392,6 +392,16 @@ class Settings:
     # that is refused every poll would put a 403 a minute into the API server's audit log.
     identities_read_enabled: bool = False
 
+    # The Kyverno policy module (#165, #170): read the CEL policy family through the policy reports.
+    # Auto-detected per cluster — a cluster serving no report API records "not installed" — so the
+    # switch is about the RBAC and the reads, not about whether Kyverno exists. `kyverno_metrics_url`
+    # is the reports controller's metrics endpoint the dashboard can reach (in-cluster on the host
+    # cluster; empty = the breaker's truncation state is unknown). `kyverno_events_retention_days`
+    # bounds the appeared/cleared history like the other event tables.
+    kyverno_enabled: bool = True
+    kyverno_metrics_url: str = ""
+    kyverno_events_retention_days: int = 90
+
     user_activity_enabled: bool = True
     # "self" | "all". Who may read /api/dashboard/activity. Defaults to self, because the
     # response is identifiable personnel data — who was present, when, and how much — and
@@ -1234,5 +1244,10 @@ def load_settings(path: str | Path) -> Settings:
         ),
         sync_events_retention_days=_num_setting(
             raw, "GSD_SYNC_EVENTS_RETENTION_DAYS", "syncEventsRetentionDays", 730, int
+        ),
+        kyverno_enabled=_bool_setting(raw, "GSD_KYVERNO_ENABLED", "kyvernoEnabled", True),
+        kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
+        kyverno_events_retention_days=_num_setting(
+            raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int
         ),
     )

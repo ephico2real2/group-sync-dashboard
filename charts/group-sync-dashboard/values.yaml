@@ -1231,6 +1231,30 @@ rbac:
   identities: false
 
 # ---------------------------------------------------------------------------
+# Kyverno policy module  (#165, #170) — the CEL policy family, read through the policy reports
+# ---------------------------------------------------------------------------
+kyverno:
+  # Grants get/list on the policy reports (wgpolicyk8s.io, openreports.io) and the five CEL policy
+  # kinds (policies.kyverno.io), and turns the poller's read on. Auto-detected per cluster: a cluster
+  # serving no policy-report API group records "not installed" and the page says so — never zero
+  # results. Read-only; no /status, no write verb. The deprecated ClusterPolicy/Policy family is
+  # not read (the API says it will be removed in a future release); its results are counted so the
+  # page can say they exist.
+  enabled: true
+  # The metrics endpoints the dashboard pod can reach, for the report breakers
+  # (kyverno_breaker_total / kyverno_breaker_drops): reports a breaker dropped are results the page
+  # cannot show, so the truncation is a state, not a clean cluster. There are THREE circuits, one per
+  # controller, each on its own endpoint — name them all, comma-separated, in-cluster on the host
+  # cluster: http://kyverno-svc-metrics.kyverno.svc:8000/metrics (admission reports),
+  # http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics (background scan reports),
+  # http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics (background-scan reports).
+  # "" leaves the truncation state unknown (said on the page). One GET per endpoint per poll.
+  metricsUrl: ""
+  # The appeared/cleared history of problem results, pruned like the other event tables (days;
+  # 0 keeps forever). Reports carry no history of their own — a report dies with its resource.
+  eventsRetentionDays: 90
+
+# ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)
 # ---------------------------------------------------------------------------
 # Grants the DASHBOARD read access to the oauth-server's pod logs, which is where the "who logged in"
