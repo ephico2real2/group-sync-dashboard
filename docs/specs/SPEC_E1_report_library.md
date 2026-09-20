@@ -23,13 +23,20 @@ with the reason, under "Orchestrator's notes".
 
 ## Orchestrator's notes
 
+- Review of #233, OB3 (2026-09-20): F1 a drawer opened by click or Enter left the focus on the card behind the overlay
+  (render()'s by-id restore beat the dialog's first-control focus) — the card blurs before the repaint; F2 a report with two
+  schedules listed its manual runs under both sections (every card and chip twice under one id) — manual runs belong to the
+  report and sit under its first section only; F3 the positioned run's fetch was the one library request outside `guard403`,
+  so a 403 painted the API-error panel instead of the refusal card; F4 the manual vocabulary above. Rejected nothing.
+
 - Review of #233 (2026-09-20, Grok, Codex — `docs/REVIEW_report_library.md`): the generate link's id is minted from
   the SECTION (`lib-gen-sec-<schedule>`) when the section belongs to a schedule, from the report when it does not —
   a report with two schedules repeated one id. The positioned run is fetched by id (`libraryPositionRun()` →
   `data.libraryRun`, in the fingerprint) and joined to the listing, so a run past the API's first page opens
-  rather than "Run not found". `manual:cap`'s words are the page's, not the mock's: "held by the manual run cap
-  alone" when no age bound applies (the mock's "goes on the next prune" is false with `manual_days` 0), "expires …"
-  when one does — §3's rule, the same ranking. Rejected: re-basing `ago()`/`untilShort()` on the service's
+  rather than "Run not found". `manual:cap` is superseded by OB3's
+  F4 (below): the wire tells the two manual states apart — `manual:<days>d` for every run within the cap (`manual:0d` =
+  kept indefinitely, the mirror of `age:0d`) and `manual:cap` only beyond it (gone on the next prune, the mock's words,
+  which were right for that state); the earlier "held by the manual run cap alone" conflated the two. Rejected: re-basing `ago()`/`untilShort()` on the service's
   `as_of` — every page reads the browser clock for relative words, and one page drifting from the rest is the
   worse defect; and stripping `cluster` from the library's position — the position is the app's, and a reader on a
   two-cluster dashboard must land on the right one.
@@ -115,9 +122,9 @@ computed by the code `prune()` runs, refactored so that the ranking is written o
     longer while it stays among the `keep`;
   - `age:<days>d` — a scheduled run beyond the newest `keep`, kept while younger than `days`
     (`age:0d` when `days` is 0: kept indefinitely);
-  - `manual:<days>d` — a manual run within the count cap, kept `days`;
-  - `manual:cap` — a manual run beyond `manual_max_runs` (it goes on the next prune), or one under
-    a cap with no age bound;
+  - `manual:<days>d` — a manual run within the count cap, kept `days` (`manual:0d` when `days` is 0: kept
+    indefinitely, like `age:0d`);
+  - `manual:cap` — a manual run beyond `manual_max_runs`: it goes on the next prune;
   - `null` — queued or running: never doomed.
 
 `docs/CHANGELOG.md` and `local-development/API.md` say this in one paragraph each.
@@ -155,7 +162,8 @@ class Retention(NamedTuple):
     `expires_at` is the EARLIEST instant the run can go: `retention_stamp + 1 s + days`, the instant
     `older_than` starts answering true; None when no age bound applies. `retained_by` says why it is
     held now (`newest:<n>/<keep> of <schedule> on <cluster>` — kept whatever its age, so at least until
-    `expires_at`; `age:<days>d`; `manual:<days>d`; `manual:cap`); None for a queued or running run.
+    `expires_at`; `age:<days>d`; `manual:<days>d` — `manual:0d` under a cap with no age bound, like `age:0d`;
+    `manual:cap` beyond the cap, gone on the next prune); None for a queued or running run.
     `doomed_at` is prune's own answer: the instant it deletes the run, `datetime.min` for one already
     beyond a count cap, None while the rank protects it or no bound applies. The page reads the first
     two (#229); prune reads the third. One ranking, two readers — the words on the page can never
@@ -249,7 +257,7 @@ New:
                 at = bound(r, manual_days)
                 plan[r.id] = Retention(_stamp(at), f"manual:{manual_days}d", at)
             else:
-                plan[r.id] = Retention(None, "manual:cap", None)
+                plan[r.id] = Retention(None, f"manual:{manual_days}d", None)
         by_key: dict[tuple[str, str], list[Run]] = {}
         for r in sorted((r for r in finished if r.schedule), key=newest_first, reverse=True):
             by_key.setdefault((r.schedule, r.cluster), []).append(r)

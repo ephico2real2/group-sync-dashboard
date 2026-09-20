@@ -1632,8 +1632,21 @@ class TestRetentionStanding:
         store = ArtifactStore(str(tmp_path))
         self._mk(store, "20260901T120000.000000Z-m1", "2026-09-01T12:00:00Z")
         standing = store.retention(**{**self.GLOBALS, "manual_days": 0})["20260901T120000.000000Z-m1"]
-        assert standing == (None, "manual:cap", None)
+        assert standing == (None, "manual:0d", None)   # like `age:0d`: kept indefinitely
         assert self._prune_keeps(store, self._at("2036-01-01T00:00:00Z"), "20260901T120000.000000Z-m1", manual_days=0)
+
+    def test_beyond_the_cap_and_under_it_with_no_age_bound_are_told_apart_on_the_wire(self, tmp_path):
+        # OB3 (#233): both carried (None, "manual:cap"), so the page printed "held by the manual run cap alone"
+        # for the run the very next prune deletes — the one case where the words and the deletion disagreed
+        store = ArtifactStore(str(tmp_path))
+        for j in range(3):
+            self._mk(store, f"20260901T12000{j}.000000Z-m{j}", f"2026-09-01T12:00:0{j}Z")
+        beyond = store.retention(**{**self.GLOBALS, "manual_max_runs": 2})["20260901T120000.000000Z-m0"]
+        under = store.retention(**{**self.GLOBALS, "manual_days": 0})["20260901T120000.000000Z-m0"]
+        assert (beyond.expires_at, beyond.retained_by) == (None, "manual:cap")
+        assert (under.expires_at, under.retained_by) == (None, "manual:0d")
+        assert (beyond.expires_at, beyond.retained_by) != (under.expires_at, under.retained_by), "the page reads only these two"
+        assert not self._prune_keeps(store, self._at("2026-09-01T12:00:05Z"), "20260901T120000.000000Z-m0", manual_max_runs=2)
 
     def test_a_scheduled_run_among_the_newest_keep_is_kept_whatever_its_age_and_says_at_least_until(self, tmp_path):
         store = ArtifactStore(str(tmp_path))

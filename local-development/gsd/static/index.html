@@ -3016,8 +3016,9 @@ function libraryExpiry(run) {
   if (m) return run.expires_at
     ? { words: `newest ${m[1]} of ${m[2]} · kept at least until`, date: fmtStamp(run.expires_at) }
     : { words: `newest ${m[1]} of ${m[2]} · kept while it is`, date: "" };
-  if (by === "manual:cap") return run.expires_at ? { words: `expires ${untilShort(run.expires_at)}`, date: fmtStamp(run.expires_at) }
-    : { words: "held by the manual run cap alone", date: "" };
+  // `manual:cap` is the run beyond the cap, and prune's next pass deletes it whatever its age; a run under the
+  // cap with no age bound says `manual:0d` and falls through to "kept indefinitely", as `age:0d` does
+  if (by === "manual:cap") return { words: "beyond the manual run cap — goes on the next prune", date: "" };
   if (run.expires_at) return { words: `expires ${untilShort(run.expires_at)}`, date: fmtStamp(run.expires_at) };
   return { words: "kept indefinitely", date: "" };
 }
@@ -3098,8 +3099,11 @@ function librarySections() {
   const sections = [];
   enabled.forEach((report) => {
     const mine = schedules.filter((s) => s.report === report.name);
-    if (mine.length) mine.forEach((sched) => sections.push({ report, sched }));
-    else sections.push({ report, sched: null });
+    // Manual runs belong to the REPORT, not to a schedule: a report with two schedules has two sections, and
+    // listing its manual runs under both put every card and its chips on the page twice under one id (review of
+    // #233, OB3 — measured). They are listed once, under the report's first section; the rest carry none.
+    if (mine.length) mine.forEach((sched, i) => sections.push({ report, sched, manuals: i === 0 }));
+    else sections.push({ report, sched: null, manuals: true });
   });
   return sections;
 }
@@ -3110,7 +3114,7 @@ function librarySectionHtml(sec, allRuns) {
   const sid = sched ? `sec-${sched.name}` : `sec-${report.name}`;
   const title = sched ? librarySpokenHead(sched, report) : report.title;
   const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
-  const manuals = allRuns.filter((r) => r.report === report.name && !r.schedule);
+  const manuals = sec.manuals ? allRuns.filter((r) => r.report === report.name && !r.schedule) : [];
   const paused = !!(sched && !sched.enabled);
   const empty = !scheduled.length && !manuals.length;
   const chips = [`<span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span>`];
@@ -3218,8 +3222,8 @@ function libraryPage() {
   if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const what = `The library holds the generated reports — documents about the cluster's own RBAC surface, its groups and its users.`;
   if (narrowedOnHost()) return refusalCard("Library", what);
-  const cat = data.reportCatalog, st = data.reportStatus, lib = data.library;
-  if ((cat && cat.forbidden) || (st && st.forbidden) || (lib && lib.forbidden)) return refusalCard("Library", what);
+  const cat = data.reportCatalog, st = data.reportStatus, lib = data.library, pr = data.libraryRun;
+  if ((cat && cat.forbidden) || (st && st.forbidden) || (lib && lib.forbidden) || (pr && pr.forbidden)) return refusalCard("Library", what);
   if (!cat || !st || !lib) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const allRuns = (lib.runs || []).slice();
   // The listing is the API's first page (1 000); a positioned run past it is fetched by id and joined here,
@@ -3256,7 +3260,13 @@ async function openArtifactInNewTab(runId) {
 function wireLibrary() {
   const main = $("main");
   main.querySelectorAll("[data-run]").forEach((el) => {
-    const open = () => { navigate({ run: el.dataset.run }); render(); };
+    // The drawer is a dialog and its first control must take the focus. render() restores the focus BY ID after
+    // the repaint, and the card that was clicked (or held Enter) keeps its id across it — so the restore put a
+    // reader back on the card BEHIND the overlay, where Escape (handled on the overlay) never fired and Tab walked
+    // the cards' chips behind the dialog; only a cold link, with nothing focused, reached the drawer (review of
+    // #233, OB3 — measured). The card gives the focus up before the repaint, so nothing is restored and the
+    // first-control focus below stands.
+    const open = () => { navigate({ run: el.dataset.run }); el.blur(); render(); };
     el.onclick = (e) => { if (!e.target.closest("[data-artifact]")) open(); };
     el.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); open(); } };
   });
@@ -6531,7 +6541,10 @@ async function refresh(opts = {}) {
       want.reportCatalog = guard403(reportGet("/api/reports"));
       want.reportStatus = guard403(reportGet("/api/status"));
       want.library = guard403(reportGet(LIBRARY_RUNS));
-      want.libraryRun = libraryPositionRun();
+      // guarded like the three above: a 403 here (a reader demoted between polls, a ticket the service refuses)
+      // otherwise threw past them into the catch below and replaced the page with "Dashboard API error … may have
+      // been deleted" — where the listing's own 403 paints the refusal card (review of #233, OB3 — measured)
+      want.libraryRun = guard403(libraryPositionRun());
     }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated

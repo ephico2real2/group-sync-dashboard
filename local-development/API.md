@@ -1013,8 +1013,9 @@ the three probe paths, which are reachable only on the report Service. One line 
 age bound applies — and `retained_by`, why it is held now: `newest:<n>/<keep> of <schedule> on <cluster>`
 (one of the newest `keep` of its schedule on its cluster, kept whatever its age — so at least until
 `expires_at`, and longer while it stays among them), `age:<days>d` (a scheduled run beyond the newest
-`keep`, kept while younger; `age:0d` is kept indefinitely), `manual:<days>d`, `manual:cap` (beyond
-`manual.maxRuns`, or under the cap with no age bound), or `null` for a queued or running run. Both are
+`keep`, kept while younger; `age:0d` is kept indefinitely), `manual:<days>d` (a manual run within the count
+cap, kept `days`; `manual:0d` is kept indefinitely), `manual:cap` (beyond `manual.maxRuns`: it goes on the
+next prune), or `null` for a queued or running run. Both are
 computed by the ranking the prune deletes by — one plan, two readers — never by the page.
 
 ## Alerts

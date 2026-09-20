@@ -92,7 +92,8 @@ class Retention(NamedTuple):
     `expires_at` is the EARLIEST instant the run can go: `retention_stamp + 1 s + days`, the instant
     `older_than` starts answering true; None when no age bound applies. `retained_by` says why it is
     held now (`newest:<n>/<keep> of <schedule> on <cluster>` — kept whatever its age, so at least until
-    `expires_at`; `age:<days>d`; `manual:<days>d`; `manual:cap`); None for a queued or running run.
+    `expires_at`; `age:<days>d`; `manual:<days>d` — `manual:0d` under a cap with no age bound, like `age:0d`;
+    `manual:cap` beyond the cap, gone on the next prune); None for a queued or running run.
     `doomed_at` is prune's own answer: the instant it deletes the run, `datetime.min` for one already
     beyond a count cap, None while the rank protects it or no bound applies. The page reads the first
     two (#229); prune reads the third. One ranking, two readers — the words on the page can never
@@ -293,7 +294,11 @@ class ArtifactStore:
         refactor (a run stamped on the cutoff second survives until the next). Manual tier: the newest
         `manual_max_runs` are kept, then aged by `manual_days`; beyond the cap a run is doomed now.
         Scheduled tier: per (schedule, cluster) the newest `keep` whatever their age, the rest while
-        younger than `days`; a bound of 0 is disabled. Queued/running runs are absent (never doomed)."""
+        younger than `days`; a bound of 0 is disabled. Queued/running runs are absent (never doomed).
+        A run beyond the cap is doomed NOW, and its word says so alone — `manual:cap` — because it is the one
+        standing the page cannot read off `expires_at`: a run under the cap with no age bound carries
+        `manual:0d` (kept indefinitely, like `age:0d`), or the two printed the same sentence for a run that
+        is kept and one that goes within the hour (review of #233, OB3 — measured)."""
         overrides = overrides or {}
 
         def bound(run: Run, days: int) -> datetime | None:
@@ -312,7 +317,7 @@ class ArtifactStore:
                 at = bound(r, manual_days)
                 plan[r.id] = Retention(_stamp(at), f"manual:{manual_days}d", at)
             else:
-                plan[r.id] = Retention(None, "manual:cap", None)
+                plan[r.id] = Retention(None, f"manual:{manual_days}d", None)
         by_key: dict[tuple[str, str], list[Run]] = {}
         for r in sorted((r for r in finished if r.schedule), key=newest_first, reverse=True):
             by_key.setdefault((r.schedule, r.cluster), []).append(r)

@@ -8050,6 +8050,116 @@ class TestLibraryPage:
         finally:
             ctx.close()
 
+    def test_a_drawer_opened_by_click_or_enter_takes_the_focus_and_escape_closes_it(self, browser, reporting_server):
+        # OB3 (#233): render() restores the focus BY ID after the repaint, and the card that was clicked (or held
+        # Enter) keeps its id — so the restore put the reader back on the card BEHIND the overlay: Escape, handled
+        # on the overlay, never fired, and Tab walked the cards' chips behind the dialog. Only the cold-URL path
+        # (nothing focused) reached the drawer's first control.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("[id='run-20990201T000000.000000Z-lib1']")
+            page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close", "the dialog takes the focus"
+            page.keyboard.press("Tab")
+            assert page.evaluate("() => !!document.activeElement.closest('#library-overlay')"), "Tab stays inside the dialog"
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert page.evaluate("() => [location.hash, document.activeElement.id]") == ["#page=library&cluster=crc-local", "run-20990201T000000.000000Z-lib1"]
+            page.click("[id='run-20990201T000000.000000Z-lib1'] .when")   # a mouse click, off the format chips
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close"
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_manual_runs_of_a_two_schedule_report_are_listed_once(self, browser, reporting_server):
+        # OB3 (#233): a report with two schedules has two sections, and every manual run of the report was rendered
+        # under BOTH — the same `run-<id>` and chip ids twice on one page, so the by-id focus restore and the
+        # drawer's return focus landed on the first. The runs belong to the report: once, under its first section.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            def two_schedules(route):
+                response = route.fetch(); body = response.json()
+                weekly = next(s for s in body["schedules"] if s["name"] == "weekly")
+                body["schedules"].append({**weekly, "name": "twice", "schedule": "0 6 1,16 * *", "cadence": "1st & 16th 06:00"})
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+
+            def with_a_manual_groups_run(route):
+                response = route.fetch(); body = response.json()
+                body["runs"].insert(0, {"id": "20990203T000000.000000Z-gman", "report": "groups", "cluster": "crc-local", "params": {},
+                                        "formats": ["html"], "generated_by": "jane.smith", "generated_by_note": "n", "schedule": None,
+                                        "requested_at": "2099-02-03T00:00:00Z", "status": "done", "started_at": "2099-02-03T00:00:00Z",
+                                        "finished_at": "2099-02-03T00:00:02Z", "error": None, "sha256": "ab" * 32, "snapshot_stamp": None,
+                                        "bytes": {"json": 100}, "pdf_variant": None, "render_seconds": 0.1, "origin": "viewer",
+                                        "expires_at": "2099-02-06T00:00:03Z", "retained_by": "manual:3d"})
+                body["total"] += 1
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/status", two_schedules)
+            page.route("**/report/api/runs?limit=1000", with_a_manual_groups_run)
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-twice")
+            assert page.evaluate("() => document.querySelectorAll(\"[id='run-20990203T000000.000000Z-gman']\").length") == 1
+            assert "Manual runs" in page.locator("#sec-weekly").inner_text() and "Manual runs" not in page.locator("#sec-twice").inner_text()
+            dups = page.evaluate("() => { const seen = {}, d = []; document.querySelectorAll('[id]').forEach((e) => { if (seen[e.id]) d.push(e.id); seen[e.id] = 1; }); return d; }")
+            assert dups == [], dups
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_refused_positioned_run_is_the_refusal_card_not_the_error_panel(self, browser, reporting_server):
+        # OB3 (#233): the positioned run's fetch was the one library request outside guard403, so a 403 on it — a
+        # reader demoted between polls, a ticket the service refuses — replaced the whole page with "Dashboard API
+        # error … The object may have been deleted", where the listing's own 403 paints the refusal card.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        target = "20990201T000000.000000Z-lib1"
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.route(f"**/report/api/runs/{target}", lambda route: route.fulfill(status=403, json={"detail": "For administrators only."}))
+            page.goto(base + f"#page=library&cluster=crc-local&run={target}")
+            page.wait_for_function("() => document.querySelector('#main').innerText.includes('For administrators only')")
+            text = page.locator("#main").inner_text()
+            assert "Dashboard API error" not in text and "Withheld, not empty" in text, text
+            assert page.locator("#library-drawer").count() == 0 and page.locator(".run").count() == 0
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_manual_cap_words_say_goes_or_kept_as_the_service_decides(self, browser, reporting_server):
+        # OB3 (#233): `manual:cap` is the run the next prune deletes; `manual:0d` the run kept with no age bound
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            standing = {"retained_by": "manual:cap"}
+
+            def with_the_standing(route):
+                response = route.fetch(); body = response.json()
+                for r in body["runs"]:
+                    if r["id"] == "20990202T000000.000000Z-libm":
+                        r["expires_at"], r["retained_by"] = None, standing["retained_by"]
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/runs?limit=1000", with_the_standing)
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("[id='run-20990202T000000.000000Z-libm']")
+            words = page.locator("[id='run-20990202T000000.000000Z-libm'] .expiry").inner_text()
+            assert words == "beyond the manual run cap — goes on the next prune", words
+            standing["retained_by"] = "manual:0d"
+            page.evaluate("() => refresh()")
+            page.wait_for_function("() => document.querySelector(\"[id='run-20990202T000000.000000Z-libm'] .expiry\").textContent === 'kept indefinitely'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_a_narrowed_reader_gets_the_refusal_card(self, browser, reporting_server):
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "alice")
