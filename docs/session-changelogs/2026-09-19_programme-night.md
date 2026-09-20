@@ -507,3 +507,81 @@ that Secret with `oc` whatever the dashboard shows him.
   after #221). Remaining programme: #143 phases 2–3, #153, #170/#165, #212's Flux example, #210, #219.
 - Worktrees: `gsd-grafana` (detached at main), `gsd-204` (feat/173 — reusable), `gsd-173`, `gsd-149`
   (feat/149-forms), `gsd-changelog`.
+
+---
+
+## Part 12 — #230 S1, clusters as labelled Secrets (10:0x → 15:1x) — PR #235 (merged `62c385a`)
+
+The contract, the discovery reader, the read API, the chart and a tier of its own. Chart 0.42.1,
+migration 19. Four review seats plus a design pass; every fix traced before it was applied, and two
+taken **on the fact but re-implemented** because the proposed mechanism did not hold.
+
+### The tier — a defect, a ruling, and a reversal
+
+- **Found by reading the code against the operator's ruling** ("cluster admin only, not the reporting
+  auditor"): the route shipped on `require_admin_tier`, the WIDE tier — and `gsd/api.py` says in its own
+  words why that is not enough, *"the wide tier that cluster-reader — the deliberate auditor persona —
+  also passes"*. Replaced by a tier of its own, modelled on Argo CD's first-class `clusters` resource
+  and asked natively: `clusterconfig:view` = `get secrets`, `clusterconfig:manage` = `create secrets`,
+  in the release namespace.
+- **Measured on CRC** (`oc get clusterrole cluster-reader -o json`): **0 of 172 rules** cover core
+  `secrets`; the auditor persona answers `no` to both questions **with his three groups carried**, while
+  passing the wide tier and an admin-gated endpoint. That is the whole reason the plain question suffices.
+- **An ordering was added, then REVERSED by the operator** the same day — *"A user with cluster admin and
+  auditor is fine. That is how Kubernetes RBAC works."* Each level asks its own question alone: RBAC is
+  additive; whoever passes `create secrets` can write the Secret with `oc`, so the gate is the action's
+  own question and the ServiceAccount is not a confused deputy. Both the finding and the reversal are in
+  `docs/specs/SPEC_S1_cluster_secrets.md`, because what the ordering measured is still true.
+- **Deviation recorded**: the offered patch used `usage_scope` as the lower rung. That rung dissolves —
+  `usage_scope` returns "all" for EVERY viewer when `userActivity.visibility: all`, and `viewer_scope`
+  widens for everyone when `visibility.enabled` is off. Caught by tracing it, not by a test.
+
+### The four seats (`docs/REVIEW_cluster_secrets.md`)
+
+- **Accepted, Grok C2 / Codex C2**: no `restrict` short-circuit — turning cluster-data restrictions off
+  must not widen this surface. One test now pins both widening switches.
+- **Accepted, Codex C4**: an unknown pod namespace silently became a **cluster-scoped** `get secrets`, a
+  broader question than the one configured. It refuses and says why.
+- **Accepted, Codex C7**: `caData: ""` beside `insecure: true` slipped past the refusal and polled
+  insecurely; the refusal now tests the key's **presence**.
+- **Accepted, Codex C8 + Fable**: a remote that echoes the request returns our own bearer token in its
+  error body, which `_get` copied into the error, `record_poll` stored and `/api/clusters` served — and
+  the first redaction truncated **before** redacting, so a straddling token or any JWT survived.
+- **Accepted, Fable**: `data.server` admitted `https://user:token@host` while `api_url` is served at
+  every tier; and with `visibility.enabled=false` the chart rendered no `system:auth-delegator` binding
+  while this tier asks a SAR anyway — refusing **everyone** with only a log line.
+- **Accepted, OB3 C6 — a reproduced widening**: `_discover_once` replaces the registry before it retires
+  the row, and only the leader writes, so in that window (indefinitely on a standby) a cluster its Secret
+  made `self-only` was served as `inherit`/`all`. `list_clusters` now walks rows through `is_served()`,
+  whose docstring had predicted exactly this: *"the rule has four copies in this file and the fifth site
+  forgot a limb"*.
+- **Accepted, Grok C6**: a failed start-up LIST retired every Secret-sourced cluster — on a fresh process
+  the registry has no previous set to stand on.
+- **Accepted, OB2 design pass**: a duplicate cluster name loaded the first by `metadata.name` — a
+  hijack-by-naming open to anyone who can create a Secret; neither loads now. Argo's scope keys
+  (`namespaces`, `clusterResources`, `project`, `shard`) are refused with the key named.
+- **Accepted, OB3 F5**: a value present but not base64/UTF-8 was reported as the key being **absent** — a
+  wrong diagnosis pointing at the wrong line of the manifest.
+- **Deferred and said**: the dashboard's own refusal of a newer database schema (Codex C10); the report
+  service already refuses with a clear message.
+- **Every pin was run against its mutant before being called a pin.** OB3's one surviving mutant (a
+  shared resolver) was already dead by then — killed by the pin added from Codex's C3.
+
+### The lab
+
+- `local-development/mock-app/deploy/tls-modes/`: the mock API deployed three more times, one per way of
+  trusting a cluster — `mock-trusted` (the enterprise CA in the bundle → the DEFAULT mode polls),
+  `mock-privateca` (its own CA → the default fails with the x509 error recorded verbatim, `caData`
+  polls), `mock-selfsigned` (bare self-signed → only `insecure: true` polls), plus the `caData`+`insecure`
+  refusal. The operator's rig, kept in the repository.
+- The tier proved live through the pod's loopback: the auditor passes the wide tier and is refused here,
+  the refusal names no cluster, Secret or namespace, and `secret:gsd-cluster` appears **0** times in
+  `/api/clusters`, `/api/kpi` and `/metrics` for him.
+- **What the lab could NOT prove, said rather than claimed**: the ordering persona. `jane.smith` is the
+  shape the finding describes, but on this lab she also holds bindings that pass the wide question — so
+  the ordering was pinned by tests, not by a live persona. (And a probe with `oc auth can-i --as=<user>`
+  **without** `--as-group` answers `no` for her: impersonation does not carry Group membership, while the
+  dashboard's resolver supplies the viewer's groups. Any future probe must pass them.)
+- Final: hermetic **4066 passed, 15 skipped**; UI **486**; `helm lint` clean, both switch states; CI green
+  on `f3081db`; `running : f3081dbd6b — verified in-pod`.
+
