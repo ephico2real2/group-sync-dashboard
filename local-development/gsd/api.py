@@ -1058,9 +1058,9 @@ def build_app(
         """Every cluster this instance knows with WHERE it came from (SPEC_S1 C5): the values list, a
         labelled Secret (`secret:<name>`), the host; the credential's KIND and never its value; the
         Secret's other labels; the D2 options; the poll outcome the cluster table holds; and the
-        current discovery cycle's findings. Administrator tier: the sources and the findings describe
-        how the fleet is wired, which is not a self reader's business. The Cluster Configurations
-        tab (#230 S2) is built on this payload; the writes are S2's too.
+        current discovery cycle's findings. `clusterconfig:view`, not the wide tier: the sources and the
+        findings describe how the fleet is wired, which is not a self reader's — nor the auditor's —
+        business. The Cluster Configurations tab (#230 S2) is built on this payload; the writes are S2's too.
 
         `clusterconfig:view`, NOT the wide tier: the wide one admits the auditor persona by design
         and the operator's ruling of 2026-09-20 forbids it here. See require_clusterconfig_view."""

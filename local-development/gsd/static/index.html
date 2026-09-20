@@ -162,7 +162,7 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
                                labels: {}, labelKey: "", labelVal: "", test: null },
-                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {},
+                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false,
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
@@ -5292,7 +5292,8 @@ function ccYaml(d) {
   // `8080` is a YAML boolean/null/int unquoted, and Kubernetes label values are strings — so the
   // twin and the API object differed (Codex C6 measured `{True: False}` against the API's strings).
   // Double-quoted style covers colons, `#` and leading/trailing space too.
-  const y = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  // Control characters escaped too (round 2, Grok C8): a raw newline inside "…" is not a YAML document.
+  const y = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}"`;
   // The KEY too: a label key of `on`, `yes` or `true` is a valid Kubernetes key and a YAML 1.1 boolean
   // unquoted, so `{True: …}` came back where the API writes `{"true": …}` — the same drift as the value.
   const labels = [`    ${y(CC_LABEL)}: ${y("cluster")}`].concat(Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`));
@@ -5469,12 +5470,17 @@ function wireClusterConfig() {
     ccReadForm();
     const f = view.clusterForm;
     if (!f.name.trim() || !f.server.trim() || !f.token) { view.clusterMsg.form = "name, server and a bearer token are required."; render(); return; }
+    // ONE request in flight: a second click while the first POST is out would answer `secret-exists`
+    // and overwrite the "created" sentence with a failure for a Secret that was just written (round 2, Grok C16).
+    if (view.clusterCreating) return;
+    view.clusterCreating = true;
     view.clusterMsg.form = "Creating…"; render();
     try {
       const r = await apiSend("/api/clusterconfigs", "POST", ccBody());
       view.clusterMsg.form = `Secret ${r.secret} created — discovery ${r.discovery}; the card appears when the next read lands.`;
       view.clusterForm = ccEmptyForm();
     } catch (e) { view.clusterMsg.form = e.message; }
+    view.clusterCreating = false;
     render(); refresh();
   };
   document.querySelectorAll("[data-cc-rotate]").forEach((el) => {

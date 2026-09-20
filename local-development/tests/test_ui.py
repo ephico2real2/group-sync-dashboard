@@ -6694,6 +6694,25 @@ class TestClusterConfigPage:
         assert twin["stringData"] == want["stringData"], (twin["stringData"]["config"], want["stringData"]["config"])
         assert twin == want
         assert "s3cr3t" not in page.locator("#cc-yaml").inner_text()   # the twin never carries the credential
+        # control characters in a value (an <input> strips newlines, so set the state directly): the pane
+        # must still be a YAML document that parses to the API's exact string (round 2, Grok C8)
+        page.evaluate("() => { view.clusterForm.labels['note'] = 'line1\\nline2\\ttab\\r'; render(); }")
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        assert twin["metadata"]["labels"]["note"] == "line1\nline2\ttab\r"
+
+    def test_a_double_click_on_create_sends_one_request(self, page, cc_rig):
+        """Round 2 (Grok C16): the second click's POST answered `secret-exists` and overwrote the
+        'created' sentence with a failure for a Secret that had just been written."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "twice"); page.fill("#cc-server", "https://api.twice.example:6443")
+        page.fill("#cc-token", "tok-twice-1234"); page.click("#cc-ca-trustedBundle")
+        page.locator("#cc-create").dblclick()
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('created')")
+        page.wait_for_timeout(300)
+        assert [m for m, _ in host.calls if m == "POST"] == ["POST"], host.calls
+        assert "secret-exists" not in page.locator("#cc-form-msg").inner_text()
 
     def test_the_administrator_keeps_every_control(self, page, cc_rig):
         base, host, settings = cc_rig

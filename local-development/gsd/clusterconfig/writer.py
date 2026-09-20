@@ -16,6 +16,7 @@ import base64
 import binascii
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 from ..config import ClusterConfig
@@ -30,12 +31,19 @@ MANAGED_BY_ANNOTATION = "groupsync-dashboard.io/managed-by"
 MANAGED_BY_UI = "ui"
 LABEL_DOMAIN = "groupsync-dashboard.io/"
 TLS_MODES = ("caData", "trustedBundle", "insecure")
+# Kubernetes' label syntax (metav1 validation): a key is an optional DNS-subdomain prefix (≤ 253) and a
+# `/`, then a name of ≤ 63 characters `[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?`; a value is empty or the
+# same shape, ≤ 63. Refused HERE, naming the key, rather than sent and answered 422 → 502 by the API
+# server (round 2, Grok C8/C16: a newline or a 64-character key reached the wire).
+_LABEL_NAME = re.compile(r"^[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$")
+_LABEL_PREFIX = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
 OAUTH_NOT_BUILT = "the password-for-token exchange is #119 P2, not built yet"
 
 
 class WriteRefused(Exception):
     """A request the contract refuses before any write: `code` is a finding code (or `duplicate-cluster-name`,
-    `not-a-secret-cluster`, `not-our-secret`, `secret-exists`, `writes-disabled`), `detail` the sentence."""
+    `not-a-secret-cluster`, `not-our-secret`, `secret-exists`, `secret-changed`, `label-invalid`,
+    `config-not-json`), `detail` the sentence."""
 
     def __init__(self, code: str, detail: str, *, conflict: bool = False):
         super().__init__(f"{code}: {detail}")
@@ -111,9 +119,17 @@ def validate(req: CreateRequest, namespace: str, *, host_name: str | None,
             base64.b64decode(req.ca_data, validate=True)
         except (binascii.Error, ValueError):
             raise WriteRefused("ca-data-invalid", "tls.caData must be a base64 PEM bundle") from None
-    for key in req.labels or {}:
-        if str(key).startswith(LABEL_DOMAIN):
+    for key, value in (req.labels or {}).items():
+        key, value = str(key), str(value)
+        if key.startswith(LABEL_DOMAIN):
             raise WriteRefused("unsupported-config-key", f"label {key}: the {LABEL_DOMAIN} prefix is the app's")
+        prefix, _, name = key.rpartition("/")
+        if key.count("/") > 1 or not _LABEL_NAME.match(name) or (prefix and (len(prefix) > 253 or not _LABEL_PREFIX.match(prefix))):
+            raise WriteRefused("label-invalid", f"label key {key!r}: an optional DNS prefix and a slash, then ≤ 63 "
+                                                "characters of letters, digits, '-', '_' or '.', starting and ending alphanumeric")
+        if value and not _LABEL_NAME.match(value):
+            raise WriteRefused("label-invalid", f"label {key}: the value must be empty or ≤ 63 characters of letters, "
+                                                "digits, '-', '_' or '.', starting and ending alphanumeric")
     parsed = parse_secret(secret_object(req, namespace), host_name=host_name)
     if isinstance(parsed, Finding):
         raise WriteRefused(parsed.code, parsed.detail)
@@ -140,10 +156,19 @@ def _scrub(text: str, *secrets: str | None) -> str:
     failure message passes through here before it is raised (review of #237, Codex C2: an echoing
     API server put the sentinel into the 502 body). Each caller names EVERY form it put on the wire:
     the plain token, and — for a rotate, whose body is `data` — the base64 blob that encodes it, which
-    a plain-text search cannot see through (measured: the first test of this scrub failed on it)."""
+    a plain-text search cannot see through (measured: the first test of this scrub failed on it).
+    And the JSON-ESCAPED forms (round 2, Grok C7): the echo is `json.dumps` of a Secret whose `config`
+    is already a JSON string, so a token holding `"`, `\\` or a non-ASCII character appears once- and
+    twice-escaped, never raw. The floor stays at eight characters so a short value cannot wipe the
+    sentence (the `_redact` rule)."""
     for secret in secrets:
-        if secret and len(secret.strip()) >= 8 and secret.strip() in text:
-            text = text.replace(secret.strip(), "<redacted>")
+        raw = (secret or "").strip()
+        if not raw:
+            continue
+        once = json.dumps(raw)[1:-1]
+        for form in (raw, once, json.dumps(once)[1:-1]):
+            if len(form) >= 8 and form in text:
+                text = text.replace(form, "<redacted>")
     return text
 
 
@@ -171,7 +196,7 @@ def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, ho
         try:
             host_client._send(client, "POST", _path(namespace), json=obj)
         except ClusterError as exc:
-            raise _failed(exc, req.token) from exc
+            raise _failed(exc, req.token, obj["stringData"]["config"]) from exc
     log.info("cluster Secret %s created by %s for cluster %s", name, viewer, req.name)
     return name
 
@@ -217,6 +242,12 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
         try:
             host_client._send(client, "PUT", _path(namespace, name), json=obj)
         except ClusterError as exc:
+            # The object carries the resourceVersion it was read with, so a Secret GitOps (or another
+            # tab) rewrote between the read and this PUT is a 409 from the API server — a named conflict
+            # the person can act on, not "unreachable" (round 2, Grok C16).
+            if exc.message.startswith("HTTP 409"):
+                raise WriteRefused("secret-changed", f"Secret {name} changed since it was read — GitOps or another "
+                                                     "writer got there first; refresh and rotate again", conflict=True) from exc
             raise _failed(exc, token, data["config"]) from exc
     log.info("cluster Secret %s credential rotated by %s for cluster %s", name, viewer, cluster)
 

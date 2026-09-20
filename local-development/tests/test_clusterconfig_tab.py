@@ -65,7 +65,8 @@ class _Host(ClusterClient):
         self.calls.append(("GET", path))
         name = path.rsplit("/", 1)[1]
         if name in self.secrets:
-            return self.secrets[name]
+            import copy
+            return copy.deepcopy(self.secrets[name])   # a fresh parse, as the API server's JSON is: a caller's edits do not reach the store
         raise ClusterError(UNREACHABLE, f"HTTP 404 on {path}: not found")
 
     def _send(self, client, method, path, *, json=None):
@@ -169,6 +170,43 @@ class TestWriter:
         with pytest.raises(WriteFailed) as exc:
             rotate(_Host({"gsd-cluster-east": _secret()}, echo=True), NS, "gsd-cluster-east", "rotated-token-9999", viewer="root", cluster="east")
         assert "rotated-token-9999" not in exc.value.message and "<redacted>" in exc.value.message
+
+    def test_an_echoed_body_does_not_carry_a_json_escaped_token(self):
+        """Round 2 (Grok C7): the echo is json.dumps of a Secret whose config is already a JSON string, so
+        a token with a quote or a backslash appears once- and twice-escaped — never raw — and the raw
+        search left its tail in the 502."""
+        for token in ('xx"sekrit-bearer-9f8e7d', 'back\\slash-sekrit-9f8e7d', 'ünïcode-sekrit-9f8e7d'):
+            host = _Host(echo=True)
+            with pytest.raises(WriteFailed) as exc:
+                create(host, NS, _req(token=token), host_name="c1", taken={}, viewer="root")
+            assert exc.value.outcome == UNREACHABLE and "<redacted>" in exc.value.message
+            assert "sekrit-9f8e7d" not in exc.value.message and "sekrit-bearer-9f8e7d" not in exc.value.message, token
+
+    def test_rotate_names_a_conflict_when_the_secret_changed_under_the_tab(self):
+        """Round 2 (Grok C16): the PUT carries the resourceVersion it was read with; GitOps writing in
+        between is a 409 from the API server — a named conflict, not 'unreachable'."""
+        class _Conflict(_Host):
+            def _send(self, client, method, path, *, json=None):
+                self.calls.append((method, path))
+                raise ClusterError(UNREACHABLE, f"HTTP 409 on {method} {path}: the object has been modified; please apply your changes to the latest version")
+        host = _Conflict({"gsd-cluster-east": _secret()})
+        with pytest.raises(WriteRefused) as exc:
+            rotate(host, NS, "gsd-cluster-east", "new-token-1234", viewer="root", cluster="east")
+        assert exc.value.code == "secret-changed" and exc.value.conflict and "new-token-1234" not in str(exc.value)
+        assert host.calls[-1][0] == "PUT" and host.secrets["gsd-cluster-east"]["data"]["config"] == _as_stored(_secret())["data"]["config"]
+
+    @pytest.mark.parametrize("labels", [
+        {"a" * 64: "x"}, {"team": "v" * 64}, {"team": "line1\nline2"}, {"bad key": "x"}, {"-lead": "x"}, {"team": "trail-"},
+        {"Bad_Prefix/team": "x"}, {"a/b/c": "x"}, {"": "x"}, {("p" * 254) + "/name": "x"},
+    ])
+    def test_a_label_kubernetes_would_refuse_is_refused_here_by_name_before_any_request(self, labels):
+        """Round 2 (Grok C8/C16): a newline or a 64-character key used to reach the API server and come
+        back as a 502. Kubernetes' own label syntax, applied in validate()."""
+        with pytest.raises(WriteRefused) as exc:
+            validate(_req(labels=labels), NS, host_name="c1", taken={})
+        assert exc.value.code == "label-invalid" and TOKEN not in str(exc.value)
+        for good in ({"environment": "prod"}, {"app.kubernetes.io/name": "x"}, {"team": ""}, {"a": "b_c.d-e"}, {"k" * 63: "v" * 63}):
+            assert validate(_req(labels=good), NS, host_name="c1", taken={}).labels == tuple(good.items())
 
     def test_rotate_refuses_a_config_that_does_not_parse_rather_than_replacing_it(self):
         """Writing `{"bearerToken": …}` over a config that failed to decode would silently drop the
@@ -325,7 +363,7 @@ class TestApi:
             "credential": {"kind": "bearerToken", "token": TOKEN},
             "tls": {"mode": "trustedBundle"}, "visibility": "self-only", "identity": "none", "labels": {"environment": "prod"}}
 
-    def test_every_route_is_administrator_tier(self, rig):
+    def test_every_write_is_the_manage_level_and_a_reader_without_it_is_refused(self, rig):
         c, *_ = rig
         assert c.post("/api/clusterconfigs", json=self.BODY, headers=H("alice")).status_code == 403
         assert c.put("/api/clusterconfigs/east/credential", json={"token": "t"}, headers=H("alice")).status_code == 403
