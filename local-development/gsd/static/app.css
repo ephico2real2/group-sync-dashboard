@@ -198,13 +198,13 @@
     --series-7: #9085e9;
     --series-8: #e66767;
     --zebra: rgba(255, 255, 255, 0.035);
-    /* Lightened to 4.50:1; at #d03b3b it was 3.62:1 against the dark surface and failed
-       as .change-removed and .err text. The light theme keeps the deeper red, which
-       already passes there — the same hex cannot serve both. */
-    --status-critical: #da6767;
-    /* Dark keeps the brighter green. The light theme's #0a880a reaches 4.5:1 on a white
-       card but only 3.76:1 here, and .change-added renders it as text. */
-    --status-good: #0ca30c;
+    /* 5.32:1 on the card and 4.50:1 on a hovered row (#204); at #d03b3b it was 3.62:1 against
+       the dark surface and failed as .change-removed and .err text. The light theme keeps the
+       deeper red, which passes there — the same hex cannot serve both. */
+    --status-critical: #db6d6d;
+    /* Dark keeps the brighter green. The light theme's #097d09 reaches 5.18:1 on a white
+       card but only 3.28:1 here, and .change-added renders it as text. */
+    --status-good: #12a512;
     --status-unknown: #898781;
     --line: #4a4a46;
     --warn: #c48704;
@@ -252,10 +252,10 @@
   --series-7: #9085e9;
   --series-8: #e66767;
   --zebra: rgba(255, 255, 255, 0.035);
-  --status-critical: #da6767;
-  /* Dark keeps the brighter green. The light theme's #0a880a reaches 4.5:1 on a white
-     card but only 3.76:1 here, and .change-added renders it as text. */
-  --status-good: #0ca30c;
+  --status-critical: #db6d6d;
+  /* Dark keeps the brighter green. The light theme's #097d09 reaches 5.18:1 on a white
+     card but only 3.28:1 here, and .change-added renders it as text. */
+  --status-good: #12a512;
   --status-unknown: #898781;
   --line: #4a4a46;
   --warn: #c48704;
@@ -294,18 +294,21 @@
   --status-warning: #c18600;  /* 3.06:1 on the card */
   --status-warning-edge: #b17a00;  /* 3.62:1 on the card */
   --status-critical: #b24e00;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
+  --warn: #906300;  /* 4.53:1 on a hovered row; the Okabe-Ito orange darkened — 15° from this palette's vermilion critical, where the default amber sat 0.5° from it (#204) */
 }
 :root[data-palette="protan"] {
   --status-good: #0071b0;  /* 4.51:1 on a hovered row, 5.13 on the card (#204) */
   --status-warning: #c18600;  /* 3.06:1 on the card */
   --status-warning-edge: #b17a00;  /* 3.62:1 on the card */
   --status-critical: #b24e00;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
+  --warn: #906300;  /* 4.53:1 on a hovered row; 15° from critical (#204) */
 }
 :root[data-palette="trit"] {
   --status-good: #007b5a;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
   --status-warning: #cb76a5;  /* 3.07:1 on the card */
   --status-warning-edge: #c46499;  /* 3.63:1 on the card */
   --status-critical: #b24e00;  /* 4.51:1 on a hovered row, 5.14 on the card (#204) */
+  --warn: #95597a;  /* 4.51:1 on a hovered row; this palette's warning pink darkened — 59° from critical (#204) */
 }
 :root[data-palette="contrast"] {
   --status-good: #076607;  /* 7.02:1 on the card */
@@ -316,22 +319,25 @@
 }
 @media screen and (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"]))[data-palette="deuter"] {
-    --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+    --status-good: #1d96d9;  /* 4.50:1 on a hovered row (the dark wash is 14 %), 5.32 on the card (#204) */
     --status-warning: #e69f00;  /* 7.73:1 on the card */
     --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-    --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+    --status-critical: #db721d;  /* 4.51:1 on a hovered row (the dark wash is 14 %), 5.34 on the card (#204) */
+    --warn: #c48704;  /* restated: the light palette's --warn above matches dark roots too (#204) */
   }
   :root:where(:not([data-theme="light"]))[data-palette="protan"] {
-    --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+    --status-good: #1d96d9;  /* 4.50:1 on a hovered row (the dark wash is 14 %), 5.32 on the card (#204) */
     --status-warning: #e69f00;  /* 7.73:1 on the card */
     --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-    --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+    --status-critical: #db721d;  /* 4.51:1 on a hovered row (the dark wash is 14 %), 5.34 on the card (#204) */
+    --warn: #c48704;  /* restated: the light palette's --warn above matches dark roots too (#204) */
   }
   :root:where(:not([data-theme="light"]))[data-palette="trit"] {
-    --status-good: #009e73;  /* 5.09:1 on the card */
+    --status-good: #09a278;  /* 4.52:1 on a hovered row (the dark wash is 14 %), 5.35 on the card (#204) */
     --status-warning: #cc79a7;  /* 5.69:1 on the card */
     --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
-    --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+    --status-critical: #db721d;  /* 4.51:1 on a hovered row (the dark wash is 14 %), 5.34 on the card (#204) */
+    --warn: #c48704;  /* restated: the light palette's --warn above matches dark roots too (#204) */
   }
   :root:where(:not([data-theme="light"]))[data-palette="contrast"] {
     --status-good: #0ec00e;  /* 7.10:1 on the card */
@@ -343,26 +349,29 @@
 }
 @media screen {
 :root[data-theme="dark"][data-palette="deuter"] {
-  --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+  --status-good: #1d96d9;  /* 4.50:1 on a hovered row (the dark wash is 14 %), 5.32 on the card (#204) */
   --status-warning: #e69f00;  /* 7.73:1 on the card */
   --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-  --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+  --status-critical: #db721d;  /* 4.51:1 on a hovered row (the dark wash is 14 %), 5.34 on the card (#204) */
+  --warn: #c48704;  /* restated: the light palette's --warn above matches dark roots too (#204) */
 }
 }
 @media screen {
 :root[data-theme="dark"][data-palette="protan"] {
-  --status-good: #1492d8;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+  --status-good: #1d96d9;  /* 4.50:1 on a hovered row (the dark wash is 14 %), 5.32 on the card (#204) */
   --status-warning: #e69f00;  /* 7.73:1 on the card */
   --status-warning-edge: #e69f00;  /* 7.73:1 on the card */
-  --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+  --status-critical: #db721d;  /* 4.51:1 on a hovered row (the dark wash is 14 %), 5.34 on the card (#204) */
+  --warn: #c48704;  /* restated: the light palette's --warn above matches dark roots too (#204) */
 }
 }
 @media screen {
 :root[data-theme="dark"][data-palette="trit"] {
-  --status-good: #009e73;  /* 5.09:1 on the card */
+  --status-good: #09a278;  /* 4.52:1 on a hovered row (the dark wash is 14 %), 5.35 on the card (#204) */
   --status-warning: #cc79a7;  /* 5.69:1 on the card */
   --status-warning-edge: #cc79a7;  /* 5.69:1 on the card */
-  --status-critical: #da6c14;  /* 4.53:1 on a hovered row, 5.09 on the card (#204) */
+  --status-critical: #db721d;  /* 4.51:1 on a hovered row (the dark wash is 14 %), 5.34 on the card (#204) */
+  --warn: #c48704;  /* restated: the light palette's --warn above matches dark roots too (#204) */
 }
 }
 @media screen {
@@ -1276,7 +1285,7 @@ td.state-cell { min-width: 210px; }
 .home .hrow .meta b { color: var(--text-secondary); font-weight: 500; }
 .home .role, .home .scope { font-family: var(--font-mono); font-size: var(--text-xs); padding: 3px 9px; /* optical: the badge's metrics, one step taller for a bare word */
   border-radius: var(--radius-sm); white-space: nowrap; background: var(--page-2); border: 1px solid var(--border); color: var(--text-secondary); }
-/* On the card's own surface, not --page-2: --warn measures 4.40:1 there (light) and 4.89 here
+/* On the card's own surface, not --page-2: --warn measures 4.66:1 there (light) and 5.18 here (#204 moved it to #ae5009)
    (review of #158, Codex). */
 .home .role.rw { color: var(--warn); background: var(--surface-1); border-color: var(--status-warning-edge); }
 .home .scope { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -1346,7 +1355,7 @@ td.state-cell { min-width: 210px; }
   background: var(--status-good); transition: width .6s cubic-bezier(.2, .7, .3, 1); }
 /* --warn, not --status-warning: the fill's edge against the track's --page-2 wash IS the meter
    (1.4.11, a graphical object), and the badge amber measures 2.70:1 there in light (2.76 on the
-   three light palettes); the text-grade amber td.num.warn already wears is 4.40:1 light, 5.87 dark. */
+   three light palettes); the text-grade amber td.num.warn already wears is 4.66:1 light, 5.65 dark. */
 .kpi-page .fill.warn { background: var(--warn); }
 .kpi-page .fill.none { min-width: 0; background: transparent; }
 .kpi-page .meter-val { font-family: var(--font-mono); font-size: var(--text-sm); font-variant-numeric: tabular-nums;
@@ -1384,7 +1393,8 @@ td.state-cell { min-width: 210px; }
 .kpi-page table { min-width: 620px; }
 .kpi-page th, .kpi-page td { padding-left: var(--space-9); }
 .kpi-page .cname { font-weight: 600; }
-.kpi-page .chip.crit { color: var(--status-critical); border-color: var(--status-critical); }
+.kpi-page .chip.crit { color: var(--status-critical); border-color: var(--status-critical);
+  background: var(--surface-1); /* opaque: the chip's zebra wash over a hovered row measured 4.06-4.31 under the text (#204 review) */ }
 
 /* the door out */
 .kpi-page .kdoor { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8);
