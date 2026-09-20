@@ -1,7 +1,7 @@
 # The Reports page on CRC — the walk behind #173's Definition of Done
 
-Deployed head `7748b69` (the PR branch `feat/173-reports-page` at `36883bb` merged with `main` at
-`88e6ea5`, through the Argo Application; `running : 7748b69e21 — verified in-pod`), walked with
+Deployed head `1be4298` (the PR branch after the review pass, merged with `main`; first walked at `7748b69`, the branch at `36883bb` with `main` at
+`88e6ea5`), through the Argo Application; `running : 1be42982b8 — verified in-pod`, walked with
 `reports_walk.py` through the OAuth proxy as kubeadmin, Chromium 1280×800 then 375×740. Every line
 below is the script's own output.
 
