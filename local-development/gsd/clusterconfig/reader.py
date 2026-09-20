@@ -47,6 +47,10 @@ _ACTIONS = {
 #: operator does not edit the values entry for an hour — and an oauth Secret parses cleanly and
 #: stops one phase later, at the credential. Announcing either as a parse refusal would send the
 #: reader to the wrong step of flow 1 (`docs/DESIGN_cluster_connection_flows.md`).
+# `discovery-failed` is NOT here on purpose (second pass, OB3 N5): the registry synthesises that
+# code for the tab, and the poller announces a failed LIST from its own site with its own phase and
+# action — `finding_event("discovery-failed")` would answer `secret-refused`/`parse`, which is wrong,
+# and no caller asks it. Route a discovery failure through `Poller._announce_discovery_failure`.
 _EVENTS = {
     "shadows-values-entry": ("secret-shadows-values", "parse"),
     "oauth-exchange-not-built": ("credential-not-supported", "credential"),

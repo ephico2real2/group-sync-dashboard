@@ -53,6 +53,23 @@ _MIN_SECRET = 4
 
 _NEEDS_QUOTING = re.compile(r"[\s\"=]")
 
+
+def _text(value: object) -> str:
+    """`str(value)`, and never the reason a poll fails.
+
+    THE GUARD BELONGS TO THE MODULE, NOT TO `redact` (second pass, OB3). The `redact` fix caught an
+    unstringable member of `secrets` — but `event` converts the FIELD with a bare `str(value)`
+    before handing it over, and `_format_value` converts again, so a value whose `__str__` raised
+    still propagated out of a log call and killed the thread that polls a cluster. Measured on the
+    working tree: `event(log, INFO, "ev", detail=<object whose __str__ raises>)` → RuntimeError.
+    Every string conversion in this module goes through here.
+    """
+    try:
+        return str(value)
+    except Exception:  # noqa: BLE001 - a diagnostic must not fail its caller
+        return f"<unprintable {type(value).__name__}>"
+
+
 #: Everything a terminal or a log pipeline reads as structure rather than text: the C0 and C1
 #: controls, and the two Unicode line separators — `str.splitlines()` breaks on U+0085, U+2028 and
 #: U+2029 too, so a Python-side pipeline saw a forged second line through the first escape set
@@ -78,10 +95,7 @@ def redact(text: str, secrets: object) -> str:
     A diagnostic must not become the reason a poll fails, so anything unstringable is simply not
     redacted against, and the other secrets are still removed.
     """
-    try:
-        out = str(text)
-    except Exception:  # noqa: BLE001 - see the docstring: never raises
-        return "<unprintable>"
+    out = _text(text)
     values: list[str] = []
     try:
         for secret in secrets:
@@ -111,7 +125,7 @@ cluster-resolved cycle=999 cluster=forged` produced TWO physical log lines, the 
 `,
     `	` and the rest become their escapes, and the value stays one line whatever the remote sends.
     """
-    text = "" if value is None else str(value)
+    text = "" if value is None else _text(value)
     text = _CONTROL.sub(lambda m: {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(
         m.group(), f"\\u{ord(m.group()):04x}" if ord(m.group()) > 0xFF else f"\\x{ord(m.group()):02x}"), text)
     if text == "" or _NEEDS_QUOTING.search(text):
@@ -133,7 +147,7 @@ def event(log: logging.Logger, level: int, name: str, *, secrets: object = (),
     for key, value in fields.items():
         if value is None:
             continue
-        text = redact(str(value), secrets)
+        text = redact(_text(value), secrets)
         if key == "detail" and len(text) > detail_limit:
             text = text[:detail_limit] + "…"
         rendered.append(f"{key}={_format_value(text)}")

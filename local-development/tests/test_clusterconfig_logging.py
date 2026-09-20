@@ -650,3 +650,289 @@ class TestTheHolesTheSeatsFound:
         base = dict(name="c", api_url="https://h:6443", source="values")
         assert _cluster_shape(ClusterConfig(token_file="x|", token_env="y", **base)) != \
                _cluster_shape(ClusterConfig(token_file="x", token_env="|y", **base))
+
+
+# ═══════════════════════════ OB3's second-pass pins (#247, head b13b44e → c518085) ═══════════════════════════
+# Its harness differs from the file's: a host whose LIST can RAISE, and Secrets with labels.
+from gsd.clusterconfig.parser import parse_secret  # noqa: E402
+from gsd.kube import AUTH_FAILED  # noqa: E402
+
+def _secret_with_labels(name: str, *, cluster: str, config: dict | None = "default", labels=None, **data) -> dict:
+    if config == "default":
+        config = {"bearerToken": TOKEN}
+    payload = {"name": cluster, "server": "https://api.example.com:6443", **data}
+    if config is not None:
+        payload["config"] = json.dumps(config)
+    meta_labels = {"groupsync-dashboard.io/secret-type": "cluster", **(labels or {})}
+    return {"metadata": {"name": name, "labels": meta_labels},
+            "data": {k: base64.b64encode(str(v).encode()).decode() for k, v in payload.items()}}
+
+
+class _RaisingHost:
+    """The host client for `discover`: a LIST that answers from a mutable table, or raises."""
+    items: list[dict] = []
+    raise_with: ClusterError | None = None
+
+    def __init__(self, cfg, timeout=15.0):
+        self.cfg = cfg
+
+    def _client(self):
+        class _Ctx:
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *a):
+                return False
+        return _Ctx()
+
+    def _list_all_with(self, client, path, params):
+        if _RaisingHost.raise_with is not None:
+            raise _RaisingHost.raise_with
+        return list(_RaisingHost.items)
+
+
+class _RigBase:
+    @pytest.fixture(autouse=True)
+    def _env(self, monkeypatch):
+        monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
+        monkeypatch.setattr("gsd.poller.ClusterClient", _RaisingHost)
+        _RaisingHost.items, _RaisingHost.raise_with = [], None
+
+    def _poller(self, tmp_path, values=()):
+        from gsd.config import Settings
+        from gsd.poller import Poller
+        from gsd.store import Store
+        store = Store(str(tmp_path / "p.db"))
+        clusters = [ClusterConfig("host", "https://kubernetes.default.svc", token_env="X")]
+        clusters += [ClusterConfig(n, "https://api.values:6443", token_env="X") for n in values]
+        return Poller(store, Settings(clusters=clusters, db_path=str(tmp_path / "p.db")))
+
+
+# ── C1: a cycle that changes nothing logs nothing — the discovery FAILURE too ─────────────────
+
+class TestAStandingDiscoveryFailureSpeaksOnce(_RigBase):
+    """The flood the reader's per-refusal WARNING was, one phase earlier.
+
+    A ServiceAccount without `list` on secrets is the commonest standing condition there is, and
+    `_discover_once` logged its WARNING unconditionally: one line every binding interval forever,
+    288 a day at the default 300s. The failure is a transition like every other.
+    """
+
+    def test_a_standing_failure_speaks_once_and_its_recovery_speaks_once(self, tmp_path, caplog):
+        _RaisingHost.raise_with = ClusterError("forbidden", "403 Forbidden on /api/v1/namespaces/ns/secrets")
+        poller = self._poller(tmp_path)
+        with caplog.at_level(logging.DEBUG, logger="gsd.clusterconfig"):
+            poller._discover_once()
+            first = list(caplog.messages)
+            caplog.clear()
+            poller._discover_once()
+            poller._discover_once()
+            poller._discover_once()
+            later = list(caplog.messages)
+        assert any(m.startswith("discovery-failed ") for m in first), first
+        assert later == [], f"a standing discovery failure spoke again: {later}"
+        with caplog.at_level(logging.DEBUG, logger="gsd.clusterconfig"):
+            caplog.clear()
+            _RaisingHost.raise_with = None
+            _RaisingHost.items = []
+            poller._discover_once()
+            recovery = list(caplog.messages)
+        assert any(m.startswith("discovery-recovered ") for m in recovery), recovery
+
+    def test_a_failure_that_changes_its_diagnosis_speaks_again(self, tmp_path, caplog):
+        """Silence must mean "the same thing is still wrong", not "something is wrong"."""
+        _RaisingHost.raise_with = ClusterError("forbidden", "403 Forbidden on /api/v1/namespaces/ns/secrets")
+        poller = self._poller(tmp_path)
+        poller._discover_once()
+        with caplog.at_level(logging.DEBUG, logger="gsd.clusterconfig"):
+            _RaisingHost.raise_with = ClusterError(UNREACHABLE, "ConnectError: connection refused")
+            poller._discover_once()
+        assert any("result=unreachable" in m for m in caplog.messages), caplog.messages
+
+
+class TestARelabelledSecretIsAnEdit(_RigBase):
+    """`parse_secret` copies the Secret's labels onto the cluster and /api/clusterconfigs serves
+    them, so relabelling one changes what a reader sees — the same silent-edit hole `api_url` was."""
+
+    def test_changing_a_label_is_reported_as_a_change(self, tmp_path, caplog):
+        _RaisingHost.items = [_secret_with_labels("gsd-cluster-lab", cluster="lab", labels={"environment": "dev"})]
+        poller = self._poller(tmp_path)
+        poller._discover_once()
+        with caplog.at_level(logging.INFO, logger="gsd.clusterconfig"):
+            _RaisingHost.items = [_secret_with_labels("gsd-cluster-lab", cluster="lab", labels={"environment": "prod"})]
+            poller._discover_once()
+        assert any("changed=lab" in m for m in caplog.messages), caplog.messages
+
+
+# ── C6: the logger every doc names is the logger the cycle emits on ───────────────────────────
+
+class TestTheDocumentedLoggerIsTheOneThatEmits(_RigBase):
+    """`GSD_LOG_LEVELS=gsd.clusterconfig=DEBUG` is the example in the values file, the chart README,
+    `_apply_per_logger_levels`'s docstring, its operator-facing complaint and the design doc's
+    worked example. It produced zero lines: nothing under gsd/clusterconfig/ ever made a logger."""
+
+    def test_the_discovery_cycle_emits_on_gsd_clusterconfig(self, tmp_path, caplog):
+        _RaisingHost.items = [_secret_with_labels("gsd-cluster-east", cluster="east"),
+                       _secret_with_labels("gsd-cluster-bad", cluster="bad", config=None)]
+        poller = self._poller(tmp_path)
+        with caplog.at_level(logging.DEBUG, logger="gsd.clusterconfig"):
+            poller._discover_once()
+        names = {r.name for r in caplog.records}
+        assert names == {"gsd.clusterconfig"}, f"the cycle emitted on {names}"
+        assert any(m.startswith("discovery ") for m in caplog.messages)
+        assert any(m.startswith("cluster-resolved ") for m in caplog.messages)
+        assert any(m.startswith("secret-refused ") for m in caplog.messages)
+
+
+# ── C3: a local misconfiguration is not a poll failure ────────────────────────────────────────
+
+class TestALocalMisconfigurationIsNotAPollFailure:
+    """`ClusterClient._client` turns a ConfigError into a ClusterError before a socket is opened.
+    Its head is `cluster '<name>': `, not a Python identifier, so it was not a transport message
+    and fell through to `phase=poll` — telling the reader to rotate a token that is fine."""
+
+    def _line(self, caplog, outcome, message, cause=None):
+        from gsd.poller import _log_poll_failure
+        cluster = ClusterConfig("east", "https://api.east:6443", token_file="/nope/token",
+                                ca_bundle_file="/nope/ca.pem", source="values")
+        with caplog.at_level(logging.DEBUG, logger="gsd.poller"):
+            exc = ClusterError(outcome, message)
+            if cause is not None:
+                exc.__cause__ = cause
+            _log_poll_failure(cluster, exc)
+        return next(m for m in caplog.messages if m.startswith("cluster-unreachable "))
+
+    def test_an_unreadable_token_file_is_the_credential_phase(self, caplog):
+        line = self._line(caplog, AUTH_FAILED,
+                          "cluster 'east': cannot read tokenFile '/nope/token': "
+                          "[Errno 2] No such file or directory", cause=__import__("gsd.config", fromlist=["ConfigError"]).ConfigError("x"))
+        assert "phase=credential" in line, line
+        assert "rotate it in this cluster's Secret" not in line, line
+
+    def test_an_unloadable_ca_bundle_is_the_tls_phase(self, caplog):
+        line = self._line(caplog, UNREACHABLE,
+                          "cluster 'east': cannot load caBundleFile '/nope/ca.pem': "
+                          "[Errno 2] No such file or directory", cause=__import__("gsd.config", fromlist=["ConfigError"]).ConfigError("x"))
+        assert "phase=tls" in line, line
+        assert "check the cluster's API URL is right" not in line, line
+
+    def test_a_remote_cannot_forge_that_head(self, caplog):
+        """The provenance test the accepted C3 fix rests on: only this process writes it."""
+        line = self._line(caplog, UNREACHABLE,
+                          "HTTP 502 on /apis/x: <html>cluster 'east': cannot load caBundleFile</html>")
+        assert "phase=poll" in line, line
+
+
+# ── C2: the residual sources ──────────────────────────────────────────────────────────────────
+
+class TestACredentialInAKeyPositionIsNotEchoed(_RigBase):
+    """The parse-phase announcement is the only one of the eight log sites that passes no
+    `secrets=` — it cannot, because a refused Secret never became a ClusterConfig. The one piece of
+    caller text a finding echoes is the key, and a key position is a place a credential can land."""
+
+    def test_an_unknown_config_key_is_described_not_quoted(self):
+        f = parse_secret(_secret_with_labels("s", cluster="c", config={"bearerToken": "t", TOKEN: 1}),
+                         host_name=None)
+        assert f.code == "unsupported-config-key"
+        assert TOKEN not in f.detail, f.detail
+        assert str(len(TOKEN)) in f.detail, f.detail
+
+    def test_an_unknown_tls_key_is_described_not_quoted(self):
+        f = parse_secret(_secret_with_labels("s", cluster="c",
+                                 config={"bearerToken": "t", "tlsClientConfig": {TOKEN: 1}}),
+                         host_name=None)
+        assert TOKEN not in f.detail, f.detail
+
+    def test_a_key_the_contract_knows_is_still_named(self):
+        """The diagnosis that matters — a key from Argo, or ours with the wrong case — is kept."""
+        assert parse_secret(_secret_with_labels("s", cluster="c", config={"bearerToken": "t", "proxyUrl": "x"}),
+                            host_name=None).detail.startswith("proxyUrl:")
+        assert parse_secret(_secret_with_labels("s", cluster="c", config={"bearertoken": "t"}),
+                            host_name=None).detail.startswith("bearertoken:")
+
+    def test_it_reaches_no_log_line_either(self, tmp_path, caplog):
+        _RaisingHost.items = [_secret_with_labels("gsd-cluster-k", cluster="k", config={"bearerToken": "t", TOKEN: 1})]
+        poller = self._poller(tmp_path)
+        with caplog.at_level(logging.DEBUG, logger="gsd.clusterconfig"):
+            poller._discover_once()
+        assert TOKEN not in "\n".join(caplog.messages), caplog.messages
+
+
+class TestADiagnosticNeverKillsItsCaller:
+    """`redact`'s docstring: "Never raises. A diagnostic must not become the reason a poll fails."
+    It guarded only a `secrets` that is not iterable."""
+
+    class _Boom:
+        def __str__(self):
+            raise RuntimeError("__str__ exploded")
+
+    def test_a_field_whose_str_raises_does_not_escape(self, caplog):
+        log = logging.getLogger("gsd.ob3probe")
+        with caplog.at_level(logging.DEBUG, logger="gsd.ob3probe"):
+            event(log, logging.INFO, "ev", detail=self._Boom())
+        assert caplog.messages and "unprintable" in caplog.messages[0], caplog.messages
+
+    def test_a_secret_whose_str_raises_does_not_escape(self, caplog):
+        log = logging.getLogger("gsd.ob3probe")
+        with caplog.at_level(logging.DEBUG, logger="gsd.ob3probe"):
+            event(log, logging.INFO, "ev", detail="plain", secrets=(self._Boom(),))
+        assert caplog.messages == ['ev detail=plain'], caplog.messages
+
+
+class TestTheRedactionCacheDoesNotOutliveItsCluster(_RigBase):
+    """`_LAST_TOKEN`'s docstring says it is "not a new place a credential lives". It had no
+    eviction, so every cluster the process ever saw stayed resident after its Secret was deleted."""
+
+    def test_a_departed_cluster_leaves_the_cache(self, tmp_path):
+        from gsd.poller import _LAST_TOKEN, _credentials
+        _LAST_TOKEN.clear()
+        _RaisingHost.items = [_secret_with_labels("gsd-cluster-gone", cluster="gone")]
+        poller = self._poller(tmp_path)
+        poller._discover_once()
+        _credentials(poller.settings.cluster("gone"))
+        assert _LAST_TOKEN.get("gone") == TOKEN, _LAST_TOKEN
+        _RaisingHost.items = []
+        poller._discover_once()
+        assert "gone" not in _LAST_TOKEN, f"the token outlived its Secret: {_LAST_TOKEN}"
+
+
+# ── C6: the pictures against the code on THIS head ────────────────────────────────────────────
+
+class TestTheFlowsNameWhatTheCodeEmits:
+    """A picture that is behind the code teaches the wrong thing confidently.
+
+    The four flows name every `phase=` and every `outcome=`, and named 4 of the 7 EVENT NAMES —
+    which is what an operator actually greps. The three missing ones were the whole parse and
+    credential announcement set, and one of them, `secret-shadows-values`, contradicts flow 1:
+    it is a `phase=parse` WARNING whose cluster LOADS, and flow 1 drew the parse branch as
+    terminal.
+    """
+
+    import pathlib as _pathlib
+    DOC = _pathlib.Path(__file__).resolve().parents[2] / "docs/DESIGN_cluster_connection_flows.md"
+
+    def _names(self) -> set[str]:
+        import re
+        import gsd
+        from gsd.clusterconfig import reader
+        src = (self._pathlib.Path(gsd.__file__).parent / "poller.py").read_text()
+        # `(?<![\w.])` so `_announce_discovery_failure(` is not read as `failure(`.
+        names = set(re.findall(
+            r'(?<![\w.])(?:event|failure)\(\s*\w+(?:,\s*logging\.\w+)?,\s*"([a-z][a-z-]+)"', src))
+        names |= {n for n, _ in reader._EVENTS.values()}
+        names.add("secret-refused")     # finding_event's default
+        return names
+
+    def test_every_event_name_the_code_emits_is_in_the_document(self):
+        doc = self.DOC.read_text()
+        missing = sorted(n for n in self._names() if n not in doc)
+        assert not missing, f"the flows never name: {missing}"
+
+    def test_flow_1_carries_the_refusal_that_loads_in_both_twins(self):
+        """The mermaid and the ASCII are the same decision points, not a picture and a caption."""
+        flow1 = self.DOC.read_text().split("## 2. The three TLS modes")[0]
+        mermaid = flow1.split("```mermaid")[1].split("```")[0]
+        ascii_twin = flow1.split("```text")[1].split("```")[0]
+        for half, text in (("mermaid", mermaid), ("ascii", ascii_twin)):
+            assert "secret-shadows-values" in text, f"flow 1's {half} has no route for it"
+            assert "LOADS" in text, f"flow 1's {half} does not say the cluster still loads"

@@ -39,6 +39,30 @@ _REFUSED_CONFIG_KEYS = {
 _REFUSED_TLS_KEYS = {"certData": "the pod holds no client certificate", "keyData": "the pod holds no client certificate",
                      "serverName": "not supported"}
 
+#: Every key name a finding will repeat back. A finding's detail is LOGGED (the poller's
+#: `secret-refused` line) and SERVED (`/api/clusterconfigs`), and the parse-phase announcement is
+#: the only one of the eight log sites that passes no `secrets=` — it cannot, because a refused
+#: Secret never became a ClusterConfig and the poller holds none of its values to strip. Measured
+#: (second pass, OB3 C2): a `config` of `{"<a 43-character secret>": 1}` put that string verbatim
+#: into `secret-refused … detail=` and into the tab. A key position is a place a credential can
+#: land, so the text is repeated only when it is a name this contract already knows — a case typo
+#: of one of ours, or one of Argo's we refuse by name — and anything else is described by its
+#: length: the same no-echo contract `_apply_per_logger_levels` applies to a miswired variable.
+_ECHOABLE_KEYS = {k.lower() for k in (
+    *_REFUSED_CONFIG_KEYS, *_REFUSED_TLS_KEYS,
+    "bearerToken", "oauth", "tlsClientConfig", "caData", "insecure", "username", "password",
+    "name", "server", "config", "visibility", "identity", "enabled",
+    "namespaces", "clusterResources", "project", "shard",
+)}
+
+
+def _unknown_key(key: str, *, prefix: str, where: str) -> str:
+    """The detail for a key this contract does not define, echoing it only when it is safe to."""
+    if key.lower() in _ECHOABLE_KEYS:
+        return f"{prefix}{key}: not a key this contract defines"
+    return (f"{where} has a {len(key)}-character key this contract does not define. It is not "
+            f"repeated here, in case something other than a key name was written into it")
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -134,7 +158,7 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         if key in _REFUSED_CONFIG_KEYS:
             return finding("unsupported-config-key", f"{key}: {_REFUSED_CONFIG_KEYS[key]}")
         if key not in ("bearerToken", "oauth", "tlsClientConfig"):
-            return finding("unsupported-config-key", f"{key}: not a key this contract defines")
+            return finding("unsupported-config-key", _unknown_key(key, prefix="", where="config"))
 
     token = config.get("bearerToken")
     oauth = config.get("oauth")
@@ -158,7 +182,8 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         if key in _REFUSED_TLS_KEYS:
             return finding("unsupported-config-key", f"tlsClientConfig.{key}: {_REFUSED_TLS_KEYS[key]}")
         if key not in ("caData", "insecure"):
-            return finding("unsupported-config-key", f"tlsClientConfig.{key}: not a key this contract defines")
+            return finding("unsupported-config-key",
+                           _unknown_key(key, prefix="tlsClientConfig.", where="tlsClientConfig"))
     insecure = tls.get("insecure", False)
     if not isinstance(insecure, bool):
         return finding("unsupported-config-key", "tlsClientConfig.insecure: must be a boolean")

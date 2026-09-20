@@ -874,6 +874,9 @@ class Poller:
         self._discovery_cycle = 0
         self._discovered_shape: dict[str, tuple] = {}
         self._discovery_findings: set[tuple[str, str]] = set()
+        # The discovery failure in force, so a standing one speaks once — see
+        # `_announce_discovery_failure`. None means the last cycle discovered cleanly.
+        self._discovery_failure: str | None = None
         # 0 so the first cycle after start takes one immediately: a pod that
         # has just come up is exactly when you want a copy on disk.
         self._next_backup = 0.0
@@ -1290,6 +1293,39 @@ class Poller:
             thread.start()
             self._threads.append(thread)
 
+    def _announce_discovery_failure(self, cycle: int, outcome: str, **fields: object) -> None:
+        """One line when a discovery failure APPEARS, then silence until it changes (#245).
+
+        THE SAME RULE THE FINDINGS GOT, AND FOR THE SAME REASON (second pass, OB3 C1).
+        `_discover_once` logged this WARNING unconditionally, so the commonest standing condition
+        there is — a ServiceAccount without `list` on secrets, or an API server the pod cannot
+        reach — wrote one WARNING every binding interval forever: 288 a day at the default 300s,
+        measured over four cycles, and it never stops. That is precisely the flood this change
+        exists to prevent, and it is the same defect the reader's per-refusal WARNING was, one
+        phase earlier: `registry.fail` keeps the previous set, so nothing about the cycle changed.
+
+        KEYED ON THE OUTCOME, NOT THE MESSAGE. `forbidden` becoming `unreachable` is a different
+        diagnosis and speaks again; the same outcome with a reworded body is not — and the body is
+        partly remote-controlled (a proxy's 502 page can carry a request id that changes every
+        cycle), so keying on the text would let the flood straight back in through `detail=`. The
+        current message is never lost: `registry.error` carries it to the tab every cycle.
+        """
+        from .clusterconfig.events import failure
+        if outcome == self._discovery_failure:
+            return
+        self._discovery_failure = outcome
+        failure(discovery_log, "discovery-failed", phase="discovery",
+                outcome="discovery-failed", cycle=cycle, **fields)
+
+    def _clear_discovery_failure(self, cycle: int, namespace: str) -> None:
+        """The other half of the transition. Silence alone is ambiguous — is it still broken, or
+        did somebody grant the RBAC? The recovery is announced once, like a cleared finding."""
+        from .clusterconfig.events import event
+        if self._discovery_failure is None:
+            return
+        self._discovery_failure = None
+        event(discovery_log, logging.INFO, "discovery-recovered", cycle=cycle, namespace=namespace)
+
     def _discover_once(self) -> None:
         """One discovery of the labelled cluster Secrets (SPEC_S1 C3): the host's client LISTs the pod's
         own namespace by label; the registry is replaced on success and keeps the previous set on a
@@ -1308,9 +1344,10 @@ class Poller:
         cycle = self._discovery_cycle
         if host is None or not namespace:
             registry.fail(at, "no host cluster or no namespace: the pod's ServiceAccount mount names neither")
-            failure(log, "discovery-failed", phase="discovery", outcome="discovery-failed",
-                    action="check the pod's ServiceAccount mount and the chart's clusters list",
-                    cycle=cycle, detail="no host cluster or no namespace: the mount names neither")
+            self._announce_discovery_failure(
+                cycle, "no-host-or-namespace",
+                action="check the pod's ServiceAccount mount and the chart's clusters list",
+                detail="no host cluster or no namespace: the mount names neither")
             return
         try:
             clusters, findings = discover(
@@ -1318,15 +1355,17 @@ class Poller:
                 host_name=host.name, values_names=tuple(c.name for c in self.settings.clusters))
         except ClusterError as exc:
             registry.fail(at, f"{exc.outcome}: {exc.message}")
-            failure(log, "discovery-failed", phase="discovery", outcome="discovery-failed",
-                    action=("grant the ServiceAccount list on secrets in this namespace, or check "
-                            "the API server is reachable — the previous set stands meanwhile"),
-                    cycle=cycle, namespace=namespace, result=exc.outcome, detail=exc.message,
-                    # The LIST's message can carry the host's own token, echoed by a proxy in
-                    # front of its API server (review of #247, OB3 C1): the client scrubs what it
-                    # builds, and this is the second boundary for what it does not.
-                    secrets=_credentials(host))
+            self._announce_discovery_failure(
+                cycle, exc.outcome,
+                action=("grant the ServiceAccount list on secrets in this namespace, or check "
+                        "the API server is reachable — the previous set stands meanwhile"),
+                namespace=namespace, result=exc.outcome, detail=exc.message,
+                # The LIST's message can carry the host's own token, echoed by a proxy in front of
+                # its API server (review of #247, OB3 C1): the client scrubs what it builds, and
+                # this is the second boundary for what it does not.
+                secrets=_credentials(host))
             return
+        self._clear_discovery_failure(cycle, namespace)
         before = {c.name for c in registry.discovered()}
         before_shape, before_findings = self._discovered_shape, self._discovery_findings
         registry.replace(clusters, findings, at=at)

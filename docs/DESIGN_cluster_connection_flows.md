@@ -25,13 +25,16 @@ keeps polling.
 ```mermaid
 flowchart TD
     A["Discovery: LIST Secrets by label<br/>groupsync-dashboard.io/secret-type=cluster"] --> B{"LIST succeeded?"}
-    B -- "no" --> BF["phase=discovery<br/>outcome=discovery-failed<br/>the previous set stands"]
+    B -- "no" --> BF["discovery-failed<br/>phase=discovery<br/>the previous set stands<br/>said ONCE, until the diagnosis changes<br/>or clears: discovery-recovered"]
     B -- "yes" --> C["Parse each Secret<br/>name, server, config, visibility, identity"]
     C --> D{"Valid, and the only<br/>claim on this name?"}
-    D -- "no" --> DF["phase=parse<br/>config-missing, name-invalid,<br/>duplicate-cluster-name, insecure-with-ca"]
-    D -- "yes" --> E["Resolve the credential"]
+    D -- "no" --> DF["secret-refused<br/>phase=parse<br/>config-missing, name-invalid,<br/>duplicate-cluster-name, insecure-with-ca"]
+    D -- "yes" --> DS{"Also a values entry<br/>of the same name?"}
+    DS -- "yes" --> DSW["secret-shadows-values<br/>phase=parse, and NOT a refusal:<br/>the Secret wins and the cluster LOADS"]
+    DSW --> E["Resolve the credential"]
+    DS -- "no" --> E
     E --> F{"Kind?"}
-    F -- "oauth" --> FF["phase=credential<br/>outcome=oauth-exchange-not-built<br/>not polled until 119 P2"]
+    F -- "oauth" --> FF["credential-not-supported<br/>phase=credential<br/>outcome=oauth-exchange-not-built<br/>not polled until 119 P2"]
     F -- "bearer, in-cluster, file" --> G["Choose the TLS mode<br/>see flow 2"]
     G --> H["Connect to the API server"]
     H --> H2{"Transport completed?"}
@@ -45,18 +48,25 @@ flowchart TD
 ```
 
 ```text
-  LIST Secrets by label ────────────► [FAIL] phase=discovery  outcome=discovery-failed
-   groupsync-dashboard.io/                   the previous set stands; nothing is retired
-   secret-type=cluster
-          │ ok
+  LIST Secrets by label ────────────► [FAIL] discovery-failed
+   groupsync-dashboard.io/                   phase=discovery   the previous set stands; nothing
+   secret-type=cluster                                         is retired. Said ONCE: a standing
+          │ ok                                                 failure is silent until its
+          │                                                    diagnosis changes, and its
+          │                                                    recovery is discovery-recovered.
           ▼
-  Parse each Secret ───────────────► [FAIL] phase=parse       config-missing, name-invalid,
-   name / server / config /                                    duplicate-cluster-name,
-   visibility / identity                                       insecure-with-ca
-          │ valid
+  Parse each Secret ───────────────► [FAIL] secret-refused
+   name / server / config /                  phase=parse       config-missing, name-invalid,
+   visibility / identity                                       duplicate-cluster-name,
+          │ valid                                              insecure-with-ca
           ▼
-  Resolve the credential ──────────► [STOP] phase=credential  outcome=oauth-exchange-not-built
-   bearer | in-cluster | file                                  (username+password: #119 P2)
+  Also a values entry ─────────────► [WARN] secret-shadows-values
+   of the same name?          yes           phase=parse, and NOT a refusal: the Secret
+          │ no                              WINS and the cluster LOADS. The one
+          ▼                                 phase=parse line whose cluster still polls.
+  Resolve the credential ──────────► [STOP] credential-not-supported
+   bearer | in-cluster | file                phase=credential  outcome=oauth-exchange-not-built
+                                                               (username+password: #119 P2)
           │
           ▼
   Choose the TLS mode  (flow 2)
@@ -75,7 +85,10 @@ flowchart TD
   Rows stored, status=ok
 
   Every [FAIL] is a finding on the tab and one WARNING line, never an exception that
-  stops the other clusters. Read the phase first: it tells you how far it got.
+  stops the other clusters. [WARN] is the one finding that is not a refusal. Read the
+  phase first — it tells you how far it got — then the EVENT NAME, which says whether
+  the cluster loaded. Every line is said ONCE, when it appears, and once more when it
+  clears; a cycle that changes nothing says nothing at all.
   connect vs tls vs poll is decided by WHO WROTE THE MESSAGE: a transport error this
   process built (`ConnectError: …`) is connect or tls; anything the remote answered
   is poll, whatever its body says. A client that could not be BUILT — a token file or
