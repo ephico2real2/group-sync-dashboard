@@ -626,9 +626,6 @@ The catalogue names this deployment enables, comma-joined for GSD_REPORT_ENABLED
 switch is a boolean; loginActivity is a tri-state ("" follows loginCapture.enabled). Misspelt values
 refuse, and loginActivity=true with capture off refuses — a report over a table nothing writes.
 */}}
-{{- /* The reporting.schedules[] entries the report pod's status page describes: name, schedule, report,
-enabled and any per-schedule retention override, as one JSON array (#149 R6). Params, cluster and
-formats are the CronJob's business and stay out of it. */ -}}
 {{- /* The Namespace label keys the poller captures: reporting.namespaceMetadata.labels plus the
 exact-group label (reporting.namespaceGroupLabel, #149 R7) when set and not already listed — the
 report forms resolve a business mnemonic to the group a namespace pins through it, so the poller
@@ -640,11 +637,16 @@ must capture it whether or not the operator listed it. */ -}}
 {{- toJson $labels -}}
 {{- end -}}
 
+{{- /* The reporting.schedules[] entries the report pod's status page describes: name, schedule, report,
+enabled and any per-schedule retention override, as one JSON array (#149 R6). Params, cluster and
+formats are the CronJob's business and stay out of it. `enabled` is emitted as the boolean the CronJob
+decides on — the literal word false suspends it (report-cronjob.yaml) — so a quoted "false" or a
+--set-string cannot leave the page saying On above a CronJob that is paused (review of #221, OB3). */ -}}
 {{- define "gsd.reportSchedulesJson" -}}
 {{- $out := list -}}
 {{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
 {{- $entry := dict "name" $s.name "schedule" $s.schedule "report" $s.report -}}
-{{- if hasKey $s "enabled" -}}{{- $_ := set $entry "enabled" $s.enabled -}}{{- end -}}
+{{- if hasKey $s "enabled" -}}{{- $_ := set $entry "enabled" (ne (toString $s.enabled) "false") -}}{{- end -}}
 {{- with $s.retention -}}{{- $_ := set $entry "retention" . -}}{{- end -}}
 {{- $out = append $out $entry -}}
 {{- end -}}

@@ -28,7 +28,7 @@ from . import REPORT_PREFIX, TICKET_HEADER
 from .artifacts import FORMATS, ArtifactStore, Run, new_run_id
 from .catalogue import REGISTRY, ValidationError, validate_params
 from .catalogue.common import validate_selector_map
-from .config import ReportSettings, load_report_settings
+from .config import ReportSettings, load_report_settings, retention_overrides
 from .metrics import ReportSignals, build_report_registry
 from .runs import QueueFull, RunManager
 from .snapshot import Snapshot, SnapshotError, newest_snapshot
@@ -427,12 +427,12 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             if r.status in counts:
                 counts[r.status] += 1
         tz = settings.window.timezone if settings.window.enabled else None
+        overrides = retention_overrides(settings)         # what the prune applies — the same reading
         schedules = []
         for sch in settings.schedules:
             enabled = sch.get("enabled", True) is not False
-            keep, days = settings.scheduled_keep_per_schedule, settings.scheduled_retention_days
             override = sch.get("retention") or {}
-            keep, days = int(override.get("keepPerSchedule", keep)), int(override.get("days", days))
+            keep, days = overrides.get(sch["name"], (settings.scheduled_keep_per_schedule, settings.scheduled_retention_days))
             try:
                 spec = cron.parse(sch["schedule"])
                 nxt = cron.next_fire(spec, at, tz) if enabled else None
@@ -446,9 +446,11 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                 state = "disabled"
             elif last_dt is None:
                 state = "never"
-            elif prv is not None and last_dt < prv - timedelta(minutes=30):
-                # the last expected fire has passed (with half an hour's grace for the queue and the
-                # render) and nothing succeeded since it
+            elif prv is not None and last_dt < prv and at - prv > timedelta(minutes=30):
+                # the last expected fire is more than half an hour behind us (the grace for the queue
+                # and the render) and nothing has succeeded since it. The grace sits AFTER the fire:
+                # measured with it on the other side (`last < prv - 30 min`), every healthy schedule
+                # read `late` from the instant it fired until its run finished (review of #221, OB3).
                 state = "late"
             else:
                 state = "ok"

@@ -37,7 +37,10 @@ class ReportConfigError(Exception):
 def _schedules_env() -> tuple[dict, ...]:
     """GSD_REPORT_SCHEDULES: a JSON array of {name, schedule, report, enabled?, retention?} rendered by
     the chart from reporting.schedules[]. Unset or empty = no schedules. A shape that is not that is a
-    startup error, like every other config typo here."""
+    startup error, like every other config typo here — the optional keys included: `enabled` is a
+    boolean and `retention` an object of non-negative integer `keepPerSchedule` / `days`, because the
+    status endpoint reads both and a `days: "twelve"` that passed startup was a 500 on every request of
+    it (review of #221, OB3)."""
     raw = os.environ.get("GSD_REPORT_SCHEDULES", "").strip()
     if not raw:
         return ()
@@ -49,7 +52,31 @@ def _schedules_env() -> tuple[dict, ...]:
                                                 and isinstance(x.get("schedule"), str) and isinstance(x.get("report"), str)
                                                 for x in parsed):
         raise SystemExit("GSD_REPORT_SCHEDULES must be a JSON array of objects with name, schedule and report")
+    for x in parsed:
+        if "enabled" in x and not isinstance(x["enabled"], bool):
+            raise SystemExit(f"GSD_REPORT_SCHEDULES: schedule {x['name']!r} has enabled={x['enabled']!r}; it must be true or false")
+        retention = x.get("retention")
+        if retention is None:
+            continue
+        if not isinstance(retention, dict) or not set(retention) <= {"keepPerSchedule", "days"} or not all(
+                isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in retention.values()):
+            raise SystemExit(f"GSD_REPORT_SCHEDULES: schedule {x['name']!r} has retention={retention!r}; it takes "
+                             "keepPerSchedule and days, each a non-negative integer")
     return tuple(parsed)
+
+
+def retention_overrides(settings: "ReportSettings") -> dict[str, tuple[int, int]]:
+    """Per schedule, the (keep, days) its `retention:` stanza overrides, the globals filling the key it
+    leaves out — ONE reading for the prune and for the status page, so the policy the page calls
+    effective is the policy the prune applies (review of #221, OB3: `ArtifactStore.prune` took
+    `overrides` since the two-tier retention landed and nothing ever passed them)."""
+    out: dict[str, tuple[int, int]] = {}
+    for sch in settings.schedules:
+        override = sch.get("retention") or {}
+        if override:
+            out[sch["name"]] = (int(override.get("keepPerSchedule", settings.scheduled_keep_per_schedule)),
+                                int(override.get("days", settings.scheduled_retention_days)))
+    return out
 
 
 def _formats_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:

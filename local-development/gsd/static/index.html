@@ -1062,7 +1062,7 @@ function renderFilters() {
   // keyboard user resting on a tab is dropped to <body> by every timed repaint, losing their place
   // in the tab order.
   const tab = (id, label) =>
-    `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id ? ' aria-current="page"' : ""}>${label}</button>`;
+    `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id || (id === "reports" && view.page === "reporting") ? ' aria-current="page"' : ""}>${label}</button>`;   // #149: the status page is Reports' child
   html += `<span class="spacer"></span>
     <nav class="tabs" aria-label="Dashboard sections">
       ${tab("home", "Home")}
@@ -2762,24 +2762,6 @@ function reportRunStatus(run) {
   </div>`;
 }
 
-function reportRunsCard() {
-  const r = data.reportRuns;
-  if (!r || r.forbidden) return "";
-  const rows = r.runs || [];
-  return `<section class="card" id="report-runs">
-    <h3>Recent runs</h3>
-    ${rows.length === 0 ? `<div class="empty-note">No report has been generated yet.</div>` : `<div class="scroll-x"><table>
-      <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th></th></tr></thead>
-      <tbody>${rows.map((x) => `<tr>
-        <td class="mono">${esc(x.requested_at)}</td><td>${esc(x.report)}</td><td>${esc(x.cluster)}</td>
-        <td>${esc(x.generated_by)}</td><td>${esc(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td>
-        <td>${x.status === "done" ? (x.formats || []).concat(["json"]).map((f) =>
-          `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(f)}">.${esc(f)}</button>`).join(" ") : ""}</td>
-      </tr>`).join("")}</tbody></table></div>`}
-    ${r.truncated ? `<div class="truncation-note">Showing ${rows.length} of ${r.total} runs.</div>` : ""}
-  </section>`;
-}
-
 /* ─── #149 R5: the Reporting status page — three cards, docs/design/reporting-status-mock.html ──────
    Everything here is what the report service says about itself (GET /report/api/status) and the
    history it holds (GET /report/api/runs with server-side filters). No personnel data beyond the
@@ -2808,7 +2790,7 @@ function untilShort(iso) {               // "in 3h 12m" / "in 15d" / "1h ago"
   if (!iso) return "";
   const secs = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
   const a = Math.abs(secs);
-  const span = a < 3600 ? `${Math.max(1, Math.round(a / 60))}m` : a < 86400 ? `${Math.floor(a / 3600)}h ${Math.round((a % 3600) / 60)}m` : `${Math.round(a / 86400)}d`;
+  const span = a < 3600 ? `${Math.max(1, Math.round(a / 60))}m` : a < 86400 ? `${Math.floor(a / 3600)}h ${Math.floor((a % 3600) / 60)}m` : `${Math.round(a / 86400)}d`;
   return secs >= 0 ? `in ${span}` : `${span} ago`;
 }
 
@@ -2906,9 +2888,14 @@ function wireReporting() {
   const back = $("back"); if (back) back.onclick = goBack;
   // The page keeps its rows while the filtered reply is on its way — blanking to "Loading…" for a
   // filter change made the controls jump under the reader's pointer.
+  // A reply describes the filters it was asked with: one asked before a filter change (this refetch,
+  // or a poll's) must not land under the new controls (review of #221, OB3 — a tiny window, closed).
   const refetch = async () => {
-    try { data.reportHistory = await guard403(reportGet(historyQuery())); } catch (e) { data.reportHistory = { forbidden: true }; }
-    render();
+    const asked = historyQuery();
+    let got;
+    try { got = await guard403(reportGet(asked)); } catch (e) { got = { forbidden: true }; }
+    if (historyQuery() !== asked) return;
+    data.reportHistory = got; render();
   };
   for (const key of ["report", "origin", "status", "cluster"]) {
     const el = $(`history-${key}`);
@@ -3201,7 +3188,7 @@ async function generateReport(refocus = false) {
       view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
       render();
     }
-    data.reportRuns = await guard403(reportGet("/api/runs?limit=50"));
+    data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
     view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? "the parameters were refused (see the fields)" : e.message };
   } finally {
@@ -5883,13 +5870,14 @@ async function refresh(opts = {}) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
       want.reportCatalog = guard403(reportGet("/api/reports"));
-      want.reportRuns = guard403(reportGet("/api/runs?limit=50"));
+      // limit=1: the catalogue shows the count (`total`) only; the runs live on the status page (#149 R5)
+      want.reportRuns = guard403(reportGet("/api/runs?limit=1"));
     }
     if (view.page === "reporting" && reportingEnabled() && !narrowedOnHost()) {
       // #149 R5/R6: the status page — the service's own account of itself, and the history page the
       // reader is on, filtered server-side (every filter runs across the whole history).
       want.reportStatus = guard403(reportGet("/api/status"));
-      want.reportHistory = guard403(reportGet(historyQuery()));
+      want.reportHistory = (async (asked) => { const r = await guard403(reportGet(asked)); return r && !r.forbidden ? { ...r, asked } : r; })(historyQuery());
     }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
@@ -5981,14 +5969,24 @@ async function refresh(opts = {}) {
     if ("reportCatalog" in got) data.reportCatalog = got.reportCatalog;
     if ("reportRuns" in got) data.reportRuns = got.reportRuns;
     if ("reportStatus" in got) data.reportStatus = got.reportStatus;
-    if ("reportHistory" in got) data.reportHistory = got.reportHistory;
+    if ("reportHistory" in got && got.reportHistory && historyQuery() === (got.reportHistory.asked || historyQuery())) data.reportHistory = got.reportHistory;
     // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
     // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
     // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
     // keep the catalogue, nor lend a ticket minted under the old identity (review of D2, second
     // pass, Codex; measured: zero report calls on the promoting refresh).
-    if (view.page === "reporting" && reportingEnabled() && got.whoami && narrowedOnHost()) {
-      data.reportStatus = null; data.reportHistory = null; data.reportTicket = null;
+    if (view.page === "reporting" && reportingEnabled() && got.whoami) {
+      if (narrowedOnHost()) {
+        data.reportStatus = null; data.reportHistory = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("reportStatus" in got)) {
+        // The same catch-up as the Reports page below: the requests above were chosen on the previous
+        // cycle's tier, so a reader promoted mid-session saw "Loading…" for a whole cycle (review of
+        // #221, OB3 — measured: zero status calls on the promoting refresh).
+        data.reportTicket = null;
+        const [status, history] = await Promise.all([guard403(reportGet("/api/status")), guard403(reportGet(historyQuery()))]);
+        if (superseded()) return;
+        data.reportStatus = status; data.reportHistory = history;
+      }
     }
     if (view.page === "reports" && reportingEnabled() && got.whoami) {
       if (narrowedOnHost()) {
@@ -5996,7 +5994,7 @@ async function refresh(opts = {}) {
       } else if (got.whoami.authenticated && !("reportCatalog" in got)) {
         data.reportTicket = null;
         const [catalog, runs] = await Promise.all([
-          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=50")),
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=1")),
         ]);
         if (superseded()) return;
         data.reportCatalog = catalog; data.reportRuns = runs;
@@ -6051,7 +6049,10 @@ async function refresh(opts = {}) {
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
       data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
-      data.reportStatus, data.reportHistory,   // #149 R5: the status page's two payloads — a finished run must repaint it
+      // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
+      // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
+      // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
+      data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).
