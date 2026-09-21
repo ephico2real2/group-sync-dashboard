@@ -588,7 +588,7 @@ taken **on the fact but re-implemented** because the proposed mechanism did not 
 
 ---
 
-## Part 13 — #229 E1, the report library tab (08:3x → 17:4x) — PR #233 (CI green on `317b5b5`, merge pending)
+## Part 13 — #229 E1, the report library tab (08:3x → 17:4x) — PR #233 (merged `14a9624`)
 
 The spec, the service's expiry contract, the page from the agreed mock, three seats, two merges of main
 forced by the lab's schema guard, and the re-walk on the merged head. The fork that carried it died on the
@@ -664,3 +664,44 @@ is not on any remote branch; Argo CD pulls from GitHub"*); a Fable fork resumed 
   although the three seats and their decisions are on the PR; the refusal was respected, not worked around.
   Left to the operator: the merge, `release-crc.sh --argocd main`, the re-walk of main and the tick on #229.
 - Not chased: the two CI-load flakes of #246 did not occur on this head.
+
+---
+
+## Part 14 — the night's close (17:5x → 21:1x)
+
+Written after the parts above, because each of these merged only once its own gate was green.
+
+- `14a9624` **#233 merged** — the report library. Deployed to CRC and re-walked there, so the evidence on
+  #229 describes main rather than a branch: `total 8, truncated false`, the lead reading *Library 8 runs ·
+  3 schedules · 1 paused*, the failed run's drawer opening from a cold URL, `no-x-overflow` at 375 px,
+  `errors : []`. #229 closed.
+- `20101e9` **#247 merged** — the cluster-connection logging and the four flows in mermaid + ASCII.
+  **Measured in the pod after deploying**: `httpx` lines in three minutes **0** (they were ~36 in that
+  window before), and across **eight poll cycles** the module logged on **cycle 1 only** — one
+  `discovery`, three `cluster-resolved`, one `secret-refused` — nothing on cycles 2–8. That is the
+  "a cycle that changes nothing logs nothing" property, which review had found FALSE in the first
+  implementation, verified against a running pod rather than a fixture.
+- `4f61158` **#237 merged** — the Cluster Configurations tab, the last unmerged piece of #230. Its walk
+  showed nine clusters with their sources and TLS modes, the four retired rows reading *"unknown — its
+  source no longer describes it"*, the `insecure-with-ca` finding, and — the tier enforced for real — a
+  `developer` session with **13 tabs instead of 14, the refusal card from a cold URL, and no request to
+  `/api/clusterconfigs` at all**.
+- **`shared-rnd`**: this CRC registered as a *remote* cluster through its public endpoint
+  `https://api.crc.testing:6443`, with the bearer token **and the CA** both read from a declared
+  ServiceAccount token Secret — no PEM pasted by hand. It polls `ok`, reads 3 CRs / 62 groups, 6 NCO
+  configs, 115 Kyverno reports and **201 login attempts** backfilled from 4 444 audit lines. Proof that
+  per-cluster capture is keyed by the configured NAME: `sync_event` rows are 192 for `crc-local` and
+  **5** for `shared-rnd` — its history begins when it was configured, and nothing is merged.
+- **The operator chart** (`group-sync-operator-helm-chart` `55c17bc`) now owns the target-cluster
+  prerequisite: the poller ServiceAccount, its read-only ClusterRole, the declared token Secret, and a
+  name-pinned Role letting the IdP bind account fetch that one Secret. `nodeAndPodReads` was flipped to
+  default **on** with the measurement above, so a registered cluster does not onboard with a Logins tab
+  that cannot work. The lab's hand-made RBAC was deleted and re-applied from the chart's own templates.
+
+### Two probe traps worth keeping
+
+- `oc auth can-i get nodes/proxy` answers **no** even when the rule exists — it does not parse the
+  subresource. Use `--subresource=proxy`. The same for `create serviceaccounts --subresource=token`,
+  which asks about *any* ServiceAccount and so answers no against a name-pinned grant: name it.
+- A newly written cluster Secret is picked up on the **next binding cycle (300 s)**, not on the write.
+  I briefly read that as a broken discovery before measuring `last_discovery`.
