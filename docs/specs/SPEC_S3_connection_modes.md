@@ -314,14 +314,82 @@ is where it lives.
 - **Recoverable.** Any derived object can be deleted and will come back; nothing that a human authored
   can be destroyed by the loop.
 
-## 9. Decomposition
+## 9. Credential reconciliation, built in
+
+The operator, 2026-09-20: *"we just need to add a credential reconciliation built-in so that we are
+making sure that all things work as intended and help resolve things."*
+
+§8 keeps the **object** right. This keeps the **credential** right — a Secret can exist, parse and be
+perfectly current while the token inside it no longer opens anything. The dashboard already classifies
+exactly this (`gsd/poller.py`, #245): every failure carries a `phase=`, an `outcome=` and an `action=`
+telling a human what to fix. Credential reconciliation is the step that stops waiting for the human on
+the subset the dashboard can fix by itself.
+
+### 9.1 The poll is the probe
+
+A cluster that polls needs no health check — the poll already proves the credential works, every cycle,
+and its outcome is recorded (`store.record_poll`). A separate probe runs only where there is no poll to
+learn from: a cluster just connected, and one whose stanza changed. Nothing here adds a second request
+per cluster per cycle to prove what the first one already proved.
+
+### 9.2 What it resolves, and what it refuses to
+
+| outcome | what it actually means | what the loop does |
+|---|---|---|
+| `auth_failed` on a **derived** Secret | the token expired, was deleted, or the ServiceAccount was recreated | re-read the declared token Secret; if it is gone or stale, **remint** (§8.3) and rewrite. Recorded as a recovery, not an incident |
+| `auth_failed` on an **unowned** Secret | someone else's credential has gone stale | **report only** — today's action line, unchanged: *"the token is invalid or expired: rotate it in this cluster's Secret"*. We did not make it and we do not rewrite it |
+| `forbidden` | the token is **valid**; the RBAC behind it is not | **never remint.** A new token has exactly the same permissions, so reminting burns the bootstrap account to no effect. Report the missing grant by name |
+| `unreachable` | transport — DNS, routing, the endpoint moved | no credential action at all. Reminting an unreachable cluster is a login attempt that cannot succeed |
+| `cert-verify-failed` | the CA no longer matches | for a derived Secret, re-read `ca.crt` alongside the token and rewrite it — a rotated cluster CA is the common cause and it is ours to fix |
+
+The `forbidden` row is the one that makes this design rather than a retry loop. "Credential
+reconciliation" naively implemented remints on any refusal; authentication and authorization are
+different answers to different questions, and the dashboard already distinguishes them
+(`gsd/kube.py`: `AUTH_FAILED`, `FORBIDDEN`, `UNREACHABLE`).
+
+### 9.3 The lockout guard — why this loop is bounded
+
+The bootstrap account is **one account for the fleet** (§3.1). A directory locks an account after a few
+failed binds. So a reconciler that retries a stale password once per cluster per cycle would, within
+minutes, lock the one account every cluster depends on and convert one broken cluster into a broken
+estate. The rules that prevent it:
+
+1. **Back off per credential, not per cluster.** A bind failure suspends *that credential* everywhere,
+   immediately — the other clusters using it are not allowed to keep trying.
+2. **A refused password is never retried.** Wrong credentials are a configuration fact, not a transient:
+   one failure, a `login-refused` finding quoting the server's own words, and no second attempt until
+   the declaration changes.
+3. **Bounded, exponential, and it gives up out loud.** Transient failures retry with backoff to a stated
+   ceiling, then stop with a finding that names the cluster, the account and the last error.
+4. **Reminting is not logging in.** A remint uses the bootstrap session that already exists, or the
+   TokenRequest grant — it is not an excuse to re-enter a password.
+
+### 9.4 Help resolve things
+
+Where the loop cannot fix it, it says precisely what would, on the tab and in one log line — that is
+what "#245's `action=`" already does, extended with what was *tried*: `attempted=remint`,
+`outcome=forbidden`, so the reader knows the cheap fix is already ruled out.
+
+It also checks the dashboard's **own** grants rather than inferring them from a failure: the reader
+ClusterRole, `get` on the declared token Secret, and `create serviceaccounts/<name>/token` where
+minting is configured, each asked as a SubjectAccessReview and each reported as present or missing by
+name. A missing grant is the commonest cause of a cluster that "won't connect", and naming it is the
+difference between a five-minute fix and an afternoon.
+
+**Acceptance** (with §7's run): delete the declared token Secret on the target and the cluster recovers
+by itself within one cycle, recorded as a recovery; remove the reader ClusterRoleBinding and it does
+**not** remint — it reports `forbidden` with the missing grant named; set a wrong bootstrap password and
+exactly one bind is attempted, with every other cluster on that credential suspended rather than
+locking the account.
+
+## 10. Decomposition
 
 - **S3a** — the loader AND the parser: the three keys in both, `clusterConfig.fleetAccount` in the
   chart, the relaxed credential requirement, the six refusals, the equivalence guard (§4.1) and the
   `fleet-credential-missing` finding. No network.
 - **S3b** — the onboarding sequence and its findings, behind #119 P2's provider; `oauthTrust` and its
   three modes; the annotations on the written Secret.
-- **S3d** — the reconciler (§8): the ownership annotations, the seven transitions, drift reporting,
+- **S3d** — the reconciler (§8 and §9): credential recovery, the lockout guard, the self-check, and the ownership annotations, the seven transitions, drift reporting,
   the 80 % renewal trigger and the `cluster-declared-twice` finding. It is its own step because it is
   the only one that DELETES, and a deleting loop earns its own review and its own acceptance run.
 - **S3c** — the tab: the mode per cluster, the credential's provenance, the token's source and
