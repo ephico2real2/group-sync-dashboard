@@ -7200,6 +7200,27 @@ function myAccessFetch(get, base, viewer, { allowStaleViewer = false } = {}) {
   });
 }
 
+function fingerprintSlots() {
+  return {
+    clusters: data.clusters, alerts: data.alerts, alertsScope: data.alertsScope, groupsyncs: data.groupsyncs, groups: data.groups,
+    groupsMeta: data.groupsMeta, group: data.group, user: data.user, users: data.users, events: data.events, logins: data.logins, access: data.access,
+    usage: data.usage, findings: data.findings, operatorConfigs: data.operatorConfigs, userBindings: data.userBindings, whoami: data.whoami, myAccess: data.myAccess, home: data.home,
+    reportCatalog: data.reportCatalog, reportRuns: data.reportRuns, fleet: data.fleet,   // #172: the fleet tables render from it
+    // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
+    // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
+    // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
+    reportStatus: data.reportStatus && { ...data.reportStatus, as_of: null }, reportHistory: data.reportHistory,
+    library: data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
+    libraryRun: data.libraryRun,
+    kpi: data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
+    kyverno: data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
+    clusterconfigs: data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
+    // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
+    // only change was a label or a grant skipped the repaint the comment above forbids skipping).
+    namespaces: data.namespaces, ns: data.ns,
+  };
+}
+
 async function refresh(opts = {}) {
   // Expired means the page has blanked itself and is leaving: nothing may fetch (a request
   // would re-stamp a sliding proxy's cookie) and nothing may paint (review of C4).
@@ -7599,24 +7620,11 @@ async function refresh(opts = {}) {
     // alertsScope rides along even though nothing renders it yet: it arrives on the same
     // wire as fields that DO, and a fingerprint that omits a payload field is a repaint
     // silently suppressed the day someone renders it.
-    const fingerprint = JSON.stringify([
-      data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
-      data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
-      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
-      data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
-      // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
-      // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
-      // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
-      data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
-      data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
-      data.libraryRun,
-      data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
-      data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
-      data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
-      // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
-      // only change was a label or a grant skipped the repaint the comment above forbids skipping).
-      data.namespaces, data.ns,
-    ]);
+    // Named so a reader of `lastFingerprint` — the UI test guarding this skip — can say WHICH slot
+    // moved. Still compared as the positional array (Object.values keeps insertion order), so an
+    // `undefined` slot serialises as null exactly as before — an object would drop the key (#271).
+    const slots = fingerprintSlots();
+    const fingerprint = JSON.stringify(Object.values(slots));
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",
       // which is the opposite of the truth and the exact confusion `sync_stopped` exists for.
