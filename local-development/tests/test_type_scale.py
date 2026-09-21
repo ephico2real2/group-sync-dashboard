@@ -267,3 +267,27 @@ def test_every_report_shell_class_the_page_writes_has_a_rule(css: str) -> None:
     styled = set(re.findall(r"\.(rp-[A-Za-z0-9_-]+)\b", css))
     assert written, "the report shell's rp- classes are gone from index.html"
     assert written - styled == set(), f"written into the page, styled nowhere: {sorted(written - styled)}"
+
+
+def test_the_heading_ladder_carries_its_weight_and_tracking(css):
+    """#253 via the review of #256 (Codex C5, Cursor finding 1): this module checked sizes, spacing
+    and radii and said nothing about `font-weight` or `letter-spacing` — so the ladder change it was
+    meant to protect passed because the guard was not looking.
+
+    The ladder is one global rule plus a per-level tracking step, and it exists because
+    `.home .answer h1` shipped w700/-0.02em since #158 while every other heading sat at w600 with no
+    tracking at all, and the tracking that did exist applied only under `.card >`, so the same `h2`
+    looked different depending on where it sat."""
+    ladder = re.search(r"h1,\s*h2,\s*h3\s*\{([^}]*)\}", css)
+    assert ladder, "the one global heading rule is gone — the ladder is back to per-scope tracking"
+    assert re.search(r"font-weight:\s*700", ladder.group(1)), ladder.group(1)
+    assert re.search(r"letter-spacing:\s*-0\.01em", ladder.group(1)), ladder.group(1)
+
+    for selector, tracking in (("h1", "-0.02em"), ("h2", "-0.015em")):
+        rule = re.search(rf"\n{selector}\s*\{{([^}}]*)\}}", css)
+        assert rule and tracking in rule.group(1), f"{selector} lost its optical tracking: {rule}"
+
+    # The per-scope duplication is what made one h2 differ from another; if it comes back, the
+    # ladder is no longer the single source and this test is the place that says so.
+    for stale in (r"\.card\s*>\s*h2\s*\{[^}]*letter-spacing", r"\.card\s*>\s*h3\s*\{[^}]*letter-spacing"):
+        assert not re.search(stale, css), f"per-scope heading tracking is back: {stale}"
