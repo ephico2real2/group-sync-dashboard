@@ -716,6 +716,20 @@ clusters:
   # Every OTHER cluster is a labelled Secret discovered at runtime (#230), not a stanza here — so
   # adding one needs no redeploy. A second stanza is still honoured for a cluster whose credential
   # must come from a file the chart mounts.
+  #
+  # CONNECTION MODES (SPEC_S3, #248 — S3a ships the keys; S3b connects). A remote stanza may declare
+  # HOW the dashboard obtains its credential instead of carrying one:
+  #   - name: shared-rnd
+  #     apiUrl: https://api.shared-rnd.example.com:6443
+  #     saTokenLookup: true              # log in as the fleet account, read the poller SA's token (S3b)
+  #     # userSelfLogin: true            # or: poll as the fleet account itself; nothing at rest (S3b)
+  #     # ldapConnectionBootstrap: uid   # OPTIONAL — overrides clusterConfig.fleetAccount.username here
+  # Exactly one mode. A stanza declaring a mode OMITS tokenEnv/tokenFile (a mode beside a credential is
+  # two sources of truth and is refused); ldapConnectionBootstrap without a mode is refused; a mode on
+  # the hosting cluster is refused — this pod's own cluster authenticates with the mounted
+  # ServiceAccount. Until S3b lands, a mode stanza is listed on the Cluster Configurations tab with its
+  # credential pending and is not polled. The render refuses each of these exactly as the loader does,
+  # so a bad stanza fails `helm template`, not the pod after a green upgrade.
 
 # ---------------------------------------------------------------------------
 # ArgoCD / GitOps
@@ -1345,6 +1359,20 @@ clusterConfig:
     # credential never reaches a response, a log line, the database or /metrics either way.
     writes:
       enabled: false
+  # The fleet account (SPEC_S3 §3.1, #248): the LDAP account the dashboard logs in AS when a cluster
+  # stanza — or a cluster Secret's config — declares a connection mode (saTokenLookup / userSelfLogin).
+  # One account for the fleet; a stanza overrides the username with ldapConnectionBootstrap. S3a
+  # records the setting; S3b reads it at connect time and nowhere else. Where neither names a username,
+  # or the password Secret is unreadable, the cluster is a finding on the tab, not a crashed pod.
+  fleetAccount:
+    # The username. Empty = every mode stanza must name its own ldapConnectionBootstrap.
+    username: ""
+    # Its password: never a literal in values — a Secret in the release namespace, read at connect
+    # time only. The chart does not create it, and the value never reaches a log line, the database,
+    # a response or /metrics (the redaction pin covers it).
+    passwordSecret:
+      name: gsd-fleet-account
+      key: password
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)

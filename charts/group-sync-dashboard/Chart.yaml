@@ -202,7 +202,7 @@ type: application
 # is retired (#96) and its history — sync events, KPI days, login events, report runs — stays under
 # it while the new name starts empty. Taking this chart's new default name on an existing release
 # does that. The flag itself needs no rename.
-version: 0.45.0
+version: 0.46.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
