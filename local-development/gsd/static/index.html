@@ -932,6 +932,11 @@ const SEARCH_BOXES = {
     id: "f-ns-search", label: "Find namespace", placeholder: "filter by name or label",
     title: 'Filters namespaces by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.',
     help: "Filters the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
+    // The list this box narrows is PAGED (#261): the view key that holds its page, reset to 1 on every
+    // change here, because a reader on page 3 of 5 would otherwise be shown an empty page 3 of 1.
+    // Declared by the box rather than written by the shared handler, so typing in the Groups tab's box
+    // cannot drop the page a reader left the namespace index on (review of #264, Cursor C1).
+    page: "nsIndexPage",
   },
   memberSearch: {
     id: "f-member-search", label: "Find member", placeholder: "filter by id or name",
@@ -979,12 +984,12 @@ function wireSearchBox(key) {
   // Except mid-IME-composition: those input events describe an unfinished conversion, and a repaint
   // here replaces the node the IME is composing into (see the guard above the innerHTML swap in
   // renderFilters). The state still updates, so the compositionend render loses nothing.
+  // A box that narrows a paged list names the page it resets (SEARCH_BOXES[key].page); every other
+  // box touches nothing beyond its own value.
+  const resetPage = () => { if (b.page) view[b.page] = 1; };
   el.oninput = (e) => {
     view[key] = e.target.value;
-    // A NARROWED SET NEEDS PAGE ONE (#261). The namespace index pages; typing in this bar changes what
-    // it holds, and a reader who was on page 3 of 5 would otherwise be shown an empty page 3 of 1.
-    // Done here rather than per-box so the next paged list inherits it.
-    view.nsIndexPage = 1;
+    resetPage();
     if (e.isComposing) return;   // an unfinished conversion: the state is kept, compositionend paints
     if (!openLookupFor(key)) render();
   };
@@ -995,6 +1000,7 @@ function wireSearchBox(key) {
   el.addEventListener("compositionend", (e) => {
     searchComposingIn = null;
     view[key] = e.target.value;
+    resetPage();
     if (!openLookupFor(key)) render();
   });
   // compositionend fires before blur in every engine, but a missed one would freeze this bar
@@ -1007,7 +1013,7 @@ function wireSearchBox(key) {
     if (e.key === "Escape" && !e.isComposing && view[key]) {
       e.preventDefault();
       view[key] = "";
-      view.nsIndexPage = 1;
+      resetPage();
       render();
     }
   };
@@ -4973,8 +4979,8 @@ function namespacesCard() {
   // ~1,900 px away from the rows once the page is scrolled. A namespace shows when it matches BOTH,
   // and neither box clears the other.
   const ownQ = (view.nsIndexSearch || "").trim();
-  const matches = (n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch)
-                      && matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsIndexSearch);
+  const fieldsOf = (n) => [n.name, ...keys.map((k) => (n.labels || {})[k])];
+  const matches = (n) => matchesSearch(fieldsOf(n), q) && matchesSearch(fieldsOf(n), ownQ);
   const shown = inScope.filter(matches);
   // THE DEFAULT IS DECIDED BY WHAT THE SECTION HOLDS, never by what a search narrowed it to: keying it
   // on the filtered count let the bar's inherited box open the section by a side door, which is the one
@@ -5087,6 +5093,27 @@ function namespacesCard() {
         bar; both apply.</span></span>
     ${toggle}
   </div>`;
+  // WHICH BOX EMPTIED THE LIST. Two boxes AND together, so "press Escape in the box" no longer says
+  // which one; and with both set, clearing the wrong one changes nothing. Each query is tried ALONE
+  // against the same set: a box that matches nothing by itself is the one hiding the rows, and is
+  // named; when each matches something alone and nothing together, the reader is told that instead.
+  // Only computed when the list is empty, so it costs nothing on a normal paint.
+  const searchEmpty = () => {
+    const hiders = [
+      q && !inScope.some((n) => matchesSearch(fieldsOf(n), q))
+        ? `<strong>${esc(q)}</strong> in the bar's Find namespace box` : "",
+      ownQ && !inScope.some((n) => matchesSearch(fieldsOf(n), ownQ))
+        ? `<strong>${esc(ownQ)}</strong> in this list's Search box` : "",
+    ].filter(Boolean);
+    const still = `All ${inScope.length} are still there${hidingPlatform
+      ? `, and ${platformCount} platform namespace${platformCount === 1 ? " is" : "s are"} hidden besides`
+      : ""} — the filter is hiding them.`;
+    // Reachable only with a query set: with both boxes empty every row matches and the list is not empty.
+    return hiders.length
+      ? `Nothing matches ${hiders.join(", nor ")}. ${still} Press Escape in ${hiders.length === 1 ? "that box" : "each box"} to clear it.`
+      : `Nothing matches both <strong>${esc(q)}</strong> (the bar's Find namespace box) and <strong>${esc(ownQ)}</strong>
+         (this list's Search box), though each matches something on its own. ${still} Press Escape in either box to widen.`;
+  };
   const body = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
@@ -5097,21 +5124,26 @@ function namespacesCard() {
           <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
           <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>
         </tr>`).join("")}</tbody></table></div>`
-    // THE EMPTY STATE IS CHOSEN BY CAUSE, NOT BY A LADDER (review of #257, Codex C8). It used to fall
-    // through to "No namespaces recorded for this cluster yet" whenever the list came out empty — so a
-    // cluster whose every namespace is a platform one said "1 platform namespace hidden" and "No
-    // namespaces recorded" in the same card: a true sentence about the filter beside a false one about
-    // the cluster. Each branch now answers the question the reader actually has, and the filter's
-    // emptiness is stated before the cluster's.
-    // THE PLATFORM FILTER'S OWN EMPTINESS IS TESTED FIRST, before the search (review of #258, Cursor
-    // C8 trigger B): with every row hidden by the filter, `q` won this ladder and the card said "All
-    // 0 are still there" — a sentence that is arithmetically true and tells the reader nothing.
+    // THE EMPTY STATE IS DECIDED BY THE STAGE THAT EMPTIED THE LIST, never by which inputs happen to
+    // be set. The rows pass through one pipeline — `all` → `inScope` (the platform filter) → `shown`
+    // (the searches) — and the counts line is computed from those same three numbers, so the sentence
+    // here and the counts above it cannot disagree. This ladder used to test INPUTS (`hidingPlatform`,
+    // then `q`) and fall through to "No namespaces recorded" for anything it did not know about, and
+    // it told that lie three times: for the platform filter (review of #257, Codex C8: "1 platform
+    // namespace hidden" beside "No namespaces recorded"), for the self tier (#258, Cursor C8), and for
+    // the section's own box (#264, Cursor C2: "0 of 39 match the search" beside "No namespaces
+    // recorded"). Keyed on the stage, a filter added later cannot reach the cluster's sentence: that
+    // one is reachable only when the cluster's own list is empty, and every stage in between owns its
+    // own sentence.
     //
-    // AND THE SELF TIER DOES NOT SPEAK FOR THE CLUSTER (trigger A). The payload is self-scoped, so
-    // "every namespace on this cluster" and "nothing is missing from the cluster" are claims it
-    // cannot support; prefixing them with "That is your view:" does not cancel them. The zero-reach
-    // branch below has kept that rule since #167 and this branch now keeps it too.
-    : `<div class="empty-note">${hidingPlatform && all.length && !inScope.length
+    // THE SELF TIER DOES NOT SPEAK FOR THE CLUSTER (#258, trigger A; #167, Grok F3). The payload is
+    // self-scoped, so "every namespace on this cluster" and "nothing is missing from the cluster" are
+    // claims it cannot support; prefixing them with "That is your view:" does not cancel them.
+    : `<div class="empty-note">${!all.length
+        ? (self
+            ? "None of your memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace missing here may exist."
+            : "No namespaces recorded for this cluster yet.")
+        : !inScope.length
         ? (self
             ? `Every namespace your memberships and grants reach is a platform one — all
                ${platformCount} of them are hidden. That is your view: a namespace missing here may exist.
@@ -5119,15 +5151,7 @@ function namespacesCard() {
             : `Every namespace on this cluster is a platform one — all ${platformCount} of them are hidden.
                Nothing is missing from the cluster.
                <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`)
-        : q
-        ? `Nothing matches <strong>${esc(q)}</strong>. All ${inScope.length} are still there${hidingPlatform
-            ? `, and ${platformCount} platform namespace${platformCount === 1 ? " is" : "s are"} hidden besides`
-            : ""} — the filter is hiding them. Press Escape in the box to clear.`
-        // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
-        // fact about their view, not about the cluster (review of #167, Grok F3).
-        : (self
-            ? "None of your memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace missing here may exist."
-            : "No namespaces recorded for this cluster yet.")}</div>`;
+        : searchEmpty()}</div>`;
   return `<section class="card">
     <h2>Namespaces <span class="muted fw-normal">· ${shown.length === inScope.length ? inScope.length : `${shown.length} of ${inScope.length} shown`}</span></h2>
     ${platformLine}

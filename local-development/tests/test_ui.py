@@ -8841,6 +8841,18 @@ class TestTheNamespaceIndexFoldsSearchesAndPages:
         self._open(dash)
         assert dash.locator("[data-index-page]").count() == 0
 
+    def test_a_miss_in_the_sections_box_names_that_box_and_not_the_cluster(self, dash):
+        """On 53e5f20 a miss typed in the section's box alone fell through the empty ladder to "No
+        namespaces recorded for this cluster yet" — three lines under "0 of 9 match the search"."""
+        self._open(dash)
+        dash.fill("#f-index-search", "zzz-no-such")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 0")
+        card = dash.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "No namespaces recorded" not in card, card[-300:]
+        assert "Nothing matches zzz-no-such in this list's Search box" in card, card[-300:]
+        assert "All 9 are still there, and 2 platform namespaces are hidden besides" in card, card[-300:]
+        assert "Press Escape in that box" in card and "0 of 9 match the search" in card, card[-300:]
+
     def test_a_mid_string_caret_in_the_sections_box_survives_a_keystroke(self, dash):
         """Every keystroke used to jump the caret to the end, so a typo in the middle of a query could
         not be corrected (review of #264, Cursor C3). Measured on 5e6039a: "prod-ns", caret at 2,
@@ -9207,3 +9219,75 @@ class TestTheIndexOnAnEstateBigEnoughToNeedIt:
         current, other = page.evaluate(
             "() => ['ns-index-page-1', 'ns-index-page-2'].map((id) => getComputedStyle(document.getElementById(id)).backgroundColor)")
         assert current != other and current not in ("rgba(0, 0, 0, 0)", "transparent"), (current, other)
+
+    def test_the_empty_sentence_names_the_box_that_is_hiding_the_rows(self, page, estate_server):
+        """Two boxes AND together. The bar alone: its box is named. Both set with the bar matching
+        nothing by itself: the bar's box alone is named — clearing the section's would change nothing.
+        Both matching something alone and nothing together: said so, either box widens."""
+        self._open(page, estate_server)
+        empty = lambda: page.locator("h2:text-is('Namespaces')").locator("xpath=..").locator(".empty-note").inner_text()
+        page.fill("#f-ns-search", "zzz-no-such")
+        page.wait_for_function("() => document.querySelectorAll('.empty-note').length === 1")
+        assert empty().startswith("Nothing matches zzz-no-such in the bar's Find namespace box. All 39 are still there, and 67 platform namespaces are hidden besides"), empty()
+        assert "Press Escape in that box" in empty() and "this list's Search box" not in empty(), empty()
+        page.fill("#f-index-search", "app-ns3")   # matches 10 on its own; the bar still hides everything
+        page.wait_for_function("() => view.nsIndexSearch === 'app-ns3'")
+        assert "Nothing matches zzz-no-such in the bar's Find namespace box." in empty(), empty()
+        assert "app-ns3" not in empty() and "in that box" in empty(), empty()
+        page.fill("#f-ns-search", "app-ns1 qa")   # 5 alone: app-ns1, 10, 13, 16, 19
+        page.fill("#f-index-search", "mn0")       # 6 alone: app-ns0, 7, 14, 21, 28, 35 — none in common
+        page.wait_for_function("() => view.nsSearch === 'app-ns1 qa' && view.nsIndexSearch === 'mn0'")
+        assert page.locator("tr[data-ns]").count() == 0
+        assert empty().startswith("Nothing matches both app-ns1 qa (the bar's Find namespace box) and mn0 (this list's Search box), though each matches something on its own."), empty()
+        assert "Press Escape in either box" in empty(), empty()
+        page.locator("#f-index-search").press("Escape")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 5")
+
+    def test_a_query_on_a_cluster_with_nothing_recorded_still_says_so(self, page, estate_server):
+        """The cluster's sentence is reachable only when the cluster's own list is empty — and then it
+        is the sentence, whatever is typed. On 53e5f20 a query here read "Nothing matches x. All 0 are
+        still there", the arithmetically-true nothing #258 had already caught for the platform filter."""
+        self._open(page, estate_server, "prod-east")
+        assert page.evaluate("() => data.namespaces.namespaces.length") == 0
+        page.fill("#f-ns-search", "anything")
+        page.wait_for_function("() => view.nsSearch === 'anything'")
+        card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "No namespaces recorded for this cluster yet." in card and "Nothing matches" not in card, card[-300:]
+
+    def test_typing_in_another_tabs_box_keeps_the_index_page(self, page, estate_server):
+        """The reset belongs to the box that pages, not to the bar's shared handler: on 53e5f20 typing in
+        the Groups tab's box wrote nsIndexPage = 1 and a reader came back to page 1 of the index."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => view.nsIndexPage === 2")
+        page.locator("button[data-nav='groups']").click()
+        page.wait_for_selector("#f-group-search")
+        page.fill("#f-group-search", "team")
+        page.wait_for_function("() => view.groupSearch === 'team'")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        page.locator("#f-group-search").press("Escape")
+        page.wait_for_function("() => view.groupSearch === ''")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        page.locator("button[data-nav='nsaudit']").click()
+        page.wait_for_selector("#f-index-search")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+
+    def test_the_bars_box_still_resets_the_page_from_a_later_page(self, page, estate_server):
+        """The declared reset, from page 5 of 106 into the 39 that match — two pages remain, so the
+        clamp alone would have left page 2."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
+        page.click('[data-index-page="5"]')
+        page.wait_for_function("() => view.nsIndexPage === 5")
+        page.fill("#f-ns-search", "app-ns")
+        page.wait_for_function("() => view.nsIndexPage === 1 && document.querySelectorAll('tr[data-ns]').length === 25")
+        assert "39 of 106 match the search" in self._line(page) and "page 1 of 2" in self._line(page), self._line(page)
+        page.locator("#f-ns-search").press("Escape")
+        page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
+        assert page.evaluate("() => view.nsIndexPage") == 1
