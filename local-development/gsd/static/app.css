@@ -1490,8 +1490,12 @@ td.state-cell { min-width: 210px; }
 
 /* #149 R7: the ParamSpec-driven report shell — one control per parameter type on the design system's
    tokens; the Subject scope and the namespace Scope share the framed-block treatment. */
-.report-field .hint { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* one line; the full text on hover (title) */
+.report-field .hint { display: block; font-size: var(--text-sm); overflow-wrap: anywhere; } /* the whole text, wrapped; secondary copy at its label's size, never above it (operator, 2026-09-21) */
 .report-field .req { color: var(--status-critical); font-weight: 600; }
+/* `.linkish` inherits its type from context, so in a field it took body copy while the same affordance
+   in a scope foot took --text-sm — the selector block's Clear rendered two steps larger than the
+   Subject block's (measured 2026-09-21). One register for the form's own links. */
+.report-field .linkish { font-size: var(--text-sm); }
 .report-advanced { margin-top: var(--space-5); }
 .report-advanced summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary); }
 .report-actions { position: sticky; bottom: 0; background: var(--surface-1); padding-top: var(--space-4); padding-bottom: var(--space-2); }
@@ -1548,6 +1552,7 @@ td.state-cell { min-width: 210px; }
 .rp-lookup .rp-menu { margin-top: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); max-height: 220px; overflow-y: auto; }
 .rp-lookup .rp-menu-head { font-size: var(--text-micro); letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); padding: var(--space-3) var(--space-5); background: var(--zebra); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
 .rp-lookup .rp-opt { font-family: var(--font-mono); font-size: var(--text-sm); padding: var(--space-2) var(--space-5); cursor: pointer; display: flex; align-items: center; gap: var(--space-3); }
+.rp-lookup .rp-opt .rp-n { margin-left: auto; flex: none; font-family: var(--font-ui); color: var(--text-muted); }   /* the group's member count, as of the snapshot */
 .rp-lookup .rp-opt::before { content: ""; width: 13px; height: 13px; border-radius: var(--radius-sm); border: 1px solid var(--border); flex: none; }
 .rp-lookup .rp-opt.sel::before { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--surface-1); }
 .rp-lookup .rp-opt:hover, .rp-lookup .rp-opt:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); outline: none; }

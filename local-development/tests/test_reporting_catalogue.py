@@ -477,6 +477,13 @@ class TestSubjectScopeAndLookups:
         assert snapshot.members_of_groups(CLUSTER, ["team-a", "hand-made"]) == {"alice", "bob", "erin"}
         assert snapshot.members_of_groups(CLUSTER, []) == set()
 
+    def test_the_member_counts_are_cut_where_the_names_are(self, snapshot):
+        # the cap bounds both projections of the same read: never a count for a name the menu does not offer
+        snapshot.DISCOVERED_CAP = 2
+        d = snapshot.discovered(CLUSTER, "company.net/mnemonic", "company.net/oud-group")
+        assert d["groups"]["truncated"] is True and d["groups"]["values"] == ["empty-group", "hand-made"]
+        assert d["groups"]["members"] == {"empty-group": 0, "hand-made": 1}
+
     def test_namespace_access_groups_its_sections_by_a_label(self, snapshot, tmp_path):
         spec, build = REGISTRY["namespace-access"]
         # nothing captured for this cluster (the seed carries no namespace labels): the headings stay as
