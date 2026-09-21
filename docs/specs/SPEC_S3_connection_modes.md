@@ -411,10 +411,36 @@ data        name=shared-rnd  server=https://api.crc.testing:6443  enabled=true
 cluster can test this honestly without a second cluster, because what is exercised is the
 *destination shape*, not the network hop.
 
-**It changes what the cluster is.** `GET /api/clusters` reports `shared-rnd` polling `ok`. The values
-stanza declares `saTokenLookup`, which alone would leave it `credential_pending` and unpolled — but a
-Secret **shadows a values entry of the same name** (SPEC_S1), and this one carries a `bearerToken`,
-so the effective `credential_kind` is `bearer` and it polls like any other cluster.
+**Why it polls, precisely.** Measured on the deployed ConfigMap, the lab's `clusters.yaml` contains
+**one entry — `dashboard`**, the host with its mounted ServiceAccount token. There is no `shared-rnd`
+stanza at all, so nothing is being shadowed: the Secret is that cluster's whole definition.
+`/api/clusterconfigs` reports it as
+
+```
+shared-rnd   source=secret:gsd-cluster-shared-rnd   credential=bearer   enabled=True
+```
+
+— the SPEC_S1 path (#230), which ships. `config.bearerToken` resolves, so `credential_pending` is
+`None` and the poller treats it like any other cluster. **`saTokenLookup` is not involved**, because
+no stanza on this lab declares it.
+
+That is the distinction the whole of S3 rests on, and it is easy to lose:
+
+| | state |
+|---|---|
+| **consuming** a Secret that already holds a token, over the remote API | **ships** — this is what the lab demonstrates |
+| **acquiring** that token — log in as the bootstrap account, read the poller SA's token, write the Secret | **not built** (S3b) |
+
+The token reached that Secret by hand: its `kubectl.kubernetes.io/last-applied-configuration`
+annotation is a manifest carrying `stringData.config`. S3b is the step that would fetch it, write it
+and (with S3d) refresh it.
+
+**The remote path is genuinely exercised.** `server` is `https://api.crc.testing:6443` — the
+front-end OpenShift API, not `kubernetes.default.svc` — so the request leaves by the same route an
+external cluster's would: a different endpoint, a real 9 612-character CA chain, and a bearer token
+belonging to a ServiceAccount in another namespace, authenticated by the API server exactly as a
+remote cluster's would be. The three `mock-*` clusters on the lab are configured the same way. This
+is §7's point: the reference cluster tests the destination shape honestly without a second cluster.
 
 > **A correction to an earlier record.** The #269 walk
 > (`reports/2026-09-21_report-form-clusters/README.md`, and the evidence comment on #267) expected
