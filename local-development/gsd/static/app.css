@@ -1260,7 +1260,9 @@ mark { background: none; color: inherit; font-weight: 700; }
   border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px; /* optical: the badge's own vertical/horizontal */ white-space: nowrap; }
 .pager { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; padding-top: var(--space-5); font-size: var(--text-sm); color: var(--text-muted); }
 .pager button { font: inherit; font-size: var(--text-sm); padding: var(--space-2) var(--space-5); border-radius: var(--radius-pill); }
-.pager button[aria-pressed="true"] { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
+/* The alerts pager marks its page with aria-pressed, the namespace index's with aria-current="page" —
+   the same pill for both, keyed on whichever attribute names the position (#264). */
+.pager button[aria-pressed="true"], .pager button[aria-current="page"] { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
 .pager .ellipsis { color: var(--text-muted); }
 /* The CR and policy tables mark a row that needs a reader with a wash the glyph and the word repeat. */
 tr.attn td { background: color-mix(in srgb, var(--status-critical) 8%, transparent); }
