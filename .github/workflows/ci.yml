@@ -448,7 +448,7 @@ jobs:
       - name: Upload shipped-image SARIF to code scanning
         if: ${{ always() && steps.sarif-shipped.outputs.sarif != '' }}
         continue-on-error: true   # reporting is best-effort; a code-scanning hiccup never fails CI
-        uses: github/codeql-action/upload-sarif@42c378ffbb438be29e3e1848d520fb0a8ee1c271 # v3.38.0
+        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
         with:
           sarif_file: ${{ steps.sarif-shipped.outputs.sarif }}
           category: grype-gsd-shipped
@@ -528,7 +528,7 @@ jobs:
       - name: Upload report-image SARIF to code scanning
         if: ${{ always() && steps.sarif-report.outputs.sarif != '' }}
         continue-on-error: true   # reporting is best-effort; a code-scanning hiccup never fails CI
-        uses: github/codeql-action/upload-sarif@42c378ffbb438be29e3e1848d520fb0a8ee1c271 # v3.38.0
+        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
         with:
           sarif_file: ${{ steps.sarif-report.outputs.sarif }}
           category: grype-gsd-report
