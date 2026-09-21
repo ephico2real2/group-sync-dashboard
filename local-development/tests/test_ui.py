@@ -231,6 +231,14 @@ def _seed(db_path: str) -> None:
         {"name": "quiet-corner", "created_at": _iso(now - timedelta(days=10)), "phase": "Active",
          "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}},
         *[{"name": f"ns{i}", "created_at": _iso(now - timedelta(days=5)), "phase": "Active", "metadata": {}} for i in range(6)],
+        # #257: two platform namespaces, HIDDEN by default — so every count asserted elsewhere in
+        # this file stays at nine, which is the property worth having: adding platform noise to the
+        # seed must not move a single existing number. `openshift-monitoring` carries a direct grant
+        # The "one of them has a finding" sentence is driven from the envelope field in the test
+        # rather than seeded here: a grant inside a platform namespace would also enter the
+        # worklist above and move counts asserted elsewhere in this file.
+        {"name": "openshift-monitoring", "created_at": _iso(now - timedelta(days=200)), "phase": "Active", "metadata": {}},
+        {"name": "kube-system", "created_at": _iso(now - timedelta(days=200)), "phase": "Active", "metadata": {}},
     ], _iso(now))
     store.replace_user_bindings(
         "crc-local",
@@ -2514,7 +2522,10 @@ class TestLookup:
         api = f"{server}/api/clusters/crc-local"
         assert doors["Groups"] == httpx.get(f"{api}/groups?state=all", timeout=5).json()["count"]
         assert doors["Users"] == httpx.get(f"{api}/users?limit=10000", timeout=5).json()["total"]
-        assert doors["Namespaces"] == httpx.get(f"{api}/namespaces", timeout=5).json()["count"] == 9
+        # 11, not 9, since #257 added two platform namespaces to the seed: the lookup counts every
+        # namespace the API returns, and the platform filter is the Namespace audit INDEX's, not
+        # the lookup's. The door and the API agreeing is what this asserts, whatever the number.
+        assert doors["Namespaces"] == httpx.get(f"{api}/namespaces", timeout=5).json()["count"] == 11
         page.locator(".door[data-page='groups'] button.drill").click()
         page.wait_for_selector("tr[data-group]")
         assert page.evaluate("() => location.hash") == "#page=groups&cluster=crc-local"
@@ -2931,7 +2942,7 @@ class TestTheWalksLookupStep:
         mod.walk_lookup(w)
         by = {s["step"]: s for s in w.steps}
         assert "lookup demo" in by, [s["step"] for s in w.steps]
-        assert by["lookup demo"]["ok"] and "Namespaces · 2 of 9" in by["lookup demo"]["detail"], by["lookup demo"]
+        assert by["lookup demo"]["ok"] and "Namespaces · 2 of 11" in by["lookup demo"]["detail"], by["lookup demo"]
         assert "lookup -> namespace page" in by and by["lookup -> namespace page"]["detail"] == "prod-ns", by
         assert by["lookup at 375 px"]["ok"], by["lookup at 375 px"]
         assert not w.errors and not errors, (w.errors, errors)
@@ -7691,7 +7702,14 @@ class TestReportsTab:
             page.click("details.report-advanced summary")
             page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
             listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
-            assert listed == ["(cluster-scoped)", "klt-pass-both", *[f"ns{i}" for i in range(6)], "prod-ns", "quiet-corner"], listed   # the seed's namespaces, in order, behind the one name the poll never lists
+            # The seed's namespaces in order, behind the one name the poll never lists. `kube-system`
+            # and `openshift-monitoring` are here because the REPORT PICKER lists every namespace:
+            # #257's platform filter is the Namespace audit index's default view, and deliberately
+            # not a global one — a reviewer generating a report about a platform namespace is a
+            # legitimate thing to do, and a picker that silently omitted them would be the defect.
+            assert listed == ["(cluster-scoped)", "klt-pass-both", "kube-system",
+                              *[f"ns{i}" for i in range(6)], "openshift-monitoring",
+                              "prod-ns", "quiet-corner"], listed
             # the preview runs for the form as it opened: this report needs a scope, so it says so — the
             # refusal beside Generate before the run is refused, with Generate untouched
             page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
@@ -8507,3 +8525,138 @@ class TestLibraryPage:
             assert not errors, errors
         finally:
             ctx.close()
+
+
+class TestPlatformNamespacesAreHiddenByDefault:
+    """#257: the index listed every namespace the poller sees — 67 of 106 on the reference cluster
+    were `openshift-*`, `kube-*` or one of the five named, so two thirds of the largest section on
+    the page was platform noise under a five-row worklist.
+
+    The seed carries two platform namespaces (`openshift-monitoring`, `kube-system`) beside its
+    nine. Every count asserted elsewhere in this file is still nine, which is the property: adding
+    platform noise to a cluster must not move a number a reader was already reading."""
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+
+    def test_they_are_hidden_and_the_page_says_how_many(self, dash):
+        self._open(dash)
+        assert dash.locator("tr[data-ns]").count() == 9
+        for name in ("openshift-monitoring", "kube-system"):
+            assert dash.locator(f'tr[data-ns="{name}"]').count() == 0, f"{name} should be hidden"
+        line = dash.locator("#ns-show-platform").locator("xpath=..").inner_text()
+        assert "2 platform namespaces hidden" in line, line
+
+    def test_the_hidden_one_with_a_finding_is_called_out(self, dash):
+        """"2 hidden" is noise removed; "2 hidden, 1 of them has a direct grant" is a different
+        sentence — the reader must not have to toggle to learn which they are looking at.
+
+        Driven by setting the envelope field rather than by seeding a grant inside a platform
+        namespace: such a grant would also enter the worklist above and move counts this file
+        asserts elsewhere, and what is under test here is the SENTENCE. That the count itself is
+        right is tests/test_namespaces_api.py's job
+        (TestPlatformNamespacesAreClassifiedAndCounted)."""
+        self._open(dash)
+        assert "direct grant" not in dash.locator("#ns-show-platform").locator("xpath=..").inner_text()
+        dash.evaluate("() => { data.namespaces.platform_with_findings = 1; render(); }")
+        dash.wait_for_timeout(250)
+        line = dash.locator("#ns-show-platform").locator("xpath=..").inner_text()
+        assert "2 platform namespaces hidden" in line and "1" in line and "has a direct grant" in line, line
+        dash.evaluate("() => { data.namespaces.platform_with_findings = 0; render(); }")
+
+    def test_the_control_shows_them_and_puts_them_back(self, dash):
+        self._open(dash)
+        dash.click("#ns-show-platform")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 11")
+        assert dash.locator('tr[data-ns="openshift-monitoring"]').count() == 1
+        assert "Hide the 2" in dash.locator("#ns-show-platform").inner_text()
+        # Focus stays on the control the reader just pressed — render() rebuilds the card under it.
+        assert dash.evaluate("() => document.activeElement && document.activeElement.id") == "ns-show-platform"
+        dash.click("#ns-show-platform")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_the_heading_counts_the_set_in_view_not_the_raw_total(self, dash):
+        """The denominator a reader is offered must be the set they are looking at. Quoting the raw
+        total while the note quoted the visible set is a real defect this caught during the build:
+        the page said "0 of 11 shown" while the empty state said all 9 were still there."""
+        self._open(dash)
+        box = dash.locator("#f-ns-search")
+        box.fill("demo zzz")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 0")
+        assert "0 of 9 shown" in dash.locator("h2", has_text="Namespaces").first.inner_text()
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "All 9 are still there" in note and "2 platform namespaces are hidden besides" in note, note
+        box.press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_a_cluster_whose_every_namespace_is_platform_does_not_contradict_itself(self, dash):
+        """Codex C8 on #257: the empty state fell through a ladder, so a list emptied by the FILTER got
+        the sentence meant for a cluster with nothing recorded. The card said "1 platform namespace
+        hidden" and "No namespaces recorded for this cluster yet" at once — a true sentence about the
+        filter beside a false one about the cluster.
+
+        Driven by narrowing the payload rather than seeding a second cluster: what is under test is
+        which sentence the renderer chooses, and the choice is made from the data it holds."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "Every namespace on this cluster is a platform one" in note, note
+        assert "No namespaces recorded" not in note, note
+        assert "Nothing is missing from the cluster" in note, note
+        # and the reader can act on it from where they are
+        dash.click("#ns-show-platform-empty")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 2")
+        dash.evaluate("() => { view.nsShowPlatform = false; }")
+
+    def test_the_self_tier_empty_state_does_not_speak_for_the_cluster(self, dash):
+        """Cursor C8 trigger A on #258, against MY fix for Codex's C8 — a correct finding does not
+        make its fix correct. The payload at the self tier is self-scoped, so "every namespace on
+        this cluster is a platform one" and "nothing is missing from the cluster" are claims it
+        cannot support. Prefixing them with "That is your view:" does not cancel them; the zero-reach
+        branch has kept that rule since #167 and this branch must keep it too."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.scope = "self";
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "namespace your memberships and grants reach" in note, note
+        assert "on this cluster is a platform one" not in note, note
+        assert "Nothing is missing from the cluster" not in note, note
+        assert "a namespace missing here may exist" in note, note
+        dash.evaluate("() => { data.namespaces.scope = 'all'; }")
+
+    def test_the_filters_own_emptiness_is_said_before_the_search(self, dash):
+        """Cursor C8 trigger B: with every row hidden by the platform filter, the search branch won
+        the ladder and the card said "All 0 are still there" — arithmetically true, and it tells the
+        reader nothing about why the list is empty."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            view.nsSearch = "zzz";
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "All 0 are still there" not in note, note
+        assert "Every namespace on this cluster is a platform one" in note, note
+        dash.evaluate("() => { view.nsSearch = ''; render(); }")
+
+    def test_a_hidden_namespace_is_still_reachable_by_its_own_page(self, dash):
+        """Filtered on the page, never dropped from the payload — the drill still resolves."""
+        dash.evaluate("() => location.hash = '#page=nsaudit&cluster=crc-local&ns=openshift-monitoring'")
+        dash.wait_for_timeout(600)
+        assert "openshift-monitoring" in dash.locator("#main").inner_text()
