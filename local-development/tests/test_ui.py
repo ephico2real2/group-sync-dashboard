@@ -8615,6 +8615,46 @@ class TestPlatformNamespacesAreHiddenByDefault:
         dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 2")
         dash.evaluate("() => { view.nsShowPlatform = false; }")
 
+    def test_the_self_tier_empty_state_does_not_speak_for_the_cluster(self, dash):
+        """Cursor C8 trigger A on #258, against MY fix for Codex's C8 — a correct finding does not
+        make its fix correct. The payload at the self tier is self-scoped, so "every namespace on
+        this cluster is a platform one" and "nothing is missing from the cluster" are claims it
+        cannot support. Prefixing them with "That is your view:" does not cancel them; the zero-reach
+        branch has kept that rule since #167 and this branch must keep it too."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.scope = "self";
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "namespace your memberships and grants reach" in note, note
+        assert "on this cluster is a platform one" not in note, note
+        assert "Nothing is missing from the cluster" not in note, note
+        assert "a namespace missing here may exist" in note, note
+        dash.evaluate("() => { data.namespaces.scope = 'all'; }")
+
+    def test_the_filters_own_emptiness_is_said_before_the_search(self, dash):
+        """Cursor C8 trigger B: with every row hidden by the platform filter, the search branch won
+        the ladder and the card said "All 0 are still there" — arithmetically true, and it tells the
+        reader nothing about why the list is empty."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            view.nsSearch = "zzz";
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "All 0 are still there" not in note, note
+        assert "Every namespace on this cluster is a platform one" in note, note
+        dash.evaluate("() => { view.nsSearch = ''; render(); }")
+
     def test_a_hidden_namespace_is_still_reachable_by_its_own_page(self, dash):
         """Filtered on the page, never dropped from the payload — the drill still resolves."""
         dash.evaluate("() => location.hash = '#page=nsaudit&cluster=crc-local&ns=openshift-monitoring'")

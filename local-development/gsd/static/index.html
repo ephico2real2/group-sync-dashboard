@@ -4994,14 +4994,26 @@ function namespacesCard() {
     // namespaces recorded" in the same card: a true sentence about the filter beside a false one about
     // the cluster. Each branch now answers the question the reader actually has, and the filter's
     // emptiness is stated before the cluster's.
-    : `<div class="empty-note">${q
+    // THE PLATFORM FILTER'S OWN EMPTINESS IS TESTED FIRST, before the search (review of #258, Cursor
+    // C8 trigger B): with every row hidden by the filter, `q` won this ladder and the card said "All
+    // 0 are still there" — a sentence that is arithmetically true and tells the reader nothing.
+    //
+    // AND THE SELF TIER DOES NOT SPEAK FOR THE CLUSTER (trigger A). The payload is self-scoped, so
+    // "every namespace on this cluster" and "nothing is missing from the cluster" are claims it
+    // cannot support; prefixing them with "That is your view:" does not cancel them. The zero-reach
+    // branch below has kept that rule since #167 and this branch now keeps it too.
+    : `<div class="empty-note">${hidingPlatform && all.length && !inScope.length
+        ? (self
+            ? `Every namespace your memberships and grants reach is a platform one — all
+               ${platformCount} of them are hidden. That is your view: a namespace missing here may exist.
+               <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`
+            : `Every namespace on this cluster is a platform one — all ${platformCount} of them are hidden.
+               Nothing is missing from the cluster.
+               <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`)
+        : q
         ? `Nothing matches <strong>${esc(q)}</strong>. All ${inScope.length} are still there${hidingPlatform
             ? `, and ${platformCount} platform namespace${platformCount === 1 ? " is" : "s are"} hidden besides`
             : ""} — the filter is hiding them. Press Escape in the box to clear.`
-        : hidingPlatform && all.length
-          ? `Every namespace on this cluster is a platform one — all ${platformCount} of them are hidden.
-             ${self ? "That is your view: " : ""}Nothing is missing from the cluster.
-             <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`
         // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
         // fact about their view, not about the cluster (review of #167, Grok F3).
         : (self
