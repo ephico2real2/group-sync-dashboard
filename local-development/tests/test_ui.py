@@ -8507,3 +8507,77 @@ class TestLibraryPage:
             assert not errors, errors
         finally:
             ctx.close()
+
+
+class TestTheTabBarFitsOneRowOnDesktop:
+    """#253, measured on the DEPLOYED dashboard 2026-09-21: fourteen tabs wanted 1234 px while the bar
+    had 1140 px inside `.wrap`'s 1180 px cap, so the row wrapped at every desktop width — 1440 included —
+    and left `Cluster Configurations` alone on a second line above the fold of every page.
+
+    THIS FIXTURE RENDERS ELEVEN TABS TOTALLING 827 px, which fits whatever the padding is: Reports,
+    Library and Cluster Configurations are gated off on the unrestricted app. A first version of this
+    guard asserted one row against those eleven and passed with the OLD padding too — a test that
+    proved nothing. So the missing three labels are injected before measuring, and what is asserted is
+    the CSS's capacity for the product's real label set rather than whatever this fixture happens to
+    show.
+
+    The wrap itself is deliberate and stays: it is what keeps every tab inside a 375 px viewport
+    (TestTheShellAtPhoneWidth). This asserts only that it does not fire where there is room."""
+
+    #: Shipped tabs this fixture does not render, longest first — `Cluster Configurations` is the widest
+    #: label in the product at 165 px and is the one that was orphaned.
+    ABSENT = ("Cluster Configurations", "Reports", "Library")
+
+    @staticmethod
+    def _with_every_shipped_tab(dash):
+        """Clone a real tab for each absent label, so the measurement is of the bar's capacity."""
+        dash.evaluate(
+            """(labels) => {
+                 const bar = document.querySelector('.tabs');
+                 const model = document.querySelector('.tab');
+                 for (const text of labels) {
+                   if ([...bar.querySelectorAll('.tab')].some(t => t.textContent.trim() === text)) continue;
+                   const clone = model.cloneNode(true);
+                   clone.removeAttribute('aria-current');
+                   clone.removeAttribute('id');
+                   clone.dataset.injected = 'true';
+                   clone.textContent = text;
+                   bar.appendChild(clone);
+                 }
+               }""", list(TestTheTabBarFitsOneRowOnDesktop.ABSENT))
+
+    def test_every_shipped_tab_sits_on_one_row_at_desktop_widths(self, dash):
+        for width in (1280, 1440):
+            dash.set_viewport_size({"width": width, "height": 900})
+            dash.reload()
+            dash.wait_for_selector("button.tab")
+            self._with_every_shipped_tab(dash)
+            dash.wait_for_timeout(250)
+            shape = dash.evaluate(
+                """() => { const t = [...document.querySelectorAll('.tab')];
+                     const bar = document.querySelector('.tabs');
+                     const gap = parseFloat(getComputedStyle(bar).gap) || 0;
+                     return {n: t.length,
+                             rows: new Set(t.map(x => Math.round(x.getBoundingClientRect().top))).size,
+                             need: Math.round(t.reduce((a, x) => a + x.getBoundingClientRect().width, 0)
+                                              + gap * (t.length - 1)),
+                             have: Math.round(bar.getBoundingClientRect().width)}; }""")
+            assert shape["n"] >= 14, f"the injection did not produce the shipped tab count: {shape}"
+            assert shape["rows"] == 1, (
+                f"{width}px: {shape['n']} tabs wrapped onto {shape['rows']} rows "
+                f"(needed {shape['need']}px, bar has {shape['have']}px)")
+
+    def test_the_bar_still_wraps_rather_than_overflowing_at_phone_width(self, dash):
+        """The other half of the trade — tightening the padding must not have turned the wrap into a
+        sideways scroll at 375 px, which is the failure #166 fixed."""
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.reload()
+        dash.wait_for_selector("button.tab")
+        self._with_every_shipped_tab(dash)
+        dash.wait_for_timeout(250)
+        rows, scroll = dash.evaluate(
+            """() => [new Set([...document.querySelectorAll('.tab')]
+                 .map(t => Math.round(t.getBoundingClientRect().top))).size,
+               [document.documentElement.scrollWidth, innerWidth]]""")
+        assert rows > 1, "at 375 px the bar must wrap, not sit on one row"
+        assert scroll[0] <= scroll[1], f"the page scrolls sideways ({scroll[0]} > {scroll[1]})"
