@@ -886,6 +886,7 @@ them on the next start.
 {{- $host := "" -}}
 {{- $declared := list -}}
 {{- $firstEnabled := "" -}}
+{{- $modeOf := dict -}}
 {{- range $i, $c := (.Values.clusters | default list) -}}
 {{- if or (kindIs "invalid" $c) (not (kindIs "map" $c)) -}}
 {{- fail (printf "clusters[%d] is not a cluster entry (it is %s). Helm pads a list index set beyond the list's length with null and never merges lists, so `--set clusters[1].name=…` on a values file that does not define clusters[0] yields [null, {…}]: pass every entry, clusters[0] included, or put the whole list in a values file." $i (kindOf $c)) -}}
@@ -928,6 +929,41 @@ them on the next start.
 {{- if and $enabled (eq $firstEnabled "") -}}
 {{- $firstEnabled = $name -}}
 {{- end -}}
+{{- /* SPEC_S3 §4 (S3a): the connection mode, read as a WORD like the controller flag, and refused
+       here exactly as gsd/config.py refuses it — both modes, a mode beside a credential, a
+       bootstrap account without a mode, a malformed one, and (second pass) a mode on the host. A
+       stanza that renders green and CrashLoops the pod is the class this guard exists to prevent. */ -}}
+{{- $modes := list -}}
+{{- range $key := (list "saTokenLookup" "userSelfLogin") -}}
+{{- if and (hasKey $c $key) (not (kindIs "invalid" (index $c $key))) -}}
+{{- $word := trim (toString (index $c $key)) -}}
+{{- if not (has $word (list "true" "false")) -}}
+{{- fail (printf "clusters[%d] (%s): %s must be true or false, not %q." $i $name $key $word) -}}
+{{- end -}}
+{{- if eq $word "true" -}}{{- $modes = append $modes $key -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $modes) 1 -}}
+{{- fail (printf "clusters[%d] (%s) declares both %s — the two connection modes are mutually exclusive; declare one." $i $name (join " and " $modes)) -}}
+{{- end -}}
+{{- $hasToken := false -}}
+{{- if and (hasKey $c "tokenEnv") (not (empty $c.tokenEnv)) -}}{{- $hasToken = true -}}{{- end -}}
+{{- if and (hasKey $c "tokenFile") (not (empty $c.tokenFile)) -}}{{- $hasToken = true -}}{{- end -}}
+{{- if and $modes $hasToken -}}
+{{- fail (printf "clusters[%d] (%s) declares %s and also tokenEnv/tokenFile — two sources of truth for one credential; remove one." $i $name (first $modes)) -}}
+{{- end -}}
+{{- if and (not $modes) (not $hasToken) -}}
+{{- fail (printf "clusters[%d] (%s): one of tokenEnv or tokenFile is required — or a connection mode (saTokenLookup / userSelfLogin, SPEC_S3), which obtains the credential instead." $i $name) -}}
+{{- end -}}
+{{- if and (hasKey $c "ldapConnectionBootstrap") (not (kindIs "invalid" $c.ldapConnectionBootstrap)) -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._@-]{0,254}$" (toString $c.ldapConnectionBootstrap)) -}}
+{{- fail (printf "clusters[%d] (%s): ldapConnectionBootstrap must be a username (letters, digits, '.', '_', '@', '-'; no spaces, colons or slashes). The value is not repeated here, in case something other than a username was written into it." $i $name) -}}
+{{- end -}}
+{{- if not $modes -}}
+{{- fail (printf "clusters[%d] (%s): ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen — declare the mode, or remove the key." $i $name) -}}
+{{- end -}}
+{{- end -}}
+{{- if $modes -}}{{- $_ := set $modeOf $name (first $modes) -}}{{- end -}}
 {{- end -}}
 {{- if gt (len $declared) 1 -}}
 {{- fail (printf "%d clusters declare dashboardController (%s) — exactly one entry is this pod's own cluster." (len $declared) (join ", " $declared)) -}}
@@ -944,6 +980,9 @@ them on the next start.
 {{- $vis := "" -}}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) -}}{{- $vis = trim (toString $c.visibility) -}}{{- end -}}
 {{- $id := "" -}}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) -}}{{- $id = trim (toString $c.identity) -}}{{- end -}}
 {{- if eq $name $host -}}
+{{- if hasKey $modeOf $name -}}
+{{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s — and declares %s: the controller is this pod's own cluster and authenticates with the mounted ServiceAccount; there is nothing to connect." $i $name $how (index $modeOf $name)) -}}
+{{- end -}}
 {{- if has $vis (list "hidden" "remote-sar") -}}
 {{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $how $vis) -}}
 {{- end -}}

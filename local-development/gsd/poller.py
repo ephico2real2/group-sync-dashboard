@@ -1430,7 +1430,7 @@ class Poller:
     def _reconcile_threads(self) -> None:
         """A thread per effective cluster that should poll and has none; a stop for one that should not."""
         wanted = {c.name: c for c in self.settings.effective_clusters()
-                  if c.enabled and c.credential_kind != "oauth"}
+                  if c.enabled and c.credential_pending is None}
         with self._threads_lock:
             running = {name for name, ev in self._cluster_stops.items() if not ev.is_set()}
         for name, cluster in wanted.items():
@@ -1498,8 +1498,11 @@ class Poller:
             if not cluster.enabled:
                 log.info("cluster %s is disabled, not polling", cluster.name)
                 continue
-            if cluster.credential_kind == "oauth":
-                log.info("cluster %s declares oauth (#119 P2, not built), not polling", cluster.name)
+            if cluster.credential_pending is not None:
+                # SPEC_S3 §4.2: a cluster whose credential cannot be resolved yet is listed and NOT
+                # polled — handing it to ClusterClient would record a false `auth_failed` for a
+                # credential that was never presented. `oauth` (#119 P2) and the S3 modes share this gate.
+                log.info("cluster %s %s, not polling", cluster.name, cluster.credential_pending)
                 continue
             self._start_cluster_thread(cluster)
         if self.settings.cluster_secrets_enabled:

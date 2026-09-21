@@ -175,6 +175,39 @@ class PlatformNamespaces:
         if missing_names:
             stale["additionalNames"] = missing_names
         return stale
+# ── Connection modes (SPEC_S3 §3/§4 — S3a ships the keys, S3b connects) ─────────────────────────
+# A values stanza, or a Secret's `config`, may declare HOW the dashboard obtains a remote cluster's
+# credential instead of carrying one. Both readers learn the same three keys (§2's equivalence), and
+# a cluster declaring a mode is listed with a credential kind that cannot be resolved yet — the way
+# `oauth` (#119 P2) already is — and is not polled, so it never reaches the poll path as a false
+# `auth_failed` for a credential that was never presented (§4.2).
+CONNECTION_MODE_KEYS = ("saTokenLookup", "userSelfLogin")
+BOOTSTRAP_KEY = "ldapConnectionBootstrap"
+CONNECTION_KEYS = (*CONNECTION_MODE_KEYS, BOOTSTRAP_KEY)
+CREDENTIAL_LOOKUP = "lookup"            # saTokenLookup: the poller ServiceAccount's token is looked up
+CREDENTIAL_SELF_LOGIN = "self-login"    # userSelfLogin: the bootstrap account polls as itself
+#: Credential kinds the process cannot resolve yet, each with the reason the poller logs instead of
+#: polling. A kind in this table is never handed to ClusterClient.
+CREDENTIAL_PENDING_REASONS = {
+    "oauth": "declares oauth (#119 P2, not built)",
+    CREDENTIAL_LOOKUP: "declares saTokenLookup — the token lookup is S3b, not built; nothing has been obtained yet",
+    CREDENTIAL_SELF_LOGIN: "declares userSelfLogin — the fleet login is S3b, not built; nothing has been obtained yet",
+}
+#: Every key a values stanza may carry. The parser's accepted `config` keys include CONNECTION_KEYS
+#: too, and tests/test_connection_modes.py fails the commit on which the two sets diverge (§4.1).
+VALUES_CLUSTER_KEYS = frozenset({
+    "name", "apiUrl", "tokenEnv", "tokenFile", "caBundleFile", "insecureSkipVerify", "enabled",
+    "visibility", "identity", "dashboardController", *CONNECTION_KEYS,
+})
+# The bootstrap account is a username the target's OAuth server will be asked to bind: letters,
+# digits and the separators an LDAP uid or an OpenShift user name carries. Not free text — a space, a
+# colon or a slash is a paste error, refused by name and never sent to a directory. Refusals do not
+# repeat the value, in case something other than a username was written into it.
+_BOOTSTRAP_USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,254}$")
+
+
+def valid_bootstrap_username(value: object) -> bool:
+    return isinstance(value, str) and bool(_BOOTSTRAP_USERNAME.match(value))
 
 
 @dataclass(frozen=True)
@@ -214,6 +247,12 @@ class ClusterConfig:
     oauth_password: str | None = field(default=None, repr=False, compare=False)
     source: str = "values"                       # values | secret:<metadata.name>
     labels: tuple[tuple[str, str], ...] = ()     # the Secret's other labels, the fleet's metadata for the tab
+    # SPEC_S3 §3 (S3a): the connection mode declared instead of a credential, and the bootstrap account
+    # that performs the login. Inert until S3b connects: the cluster is listed with a pending credential
+    # kind (`credential_pending`) and is not polled.
+    sa_token_lookup: bool = False
+    user_self_login: bool = False
+    ldap_connection_bootstrap: str | None = None
 
     @property
     def tls_mode(self) -> dict:
@@ -236,14 +275,34 @@ class ClusterConfig:
     def credential_kind(self) -> str:
         """What authenticates this cluster, as a word the API may say: in-cluster (the pod's SA token
         path), file (a values entry's tokenFile/tokenEnv), bearer (a Secret's bearerToken), oauth (a
-        Secret's username/password — #119 P2, not resolvable yet). Never the value."""
+        Secret's username/password — #119 P2, not resolvable yet), lookup / self-login (a declared
+        connection mode, SPEC_S3 — not resolvable until S3b). Never the value."""
         if self.oauth_username is not None or self.oauth_password is not None:
             return "oauth"
         if self.token_value is not None:
             return "bearer"
         if self.token_file == SA_TOKEN_PATH:
             return "in-cluster"
+        if self.sa_token_lookup:
+            return CREDENTIAL_LOOKUP
+        if self.user_self_login:
+            return CREDENTIAL_SELF_LOGIN
         return "file"
+
+    @property
+    def connection_mode(self) -> str | None:
+        """The declared mode's key — `saTokenLookup` or `userSelfLogin` — or None (SPEC_S3 §3)."""
+        if self.sa_token_lookup:
+            return "saTokenLookup"
+        if self.user_self_login:
+            return "userSelfLogin"
+        return None
+
+    @property
+    def credential_pending(self) -> str | None:
+        """Why this cluster's credential cannot be resolved yet, or None when it can (SPEC_S3 §4.2).
+        The poller lists a pending cluster and does not poll it; `oauth` and the S3 modes share the gate."""
+        return CREDENTIAL_PENDING_REASONS.get(self.credential_kind)
 
     def resolve_token(self) -> str:
         """Read the token at the moment it is needed.
@@ -262,6 +321,10 @@ class ClusterConfig:
             raise ConfigError(
                 f"cluster {self.name!r}: username/password exchange against the OAuth server is #119 P2, not built"
             )
+        if self.connection_mode is not None:
+            # Listed so the tab can say what the stanza declares; obtaining the credential is S3b. The
+            # poller never asks (`credential_pending`), so this is reached only by a direct caller.
+            raise ConfigError(f"cluster {self.name!r}: {CREDENTIAL_PENDING_REASONS[self.credential_kind]}")
         if self.token_file:
             try:
                 token = Path(self.token_file).read_text(encoding="utf-8").strip()
@@ -1301,18 +1364,7 @@ def load_settings(path: str | Path) -> Settings:
     if not isinstance(entries, list) or not entries:
         raise ConfigError(f"{path}: 'clusters' must be a non-empty list")
 
-    known = {
-        "name",
-        "apiUrl",
-        "tokenEnv",
-        "tokenFile",
-        "caBundleFile",
-        "insecureSkipVerify",
-        "enabled",
-        "visibility",
-        "identity",
-        "dashboardController",
-    }
+    known = set(VALUES_CLUSTER_KEYS)
 
     clusters: list[ClusterConfig] = []
     wheres: list[str] = []
@@ -1338,8 +1390,36 @@ def load_settings(path: str | Path) -> Settings:
         if not api_url.startswith(("http://", "https://")):
             raise ConfigError(f"{where}: apiUrl must start with http:// or https://")
 
-        if not entry.get("tokenEnv") and not entry.get("tokenFile"):
+        # SPEC_S3 §4 (S3a): the connection mode, read as a WORD like dashboardController — a quoted
+        # "yes" must not become a login. A stanza declaring a mode may omit the credential; one
+        # declaring neither keeps today's requirement with today's message; declaring both modes, or
+        # a mode beside a credential, is two sources of truth and the operator meant one of them.
+        modes = []
+        for key in CONNECTION_MODE_KEYS:
+            if key in entry:
+                if not isinstance(entry[key], bool):
+                    raise ConfigError(f"{where}: {name!r}: {key} must be true or false, not {entry[key]!r}")
+                if entry[key]:
+                    modes.append(key)
+        if len(modes) > 1:
+            raise ConfigError(f"{where}: {name!r} declares both {' and '.join(modes)} — the two connection "
+                              "modes are mutually exclusive; declare one")
+        mode = modes[0] if modes else None
+        if mode and (entry.get("tokenEnv") or entry.get("tokenFile")):
+            supplied = " and ".join(k for k in ("tokenEnv", "tokenFile") if entry.get(k))
+            raise ConfigError(f"{where}: {name!r} declares {mode} and also {supplied} — two sources of truth "
+                              "for one credential; remove one")
+        if not mode and not entry.get("tokenEnv") and not entry.get("tokenFile"):
             raise ConfigError(f"{where}: one of tokenEnv or tokenFile is required")
+        bootstrap = entry.get(BOOTSTRAP_KEY)
+        if bootstrap is not None:
+            if not valid_bootstrap_username(bootstrap):
+                raise ConfigError(f"{where}: {name!r}: {BOOTSTRAP_KEY} must be a username (letters, digits, "
+                                  "'.', '_', '@', '-'; no spaces, colons or slashes) — the value is not repeated "
+                                  "here, in case something other than a username was written into it")
+            if not mode:
+                raise ConfigError(f"{where}: {name!r}: {BOOTSTRAP_KEY} without saTokenLookup or userSelfLogin "
+                                  "configures a login that would never happen — declare the mode, or remove the key")
 
         insecure = bool(entry.get("insecureSkipVerify", False))
         if insecure and entry.get("caBundleFile"):
@@ -1396,6 +1476,9 @@ def load_settings(path: str | Path) -> Settings:
                 visibility=visibility,
                 identity=identity,
                 dashboard_controller=controller,
+                sa_token_lookup=mode == "saTokenLookup",
+                user_self_login=mode == "userSelfLogin",
+                ldap_connection_bootstrap=bootstrap,
             )
         )
         wheres.append(where)
@@ -1414,9 +1497,18 @@ def load_settings(path: str | Path) -> Settings:
             or next((c for c in clusters if c.enabled), None))
     for cluster, where in zip(clusters, wheres):
         if cluster is host:
+            how = ("declared by dashboardController" if cluster.dashboard_controller
+                   else "the first enabled entry, since none declares dashboardController")
+            if cluster.connection_mode is not None:
+                # SPEC_S3 §4 rule 4: the controller is this pod's own cluster and authenticates with the
+                # mounted ServiceAccount — there is nothing to connect. Checked here, against the cluster
+                # that really is the host, so an inferred host is refused the same as a declared one.
+                raise ConfigError(
+                    f"{where}: {cluster.name!r} is the hosting cluster ({how}) and declares "
+                    f"{cluster.connection_mode} — the controller authenticates with the mounted "
+                    "ServiceAccount; there is nothing to connect"
+                )
             if cluster.visibility in (VISIBILITY_HIDDEN, VISIBILITY_REMOTE_SAR):
-                how = ("declared by dashboardController" if cluster.dashboard_controller
-                       else "the first enabled entry, since none declares dashboardController")
                 raise ConfigError(
                     f"{where}: visibility {cluster.visibility!r} is not allowed on the hosting cluster "
                     f"({how}) — it is the cluster the viewer logged in to"
