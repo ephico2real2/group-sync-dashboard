@@ -863,6 +863,7 @@ class Poller:
         # a single-writer application whose primary defence is that there is only one pod.
         self.elector = elector
         self._stop = threading.Event()
+        self._discover_now = threading.Event()   # SPEC_S2: a write from the tab wakes the discovery thread
         self._threads: list[threading.Thread] = []
         # Per-cluster stop events (SPEC_S1 C3): a Secret-sourced cluster whose Secret vanished stops
         # its own thread without stopping the poller. Keyed by cluster name; the host's is never set.
@@ -1441,10 +1442,17 @@ class Poller:
                 continue    # a values cluster is never stopped at runtime: its config rolls the pod
             self._cluster_stops[name].set()
 
+    def request_discovery(self) -> None:
+        """Wake the discovery thread now (SPEC_S2 notes): a Secret the tab just wrote is discovered within
+        seconds instead of on the next cadence tick. A GitOps-written Secret still rides the cadence."""
+        self._discover_now.set()
+
     def _run_discovery(self) -> None:
-        """The discovery stage on the binding cadence (SPEC_S1 C3), after the synchronous one in start()."""
+        """The discovery stage on the binding cadence (SPEC_S1 C3), after the synchronous one in start();
+        a write from the tab shortens one wait through `request_discovery()`."""
         while not self._stop.is_set():
-            self._stop.wait(self.settings.binding_interval_seconds)
+            self._discover_now.wait(self.settings.binding_interval_seconds)
+            self._discover_now.clear()
             if self._stop.is_set():
                 return
             try:
@@ -1502,5 +1510,6 @@ class Poller:
 
     def stop(self) -> None:
         self._stop.set()
+        self._discover_now.set()   # the discovery thread may be in its cadence wait
         for thread in self._threads:
             thread.join(timeout=5)

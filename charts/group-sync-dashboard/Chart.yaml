@@ -188,7 +188,10 @@ type: application
 # CHART 0.43.0 (2026-09-20), MINOR: two new values — `httpLogLevel` (the HTTP request record,
 # default WARNING, moved off `logLevel` on evidence) and `clusterConfigLogLevels` (per-logger
 # overrides). A default install now logs fewer lines, not more (#245).
-version: 0.43.0
+# CHART 0.44.0 (2026-09-20), MINOR: the Cluster Configurations tab's writes (#230 S2) —
+# clusterConfig.secrets.writes.enabled (OFF by default: the dashboard is a reader) adds create, update,
+# delete to the cluster-secrets Role and clusterSecretsWritesEnabled to the ConfigMap when on.
+version: 0.44.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

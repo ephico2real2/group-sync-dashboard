@@ -1306,6 +1306,22 @@ kyverno:
 clusterConfig:
   secrets:
     enabled: true
+    # The Cluster Configurations tab's writes (#230 S2, docs/specs/SPEC_S2_cluster_configurations_tab.md):
+    # an administrator adds a cluster from the tab — the same labelled Secret a GitOps process would
+    # write —, rotates its token in place, or deletes it. OFF by default, a stated exception to the
+    # on-by-default rule (tests/test_values_defaults.py): a write path on Secrets widens the dashboard's
+    # read-only posture (its only write anywhere is its own leader Lease), so it stays off until the
+    # operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it
+    # and removes the exception. Turning it on is the decision to let the dashboard mint cluster
+    # access. On, the Role above
+    # gains create, update and delete on secrets in the release namespace and the four write routes
+    # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
+    # reader holding clusterconfig:manage — visibility.clusterConfigManageSar — with a proxy-verified
+    # identity, one audit log line per write); off, no write route is registered and the tab
+    # is read-only — the form still produces the Secret's YAML for a GitOps process to apply. The
+    # credential never reaches a response, a log line, the database or /metrics either way.
+    writes:
+      enabled: false
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)

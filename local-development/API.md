@@ -187,7 +187,12 @@ bundles — the injected OpenShift CA and the enterprise ConfigMap, colon-joined
 `{"insecure": false, "ca": "caData"}` — the Secret's own base64 PEM, this cluster alone; `{"insecure": true,
 "ca": null}` — verification off. A values entry reports `caBundleFile` or `serviceAccount` (the pod's SA CA
 path) the same way. `caData` beside `insecure: true` is refused as the finding `insecure-with-ca`, naming both
-fields. The PEM itself is never on the wire. A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
+fields. The PEM itself is never on the wire. **A listed cluster always reports an effective mode** — the
+reader supplies `trusted-bundle` when nothing overrides it — so `tls: null` never means "no mode": it appears
+only on a **`retired`** row, whose source no longer describes how it was trusted, and the tab says `unknown`
+there rather than a dash. (A Secret with no `config` key at all is not a cluster: the reader refuses it as the
+finding `config-missing`, and it reaches this payload only as a retired row if it was accepted before.)
+A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
 its values entry was removed: `enabled: false`, its history kept (#96), listed so the reader knows why it
 is gone rather than finding it missing. `credential` is `in-cluster` (the host's ServiceAccount token path), `file` (a values entry's
 `tokenFile`/`tokenEnv`), `bearer` (a Secret's `bearerToken`) or `oauth` (a Secret's
@@ -196,6 +201,56 @@ is gone rather than finding it missing. `credential` is `in-cluster` (the host's
 finding (the LIST itself failed — the Role absent, the API unreachable) carries `secret: "-"` and the
 previous set of discovered clusters stands. `secrets.enabled=false` (`clusterConfig.secrets.enabled`)
 answers the values list alone with `last_discovery: null`.
+
+### The Cluster Configurations tab's writes (#230 S2)
+
+Four routes, all `clusterconfig:manage` (above — never the wide tier) and each needing a proxy-verified
+identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
+the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
+(`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
+and with the switch off a write-only path is a `404` and a POST on the read path a `405` (a route that was
+never registered, not one that refuses); `GET /api/clusterconfigs` says which in `secrets.writes`. They write only in the pod's own namespace and only Secrets carrying
+`groupsync-dashboard.io/secret-type: cluster` (the app checks the label before every update or delete
+— RBAC cannot scope a verb by label). Each successful write logs one line naming the person, the verb
+and the Secret, and wakes the discovery thread so the result is on `GET /api/clusterconfigs` within
+seconds; a Secret written by GitOps still rides the binding cadence. **The credential never comes
+back**: not in these responses, not in a log line, not in the database, not in `/metrics`
+(`docs/specs/SPEC_S2_cluster_configurations_tab.md`, a test with a sentinel token).
+
+`POST /api/clusterconfigs` → `201` — creates `gsd-cluster-<name>`, labelled, annotated
+`groupsync-dashboard.io/managed-by: ui`. The body:
+
+```json
+{"name": "ocp-west", "server": "https://api.ocp-west.example.com:6443",
+ "credential": {"kind": "bearerToken", "token": "…"},
+ "tls": {"mode": "caData", "caData": "<base64 PEM>"},
+ "visibility": "self-only", "identity": "none", "labels": {"environment": "prod"}}
+```
+
+`tls.mode` is one of `trustedBundle` (the dashboard's own trust store — the default), `caData` (this
+cluster's bundle, base64 PEM in `tls.caData`), `insecure` (verification off). The request is validated by
+the same parser discovery runs, so a refusal carries S1's finding code in `detail` — `422
+oauth-exchange-not-built: the password-for-token exchange is #119 P2, not built yet`, `422
+ca-data-invalid`, `422 name-invalid`, `422 host-cluster-not-from-secret`, `422 unsupported-config-key` (a
+label under the `groupsync-dashboard.io/` prefix) — and a name the instance already knows is `409
+duplicate-cluster-name: <name> is already declared by <source>`; an existing Secret of that name `409
+secret-exists`. A `403` from the API server is `502` naming the chart switch. The answer:
+`{"secret": "gsd-cluster-ocp-west", "cluster": "ocp-west", "discovery": "requested"}`.
+
+`PUT /api/clusterconfigs/{name}/credential` with `{"token": "…"}` → `200` — replaces `bearerToken` in
+place, every other `config` key kept; Secret-sourced clusters only (`404` unknown, `409
+not-a-secret-cluster` for a values or host cluster, `409 not-our-secret` for a Secret without the label).
+The old token is gone from the cluster on the write.
+
+`DELETE /api/clusterconfigs/{name}` → `200 {"secret": …, "cluster": …, "retired": "on the next
+discovery"}` — the same eligibility; the next discovery disables the cluster and keeps its rows.
+
+`POST /api/clusterconfigs/test` — the create body (`name` optional, `labels` ignored) → `200
+{"reachable": true, "server_version": "v1.31.6", "identity": "system:serviceaccount:…", "error": null}`.
+The request goes through the parser (the same refusals), then `GET /version` and `GET
+/apis/user.openshift.io/v1/users/~` with that credential and TLS mode; a cluster without the OpenShift
+user API leaves `identity` null; a failure answers `reachable: false` with `error: "<outcome>: <message>"`.
+Nothing is stored or registered.
 
 ## GroupSync CRs
 

@@ -370,8 +370,8 @@ class TestApi:
         c, store = client
         assert c.get("/api/clusterconfigs", headers=H("alice")).status_code == 403
         body = c.get("/api/clusterconfigs", headers=H("root")).json()
-        assert body["secrets"] == {"enabled": True, "namespace": "ns", "label": LABEL_SELECTOR,
-                                   "last_discovery": "2026-09-20T16:05:12Z", "error": None}
+        assert body["secrets"] == {"enabled": True, "writes": False, "namespace": "ns", "label": LABEL_SELECTOR,
+                                   "last_discovery": "2026-09-20T16:05:12Z", "error": None}   # `writes`: S2's switch
         by = {x["id"]: x for x in body["clusters"]}
         assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
         assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,

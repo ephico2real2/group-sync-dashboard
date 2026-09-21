@@ -109,6 +109,7 @@
   --tab-reports: #5b6470;      /* documents; 5.69:1 on --page (measured) */
   --tab-kpi: #4a55a3;          /* the KPI page (#157): instrument indigo; measured in tests/test_accessibility.py */
   --tab-kyverno: #0b6e7a;      /* the Kyverno page (#170): guard-rail teal; measured in tests/test_accessibility.py */
+  --tab-clusters: #6b3a12;     /* the Cluster Configurations page (#230 S2): bronze, 8.90:1 on --page; measured in tests/test_accessibility.py */
   --tab-library: #7a2468;      /* the Library page (#229): bookmark magenta between policy and nsaudit; 8.74:1 on --page, measured */
   /* Report categories (#147 reports table): a chip label + a per-row rail/wash (--rk). NOT --tab-*
      (those are the active-tab label colours the contrast test audits); mid-tone on --surface-1. */
@@ -223,6 +224,7 @@
     --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
     --tab-kpi: #9aa3e6;
     --tab-kyverno: #5cc4cf;
+    --tab-clusters: #e0a060;    /* 8.67:1 on the dark --page (measured) */
     --tab-library: #d489c0;      /* 7.53:1 on the dark --page (measured) */
     --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
@@ -275,6 +277,7 @@
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
   --tab-kpi: #9aa3e6;
   --tab-kyverno: #5cc4cf;
+  --tab-clusters: #e0a060;    /* 8.67:1 on the dark --page (measured) */
   --tab-library: #d489c0;      /* 7.53:1 on the dark --page (measured) */
   --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
 }
@@ -926,6 +929,7 @@ body[data-page="usage"]    { --accent: var(--tab-usage); }
 body[data-page="reports"]  { --accent: var(--tab-reports); }
 body[data-page="kpi"]      { --accent: var(--tab-kpi); }
 body[data-page="kyverno"]  { --accent: var(--tab-kyverno); }
+body[data-page="clusters"] { --accent: var(--tab-clusters); }
 body[data-page="library"]  { --accent: var(--tab-library); }
 
 .tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
@@ -1515,6 +1519,42 @@ td.state-cell { min-width: 210px; }
 .rp-lookup .rp-opt:hover, .rp-lookup .rp-opt:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); outline: none; }
 .rp-lookup .rp-nomatch { font-size: var(--text-sm); color: var(--text-muted); padding: var(--space-3) var(--space-5); }
 
+/* ── #230 S2: the Cluster Configurations page — docs/design/cluster-configurations-mock.html, ported. A card per
+   cluster with label/value rows; the source chips coloured by the report-category tokens the mock chose; the
+   Add-cluster form beside its YAML twin, one column under 900 px. Every chip wraps (`overflow-wrap: anywhere`):
+   a long label chip ran 58 px past a 375 px viewport in the draft, measured. */
+.cc-kv { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: var(--space-3) var(--space-5); padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); min-width: 0; }
+.cc-kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
+.cc-kv .v { overflow-wrap: anywhere; min-width: 0; }
+.rp-chip.cc-chip, .cc-chips .rp-chip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.rp-chip.cc-src-values { color: var(--k-rbac); }
+.rp-chip.cc-src-secret { color: var(--k-identity); }
+.rp-chip.cc-src-in-cluster { color: var(--k-access); }
+.cc-chips { display: flex; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+h2 .cc-chips { display: inline-flex; vertical-align: middle; }
+.cc-hint { font-size: var(--text-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.cc-foot { margin-top: var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.cc-consq { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-3); overflow-wrap: anywhere; }
+.cc-acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-4); align-items: center; }
+.cc-panel { margin-top: var(--space-4); padding: var(--space-5) var(--space-6); border: 1px dashed var(--border); border-radius: var(--radius-md); background: var(--zebra); }
+.cc-field { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-6); min-width: 0; }
+.cc-field > .cc-lbl, .cc-field > label { font-size: var(--text-sm); color: var(--text-secondary); }
+.cc-choices { display: flex; flex-direction: column; gap: var(--space-3); }
+.cc-choice { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.cc-choice input { width: auto; flex: none; }
+.cc-stack { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.cc-stack textarea { width: 100%; max-width: 100%; }
+.cc-warn { margin-top: var(--space-3); padding: var(--space-5) var(--space-6); border-left: 3px solid var(--status-warning); /* optical: the rail */
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent); border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-size: var(--text-md); color: var(--text-secondary); overflow-wrap: anywhere; }
+.cc-warn strong { color: var(--text-primary); }
+.cc-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7); min-width: 0; }
+@media (min-width: 900px) { .cc-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.cc-yaml-pane { min-width: 0; }
+.cc-yaml { font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  margin: 0; max-width: 100%; background: var(--zebra); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-6); }
+.cc-btn-acc { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
 /* ─── #229 the Library page (docs/design/report-library-mock.html): one section per configured report, its
    category colour as the rail (--rk, the Reports table's tokens), run cards never a wide table, the run
    drawer as a position. ──────────────────────────────────────────────────────────────────────────────── */

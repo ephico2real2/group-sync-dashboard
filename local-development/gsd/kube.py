@@ -8,6 +8,7 @@ are a CRD and an OpenShift type, and both are simple to read directly.
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import logging
 import re
 import threading
@@ -360,6 +361,30 @@ FORBIDDEN = "forbidden"
 UNREACHABLE = "unreachable"
 
 
+def redact_text(text: str, *secrets: str | None) -> str:
+    """Replace every spelling of each secret with `<redacted>`: the raw value and its JSON-escaped forms
+    (once and twice, ASCII-escaped and not), because an API server or a proxy that echoes a request
+    quotes a body whose `config` is a JSON string inside a JSON document — a token holding `"`, `\\`
+    or a non-ASCII character never appears raw there (review of #237, Codex C7 and Grok C7). Longest
+    spelling first, so a partial replacement cannot leave a tail. Values shorter than eight characters
+    are left alone: a one-character value would wipe the sentence, and the writer refuses a bearer
+    token that short before it is ever sent."""
+    forms: set[str] = set()
+    for secret in secrets:
+        raw = (secret or "").strip()
+        if len(raw) < 8:
+            continue
+        frontier = {raw}
+        forms.add(raw)
+        for _ in range(2):
+            frontier = {json.dumps(v, ensure_ascii=ascii_)[1:-1] for v in frontier for ascii_ in (True, False)}
+            forms.update(frontier)
+    for form in sorted(forms, key=len, reverse=True):
+        if form in text:
+            text = text.replace(form, "<redacted>")
+    return text
+
+
 class ClusterError(Exception):
     """A poll failed in a way that must be surfaced on the cluster card, not swallowed."""
 
@@ -545,8 +570,9 @@ class ClusterClient:
         self.cluster = cluster
         self._timeout = timeout
 
-    def _redact(self, text: str) -> str:
-        """Strip this cluster's own credential out of anything we are about to quote.
+    def _redact(self, text: str, *secrets: str | None) -> str:
+        """Strip this cluster's own credential — and any `secrets` the caller put on the wire — out of
+        anything we are about to quote.
 
         A remote cluster controls its error bodies, and an API server (or anything in front of it)
         that echoes the request — a proxy's 502 page, a debug handler — hands our own bearer token
@@ -561,10 +587,8 @@ class ClusterClient:
         try:
             token = self.cluster.resolve_token()
         except Exception:  # noqa: BLE001
-            return text
-        if token and len(token) >= 8 and token in text:
-            return text.replace(token, "<redacted>")
-        return text
+            token = None
+        return redact_text(text, token, *secrets)
 
     # REDACT BEFORE TRUNCATING, always (review of #235, the Fable seat): `text[:200]` then redact
     # misses a token that straddles the cut, and misses every JWT, which is longer than the window.
@@ -595,6 +619,35 @@ class ClusterClient:
             return response.json()
         except ValueError as exc:
             raise ClusterError(UNREACHABLE, f"non-JSON response from {path}: {exc}") from exc
+
+    def _send(self, client: httpx.Client, method: str, path: str, *, json: Any = None,
+              secrets: tuple[str | None, ...] = ()) -> dict | None:
+        """The write twin of `_get` (SPEC_S2 §S2.1): one request with a body, the same status → outcome
+        mapping, `None` for an empty answer (a 204, a DELETE's Status object is returned as JSON).
+        `secrets` are the values the BODY carries that must not come back in an error — the caller's
+        token and the encoded config — redacted here, BEFORE the 200-character cut, because a token
+        straddling the cut left its head in the sentence when the writer scrubbed afterwards (review
+        of #237, Codex C7)."""
+        try:
+            response = client.request(method, path, json=json)
+        except httpx.HTTPError as exc:
+            raise ClusterError(UNREACHABLE, self._redact(f"{type(exc).__name__}: {exc}", *secrets)) from exc
+        if response.status_code == 401:
+            raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+        if response.status_code == 403:
+            raise ClusterError(FORBIDDEN, f"403 Forbidden on {method} {path} — the ServiceAccount lacks {method.lower()} permission here")
+        if response.status_code >= 400:
+            # Redacted before truncated, as _get does: a write carries a BODY, and an API server (or a
+            # proxy in front of it) that echoes the request on a 4xx hands the host's own credential
+            # back inside response.text. The body's OWN secret — the token a caller asked us to write —
+            # is not this client's to recognise; the writer scrubs that one (review of #237, Codex C2).
+            raise ClusterError(UNREACHABLE, f"HTTP {response.status_code} on {method} {path}: {self._redact(response.text, *secrets)[:200]}")
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ClusterError(UNREACHABLE, f"non-JSON response from {method} {path}: {exc}") from exc
 
     def _list_all(self, client: httpx.Client, path: str) -> list[dict]:
         """List every object, following the API server's continue tokens.
