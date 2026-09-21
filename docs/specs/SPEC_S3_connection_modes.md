@@ -1052,6 +1052,51 @@ Every one of these joins the closed set in the same PR that emits it, and the re
 extended to drive a failure in each new path with the password in force — the contract §3.1 rule 4
 already sets.
 
+#### 9.3.6 The daily ping — confirm the fleet account can still get a token
+
+Everything above is reactive: it says what to do when a connection fails. **The fleet account is one
+account for the whole estate**, so the expensive failure is not a cluster going down — it is the
+account quietly ceasing to work, and nobody finding out until the next onboarding, at the worst
+possible moment. A **daily ping** turns that into a scheduled answer.
+
+**What it proves.** The real path, end to end: log in as the fleet account, and read the target
+ServiceAccount's token. Not a shortcut, because the shortcuts miss the interesting failures:
+
+| failure | a bind alone | a SubjectAccessReview | the real read |
+|---|---|---|---|
+| the password was rotated or expired | caught | — | caught |
+| the RBAC that lets it read the token was revoked | missed | caught | caught |
+| the ServiceAccount, or its token Secret, was deleted | missed | **missed** (a SAR answers about a *kind*, not an object that exists) | **caught** |
+
+The token read is discarded. Confirming is not renewing: the ping **does not rewrite the cluster
+Secret**, because a working cluster's `resourceVersion` should not churn daily for a check.
+
+**Once per credential per day — never once per cluster.** This is the same rule as §9.3's back-off,
+for the same reason and it matters more here because the ping is *scheduled* rather than provoked:
+twenty clusters sharing one fleet account must produce **one** bind a day, not twenty. A daily ping
+that fans out per cluster is a slow, self-inflicted lockout walk that looks like health checking.
+
+**It stands down on a refusal.** If the password has been refused (§9.3 rule 2), the daily ping
+**stops** until the declaration changes. Pinging daily with a credential already known to be wrong is
+exactly the lockout walk, only slower — one failed bind a day is under most thresholds, until a
+directory's counter does not reset and it is not. The suspension that rule 2 sets is what the ping
+reads before it runs.
+
+**A failure is a finding, not an outage.** The clusters keep polling on the tokens they already hold —
+those are `remote-lookup` credentials and remain valid. What a failed ping means is *the next
+onboarding or renewal will fail*, so it reports rather than disrupts:
+
+- a finding on the Cluster Configurations tab naming the account, what was tried and the server's own
+  words;
+- one log line in #245's vocabulary — `phase=credential`, `outcome=<the finding code>`,
+  `action=<the fix in the operator's terms>`, and `suspended=<credential>` where rule 2 applies;
+- `fleet_account_last_ok` as an instant, so the tab can say *how long* it has been failing rather than
+  only that it is — the same reason a report's provenance names an instant rather than an age (§5.1).
+
+**Cadence is a value, and the default is daily.** Anything more frequent buys little — a credential
+does not usually break between two mornings — and every increment multiplies the bind rate at a
+directory that is counting. Anything less and the answer is stale when it matters.
+
 ### 9.4 Help resolve things
 
 Where the loop cannot fix it, it says precisely what would, on the tab and in one log line — that is
