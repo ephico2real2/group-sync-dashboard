@@ -806,3 +806,27 @@ class TestPlatformNamespacesAreConfigurable:
         took effect — the refusal names the key."""
         with pytest.raises(ConfigError, match=re.escape(wanted)):
             _load(tmp_path, body)
+
+
+class TestThePatternsAreLiteralAndSaySo:
+    """Review of #259 (Codex C3): the padded/empty check this loader carried was DEAD CODE — it ran
+    after `_string_list_setting` had already stripped and dropped empties, so it could never fire.
+    What is worth refusing is the thing the stripping cannot fix: a pattern someone wrote as a glob."""
+
+    @pytest.mark.parametrize("pattern", ["team-*", "oud-?", "ns[0-9]", "a]b"])
+    def test_a_glob_is_refused_with_the_literal_rule_stated(self, tmp_path, pattern):
+        import json
+        with pytest.raises(ConfigError, match="matching is literal, not a glob"):
+            _load(tmp_path, f"platformNamespaces:\n  additionalNames: {json.dumps([pattern])}\n")
+
+    def test_the_refusal_names_the_axis_that_would_have_worked(self, tmp_path):
+        """`team-*` means a prefix, and the message says which key takes it — a refusal that leaves
+        someone guessing is a refusal they will work around."""
+        with pytest.raises(ConfigError, match=r"additionalPrefixes"):
+            _load(tmp_path, 'platformNamespaces:\n  additionalNames: ["team-*"]\n')
+
+    def test_a_repeated_pattern_is_collapsed_not_refused(self, tmp_path):
+        """Harmless to matching and noise in a diff; a values file should not be rejected over a
+        duplicated line."""
+        assert _load(tmp_path, 'platformNamespaces:\n  additionalSuffixes: ["-op", "-op", "-mgr"]\n'
+                     ).additional_suffixes == ("-op", "-mgr")

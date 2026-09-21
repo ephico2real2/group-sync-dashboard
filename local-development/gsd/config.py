@@ -840,11 +840,24 @@ def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
         # A LIST IS NEVER SPLIT here either: a namespace name cannot contain a comma, but a
         # comma-separated string is how a hand-written settings file expresses one, and
         # _string_list_setting already draws that line for every other list in this file.
+        #
+        # It also strips and drops empties, which is why the padded/empty check an earlier version of
+        # this function carried was DEAD CODE — it ran after the stripping and could never fire
+        # (review of #259, Codex C3). What is worth refusing is the thing the stripping cannot fix:
         values = _string_list_setting(source, key, default)
         for value in values:
-            if value != value.strip() or not value:
-                raise ConfigError(f"platformNamespaces.{key}: {value!r} is empty or padded")
-        return values
+            # MATCHING IS LITERAL. Someone writing `team-*` or `oud-?` means a glob, and silence
+            # would leave them with a pattern that matches one absurd namespace and no error. The
+            # three axes are deliberately not globs (#255) — say so where it is written.
+            bad = {c for c in "*?[]" if c in value}
+            if bad:
+                raise ConfigError(
+                    f"platformNamespaces.{key}: {value!r} contains {''.join(sorted(bad))} — matching is "
+                    f"literal, not a glob. A prefix, a suffix or a full name; `team-*` is a prefix "
+                    f"`team-` on additionalPrefixes.")
+        # A repeated pattern is harmless to matching and noise in a diff; collapse it rather than
+        # refusing a values file over a duplicated line.
+        return tuple(dict.fromkeys(values))
 
     return PlatformNamespaces(
         prefixes=axis("prefixes", PLATFORM_NAMESPACE_PREFIXES),
