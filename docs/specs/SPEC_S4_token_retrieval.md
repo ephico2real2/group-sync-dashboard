@@ -94,42 +94,43 @@ CRC's sessions last **31536000 seconds — a year.** SPEC_S3 §3.2 already says 
 renewal schedule hard-coded to "daily" is wrong by 365× on this cluster — in the safe direction — and
 fatally wrong on a cluster configured to an hour, which needs renewing every 48 minutes.
 
-**So renew at `issued + min(0.8 × lifetime, ceiling)`**, where `ceiling` is the ping cadence (daily
-by default). Saying "80 %, it is what the kubelet does" was **half the rule** — and the missing half
-is the one that matters here. From `pkg/kubelet/token/token_manager.go`, fetched:
+**So renew a fixed margin before expiry — 1 to 2 hours — not a percentage of the lifetime** (the
+operator's rule, 2026-09-21, and it is better than the percentage this section first specified).
 
-```go
-const ( maxTTL = 24 * time.Hour; gcPeriod = time.Minute; maxJitter = 10 * time.Second )
-if now.After(iat.Add(maxTTL - jitter)) { return true }
-// Require a refresh if within 20% of the TTL plus a jitter from the expiration time.
+```
+renew_at = expires_at − margin        margin = min(2 h, ¼ × lifetime)
 ```
 
-Two conditions, **whichever fires first**: 80 % of the TTL *or* a 24-hour ceiling.
+**The margin is a retry budget, not a fraction.** What it has to buy is time to fail, back off, retry,
+alert a human, and still renew before the session actually dies. That is an absolute quantity: two
+hours is two hours whether the session lasts a day or a year. Scaling it as a percentage produces
+nonsense at both ends — 80 % of a year renews **73 days early** for no benefit, and 80 % of a
+one-hour session leaves **12 minutes** to notice and recover.
 
-**On a real cluster the 80 % rule is the one that fires, and the ceiling never binds.** OpenShift's
-documented default is `accessTokenMaxAgeSeconds: 86400` — 24 hours, and `0` means "use the default" —
-so 80 % is **19.2 hours**, comfortably inside a daily ceiling. The ceiling exists for the outlier.
+The `¼ × lifetime` term is only a floor for unusually short sessions, so a cluster that sets an hour
+renews at 45 minutes rather than at a margin larger than the session itself.
 
-**The reference cluster is that outlier, and it is not representative.** CRC sets
-`accessTokenMaxAgeSeconds: 31536000` in `crc-org/snc`'s `oauth_cr.yaml`, commented *"token max age
-set to 365 days"*. At 80 % alone that renews on **day 292** — the renewal path first running in
-production at the moment of need, with an outage as its test.
+| `accessTokenMaxAgeSeconds` | where | renews |
+|---|---|---|
+| 86400 (24 h) | **real OpenShift, the documented default** | 2 h before expiry — once a day |
+| 31536000 (365 d) | the reference cluster (CRC) | 2 h before expiry — once a year |
+| 3600 (1 h) | an estate that tightens it | 15 min before expiry |
 
-| | `accessTokenMaxAgeSeconds` | 80 % trigger | what governs |
-|---|---|---|---|
-| real OpenShift, default | 86400 (24 h) | **19.2 h** | the 80 % rule |
-| the reference cluster (CRC) | 31536000 (365 d) | 292 d | **the ceiling** |
+**What this costs is one login per session lifetime, which is the floor.** A session cannot be
+renewed less often than it expires, and renewing it earlier buys nothing but more binds — which is
+the one thing §6 says to spend carefully.
 
-**So the lab cannot test the normal path, and that is a trap for #285.** A renewal test run only on
-CRC exercises the *ceiling* and never the 80 % trigger, because 80 % of a year is nine months away.
-Proving the 80 % path needs either a cluster with a realistic `accessTokenMaxAgeSeconds`, or the lab's
-value temporarily lowered, or an injected clock — and the test must state which, because "renewal
-works on CRC" is evidence about the branch that will almost never run in production.
+**Two clusters the same rule must survive.** OpenShift's default is 24 hours (`accessTokenMaxAgeSeconds:
+86400`; `0` means "use the default"), while CRC sets `31536000` in `crc-org/snc`'s `oauth_cr.yaml`,
+commented *"token max age set to 365 days"*. **So the lab renews once a year and a real cluster once a
+day** — which is a trap for #285's tests: a renewal test run only on CRC will not fire naturally
+inside any test run. Proving it needs a cluster with a realistic value, the lab's value temporarily
+lowered, or an injected clock, and the test must say which.
 
 **A second clock the fragment does not carry.** `oauth/cluster .spec.tokenConfig.accessTokenInactivityTimeout`
-(300 s minimum; unset on the reference cluster) invalidates a session that has simply been idle,
+(300 s minimum; unset on the reference cluster) invalidates a session that has merely been *idle*,
 whatever `expires_in` says — and a standby replica or an unreachable target can idle one. `self-login`
-reads it too and treats a poll gap longer than it as "renew now".
+reads it too and treats a poll gap approaching it as "renew now".
 
 ## 4. The two identities
 
