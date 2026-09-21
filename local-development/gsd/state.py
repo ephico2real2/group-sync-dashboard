@@ -407,23 +407,28 @@ def compute_alerts(
                         kind="sync_stopped",
                         subject=name,
                         detail=(
-                            f"last sync {_ago(now - last_sync)} ago and the schedule is "
+                            f"last sync at {cr['last_sync_at']} and the schedule is "
                             f"unusable — this CR has stopped syncing"
                         ),
                         severity="critical",
                     )
                 )
 
+        # THE INSTANT, NOT THE AGE. `_ago(now - last_sync)` ticked every minute, and the page polls
+        # every minute (index.html POLL_INTERVAL_MS) and repaints unless every payload is identical —
+        # /api/alerts is fetched on every page — so one overdue CR repainted every page on every poll
+        # and dropped the reader's scroll and selection (#271; measured: alerts[0].detail
+        # `6h00m` -> `6h01m` at seed+60 s). The detail is rendered verbatim, so it now shows the
+        # instant; the CR's own row on the same page still shows the age, client-side (`ago(last_sync_at)`).
         state = compute_state(last_sync, schedule, now, grace)
         if state == OVERDUE:
-            age = now - last_sync if last_sync else None
             alerts.append(
                 Alert(
                     cluster=cluster,
                     kind="overdue",
                     subject=name,
                     detail=(
-                        f"last sync {_ago(age)} ago, schedule {schedule!r} "
+                        f"last sync at {cr['last_sync_at']}, schedule {schedule!r} "
                         f"(> 2 intervals) — the schedule has stopped firing"
                     ),
                     severity="critical",
