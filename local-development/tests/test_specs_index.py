@@ -42,7 +42,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
-    assert len(rows) == 18, f"expected eighteen index rows (the programme's thirteen, E1, S1, S2, S3 and T1), matched {sorted(rows)}"
+    assert len(rows) == 19, f"expected nineteen index rows (the programme's thirteen, E1, S1, S2, S3, S4 and T1), matched {sorted(rows)}"
     return rows
 
 
@@ -93,7 +93,11 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S")]
     assert len(set(programme)) == len(programme), programme
-    assert len({int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}) == 1, "the S batch is #230"
+    # S1-S3 are three steps of one issue (#230). S4 is its own issue set (#283-#286): the credential
+    # RETRIEVAL machinery is separable work with its own steps, not a fourth step of the Secret
+    # contract, so the batch now spans two issues rather than one.
+    s_issues = {int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}
+    assert s_issues == {230, 283}, f"the S batch is #230 (S1-S3) and #283 (S4); got {sorted(s_issues)}"
 
 
 def _ordered_ids() -> list[str]:
