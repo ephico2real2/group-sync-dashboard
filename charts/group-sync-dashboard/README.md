@@ -167,6 +167,8 @@ container starting, which is a louder failure than the one above but still not a
 | `console.url` | `""` | the console the KPI page's Observe door opens (this namespace's workloads board); empty means discovered from `openshift-config-managed/console-public` by the pod's own identity; the same rule: an absolute `http(s)://` base or the render is refused |
 | `config.alerts.groupCountCliff.silence` | `[]` | exact names or fnmatch globs. Silenced cliffs are still reported (`group_count_cliff_silenced`), dimmed on the Overview. The other silence is the Group annotation `groupsync-dashboard.io/silence-group-count-cliff=true` or `=until=YYYY-MM-DD`, read on every poll, never written |
 | `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else — see [Dashboard log verbosity](#dashboard-log-verbosity--loglevel) for what each promises and which look-alike values are refused |
+| `httpLogLevel` | `WARNING` | the HTTP **request record** — `httpx` (one line per outbound API call) and `uvicorn.access` (one per inbound request) — separately from this app's own reasoning. The default moved from INFO on evidence (#245): measured on a four-cluster lab at a 60s refresh, **1 082 of the pod's 1 784 lines in 90 minutes were httpx request URLs** — 61%, and ~10 000 an hour at forty clusters, against about 12 a cycle at the one cluster the original decision was measured on. `INFO` restores the full per-request record exactly. uvicorn's access lines were unreachable by any setting before this |
+| `clusterConfigLogLevels` | `""` | per-logger overrides, `logger=LEVEL` comma-separated (e.g. `gsd.clusterconfig=DEBUG,httpx=INFO`) — raise one concern without raising every module across every polling cluster. A level set here overrides `logLevel` for that logger in both directions; `root` is refused (that is `logLevel`). Set it in a values file: Helm's `--set` reads the comma as a list separator, so `--set clusterConfigLogLevels=a=DEBUG,b=INFO` keeps only the first pair unless the comma is escaped as `\,`. A bad entry is skipped with a warning rather than failing the pod |
 | `ui.export.enabled` | `true` | CSV/JSON download of the table on screen, built in the browser from what the server served this reader; the file says when the page was partial. Off removes the control |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
@@ -481,16 +483,19 @@ some other way — it then runs at `INFO` and logs a warning rather than failing
 | `INFO` | **the default.** One line per completed unit of work or state change; readable at steady state |
 | `DEBUG` | this app's own reasoning: per-pod login-capture accounting, poll timing and the binding-refresh countdown, row counts per read, which replica holds the Lease and how stale its renewal is, why a reader was put on the narrow tier |
 
-**Two things `logLevel` does not control**, both deliberate:
+**Two things `logLevel` does not control**, both deliberate — and both governed by `httpLogLevel` since #245:
 
 - **Inbound request lines.** uvicorn logs one per request on its own loggers, which carry
-  `propagate=False` and their own handlers at `INFO`, so this value cannot raise or lower them. At
-  `CRITICAL` you still get a line per request and lose every application diagnostic.
-- **Outbound request lines.** `httpx` logs `HTTP Request: GET <url> "200 OK"` at `INFO` itself, so
-  they are present at the default. The transport layer beneath it (`httpcore`, socket and TLS
-  events) is pinned to `WARNING`, because unpinned it was 97% of `DEBUG` output — measured in a live
-  pod, 356 framing lines per 10 of the app's own. Set `GSD_DEBUG_HTTP=true` to restore it when
-  diagnosing a handshake against a corporate CA.
+  `propagate=False` and their own handlers, so **this** value cannot raise or lower them — but
+  `httpLogLevel` now can, and at its `WARNING` default `/readyz` and `/metrics` stop writing a line
+  apiece. Set `httpLogLevel: INFO` to get them back.
+- **Outbound request lines.** `httpx` logs `HTTP Request: GET <url> "200 OK"` at its own `INFO`, and
+  until #245 nothing governed it: measured on a four-cluster lab, **1 082 of the pod's 1 784 lines
+  in 90 minutes** were those URLs. They are governed by `httpLogLevel` now (default `WARNING`), not
+  by this value; `httpLogLevel: INFO` restores them exactly. The transport layer beneath them
+  (`httpcore`, socket and TLS events) is pinned to `WARNING` separately, because unpinned it was 97%
+  of `DEBUG` output — measured in a live pod, 356 framing lines per 10 of the app's own. Set
+  `GSD_DEBUG_HTTP=true` to restore **that** when diagnosing a handshake against a corporate CA.
 
 ### oauth-server log verbosity
 

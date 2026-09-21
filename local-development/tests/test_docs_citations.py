@@ -133,6 +133,9 @@ REVIEW_ARTIFACTS = (
     "REVIEW_C2.md",
     "REVIEW_A2.md",
     "REVIEW_B1.md",
+    # PR #247 (#245): three seats on the first head, their findings quoting `poller.py:1176-1180`
+    # and the like — spans of code at a moment, which the fixes then moved.
+    "REVIEW_clusterconfig_logging.md",
     "REVIEW_C4.md",
     "REVIEW_D1.md",
     "REVIEW_C3.md",

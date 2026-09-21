@@ -181,6 +181,18 @@ spec:
             # helper refuses the render instead, and normalises case so `debug` is not an outage.
             - name: GSD_LOG_LEVEL
               value: {{ include "gsd.logLevel" . | quote }}
+            # The HTTP request record, separate from the app's own reasoning (#245). Refused at
+            # render time the same way logLevel is: a level is a promise, and a misspelling that
+            # reaches the container is a promise silently not kept.
+            - name: GSD_HTTP_LOG_LEVEL
+              value: {{ include "gsd.httpLogLevel" . | quote }}
+            {{- with .Values.clusterConfigLogLevels }}
+            # Per-logger overrides. Not validated here: the app parses the pairs, skips a bad one
+            # with a warning and carries on, which is the right failure for a diagnostic setting —
+            # refusing the render would make a typo in a debugging aid an outage.
+            - name: GSD_LOG_LEVELS
+              value: {{ . | quote }}
+            {{- end }}
             # The view-restrictions switch rides the Deployment rather than the ConfigMap:
             # one wire from one values key, visible in `oc describe deploy` where an
             # auditor looks for a security control. The NAME is load-bearing — the app

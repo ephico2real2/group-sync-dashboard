@@ -18,7 +18,21 @@ every reviewer hold the code to. "Design" is the code, file by file, applied wit
 check on every Old text. A deviation found necessary during implementation is written back here, in
 the same pull request, under "Orchestrator's notes", with the reason.
 
+The flows this contract produces are drawn — as mermaid and as ASCII — in
+[`docs/DESIGN_cluster_connection_flows.md`](../DESIGN_cluster_connection_flows.md): the connection
+path with every refusal point, the three TLS modes as a decision, the credential modes and which
+object holds which secret, and the tier gate on the surface. The log vocabulary those pictures are
+read against is `gsd/clusterconfig/events.py` (#245).
+
 ## Orchestrator's notes
+
+- **The reader does not log (#245, PR #247, from its review).** `reader.discover` returns findings and
+  emits nothing: it runs every binding interval and knows nothing of the cycle before it, so a
+  `WARNING` per refused Secret there was one standing bad Secret writing a line every cycle forever —
+  the flood #245 exists to prevent. The poller, which holds the previous cycle's findings, announces
+  each one when it **appears** (`secret-refused` / `secret-shadows-values` / `credential-not-supported`,
+  the event name and phase chosen by `reader.finding_event`) and names it again in `refused_cleared=`
+  when it goes. The tab still shows every finding every cycle; only the line is a transition.
 
 - **The operator's ruling on the tier (2026-09-20, relayed during implementation):** this surface is
   **cluster-admin only — the reporting auditor may neither view nor change it**, and it gets *"a new tier

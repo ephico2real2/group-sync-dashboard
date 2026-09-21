@@ -3018,6 +3018,8 @@ def create_app() -> FastAPI:
         # the point: the reader asked for a level they did not get.
         log.warning("%s", complaint)
     _quiet_transport_framing()
+    for grumble in _apply_http_log_level() + _apply_per_logger_levels():
+        log.warning("%s", grumble)
     return build_app(load_settings(os.environ.get("GSD_CONFIG", "clusters.yaml")))
 
 
@@ -3026,6 +3028,12 @@ def create_app() -> FastAPI:
 #: what you will see and two ways to write one level is not one promise. The chart refuses the same
 #: set at render time; this is the second boundary, for a container configured directly.
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+#: The longest logger name `GSD_LOG_LEVELS` will look up. `logging.getLogger(name)` CREATES the
+#: logger and a placeholder for every dotted prefix of it, each keyed by a copy of that prefix — a
+#: 100 000-character value of `a.a.a…` made 50 016 loggers and 2.2 GB of RSS inside `create_app`
+#: (review of #247, second pass, OB2 C5). The longest name this app owns is under 40 characters.
+MAX_LOGGER_NAME = 200
 
 
 def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
@@ -3087,10 +3095,20 @@ def _quiet_transport_framing() -> None:
     — and the ten lines an operator turned it on for were buried in it. A level that floods is a
     level nobody turns on twice.
 
-    HTTPX IS DELIBERATELY LEFT ALONE. Its `HTTP Request: GET <url> "200 OK"` lines are SEMANTIC —
-    which API call, against which cluster, with what status — and they are the record of what the
-    poller actually asked for. They sit at INFO by httpx's own choice, the chart README documents
-    them as intentionally present at the default, and they cost 12 lines a cycle rather than 356.
+    HTTPX WAS DELIBERATELY LEFT ALONE HERE, AND NOW HAS ITS OWN VARIABLE (#245). The original
+    reasoning stands on its own terms: `HTTP Request: GET <url> "200 OK"` is SEMANTIC — which API
+    call, against which cluster, with what status — and at ONE cluster it cost 12 lines a cycle
+    against httpcore's 356, so thresholding it would have been over-reach. What changed is the
+    fleet, not the argument. MEASURED ON THE LAB AT FOUR CLUSTERS, 60s refresh: 1 784 lines in 90
+    minutes, 1 082 of them httpx request URLs — 61%, and ~10 000 an hour at the forty clusters the
+    cluster-configuration module exists to serve. The decision was outgrown rather than wrong.
+
+    It is also a PROXY for the facts we actually want. Once `gsd.clusterconfig` logs which cluster,
+    which phase and what outcome (see `clusterconfig/events.py`), a list of URLs is the same story
+    told worse. So httpx moves to `GSD_HTTP_LOG_LEVEL` (default WARNING, `INFO` restores exactly
+    today's behaviour) rather than being pinned here — the capability is a variable away, and the
+    line an operator misses most was never the URL.
+
     `httpcore` is the layer below: the same requests, spelled as socket events.
 
     NOT disabled, THRESHOLDED. A TLS handshake failing against a corporate CA bundle is a real
@@ -3104,3 +3122,148 @@ def _quiet_transport_framing() -> None:
     if os.environ.get("GSD_DEBUG_HTTP", "").strip().lower() in {"1", "true", "yes"}:
         return
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+#: The loggers `GSD_HTTP_LOG_LEVEL` governs: the per-request record, inbound and outbound.
+#: `uvicorn.access` is here because its access lines are the same kind of thing as httpx's — one
+#: line per request, useful when you are asking about requests and noise when you are not. It was
+#: previously unreachable by any setting at all: its logger carries propagate=False and its own
+#: handler, so `GSD_LOG_LEVEL` could neither raise nor lower it, and `/readyz` and `/metrics` wrote
+#: a line apiece forever. Naming it here is the first time an operator can turn it down.
+HTTP_LOGGERS = ("httpx", "uvicorn.access")
+
+
+def _apply_http_log_level() -> list[str]:
+    """`GSD_HTTP_LOG_LEVEL` — the per-request record, separately from this app's own reasoning.
+
+    WHY SEPARATE RATHER THAN FOLDED INTO GSD_LOG_LEVEL. They answer different questions. "What is
+    the dashboard doing about cluster ocp-east?" is `gsd.*`; "what HTTP calls went out?" is httpx.
+    Tying them means an operator who wants the first at DEBUG gets a flood of the second, which is
+    exactly the state #245 measured: 61% of the pod's lines were request URLs, and our own module's
+    lines were the ones being hidden.
+
+    DEFAULT WARNING, not OFF. A request that fails is still worth a line; the routine 200s are not.
+    `GSD_HTTP_LOG_LEVEL=INFO` restores the previous behaviour exactly, for whoever wants the full
+    request record back — which is why the old behaviour is a value rather than a deleted feature.
+
+    Returns complaints rather than logging them, for the same reason `_resolve_log_level` does: this
+    can run before the caller has decided what to do with them.
+    """
+    raw = os.environ.get("GSD_HTTP_LOG_LEVEL")
+    complaints: list[str] = []
+    if raw is None or not raw.strip():
+        level = logging.WARNING
+    else:
+        wanted = raw.strip().upper()
+        if wanted in LOG_LEVELS:
+            level = getattr(logging, wanted)
+        else:
+            level = logging.WARNING
+            # The value is not echoed, for the reason `_resolve_log_level` states at length: an
+            # environment variable is a place credentials get miswired.
+            complaints.append(
+                f"GSD_HTTP_LOG_LEVEL is set to a {len(raw)}-character value that is not a log "
+                f"level this app accepts, so the HTTP request record is at WARNING. Use one of "
+                f"{', '.join(LOG_LEVELS)} (case does not matter); INFO restores the per-request "
+                f"lines. This setting governs {', '.join(HTTP_LOGGERS)} only — this app's own "
+                f"loggers are GSD_LOG_LEVEL."
+            )
+    for name in HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(level)
+    return complaints
+
+
+def _apply_per_logger_levels() -> list[str]:
+    """`GSD_LOG_LEVELS=gsd.clusterconfig=DEBUG,httpx=INFO` — raise one concern, not the fleet.
+
+    THE PROBLEM IT SOLVES. Diagnosing one cluster's connection meant `GSD_LOG_LEVEL=DEBUG`, which
+    turns on every module's reasoning at once across however many clusters are polling. The thing
+    you wanted was one logger. With forty clusters that difference is the difference between a
+    readable log and a flood.
+
+    LAST ONE WINS for a repeated logger, and an unparseable pair is skipped with a complaint rather
+    than failing the parse — the same degrade-and-say-so contract as every other log setting here.
+
+    THE NAME IS NOT ECHOED EITHER (review of #247, Grok C4). The first version reported it, arguing
+    that a logger name is structurally public because it names a module. That argument assumes the
+    value IS a logger name — which is exactly the assumption that fails when something else has been
+    miswired into the variable, and "an environment variable is a place credentials get miswired" is
+    the whole reason `_resolve_log_level` refuses to repeat its own. The length and the accepted set
+    are enough to repair the setting; the operator can read their own values file.
+
+    A LEVEL SET HERE OVERRIDES THE ROOT LEVEL, in both directions: `Logger.isEnabledFor` consults the
+    logger's own level, and `callHandlers` walks ancestors' handlers without re-checking ancestors'
+    levels. So `gsd.clusterconfig=DEBUG` emits even at `GSD_LOG_LEVEL=ERROR`, which is the point —
+    and `gsd.poller=ERROR` silences that module even at `GSD_LOG_LEVEL=DEBUG`, which is the trap.
+    The root logger itself is refused here (`root=…` is skipped with a complaint): it is every
+    logger at once, and its level is GSD_LOG_LEVEL's.
+    """
+    raw = os.environ.get("GSD_LOG_LEVELS")
+    if raw is None or not raw.strip():
+        return []
+    # ONE COMPLAINT PER KIND OF MISTAKE, NOT PER ENTRY (second pass, Codex C5): a 100 000-character
+    # `x,x,…` produced 50 000 warning records — 9.7 MB — inside the factory. Counted, the message
+    # stays exact for the one typo and bounded for the flood.
+    malformed = 0
+    root_entries = 0
+    too_long: list[int] = []
+    bad_level: list[int] = []
+    for pair in raw.split(","):
+        if not pair.strip():
+            continue
+        name, sep, value = pair.partition("=")
+        name, value = name.strip(), value.strip().upper()
+        if not sep or not name:
+            malformed += 1
+            continue
+        if len(name) > MAX_LOGGER_NAME:
+            # Refused BEFORE `getLogger` sees it: the lookup is what allocates.
+            too_long.append(len(name))
+            continue
+        if logging.getLogger(name) is logging.getLogger():
+            # `root=CRITICAL` would silence every logger at once — `logging.getLogger("root")` IS
+            # the root logger — with no complaint and no line saying so (review of #247, OB3 C4).
+            # The root's level is GSD_LOG_LEVEL's job, and one setting per level is the contract.
+            root_entries += 1
+            continue
+        if value not in LOG_LEVELS:
+            bad_level.append(len(name))
+            continue
+        logging.getLogger(name).setLevel(getattr(logging, value))
+    complaints: list[str] = []
+    if malformed:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {_count(malformed, 'entry', 'entries')} not of the form name=LEVEL, "
+            f"skipped. The format is a comma-separated list, e.g. gsd.clusterconfig=DEBUG,httpx=INFO."
+        )
+    if too_long:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {_count(len(too_long), 'logger name', 'logger names')} longer than "
+            f"{MAX_LOGGER_NAME} characters (the longest is {max(too_long)}), skipped: no logger this "
+            f"app has is that long, and looking one up allocates a logger per dotted part."
+        )
+    if root_entries:
+        complaints.append(
+            f"GSD_LOG_LEVELS names the root logger ({_count(root_entries, 'entry', 'entries')}), "
+            f"skipped: that would set every logger at once and override GSD_LOG_LEVEL silently. "
+            f"Set GSD_LOG_LEVEL instead."
+        )
+    if len(bad_level) == 1:
+        complaints.append(
+            f"GSD_LOG_LEVELS has a {bad_level[0]}-character logger name set to a value that is "
+            f"not a log level this app accepts, so that logger is unchanged. Neither the name "
+            f"nor the value is repeated here, in case something other than a log setting was "
+            f"wired into it. Use one of {', '.join(LOG_LEVELS)}."
+        )
+    elif bad_level:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {len(bad_level)} logger names set to values that are not log "
+            f"levels this app accepts, so those loggers are unchanged. Neither the names nor the "
+            f"values are repeated here, in case something other than a log setting was wired into "
+            f"it. Use one of {', '.join(LOG_LEVELS)}."
+        )
+    return complaints
+
+
+def _count(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
