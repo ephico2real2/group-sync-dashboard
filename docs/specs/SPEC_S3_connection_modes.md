@@ -1097,6 +1097,52 @@ onboarding or renewal will fail*, so it reports rather than disrupts:
 does not usually break between two mornings — and every increment multiplies the bind rate at a
 directory that is counting. Anything less and the answer is stale when it matters.
 
+#### 9.3.7 `self-login` renews or it stops — and its bind rate is the reason `remote-lookup` is preferred
+
+The daily ping above is a **check**: `remote-lookup` clusters keep polling whether or not it succeeds,
+because the token they hold is the target ServiceAccount's and outlives every login. **`self-login`
+has no such token.** The credential *is* the session, the session expires on the target's terms
+(§3.2), and when it does that cluster stops polling. So for `self-login` the scheduled login is not a
+health check — **it is the mechanism**, and a failure is an outage for that cluster rather than a
+warning about a future one.
+
+Three rules follow.
+
+**1. Renew at 80 % of the lifetime the TARGET states, not at a fixed day and not at expiry.** §3.2:
+the session is 24 hours *by default* and the target may have changed it
+(`oauth/cluster .spec.tokenConfig.accessTokenMaxAgeSeconds`), so the dashboard reads the value rather
+than assuming it. §8.3's 80 % trigger is the right shape — it is what the kubelet does for a projected
+token — and the reason is the same: a renewal that begins at expiry has already failed, and leaves no
+room for the one retry a transient deserves. A cluster whose session is an hour needs renewing every
+48 minutes; hard-coding "daily" would poll it into a gap it never recovers from.
+
+**2. The bind rate scales with the number of clusters, and there is no way around it.** A session is
+issued by *one* OAuth server for *one* cluster: a session obtained from cluster A is not a credential
+on cluster B. So the ping's rule — *one bind per credential per day, never per cluster* — **cannot
+apply here**. Twenty `self-login` clusters mean twenty logins per renewal cycle, with the same
+account, against twenty directories that may all be the same directory.
+
+That is the concrete reason `saTokenLookup` is the **preferred** mode (#248's title says so; this is
+why):
+
+| | `remote-lookup` | `self-login` |
+|---|---|---|
+| binds after onboarding | **one a day**, for the whole fleet (§9.3.6) | **one per cluster per renewal cycle** |
+| adding the 21st cluster | no change to the bind rate | +1 login every cycle, forever |
+| a failed renewal | a finding; clusters keep polling | **that cluster stops polling** |
+| what is at rest | the target SA's permanent token | nothing beyond the fleet password |
+
+`self-login` buys "nothing long-lived at rest" and pays for it in bind rate and in blast radius. That
+is a real trade and an estate may want it; it should be made knowingly, which is what this table is
+for.
+
+**3. A refused password stops every `self-login` cluster at once.** §9.3 rule 1 suspends a credential
+*everywhere* on a refusal, and for `self-login` that is the whole estate's polling, not a deferred
+onboarding. The suspension is still right — the alternative is locking the account and losing the
+`remote-lookup` clusters too — but the finding must say **what it just stopped**, naming the clusters
+that are now not renewing, because "credential suspended" reads like a warning when it is an outage.
+`suspended=<credential>` (§9.3.5) carries the scope; here it also needs the count.
+
 ### 9.4 Help resolve things
 
 Where the loop cannot fix it, it says precisely what would, on the tab and in one log line — that is
