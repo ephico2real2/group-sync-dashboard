@@ -380,7 +380,8 @@ the way Argo CD prunes only what carries its tracking annotation.
 flowchart TD
     A["Every discovery cycle<br/>the declared clusters and the discovered Secrets"] --> B{"Stanza declares<br/>a connection mode?"}
     B -- "no" --> BN["Nothing to reconcile<br/>a credential was supplied, or none was asked for"]
-    B -- "yes" --> C{"A Secret already<br/>carries this name?"}
+    B -- "yes, userSelfLogin" --> BU["NOTHING is written<br/>the token lives in memory only<br/>writing it would create the credential<br/>at rest this mode exists to avoid"]
+    B -- "yes, saTokenLookup" --> C{"A Secret already<br/>carries this name?"}
     C -- "no" --> CN["Connect, then WRITE the derived Secret<br/>managed-by=cluster-stanza<br/>source-cluster=this name"]
     C -- "yes" --> D{"Does it carry<br/>managed-by=cluster-stanza?"}
     D -- "no" --> DN["STAND DOWN<br/>finding shadows-values-entry<br/>a human's Secret wins and is never touched"]
@@ -399,6 +400,9 @@ flowchart TD
           │
   stanza declares a mode? ──no──► nothing to reconcile
           │ yes
+  which mode? ──userSelfLogin──► NOTHING is written (in memory only;
+          │                      a Secret here would be the credential
+          │ saTokenLookup        at rest this mode exists to avoid)
   a Secret with this name? ──no──► CONNECT, then WRITE it
           │ yes                    managed-by=cluster-stanza
           │                        source-cluster=<the name>
@@ -464,7 +468,7 @@ flowchart TD
                  grant                                    declared token
                                                           Secret
                                                                │
-                                                     present? ─┴─ no ──► REMINT
+                                            present and valid? ─┴─ no ──► REMINT
                                                         │ yes              │
                                                    rewrite it        bind refused? ──yes──► STOP
                                                    RECOVERY,               │               one attempt,

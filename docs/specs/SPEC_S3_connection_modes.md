@@ -333,24 +333,51 @@ crashed pod mid-connect is not a broken cluster.
 
 Drawn as flow 5 of `docs/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
 
-### 8.1 Ownership — only what we made, the way Argo tracks it
+### 8.1 Ownership — only what we made, and it is bookkeeping, not authentication
 
 Argo CD marks every resource it manages with an `argocd.argoproj.io/tracking-id` annotation — now its
 default tracking method — and **only resources carrying the matching annotation are candidates for
-pruning**, precisely so it never deletes something another tool made. The same rule here:
+pruning**, precisely so it never deletes something another tool made. The same rule here, with three
+corrections the adversarial pass measured against the shipped code.
+
+**The key already exists, and it already has a value.** S2's writer defines
+`MANAGED_BY_ANNOTATION = "groupsync-dashboard.io/managed-by"` with `MANAGED_BY_UI = "ui"`
+(`local-development/gsd/clusterconfig/writer.py`), and stamps it on every Secret the tab creates. So the
+reconciler does **not** introduce a key; it adds a second **value** on the existing one, and the match
+must be on the **exact value**, never on the key's presence:
 
 ```yaml
 metadata:
   annotations:
-    groupsync-dashboard.io/managed-by: cluster-stanza     # this Secret is DERIVED
-    groupsync-dashboard.io/source-cluster: shared-rnd      # from this declaration
-    groupsync-dashboard.io/token-source: lookup            # or: minted
+    groupsync-dashboard.io/managed-by: reconciler        # DERIVED — written by the loop
+    groupsync-dashboard.io/source-cluster: shared-rnd     # from this declaration
+    groupsync-dashboard.io/token-source: lookup           # or: minted
 ```
 
-A Secret **without** that annotation was authored by a human or a GitOps process — through the tab, by
-hand, from a repository — and the reconciler never writes to it, never rotates it and never deletes it.
-It is a record in its own right (§2), not our output. The annotation is what separates the two, and
-without it "reconcile" would eventually mean "delete the operator's own work".
+A Secret stamped `ui` is a human's, made through the tab. A Secret with no annotation is a human's or a
+GitOps process's. Only `reconciler` is ours.
+
+**The marker does not survive parsing, so the loop must read the raw object.** `parse_secret` builds its
+`ClusterConfig` from `metadata.labels` and the `data` keys; it never reads `metadata.annotations`
+(`local-development/gsd/clusterconfig/parser.py`). A reconciler that asks a parsed cluster "are you
+mine?" will always hear no. Ownership is decided on the **raw Secret** as listed, before parsing, and
+S3d's first job is to carry that field through.
+
+**The annotation is NOT authentication.** Anyone who can create a Secret in the release namespace can
+write `managed-by: reconciler` on it — and that is S2's existing trust boundary, not a new one. Paired
+with §8.2's deletion, a forged marker turns "remove a stanza" into "delete the object someone else
+made". So deletion is guarded by more than the marker:
+
+1. The Secret's `data.name` must equal the declared cluster the loop is retiring — the marker alone
+   never authorises a delete.
+2. The delete carries **UID and resourceVersion preconditions**. S2 deletes by name today
+   (`writer.py`), so a replacement object created between the read and the delete would be destroyed by
+   a check-then-delete race. The reconciler must not inherit that.
+3. Anything that fails either check is a finding, never a delete.
+
+Stated plainly because it is the part most easily lost: the annotation exists so the loop can recognise
+its **own** work, and for nothing else. It is a bookkeeping mark on a namespace whose write access is
+already the privilege boundary.
 
 ### 8.2 The transitions
 
@@ -358,15 +385,17 @@ without it "reconcile" would eventually mean "delete the operator's own work".
 |---|---|
 | a stanza is **added** | connect (§5) and write the derived Secret |
 | a stanza's **mode or bootstrap account** changes | reconnect and rewrite the Secret in place — the cluster keeps its name, its rows and its history |
-| a stanza's **`apiUrl`** changes | reconnect; a cluster is its **name**, so this is the same cluster at a new address, not a new one |
-| a stanza is **removed** | the derived Secret is deleted and the cluster retires (#96) — it leaves the UI and keeps its history |
-| a derived Secret is **deleted by hand** | re-created next cycle from the declaration. The file is the record; deleting the output does not undeclare the cluster |
+| a stanza's **`apiUrl`** changes | reconnect, and expect it to be *reported* as a change: `_cluster_shape` (`gsd/poller.py`) includes `api_url` in what "this cluster changed" means, deliberately, so that repointing a cluster is visible. The cluster keeps its name, its rows and its history; the `changed=` line is correct and stays |
+| a stanza is **removed** | the derived Secret is deleted (under §8.1's guards). Retirement itself needs no new code: `retire_absent_clusters` already disables a cluster whose Secret has vanished and **keeps its history** (`gsd/poller.py`, `gsd/store.py`), so the loop deletes the object and lets the existing path retire the row — it must not invent a second retirement |
+| a derived Secret is **deleted by hand** | re-created next cycle from the declaration. The file is the record; deleting the output does not undeclare the cluster. Between the delete and the next cycle the existing vanish path retires the row, so the history survives the gap |
 | a derived Secret is **edited by hand** | the declared fields are restored, and the edit is reported as drift on the tab — the same answer Argo gives, for the same reason |
 | an **unowned** Secret names a declared cluster | today's rule stands, unchanged: **the Secret shadows the values entry and wins**, with the existing `shadows-values-entry` finding (`gsd/clusterconfig/reader.py`) and its existing action — *"edit the Secret, or delete it to fall back to the values entry"*. The reconciler **stands down**: it does not connect, does not overwrite and does not delete. A human's credential is in force and the tab says so |
 
 The removal row is the one that earns the design. A cluster deleted from the file but left polling from
 an orphaned Secret is the failure this project has already met once — a set-change that displaces objects
 without pruning them leaves them running, and only a matching owner marker makes the cleanup safe.
+
+**One consequence to design for:** `reader.py` emits `shadows-values-entry` for **every** Secret that shadows a values entry — including the derived Secret the loop itself wrote. Left alone, connecting a cluster would raise a finding against the connection working correctly. S3d must either exempt a Secret whose `managed-by` is `reconciler` and whose `data.name` matches the stanza that produced it, or render that case as the normal state rather than a finding. Deciding this is part of S3d, not an afterthought.
 
 **Shadowing is not a conflict — it is the mechanism.** A Secret already wins over a values entry of the
 same name (`gsd/config.py`, `gsd/clusterconfig/registry.py`: *a Secret shadows a values entry*), and that
@@ -379,14 +408,17 @@ situation is the divergence §4.1 exists to prevent.
 ### 8.3 Renewal — the way Kubernetes does it
 
 The operator's requirement. A minted token carries a real `expirationTimestamp`, and the reconciler
-remints it **before** it expires rather than after a poll fails: Kubernetes' own rule for a projected
-service-account token is that the kubelet requests a new one once the token is older than **80 % of its
-TTL**, or older than 24 hours, so the holder never presents an expired credential. This reconciler uses
-the same 80 % trigger on the same cadence, and the tab shows the real date.
+remints it **before** it expires rather than after a poll fails. Kubernetes' own rule for a projected
+service-account token is that the kubelet requests a new one once the token is older than **80 % of its TTL**
+**or older than 24 hours** — whichever comes first. This reconciler takes **both** triggers, not just the first:
+a long-lived token that is nowhere near 80 % of its life still gets a daily refresh, which is the half that keeps
+a multi-day token honest. The tab shows the real date.
 
-Worth stating plainly, because it is the reason this is not simply "what Argo does": **Argo CD does not
-rotate cluster credentials.** Its documented procedure is manual — delete the token Secret so Kubernetes
-issues a new one, then re-run `argocd cluster add` — and TokenRequest support is listed as future work.
+Worth stating precisely, because an earlier draft overstated it: **Argo CD does not rotate cluster
+credentials *automatically*.** It is not that it cannot — `argocd cluster rotate-auth` exists and rotates
+the `argocd-manager` token on demand, and the documented manual procedure is to delete the token Secret
+so Kubernetes issues a new one and re-run `argocd cluster add`. What Argo has no equivalent of is a
+loop that renews **before** expiry without anybody asking.
 A token that never expires is the alternative, and the audit position here forbids it (#248: never
 `expires: never`; a declared Secret reads `expires: current`). So renewal is ours to do, and §8.2's loop
 is where it lives.
@@ -398,8 +430,11 @@ is where it lives.
   the urgent single add (§2).
 - **Reviewable.** The cluster list is a diff, and the reconciler's every action is one `phase=`-tagged
   log line (#245) naming the cluster and the outcome.
-- **Recoverable.** Any derived object can be deleted and will come back; nothing that a human authored
-  can be destroyed by the loop.
+- **Recoverable.** Any derived object can be deleted and will come back. Nothing a human authored is
+  *targeted* by the loop — but "cannot be destroyed" is a promise only §8.1's guards can keep, and only
+  once they are built: the marker is forgeable, and a delete without UID and resourceVersion
+  preconditions can still destroy a replacement object created in the race. S3d's acceptance is where
+  that promise is earned, not here.
 
 ## 9. Credential reconciliation, built in
 
@@ -429,7 +464,21 @@ per cluster per cycle to prove what the first one already proved.
 | `auth_failed` on an **unowned** Secret | someone else's credential has gone stale | **report only** — today's action line, unchanged: *"the token is invalid or expired: rotate it in this cluster's Secret"*. We did not make it and we do not rewrite it |
 | `forbidden` | the token is **valid**; the RBAC behind it is not | **never remint.** A new token has exactly the same permissions, so reminting burns the bootstrap account to no effect. Report the missing grant by name |
 | `unreachable` | transport — DNS, routing, the endpoint moved | no credential action at all. Reminting an unreachable cluster is a login attempt that cannot succeed |
-| `cert-verify-failed` | the CA no longer matches | for a derived Secret, re-read `ca.crt` alongside the token and rewrite it — a rotated cluster CA is the common cause and it is ours to fix |
+| `cert-verify-failed` *(see below — not an outcome today)* | the CA no longer matches | for a derived Secret, re-read `ca.crt` alongside the token and rewrite it — a rotated cluster CA is the common cause and it is ours to fix |
+
+**Two corrections from the adversarial pass, both measured against the code, and both changing what S3a
+must build:**
+
+1. **`cert-verify-failed` is not an outcome the code produces.** It is a string in the log line only:
+   `poll_once` classifies a certificate failure and still records and returns `unreachable`
+   (`gsd/poller.py`). A reconciler keyed on it would never fire, and one keyed on `unreachable` would
+   remint into an unreachable cluster. So S3a's first job in this section is to make the CA failure a
+   **structured outcome** the caller can branch on — otherwise this row is undeliverable.
+2. **`auth_failed` covers two different situations**, and only one of them is reminting's business: a
+   real 401 from the API server, and a **local credential-resolution failure before any request is made**
+   (`gsd/kube.py`). Reminting the second is pointless — nothing was presented and nothing was refused —
+   and for a credential-less stanza awaiting its first lookup (§4.2) that is exactly the state the pod is
+   in. The two must be told apart before any remint.
 
 The `forbidden` row is the one that makes this design rather than a retry loop. "Credential
 reconciliation" naively implemented remints on any refusal; authentication and authorization are
@@ -444,7 +493,12 @@ minutes, lock the one account every cluster depends on and convert one broken cl
 estate. The rules that prevent it:
 
 1. **Back off per credential, not per cluster.** A bind failure suspends *that credential* everywhere,
-   immediately — the other clusters using it are not allowed to keep trying.
+   immediately — the other clusters using it are not allowed to keep trying. **There is no seam for this
+   today and S3d must build one**: `Poller` runs one thread per cluster and *discards* `poll_once`'s
+   return value (`gsd/poller.py`), and `ClusterRegistry`'s lock guards discovery state only
+   (`gsd/clusterconfig/registry.py`). A per-credential gate therefore needs a process-wide coordinator
+   **and** durable state in the Store — durable because a pod restart must not forget that a password was
+   refused and start the lockout walk again.
 2. **A refused password is never retried.** Wrong credentials are a configuration fact, not a transient:
    one failure, a `login-refused` finding quoting the server's own words, and no second attempt until
    the declaration changes.
@@ -463,7 +517,9 @@ It also checks the dashboard's **own** grants rather than inferring them from a 
 ClusterRole, `get` on the declared token Secret, and `create serviceaccounts/<name>/token` where
 minting is configured. Each is asked as a **SelfSubjectAccessReview** — the dashboard asking about its
 own identity on the target, not the `SubjectAccessReview` the tier resolver already uses to ask about a
-*reader* (`gsd/api.py`) — and each is reported present or missing by name. A missing grant is the
+*reader* (`gsd/api.py`). **No SelfSubjectAccessReview path exists in the app today** — `gsd/kube.py`
+carries only the SubjectAccessReview form with an explicit user and groups — so this is new code, not a
+new caller of something shipped. Each grant is reported present or missing by name. A missing grant is the
 commonest cause of a cluster that "will not connect", and naming it is the difference between a
 five-minute fix and an afternoon.
 
@@ -472,9 +528,13 @@ reference cluster while auditing these very permissions:
 
 - a subresource must be named as a subresource. `can-i get nodes/proxy` answers **no** while the rule is
   present; the question only resolves with the subresource given as one (`--subresource=proxy`).
-- a `resourceNames`-pinned grant only answers for the name it is pinned to. `create
-  serviceaccounts/token` answers **no** in general and **yes** for the one ServiceAccount named in the
-  Role, so the check must ask about *that* ServiceAccount.
+- a `resourceNames`-pinned grant only answers for the name it is pinned to: the check must name *that*
+  ServiceAccount, not ask in general.
+- **and the notation matters, which an earlier draft of this very section got wrong.** In a
+  `ResourceAttributes` the object's **name** and its **subresource** are separate fields, so
+  `serviceaccounts/token` written as a single string asks about a ServiceAccount *named* `token` — the
+  trap this paragraph exists to warn about, committed in the warning itself. The question is
+  `resource: serviceaccounts`, `subresource: token`, `name: <the ServiceAccount>`.
 
 Both traps produce a **false gap** — a red row on the tab telling an operator to grant something they
 have already granted. Two were nearly recorded that way during the audit that produced this spec, which
