@@ -27,6 +27,7 @@ clusters:
   - name: shared-rnd                      # a REMOTE cluster, named, with no credential
     apiUrl: https://api.crc.testing:6443
     saTokenLookup: true                   # obtain the credential; do not expect one here
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt   # the BOOTSTRAP trust (§6): no caData exists before the first login
     ldapConnectionBootstrap: svc-gsd-fleet  # OPTIONAL — defaults to the chart's fleet account
 ```
 
@@ -114,7 +115,10 @@ Rules, in the order they are checked:
 3. Where neither names a username, or the password Secret is unreadable, the cluster is a **finding**
    (`fleet-credential-missing`, naming the Secret and the key) and not a crashed pod.
 4. The username appears in logs and on the tab; the password appears nowhere — not the database, not a
-   log line, not a response, not `/metrics` (the redaction pin covers it).
+   log line, not a response, not `/metrics` (the redaction pin covers it). It is not a field of
+   `ClusterConfig`, so `poller._credentials()` — the list the emit helper redacts against — does not hold
+   it: the connector passes it as a `secrets=` value at every call site of the new phases, and the
+   redaction pin is extended to drive a failure in each of them with the password in force.
 
 ### 3.2 The login session's lifetime belongs to the target cluster
 
@@ -133,10 +137,15 @@ $ oc get oauthaccesstokens -o jsonpath='{.items[0].expiresIn}'
 ```
 
 **One year**, on live tokens — 365 times the default. **That is CRC's own doing, not an estate
-setting**: the reference cluster is the only one in this estate with a non-default lifetime, and its
-`oauth/cluster` object was created at `11:45:58Z` against an install that completed at `12:12:11Z` —
-before the cluster had finished installing, which is what a bundled value looks like rather than a later
-edit. A developer VM avoiding a daily re-login is a sensible default for a developer VM; it just makes
+setting**, and the evidence is the object's content, not its timestamp. `oauth/cluster` is created by the
+cluster-version operator (`release.openshift.io/create-only: "true"`, owner `ClusterVersion`) at
+`11:45:58Z`; the creation time dates the object the CVO made, not the value, and the object stands at
+`generation: 3` — the spec changed twice after that moment. The value arrived by `oc apply`: its `kubectl.kubernetes.io/last-applied-configuration`
+annotation holds exactly `tokenConfig.accessTokenMaxAgeSeconds: 31536000` beside the `developer`
+HTPasswd provider — which is, key for key, `oauth_cr.yaml` in CRC's bundle builder (`crc-org/snc`:
+*"token max age set to 365 days"*), applied by `snc.sh` after `wait-for install-complete` when the
+bundle is made. So it is bundled, and it was applied *after* the install completed at `12:12:11Z`, not
+before. A developer VM avoiding a daily re-login is a sensible default for a developer VM; it just makes
 this lab unrepresentative of every cluster the dashboard will actually connect to.
 
 **A fixed daily refresh is not wrong; it is just not derived.** The session lifetime is an **upper
@@ -152,12 +161,14 @@ Three consequences follow:
 1. **Renewal tracks the shorter of the two clocks.** A looked-up ServiceAccount token has its own TTL
    (§8.3); a `userSelfLogin` session has this one. Whichever expires first decides when the dashboard
    must act, and the tab shows the real date for each rather than a nominal "daily".
-2. **The reference cluster cannot test expiry.** §7's acceptance run proves the *connection path*; it
-   cannot prove renewal, because nothing it holds expires within any plausible test window. Saying a
-   green run here demonstrates renewal would be claiming a result the lab is incapable of producing.
-   Expiry is tested by setting a short `accessTokenMaxAgeSeconds` on a scratch cluster, or by minting a
-   token with a short `expirationSeconds` through the TokenRequest API — which the spec prefers, since
-   it needs no cluster-wide change to prove a per-cluster behaviour.
+2. **The reference cluster cannot test *session* expiry; it can test token expiry.** §7's acceptance
+   run proves the *connection path*. It cannot prove a `userSelfLogin` renewal, because a session here
+   lives a year and shortening it means editing `oauth/cluster` for the whole cluster. A **minted** token
+   is the other clock (§8.3), and that one the lab *can* run down: the TokenRequest API takes an
+   `expirationSeconds` as low as 600 — the API server's floor — so a token that dies in ten minutes is one
+   request away and needs no cluster-wide change. Saying a green run here demonstrates *session* renewal
+   would be claiming a result the lab is incapable of producing; token renewal is demonstrated here, with
+   a short-lived mint, and the spec prefers that proof for exactly that reason.
 3. **Report the real lifetime, without editorialising.** The tab shows each cluster's actual
    `accessTokenMaxAgeSeconds` rather than a nominal figure — for the same reason #248 writes
    `expires: current` rather than `never`: the number a reviewer needs is the real one. This is
@@ -327,6 +338,17 @@ So the corrected design:
 - `bundle` remains for the estate whose ingress CA really is in the corporate store, and the tab
   says which mode a cluster used — because "it worked here" is not evidence about the next cluster.
 
+**Before the first lookup there is no `caData`, so `caData` cannot be the first connection's trust.** The
+material `caData` names is the `ca.crt` beside the token, and it is read *after* the login (§5's fourth
+step) — so on a cluster's first connection the OAuth discovery and the login run with no `caData` in
+hand, and `oauthTrust: caData` has nothing to verify against. The stanza therefore carries the
+**bootstrap trust** itself, the way every other stanza carries its trust: `caBundleFile` (or
+`insecureSkipVerify`, said out loud), and where it names neither the dashboard's own bundle is used —
+which on this cluster is the mode measured to fail (`ClusterConfig(name='shared-rnd', api_url=…).tls_mode`
+→ `trusted-bundle`). §1's stanza names `caBundleFile` for that reason and §7's acceptance run needs it.
+Once the derived Secret exists, its `tlsClientConfig.caData` takes over for the poll and for every
+reconnection, and `caData` is then the default it says it is.
+
 **The lesson worth keeping, since it is the one that generalises:** a reproduced number is not a
 confirmed cause. `verify=19` was measured correctly and then explained by the first plausible story
 — "routes are ingress-signed, `caData` is the API CA" — without opening the bundle to see what was
@@ -435,8 +457,8 @@ already the privilege boundary.
 | a stanza is **added** | connect (§5) and write the derived Secret |
 | a stanza's **mode or bootstrap account** changes | reconnect and rewrite the Secret in place — the cluster keeps its name, its rows and its history |
 | a stanza's **`apiUrl`** changes | reconnect, and expect it to be *reported* as a change: `_cluster_shape` (`gsd/poller.py`) includes `api_url` in what "this cluster changed" means, deliberately, so that repointing a cluster is visible. The cluster keeps its name, its rows and its history; the `changed=` line is correct and stays |
-| a stanza is **removed** | the derived Secret is deleted (under §8.1's guards). Retirement itself needs no new code: `retire_absent_clusters` already disables a cluster whose Secret has vanished and **keeps its history** (`gsd/poller.py`, `gsd/store.py`), so the loop deletes the object and lets the existing path retire the row — it must not invent a second retirement |
-| a derived Secret is **deleted by hand** | re-created next cycle from the declaration. The file is the record; deleting the output does not undeclare the cluster. Between the delete and the next cycle the existing vanish path retires the row, so the history survives the gap |
+| a stanza is **removed** | the derived Secret is deleted (under §8.1's guards). Retirement itself needs no new code, but it is **two paths, and `retire_absent_clusters` is only the first**: at start, `Poller.start` calls `store.retire_absent_clusters` for every row the merged configuration no longer names (`gsd/poller.py`, `gsd/store.py`); at runtime, `_discover_once`'s vanish block disables the row of a Secret that left the LIST **only when no values entry carries that name**, and `_reconcile_threads` stops its thread. Both **keep the history**. A removed stanza rolls the pod, so the derived Secret is still present at the next start and nothing retires the row then; the loop deletes the object, and the runtime path retires the row on the cycle that sees it gone — it must not invent a second retirement |
+| a derived Secret is **deleted by hand** | re-created next cycle from the declaration. The file is the record; deleting the output does not undeclare the cluster. **The existing vanish path does not retire this row**: `_discover_once` skips a vanished name that is still in `settings.clusters` (`if name not in {c.name for c in self.settings.clusters}`, `gsd/poller.py`) and `_reconcile_threads` never stops a values cluster's thread, so between the delete and the re-creation the merged view falls back to the credential-less stanza and the thread polls *that* — §4.2's pending state, measured. Nothing is deleted from the store, so the history survives; S3d renders the gap as pending, not as a failure and not as a retirement |
 | a derived Secret is **edited by hand** | the declared fields are restored, and the edit is reported as drift on the tab — the same answer Argo gives, for the same reason |
 | an **unowned** Secret names a declared cluster | today's rule stands, unchanged: **the Secret shadows the values entry and wins**, with the existing `shadows-values-entry` finding (`gsd/clusterconfig/reader.py`) and its existing action — *"edit the Secret, or delete it to fall back to the values entry"*. The reconciler **stands down**: it does not connect, does not overwrite and does not delete. A human's credential is in force and the tab says so |
 
@@ -445,6 +467,8 @@ an orphaned Secret is the failure this project has already met once — a set-ch
 without pruning them leaves them running, and only a matching owner marker makes the cleanup safe.
 
 **One consequence to design for:** `reader.py` emits `shadows-values-entry` for **every** Secret that shadows a values entry — including the derived Secret the loop itself wrote. Left alone, connecting a cluster would raise a finding against the connection working correctly. S3d must either exempt a Secret whose `managed-by` is `reconciler` and whose `data.name` matches the stanza that produced it, or render that case as the normal state rather than a finding. Deciding this is part of S3d, not an afterthought.
+
+**A second consequence, and it is the write itself.** The derived Secret's `data.name` is the stanza's name by design, and `writer.validate` refuses exactly that: `taken` is every effective cluster *including the values entries*, so a reconciler that reuses `writer.create` is answered `duplicate-cluster-name` — measured on this head, `writer.validate(req, ns, host_name='dashboard', taken={'shared-rnd': 'values'})` raises *"shared-rnd is already declared by values"* with `conflict=True`. The refusal is right for a human POST (two authors of one name is a conflict) and wrong for the loop, whose whole purpose is to author the Secret *for* the values entry. S3d exempts only a values-sourced entry, and only the one the loop names, and leaves the human path refused; §7 item 7's equivalence run is what proves the exemption did not widen.
 
 **Shadowing is not a conflict — it is the mechanism.** A Secret already wins over a values entry of the
 same name (`gsd/config.py`, `gsd/clusterconfig/registry.py`: *a Secret shadows a values entry*), and that
@@ -488,15 +512,16 @@ arrives:
 
 | credential | lifetime | what "renewal" means |
 |---|---|---|
-| **declared token Secret** (`kubernetes.io/service-account-token`) | **none** — no `exp` claim at all | there is no clock to track. Rotation is an **action**: delete the Secret so the controller issues a fresh one. Nothing to schedule, and nothing for the 80 % trigger to fire on |
+| **declared token Secret** (`kubernetes.io/service-account-token`) | **none** — no `exp` claim at all | there is no clock to track. Rotation is an **action**: delete the Secret and let whatever declares it — the operator chart, by Helm or by Argo — re-create the object, which the token controller then fills. The controller **does not recreate** a deleted Secret; it only adds a token to one that exists (Kubernetes, *Token controller*: "watches for ServiceAccount token Secret addition … and adds a token to the Secret if needed"), and since 1.24 nothing creates one unasked. Nothing to schedule, and nothing for the 80 % trigger to fire on |
 | **TokenRequest-minted** (#238) | bounded, real `expirationTimestamp` | §8.3's 80 %-or-24-hours trigger applies exactly as written |
 
 Three consequences:
 
 1. **§9.2's `auth_failed` row means different things on the two paths.** On a minted token it can be
-   expiry. On a declared one expiry is *impossible*, so the same failure means the Secret was deleted,
-   the ServiceAccount was recreated with a new uid, or the grant was withdrawn — and re-reading the
-   Secret before reminting is not merely an optimisation, it is the whole fix.
+   expiry. On a declared one expiry is *impossible*, so the same failure means the Secret was deleted or
+   the ServiceAccount was recreated with a new uid (a withdrawn *grant* is a 403 — §9.2's `forbidden`
+   row, never this one) — and re-reading the Secret before reminting is not merely an optimisation, it
+   is the whole fix.
 2. **This is precisely why the tab writes `expires: current` and never `expires: never`** (the
    operator's ruling on #248). A credential with no expiry must not be rendered as though it had a
    reassuring one, and "never" is the word an auditor is entitled to object to.
@@ -526,6 +551,14 @@ is where it lives.
 - **Idempotent.** The same values file applied any number of times produces one outcome.
 - **No human step.** Connecting an estate is a merge, not a sequence of GUI actions; the tab remains for
   the urgent single add (§2).
+- **Gated by the file, not by the tab's switch.** `clusterConfig.secrets.writes.enabled` governs the
+  tab's writes (`_writes_gate`, `gsd/api.py`: a proxy-verified viewer, `clusterconfig:manage`, the
+  switch, one audit line naming the viewer). A declared mode has no viewer to gate: the values file the
+  operator's CI/CD reviewed *is* the authorization, the reconciler writes as the pod's ServiceAccount, and
+  its audit is the `phase=`-tagged line naming the cluster and the bootstrap username. §5's
+  `writes-disabled` row is therefore the **tab's** Connect action (S3c) only; a deployment that wants no
+  autonomous minting declares no mode. Said here because an implementer reading §5 alone would gate the
+  loop on the switch, and one reading this section alone would not.
 - **Reviewable.** The cluster list is a diff, and the reconciler's every action is one `phase=`-tagged
   log line (#245) naming the cluster and the outcome.
 - **Recoverable.** Any derived object can be deleted and will come back. Nothing a human authored is
