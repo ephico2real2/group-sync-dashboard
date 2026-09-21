@@ -841,6 +841,42 @@ false
 # The same closed vocabulary the app enforces (gsd/config.py CLUSTER_VISIBILITIES), refused at
 # render so a typo'd policy fails `helm template` rather than the pod's startup. Nil-safe on
 # every hop for the usual reason. Called from configmap.yaml, which always renders.
+{{- /*
+Which namespaces are the platform's (#255). REFUSED AT RENDER because the loader refuses the same
+things at startup, and a green `helm upgrade` that CrashLoops the pod is the failure class this chart
+has already shipped three of (#251). Measured in the review of #259, Codex C6: before this, a typo'd
+`additionalSufixes` and a numeric entry both rendered happily into the ConfigMap and the pod refused
+them on the next start.
+*/ -}}
+{{- define "gsd.validatePlatformNamespaces" -}}
+{{- with .Values.platformNamespaces -}}
+{{- if not (kindIs "map" .) -}}
+{{- fail (printf "platformNamespaces must be a mapping, got %s." (kindOf .)) -}}
+{{- end -}}
+{{- $known := list "prefixes" "suffixes" "names" "additionalPrefixes" "additionalSuffixes" "additionalNames" -}}
+{{- range $key, $value := . -}}
+{{- if not (has $key $known) -}}
+{{- fail (printf "platformNamespaces.%s is not a key this chart defines; expected any of %s. A typo here is a pattern that never takes effect." $key (join ", " $known)) -}}
+{{- end -}}
+{{- if not (kindIs "invalid" $value) -}}
+{{- if not (kindIs "slice" $value) -}}
+{{- fail (printf "platformNamespaces.%s must be a list, got %s." $key (kindOf $value)) -}}
+{{- end -}}
+{{- range $entry := $value -}}
+{{- if not (kindIs "string" $entry) -}}
+{{- fail (printf "platformNamespaces.%s: every entry must be a string; %v is %s." $key $entry (kindOf $entry)) -}}
+{{- end -}}
+{{- $bad := "" -}}
+{{- range $c := list "*" "?" "[" "]" -}}{{- if contains $c $entry -}}{{- $bad = printf "%s%s" $bad $c -}}{{- end -}}{{- end -}}
+{{- if $bad -}}
+{{- fail (printf "platformNamespaces.%s: %q contains %s — matching is literal, not a glob. A prefix, a suffix or a full name; `team-*` is a prefix `team-` on additionalPrefixes." $key $entry $bad) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "gsd.validateClusters" -}}
 {{- /* TWO PASSES, and that is the point (review of #251, C1c/C4): the host is whichever entry
        declares `dashboardController: true`, which cannot be known until every entry has been read.

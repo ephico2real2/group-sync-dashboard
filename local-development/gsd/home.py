@@ -25,11 +25,19 @@ HOME_CHANGES_ITEMS = 12       # lines shown; `more` counts the rest
 HOME_EVENTS_LIMIT = 500       # rows read per cluster before folding — a person's own history, never a cluster's
 FLAP_MIN_CHANGES = 3          # a group changing this often inside the window is one "flapping" line
 BATCH_MIN_GROUPS = 3          # this many groups changing in one sync is one "at once" line
+# THE SHIPPED DEFAULT, and only the default since #255. These two constants are OpenShift's and
+# Kubernetes' own conventions; an estate's platform is wider — on the reference cluster this rule calls
+# `cert-manager`, `cert-manager-operator`, `group-sync-operator`, `group-sync-dashboard`,
+# `hostpath-provisioner`, `kyverno` and `namespace-configuration-operator` application namespaces, which
+# is seven wrong out of 106. `Settings.platform_namespaces` carries the estate's own answer and every
+# caller that has a Settings passes it; these remain the value it defaults to.
 PLATFORM_NAMESPACE_PREFIXES = ("openshift-", "kube-")
 PLATFORM_NAMESPACES = frozenset({"default", "openshift", "kube-system", "kube-public", "kube-node-lease"})
 
 
 def is_platform_namespace(name: str) -> bool:
+    """The shipped rule. Callers holding a `Settings` use `settings.platform_namespaces.matches`
+    instead — this is what that defaults to, and what a caller without settings still gets."""
     return name in PLATFORM_NAMESPACES or name.startswith(PLATFORM_NAMESPACE_PREFIXES)
 
 
@@ -58,7 +66,8 @@ def _rank(role: str) -> tuple[int, str]:
     return ROLE_RANK.get(role, len(ROLE_RANK)), role
 
 
-def derive_answer(groups: list[dict], via: list[dict], direct: list[dict]) -> dict:
+def derive_answer(groups: list[dict], via: list[dict], direct: list[dict],
+                  *, platform=is_platform_namespace) -> dict:
     """The headline and the cards, from the three reads the drill-downs already serve.
 
     ``groups``: ``Store.user_groups`` rows; ``via``: ``Store.user_bindings`` rows (each carrying
@@ -97,7 +106,7 @@ def derive_answer(groups: list[dict], via: list[dict], direct: list[dict]) -> di
     namespaces: dict[str, dict] = {}
 
     def ns_row(name: str) -> dict:
-        return namespaces.setdefault(name, {"name": name, "platform": is_platform_namespace(name), "grants": []})
+        return namespaces.setdefault(name, {"name": name, "platform": platform(name), "grants": []})
 
     for b in via:
         if b["binding_namespace"]:
