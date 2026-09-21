@@ -19,10 +19,11 @@ import threading
 import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from .. import TITLE, __version__
 from ..activity import USER_HEADER
@@ -55,6 +56,10 @@ class Principal(BaseModel):
     note: str
 
 
+#: A cluster id as the dashboard names it — the one shape every cluster-bearing field and query accepts.
+CLUSTER_ID = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+
+
 class PreviewRequest(BaseModel):
     report: str = Field(description="A catalogue name, e.g. namespace-access.")
     cluster: str = Field(description="The cluster id as the dashboard names it.", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
@@ -63,9 +68,14 @@ class PreviewRequest(BaseModel):
 
 class RunRequest(BaseModel):
     report: str = Field(description="A catalogue name, e.g. namespace-access.")
-    cluster: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$",
+    cluster: str | None = Field(default=None, pattern=CLUSTER_ID,
                                 description="The cluster id as the dashboard names it. A viewer names one; a service "
                                             "caller may omit it, and the run fans out to every enabled cluster in the snapshot (R1).")
+    clusters: list[Annotated[str, StringConstraints(pattern=CLUSTER_ID)]] | None = Field(
+        default=None, min_length=1, max_length=100,
+        description="Several clusters in one action (#267): one run per cluster, one queue slot, answered as "
+                    "`{\"runs\": [...]}` like a schedule's fan-out. Exclusive with `cluster`. A cluster the snapshot "
+                    "lacks fails its own run and no other.")
     params: dict = Field(default_factory=dict, description="Parameters per the report's spec; unknown keys are refused.")
     formats: list[str] | None = Field(default=None, description="Subset of html, pdf; json is always written. Omitted: "
                                                                  "the deployment's default for the run's origin (R3).")
@@ -362,7 +372,18 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         # Cluster-agnostic scheduling (R1): a schedule never names a cluster — the service resolves them
         # from the snapshot, one run per enabled cluster, each tagged schedule:<name>. A viewer chooses
         # a cluster in the nav and must name it; a service caller may still pin one.
-        if body.cluster is None:
+        if body.cluster is not None and body.clusters is not None:
+            raise HTTPException(status_code=422, detail="name the cluster once: `cluster` for one, `clusters` for several")
+        if body.clusters is not None:
+            # Several clusters in one action (#267): the form's multi-select, or a service caller pinning a
+            # subset. One run per cluster — `cluster` stays a single string on the sealed model, so every
+            # artefact keeps its own hash, provenance and retention — queued as ONE slot like a schedule's
+            # fan-out. A cluster the snapshot lacks fails its own run in the worker; the others render.
+            repeated = sorted({c for c in body.clusters if body.clusters.count(c) > 1})
+            if repeated:
+                raise HTTPException(status_code=422, detail=f"clusters repeats {', '.join(repeated)}")
+            targets = list(body.clusters)
+        elif body.cluster is None:
             if p.kind == "viewer":
                 raise HTTPException(status_code=422, detail="a viewer run names its cluster")
             try:
@@ -387,16 +408,17 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
                                formats=sorted(set(formats)), generated_by=by,
                                generated_by_note="unattended (service token)" if p.kind == "service" else p.note,
                                schedule=body.schedule, requested_at=requested.strftime("%Y-%m-%dT%H:%M:%SZ"), origin=origin))
+        fan_out = body.cluster is None      # a schedule's every-enabled-cluster run, or a named `clusters` list
         try:
-            if body.cluster is not None:
-                runs.submit(created[0])
-            else:
+            if fan_out:
                 runs.submit_batch(created)     # one queue slot, all or nothing
+            else:
+                runs.submit(created[0])
         except QueueFull as exc:
             raise HTTPException(status_code=429, detail="the render queue is full; try again shortly") from exc
         # The single-cluster shape is unchanged (the page and the trigger read `id`); a fan-out answers
         # with every run it queued.
-        return created[0].public() if body.cluster is not None else {"runs": [r.public() for r in created]}
+        return {"runs": [r.public() for r in created]} if fan_out else created[0].public()
 
     preview_slot = threading.Semaphore(1)
 

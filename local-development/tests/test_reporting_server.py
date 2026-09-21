@@ -1257,6 +1257,67 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups"}, headers=ticket)
             assert r.status_code == 422 and "names its cluster" in r.json()["detail"]
 
+    # #267: several clusters in one action — the form's multi-select. `cluster` stays a single string on the
+    # sealed model (one artefact, one cluster, one hash), so N clusters is N runs, queued as one slot.
+    VIEWER = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+
+    def test_a_viewer_names_several_clusters_and_gets_one_sealed_run_per_cluster(self, tmp_path):
+        with self._two_cluster_client(tmp_path) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "prod-east"], "formats": ["html"]},
+                            headers=self.VIEWER)
+            assert r.status_code == 202, r.text
+            runs = r.json()["runs"]
+            assert [x["cluster"] for x in runs] == [CLUSTER, "prod-east"], "one run per cluster, in the order asked"
+            assert len({x["id"] for x in runs}) == 2 and len({x["requested_at"] for x in runs}) == 1, "one action, one instant"
+            assert {x["origin"] for x in runs} == {"viewer"} and {x["generated_by"] for x in runs} == {"root"}
+            docs = []
+            for x in runs:
+                done = _wait_done(client, x["id"], self.VIEWER)
+                assert done["status"] == "done", done
+                doc = client.get(f"{REPORT_PREFIX}/api/runs/{x['id']}/artifact?format=json", headers=self.VIEWER).json()
+                assert doc["cluster"] == x["cluster"] and isinstance(doc["cluster"], str), "the sealed model still names ONE cluster"
+                docs.append(doc)
+            assert docs[0]["sha256"] != docs[1]["sha256"], "each artefact is its own gathering, sealed on its own"
+            assert all("name" in d and d["name"] == "groups" for d in docs)
+
+    def test_one_cluster_the_snapshot_lacks_fails_its_own_run_and_no_other(self, tmp_path):
+        # Partial failure is not failure: three asked, one absent from the snapshot, is two runs and one stated reason.
+        with self._two_cluster_client(tmp_path) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "ghost", "prod-east"], "formats": []},
+                            headers=self.VIEWER)
+            assert r.status_code == 202, r.text
+            outcome = {x["cluster"]: _wait_done(client, x["id"], self.VIEWER) for x in r.json()["runs"]}
+            assert {c: o["status"] for c, o in outcome.items()} == {CLUSTER: "done", "ghost": "failed", "prod-east": "done"}
+            assert outcome["ghost"]["error"] == "unknown cluster 'ghost' in the snapshot"
+            assert outcome["prod-east"]["sha256"] and outcome[CLUSTER]["sha256"], "the runs after the failed one still rendered"
+
+    def test_the_list_shape_is_refused_when_it_is_ambiguous_or_empty(self, tmp_path):
+        with self._two_cluster_client(tmp_path) as client:
+            both = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "clusters": ["prod-east"]}, headers=self.VIEWER)
+            assert both.status_code == 422 and "name the cluster once" in both.json()["detail"], both.text
+            twice = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "prod-east", CLUSTER]}, headers=self.VIEWER)
+            assert twice.status_code == 422 and twice.json()["detail"] == f"clusters repeats {CLUSTER}", twice.text
+            empty = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": []}, headers=self.VIEWER)
+            assert empty.status_code == 422, empty.text
+            injected = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "a\r\nX-Injected: 1"]}, headers=self.VIEWER)
+            assert injected.status_code == 422, injected.text
+            listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=self.VIEWER).json()
+            assert listed["total"] == 0, "a refused request queues nothing"
+            # a one-element list is still the list shape: the caller asked for a batch and reads `runs`
+            one = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": ["prod-east"], "formats": []}, headers=self.VIEWER)
+            assert one.status_code == 202 and [x["cluster"] for x in one.json()["runs"]] == ["prod-east"]
+
+    def test_a_viewers_several_clusters_are_one_queue_slot_all_or_nothing(self, tmp_path):
+        with self._two_cluster_client(tmp_path, max_queued_runs=1) as client:
+            client.app.state.runs._stop.set(); client.app.state.runs._thread.join(timeout=5)     # a paused worker holds the slot
+            assert client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=self.VIEWER).status_code == 202
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "prod-east"]}, headers=self.VIEWER)
+            assert r.status_code == 429, r.text
+            listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=self.VIEWER).json()
+            refused = [x for x in listed["runs"] if x["status"] == "failed"]
+            assert len(refused) == 2 and {x["cluster"] for x in refused} == {CLUSTER, "prod-east"}, "neither cluster of the refused batch is queued"
+            assert listed["queued"] == 1
+
     def test_formats_default_by_origin_and_json_is_implied(self, tmp_path):
         ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         with self._client(tmp_path) as client:

@@ -6280,7 +6280,10 @@ def reporting_server(tmp_path_factory):
                                      login_capture_enabled=False)
     report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
-        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        # Two configured clusters, both in the snapshot the seed wrote (#267): the form's cluster control lists
+        # what the nav lists, and a several-cluster run needs a second target the service can render.
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
         reporting_url="http://127.0.0.1:1/unused", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
     )
@@ -7641,15 +7644,16 @@ class TestReportsTab:
     def test_the_paramspec_shell_renders_one_control_per_type_and_posts_the_form(self, browser, reporting_server):
         # #149 R7: bool → switch, enum → segmented, int → number with unit, csv with a source → a tag input
         # over the discovered lookup with type-ahead (Enter adds a value the set lacks), optional fields
-        # under Advanced, the Subject scope as one block with a count and Clear, no cluster field, the
-        # action bar naming the formats; the POST carries what the controls hold.
+        # under Advanced, the Subject scope as one block with a count and Clear, the cluster control naming
+        # the nav's cluster (#267), the action bar naming the formats; the POST carries what the controls hold.
         import json as _json
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
         try:
             page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
             page.wait_for_selector("#report-form.r-access")
-            assert page.locator("#report-cluster").count() == 0, "no cluster field: the nav chose it"
+            assert page.locator("#report-clusters").count() == 1, "#267: the form names its cluster"
+            assert page.locator("#report-cluster-crc-local[aria-checked='true'].primary").count() == 1, "defaulted from the nav"
             assert "JSON" in page.locator("#report-generate").inner_text() and "HTML" in page.locator("#report-generate").inner_text()
             # the Subject scope: two lookups over the discovered users and groups
             page.wait_for_function("() => document.querySelectorAll('#report-subject .rp-opt').length > 0")
@@ -8773,3 +8777,127 @@ class TestPlatformNamespacesAreHiddenByDefault:
         dash.evaluate("() => location.hash = '#page=nsaudit&cluster=crc-local&ns=openshift-monitoring'")
         dash.wait_for_timeout(600)
         assert "openshift-monitoring" in dash.locator("#main").inner_text()
+
+
+class TestReportClusterControl:
+    """#267: the cluster control in every report form. It defaults from the nav's cluster and writes back to it,
+    so the two never disagree; the nav's cluster is the primary — the discovered lookups and the totals preview
+    are its, both keyed per cluster — so promoting another clears the cluster-bound fields and SAYS so; several
+    clusters run as one action, one run per cluster (`cluster` stays one string on the sealed model), each
+    outcome said separately, and a cluster the snapshot lacks fails its own run and no other."""
+
+    CHIPS = "() => [...document.querySelectorAll('[data-cluster-pick]')].map(b => [b.dataset.clusterPick, b.getAttribute('aria-checked'), b.classList.contains('primary')])"
+    COUNT = "() => document.getElementById('report-cluster-count').textContent === %r"
+
+    def test_the_control_defaults_from_the_nav_and_writes_back_to_it(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-clusters")
+            chips = lambda: page.evaluate(self.CHIPS)
+            assert chips() == [["crc-local", "true", True], ["prod-east", "false", False]], chips()   # the nav's list, the nav's cluster
+            assert page.locator("#report-cluster-count").inner_text() == "1 of 2 clusters"
+            assert page.locator("#report-cluster-crc-local").get_attribute("aria-disabled") == "true", "the last cluster cannot be unchecked"
+            assert page.locator("#report-clusters-one").is_hidden() and page.locator("#report-clusters-all").is_visible()
+            # the nav -> the form
+            page.select_option("#f-cluster", "prod-east"); page.locator("#f-cluster").dispatch_event("change")
+            page.wait_for_function("() => document.querySelector('#report-cluster-prod-east').getAttribute('aria-checked') === 'true'")
+            assert chips() == [["crc-local", "false", False], ["prod-east", "true", True]], chips()
+            # the form -> the nav: add crc-local, then drop prod-east — crc-local is the primary, the select and the URL say so
+            page.click("#report-cluster-crc-local")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            assert page.evaluate("() => reportTargets()") == ["crc-local", "prod-east"], "the configured order, whatever the click order"
+            assert page.locator("#report-cluster-crc-local").get_attribute("aria-disabled") is None
+            assert "2 clusters, one run each" in page.locator("#report-form .report-actions").inner_text()
+            page.click("#report-cluster-prod-east")
+            page.wait_for_function("() => view.cluster === 'crc-local'")
+            assert page.locator("#f-cluster").input_value() == "crc-local" and "cluster=crc-local" in page.evaluate("() => location.hash")
+            assert chips() == [["crc-local", "true", True], ["prod-east", "false", False]], chips()
+            assert "cluster crc-local" in " ".join(page.locator("#report-form .report-actions").inner_text().split())
+            # `all N` and `only <primary>`
+            page.click("#report-clusters-all")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            page.click("#report-clusters-one")
+            page.wait_for_function(self.COUNT % "1 of 2 clusters")
+            assert page.evaluate("() => view.reportClusters") is None, "back to following the nav"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_promoting_another_cluster_clears_the_lookups_says_so_and_refetches_the_totals(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.click("details.report-advanced summary")
+            page.fill("#report-param-access-matrix-namespace_prefix", "prod"); page.locator("#report-param-access-matrix-namespace_prefix").dispatch_event("change")
+            page.wait_for_function("() => view.reportTotals && view.reportTotals.cluster === 'crc-local'", timeout=15_000)
+            page.click("#report-cluster-prod-east")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            assert page.locator(".rp-tag[data-name='alice']").count() == 1, "adding a target touches nothing: the primary is still crc-local"
+            # dropping the primary promotes prod-east through navigate(): the lookups and the totals are re-requested for it
+            with page.expect_request(lambda r: r.url.endswith("/api/discovered?cluster=prod-east")) as looked:
+                with page.expect_request(lambda r: r.url.endswith("/api/preview") and r.method == "POST" and '"cluster":"prod-east"' in r.post_data) as previewed:
+                    page.click("#report-cluster-crc-local")
+            assert looked.value and previewed.value
+            page.wait_for_function("() => view.cluster === 'prod-east'")
+            assert page.evaluate("() => view.reportForm['access-matrix']") == {"namespace_prefix": "prod"}, "the lookup went, the typed text stayed"
+            assert page.locator(".rp-tag").count() == 0
+            note = " ".join(page.locator("#report-cluster-note").inner_text().split())
+            assert "Cluster changed from crc-local to prod-east" in note and "users picked on crc-local was cleared" in note, note
+            assert page.locator("#report-cluster-note[role='status']").count() == 1
+            page.wait_for_function("() => view.reportTotals && view.reportTotals.cluster === 'prod-east'", timeout=15_000)
+            assert page.locator("#report-form .report-actions").inner_text().count("cluster prod-east") == 1
+            page.click("#report-cluster-note-x")
+            page.wait_for_function("() => !document.getElementById('report-cluster-note')")
+            # the nav's own select is the same chokepoint: back to crc-local, the set follows and nothing else was held
+            page.select_option("#f-cluster", "crc-local"); page.locator("#f-cluster").dispatch_event("change")
+            page.wait_for_function("() => view.cluster === 'crc-local' && view.reportClusters === null")
+            assert page.locator("#report-cluster-note").count() == 0, "nothing cluster-bound was held, so nothing is said"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_several_clusters_run_as_one_action_and_one_missing_snapshot_fails_only_its_own(self, browser, reporting_server):
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-clusters")
+            # a third id the snapshot does not hold — what a configured-but-never-polled cluster looks like to the form
+            page.evaluate("() => { data.clusters.push({ id: 'ghost', status: null }); render(); }")
+            page.click("#report-clusters-all")
+            page.wait_for_function(self.COUNT % "3 of 3 clusters")
+            page.uncheck("#report-want-pdf")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            body = _json.loads(info.value.post_data)
+            assert body["clusters"] == ["crc-local", "prod-east", "ghost"] and "cluster" not in body, body
+            page.wait_for_selector("#report-batch")
+            page.wait_for_function("() => /3 clusters requested — 2 done · 1 failed/.test(document.getElementById('report-batch').textContent)", timeout=30_000)
+            ghost = " ".join(page.locator("#report-status-ghost").inner_text().split())
+            assert "ghost · Run" in ghost and "failed: unknown cluster 'ghost' in the snapshot" in ghost, ghost
+            assert page.locator("#report-status-crc-local [data-artifact][data-format='html']").count() == 1
+            assert page.locator("#report-status-prod-east [data-artifact][data-format='json']").count() == 1
+            runs = page.evaluate("() => view.reportBatch.runs.map(r => [r.cluster, r.status, r.id, r.requested_at])")
+            assert len({r[2] for r in runs}) == 3 and len({r[3] for r in runs}) == 1, "one action, one instant, one id per cluster"
+            assert page.locator("#report-batch[role='status']").count() == 1 and page.locator("#report-batch [role='status']").count() == 0, "one live region for the batch"
+            page.set_viewport_size({"width": 375, "height": 740})
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the chips and three statuses fit a phone"
+            page.set_viewport_size({"width": 1280, "height": 900})
+            # the Library groups the action's runs under the report, one block per cluster, the failed one with its reason
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#library-lead")
+            heads = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .cluster-head')].map(h => h.textContent)")
+            assert heads == ["crc-local", "ghost", "prod-east"], heads
+            reasons = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .run .reason')].map(r => r.textContent)")
+            assert "unknown cluster 'ghost' in the snapshot" in reasons, reasons
+            assert not errors, errors
+        finally:
+            ctx.close()
