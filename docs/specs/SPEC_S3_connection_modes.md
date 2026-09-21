@@ -132,7 +132,12 @@ $ oc get oauthaccesstokens -o jsonpath='{.items[0].expiresIn}'
 31536000
 ```
 
-**One year**, on live tokens — 365 times the default.
+**One year**, on live tokens — 365 times the default. **That is CRC's own doing, not an estate
+setting**: the reference cluster is the only one in this estate with a non-default lifetime, and its
+`oauth/cluster` object was created at `11:45:58Z` against an install that completed at `12:12:11Z` —
+before the cluster had finished installing, which is what a bundled value looks like rather than a later
+edit. A developer VM avoiding a daily re-login is a sensible default for a developer VM; it just makes
+this lab unrepresentative of every cluster the dashboard will actually connect to.
 
 **A fixed daily refresh is not wrong; it is just not derived.** The session lifetime is an **upper
 bound**, so re-authenticating more often than required is safe — on this cluster a daily refresh is
@@ -153,10 +158,12 @@ Three consequences follow:
    Expiry is tested by setting a short `accessTokenMaxAgeSeconds` on a scratch cluster, or by minting a
    token with a short `expirationSeconds` through the TokenRequest API — which the spec prefers, since
    it needs no cluster-wide change to prove a per-cluster behaviour.
-3. **A long session is the audit posture's problem, not the dashboard's to fix** — but it is the
-   dashboard's to *report*. Where a target's `accessTokenMaxAgeSeconds` is far above the default, the
-   tab says so beside that cluster, for the same reason `expires: current` is written rather than
-   `never` (#248): the number a reviewer needs is the real one.
+3. **Report the real lifetime, without editorialising.** The tab shows each cluster's actual
+   `accessTokenMaxAgeSeconds` rather than a nominal figure — for the same reason #248 writes
+   `expires: current` rather than `never`: the number a reviewer needs is the real one. This is
+   reporting, not a judgement. A long session on a developer VM is a reasonable default; the same
+   number on a production cluster is a conversation for whoever owns that cluster, and the dashboard's
+   job is to make it visible, not to grade it.
 
 ## 4. What the loader and the parser must change
 
