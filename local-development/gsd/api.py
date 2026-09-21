@@ -2154,6 +2154,13 @@ def build_app(
         for row in rows:
             row["platform"] = settings.platform_namespaces.matches(row["name"])
         platform = [r for r in rows if r["platform"]]
+        # A CONFIGURED PATTERN THAT MATCHES NOTHING IS REPORTABLE (#255), and it has to be reported
+        # somewhere a reader will see — an `unmatched()` nobody calls is a claim the release notes
+        # make and the product does not keep, which is the defect the review of #251 caught in
+        # `controller_is_declared`. Computed over the cluster's own namespace names, so it answers
+        # "your `-operator` matches nothing HERE" rather than "nowhere", which is the actionable
+        # version on a fleet where estates differ.
+        stale_patterns = settings.platform_namespaces.unmatched([r["name"] for r in rows])
         source = store.namespaces_source(cluster_id)
         return {
             "cluster": cluster_id,
@@ -2167,6 +2174,7 @@ def build_app(
             # "67 hidden" is noise removed; "67 hidden, 1 of them with a finding" is a different
             # sentence, and the page must be able to say it without the reader toggling to find out.
             "platform_with_findings": len([r for r in platform if r.get("direct_grants")]),
+            "platform_patterns_unmatched": stale_patterns,
             "cluster_wide_groups": cluster_wide_groups,
             "cluster_wide_grants": cluster_wide_grants,
             "cluster_wide_path": cluster_wide_path,
