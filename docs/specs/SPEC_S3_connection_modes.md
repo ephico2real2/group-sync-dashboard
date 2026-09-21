@@ -101,12 +101,70 @@ clusterConfig:
   fleetAccount:
     # The LDAP account the dashboard logs in AS when connecting a cluster that declares a mode.
     # One account for the fleet; a stanza overrides it with ldapConnectionBootstrap.
-    username: ""
+    username: ocp-oauth-bind-serviceid
     # Its password. Never a literal in values — a Secret reference, read at connect time only.
     passwordSecret:
-      name: gsd-fleet-account
-      key: password
+      namespace: openshift-config        # optional; defaults to the release namespace
+      name: ldap-oauth-bind-secret
+      key: bindPassword
 ```
+
+**Named explicitly, never discovered from the OAuth CR** (the operator's ruling, 2026-09-21). The
+account and its Secret could in principle be read off `oauth/cluster` — the cluster's LDAP identity
+provider already names a `bindDN` and a `bindPassword` Secret. This spec deliberately does not, for
+three reasons:
+
+1. It would need `get` on `oauth/cluster`, a **cluster-scoped** read of the cluster's identity
+   configuration, to learn one username.
+2. It would couple S3b to the OAuth CR's shape — a second identity provider, a non-LDAP provider, or
+   a schema change breaks a connector that has nothing to do with authentication config.
+3. It would only ever work where the fleet account **is** the IDP's bind account. Naming it in values
+   lets an estate use a different account, which is the normal case.
+
+That the two happen to coincide on the reference cluster is a convenience, not a mechanism.
+
+#### `passwordSecret.namespace` — a cross-namespace read, and what it costs
+
+`namespace` is optional and defaults to the release namespace. Setting it — as the reference
+configuration does, to `openshift-config` — moves the read outside the namespace boundary the rest of
+this design is built on, and that is not free:
+
+- `templates/cluster-secrets-rbac.yaml` is deliberately **a Role, not a ClusterRole**, because
+  "`secrets` cluster-wide would hand the dashboard every credential on the cluster". A Secret in
+  another namespace needs its own Role **there**, scoped with `resourceNames` to that one Secret, and
+  a RoleBinding for the dashboard's ServiceAccount.
+- The dashboard's chart installs into its own namespace. Creating a RoleBinding in `openshift-config`
+  means either the chart writes into a namespace it does not own — which many clusters refuse, and
+  which is a privilege-escalation surface — or that grant is applied separately and the chart
+  **refuses to start the mode** until it is present, reporting `fleet-credential-missing` naming the
+  namespace, the Secret and the key.
+
+Measured on the reference cluster, 2026-09-21: `ldap-oauth-bind-secret` exists in `openshift-config`
+with key `bindPassword`, and the dashboard's ServiceAccount **cannot read it** (`oc auth can-i get
+secrets/ldap-oauth-bind-secret -n openshift-config` → `no`). The group-sync-operator chart
+establishes the pattern to copy — a dedicated `oauth-secret-extractor` ServiceAccount with a Role in
+`openshift-config` scoped by `resourceNames` to a single Secret — but that grant is for the
+operator's consumer, not this one.
+
+#### Whichever account is named, it must be able to LOG IN
+
+Independent of where the password lives: §3's modes obtain a **token from the target cluster's OAuth
+server**, so the named account has to be one that provider will authenticate. On the reference
+cluster the IDP's user search is
+
+```
+…/dc=ephico2real,dc=com?uid?sub?(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com))
+```
+
+so an account authenticates only if it carries a `uid` **and** is a member of that group. A directory
+*bind* identity — `cn=…,ou=TrustedApplications`, an RDN of `cn=`, in a service OU — typically
+satisfies neither: it can bind to the directory so the OAuth server may search it, which is a
+different capability from being findable as a user.
+
+**This is checkable by a directory read and must not be checked by attempting the login.** A lockout
+policy would lock the account the cluster's OAuth uses to authenticate *every* user, so the
+verification is `ldapsearch -s base uid memberOf` against the entry, not a login attempt. If the named
+account turns out not to be loginable, the answer is to name one that is — not to widen the filter.
 
 Rules, in the order they are checked:
 
@@ -299,6 +357,247 @@ That is a real cost this spec must schedule rather than assume, and it splits th
 Until that lands, an implementer copying this table verbatim gets a `ValueError` at the first
 failure — which is the loudest possible reminder, and better than a silent one, but it is the
 spec's job to say so first.
+
+### 5.1 The Secret the lookup writes — the artefact, and what reads each field
+
+**Build state, measured on `main` at chart 0.48.0 (2026-09-21).** Say this first, because the stanza
+below reads like working configuration and is not yet:
+
+| piece | state |
+|---|---|
+| the three stanza keys, in both readers | **ships** (S3a) — recorded, refused six ways, equivalence-guarded |
+| a mode cluster is listed and **not polled** | **ships** — `credential_pending`, `poller.py`'s gate |
+| `gsd-cluster-<name>` Secret writer | **ships** (#230 S2) — `SECRET_NAME_PREFIX` in `gsd/clusterconfig/writer.py` |
+| `clusterConfig.fleetAccount.username` in the chart | **ships** (S3a) |
+| **logging in as the bootstrap account and reading the token** | **NOT BUILT** — S3b |
+| **the provenance annotations below** | **NOT BUILT** — S3b; nothing writes or reads them today |
+
+`saTokenLookup` appears in exactly two files (`gsd/config.py`, `gsd/clusterconfig/parser.py`), and
+both only *record* the declaration. No code in the tree performs a login, an exchange or a
+TokenRequest. A hand-made Secret of the shape below is therefore consumed normally — the parser
+accepts its `config`, and the annotations are inert metadata — but nothing produced it and nothing
+will refresh it.
+
+#### The stanza
+
+```yaml
+  - name: shared-rnd
+    apiUrl: https://api.shared-rnd.example.com:6443
+    saTokenLookup: true
+    ldapConnectionBootstrap: svc.gsd.fleet      # optional; overrides clusterConfig.fleetAccount.username
+    enabled: true
+```
+
+#### What S3b does with it
+
+1. Log in to `apiUrl` as **`svc.gsd.fleet`** — the bootstrap account of §3.1, a *person-shaped*
+   account the target cluster's own identity provider authenticates. It is named here, per cluster,
+   only to override the fleet default.
+2. Read the **poller ServiceAccount's** token on that cluster. The bootstrap account's own session is
+   never the polling credential: an OpenShift login session is short-lived by design (§3.2 — the
+   cluster's `accessTokenMaxAgeSeconds`, 24 h by default), while the SA token is the long-lived
+   credential the poll needs.
+3. Write it to **`gsd-cluster-<name>`** in the release namespace — `gsd-cluster-shared-rnd` for the
+   stanza above — in the labelled-Secret shape SPEC_S1 already defines, so the ordinary discovery path
+   picks it up on the next cycle with no restart.
+
+#### The Secret, with a placeholder credential
+
+```yaml
+kind: Secret
+apiVersion: v1
+metadata:
+  name: gsd-cluster-shared-rnd                        # gsd-cluster-<name>, from the stanza
+  namespace: group-sync-dashboard                     # the release namespace; a Secret elsewhere is refused
+  labels:
+    groupsync-dashboard.io/secret-type: cluster       # REQUIRED — what discovery selects on
+    environment: rnd                                  # the fleet's own labels ride along, shown on the tab
+  annotations:
+    groupsync-dashboard.io/token-source: lookup            # how the credential was obtained
+    groupsync-dashboard.io/source-namespace: group-sync-operator
+    groupsync-dashboard.io/source-service-account: group-sync-dashboard-cluster-poller
+stringData:
+  name: shared-rnd                                    # must equal the stanza's `name`
+  server: https://api.shared-rnd.example.com:6443
+  enabled: "true"
+  visibility: inherit
+  identity: same-as-host
+  config: |
+    {"bearerToken":"<the poller SA's token — never in git, never in a manifest>",
+     "tlsClientConfig":{"insecure":false,"caData":"<the target's CA chain, base64 PEM>"}}
+type: Opaque
+```
+
+#### What reads each field
+
+`name`, `server`, `enabled`, `visibility`, `identity` and `config` are SPEC_S1's contract and are
+parsed today. `config.bearerToken` gives `credential_kind: bearer`, which clears
+`credential_pending`, so **writing this Secret is what makes the cluster start polling** — the stanza
+alone never does.
+
+The three annotations are **new with S3b and are provenance, not configuration**. They answer, on the
+Cluster Configurations tab and in a support ticket, the question a bearer token cannot: *where did
+this come from, and what do I rotate?*
+
+- `token-source: lookup` — distinguishes a token the dashboard fetched from one a human pasted. A
+  hand-made Secret omits it, and S3d must not treat an unannotated Secret as its own to refresh or
+  delete (§8.1: only what we made).
+- `source-namespace` / `source-service-account` — **the rotation address.** A bearer token is opaque;
+  without these, "rotate this credential" has no answer but "find whoever created it". With them the
+  next lookup knows exactly which SA on which cluster to read again.
+
+Today's writer sets a different annotation — `groupsync-dashboard.io/managed-by: ui` (#230 S2) — for a
+Secret a person created through the form. The two are orthogonal: `managed-by` says *who* created it,
+`token-source` says *how the credential was obtained*. S3b writes both.
+
+#### Measured on the reference cluster (2026-09-21)
+
+`gsd-cluster-shared-rnd` exists on the lab today, hand-made as a faithful mock of what S3b will
+write. Read back from the API server (the credential not shown):
+
+```
+labels      {"environment": "rnd", "groupsync-dashboard.io/secret-type": "cluster"}
+annotations groupsync-dashboard.io/token-source: lookup
+            groupsync-dashboard.io/source-namespace: group-sync-operator
+            groupsync-dashboard.io/source-service-account: group-sync-dashboard-cluster-poller
+data        name=shared-rnd  server=https://api.crc.testing:6443  enabled=true
+            visibility=inherit  identity=same-as-host
+            config: bearerToken=<1377 chars>  tlsClientConfig{insecure:false, caData=<9612 chars>}
+```
+
+`server` is **CRC's own API** — the controller's public endpoint, which is §7's point: the reference
+cluster can test this honestly without a second cluster, because what is exercised is the
+*destination shape*, not the network hop.
+
+**Why it polls, precisely.** Measured on the deployed ConfigMap, the lab's `clusters.yaml` contains
+**one entry — `dashboard`**, the host with its mounted ServiceAccount token. There is no `shared-rnd`
+stanza at all, so nothing is being shadowed: the Secret is that cluster's whole definition.
+`/api/clusterconfigs` reports it as
+
+```
+shared-rnd   source=secret:gsd-cluster-shared-rnd   credential=bearer   enabled=True
+```
+
+— the SPEC_S1 path (#230), which ships. `config.bearerToken` resolves, so `credential_pending` is
+`None` and the poller treats it like any other cluster. **`saTokenLookup` is not involved**, because
+no stanza on this lab declares it.
+
+That is the distinction the whole of S3 rests on, and it is easy to lose:
+
+| | state |
+|---|---|
+| **consuming** a Secret that already holds a token, over the remote API | **ships** — this is what the lab demonstrates |
+| **acquiring** that token — log in as the bootstrap account, read the poller SA's token, write the Secret | **not built** (S3b) |
+
+The token reached that Secret by hand: its `kubectl.kubernetes.io/last-applied-configuration`
+annotation is a manifest carrying `stringData.config`. S3b is the step that would fetch it, write it
+and (with S3d) refresh it.
+
+**The remote path is genuinely exercised.** `server` is `https://api.crc.testing:6443` — the
+front-end OpenShift API, not `kubernetes.default.svc` — so the request leaves by the same route an
+external cluster's would: a different endpoint, a real 9 612-character CA chain, and a bearer token
+belonging to a ServiceAccount in another namespace, authenticated by the API server exactly as a
+remote cluster's would be. The three `mock-*` clusters on the lab are configured the same way. This
+is §7's point: the reference cluster tests the destination shape honestly without a second cluster.
+
+> **A correction to an earlier record.** The #269 walk
+> (`reports/2026-09-21_report-form-clusters/README.md`, and the evidence comment on #267) expected
+> `shared-rnd` to fail its run as "the credential-less cluster of SPEC_S3" and, when it sealed like
+> the rest, attributed that to "it has a snapshot on this lab". The observation was right and **the
+> stated reason was wrong**: this Secret is why. `shared-rnd` is not credential-less on the reference
+> cluster and has not been since the Secret was applied. The conclusion that partial failure remains
+> covered only by the API test and the browser test's injected `ghost` still holds — it holds for a
+> different reason.
+
+#### Why the token is not in the stanza
+
+The stanza declares the *mode*; the Secret carries the *credential*. That split is the point of S3:
+values files live in git, and a bearer token must not. The loader refuses a mode beside
+`tokenEnv`/`tokenFile` for the same reason — two sources of truth for one credential (§4).
+
+#### What must be true before S3b can run — and the dependency nobody wrote down
+
+S3b writes a Secret, so it needs the **write** grant, not just the read one. That grant is
+`clusterConfig.secrets.writes.enabled`, which is **off by default** and which `values.yaml` describes
+as *"the decision to let the dashboard mint cluster access"* — which is exactly what the retriever
+does. The `clusterConfig.fleetAccount` block sits directly beside it and **nothing connects the
+two**: an operator can set `fleetAccount.username`, apply a mode stanza, and find the lookup has
+nowhere to put its result.
+
+Measured from the chart: `templates/cluster-secrets-rbac.yaml` grants
+`get, list, watch` normally and adds `create, update, delete` **only** under
+`clusterConfig.secrets.writes.enabled`. So:
+
+| precondition | why | on the reference lab, 2026-09-21 |
+|---|---|---|
+| `clusterConfig.secrets.enabled` | discovery reads the labelled Secrets | **on** (default) |
+| `clusterConfig.secrets.writes.enabled` | **the retriever cannot persist its token without `create`** | **on** — the Role carries `create, update, delete` |
+| `fleetAccount.username`, or `ldapConnectionBootstrap` per stanza | the account to log in AS | **absent** — username is empty, so the chart renders nothing |
+| the `gsd-fleet-account` Secret (`passwordSecret`) | its password, read at connect time only; **the chart does not create it** | **NotFound** |
+| a stanza or Secret `config` declaring a mode | what triggers the lookup at all | **none** |
+
+Nothing on the lab exercises the lookup, and the state above is why — independently of S3b being
+unbuilt. That is worth recording: a reader who sees `shared-rnd` polling could reasonably conclude
+the mode works, and none of these five is satisfied.
+
+**Two things this implies for S3b's PR.**
+
+1. **The dependency must be stated where the operator reads it.** `fleetAccount`'s own comment says
+   S3b "reads it at connect time and nowhere else" — true, and incomplete: without
+   `secrets.writes.enabled` the connect succeeds and the *write* fails. Either the chart refuses the
+   combination at render (a mode stanza with writes off), or the tab says it plainly. A render-time
+   refusal is this chart's habit — it already refuses a mode beside a credential, and a mode on the
+   host.
+2. **`writes.enabled` now gates two different decisions.** Today it means "a person may add a cluster
+   from the tab". With S3b it also means "the dashboard may mint cluster access unattended", which is
+   a larger grant of trust and is the thing the values comment was already circling. Whether those
+   stay one switch or become two is an operator decision, and it belongs in S3b's review rather than
+   being settled by whichever lands first.
+
+#### The consumption path is ready for this Secret — with one gap S3d inherits
+
+Reviewed against the Argo CD design it borrows from (2026-09-21). **A retriever writing the shape
+above is consumed as-is**: `parse_secret` reads `metadata.name` and the `data` keys, and **ignores
+annotations entirely**, so the provenance keys pass through untouched.
+
+The borrowed design is followed where it is right and departed from where it is not, each departure
+already reasoned in the code:
+
+| | |
+|---|---|
+| label selector `groupsync-dashboard.io/secret-type=cluster`, server-side, release namespace only | Argo's model |
+| Argo's scope keys (`namespaces`, `clusterResources`, `project`, `shard`) **refused by name** | a Secret copied from Argo with `namespaces: team-a` would be read as a FULL cluster — the opposite of what its author declared |
+| the host is **never** sourced from a Secret | the host authenticates the reader; a Secret must not replace it |
+| a duplicate cluster name loads **neither** Secret | Argo's first-by-name would let `aaa-anything` replace a real cluster's server and token, invisibly, for anyone who may create a Secret here |
+| a shadowed values entry is a finding, not silence | the Secret wins, and the tab says so |
+
+**The gap: the ownership marker is written and never read.** `writer.py` sets
+`groupsync-dashboard.io/managed-by: ui`, the tab's YAML pane renders it, and the tab's own text warns
+that a namespace policy "will still delete a UI-written Secret unless it honours" it — but no code
+reads it back, because the parser ignores annotations.
+
+That costs nothing today: nothing acts on ownership. It stops being free at **S3d**, whose §8.1 rule
+is *only what we made* and which is **the only step that deletes**. Two consequences to settle before
+that loop is written, not while writing it:
+
+1. **The markers need a reader and a contract.** `token-source`, `source-namespace` and
+   `source-service-account` are the rotation address and the ownership proof. If S3b writes one wrong
+   — or a human hand-edits it — nothing notices today, and S3d would take a deleting decision on
+   unvalidated input. Parsing them into `ClusterConfig` (ignored by the poll, surfaced on the tab)
+   turns them from prose into a contract with one place to validate.
+2. **`managed-by` and `token-source` answer different questions** and both are needed: *who created
+   this* (`ui`, or the retriever) and *how the credential was obtained* (`lookup`, or pasted). A
+   Secret carrying neither is a human's, and S3d must stand down on it — which is only enforceable
+   once something reads them.
+
+#### What still has to be decided in S3b
+
+- **The lookup's own RBAC.** Reading another SA's token is `get` on that Secret, or a TokenRequest
+  `create` on the SA. §8.3 prefers TokenRequest (bounded lifetime, the 80 % renewal trigger); a legacy
+  SA-token Secret never expires and is invalidated only by deleting it, which is why the tab words it
+  `expires: current` (#248) rather than `never`.
+- **Failure vocabulary.** Every finding this adds joins the closed set *and* the page in the same PR
+  (SPEC_S1 §S1.2), and every new `phase=` joins #245's set.
 
 ## 6. The measured trap this spec exists to record
 
@@ -637,6 +936,212 @@ estate. The rules that prevent it:
    ceiling, then stop with a finding that names the cluster, the account and the last error.
 4. **Reminting is not logging in.** A remint uses the bootstrap session that already exists, or the
    TokenRequest grant — it is not an excuse to re-enter a password.
+
+#### 9.3.1 What exists today — measured, 2026-09-21
+
+**There is no retry logic at all.** No `retry`, `backoff` or `max_attempts` anywhere in
+`gsd/poller.py` or `gsd/kube.py`. What exists instead:
+
+- a **15 s timeout** per request (`ClusterClient(timeout=15.0)`), tighter for the tier decision;
+- **connect errors, TLS failures and timeouts collapsed into one outcome** — `UNREACHABLE`, redacted,
+  because "we could not talk to it" is operationally different from "it said no";
+- a failed cycle **records the outcome and returns**. A user refresh failing is softer still: logged,
+  and the Users tab keeps last cycle's rows.
+
+So today's model is: **the poll interval is the retry, and a failure is reported rather than fought.**
+For a read-only poller that is defensible — a cluster that is down will still be down in 60 s, and
+hammering it buys nothing.
+
+**S3b breaks that assumption**, which is what §9.3 above already saw coming.
+
+#### 9.3.2 The sequencing problem — the risk starts at S3b, the guard is assigned to S3d
+
+Two additions to the rules above, both about *when* rather than *how*:
+
+1. **The cheap half of the guard belongs with S3b.** The moment S3b performs its first login, a wrong
+   password in a values file can begin the lockout walk — before S3d's coordinator exists. Rule 2
+   above (*a refused password is never retried*) needs **no cross-cluster coordination at all**: one
+   failure, a `login-refused` finding quoting the server's own words, stop. Ship it with S3b, or gate
+   S3b behind S3d.
+2. **Connection and credential errors want opposite policies, and the seam is half built.**
+   `UNREACHABLE` is safe to retry freely — nothing locks. `AUTH_FAILED` against an LDAP-backed login
+   is not. `ClusterError` already carries that distinction; **nothing consumes it for a retry
+   decision yet.**
+
+#### 9.3.3 The three failure classes
+
+| failure | today | should be |
+|---|---|---|
+| `UNREACHABLE` — connect, TLS, timeout | wait for the next poll | **retry, bounded exponential** — nothing locks, and faster recovery means a fresher snapshot |
+| `AUTH_FAILED` — a bearer token | wait for the next poll | **do not retry** — a wrong token is a configuration fact, not a transient |
+| `AUTH_FAILED` — an LDAP login (S3b) | *does not exist yet* | **never retry a refusal** — a second bind locks the one account the whole fleet shares |
+
+#### 9.3.4 Why this is not about report latency
+
+The obvious worry — *"someone runs a report and it times out while we retry"* — **cannot happen, and
+it is worth writing down why, because the instinct is to put a timeout on the report path.**
+
+The report service **never talks to a cluster**. It reads
+`Snapshot(newest_snapshot(settings.snapshot_dir))` — a file. Its only HTTP client is `trigger.py`,
+which posts to the report service itself. So a connection failure cannot make a report slow; it can
+only make that cluster's data in the snapshot **stale**, or **absent** if it was never polled — and
+an absent cluster fails its own run with `unknown cluster in the snapshot` and no other.
+
+**Retry protects snapshot freshness, not request latency.** That is what makes it safe to retry
+generously in the background: the snapshot is the airlock between the two.
+
+```
+  ┌──────────────────── BACKGROUND (poll loop, one thread per cluster) ─────────────────────┐
+  │   every pollInterval (60s)                                                               │
+  │        │                                                                                 │
+  │        ▼                                                                                 │
+  │   credential_pending? ──yes──► LIST IT, DON'T POLL ──► tab: "declares saTokenLookup,     │
+  │        │ no                                             not built" (never an auth_failed │
+  │        ▼                                                for a credential never presented)│
+  │   ┌─────────────┐                                                                        │
+  │   │  CONNECT    │                                                                         │
+  │   └─────┬───────┘                                                                         │
+  │    ┌────┴─────┬──────────────────┬──────────────────────────┐                             │
+  │    ▼          ▼                  ▼                          ▼                             │
+  │   ok     UNREACHABLE        AUTH_FAILED               AUTH_FAILED                         │
+  │    │     connect/TLS/       (bearer token)            (LDAP login — S3b)                  │
+  │    │      timeout                │                          │                             │
+  │    │          │                  │                          │                             │
+  │    │    RETRY, BOUNDED      NO RETRY                 ### NEVER RETRY ###                   │
+  │    │    1s→2s→4s→8s…        token is wrong,          a 2nd bind locks the ONE             │
+  │    │    to a ceiling        not transient            account the fleet shares             │
+  │    │          │                  │                          │                             │
+  │    │    gives up OUT LOUD ───────┴──────────────────────────┘                             │
+  │    │    finding: cluster, account, last error                                              │
+  │    ▼          ▼                                                                            │
+  │  WRITE      snapshot keeps LAST GOOD data (stale, and says so)                             │
+  │  SNAPSHOT                                                                                  │
+  └────────┬───────────────────────────────────────────────────────────────────────────────────┘
+           ▼   /data/report/snapshot.db   ← a FILE. no network, no retry, no timeout.
+  ┌────────┴──────────── FOREGROUND (the reader's request) ─────────────────────────────────┐
+  │   "Generate report" ──► read snapshot ──► seal artefact                                  │
+  │                          ├─ cluster present ─► report, with "Data as of <stamp>"          │
+  │                          └─ cluster absent  ─► that run fails, "unknown cluster in the    │
+  │                                                 snapshot" — no other run is affected      │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 9.3.5 What the loggers must say
+
+The vocabulary already exists and is good: `_log_poll_failure` names the phase, what was in force and
+the fix (#245); `PHASES` is a closed set (`discovery, parse, credential, tls, connect, poll`); and the
+classification is by the message's **provenance**, not a substring, so a proxy's `HTTP 502` body
+mentioning certificates is not reported as a TLS problem this cluster does not have.
+
+Retry needs that vocabulary **extended, not replaced** — the same rule §9.4 already states for
+`attempted=`:
+
+- **`attempt=<n>/<ceiling>`** on every retried failure, so a reader can tell one bad minute from a
+  cluster that has been failing for an hour.
+- **`retry_in=<seconds>`** when backing off, so the next line's absence is explained rather than
+  looking like a hang.
+- **`gave_up=true`** with the ceiling and the last error when the loop stops — a bounded loop that
+  ends silently is indistinguishable from one that is still running.
+- **`suspended=<credential>`** when a refusal suspends a credential *everywhere* (§9.3 rule 1), naming
+  the credential rather than the cluster, because that is the scope of the decision and the reader's
+  next question is "what else did this just stop?".
+- **No new phase.** `connect` and `credential` already name where these fail; a `retry` phase would
+  describe the *mechanism* rather than the place, which is what `phase=` is for.
+
+Every one of these joins the closed set in the same PR that emits it, and the redaction pin is
+extended to drive a failure in each new path with the password in force — the contract §3.1 rule 4
+already sets.
+
+#### 9.3.6 The daily ping — confirm the fleet account can still get a token
+
+Everything above is reactive: it says what to do when a connection fails. **The fleet account is one
+account for the whole estate**, so the expensive failure is not a cluster going down — it is the
+account quietly ceasing to work, and nobody finding out until the next onboarding, at the worst
+possible moment. A **daily ping** turns that into a scheduled answer.
+
+**What it proves.** The real path, end to end: log in as the fleet account, and read the target
+ServiceAccount's token. Not a shortcut, because the shortcuts miss the interesting failures:
+
+| failure | a bind alone | a SubjectAccessReview | the real read |
+|---|---|---|---|
+| the password was rotated or expired | caught | — | caught |
+| the RBAC that lets it read the token was revoked | missed | caught | caught |
+| the ServiceAccount, or its token Secret, was deleted | missed | **missed** (a SAR answers about a *kind*, not an object that exists) | **caught** |
+
+The token read is discarded. Confirming is not renewing: the ping **does not rewrite the cluster
+Secret**, because a working cluster's `resourceVersion` should not churn daily for a check.
+
+**Once per credential per day — never once per cluster.** This is the same rule as §9.3's back-off,
+for the same reason and it matters more here because the ping is *scheduled* rather than provoked:
+twenty clusters sharing one fleet account must produce **one** bind a day, not twenty. A daily ping
+that fans out per cluster is a slow, self-inflicted lockout walk that looks like health checking.
+
+**It stands down on a refusal.** If the password has been refused (§9.3 rule 2), the daily ping
+**stops** until the declaration changes. Pinging daily with a credential already known to be wrong is
+exactly the lockout walk, only slower — one failed bind a day is under most thresholds, until a
+directory's counter does not reset and it is not. The suspension that rule 2 sets is what the ping
+reads before it runs.
+
+**A failure is a finding, not an outage.** The clusters keep polling on the tokens they already hold —
+those are `remote-lookup` credentials and remain valid. What a failed ping means is *the next
+onboarding or renewal will fail*, so it reports rather than disrupts:
+
+- a finding on the Cluster Configurations tab naming the account, what was tried and the server's own
+  words;
+- one log line in #245's vocabulary — `phase=credential`, `outcome=<the finding code>`,
+  `action=<the fix in the operator's terms>`, and `suspended=<credential>` where rule 2 applies;
+- `fleet_account_last_ok` as an instant, so the tab can say *how long* it has been failing rather than
+  only that it is — the same reason a report's provenance names an instant rather than an age (§5.1).
+
+**Cadence is a value, and the default is daily.** Anything more frequent buys little — a credential
+does not usually break between two mornings — and every increment multiplies the bind rate at a
+directory that is counting. Anything less and the answer is stale when it matters.
+
+#### 9.3.7 `self-login` renews or it stops — and its bind rate is the reason `remote-lookup` is preferred
+
+The daily ping above is a **check**: `remote-lookup` clusters keep polling whether or not it succeeds,
+because the token they hold is the target ServiceAccount's and outlives every login. **`self-login`
+has no such token.** The credential *is* the session, the session expires on the target's terms
+(§3.2), and when it does that cluster stops polling. So for `self-login` the scheduled login is not a
+health check — **it is the mechanism**, and a failure is an outage for that cluster rather than a
+warning about a future one.
+
+Three rules follow.
+
+**1. Renew at 80 % of the lifetime the TARGET states, not at a fixed day and not at expiry.** §3.2:
+the session is 24 hours *by default* and the target may have changed it
+(`oauth/cluster .spec.tokenConfig.accessTokenMaxAgeSeconds`), so the dashboard reads the value rather
+than assuming it. §8.3's 80 % trigger is the right shape — it is what the kubelet does for a projected
+token — and the reason is the same: a renewal that begins at expiry has already failed, and leaves no
+room for the one retry a transient deserves. A cluster whose session is an hour needs renewing every
+48 minutes; hard-coding "daily" would poll it into a gap it never recovers from.
+
+**2. The bind rate scales with the number of clusters, and there is no way around it.** A session is
+issued by *one* OAuth server for *one* cluster: a session obtained from cluster A is not a credential
+on cluster B. So the ping's rule — *one bind per credential per day, never per cluster* — **cannot
+apply here**. Twenty `self-login` clusters mean twenty logins per renewal cycle, with the same
+account, against twenty directories that may all be the same directory.
+
+That is the concrete reason `saTokenLookup` is the **preferred** mode (#248's title says so; this is
+why):
+
+| | `remote-lookup` | `self-login` |
+|---|---|---|
+| binds after onboarding | **one a day**, for the whole fleet (§9.3.6) | **one per cluster per renewal cycle** |
+| adding the 21st cluster | no change to the bind rate | +1 login every cycle, forever |
+| a failed renewal | a finding; clusters keep polling | **that cluster stops polling** |
+| what is at rest | the target SA's permanent token | nothing beyond the fleet password |
+
+`self-login` buys "nothing long-lived at rest" and pays for it in bind rate and in blast radius. That
+is a real trade and an estate may want it; it should be made knowingly, which is what this table is
+for.
+
+**3. A refused password stops every `self-login` cluster at once.** §9.3 rule 1 suspends a credential
+*everywhere* on a refusal, and for `self-login` that is the whole estate's polling, not a deferred
+onboarding. The suspension is still right — the alternative is locking the account and losing the
+`remote-lookup` clusters too — but the finding must say **what it just stopped**, naming the clusters
+that are now not renewing, because "credential suspended" reads like a warning when it is an outage.
+`suspended=<credential>` (§9.3.5) carries the scope; here it also needs the count.
 
 ### 9.4 Help resolve things
 
