@@ -8762,3 +8762,159 @@ class TestPlatformNamespacesAreHiddenByDefault:
         dash.evaluate("() => location.hash = '#page=nsaudit&cluster=crc-local&ns=openshift-monitoring'")
         dash.wait_for_timeout(600)
         assert "openshift-monitoring" in dash.locator("#main").inner_text()
+
+
+class TestTheNamespaceIndexFoldsSearchesAndPages:
+    """#261, the agreed mock's index controls. The index is the largest thing on the page — 106 rows
+    under a five-row worklist, 3,619 px of a 5,153 px document — so it folds, it carries a search of
+    its own beside the list it searches, and it pages.
+
+    The seed holds eleven namespaces, two of them platform, so nine are listed by default: under
+    INDEX_FOLD (25), which is exactly the case that must start OPEN. A fold that costs a click and
+    buys nothing on a small estate is why the default is decided by size rather than fixed."""
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+
+    def test_a_small_estate_starts_open_and_the_control_says_what_it_holds(self, dash):
+        self._open(dash)
+        assert dash.locator("#ns-index-body").is_visible()
+        label = dash.locator("#ns-index-fold").inner_text()
+        assert label.startswith("▾ Hide") and "9" in label, label
+        assert dash.locator("#ns-index-fold").get_attribute("aria-expanded") == "true"
+
+    def test_the_fold_hides_the_rows_and_keeps_the_reasons(self, dash):
+        """Only the ROWS fold. Three caveats live in the notes above the table, and collapsing the
+        card would have taken all three with it."""
+        self._open(dash)
+        dash.click("#ns-index-fold")
+        dash.wait_for_function("() => !document.getElementById('ns-index-body') || document.getElementById('ns-index-body').hidden")
+        # `hidden` takes them off the screen, not out of the DOM — count() still sees nine, which is
+        # why this asserts what a reader can SEE. (My own first version of this assertion counted
+        # nodes and passed nothing.)
+        assert not dash.locator("tr[data-ns]").first.is_visible(), "the rows are still on screen"
+        assert dash.locator("#ns-index-body").is_visible() is False
+        card = dash.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "not only those with a grant" in card, "the heading's caveat went with the rows"
+        assert "third drill-down" in card, card[:200]
+        assert dash.evaluate("() => document.activeElement.id") == "ns-index-fold"
+        dash.click("#ns-index-fold")
+        dash.wait_for_function("() => { const b = document.getElementById('ns-index-body'); return b && !b.hidden; }")
+
+    def test_the_sections_own_search_is_separate_from_the_bars_and_they_combine(self, dash):
+        """Two boxes, neither clearing the other: a namespace shows when it matches both."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.locator('tr[data-ns="prod-ns"]').count() == 1
+        dash.fill("#f-ns-search", "demo")   # the bar's box, ANDed with the section's
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.evaluate("() => [document.getElementById('f-ns-search').value, document.getElementById('f-index-search').value]") == ["demo", "prod"]
+        dash.locator("#f-index-search").press("Escape")
+        dash.wait_for_function("() => document.getElementById('f-index-search').value === ''")
+        assert dash.evaluate("() => document.getElementById('f-ns-search').value") == "demo", "Escape in one box must not clear the other"
+        dash.locator("#f-ns-search").press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_the_counts_line_quotes_every_denominator(self, dash):
+        """"39" alone says nothing; "39 of 106" says what the filter did."""
+        self._open(dash)
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "11 on this cluster" in line and "2 platform hidden" in line and "9 listed" in line, line
+        dash.fill("#f-index-search", "prod")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "1 of 9 match the search" in line, line
+        dash.locator("#f-index-search").press("Escape")
+
+    def test_the_search_reveals_a_folded_section(self, dash):
+        """Filtering something the reader cannot see makes the box look broken."""
+        self._open(dash)
+        dash.click("#ns-index-fold")
+        dash.wait_for_function("() => document.getElementById('ns-index-body').hidden")
+        dash.fill("#f-index-search", "prod")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.locator("#ns-index-body").is_visible()
+        dash.locator("#f-index-search").press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_no_pager_until_there_is_a_second_page(self, dash):
+        """Nine rows against a page size of 25: a pager here would be furniture."""
+        self._open(dash)
+        assert dash.locator("[data-index-page]").count() == 0
+
+
+class TestTheIndexOnAnEstateBigEnoughToNeedIt:
+    """The seed's nine namespaces are under INDEX_FOLD, so they exercise the small-estate half only.
+    The reference cluster has 106 — 67 of them platform — which is the case the fold and the pager
+    exist for. Driven by widening the payload rather than seeding a second cluster: what is under
+    test is what the renderer does with a hundred rows, and the payload is where they come from."""
+
+    def _open_big(self, dash, count=106, platform=67):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+        dash.evaluate(
+            """([count, platform]) => {
+                 const keys = Object.keys((data.namespaces.namespaces[0] || {}).labels || {});
+                 data.namespaces.namespaces = Array.from({length: count}, (_, i) => ({
+                   name: i < platform ? `openshift-ns${i}` : `app-ns${i}`,
+                   labels: {}, via_groups: 0, direct_grants: 0, platform: i < platform }));
+                 data.namespaces.count = count;
+                 data.namespaces.platform_count = platform;
+                 data.namespaces.platform_with_findings = 0;
+                 view.nsIndexOpen = null; view.nsIndexPage = 1; view.nsIndexSearch = ""; view.nsSearch = "";
+                 render();
+               }""", [count, platform])
+        dash.wait_for_timeout(250)
+
+    def test_a_large_estate_starts_folded_and_the_control_says_what_is_behind_it(self, dash):
+        self._open_big(dash)
+        assert dash.locator("#ns-index-body").is_visible() is False
+        label = dash.locator("#ns-index-fold").inner_text()
+        assert label.startswith("▸ Show") and "39 of 106" in label, label
+
+    def test_the_counts_line_follows_the_whole_chain(self, dash):
+        self._open_big(dash)
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "106 on this cluster" in line and "67 platform hidden" in line and "39 listed" in line, line
+
+    def test_it_pages_over_what_is_left_after_the_platform_filter(self, dash):
+        self._open_big(dash)
+        dash.click("#ns-index-fold")
+        dash.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        # 39 non-platform rows at 25 to a page: two pages, 25 then 14.
+        assert dash.locator("tr[data-ns]").count() == 25
+        assert dash.locator("[data-index-page]").count() >= 4   # Previous, 1, 2, Next
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "showing 1–25 on page 1 of 2" in line, line
+        dash.click('[data-index-page="2"]')
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "showing 26–39 on page 2 of 2" in line, line
+
+    def test_showing_the_platform_namespaces_repages_from_one(self, dash):
+        """Every filter change resets the page: 106 rows is five pages, and a reader sitting on page 2
+        of the old set must not be left on a page that no longer means what it did."""
+        self._open_big(dash)
+        dash.click("#ns-index-fold")
+        dash.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        dash.click('[data-index-page="2"]')
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        dash.click("#ns-show-platform")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "showing 1–25 on page 1 of 5" in line, line
+        dash.evaluate("() => { view.nsShowPlatform = false; view.nsIndexPage = 1; render(); }")
+
+    def test_a_search_from_a_later_page_lands_on_page_one(self, dash):
+        self._open_big(dash)
+        dash.click("#ns-index-fold")
+        dash.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        dash.click('[data-index-page="2"]')
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        dash.fill("#f-index-search", "app-ns7")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length > 0 && document.querySelectorAll('tr[data-ns]').length <= 11")
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "match the search" in line and "page 2" not in line, line
+        dash.locator("#f-index-search").press("Escape")

@@ -201,6 +201,12 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                    index was platform noise under a five-row worklist. A preference like the box
                    above: the poll repaint must not restore them under a reader who hid them. */
                 nsShowPlatform: false,
+                /* #261, from the agreed mock. The index is the largest thing on this page — 106 rows
+                   under a five-row worklist, 3,619 px of a 5,153 px document — so it folds, it has a
+                   search of its own beside it, and it pages. All three are preferences like the box
+                   above: a 60s repaint must not reopen a section the reader folded or move their page.
+                   `nsIndexOpen: null` means "decide by the size of the estate" (see INDEX_FOLD). */
+                nsIndexSearch: "", nsIndexOpen: null, nsIndexPage: 1,
                 lookupSearch: "",   // #174: the one box over all three kinds; carried across "see all matches"
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
                    other control on this page, so a 60s poll repaint does not collapse a list
@@ -972,6 +978,10 @@ function wireSearchBox(key) {
   // renderFilters). The state still updates, so the compositionend render loses nothing.
   el.oninput = (e) => {
     view[key] = e.target.value;
+    // A NARROWED SET NEEDS PAGE ONE (#261). The namespace index pages; typing in this bar changes what
+    // it holds, and a reader who was on page 3 of 5 would otherwise be shown an empty page 3 of 1.
+    // Done here rather than per-box so the next paged list inherits it.
+    view.nsIndexPage = 1;
     if (e.isComposing) return;   // an unfinished conversion: the state is kept, compositionend paints
     if (!openLookupFor(key)) render();
   };
@@ -994,6 +1004,7 @@ function wireSearchBox(key) {
     if (e.key === "Escape" && !e.isComposing && view[key]) {
       e.preventDefault();
       view[key] = "";
+      view.nsIndexPage = 1;
       render();
     }
   };
@@ -4931,6 +4942,13 @@ function policyPage() {
    by a label value with the same AND contract as the other boxes, and each one a page. */
 const labelShort = (key) => String(key).split("/").pop();
 
+/* THE FOLD'S THRESHOLD AND THE PAGE SIZE ARE THE SAME NUMBER, and that is deliberate (#261): a row is
+   about 34 px at 1280, so 25 rows is roughly one screen. A reader learns one number instead of two, and
+   the fold's promise ("about a screenful") is the page's promise too. Below the threshold a fold costs a
+   click and buys nothing, which is why the default is decided by the estate rather than fixed. */
+const INDEX_FOLD = 25;
+const INDEX_PAGE = 25;
+
 function namespacesCard() {
   const d = data.namespaces;
   if (!d) return `<section class="card"><h2>Namespaces</h2><div class="empty-note">Loading…</div></section>`;
@@ -4947,7 +4965,25 @@ function namespacesCard() {
   const platformCount = d.platform_count != null ? d.platform_count : all.filter((n) => n.platform).length;
   const hidingPlatform = platformCount > 0 && !view.nsShowPlatform;
   const inScope = hidingPlatform ? all.filter((n) => !n.platform) : all;
-  const shown = inScope.filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch));
+  // TWO BOXES, AND THEY COMBINE (#261). The bar's `Find namespace` is the shell's and keeps the scope
+  // it ships with; this section gets one of its own, beside the list it searches, because the bar is
+  // ~1,900 px away from the rows once the page is scrolled. A namespace shows when it matches BOTH,
+  // and neither box clears the other.
+  const ownQ = (view.nsIndexSearch || "").trim();
+  const matches = (n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch)
+                      && matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsIndexSearch);
+  const shown = inScope.filter(matches);
+  // THE DEFAULT IS DECIDED BY WHAT THE SECTION HOLDS, never by what a search narrowed it to: keying it
+  // on the filtered count let the bar's inherited box open the section by a side door, which is the one
+  // thing this page does not get to do to a control it does not own (the mock's own render check found
+  // that). Typing in THIS box reveals the section — filtering something the reader cannot see makes the
+  // box look broken, and "nothing matches" is itself the answer to their query.
+  const indexOpen = ownQ ? true : (view.nsIndexOpen === null ? inScope.length <= INDEX_FOLD : view.nsIndexOpen);
+  const pages = Math.max(1, Math.ceil(shown.length / INDEX_PAGE));
+  const wanted = Number.isFinite(view.nsIndexPage) ? Math.trunc(view.nsIndexPage) : 1;
+  const page = Math.min(Math.max(1, wanted), pages);
+  const from = (page - 1) * INDEX_PAGE, to = Math.min(from + INDEX_PAGE, shown.length);
+  const paged = shown.slice(from, to);
   const source = d.source || {};
   const note = source.state === "forbidden"
     ? `<div class="filterbar-note truncation-note mb-4">The namespace read was refused (${esc(ago(source.observed_at))}), so this list cannot
@@ -4978,11 +5014,50 @@ function namespacesCard() {
         : ""}. <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
     : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
     <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span></div>`;
+  // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
+  // caught `[data-page]` also matching `<body data-page="nsaudit">`, so every click on the page ran the
+  // pager's handler and emptied the list. `aria-current="page"` carries the position to a screen reader,
+  // and the ends are disabled rather than absent so the control does not move under a reader.
+  const pager = !indexOpen || pages < 2 ? "" : `<nav class="pager" aria-label="Namespace pages">
+    <button type="button" class="linkish" data-index-page="${page - 1}"${page === 1 ? " disabled" : ""}>‹ Previous</button>
+    ${Array.from({ length: pages }, (_, i) => i + 1).map((i) => i === page
+      ? `<button type="button" class="linkish" data-index-page="${i}" aria-current="page"><strong>${i}</strong></button>`
+      : `<button type="button" class="linkish" data-index-page="${i}">${i}</button>`).join(" ")}
+    <button type="button" class="linkish" data-index-page="${page + 1}"${page === pages ? " disabled" : ""}>Next ›</button>
+  </nav>`;
+  // ONE LINE, EVERY NUMBER BESIDE THE NUMBER IT CAME OUT OF. "39" alone says nothing; "39 of 106" says
+  // what the filter did. The chain only names the steps that actually happened, so a small cluster with
+  // no platform namespaces and no search reads as one clause rather than four zeroes.
+  const chain = [`<strong>${all.length}</strong> on this cluster`];
+  if (hidingPlatform && platformCount) chain.push(`<strong>${platformCount}</strong> platform hidden`);
+  if (q || ownQ) chain.push(`<strong>${shown.length}</strong> of <strong>${inScope.length}</strong> match the search`);
+  else if (hidingPlatform && platformCount) chain.push(`<strong>${inScope.length}</strong> listed`);
+  if (indexOpen && shown.length) chain.push(pages > 1
+    ? `showing <strong>${from + 1}–${to}</strong> on page <strong>${page}</strong> of <strong>${pages}</strong>`
+    : `showing all <strong>${shown.length}</strong>`);
+  const countsLine = `<div class="filterbar-note mb-2">${chain.join(" · ")}.</div>`;
+  // The fold's label says what you would SEE if you opened it, out of what exists on the cluster — of
+  // the three counts it could carry, that is the one a reader is deciding on.
+  const foldLabel = shown.length === all.length
+    ? `${all.length} namespace${all.length === 1 ? "" : "s"}`
+    : `${shown.length} of ${all.length} namespaces`;
+  const controls = `<div class="row-wrap mb-3">
+    <span class="filterbar-note"><label for="f-index-search">Search this list</label>
+      <input id="f-index-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
+             placeholder="name or label, any words" value="${esc(view.nsIndexSearch || "")}"
+             aria-describedby="f-index-search-help">
+      <span id="f-index-search-help" class="sr-only">Searches the namespaces in this section by name or by
+        the value of any captured label as you type. Several words are combined with AND, so every word
+        must appear. Press Escape to clear. This is separate from the Find namespace box in the filter
+        bar; both apply.</span></span>
+    <button type="button" class="linkish" id="ns-index-fold" aria-expanded="${indexOpen ? "true" : "false"}"
+            aria-controls="ns-index-body">${indexOpen ? "▾ Hide" : "▸ Show"} ${foldLabel}</button>
+  </div>`;
   const body = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
           <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
-        <tbody>${shown.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
+        <tbody>${paged.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
           <td><button type="button" class="drill">${esc(n.name)}</button></td>
           ${keys.map((k) => `<td class="mono muted">${esc((n.labels || {})[k] || "—")}</td>`).join("")}
           <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
@@ -5027,7 +5102,15 @@ function namespacesCard() {
       : "Every namespace the poller sees, not only those with a grant."} Click a row — a namespace is an entity here,
       the third drill-down beside groups and users. The box in the bar finds by name or by any captured label.</div>
     ${alsoLine("namespaces", view.nsSearch)}
-    ${note}${cw}${body}
+    ${note}${cw}${controls}${countsLine}
+    ${shown.length
+      // ONLY THE ROWS FOLD. An empty state inside the fold is a sentence the reader cannot read: with
+      // nothing matching and the section shut they would see a control and no reason for it, and
+      // "nothing matches — all 39 are still there" is itself the answer to their query. The heading,
+      // the notes, the counts line and every empty branch stay outside, which is also why this folds
+      // the ROWS and not the card — three caveats live in the notes above.
+      ? `<div id="ns-index-body"${indexOpen ? "" : " hidden"}>${body}${pager}</div>`
+      : body}
   </section>`;
 }
 
@@ -5313,7 +5396,7 @@ function wireLookup() {
       if (carried) {
         if (el.dataset.page === "groups") view.groupSearch = carried;
         else if (el.dataset.page === "users") view.userSearch = carried;
-        else if (el.dataset.page === "nsaudit") view.nsSearch = carried;
+        else if (el.dataset.page === "nsaudit") { view.nsSearch = carried; view.nsIndexPage = 1; }
       }
       refresh();
     };
@@ -6673,9 +6756,49 @@ function wireNsAudit() {
     if (!el) return;
     el.onclick = () => {
       view.nsShowPlatform = !view.nsShowPlatform;
+      view.nsIndexPage = 1;   // the set changed size; page 4 of the old set may not exist
       render();
       const again = document.getElementById("ns-show-platform") || document.getElementById(id);
       if (again) again.focus();
+    };
+  });
+
+  // #261: the fold, the section's own search and the pager.
+  const fold = document.getElementById("ns-index-fold");
+  if (fold) fold.onclick = () => {
+    view.nsIndexOpen = !(view.nsIndexOpen === null ? fold.getAttribute("aria-expanded") === "true" : view.nsIndexOpen);
+    render();
+    const again = document.getElementById("ns-index-fold");
+    if (again) again.focus();
+  };
+
+  const indexBox = document.getElementById("f-index-search");
+  if (indexBox) {
+    indexBox.oninput = () => {
+      view.nsIndexSearch = indexBox.value;
+      view.nsIndexPage = 1;   // EVERY filter change resets the page (#261): narrowing to six matches
+      render();               // while the reader sits on page 3 would otherwise show them nothing.
+      const again = document.getElementById("f-index-search");
+      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+    };
+    indexBox.onkeydown = (e) => {
+      if (e.key !== "Escape" || !indexBox.value) return;
+      e.stopPropagation();   // the shell clears its own box on Escape; this one is not the shell's
+      view.nsIndexSearch = ""; view.nsIndexPage = 1; view.nsIndexOpen = null;
+      render();
+      const again = document.getElementById("f-index-search");
+      if (again) again.focus();
+    };
+  }
+
+  // `data-index-page`, not `data-page`: the mock's render check caught `[data-page]` also matching
+  // `<body data-page="nsaudit">`, so every click anywhere ran the pager and emptied the list.
+  document.querySelectorAll("#ns-index-body [data-index-page]").forEach((el) => {
+    el.onclick = () => {
+      const to = Number(el.dataset.indexPage);
+      if (!Number.isFinite(to)) return;
+      view.nsIndexPage = to;
+      render();
     };
   });
   document.querySelectorAll("[data-sort-key]").forEach((el) => {
