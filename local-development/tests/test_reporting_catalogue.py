@@ -212,6 +212,31 @@ class TestEveryReportBuildsAndRenders:
         pdf = render_pdf(report, "GSD", "pdf/a-2b", *FONTS)
         assert pdf.startswith(b"%PDF") and RAW_ERROR.encode() not in pdf
 
+    def test_the_provenance_rows_say_what_happened_not_the_pollers_state_word(self, snapshot):
+        # Operator, 2026-09-21: "Namespaces ok — attests absence" is misleading. It put the poller's own
+        # state token beside a term of art whose meaning (SPEC_C3: "this namespace exists and has no
+        # grants", as against "none observed") appeared nowhere on the row — and which reads on its face
+        # as the report asserting that access IS absent. Nothing pinned these rows before this test.
+        report = _build(snapshot, "groups")
+        rows = {k: v for b in report.sections[0].blocks if getattr(b, "items", None) for k, v in b.items}
+        for label in ("Namespaces", "User objects", "Login capture"):
+            assert label in rows, rows
+            # no bare state token is offered to a reader as the whole value
+            assert rows[label] not in ("ok", "off", "forbidden", "pending"), (label, rows[label])
+        assert not rows["Namespaces"].startswith(("ok ", "off ", "forbidden ", "pending ")), rows["Namespaces"]
+        # the claim is spelled out, in either direction, and never as the bare term of art
+        absence = "a namespace with no grants is reported as having none"
+        cannot = "\u2018no grants\u2019 cannot be told from \u2018never read\u2019"
+        assert (absence in rows["Namespaces"]) is report.coverage["attests_absence"], rows["Namespaces"]
+        assert (cannot in rows["Namespaces"]) is not report.coverage["attests_absence"], rows["Namespaces"]
+        assert "attests absence" not in rows["Namespaces"] and "does not attest absence" not in rows["Namespaces"]
+        # every state has words, so a new one cannot render a KeyError or a raw token
+        from gsd.reporting.catalogue.common import _CAPTURE, _NS_READ, _USERS_READ
+        assert set(_NS_READ) == {"ok", "off", "forbidden", "pending"}
+        assert set(_USERS_READ) == {"ok", "forbidden", "pending"} and set(_CAPTURE) == {"ok", "off", "pending"}
+        # the JSON field consumers read is untouched
+        assert isinstance(report.coverage["attests_absence"], bool)
+
     def test_namespace_access_attests_absence_only_under_ok_coverage(self, tmp_path):
         store = seed_store(str(tmp_path / "w.db"))
         store.replace_namespaces(CLUSTER, [{"name": "prod-ns", "created_at": None, "phase": "Active"}, {"name": "dev-ns", "created_at": None, "phase": "Active"}], "2026-09-06T11:00:00Z")
