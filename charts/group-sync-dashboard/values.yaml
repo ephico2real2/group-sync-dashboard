@@ -688,6 +688,14 @@ session:
 # API with a token from THAT cluster — needs none of this and is still the recommendation
 # where trust boundaries differ: docs/reference-architecture.md §8a.
 clusters:
+  # CHANGING `name` ON A RUNNING RELEASE RETIRES THE OLD CLUSTER. The name is the id every
+  # observation table keys on (33 of them: sync events, KPI days, login events, report runs,
+  # membership and binding history), so a rename is a NEW cluster to this dashboard: the old row is
+  # retired (#96), its history stays under the old name, the Cluster Configurations tab shows it as
+  # a retired card, and trends restart from empty. Measured on the reference lab, where one rename
+  # had already happened: 197 sync events and 24 KPI days under the old name, 9 and 8 under the new.
+  # Nothing migrates them. Rename deliberately, or keep the name you have — `dashboardController`
+  # below works whatever the cluster is called.
   - name: dashboard
     # THIS POD'S OWN CLUSTER (#249). Declared, not inferred from list order: the controller is the
     # cluster the oauth-proxy authenticates readers against, whose in-cluster Services the Kyverno
@@ -700,7 +708,7 @@ clusters:
     # and a declared-but-disabled one is refused too. Omit it entirely and the first enabled entry is
     # the host, as before, with the fallback said on the page rather than assumed. A Secret-sourced
     # cluster is remote by definition, so the cluster-Secret parser REFUSES this key by name.
-    dashboard_controller: true
+    dashboardController: true
     apiUrl: https://kubernetes.default.svc
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt

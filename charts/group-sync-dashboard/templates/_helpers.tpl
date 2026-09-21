@@ -842,7 +842,14 @@ false
 # render so a typo'd policy fails `helm template` rather than the pod's startup. Nil-safe on
 # every hop for the usual reason. Called from configmap.yaml, which always renders.
 {{- define "gsd.validateClusters" -}}
+{{- /* TWO PASSES, and that is the point (review of #251, C1c/C4): the host is whichever entry
+       declares `dashboardController: true`, which cannot be known until every entry has been read.
+       Measured on the single-pass version: two controllers, a disabled one and a quoted "yes" all
+       RENDERED, then CrashLooped the pod on the loader's refusal after a green `helm upgrade` —
+       the very class this guard exists to prevent. */ -}}
 {{- $host := "" -}}
+{{- $declared := list -}}
+{{- $firstEnabled := "" -}}
 {{- range $i, $c := (.Values.clusters | default list) -}}
 {{- if or (kindIs "invalid" $c) (not (kindIs "map" $c)) -}}
 {{- fail (printf "clusters[%d] is not a cluster entry (it is %s). Helm pads a list index set beyond the list's length with null and never merges lists, so `--set clusters[1].name=…` on a values file that does not define clusters[0] yields [null, {…}]: pass every entry, clusters[0] included, or put the whole list in a values file." $i (kindOf $c)) -}}
@@ -866,10 +873,43 @@ false
 {{- end -}}
 {{- $enabled = eq $enabledWord "true" -}}
 {{- end -}}
-{{- if and $enabled (eq $host "") -}}
-{{- $host = $name -}}
+{{- /* The controller flag: a WORD, not truthiness — a quoted "yes" is a non-empty string and
+       truthy in Go, and the loader refuses it, so it must never reach a release. */ -}}
+{{- $isController := false -}}
+{{- if and (hasKey $c "dashboardController") (not (kindIs "invalid" $c.dashboardController)) -}}
+{{- $word := trim (toString $c.dashboardController) -}}
+{{- if not (has $word (list "true" "false")) -}}
+{{- fail (printf "clusters[%d] (%s): dashboardController must be true or false, not %q. It names this pod's OWN cluster." $i $name $word) -}}
+{{- end -}}
+{{- $isController = eq $word "true" -}}
+{{- end -}}
+{{- if and $isController (not $enabled) -}}
+{{- fail (printf "clusters[%d] (%s) is the dashboardController but enabled is false — the controller is this pod's own cluster and cannot be disabled." $i $name) -}}
+{{- end -}}
+{{- if $isController -}}
+{{- $declared = append $declared $name -}}
+{{- end -}}
+{{- if and $enabled (eq $firstEnabled "") -}}
+{{- $firstEnabled = $name -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $declared) 1 -}}
+{{- fail (printf "%d clusters declare dashboardController (%s) — exactly one entry is this pod's own cluster." (len $declared) (join ", " $declared)) -}}
+{{- end -}}
+{{- $how := "the first enabled entry, since none declares dashboardController" -}}
+{{- $host = $firstEnabled -}}
+{{- if $declared -}}
+{{- $host = first $declared -}}
+{{- $how = "declared by dashboardController: true" -}}
+{{- end -}}
+{{- /* Second pass: the host-only rules, now against the cluster that really is the host. */ -}}
+{{- range $i, $c := (.Values.clusters | default list) -}}
+{{- $name := toString ($c.name | default (printf "clusters[%d]" $i)) -}}
+{{- $vis := "" -}}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) -}}{{- $vis = trim (toString $c.visibility) -}}{{- end -}}
+{{- $id := "" -}}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) -}}{{- $id = trim (toString $c.identity) -}}{{- end -}}
+{{- if eq $name $host -}}
 {{- if has $vis (list "hidden" "remote-sar") -}}
-{{- fail (printf "clusters[%d] (%s) is the hosting cluster — the first enabled entry, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $vis) -}}
+{{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $how $vis) -}}
 {{- end -}}
 {{- else if and (eq $vis "remote-sar") (ne $id "same-as-host") -}}
 {{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host. The review names the host's username on that cluster, which only means something if both clusters share an identity provider — say so explicitly." $i $name) -}}

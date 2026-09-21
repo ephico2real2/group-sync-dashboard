@@ -153,7 +153,7 @@ reporting:
 # the mock-creds volume (patched onto the Deployment; preserved across `helm upgrade` by 3-way merge).
 clusters:
   - name: dashboard
-    dashboard_controller: true
+    dashboardController: true
     apiUrl: https://kubernetes.default.svc
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt

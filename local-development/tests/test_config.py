@@ -690,7 +690,7 @@ clusters:
   - name: home
     apiUrl: https://kubernetes.default.svc
     tokenEnv: T
-    dashboard_controller: true
+    dashboardController: true
 """
 
 
@@ -704,7 +704,7 @@ def test_the_declared_controller_wins_even_when_it_is_not_first(tmp_path):
 
 
 def test_without_the_flag_the_first_enabled_entry_is_still_the_host(tmp_path):
-    s = load_settings(_clusters_yaml(tmp_path, _TWO.replace("    dashboard_controller: true\n", "")))
+    s = load_settings(_clusters_yaml(tmp_path, _TWO.replace("    dashboardController: true\n", "")))
     assert s.host_cluster().name == "ocp-east"
     assert s.controller_is_declared is False, "the fallback must be visible, not indistinguishable"
 
@@ -712,21 +712,21 @@ def test_without_the_flag_the_first_enabled_entry_is_still_the_host(tmp_path):
 def test_two_declared_controllers_are_refused_by_name(tmp_path):
     body = _TWO + "    \n"
     body = body.replace("  - name: ocp-east\n    apiUrl: https://api.east.example.com:6443\n    tokenEnv: T\n",
-                        "  - name: ocp-east\n    apiUrl: https://api.east.example.com:6443\n    tokenEnv: T\n    dashboard_controller: true\n")
+                        "  - name: ocp-east\n    apiUrl: https://api.east.example.com:6443\n    tokenEnv: T\n    dashboardController: true\n")
     with pytest.raises(ConfigError) as exc:
         load_settings(_clusters_yaml(tmp_path, body))
     assert "ocp-east" in str(exc.value) and "home" in str(exc.value)
 
 
 def test_a_disabled_controller_is_refused(tmp_path):
-    body = _TWO.replace("    dashboard_controller: true\n", "    dashboard_controller: true\n    enabled: false\n")
+    body = _TWO.replace("    dashboardController: true\n", "    dashboardController: true\n    enabled: false\n")
     with pytest.raises(ConfigError) as exc:
         load_settings(_clusters_yaml(tmp_path, body))
     assert "cannot be disabled" in str(exc.value)
 
 
 def test_a_non_boolean_controller_is_refused(tmp_path):
-    body = _TWO.replace("dashboard_controller: true", "dashboard_controller: 'yes'")
+    body = _TWO.replace("dashboardController: true", "dashboardController: 'yes'")
     with pytest.raises(ConfigError) as exc:
         load_settings(_clusters_yaml(tmp_path, body))
     assert "must be true or false" in str(exc.value)

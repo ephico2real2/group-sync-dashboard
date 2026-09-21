@@ -193,10 +193,15 @@ type: application
 # delete to the cluster-secrets Role and clusterSecretsWritesEnabled to the ConfigMap when on.
 # CHART 0.44.1 (2026-09-20), PATCH: appVersion follows the application to 0.30.0. No template or
 # defaults change — the image tag is empty on purpose, so every install now pulls 0.30.0.
-# CHART 0.45.0 (2026-09-20), MINOR: `clusters[].dashboard_controller` declares this pod's own
+# CHART 0.45.0 (2026-09-20), MINOR: `clusters[].dashboardController` declares this pod's own
 # cluster instead of it being whichever entry sorted first (#249), and the default stanza is renamed
 # `dashboard`. A values file that sets neither keeps working — the first enabled entry is still the
-# host, and the page says the fallback was used.
+# host, and the pod log names the controller and whether anyone declared it
+# (`controller-cluster name=… declared=…`).
+# RENAMING A CLUSTER IS NOT FREE: `name` is the id every observation table keys on, so the old name
+# is retired (#96) and its history — sync events, KPI days, login events, report runs — stays under
+# it while the new name starts empty. Taking this chart's new default name on an existing release
+# does that. The flag itself needs no rename.
 version: 0.45.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,

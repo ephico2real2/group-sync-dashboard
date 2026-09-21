@@ -52,7 +52,7 @@ _ECHOABLE_KEYS = {k.lower() for k in (
     *_REFUSED_CONFIG_KEYS, *_REFUSED_TLS_KEYS,
     "bearerToken", "oauth", "tlsClientConfig", "caData", "insecure", "username", "password",
     "name", "server", "config", "visibility", "identity", "enabled",
-    "namespaces", "clusterResources", "project", "shard", "dashboard_controller",
+    "namespaces", "clusterResources", "project", "shard", "dashboardController",
 )}
 
 
@@ -149,9 +149,9 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
     # Secret-sourced cluster is by definition remote — the chart writes the stanza for the cluster
     # the pod runs on. Accepting it here would let a Secret claim to be the host, which decides the
     # oauth-proxy's target and what `same-as-host` resolves against. Refused by name, not ignored.
-    if "dashboard_controller" in data:
+    if "dashboardController" in data:
         return finding("unsupported-config-key",
-                       "data.dashboard_controller: the controller is declared in the chart's values, "
+                       "data.dashboardController: the controller is declared in the chart's values, "
                        "not by a Secret — a Secret-sourced cluster is remote by definition")
 
     raw_config = data.get("config")

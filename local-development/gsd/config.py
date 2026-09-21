@@ -658,7 +658,7 @@ class Settings:
         """The cluster the oauth-proxy authenticates against, `same-as-host`/`inherit` resolve
         against, the Kyverno breaker is scraped from, and the visibility tiers ask their SARs on.
 
-        DECLARED, not inferred (#249): the entry carrying `dashboard_controller: true`. Falling back
+        DECLARED, not inferred (#249): the entry carrying `dashboardController: true`. Falling back
         to the first enabled entry keeps an existing install working, and `controller_is_declared`
         says which happened so the page and the startup log can name it — position was load-bearing
         and invisible, and alphabetising the list moved all four of the things above at once.
@@ -670,7 +670,7 @@ class Settings:
 
     @property
     def controller_is_declared(self) -> bool:
-        """True when an entry carries `dashboard_controller: true`; False when the host is the first
+        """True when an entry carries `dashboardController: true`; False when the host is the first
         enabled entry by fallback. Surfaced so "inferred-from-order" is visible rather than assumed."""
         return any(c.enabled and c.dashboard_controller for c in self.clusters)
 
@@ -1191,12 +1191,12 @@ def load_settings(path: str | Path) -> Settings:
         "enabled",
         "visibility",
         "identity",
-        "dashboard_controller",
+        "dashboardController",
     }
 
     clusters: list[ClusterConfig] = []
+    wheres: list[str] = []
     seen: set[str] = set()
-    host_name: str | None = None
     for i, entry in enumerate(entries):
         where = f"{path}: clusters[{i}]"
         if not isinstance(entry, dict):
@@ -1257,26 +1257,11 @@ def load_settings(path: str | Path) -> Settings:
                 raise ConfigError(
                     f"{where}: identity {identity!r} is not one of {', '.join(CLUSTER_IDENTITIES)}"
                 )
-        is_host = enabled and host_name is None
-        if is_host:
-            host_name = name
-            if visibility in (VISIBILITY_HIDDEN, VISIBILITY_REMOTE_SAR):
-                raise ConfigError(
-                    f"{where}: visibility {visibility!r} is not allowed on the hosting cluster "
-                    f"(the first enabled entry) — it is the cluster the viewer logged in to"
-                )
-        elif visibility == VISIBILITY_REMOTE_SAR and (identity or IDENTITY_NONE) != IDENTITY_SAME_AS_HOST:
-            raise ConfigError(
-                f"{where}: visibility remote-sar needs identity: same-as-host — the review names "
-                f"the host's username on this cluster, which only means something if the two "
-                f"clusters share an identity provider"
-            )
-
-        controller = entry.get("dashboard_controller", False)
+        controller = entry.get("dashboardController", False)
         if not isinstance(controller, bool):
-            raise ConfigError(f"{where}: dashboard_controller must be true or false, not {controller!r}")
+            raise ConfigError(f"{where}: dashboardController must be true or false, not {controller!r}")
         if controller and not enabled:
-            raise ConfigError(f"{where}: {name!r} is the dashboard_controller but enabled is false — "
+            raise ConfigError(f"{where}: {name!r} is the dashboardController but enabled is false — "
                               "the controller is this pod's own cluster and cannot be disabled")
 
         clusters.append(
@@ -1293,11 +1278,35 @@ def load_settings(path: str | Path) -> Settings:
                 dashboard_controller=controller,
             )
         )
+        wheres.append(where)
 
     declared = [c.name for c in clusters if c.dashboard_controller]
     if len(declared) > 1:
-        raise ConfigError(f"{path}: {len(declared)} clusters declare dashboard_controller ({', '.join(declared)}) — "
+        raise ConfigError(f"{path}: {len(declared)} clusters declare dashboardController ({', '.join(declared)}) — "
                           "exactly one entry is this pod's own cluster")
+
+    # THE HOST-ONLY VISIBILITY RULES RUN IN A SECOND PASS (review of #251, C1b). They were applied
+    # inline against "the first enabled entry", which stopped being the host the moment a LATER entry
+    # could declare `dashboardController: true`: measured on that head, `hidden` was accepted on the
+    # declared controller — the login cluster, the one thing the rule exists to protect — and refused
+    # on a remote. The host is not known until every entry has been read, so the check cannot be.
+    host = (next((c for c in clusters if c.enabled and c.dashboard_controller), None)
+            or next((c for c in clusters if c.enabled), None))
+    for cluster, where in zip(clusters, wheres):
+        if cluster is host:
+            if cluster.visibility in (VISIBILITY_HIDDEN, VISIBILITY_REMOTE_SAR):
+                how = ("declared by dashboardController" if cluster.dashboard_controller
+                       else "the first enabled entry, since none declares dashboardController")
+                raise ConfigError(
+                    f"{where}: visibility {cluster.visibility!r} is not allowed on the hosting cluster "
+                    f"({how}) — it is the cluster the viewer logged in to"
+                )
+        elif cluster.visibility == VISIBILITY_REMOTE_SAR and (cluster.identity or IDENTITY_NONE) != IDENTITY_SAME_AS_HOST:
+            raise ConfigError(
+                f"{where}: visibility remote-sar needs identity: same-as-host — the review names "
+                f"the host's username on this cluster, which only means something if the two "
+                f"clusters share an identity provider"
+            )
 
     admin_sar = _visibility_sar_setting(raw)
     usage_admin_sar = _usage_visibility_sar_setting(raw)

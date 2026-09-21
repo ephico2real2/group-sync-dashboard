@@ -41,7 +41,7 @@ spec:
       valuesObject:
         clusters:
           - name: dashboard
-            dashboard_controller: true
+            dashboardController: true
             apiUrl: https://kubernetes.default.svc
             tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
             caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
