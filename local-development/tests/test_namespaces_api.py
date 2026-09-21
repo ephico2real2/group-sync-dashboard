@@ -295,3 +295,69 @@ class TestTheDetail:
         d = client.get("/api/clusters/crc/namespaces/quiet-ns", headers={"X-Forwarded-User": "carol"}).json()
         assert d["scope"] == "self" and d["via_groups"] == []
         assert [g["group_name"] for g in d["cluster_wide_groups"]] == ["ops-admins"]
+
+
+class TestPlatformNamespacesAreClassifiedAndCounted:
+    """#257: the index listed every namespace the poller sees, and on the reference cluster 67 of
+    106 were platform ones — `openshift-*`, `kube-*` and the five named — so two thirds of the
+    largest section on the page was noise under a five-row worklist.
+
+    The classification is the one `gsd/home.py` already ships and the Home page already uses; the
+    point of deciding it server-side is that the page cannot drift into a second definition of
+    "platform". The rows stay in the payload — export, search and the drill must still reach a
+    hidden namespace — so what the envelope adds is the ability to SAY how many are hidden."""
+
+    @staticmethod
+    def _seeded(tmp_path, names: list[str], grants: list[dict] | None = None) -> TestClient:
+        db = str(tmp_path / "platform.db")
+        s = Store(db)
+        now = now_iso()
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        s.record_poll("crc", "ok", None)
+        s.replace_namespaces("crc", [{"name": n, "created_at": now, "phase": "Active", "metadata": {}}
+                                     for n in names], now)
+        if grants:
+            s.replace_user_bindings("crc", grants, now)
+        settings = Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                            db_path=db, oauth_proxy_enabled=True, namespace_metadata_labels=KEYS)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        return TestClient(app)
+
+    def test_every_row_says_whether_it_is_platform_by_the_shipped_rule(self, tmp_path):
+        with self._seeded(tmp_path, ["openshift-monitoring", "kube-system", "default", "openshift",
+                                     "kube-public", "kube-node-lease", "demo-prod", "legacy-payments"]) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        by_name = {n["name"]: n["platform"] for n in body["namespaces"]}
+        assert by_name == {
+            "openshift-monitoring": True,   # prefix
+            "kube-system": True,            # both a prefix and a named one
+            "default": True, "openshift": True, "kube-public": True, "kube-node-lease": True,
+            "demo-prod": False, "legacy-payments": False,
+        }, by_name
+
+    def test_the_envelope_counts_them_so_the_page_can_say_how_many_it_hid(self, tmp_path):
+        with self._seeded(tmp_path, ["openshift-a", "kube-b", "demo-prod"]) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_count"] == 2
+        assert body["count"] == 3, "the rows stay in the payload — hiding is the page's job, not a drop"
+        assert len(body["namespaces"]) == 3
+
+    def test_a_cluster_with_no_platform_namespace_counts_zero(self, tmp_path):
+        """The control must have nothing to offer rather than claiming an empty filter."""
+        with self._seeded(tmp_path, ["demo-prod", "legacy-payments"]) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_count"] == 0
+        assert body["platform_with_findings"] == 0
+
+    def test_a_hidden_namespace_that_holds_a_finding_is_counted_separately(self, tmp_path):
+        """The one case where hiding costs the reader something. "67 hidden" is noise removed;
+        "67 hidden, 1 with a direct grant" is a different sentence, and the page must be able to
+        say it without the reader toggling to find out."""
+        grants = [{"binding_kind": "RoleBinding", "binding_namespace": "openshift-monitoring",
+                   "binding_name": "dana-edit", "role_kind": "ClusterRole", "role_name": "edit",
+                   "user_name": "dana.lee", "is_platform": 0}]
+        with self._seeded(tmp_path, ["openshift-monitoring", "openshift-quiet", "demo-prod"], grants) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_count"] == 2
+        assert body["platform_with_findings"] == 1, body
