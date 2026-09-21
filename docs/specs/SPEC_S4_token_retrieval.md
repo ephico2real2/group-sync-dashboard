@@ -254,7 +254,7 @@ password in force (§3.1 rule 4).
   `write=False`**; the Secret write; the `writes.enabled` dependency refused at render **and** at
   runtime, because a Secret-declared mode is invisible to `helm template`.
 - **#285 — the lifecycle.** The daily ping (which is #284's read without the write — so it needs
-  #284, not only #283), `self-login` renewal at `min(0.8 × lifetime, ceiling)`, and the
+  #284, not only #283), `self-login` renewal at the fixed margin §3.1 states, and the
   per-credential gate: in-memory in #283, durable and replica-shared here.
 - **#286 — pre-existing litter only.** Everything from #283 onward leaves nothing behind. This is
   about the objects already there — and most are not from logins at all: of 140 on the lab, **95 are
