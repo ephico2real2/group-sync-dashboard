@@ -2850,8 +2850,14 @@ function reportClustersBlock(spec) {
       <span class="rp-clu-tick" aria-hidden="true">${on ? "✓" : ""}</span>${esc(c.id)}${c.gone ? '<span class="rp-clu-tag">not configured</span>' : ""}${primary ? '<span class="rp-clu-tag nav">lookups · totals</span>' : ""}</button>`;
   };
   const note = view.reportClusterNote, cleared = note && note.cleared[spec.name];
-  const noteHtml = cleared ? `<div class="rp-clu-note" role="status" id="report-cluster-note">Cluster changed ${note.from ? `from <span class="mono">${esc(note.from)}</span> ` : ""}to <span class="mono">${esc(note.to)}</span> —
-      <span class="mono">${esc(cleared.join(", "))}</span> picked on ${esc(note.from || "the previous cluster")} ${cleared.length === 1 ? "was" : "were"} cleared; the lookups now offered are ${esc(note.to)}'s.
+  // A change TO the fleet (#172) records `to: null`, and the boot cycle then stamps the first cluster OUTSIDE
+  // navigate() (the one sanctioned bypass), so no later chokepoint pass rewrites that note: it is the one the
+  // form shows when the reader comes back. Name the fleet for what it is, and quote the cluster the form is on
+  // NOW for the lookups — those are whose they are, whatever the note recorded.
+  const toName = note ? (note.to ? `<span class="mono">${esc(note.to)}</span>` : "the fleet view") : "";
+  const offered = view.cluster ? `<span class="mono">${esc(view.cluster)}</span>'s` : "the selected cluster's";
+  const noteHtml = cleared ? `<div class="rp-clu-note" role="status" id="report-cluster-note">Cluster changed ${note.from ? `from <span class="mono">${esc(note.from)}</span> ` : ""}to ${toName} —
+      <span class="mono">${esc(cleared.join(", "))}</span> picked on ${esc(note.from || "the previous cluster")} ${cleared.length === 1 ? "was" : "were"} cleared; the lookups now offered are ${offered}.
       <button type="button" class="linkish" id="report-cluster-note-x">dismiss</button></div>` : "";
   return `<div class="rp-scope clu" id="report-clusters">
     <div class="rp-scope-top"><span class="t">Clusters <span class="rp-auto">discovered · ${clusters.length} configured</span></span><span class="and muted">one run per cluster · the same parameters on each</span></div>
@@ -2956,7 +2962,9 @@ function reportRunStatus(run, inBatch = false) {
 function reportBatchStatus(b) {
   const n = b.requested.length;
   const tally = ["done", "failed", "running", "queued"].map((st) => [st, b.runs.filter((r) => r.status === st).length]).filter(([, k]) => k);
-  const head = b.error ? `${n} clusters requested — the request was refused: ${esc(b.error)}`
+  // An error with runs already answered is the FOLLOWING-UP's, not the request's: the service said 202, the
+  // runs are queued and the Library will hold them. Calling that "refused" tells the reader the opposite.
+  const head = b.error ? `${n} clusters requested — ${b.runs.length ? "the runs were queued, but following them failed" : "the request was refused"}: ${esc(b.error)}`
     : `${n} clusters requested — ${tally.length ? tally.map(([st, k]) => `${k} ${st}`).join(" · ") : "submitting…"}`;
   return `<div class="report-batch" id="report-batch" role="status"><div class="rp-batch-head">${head}</div>
     ${b.runs.map((r) => reportRunStatus(r, true)).join("")}</div>`;
@@ -3717,7 +3725,13 @@ function wireReports() {
   const oneCluster = $("report-clusters-one");
   if (oneCluster) oneCluster.onclick = () => { view.reportClusters = null; render(); };
   const noteX = $("report-cluster-note-x");
-  if (noteX) noteX.onclick = () => { view.reportClusterNote = null; render(); };
+  // Dismissed for THIS form only: the note renders per form (`cleared[spec.name]`), so another form's cleared
+  // lookup is still owed to its reader when they open it. The form card only renders for `view.report`.
+  if (noteX) noteX.onclick = () => {
+    const note = view.reportClusterNote;
+    if (note) { delete note.cleared[view.report]; if (!Object.keys(note.cleared).length) view.reportClusterNote = null; }
+    render();
+  };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).

@@ -9417,3 +9417,80 @@ class TestReportClusterControl:
             assert not errors, errors
         finally:
             ctx.close()
+
+    def test_a_change_to_the_fleet_is_said_as_the_fleet_and_the_lookups_are_named_for_the_cluster_the_form_is_on(self, browser, reporting_server):
+        # The Overview is the fleet (#172), so a visit there records `to: null` — and the boot cycle then stamps
+        # the first cluster OUTSIDE navigate(), so no chokepoint pass rewrites the note. Before the fix the
+        # reader was shown "changed from crc-local to — ... the lookups now offered are 's." (OB1 on #269).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.click("#tab-overview")
+            page.wait_for_function("() => view.cluster === null")
+            page.click("#tab-reports")
+            page.click("[data-report='access-matrix']")
+            page.wait_for_function("() => view.cluster === 'crc-local' && !!document.getElementById('report-cluster-note')")
+            note = " ".join(page.locator("#report-cluster-note").inner_text().split())
+            assert note == ("Cluster changed from crc-local to the fleet view — users picked on crc-local was cleared; "
+                            "the lookups now offered are crc-local's. dismiss"), note
+            assert page.locator(".rp-tag").count() == 0, "the lookup really went, whatever the note says"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_poll_failure_after_the_runs_were_queued_is_not_said_as_a_refusal(self, browser, reporting_server):
+        # The service answered 202 and the runs are queued; only following them failed. Saying "the request was
+        # refused" tells the reader the opposite of what happened — the documents are in the Library (OB1 on #269).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-clusters")
+            page.click("#report-clusters-all")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            page.uncheck("#report-want-pdf")
+            page.route(re.compile(r"/report/api/runs/[^/?]+$"), lambda route: route.abort())   # the per-run polls, not the POST
+            page.click("#report-generate")
+            page.wait_for_function("() => view.reportBatch && view.reportBatch.error")
+            head = " ".join(page.locator("#report-batch .rp-batch-head").inner_text().split())
+            assert page.evaluate("() => view.reportBatch.runs.length") == 2, "the POST was answered: two runs are queued"
+            assert "the request was refused" not in head, head
+            assert "2 clusters requested — the runs were queued, but following them failed:" in head, head
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_dismissing_the_note_on_one_form_keeps_what_another_form_is_owed(self, browser, reporting_server):
+        # The note is rendered per form (`cleared[spec.name]`); dismissing it used to null it for every form, so a
+        # second form's cleared lookup was never said to the reader who opens it (OB1 on #269).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.click("[data-report='groups']")
+            page.wait_for_function("() => view.report === 'groups' && document.querySelectorAll('[data-lookup-opt=\"groups\"]').length > 0")
+            page.click('[data-lookup-opt="groups"] >> nth=0')
+            page.wait_for_selector(".rp-tag")
+            page.click("#report-cluster-prod-east")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            page.click("#report-cluster-crc-local")                     # promotes prod-east: both forms' lookups go
+            page.wait_for_function("() => view.cluster === 'prod-east' && !!document.getElementById('report-cluster-note')")
+            assert "groups picked on crc-local was cleared" in " ".join(page.locator("#report-cluster-note").inner_text().split())
+            page.click("#report-cluster-note-x")
+            page.wait_for_function("() => !document.getElementById('report-cluster-note')")
+            page.click("[data-report='access-matrix']")
+            page.wait_for_selector("#report-form.r-access")
+            assert page.locator("#report-cluster-note").count() == 1, "access-matrix lost `users` too, and has not been told"
+            assert "users picked on crc-local was cleared" in " ".join(page.locator("#report-cluster-note").inner_text().split())
+            assert not errors, errors
+        finally:
+            ctx.close()

@@ -1298,9 +1298,13 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             twice = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "prod-east", CLUSTER]}, headers=self.VIEWER)
             assert twice.status_code == 422 and twice.json()["detail"] == f"clusters repeats {CLUSTER}", twice.text
             empty = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": []}, headers=self.VIEWER)
+            # Name the reason, not just the code: a base server that has never heard of `clusters` also
+            # answers 422 here (for the missing `cluster`), so a bare status assert cannot tell the two apart.
             assert empty.status_code == 422, empty.text
+            assert empty.json()["detail"][0]["loc"] == ["body", "clusters"] and empty.json()["detail"][0]["type"] == "too_short", empty.text
             injected = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "clusters": [CLUSTER, "a\r\nX-Injected: 1"]}, headers=self.VIEWER)
             assert injected.status_code == 422, injected.text
+            assert injected.json()["detail"][0]["loc"] == ["body", "clusters", 1] and injected.json()["detail"][0]["type"] == "string_pattern_mismatch", injected.text
             listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=self.VIEWER).json()
             assert listed["total"] == 0, "a refused request queues nothing"
             # a one-element list is still the list shape: the caller asked for a batch and reads `runs`
