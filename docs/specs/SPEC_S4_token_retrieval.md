@@ -101,9 +101,20 @@ operator's rule, 2026-09-21, and it is better than the percentage this section f
 renew_at = expires_at − margin        margin = min(2 h, ¼ × lifetime)
 ```
 
-**The margin is a retry budget, not a fraction.** What it has to buy is time to fail, back off, retry,
-alert a human, and still renew before the session actually dies. That is an absolute quantity: two
-hours is two hours whether the session lasts a day or a year. Scaling it as a percentage produces
+**The point is that this needs no knowledge of the environment.** The session is self-describing: the
+login hands back `expires_in`, so the dashboard records the absolute instant the session dies and
+schedules re-authentication before it. It never has to know, ask, or assume what the cluster
+configured — an estate that tightens tokens to an hour and one that loosens them to a year are the
+same code path, because both are answered by the value the target just returned.
+
+That also removes a permission and a failure mode the earlier draft introduced. **Nothing needs to
+read `oauth/cluster` to schedule a renewal**: §3.2's rule — *read the lifetime rather than assume it* —
+is satisfied by the session itself, not by querying the OAuth CR. Do not add a `get oauths/cluster`
+grant for this.
+
+**And the margin is a retry budget, not a fraction.** What it has to buy is time to fail, back off,
+retry, alert a human, and still renew before the session actually dies. That is an absolute quantity:
+two hours is two hours whether the session lasts a day or a year. Scaling it as a percentage produces
 nonsense at both ends — 80 % of a year renews **73 days early** for no benefit, and 80 % of a
 one-hour session leaves **12 minutes** to notice and recover.
 
@@ -127,10 +138,17 @@ day** — which is a trap for #285's tests: a renewal test run only on CRC will 
 inside any test run. Proving it needs a cluster with a realistic value, the lab's value temporarily
 lowered, or an injected clock, and the test must say which.
 
-**A second clock the fragment does not carry.** `oauth/cluster .spec.tokenConfig.accessTokenInactivityTimeout`
-(300 s minimum; unset on the reference cluster) invalidates a session that has merely been *idle*,
-whatever `expires_in` says — and a standby replica or an unreachable target can idle one. `self-login`
-reads it too and treats a poll gap approaching it as "renew now".
+**The one thing the session does not tell you: inactivity.**
+`oauth/cluster .spec.tokenConfig.accessTokenInactivityTimeout` (300 s minimum; unset on the reference
+cluster) invalidates a session that has merely been *idle*, whatever `expires_in` says — and a standby
+replica or an unreachable target can idle one.
+
+**Handle it reactively rather than by reading the CR**, for the same reason as above: a `401` on a
+poll with a credential whose `token-source` is `self-login` means *re-authenticate*, not *the password
+is wrong*. That covers an inactivity timeout, an administrator revoking the session, and a cluster
+whose policy changed underneath us — without the dashboard knowing any of those settings. It is the
+one place where a `401` is **not** treated as a refusal, and the distinction is the credential kind,
+which the Secret already records.
 
 ## 4. The two identities
 
