@@ -224,18 +224,166 @@ count, with the totals line stating in words that it is the primary's.
 
 ---
 
+## Part 8 — the report forms, three defects the operator found on the deployed page (#272 → #273)
+
+### The forms (14:0x → 16:5x) — commits `52ad778`, `0f618dd`, `26c04c5`, PR #273
+
+*"the text description in the report forms are all truncated now"*, *"some of the font are different
+sizes"*, *"selecting a group to run reports on doesn't show the number of users in that group"*.
+
+Measured on the deployed page before briefing anyone: all eleven forms walked, `getComputedStyle`
+and `scrollWidth`/`clientWidth` read on every text node inside `#report-form`.
+
+- **20 hints clipped across 8 of the 11 forms**, into a 264 px column; worst **1548 px**, 5.9× its
+  box. Not an edge case for long copy — `groups`' ordinary sentences were cut at 336 px.
+  `.report-field .hint` carried `nowrap + overflow:hidden + ellipsis` and leaned on a `title` that
+  *was* genuinely set — but hover is mouse-only, so for a keyboard or touch reader the sentence did
+  not exist.
+- **The size question had one cause:** nothing set the hint's `font-size`, so it inherited body copy
+  at `--text-base` while its own label sat at `--text-sm`. The secondary copy rendered **two steps
+  larger than the thing it describes**, on every form.
+- **OB1 (Fable 5.1) produced the fix**; the trace found **three things beyond it**. Its PLAUSIBLE was
+  real — four more 14 px elements in `namespace-access`'s selector block, which its rule could not
+  reach, and which the `reporting_server` fixture could not even render because it sets no
+  `namespace_selector_labels`. My own server test landed in the wrong class and **stole the
+  `@staticmethod` decorator** belonging to the method below it, so it reported "passed" while inert.
+  And `count()` used `v in members` on a `JSON.parse` map, so a group named `constructor` rendered
+  **`function Object() { [native code] }`** as its member count — reverted the guard to prove it.
+- **Found by OB1:** two `== 422` asserts that hold on the base server too. Measured: base answers the
+  *string* `"a viewer run names its cluster"`, so they could not tell "refused because the list is
+  empty" from "refused because `clusters` is unknown". The fourth test this session that did not look.
+
+Evidence: `reports/2026-09-21_report-form-hints/` — before and after captured with the same script
+against the same lab, since the before cannot be retaken once the fix deploys. 0 clipped, 0 off-size.
+
+---
+
+## Part 9 — the provenance rows, and the cluster stanza (#274 → #275, #277)
+
+### `Namespaces ok — attests absence` (17:0x) — commit `92b70ba`, PR #275
+
+The operator: *"the following text is misleading"*. It was misleading **twice**. `namespaces_read` is
+not a count but the poller's state token, and `attests_absence` **is** `ns_state == "ok"` — so the row
+said one fact twice, in two vocabularies. And "attests absence" reads on its face as the report
+*asserting that access is absent*, when the claim is about **coverage**: whether the report can tell
+"no grants" from "never looked". SPEC_C3 defines it precisely and that definition appeared nowhere on
+the row.
+
+**A correction on the way:** I first concluded the explanatory Note was not rendered on normal
+reports. It is — `common.py` appends it on every one; I had read only the first half of the function.
+That changed the fix from "surface the missing explanation" to "make the summary carry its own
+meaning", and stopped me duplicating a Note that was already there.
+
+`coverage.attests_absence` on the JSON is untouched — a field consumers read. The two rows beside it
+(`User objects`, `Login capture`) rendered bare tokens too and say what happened now; rewording one
+and leaving two raw tokens under it would have read worse. Nothing pinned these rows before.
+
+### The cluster stanza, measured through both readers (18:0x) — PR #277, chart 0.47.1
+
+*"document the various combo accepted … when adding a cluster stanza in values.yaml"*. Written by
+running **30 combinations through both readers** — `helm template` and the pod's loader — not by
+reading the source. Twelve accepted, eighteen refused.
+
+**The finding the exercise produced:** fourteen refusals fail the render, but **four render cleanly
+and are refused by the pod at startup** — an unknown key, a duplicate `name`, an `apiUrl` with no
+scheme, and `insecureSkipVerify` with `caBundleFile`. `templates/configmap.yaml` passes `clusters`
+through with `toYaml`, and `gsd.validateClusters` covers the connection-mode and host rules only.
+Those four fail *after a green upgrade*, which reads as an outage rather than a config error.
+
+`values.yaml` already claimed *"The render refuses each of these exactly as the loader does"* — true
+read narrowly (the S3 mode rules), false read as parity. The measurement settles it.
+`example-production.yaml` is **loaded** by a test, not eyeballed, so it cannot rot into an
+illustration. 62 tests hold the document.
+
+---
+
+## Part 10 — the report service stops narrating its health checks (#278, chart 0.48.0)
+
+*"too much logs — change the default liveness and readiness interval"*. The interval was the smaller
+half.
+
+**The root cause was a fix that never arrived.** #245 gave `uvicorn.access` a setting because that
+logger carries `propagate=False` and its own handler, so `GSD_LOG_LEVEL` could neither raise nor lower
+it and — in `api.py`'s own words — *"`/readyz` and `/metrics` wrote a line apiece forever"*. It reached
+the **dashboard only**: the report service never called `_apply_http_log_level`, and the chart never
+passed it `GSD_HTTP_LOG_LEVEL`.
+
+The periods were hard-coded while the dashboard's are a values block, and liveness ran five times more
+often here for the same cost profile. `reporting.probes` now exists: liveness **60s/3 → 300s/2**,
+readiness **15s → 30s** — 30s rather than the dashboard's 15s for a cost the dashboard lacks, since
+`/report/readyz` performs a **SQLite read** that contends for the writer's lock.
+
+**The trade, stated:** a wedged pod now restarts in 10 minutes rather than 3. Readiness still pulls it
+from the Service in 90s.
+
+Measured on the deployed pod afterwards: **the whole log since startup is five lines, zero of them
+probes** — against 7 200 a day before.
+
+---
+
+## Part 11 — the flake was a production defect (#271 → #279)
+
+### What OB2 found (17:3x → 18:2x) — commits `d08fccb`, `c59ef55`, PR #279
+
+I had filed #271 as an unreproducible CI failure after retrying it twice. **That was wrong, and it is
+the second time this session's scar list has caught me** — #246's "flake" was a real defect too.
+
+**OB2 (Fable 5.1, high) named the slot.** It measured the five Home payloads *on the wire without a
+browser*, found the only clock-derived field that moves inside a test's window, then reproduced it in
+a browser by aiming the failing test's own steps at the instant the wire said the value moves:
+`alerts[0].detail` carries `last sync 6h00m ago` at **minute precision**, moving at seed + 60 s.
+
+**The production consequence (OB2's N1), which is the real finding:** `/api/alerts` is fetched by
+every page, the poll interval is 60 s, so for as long as **any** CR is overdue the unchanged-poll
+repaint skip is defeated **on every page, every minute** — dropping the reader's scroll, selection and
+focus. The `reportStatus.as_of` failure mode, loose on the most ordinary alert this dashboard raises,
+since 2026-08-01.
+
+Why it hid: the phase within the minute is the sum of ~270 preceding tests' durations — near-constant
+on one machine, load-dependent on a runner. Hence 3/3 locally and failures on CI, **one on a branch
+that changed only markdown**. It also explains why setting the test's fixed wait to `0` changed
+nothing: the phase decides, not the wait.
+
+- **Traced before applying:** the `fingerprintSlots()` refactor had to be byte-identical or repaint
+  behaviour would change silently — verified **statically**, 31 slots, order compared against the
+  previous array literal, and `Object.values` keeps an `undefined` slot as `null` exactly as the array
+  did (an object fingerprint would have dropped those keys). The dropped `if last_sync else None`
+  guard is safe because `compute_state` returns `UNKNOWN` when `last_sync is None` — dead code.
+- **The guard is at the state layer**, deterministic and cheap, rather than the browser test that
+  found this by accident.
+- **Confirmed by intervention:** #277 and #278 had been failing this test on every run; the only
+  change was inheriting #279, and both went green. **Four of six** fix-less CI runs hit it — ~67 %, not
+  the ~5 % a uniform-phase model predicts, so the CI phase clusters near a minute boundary.
+
+### The timezone (18:3x) — commit `c59ef55`
+
+The operator: *"it must match the Timezone set"*. The division: **the server states the instant, the
+page presents it**. The payload keeps the raw UTC stamp — which is what keeps the fingerprint stable —
+and the row localises at render. It has to be the page: the zone abbreviation depends on the instant
+(EST in January, EDT in July), so a server-stamped zone mislabels everything across a DST boundary.
+
+Captured in three zones, one seeded CR — `reports/2026-09-21_alert-instant-timezone/`. Tokyo renders
+`GMT+9` from the browser's IANA database, not a label this app could have hardcoded.
+
+The operator's ruling on the wording — *"this is best practices for time"* — is recorded as a standing
+rule: server-rendered text carries the absolute instant; relative ages are presentation and belong
+client-side, and before putting any clock-derived value in a payload, ask whether it lands in the
+fingerprint.
+
+---
+
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **12** (#251, #252, #254, #256, #258, #259, #260, #262, #264, #265, #266, #269) |
-| Commits authored | 23 non-merge |
-| Review passes run | 10 — OB1-lite ×1, OB2 ×4, OB3 ×2, Cursor ×3, Codex ×3 (one died: "model at capacity") |
+| Pull requests merged | **20** — #251, #252, #254, #256, #258, #259, #260, #262, #263, #264, #265, #266, #268, #269, #273, #275, #276, #277, #278, #279 |
+| Commits authored | 33 non-merge |
+| Review passes run | 13 — OB1-lite ×2, OB2 ×5, OB3 ×2, Cursor ×3, Codex ×3 (one died: "model at capacity") |
 | Reviewer findings accepted | the large majority; **2 refuted with evidence** (Codex C5 on #259, a Codex framing on 200% zoom) |
-| **Fixes that were themselves wrong** | **6** — and every one was caught by a different reviewer than the one whose finding it answered |
-| Tests that passed because they did not look | **4** — the tab-bar guard (passed with the old padding), the type guard (never asserted weight or tracking), the headroom canary (`spare` is 0 by construction), and two bare `== 422` asserts that also hold on the base server |
-| Full suite, final | 4466 passed, 15 skipped (hermetic); test_ui 552; reporting 101 |
-| CI failures that were not the code | **2** — GitHub answered HTTP 504 for the pinned Grype release on both branches, three times across the two; the "Grype identified the distribution" guard then failed correctly, refusing to let a scan that matched no OS package report green |
+| **Fixes that were themselves wrong** | **6** — every one caught by a different reviewer than the one whose finding it answered. Plus **3 more** found by tracing a reviewer's own fix before applying it (the selector block OB1 could not render; my server test inert in the wrong class; `v in members` printing a native function into a group option) |
+| Tests that passed because they did not look | **5** — the tab-bar guard (old padding), the type guard (never asserted weight or tracking), the headroom canary (`spare` is 0 by construction), two bare `== 422` asserts that hold on the base server, and my own server test that reported "passed" while a stolen `@staticmethod` made it inert |
+| Full suite, final | 4476 passed, 15 skipped (hermetic); test_ui 559; reporting 101 |
+| CI failures that were not the code | **5 Grype 504s** from GitHub across three branches (the "Grype identified the distribution" guard then failed correctly, refusing a scan that matched no OS package). **Separately, 4 CI failures that WERE the code** — `TestHomeSkipsTheUnchangedPoll` on four runs, which I twice called a flake before OB2 named the slot |
 | Longest single loss | ~2 h across three venv rebuilds before the tracked symlink was diagnosed — the evidence was one `git ls-files -s` away each time |
 
 ## Where things are recorded
@@ -253,23 +401,32 @@ count, with the totals line stating in words that it is the primary's.
 
 ## State left behind
 
-- **Deployed:** `feat/267-cluster-in-report-forms @ 97462a1824` through `release-crc.sh --argocd`,
-  Argo Synced/Healthy, commit verified in-pod. Before it the lab held main at the merge-base. The
-  walk of that head is `reports/2026-09-21_report-form-clusters/`.
-- **#264 merged** — OB2 fixed Cursor's four findings and then C2, restructuring the empty-state
-  ladder around *which pipeline stage emptied* (`all` → `inScope` → `shown`) rather than patching the
-  instance, after being asked whether the sentence's shape was the defect. It was: proving the fix
-  turned up a fourth unreported instance.
-- **#269 merged** as `260fefe`, branch deleted, **#267 closed** against its Definition of done. The
-  one DoD item its walk could not close is partial failure on a *configured* cluster — that line
-  rests on the API test and the browser test's injected `ghost`, which is stated on the issue rather
-  than covered by the walk. See Part 7.
-- **#270 open**: the report sha256 covers run facts, so two runs over one snapshot never agree. Needs
-  a decision (exclude the provenance section, or split it) because the fix changes every existing
-  artefact's hash once.
-- The remaining #261 tranche is unbuilt, and the walk surfaced its first item on the live page:
-  `openshift-console-user-settings` is ranked in the worklist and hidden from the index at once, with
-  nothing reconciling the two.
-- **#255's expected-grants half** is unbuilt: suppressing known-good direct grants, and
-  `existingConfigMap` for maintaining the list outside the chart.
-- **S3b/S3c/S3d** remain; S3d is explicitly unsafe until its prerequisites land.
+- **Deployed:** `main @ 581ce0ee0a` through `release-crc.sh --argocd`, Argo Synced/Healthy, commit
+  verified in-pod. Chart 0.48.0, app 0.30.0. Verified on the running report pod afterwards: probes at
+  liveness 300s/2 and readiness 30s, `GSD_HTTP_LOG_LEVEL=WARNING`, and **the whole log since startup
+  is five lines with zero probe lines**.
+- **Open PRs: none.** Nine merged today (#263, #268, #269, #273, #275, #276, #277, #278, #279); four
+  issues closed (#267, #271, #272, #274).
+- **#270 is the operator's call and the last of its kind.** The report `sha256` covers run facts —
+  provenance sits inside `canonical()` — so two runs over one unchanged snapshot never agree, which
+  is the opposite of what `model.py` states. It is the **third** instance of one root cause:
+  `reportStatus.as_of` was the first, #271 the second. Either fix changes every existing artefact's
+  hash once, so it needs a decision rather than a patch.
+- **#210 is collectable again**: Fable is back and did real work today (OB1-lite on #273, OB2 on
+  #271), so the re-review owed to OB3's quota-outage passes can be run.
+- Unbuilt design work, unchanged: #261's remaining tranche, #255's expected-grants half, #253, and
+  S3b/S3c/S3d — S3d explicitly unsafe until its prerequisites land.
+
+## The thread worth carrying
+
+Three of this session's fixes share one root cause — **a clock-derived value in a payload that is
+compared or sealed**. `reportStatus.as_of` (before today), the provenance rows (#274), and the alert
+age (#271). #270 is the fourth and still open. That is now a written rule with a check attached
+rather than four separate repairs: before putting any clock-derived value in a payload, ask whether it
+lands in the auto-refresh fingerprint or inside `canonical()`.
+
+The second thread is about trust in one's own corrections. Six fixes written in response to a correct
+finding were themselves wrong, and three more were caught only by tracing a reviewer's fix before
+applying it. Twice — #246 and #271 — a test was called a flake when it was reporting a real defect.
+The habit that worked every time was the same one: measure the mechanism rather than retry the
+symptom.
