@@ -14,6 +14,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
+import re
 import socket
 import threading
 import time
@@ -8524,12 +8525,18 @@ class TestTheTabBarFitsOneRowOnDesktop:
     The wrap itself is deliberate and stays: it is what keeps every tab inside a 375 px viewport
     (TestTheShellAtPhoneWidth). This asserts only that it does not fire where there is room."""
 
-    #: Shipped tabs this fixture does not render, longest first — `Cluster Configurations` is the widest
-    #: label in the product at 165 px and is the one that was orphaned.
-    ABSENT = ("Cluster Configurations", "Reports", "Library")
-
+    #: Every tab label the PRODUCT renders, read from the source rather than hard-coded (review of
+    #: #256, Cursor finding 3): a hard-coded list goes stale the moment a tab is added or renamed,
+    #: which is precisely the change this guard exists to catch.
     @staticmethod
-    def _with_every_shipped_tab(dash):
+    def _shipped_labels() -> list[str]:
+        page = (pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static" / "index.html").read_text()
+        labels = re.findall(r'tab\("[a-z]+",\s*"([^"]+)"\)', page)
+        assert len(labels) >= 14, f"expected the product's full tab set, found {labels}"
+        return labels
+
+    @classmethod
+    def _with_every_shipped_tab(cls, dash):
         """Clone a real tab for each absent label, so the measurement is of the bar's capacity."""
         dash.evaluate(
             """(labels) => {
@@ -8544,7 +8551,7 @@ class TestTheTabBarFitsOneRowOnDesktop:
                    clone.textContent = text;
                    bar.appendChild(clone);
                  }
-               }""", list(TestTheTabBarFitsOneRowOnDesktop.ABSENT))
+               }""", cls._shipped_labels())
 
     def test_every_shipped_tab_sits_on_one_row_at_desktop_widths(self, dash):
         for width in (1280, 1440):
@@ -8566,6 +8573,19 @@ class TestTheTabBarFitsOneRowOnDesktop:
             assert shape["rows"] == 1, (
                 f"{width}px: {shape['n']} tabs wrapped onto {shape['rows']} rows "
                 f"(needed {shape['need']}px, bar has {shape['have']}px)")
+            # THE HEADROOM, not just the pass (review of #256, Cursor finding 2). `rows == 1` is true
+            # with one pixel to spare and true with a hundred, and the difference is whether the next
+            # tab or a renamed label re-breaks the bar. 18px is what this fix left: the widest label
+            # in the product is 165px, so the canary is that ONE more average tab would not fit —
+            # which is the honest statement of where this sits, and the signal that the bar needs a
+            # different shape (a scroller or an overflow menu) rather than another four pixels.
+            spare = shape["have"] - shape["need"]
+            average = shape["need"] / shape["n"]
+            assert spare >= 0, shape
+            assert spare < average, (
+                f"{width}px: {spare}px spare is now more than one average tab ({average:.0f}px) — "
+                "if the bar gained room, this canary is stale and the comment on `.tab` should be "
+                "re-measured rather than the assertion loosened")
 
     def test_the_bar_still_wraps_rather_than_overflowing_at_phone_width(self, dash):
         """The other half of the trade — tightening the padding must not have turned the wrap into a
