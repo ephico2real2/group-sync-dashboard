@@ -18,7 +18,7 @@
 #
 # What this instance does NOT have: the lab's mock cluster — crc.yaml lists it, but its credentials
 # Secret and volume were patched onto the Helm release's Deployment by hand; Argo would strip the
-# patch on every self-heal, so the clusters list is overridden to crc-local alone.
+# patch on every self-heal, so the clusters list is overridden to `dashboard` alone.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -40,7 +40,8 @@ spec:
         - ../../environments/crc.yaml
       valuesObject:
         clusters:
-          - name: crc-local
+          - name: dashboard
+            dashboard_controller: true
             apiUrl: https://kubernetes.default.svc
             tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
             caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt

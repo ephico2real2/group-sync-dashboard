@@ -146,13 +146,14 @@ reporting:
 # ---------------------------------------------------------------------------
 # Clusters the dashboard polls
 # ---------------------------------------------------------------------------
-# crc-local is this cluster (the in-pod ServiceAccount token). The mock OpenShift API server
+# `dashboard` is this cluster and the declared controller (#249). The mock OpenShift API server
 # (local-development/mock-app, Service mock-openshift:6443) is added as a SECOND cluster so the
 # namespace-access report and the P2 multi-dimension selector can be exercised against its fixture
 # namespaces too. Its token + CA live in the mock-cluster-creds Secret, mounted at /etc/gsd/mock by
 # the mock-creds volume (patched onto the Deployment; preserved across `helm upgrade` by 3-way merge).
 clusters:
-  - name: crc-local
+  - name: dashboard
+    dashboard_controller: true
     apiUrl: https://kubernetes.default.svc
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
@@ -169,3 +170,13 @@ clusters:
     visibility: inherit
     identity: same-as-host
 
+
+# The Cluster Configurations tab writes its own Secrets here (#230 S2). ON for the lab at the
+# operator's instruction (2026-09-20): the LDAP account exists on this cluster, is a member of the
+# login-gate group, and its credentials are already on the controller — so a cluster can be
+# onboarded from the GUI rather than by hand. The chart still ships this OFF, a stated exception:
+# it is the decision to let the dashboard mint cluster access.
+clusterConfig:
+  secrets:
+    writes:
+      enabled: true

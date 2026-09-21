@@ -688,11 +688,26 @@ session:
 # API with a token from THAT cluster — needs none of this and is still the recommendation
 # where trust boundaries differ: docs/reference-architecture.md §8a.
 clusters:
-  - name: crc-local
+  - name: dashboard
+    # THIS POD'S OWN CLUSTER (#249). Declared, not inferred from list order: the controller is the
+    # cluster the oauth-proxy authenticates readers against, whose in-cluster Services the Kyverno
+    # breaker URL names, that `identity: same-as-host` and `visibility: inherit` resolve against,
+    # and on which every visibility tier asks its SubjectAccessReview. Before this flag the host was
+    # whichever entry sorted first and was enabled, so alphabetising this list — or disabling the
+    # first entry for a moment — moved all four at once and looked like nothing.
+    #
+    # Exactly one enabled entry may carry it; two refuse the render's config at startup, naming both,
+    # and a declared-but-disabled one is refused too. Omit it entirely and the first enabled entry is
+    # the host, as before, with the fallback said on the page rather than assumed. A Secret-sourced
+    # cluster is remote by definition, so the cluster-Secret parser REFUSES this key by name.
+    dashboard_controller: true
     apiUrl: https://kubernetes.default.svc
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
     enabled: true
+  # Every OTHER cluster is a labelled Secret discovered at runtime (#230), not a stanza here — so
+  # adding one needs no redeploy. A second stanza is still honoured for a cluster whose credential
+  # must come from a file the chart mounts.
 
 # ---------------------------------------------------------------------------
 # ArgoCD / GitOps

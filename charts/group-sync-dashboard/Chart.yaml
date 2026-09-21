@@ -193,7 +193,11 @@ type: application
 # delete to the cluster-secrets Role and clusterSecretsWritesEnabled to the ConfigMap when on.
 # CHART 0.44.1 (2026-09-20), PATCH: appVersion follows the application to 0.30.0. No template or
 # defaults change — the image tag is empty on purpose, so every install now pulls 0.30.0.
-version: 0.44.1
+# CHART 0.45.0 (2026-09-20), MINOR: `clusters[].dashboard_controller` declares this pod's own
+# cluster instead of it being whichever entry sorted first (#249), and the default stanza is renamed
+# `dashboard`. A values file that sets neither keeps working — the first enabled entry is still the
+# host, and the page says the fallback was used.
+version: 0.45.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

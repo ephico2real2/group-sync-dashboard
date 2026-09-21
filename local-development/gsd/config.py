@@ -133,6 +133,13 @@ class ClusterConfig:
     # serves by default — the direction that matters is that it never widens.
     visibility: str | None = None
     identity: str | None = None
+    # THE CONTROLLER (#249): this pod's own cluster — the one the oauth-proxy authenticates readers
+    # against, whose Services the Kyverno breaker URL names, that `same-as-host`/`inherit` resolve
+    # against, and on which the visibility tiers ask their SubjectAccessReviews. Declared rather than
+    # inferred from list order: alphabetising `clusters[]`, or disabling the first entry for a
+    # moment, used to move all four silently. A values concept only — a Secret-sourced cluster is by
+    # definition remote, and the parser refuses the key there.
+    dashboard_controller: bool = False
     # A Secret-sourced cluster (docs/specs/SPEC_S1_cluster_secrets.md): the credential lives in the
     # process's memory, read from the Secret each discovery — never on disk, never in a repr, never
     # compared (two configs that differ only by a rotated token are the same cluster).
@@ -648,9 +655,24 @@ class Settings:
         return None
 
     def host_cluster(self) -> ClusterConfig | None:
-        """The cluster the oauth-proxy authenticates against: the FIRST enabled entry, which is
-        the one the chart writes for the pod's own cluster (values.yaml `clusters[0]`)."""
-        return next((c for c in self.clusters if c.enabled), None)
+        """The cluster the oauth-proxy authenticates against, `same-as-host`/`inherit` resolve
+        against, the Kyverno breaker is scraped from, and the visibility tiers ask their SARs on.
+
+        DECLARED, not inferred (#249): the entry carrying `dashboard_controller: true`. Falling back
+        to the first enabled entry keeps an existing install working, and `controller_is_declared`
+        says which happened so the page and the startup log can name it — position was load-bearing
+        and invisible, and alphabetising the list moved all four of the things above at once.
+        `load_settings` refuses two declared controllers and a declared-but-disabled one, so this
+        cannot pick between rivals.
+        """
+        return (next((c for c in self.clusters if c.enabled and c.dashboard_controller), None)
+                or next((c for c in self.clusters if c.enabled), None))
+
+    @property
+    def controller_is_declared(self) -> bool:
+        """True when an entry carries `dashboard_controller: true`; False when the host is the first
+        enabled entry by fallback. Surfaced so "inferred-from-order" is visible rather than assumed."""
+        return any(c.enabled and c.dashboard_controller for c in self.clusters)
 
     def cluster_policy(self, name: str) -> tuple[str, str]:
         """(visibility, identity) for one cluster id, defaults resolved.
@@ -1169,6 +1191,7 @@ def load_settings(path: str | Path) -> Settings:
         "enabled",
         "visibility",
         "identity",
+        "dashboard_controller",
     }
 
     clusters: list[ClusterConfig] = []
@@ -1249,6 +1272,13 @@ def load_settings(path: str | Path) -> Settings:
                 f"clusters share an identity provider"
             )
 
+        controller = entry.get("dashboard_controller", False)
+        if not isinstance(controller, bool):
+            raise ConfigError(f"{where}: dashboard_controller must be true or false, not {controller!r}")
+        if controller and not enabled:
+            raise ConfigError(f"{where}: {name!r} is the dashboard_controller but enabled is false — "
+                              "the controller is this pod's own cluster and cannot be disabled")
+
         clusters.append(
             ClusterConfig(
                 name=name,
@@ -1260,8 +1290,14 @@ def load_settings(path: str | Path) -> Settings:
                 enabled=enabled,
                 visibility=visibility,
                 identity=identity,
+                dashboard_controller=controller,
             )
         )
+
+    declared = [c.name for c in clusters if c.dashboard_controller]
+    if len(declared) > 1:
+        raise ConfigError(f"{path}: {len(declared)} clusters declare dashboard_controller ({', '.join(declared)}) — "
+                          "exactly one entry is this pod's own cluster")
 
     admin_sar = _visibility_sar_setting(raw)
     usage_admin_sar = _usage_visibility_sar_setting(raw)
