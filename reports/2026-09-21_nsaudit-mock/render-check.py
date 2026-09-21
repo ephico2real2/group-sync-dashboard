@@ -353,6 +353,92 @@ def contrast(page, theme):
     return rows
 
 
+# ── The contract check ────────────────────────────────────────────────────────────────────────
+# The one risk this whole exercise exists to avoid: `docs/design/tab-feature-contract.md` was
+# written because an earlier pass "reduced these pages to headline + KPIs + a table, and in doing
+# so deleted most of their value". Each entry is the distinctive clause of one caveat the live
+# page carries (measured into docs/design/nsaudit-feature-capture.md). A caveat behind a
+# disclosure still counts — the states below are driven — but one that renders in no state at all
+# is a caveat that was deleted, which is what this asserts.
+CAVEATS = {
+    "riskTier ranks on privilege, not count": "not by count",
+    "riskTier: one forgotten cluster-admin": "one forgotten cluster-admin matters more than twenty",
+    "WHO_PREVIEW: the names are corroboration": "the names are corroboration",
+    "WHO_PREVIEW: why the roster is bounded": "would decide the width of the whole table",
+    "the KPIs come from the rollup": "never pages and never filters",
+    "the double-count the union avoids": "the sum says 11 where the truth is 8",
+    "the platform exclusion, stated": "break-glass and cluster-internal, with nowhere to migrate to",
+    "why 1 — offboarding does not revoke it": "keeps granting after they leave the team",
+    "why 2 — invisible to access review": "a clean review can coexist with standing access nobody approved",
+    "why 3 — no approval trail": "records only who ran",
+    "runbook: work top-down": "the table above is already in the order to do it in",
+    "runbook: wait one sync": "deleting first leaves them locked out",
+    "runbook: the operational goal": "operational goal:",
+    "runbook: clean is clean": "an access review that reads clean",
+    "the flat list is collapsed on purpose": "costs time nobody gets value from",
+    "the flat list is not the view to work from": "the per-namespace table above is the view to work from",
+    "truncation: ranked below, not hidden": "they are ranked below these",
+    "the namespace filter is server-side": "server-side",
+    "namespaces: not only those with a grant": "not only those with a grant",
+    "namespaces: the third drill-down": "the third drill-down beside groups and users",
+    "namespaces: zero in both": "a namespace with zero in both is a result an access review wants to confirm",
+    "namespaces: the filter is hiding them": "the filter is hiding them",
+    "namespaces: a refused read cannot attest absence": "cannot attest absence",
+    "self: no wide aggregate is recomputed": "none of the wide view's aggregates",
+    "self: says nothing about other accounts": "says nothing about whether other accounts hold direct grants",
+    "self: a direct grant survives offboarding": "a direct grant survives offboarding",
+    "self: your view, not the cluster": "that is your view, not the cluster",
+    "refusal: withheld, not empty": "withheld, not empty",
+    "refusal: for administrators only": "for administrators only",
+    "namespace refusal: deliberately indistinguishable": "deliberately indistinguishable",
+    "detail: outside the naming convention": "outside the naming convention",
+    "detail: the answer the triangle exists for": "the answer the triangle exists for",
+    "detail: the goal for this card is zero": "the operational goal for this card is zero",
+    "detail: virtual groups hold no person": "authorise access but hold no person",
+    "detail: zero in both could never happen": "could never happen",
+    "detail: retention cut it, nothing else": "does not mean nothing happened before",
+    "detail: no change recorded since watching began": "no binding change recorded here",
+    "the zero state: offboarding is one action": "that is what makes offboarding a single action",
+    "loading is a real state": "loading",
+    "export says what it downloads": "never more than the server served you",
+}
+
+
+def caveats(page):
+    """Collect the page's text across every state it has, then assert every caveat survives."""
+    import re
+    texts = []
+    grab = lambda: texts.append(page.evaluate("() => document.body.innerText"))
+    # Set the disclosure state, never toggle it: drive() has already opened these, and a click
+    # here would close them — which is how this sweep first reported two caveats missing that
+    # were on the page the whole time.
+    page.evaluate("""() => { MOCK.view.ns = null; MOCK.view.tier = 'admin';
+        MOCK.view.countsOpen = true; MOCK.view.grantsOpen = true; MOCK.render(); }""")
+    page.wait_for_timeout(250)
+    grab()
+    page.select_option("#ns-pick", "legacy-payments"); page.wait_for_timeout(250); grab()
+    page.click("#ns-pick-clear"); page.wait_for_timeout(200)
+    page.fill("#f-ns-search", "zzzz"); page.wait_for_timeout(250); grab()
+    page.fill("#f-ns-search", ""); page.wait_for_timeout(200)
+    for tier in ("self-jdoe", "self-alice", "withheld"):
+        page.select_option("#f-tier", tier); page.wait_for_timeout(250); grab()
+    page.select_option("#f-tier", "admin"); page.wait_for_timeout(250)
+    for ns in ("legacy-payments", "demo-prod"):
+        page.evaluate("(n) => { MOCK.view.ns = n; MOCK.view.wideOpen = true; MOCK.view.platformOpen = true; MOCK.render(); }", ns)
+        page.wait_for_timeout(250); grab()
+    page.evaluate("() => { MOCK.view.ns = null; MOCK.render(); }"); page.wait_for_timeout(200)
+    # Titles too: the export buttons carry their honesty sentence as a tooltip, which innerText omits.
+    texts.append(page.evaluate("() => [...document.querySelectorAll('[title]')].map(e => e.title).join(' || ')"))
+    blob = re.sub(r"\s+", " ", " ".join(texts)).strip().lower()
+    missing = [k for k, v in CAVEATS.items() if re.sub(r"\s+", " ", v).strip().lower() not in blob]
+    for k in CAVEATS:
+        if k in missing:
+            check(f"caveat kept — {k}", CAVEATS[k], ok=False)
+    check(f"every one of the {len(CAVEATS)} caveats the live page carries is reachable here",
+          len(CAVEATS) - len(missing), len(CAVEATS))
+    note("states swept for caveats", len(texts))
+
+
 def main():
     print(f"mock: {MOCK}\n")
     with sync_playwright() as p:
@@ -364,6 +450,7 @@ def main():
         page.on("console", lambda m: console.append(m.type + ": " + m.text) if m.type in ("error", "warning") else None)
         page.goto(URL, wait_until="load"); page.wait_for_timeout(600)
         drive(page)
+        caveats(page)
         widths(page)
         contrast(page, None)
         contrast(page, "dark")

@@ -1278,6 +1278,24 @@ function shapesCard() {
       <p class="note mt-5">Measured: <code>GET …/namespaces/legacy-payments</code> as
         <code>jeff</code> answers <strong>403</strong> — <code>${esc(LAB.self.detailRefusal)}</code>.</p></div>
 
+    <div class="shape-ex"><span class="lbl">Shape — the namespace read was refused</span>
+      <div class="trunc">The namespace read was refused (4m ago), so this list cannot attest absence — a
+        namespace missing here may exist. Grant namespaces [get,list] (chart:
+        <code>rbac.namespaces</code>).</div>
+      <p class="note mt-5">The poller can lose <code>namespaces [get,list]</code> without losing anything
+        else, and the list then goes quiet rather than empty. This cluster answers
+        <code>source.state: ok</code>, so the note never renders here — and a list that cannot attest
+        absence while looking complete is the worst thing this page could do.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — a namespace nothing has happened to</span>
+      <section class="card"><h3>History <span class="count">· 0</span></h3>
+        <p class="empty-note">No binding change recorded here since this dashboard started watching.</p>
+      </section>
+      <p class="note mt-5">Every namespace captured here has changes — all of them <em>first observed</em>,
+        because the store was seeded on 2026-09-20 and nothing has been granted or revoked since. The
+        sentence matters because it says <strong>since this dashboard started watching</strong>: an empty
+        history is not evidence that nothing ever happened.</p></div>
+
     <div class="shape-ex"><span class="lbl">Shape — loading</span>
       <section class="card"><p class="empty-note">Loading…</p></section>
       <p class="note mt-5">Loading is a real state: the page fails closed rather than

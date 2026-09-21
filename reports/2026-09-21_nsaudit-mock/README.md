@@ -40,8 +40,19 @@ every geometry assertion is computed over the whole document in the browser.
 local-development/.venv/bin/python reports/2026-09-21_nsaudit-mock/render-check.py
 ```
 
-106 checks, all passing. What it caught while the mock was being built, none of which `node --check`
-can see:
+107 checks, all passing. The last of them is the one that matters most: **every one of the 40 caveats
+the live page carries is reachable in the mock**, asserted across nine driven states (the four tiers,
+the filtered and unfiltered flat list, a search that matches nothing, and two namespace pages) plus the
+`title` attributes, because the export buttons carry their honesty sentence as a tooltip. A caveat
+behind a disclosure counts — the disclosures are opened — and one that renders in no state at all does
+not. That check found two caveats whose branch the lab never produces (a refused namespace read, a
+namespace with no recorded change); both are drawn as labelled shapes rather than left in the code
+where no reader would meet them.
+
+It also found a bug in itself: the sweep first reported two caveats missing because it *toggled* the
+disclosures that the drive step had already opened, closing them. It sets the state explicitly now.
+
+What it caught while the mock was being built, none of which `node --check` can see:
 
 | found | fix |
 |---|---|
