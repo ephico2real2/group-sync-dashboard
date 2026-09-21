@@ -254,6 +254,8 @@ with no memory of how it got there. Applying the same values file twice changes 
 a half-connected estate finishes the job. That is the property automation needs, and the reason a
 crashed pod mid-connect is not a broken cluster.
 
+Drawn as flow 5 of `docs/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
+
 ### 8.1 Ownership — only what we made, the way Argo tracks it
 
 Argo CD marks every resource it manages with an `argocd.argoproj.io/tracking-id` annotation — now its
@@ -283,11 +285,19 @@ without it "reconcile" would eventually mean "delete the operator's own work".
 | a stanza is **removed** | the derived Secret is deleted and the cluster retires (#96) — it leaves the UI and keeps its history |
 | a derived Secret is **deleted by hand** | re-created next cycle from the declaration. The file is the record; deleting the output does not undeclare the cluster |
 | a derived Secret is **edited by hand** | the declared fields are restored, and the edit is reported as drift on the tab — the same answer Argo gives, for the same reason |
-| an **unowned** Secret names a declared cluster | a **finding** (`cluster-declared-twice`), naming both sources. The declaration wins for polling; the Secret is left untouched, because we did not make it |
+| an **unowned** Secret names a declared cluster | today's rule stands, unchanged: **the Secret shadows the values entry and wins**, with the existing `shadows-values-entry` finding (`gsd/clusterconfig/reader.py`) and its existing action — *"edit the Secret, or delete it to fall back to the values entry"*. The reconciler **stands down**: it does not connect, does not overwrite and does not delete. A human's credential is in force and the tab says so |
 
 The removal row is the one that earns the design. A cluster deleted from the file but left polling from
 an orphaned Secret is the failure this project has already met once — a set-change that displaces objects
 without pruning them leaves them running, and only a matching owner marker makes the cleanup safe.
+
+**Shadowing is not a conflict — it is the mechanism.** A Secret already wins over a values entry of the
+same name (`gsd/config.py`, `gsd/clusterconfig/registry.py`: *a Secret shadows a values entry*), and that
+is exactly how a lookup delivers its result: the stanza declares the intent, the derived Secret carries
+the credential, and the merged view polls the Secret. The only case needing a new rule is the *unowned*
+shadow in the last row, and the rule there is to leave it alone. This spec adds **no** new precedence and
+**no** new finding code for it — `shadows-values-entry` already exists, and inventing a second id for one
+situation is the divergence §4.1 exists to prevent.
 
 ### 8.3 Renewal — the way Kubernetes does it
 
@@ -324,6 +334,8 @@ perfectly current while the token inside it no longer opens anything. The dashbo
 exactly this (`gsd/poller.py`, #245): every failure carries a `phase=`, an `outcome=` and an `action=`
 telling a human what to fix. Credential reconciliation is the step that stops waiting for the human on
 the subset the dashboard can fix by itself.
+
+Drawn as flow 6 of `docs/DESIGN_cluster_connection_flows.md`, in mermaid and in ASCII.
 
 ### 9.1 The poll is the probe
 
@@ -390,7 +402,7 @@ locking the account.
 - **S3b** — the onboarding sequence and its findings, behind #119 P2's provider; `oauthTrust` and its
   three modes; the annotations on the written Secret.
 - **S3d** — the reconciler (§8 and §9): credential recovery, the lockout guard, the self-check, and the ownership annotations, the seven transitions, drift reporting,
-  the 80 % renewal trigger and the `cluster-declared-twice` finding. It is its own step because it is
+  the 80 % renewal trigger, and standing down on an unowned shadow. It is its own step because it is
   the only one that DELETES, and a deleting loop earns its own review and its own acceptance run.
 - **S3c** — the tab: the mode per cluster, the credential's provenance, the token's source and
   expiry wording (`expires: current` for a declared Secret, a real date for a minted one — #248), and

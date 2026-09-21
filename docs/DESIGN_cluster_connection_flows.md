@@ -369,6 +369,115 @@ flowchart TD
 
 ---
 
+## 5. The reconcile loop — declaration against derived Secret
+
+Specified in `docs/specs/SPEC_S3_connection_modes.md` §8. The loop is **level-triggered**: every
+discovery cycle it compares what the values file declares against what exists, with no memory of how
+things got that way. It writes and deletes **only** Secrets carrying its own ownership annotations,
+the way Argo CD prunes only what carries its tracking annotation.
+
+```mermaid
+flowchart TD
+    A["Every discovery cycle<br/>the declared clusters and the discovered Secrets"] --> B{"Stanza declares<br/>a connection mode?"}
+    B -- "no" --> BN["Nothing to reconcile<br/>a credential was supplied, or none was asked for"]
+    B -- "yes" --> C{"A Secret already<br/>carries this name?"}
+    C -- "no" --> CN["Connect, then WRITE the derived Secret<br/>managed-by=cluster-stanza<br/>source-cluster=this name"]
+    C -- "yes" --> D{"Does it carry<br/>managed-by=cluster-stanza?"}
+    D -- "no" --> DN["STAND DOWN<br/>finding shadows-values-entry<br/>a human's Secret wins and is never touched"]
+    D -- "yes" --> E{"Does it match<br/>what the stanza declares?"}
+    E -- "no" --> EN["Rewrite the declared fields in place<br/>the edit is reported as drift"]
+    E -- "yes" --> F{"Token past<br/>80 percent of its life?"}
+    F -- "yes" --> FN["Remint and rewrite<br/>before it expires, never after a failure"]
+    F -- "no" --> FO["Leave it alone"]
+    G["A stanza was REMOVED"] --> H{"Its Secret carries<br/>managed-by=cluster-stanza?"}
+    H -- "yes" --> HY["DELETE it and retire the cluster<br/>it leaves the UI and keeps its history"]
+    H -- "no" --> HN["Leave it<br/>we did not make it"]
+```
+
+```text
+  every discovery cycle
+          │
+  stanza declares a mode? ──no──► nothing to reconcile
+          │ yes
+  a Secret with this name? ──no──► CONNECT, then WRITE it
+          │ yes                    managed-by=cluster-stanza
+          │                        source-cluster=<the name>
+  is it OURS?
+  managed-by=cluster-stanza
+          │
+     no ──┴── yes
+     │         │
+  STAND DOWN   matches the declaration? ──no──► rewrite declared fields
+  finding:            │ yes                     drift reported on the tab
+  shadows-values-     │
+  entry         token past 80% of life? ──yes──► REMINT and rewrite
+  (a human's          │ no                      before expiry, not after failure
+  Secret wins;        │
+  never touched)   leave it alone
+
+
+  a stanza was REMOVED
+          │
+  its Secret is ours? ──no──► leave it (we did not make it)
+          │ yes
+  DELETE it, retire the cluster, keep its history
+```
+
+## 6. Credential reconciliation — the credential still WORKS, not merely exists
+
+Specified in `docs/specs/SPEC_S3_connection_modes.md` §9. A Secret can exist, parse and be perfectly
+current while the token inside it opens nothing. The poll itself is the probe, and the outcome codes
+are the ones `gsd/kube.py` already emits.
+
+```mermaid
+flowchart TD
+    A["A poll failed"] --> B{"outcome"}
+    B -- "unreachable" --> U["No credential action<br/>DNS, routing or the endpoint moved<br/>reminting cannot help an unreachable cluster"]
+    B -- "forbidden" --> F["NEVER remint<br/>the token is valid, the RBAC is not<br/>a new token has identical permissions<br/>name the missing grant"]
+    B -- "cert-verify-failed" --> V{"Ours?"}
+    V -- "yes" --> VY["Re-read ca.crt beside the token<br/>a rotated cluster CA is the common cause"]
+    V -- "no" --> VN["Report: fix the CA this cluster points at"]
+    B -- "auth_failed" --> C{"Ours?"}
+    C -- "no" --> CN["Report only<br/>the token is invalid or expired:<br/>rotate it in this cluster's Secret"]
+    C -- "yes" --> CY["Re-read the declared token Secret"]
+    CY --> D{"Present and valid?"}
+    D -- "yes" --> DY["Rewrite the derived Secret<br/>recorded as a RECOVERY, not an incident"]
+    D -- "no" --> DN["Remint, then rewrite"]
+    DN --> E{"Did the bind fail?"}
+    E -- "refused" --> ER["STOP. One attempt only.<br/>finding login-refused, quoting the server<br/>suspend this CREDENTIAL everywhere"]
+    E -- "transient" --> ET["Back off exponentially to a ceiling<br/>then give up out loud"]
+```
+
+```text
+  a poll failed
+       │
+   outcome?
+       │
+   ┌───┴──────────────┬───────────────────┬────────────────────┐
+   │                  │                   │                    │
+ unreachable      forbidden        cert-verify-failed      auth_failed
+   │                  │                   │                    │
+ no credential   NEVER remint          ours? ──no──► report   ours? ──no──► report only
+ action at all   token is VALID,         │ yes                  │ yes       "rotate it in
+ (DNS, routing,  the RBAC is not      re-read ca.crt            │            this cluster's
+ endpoint moved) name the missing     beside the token    re-read the         Secret"
+                 grant                                    declared token
+                                                          Secret
+                                                               │
+                                                     present? ─┴─ no ──► REMINT
+                                                        │ yes              │
+                                                   rewrite it        bind refused? ──yes──► STOP
+                                                   RECOVERY,               │               one attempt,
+                                                   not an incident      transient          login-refused,
+                                                                           │               credential
+                                                                   back off to a ceiling,  suspended
+                                                                   then give up out loud   everywhere
+```
+
+**Why the loop is bounded, in one line:** the bootstrap account is one account for the whole fleet, so
+a per-cluster retry of a stale password locks it within minutes and turns one broken cluster into a
+broken estate. Back off per **credential**, never per cluster.
+
 ## Reading the log against these pictures
 
 ```text
