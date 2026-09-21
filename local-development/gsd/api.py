@@ -28,7 +28,8 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
-from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
+from .home import (HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes,
+                   is_platform_namespace)
 from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
@@ -2145,6 +2146,15 @@ def build_app(
         # explains the one case where they differ (review of #167, pass 2, Codex).
         cluster_wide_path = bool(wide["via_groups"] or wide["cluster_wide_grants"])
         rows = store.namespaces(cluster_id, user_name=me, groups=groups, every=cluster_wide_path)
+        # PLATFORM, decided here rather than in the store (#257): it is a judgement about a name, not
+        # a fact the poller read, and `home.py` already decides it the same way at this layer. The row
+        # carries the answer and the envelope carries the count, so the page can hide them by default
+        # AND say how many it hid — the rule this page already keeps for platform identities in the
+        # grant counts (`excluded_platform`). A hidden row stays in `namespaces`: it is filtered on the
+        # page, never dropped from the payload, so export, search and the drill still reach it.
+        for row in rows:
+            row["platform"] = is_platform_namespace(row["name"])
+        platform = [r for r in rows if r["platform"]]
         source = store.namespaces_source(cluster_id)
         return {
             "cluster": cluster_id,
@@ -2153,6 +2163,11 @@ def build_app(
             "source": {"state": source["state"], "observed_at": source["observed_at"]} if source else None,
             "label_keys": list(settings.namespace_metadata_labels),
             "count": len(rows),
+            "platform_count": len(platform),
+            # The one case where hiding a namespace costs the reader something: it had a finding.
+            # "67 hidden" is noise removed; "67 hidden, 1 of them with a finding" is a different
+            # sentence, and the page must be able to say it without the reader toggling to find out.
+            "platform_with_findings": len([r for r in platform if r.get("direct_grants")]),
             "cluster_wide_groups": cluster_wide_groups,
             "cluster_wide_grants": cluster_wide_grants,
             "cluster_wide_path": cluster_wide_path,
