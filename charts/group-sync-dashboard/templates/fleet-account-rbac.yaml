@@ -1,0 +1,105 @@
+{{- /*
+Lets the DASHBOARD retrieve ONE Secret — the fleet account's password (SPEC_S3 §3.1, #248) — from
+wherever the operator put it: this release's namespace, or another one such as `openshift-config`,
+where a cluster's LDAP bind password already sits.
+
+TWO IDENTITIES, TWO JOBS, AND NEITHER IS GIVEN ANYTHING ON THE OTHER SIDE. The LDAP account named by
+`fleetAccount.username` authenticates to the REMOTE cluster and reads the permanent ServiceAccount
+token that already exists there, which it may do because the estate granted it that access by design.
+The dashboard's OWN ServiceAccount then writes the result into this release's namespace as
+`gsd-cluster-<name>` (that write is `clusterConfig.secrets.writes.enabled`, a separate grant).
+
+So the only thing the dashboard needs locally in order to BE the LDAP account is its password — this
+grant, `get` on one Secret. The LDAP account is never given anything on this cluster, and the
+dashboard's ServiceAccount is never given anything on the remote one.
+
+THE SCOPE IS THE POINT. `get` on a single Secret named by `resourceNames`, and nothing else:
+
+  - never `list` or `watch`: `resourceNames` cannot restrict a collection verb, so a list grant here
+    would hand the dashboard every Secret in that namespace. `get` by name is all a connect-time read
+    needs.
+  - never a ClusterRole: the same reasoning cluster-secrets-rbac.yaml records — `secrets` cluster-wide
+    would hand the dashboard every credential on the cluster.
+  - rendered only when a fleet account is actually in use, so a default install renders nothing.
+
+A namespace other than this release's means writing a Role and RoleBinding into a namespace this
+chart does not own. That is a real privilege question for whoever installs: `rbac.create: false`
+turns it off, and a cluster administrator applies the same two objects once.
+
+It is also temporary by design. Once a replicator (Kyverno) copies the Secret into this release's
+namespace, clearing `passwordSecret.namespace` re-renders this grant against the local copy and the
+cross-namespace Role is pruned — same template, same key, no code change.
+*/ -}}
+{{- $fleet := (.Values.clusterConfig).fleetAccount | default dict }}
+{{- $ps := $fleet.passwordSecret | default dict }}
+{{- $rbac := $ps.rbac | default dict }}
+{{- /* In use when the chart names an account, or any cluster stanza declares a connection mode —
+       a stanza's ldapConnectionBootstrap names the username but the password is still this one. */ -}}
+{{- $inUse := not (empty ($fleet.username | default "")) }}
+{{- range .Values.clusters }}
+  {{- /* SKIP A NON-ENTRY RATHER THAN DEREFERENCE IT. Helm pads a list index set beyond the list's
+         length with null, so `clusters[0]` can be nil; `gsd.validateClusters` refuses that BY NAME
+         ("clusters[0] is not a cluster entry"), and reaching into it here would abort the render
+         with a nil-pointer first — replacing a diagnosis with a stack trace. */ -}}
+  {{- if kindIs "map" . }}
+    {{- if or .saTokenLookup .userSelfLogin }}{{- $inUse = true }}{{- end }}
+  {{- end }}
+{{- end }}
+{{- /* A WORD, NOT TRUTHINESS. `$rbac.create | default true` returns TRUE for an explicit `false`,
+       because Helm's `default` treats false as empty — an opt-out that silently does not opt out.
+       The same trap `enabled: "false"` fell into on a cluster stanza; read it the same way. */ -}}
+{{- $create := true }}
+{{- if hasKey $rbac "create" }}
+  {{- $raw := $rbac.create }}
+  {{- if kindIs "bool" $raw }}{{- $create = $raw }}
+  {{- else if eq (toString $raw) "true" }}{{- $create = true }}
+  {{- else if eq (toString $raw) "false" }}{{- $create = false }}
+  {{- else }}{{- fail (printf "clusterConfig.fleetAccount.passwordSecret.rbac.create must be true or false, not %q" (toString $raw)) }}{{- end }}
+{{- end }}
+{{- if and $inUse $create }}
+{{- $ns := $ps.namespace | default "" }}
+{{- $target := ternary .Release.Namespace $ns (empty $ns) }}
+{{- if empty ($ps.name | default "") }}
+{{- fail "clusterConfig.fleetAccount.passwordSecret.name is empty, but a connection mode is in use. The dashboard has to be told WHICH Secret holds the fleet account's password before it can be granted access to it." }}
+{{- end }}
+{{- if empty ($ps.key | default "") }}
+{{- fail (printf "clusterConfig.fleetAccount.passwordSecret.key is empty for Secret %q. Name the key that holds the password (for an OpenShift LDAP bind Secret it is usually `bindPassword`)." $ps.name) }}
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "gsd.fullname" . }}-fleet-account
+  namespace: {{ $target }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fleet-account
+  annotations:
+    # Says what this grant is for, in the namespace where someone will find it and wonder.
+    groupsync-dashboard.io/purpose: >-
+      read the fleet account's password at connect time (SPEC_S3 §3.1); granted to
+      {{ include "gsd.serviceAccountName" . }} in {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    # get only, and only this Secret. `list` is deliberately absent: resourceNames does not restrict
+    # it, so listing would expose every Secret in {{ $target }}.
+    resourceNames: [{{ $ps.name | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "gsd.fullname" . }}-fleet-account
+  namespace: {{ $target }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fleet-account
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "gsd.fullname" . }}-fleet-account
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gsd.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

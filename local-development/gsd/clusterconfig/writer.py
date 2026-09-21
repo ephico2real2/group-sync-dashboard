@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass, field
 
 from ..config import ClusterConfig
+from ..config import CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
 from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
 from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
 from .events import event
@@ -32,6 +33,31 @@ log = logging.getLogger(__name__)
 SECRET_NAME_PREFIX = "gsd-cluster-"
 MANAGED_BY_ANNOTATION = "groupsync-dashboard.io/managed-by"
 MANAGED_BY_UI = "ui"
+#: PROVENANCE, NOT CONFIGURATION (SPEC_S3 §5.1). A bearer token is opaque: nothing in it says where it
+#: came from or what to rotate when it must change. These three answer that, on the tab and in a
+#: support ticket. They are ignored by the parser and by the poll — they exist for the human, and for
+#: S3d, which may only refresh or delete what this dashboard made (§8.1).
+TOKEN_SOURCE_ANNOTATION = "groupsync-dashboard.io/token-source"
+SOURCE_NAMESPACE_ANNOTATION = "groupsync-dashboard.io/source-namespace"
+SOURCE_SERVICE_ACCOUNT_ANNOTATION = "groupsync-dashboard.io/source-service-account"
+#: How the credential was obtained. `managed-by` says WHO created the Secret; this says HOW the
+#: credential in it was got — the two are orthogonal and a retriever sets both.
+#:
+#: NOT A SECOND VOCABULARY. The value IS the `credential_kind` the declaring mode resolves to, so the
+#: chain is one thing end to end: `saTokenLookup: true` -> `ClusterConfig.credential_kind` ->
+#: `"lookup"` -> this annotation. Defining "lookup" again here would be two constants that happen to
+#: be equal today, and the tab would disagree with the Secret the first time one of them moved.
+#: The two differ in what they LEAVE BEHIND, which is why a reader of the Secret needs to be told
+#: which one made it:
+#:   lookup     — log in as the fleet account, read the target ServiceAccount's PERMANENT token and
+#:                store it. The credential outlives the login; the tab says `expires: current`,
+#:                because it is invalidated by deleting its Secret rather than by a clock (#248).
+#:   self-login — no retrieval at all: the dashboard polls AS the LDAP account, on its own session.
+#:                The credential IS the login, so it expires on the target's own terms (§3.2,
+#:                `accessTokenMaxAgeSeconds`, 24 h by default), the tab shows a real date, and
+#:                renewal is not optional. It is also the mode where nothing long-lived is at rest.
+TOKEN_SOURCE_LOOKUP = CREDENTIAL_LOOKUP          # saTokenLookup
+TOKEN_SOURCE_SELF_LOGIN = CREDENTIAL_SELF_LOGIN  # userSelfLogin
 LABEL_DOMAIN = "groupsync-dashboard.io/"
 TLS_MODES = ("caData", "trustedBundle", "insecure")
 # Kubernetes' label syntax (metav1 validation): a key is an optional DNS-subdomain prefix (≤ 253) and a
@@ -73,6 +99,18 @@ class CreateRequest:
     visibility: str = "self-only"
     identity: str = "none"
     labels: dict[str, str] = field(default_factory=dict)
+    #: Written as the WORD "true"/"false", which is how the parser reads it back
+    #: (`data.enabled` unset means true; anything but those two words is a finding). Default true:
+    #: a cluster is created because someone means to poll it.
+    enabled: bool = True
+    #: Who created the Secret. `ui` for the tab's form; a retriever names itself, so a machine-written
+    #: Secret does not claim a person made it.
+    managed_by: str = MANAGED_BY_UI
+    #: Provenance — the rotation address. Omitted entirely when unset, so a hand-made Secret and a
+    #: UI-written one carry no empty markers for S3d to misread as ownership.
+    token_source: str | None = None
+    source_namespace: str | None = None
+    source_service_account: str | None = None
 
 
 def secret_name_for(cluster: str) -> str:
@@ -91,15 +129,25 @@ def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -
     else:
         config["bearerToken"] = "<redacted>" if redact else (req.token or "").strip()   # as validate and rotate read it
     labels = {SECRET_TYPE_LABEL: SECRET_TYPE_CLUSTER, **{str(k): str(v) for k, v in (req.labels or {}).items()}}
+    # Built the way `labels` is, rather than a fixed dict: a retriever records where it got the token
+    # (SPEC_S3 §5.1). An unset marker is OMITTED, never written empty — S3d reads these to decide what
+    # it owns, and an empty string is not an answer.
+    annotations = {MANAGED_BY_ANNOTATION: req.managed_by}
+    for key, value in ((TOKEN_SOURCE_ANNOTATION, req.token_source),
+                       (SOURCE_NAMESPACE_ANNOTATION, req.source_namespace),
+                       (SOURCE_SERVICE_ACCOUNT_ANNOTATION, req.source_service_account)):
+        if value:
+            annotations[key] = str(value)
     return {
         "apiVersion": "v1", "kind": "Secret",
         "metadata": {"name": secret_name_for(req.name), "namespace": namespace, "labels": labels,
-                     "annotations": {MANAGED_BY_ANNOTATION: MANAGED_BY_UI}},
+                     "annotations": annotations},
         "type": "Opaque",
         # Compact separators: the page's twin is JSON.stringify under a `|-` block, and the promise is that
         # the two Secrets are equal BYTE FOR BYTE, `config` included — not merely equal once parsed.
         "stringData": {"name": req.name, "server": req.server, "config": json.dumps(config, separators=(",", ":")),
-                       "visibility": req.visibility, "identity": req.identity, "enabled": "true"},
+                       "visibility": req.visibility, "identity": req.identity,
+                       "enabled": "true" if req.enabled else "false"},
     }
 
 
@@ -300,5 +348,7 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
 
 
 __all__ = ["CreateRequest", "WriteRefused", "WriteFailed", "SECRET_NAME_PREFIX", "MANAGED_BY_ANNOTATION",
+           "TOKEN_SOURCE_ANNOTATION", "SOURCE_NAMESPACE_ANNOTATION", "SOURCE_SERVICE_ACCOUNT_ANNOTATION",
+           "TOKEN_SOURCE_LOOKUP", "TOKEN_SOURCE_SELF_LOGIN",
            "TLS_MODES", "OAUTH_NOT_BUILT", "secret_object", "secret_name_for", "validate", "create", "rotate",
            "delete", "test_connection", "AUTH_FAILED", "UNREACHABLE"]
