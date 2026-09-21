@@ -4622,6 +4622,49 @@ class TestHomeSkipsTheUnchangedPoll:
             "an automatic poll of an unchanged store repainted Home; the slots that moved:\n  " + "\n  ".join(_moved_slots(p, before))
 
 
+class TestAnAlertsInstantRendersInTheConfiguredZone:
+    """#271 put the absolute stamp into an alert's detail, because a live age recomputed per request
+    defeats the unchanged-poll repaint skip. The operator's requirement on top of that: it must match
+    the timezone the deployment is set to, as every other timestamp on this page does.
+
+    The division: the SERVER states the instant (stable, so the fingerprint still matches, and it is
+    the stamp a reader quotes), the PAGE presents it in the configured zone. It has to be the page —
+    the zone abbreviation depends on the instant (EST in January, EDT in July), so a zone stamped
+    once server-side mislabels everything across a DST boundary.
+    """
+
+    RAW = "last sync at 2026-09-21T12:00:00Z, schedule '0 * * * *' — stopped"
+
+    def test_the_helper_localises_an_instant_and_leaves_the_rest_alone(self, dash):
+        out = dash.evaluate("(t) => { setDisplayZone({name: 'America/Chicago', abbrev: 'CDT'}); "
+                            "return withLocalInstants(esc(t)); }", self.RAW)
+        assert "2026-09-21T12:00:00Z" not in out, out      # the raw UTC form is gone
+        assert "2026-09-21 07:00:00 CDT" in out, out        # noon UTC is 07:00 CDT
+        assert "schedule &#39;0 * * * *&#39; — stopped" in out, "the rest of the sentence is untouched, still escaped"
+
+    def test_utc_still_says_so_rather_than_dropping_the_marker(self, dash):
+        out = dash.evaluate("(t) => { setDisplayZone(null); return withLocalInstants(esc(t)); }", self.RAW)
+        assert "2026-09-21 12:00:00Z" in out, out
+        assert "T" not in out.split(",")[0], "the T separator is replaced, so it reads as a time not an id"
+
+    def test_a_run_id_is_not_mistaken_for_an_instant(self, dash):
+        # run ids carry a stamp with no dashes or colons; converting one would corrupt a filename
+        rid = "20260921T171114.745714Z-058e"
+        out = dash.evaluate("(t) => { setDisplayZone({name: 'America/Chicago', abbrev: 'CDT'}); "
+                            "return withLocalInstants(esc(t)); }", f"run {rid} failed")
+        assert rid in out, out
+
+    def test_the_rendered_alert_row_carries_no_raw_utc_stamp(self, dash):
+        # the seeded overdue CR reaches the Overview's alerts card; whatever zone the deployment is
+        # set to, the reader must not be shown the wire format
+        dash.wait_for_selector(".alert-row .what")
+        whats = dash.locator(".alert-row .what").all_inner_texts()
+        assert whats, "no alert rows to check"
+        import re as _re
+        raw = [w for w in whats if _re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", w)]
+        assert not raw, f"an alert row shows the raw wire stamp instead of the configured zone: {raw}"
+
+
 class TestVisibilityLabels:
     def test_the_pill_names_the_narrowed_view(self, page, scoped_server):
         """Q6/DoD 5: the reader can tell 'this is your view' from 'this is everything',
@@ -8329,7 +8372,7 @@ class TestReportFormHintsAndType:
                 # block held four more at --text-base — two `<span class="muted">` of help copy and the two
                 # `.linkish` buttons beside the preview — because they sat in a `.report-field` and nothing
                 # pinned them. They are the form's own secondary copy and read at its one size.
-                stray = page.evaluate("""(sm) => [...document.querySelectorAll('#report-form .report-field .muted, #report-form .report-field .linkish')]
+                stray = page.evaluate(r"""(sm) => [...document.querySelectorAll('#report-form .report-field .muted, #report-form .report-field .linkish')]
                     .map((e) => [e.textContent.replace(/\s+/g, ' ').trim().slice(0, 40), getComputedStyle(e).fontSize])
                     .filter(([, size]) => size !== sm)""", sm)
                 assert not stray, (report, stray)

@@ -607,6 +607,27 @@ function fmtTime(iso) {
          `${parts.timeZoneName || displayAbbrev}`;
 }
 
+/* THE SERVER STATES AN INSTANT; THE PAGE PRESENTS IT (#271, and the operator's ruling of
+   2026-09-21 that an absolute stamp is the right thing for a server to emit).
+
+   A server-authored sentence — an alert's `detail` — carries the absolute UTC stamp, because a
+   relative age recomputed per request is a different string every time and defeats the
+   unchanged-poll repaint skip. But an absolute stamp in raw UTC ignores the deployment's configured
+   zone, which every other timestamp on this page honours, so the page localises it at RENDER time.
+   The payload keeps the raw stamp, so the fingerprint is unaffected and the skip still works.
+
+   The browser has to do it rather than the server: the zone ABBREVIATION depends on the instant
+   (EST in January, EDT in July), so a zone stamped once server-side mislabels every timestamp on
+   the other side of a DST boundary — the same reason `fmtTime` asks the formatter per timestamp.
+
+   Applied AFTER esc(): the pattern is digits, '-', ':', 'T' and 'Z', none of which escaping alters,
+   so escaping stays intact and no unescaped server text is ever substituted back in. A run id
+   (`20260921T171114.745714Z-058e`) carries no dashes or colons in its stamp and cannot match. */
+const ISO_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/g;
+function withLocalInstants(escaped) {
+  return String(escaped).replace(ISO_INSTANT, (m) => esc(fmtTime(m)));
+}
+
 /* Just the clock, in the display zone. For tables where the date is already a column.
    Shares displayZone with fmtTime rather than slicing the ISO string, which is what the
    Usage panel used to do — `.slice(11, 19)` reads the raw UTC hour, so that one table stayed
@@ -1280,7 +1301,7 @@ function alertsCard(all, clusterCount) {
       + slice.map((x) => `<div class="alert-row sev-${x.severity === "critical" ? "critical" : "warning"}${x.silenced ? " silenced" : ""}">
         ${sevBadge(x.severity)}
         <div class="who">${esc(x.subject)}<div class="muted fw-normal text-xs">${esc(x.cluster)} · ${esc(x.kind)}</div></div>
-        <div class="what">${x.silenced ? `<span class="silence-tag">silenced by ${esc(x.silenced_by)}</span> ` : ""}${esc(x.detail)}</div>
+        <div class="what">${x.silenced ? `<span class="silence-tag">silenced by ${esc(x.silenced_by)}</span> ` : ""}${withLocalInstants(esc(x.detail))}</div>
       </div>`).join("")
       + alertPager(rows.length, page, pages);
   return `<section class="card">
