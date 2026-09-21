@@ -15,8 +15,11 @@ from fastapi.testclient import TestClient
 
 from gsd.api import build_app
 from gsd.clusterconfig import SECRET_TYPE_LABEL, parse_secret
+from gsd.clusterconfig.parser import Finding
 from gsd.clusterconfig.writer import (
-    MANAGED_BY_ANNOTATION, CreateRequest, WriteFailed, WriteRefused, create, delete, rotate, secret_object, validate,
+    MANAGED_BY_ANNOTATION, SOURCE_NAMESPACE_ANNOTATION, SOURCE_SERVICE_ACCOUNT_ANNOTATION,
+    TOKEN_SOURCE_ANNOTATION, TOKEN_SOURCE_LOOKUP, TOKEN_SOURCE_SELF_LOGIN,
+    CreateRequest, WriteFailed, WriteRefused, create, delete, rotate, secret_object, validate,
 )
 from gsd.clusterconfig.writer import test_connection as probe_connection   # not a test: pytest would collect the name
 from gsd.config import ClusterConfig
@@ -94,6 +97,71 @@ def _req(**kw) -> CreateRequest:
                 tls_mode="trustedBundle", labels={"environment": "prod"})
     base.update(kw)
     return CreateRequest(**base)
+
+
+class TestProvenanceAndEnabled:
+    """SPEC_S3 §5.1. A bearer token is opaque: nothing in it says where it came from or what to rotate.
+    The three provenance annotations are the rotation address, and `managed-by` says WHO created the
+    Secret as against HOW the credential was got — a retriever sets both. `enabled` is written as the
+    WORD the parser reads back, so a cluster can be created switched off."""
+
+    PROV = dict(token_source=TOKEN_SOURCE_LOOKUP, source_namespace="group-sync-operator",
+                source_service_account="group-sync-dashboard-cluster-poller")
+
+    def test_a_secret_without_provenance_carries_no_empty_markers(self):
+        # S3d decides what it owns from these; an empty string is not an answer, so unset is OMITTED
+        anns = secret_object(_req(), NS)["metadata"]["annotations"]
+        assert anns == {MANAGED_BY_ANNOTATION: "ui"}, anns
+
+    def test_the_three_markers_are_written_when_a_retriever_sets_them(self):
+        anns = secret_object(_req(**self.PROV), NS)["metadata"]["annotations"]
+        assert anns[TOKEN_SOURCE_ANNOTATION] == "remote-lookup"
+        assert anns[SOURCE_NAMESPACE_ANNOTATION] == "group-sync-operator"
+        assert anns[SOURCE_SERVICE_ACCOUNT_ANNOTATION] == "group-sync-dashboard-cluster-poller"
+
+    def test_managed_by_is_the_writer_not_a_constant(self):
+        # a machine-written Secret must not claim a person made it
+        assert secret_object(_req(), NS)["metadata"]["annotations"][MANAGED_BY_ANNOTATION] == "ui"
+        anns = secret_object(_req(managed_by="cluster-poller"), NS)["metadata"]["annotations"]
+        assert anns[MANAGED_BY_ANNOTATION] == "cluster-poller"
+
+    def test_the_twin_carries_the_same_metadata_as_the_write(self):
+        # the pane promises what WILL be written; provenance must not appear in one and not the other
+        live, twin = secret_object(_req(**self.PROV), NS), secret_object(_req(**self.PROV), NS, redact=True)
+        assert live["metadata"] == twin["metadata"]
+
+    @pytest.mark.parametrize("kw,word", [({}, "true"), ({"enabled": True}, "true"), ({"enabled": False}, "false")])
+    def test_enabled_is_written_as_the_word_the_parser_reads(self, kw, word):
+        assert secret_object(_req(**kw), NS)["stringData"]["enabled"] == word
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_enabled_survives_the_round_trip_through_the_parser(self, enabled):
+        obj = secret_object(_req(enabled=enabled, **self.PROV), NS)
+        obj["data"] = {k: base64.b64encode(v.encode()).decode() for k, v in obj.pop("stringData").items()}
+        parsed = parse_secret(obj, host_name="dashboard")
+        assert not isinstance(parsed, Finding), parsed
+        assert parsed.enabled is enabled
+
+    def test_the_marker_is_the_credential_kind_the_mode_resolves_to(self):
+        """`token-source` is not a second vocabulary. The operator's chain: `saTokenLookup: true` is
+        what the stanza declares, `credential_kind` is what it resolves to, and that word is what the
+        Secret records. Defining the word twice would let the tab and the Secret disagree the first
+        time one moved, so this pins them to one object."""
+        from gsd.config import CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN, ClusterConfig
+
+        assert TOKEN_SOURCE_LOOKUP is CREDENTIAL_LOOKUP
+        assert TOKEN_SOURCE_SELF_LOGIN is CREDENTIAL_SELF_LOGIN
+        # and the stanza that declares the mode resolves to exactly that word
+        assert ClusterConfig(name="x", api_url="https://a", sa_token_lookup=True).credential_kind == TOKEN_SOURCE_LOOKUP
+        assert ClusterConfig(name="x", api_url="https://a", user_self_login=True).credential_kind == TOKEN_SOURCE_SELF_LOGIN
+
+    def test_the_secret_is_named_for_the_cluster_it_declares(self):
+        """`gsd-cluster-<name>` where `<name>` is `data.name` — one source, so the two cannot drift."""
+        for cluster in ("west", "shared-rnd", "prod-east-2"):
+            obj = secret_object(_req(name=cluster), NS)
+            assert obj["metadata"]["name"] == f"gsd-cluster-{cluster}"
+            assert obj["stringData"]["name"] == cluster
+            assert obj["metadata"]["name"] == "gsd-cluster-" + obj["stringData"]["name"]
 
 
 # ── the writer ────────────────────────────────────────────────────────────────────────────────────────────

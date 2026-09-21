@@ -1444,12 +1444,39 @@ clusterConfig:
   fleetAccount:
     # The username. Empty = every mode stanza must name its own ldapConnectionBootstrap.
     username: ""
-    # Its password: never a literal in values — a Secret in the release namespace, read at connect
-    # time only. The chart does not create it, and the value never reaches a log line, the database,
-    # a response or /metrics (the redaction pin covers it).
+    # Its password: never a literal in values — a Secret reference, read at connect time only. The
+    # chart does not CREATE it (it holds a credential this release does not own); it only grants the
+    # dashboard permission to RETRIEVE it. The value never reaches a log line, the database, a
+    # response or /metrics (the redaction pin covers it).
     passwordSecret:
+      # Where the Secret lives. Empty = this release's own namespace. Set it to read a Secret that
+      # already exists elsewhere — `openshift-config` is the usual answer, because that is where a
+      # cluster's LDAP bind password already sits and an estate would rather not copy it.
+      #
+      # THE GRANT IS RENDERED FOR YOU, and it is the narrowest one that works: `get` on THIS ONE
+      # Secret by `resourceNames`, never `list` (which resourceNames cannot restrict — a list grant
+      # would return every Secret in the namespace) and never a ClusterRole. See
+      # templates/fleet-account-rbac.yaml.
+      #
+      # A namespace OTHER than this release's means the chart writes a Role and RoleBinding into a
+      # namespace it does not own. Whoever runs `helm install` must be allowed to do that — on a
+      # cluster that refuses it, set `rbac.create: false` below, have a cluster administrator apply
+      # the two objects once, and the release installs unchanged.
+      #
+      # REPLICATING THE SECRET INSTEAD is the better end state, and this field is how you migrate to
+      # it without a chart change. Have Kyverno (or any replicator) copy the Secret into this
+      # release's namespace, then clear `namespace` here: the grant re-renders against the local
+      # copy, the cross-namespace Role is pruned, and the chart stops writing anywhere it does not
+      # own. The dashboard reads the same key either way and needs no restart beyond the upgrade —
+      # it reads the password at connect time, not at boot.
+      namespace: ""
       name: gsd-fleet-account
       key: password
+      # Render the Role and RoleBinding. Off = you grant it yourself; the dashboard still reads the
+      # Secret at connect time, and reports `fleet-credential-missing` naming the namespace, the
+      # Secret and the key if the grant is absent — it does not crash.
+      rbac:
+        create: true
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)
