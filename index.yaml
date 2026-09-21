@@ -3,6 +3,27 @@ entries:
   group-sync-dashboard:
   - apiVersion: v2
     appVersion: 0.24.0
+    created: "2026-09-21T00:28:53.519946823Z"
+    description: Read-only observability for the redhat-cop group-sync-operator
+    digest: ee2ffe088bf0da1070c28c7bd00e6474bbe92dba5ab04e801298dae885f5c8da
+    home: https://github.com/ephico2real2/group-sync-dashboard
+    keywords:
+    - openshift
+    - ldap
+    - rbac
+    - groupsync
+    - observability
+    maintainers:
+    - name: ephico2real
+    name: group-sync-dashboard
+    sources:
+    - https://github.com/ephico2real2/group-sync-dashboard
+    type: application
+    urls:
+    - group-sync-dashboard-0.43.0.tgz
+    version: 0.43.0
+  - apiVersion: v2
+    appVersion: 0.24.0
     created: "2026-09-20T19:17:26.894391309Z"
     description: Read-only observability for the redhat-cop group-sync-operator
     digest: 3226f03258211ce0fc8e196b192f054e143e79c98b4dfa54c7dcc12212304d50
@@ -1168,4 +1189,4 @@ entries:
     urls:
     - openshift-grafana-0.1.0.tgz
     version: 0.1.0
-generated: "2026-09-20T19:17:26.896069165Z"
+generated: "2026-09-21T00:28:53.520283119Z"
