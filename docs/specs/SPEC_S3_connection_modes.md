@@ -457,6 +457,45 @@ The stanza declares the *mode*; the Secret carries the *credential*. That split 
 values files live in git, and a bearer token must not. The loader refuses a mode beside
 `tokenEnv`/`tokenFile` for the same reason — two sources of truth for one credential (§4).
 
+#### What must be true before S3b can run — and the dependency nobody wrote down
+
+S3b writes a Secret, so it needs the **write** grant, not just the read one. That grant is
+`clusterConfig.secrets.writes.enabled`, which is **off by default** and which `values.yaml` describes
+as *"the decision to let the dashboard mint cluster access"* — which is exactly what the retriever
+does. The `clusterConfig.fleetAccount` block sits directly beside it and **nothing connects the
+two**: an operator can set `fleetAccount.username`, apply a mode stanza, and find the lookup has
+nowhere to put its result.
+
+Measured from the chart: `templates/cluster-secrets-rbac.yaml` grants
+`get, list, watch` normally and adds `create, update, delete` **only** under
+`clusterConfig.secrets.writes.enabled`. So:
+
+| precondition | why | on the reference lab, 2026-09-21 |
+|---|---|---|
+| `clusterConfig.secrets.enabled` | discovery reads the labelled Secrets | **on** (default) |
+| `clusterConfig.secrets.writes.enabled` | **the retriever cannot persist its token without `create`** | **on** — the Role carries `create, update, delete` |
+| `fleetAccount.username`, or `ldapConnectionBootstrap` per stanza | the account to log in AS | **absent** — username is empty, so the chart renders nothing |
+| the `gsd-fleet-account` Secret (`passwordSecret`) | its password, read at connect time only; **the chart does not create it** | **NotFound** |
+| a stanza or Secret `config` declaring a mode | what triggers the lookup at all | **none** |
+
+Nothing on the lab exercises the lookup, and the state above is why — independently of S3b being
+unbuilt. That is worth recording: a reader who sees `shared-rnd` polling could reasonably conclude
+the mode works, and none of these five is satisfied.
+
+**Two things this implies for S3b's PR.**
+
+1. **The dependency must be stated where the operator reads it.** `fleetAccount`'s own comment says
+   S3b "reads it at connect time and nowhere else" — true, and incomplete: without
+   `secrets.writes.enabled` the connect succeeds and the *write* fails. Either the chart refuses the
+   combination at render (a mode stanza with writes off), or the tab says it plainly. A render-time
+   refusal is this chart's habit — it already refuses a mode beside a credential, and a mode on the
+   host.
+2. **`writes.enabled` now gates two different decisions.** Today it means "a person may add a cluster
+   from the tab". With S3b it also means "the dashboard may mint cluster access unattended", which is
+   a larger grant of trust and is the thing the values comment was already circling. Whether those
+   stay one switch or become two is an operator decision, and it belongs in S3b's review rather than
+   being settled by whichever lands first.
+
 #### The consumption path is ready for this Secret — with one gap S3d inherits
 
 Reviewed against the Argo CD design it borrows from (2026-09-21). **A retriever writing the shape
