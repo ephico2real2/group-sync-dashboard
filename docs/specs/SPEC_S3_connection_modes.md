@@ -392,6 +392,39 @@ Today's writer sets a different annotation — `groupsync-dashboard.io/managed-b
 Secret a person created through the form. The two are orthogonal: `managed-by` says *who* created it,
 `token-source` says *how the credential was obtained*. S3b writes both.
 
+#### Measured on the reference cluster (2026-09-21)
+
+`gsd-cluster-shared-rnd` exists on the lab today, hand-made as a faithful mock of what S3b will
+write. Read back from the API server (the credential not shown):
+
+```
+labels      {"environment": "rnd", "groupsync-dashboard.io/secret-type": "cluster"}
+annotations groupsync-dashboard.io/token-source: lookup
+            groupsync-dashboard.io/source-namespace: group-sync-operator
+            groupsync-dashboard.io/source-service-account: group-sync-dashboard-cluster-poller
+data        name=shared-rnd  server=https://api.crc.testing:6443  enabled=true
+            visibility=inherit  identity=same-as-host
+            config: bearerToken=<1377 chars>  tlsClientConfig{insecure:false, caData=<9612 chars>}
+```
+
+`server` is **CRC's own API** — the controller's public endpoint, which is §7's point: the reference
+cluster can test this honestly without a second cluster, because what is exercised is the
+*destination shape*, not the network hop.
+
+**It changes what the cluster is.** `GET /api/clusters` reports `shared-rnd` polling `ok`. The values
+stanza declares `saTokenLookup`, which alone would leave it `credential_pending` and unpolled — but a
+Secret **shadows a values entry of the same name** (SPEC_S1), and this one carries a `bearerToken`,
+so the effective `credential_kind` is `bearer` and it polls like any other cluster.
+
+> **A correction to an earlier record.** The #269 walk
+> (`reports/2026-09-21_report-form-clusters/README.md`, and the evidence comment on #267) expected
+> `shared-rnd` to fail its run as "the credential-less cluster of SPEC_S3" and, when it sealed like
+> the rest, attributed that to "it has a snapshot on this lab". The observation was right and **the
+> stated reason was wrong**: this Secret is why. `shared-rnd` is not credential-less on the reference
+> cluster and has not been since the Secret was applied. The conclusion that partial failure remains
+> covered only by the API test and the browser test's injected `ghost` still holds — it holds for a
+> different reason.
+
 #### Why the token is not in the stanza
 
 The stanza declares the *mode*; the Secret carries the *credential*. That split is the point of S3:
