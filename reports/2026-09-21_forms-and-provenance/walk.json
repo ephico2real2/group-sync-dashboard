@@ -1,0 +1,15 @@
+{
+ "head": "v0.30.0 · 3ff11ea10d",
+ "forms": {
+  "reports": 11,
+  "hints": 30,
+  "clipped": 0,
+  "stray": 0
+ },
+ "provenance": {
+  "Namespaces": "every namespace on the cluster was read — a namespace with no grants is reported as having none",
+  "User objects": "read — ‘logged in’ means a User object with an identity exists",
+  "Login capture": "on — attempts are recorded; see the note for since when"
+ },
+ "attests_absence": true
+}

@@ -688,6 +688,12 @@ session:
 # API with a token from THAT cluster — needs none of this and is still the recommendation
 # where trust boundaries differ: docs/reference-architecture.md §8a.
 clusters:
+  # EVERY ACCEPTED COMBINATION, AND WHERE EACH REFUSAL FIRES: docs/CLUSTER_STANZA.md — measured, not
+  # described, and held by tests/test_cluster_stanza_matrix.py. Worth reading §5 before a rollout:
+  # fourteen bad stanzas fail `helm template`, but FOUR render cleanly and are refused by the pod at
+  # startup (an unknown key, a duplicate name, an apiUrl with no scheme, insecureSkipVerify together
+  # with caBundleFile) — those fail after a green upgrade. A worked file: example-production.yaml.
+  #
   # CHANGING `name` ON A RUNNING RELEASE RETIRES THE OLD CLUSTER. The name is the id every
   # observation table keys on (33 of them: sync events, KPI days, login events, report runs,
   # membership and binding history), so a rename is a NEW cluster to this dashboard: the old row is
