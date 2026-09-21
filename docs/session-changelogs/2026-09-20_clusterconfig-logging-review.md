@@ -7,14 +7,14 @@ every "measured" claim is one the session ran a command for; nothing below is re
 alone. The session resumed a fork that died on an Opus session limit mid-suite, with the first-pass
 fixes uncommitted in the worktree.
 
-Outcome in one line: **pending**
+Outcome in one line: **PR #247 reviewed twice by four seats (Codex, Grok, OB2, OB3), every accepted finding applied with a pin that was mutated before it was kept, brought up to `main` `14a9624`, the TLS verification record placed beside the three-modes picture, and CI green on the final head `2da802b` — not merged, not deployed, by instruction.**
 
 | | Before the session | After |
 |---|---|---|
-| `main` | `95b8c0f` (#242 merged); the branch was six commits behind it | pending |
-| PR #247 | open at `28c9e89`, ten files modified and uncommitted (the first-pass fixes), the review record untracked with only two of three seats' columns | pending |
-| Review passes on #247 | one: Codex, Grok and OB3 on `250cc54`, their reports in the session scratchpad, the fixes half-applied | pending |
-| Chart | `0.43.0` on the branch (`0.42.1` on `main`) | pending |
+| `main` | `95b8c0f` (#242 merged); the branch was six commits behind it | `14a9624` (#233 merged) merged into the branch twice, clean both times; the diff against `main` touches only this PR's files |
+| PR #247 | open at `28c9e89`, ten files modified and uncommitted (the first-pass fixes), the review record untracked with only two of three seats' columns | open at `2da802b`, `mergeStateStatus: CLEAN`, ten checks concluded (nine success, `container-smoke` skipped); the record carries both passes and all four seats; decisions posted on the PR |
+| Review passes on #247 | one: Codex, Grok and OB3 on `250cc54`, their reports in the session scratchpad, the fixes half-applied | two: the second on `b13b44e` with Codex, Grok, OB2 and OB3; every accepted fix applied, every rejection reasoned in the record |
+| Chart | `0.43.0` on the branch (`0.42.1` on `main`) | `0.43.0`, lint clean, rendered unset / both set / junk refused |
 | Session changelog | none for today | this file |
 
 ---
@@ -92,3 +92,32 @@ Outcome in one line: **pending**
 - Its three code pins mutated before being kept (the gate, the guard, the echo): each killed.
 - Hermetic **4257 passed, 15 skipped**; UI **496 passed** (serially); helm clean; four blocks
   re-rendered (42 606 / 33 716 / 18 969 / 18 454 B), flow 1 viewed as PNG.
+---
+
+## Numbers
+
+| | |
+|---|---|
+| Commits authored | 6 on the branch this session (`cd0f773`, `b13b44e`, `81c357c`, `c518085`, `2da802b`, the closing docs commit) plus two merges of `main` |
+| PRs merged | 0 — #247 is left for the operator |
+| Review passes run | 1 (the second pass; the first was the predecessor's, folded in here); 4 seats |
+| Reviewer findings accepted / rejected | second pass: 19 accepted, 7 rejected with reasons, 2 decided-not-patched (the poll-failure repeat; `cycle=` per process) |
+| Defects found by tooling rather than reviewers | 3 — CI's `ModuleNotFoundError: tests`; the mutant that survived the delimiter pin's first version; markdownlint's untyped fences |
+| Full suite, final | hermetic 4257 passed / 15 skipped; UI 496 passed; helm clean; CI ten checks concluded on `2da802b` |
+| Longest single loss | two silent `nohup cursor agent` deaths (0-byte output) before an attached launch worked — written into the adversarial-review memory note |
+
+## Where things are recorded
+
+- `docs/REVIEW_clusterconfig_logging.md` — both passes, four seats, every decision with its reason; listed in `REVIEW_ARTIFACTS` in `local-development/tests/test_docs_citations.py`.
+- `docs/DESIGN_cluster_connection_flows.md` — the four flows as they stand after both passes, the TLS verification record beside flow 2 with the commands as run.
+- `docs/specs/SPEC_S1_cluster_secrets.md` — the "reader does not log" deviation under Orchestrator's notes.
+- `docs/CHANGELOG.md` — the #245 entry extended with what the reviews changed.
+- PR #247's comment thread — the decisions, one line each, and the re-validation.
+- The memory note *adversarial-review-before-shipping* — the dated data point (a source-only seat found what three harnesses drove past; the path nobody drove; mutate every pin).
+
+## State left behind
+
+- Worktree `gsd-logging` clean at the closing commit; `origin/feat/245-clusterconfig-logging` pushed. Not merged, not deployed: the lab belongs to #233.
+- The lab was read once, read-only (`oc --context crc-admin`, `oc exec … curl`), to re-measure the TLS record; nothing applied.
+- Open decision for the operator: OB3's N1 — `_log_poll_failure` logs one WARNING per poll for a standing unreachable cluster (1 440 a day at the default 60 s); left as is in #247, the numbers recorded.
+- Reviewer artefacts kept under the session scratchpad `245/` (briefs, the eight reports, OB2's and OB3's patches and pins, the mermaid renders); every export and mutant copy deleted.
