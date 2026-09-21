@@ -384,9 +384,24 @@ what "#245's `action=`" already does, extended with what was *tried*: `attempted
 
 It also checks the dashboard's **own** grants rather than inferring them from a failure: the reader
 ClusterRole, `get` on the declared token Secret, and `create serviceaccounts/<name>/token` where
-minting is configured, each asked as a SubjectAccessReview and each reported as present or missing by
-name. A missing grant is the commonest cause of a cluster that "won't connect", and naming it is the
-difference between a five-minute fix and an afternoon.
+minting is configured. Each is asked as a **SelfSubjectAccessReview** — the dashboard asking about its
+own identity on the target, not the `SubjectAccessReview` the tier resolver already uses to ask about a
+*reader* (`gsd/api.py`) — and each is reported present or missing by name. A missing grant is the
+commonest cause of a cluster that "will not connect", and naming it is the difference between a
+five-minute fix and an afternoon.
+
+**The self-check must be asked precisely, or it reports grants that exist as missing.** Measured on the
+reference cluster while auditing these very permissions:
+
+- a subresource must be named as a subresource. `can-i get nodes/proxy` answers **no** while the rule is
+  present; the question only resolves with the subresource given as one (`--subresource=proxy`).
+- a `resourceNames`-pinned grant only answers for the name it is pinned to. `create
+  serviceaccounts/token` answers **no** in general and **yes** for the one ServiceAccount named in the
+  Role, so the check must ask about *that* ServiceAccount.
+
+Both traps produce a **false gap** — a red row on the tab telling an operator to grant something they
+have already granted. Two were nearly recorded that way during the audit that produced this spec, which
+is why the rule is written down rather than left to the implementer.
 
 **Acceptance** (with §7's run): delete the declared token Secret on the target and the cluster recovers
 by itself within one cycle, recorded as a recovery; remove the reader ClusterRoleBinding and it does
