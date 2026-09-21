@@ -228,13 +228,14 @@ count, with the totals line stating in words that it is the primary's.
 
 | | |
 |---|---|
-| Pull requests merged | **10** (#251, #252, #254, #256, #258, #259, #260, #262, #265, #266); #264 and #269 reviewed and validated |
+| Pull requests merged | **12** (#251, #252, #254, #256, #258, #259, #260, #262, #264, #265, #266, #269) |
 | Commits authored | 23 non-merge |
 | Review passes run | 10 — OB1-lite ×1, OB2 ×4, OB3 ×2, Cursor ×3, Codex ×3 (one died: "model at capacity") |
 | Reviewer findings accepted | the large majority; **2 refuted with evidence** (Codex C5 on #259, a Codex framing on 200% zoom) |
 | **Fixes that were themselves wrong** | **6** — and every one was caught by a different reviewer than the one whose finding it answered |
 | Tests that passed because they did not look | **4** — the tab-bar guard (passed with the old padding), the type guard (never asserted weight or tracking), the headroom canary (`spare` is 0 by construction), and two bare `== 422` asserts that also hold on the base server |
 | Full suite, final | 4466 passed, 15 skipped (hermetic); test_ui 552; reporting 101 |
+| CI failures that were not the code | **2** — GitHub answered HTTP 504 for the pinned Grype release on both branches, three times across the two; the "Grype identified the distribution" guard then failed correctly, refusing to let a scan that matched no OS package report green |
 | Longest single loss | ~2 h across three venv rebuilds before the tracked symlink was diagnosed — the evidence was one `git ls-files -s` away each time |
 
 ## Where things are recorded
@@ -259,8 +260,10 @@ count, with the totals line stating in words that it is the primary's.
   ladder around *which pipeline stage emptied* (`all` → `inScope` → `shown`) rather than patching the
   instance, after being asked whether the sentence's shape was the defect. It was: proving the fix
   turned up a fourth unreported instance.
-- **#269 reviewed, validated and walked**, awaiting CI on `76e7332`. The one DoD item its walk could
-  not close is partial failure on a *configured* cluster — see Part 7.
+- **#269 merged** as `260fefe`, branch deleted, **#267 closed** against its Definition of done. The
+  one DoD item its walk could not close is partial failure on a *configured* cluster — that line
+  rests on the API test and the browser test's injected `ghost`, which is stated on the issue rather
+  than covered by the walk. See Part 7.
 - **#270 open**: the report sha256 covers run facts, so two runs over one snapshot never agree. Needs
   a decision (exclude the provenance section, or split it) because the fix changes every existing
   artefact's hash once.
