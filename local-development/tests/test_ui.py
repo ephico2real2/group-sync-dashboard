@@ -6277,6 +6277,12 @@ def reporting_server(tmp_path_factory):
                                                 {"name": "paused-ns", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False}),   # #149 R5
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
+                                     # The seeded namespaces carry both labels, so namespace-access renders its
+                                     # selector dimensions here. Without them that block returns "" and its help
+                                     # copy — which is where the deployed page's remaining 14px text lived — is
+                                     # unreachable by any browser test (measured 2026-09-21).
+                                     namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment"),
+                                     namespace_group_label="company.net/oud-group",
                                      login_capture_enabled=False)
     report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
@@ -8192,6 +8198,129 @@ class TestReportFormsReview:
             page.fill("#report-param-access-certification-reviewer", "Jane"); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
             page.evaluate("() => render()")
             assert page.input_value("#report-param-access-certification-reviewer") == "Jane"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+
+
+class TestReportFormHintsAndType:
+    """Operator, 2026-09-21, on 0.30.0-97462a1824: "the text description in the report forms are all
+    truncated now", "some of the font are different sizes", and a group picked for a report "doesn't show
+    the number of users in that group". Measured on the deployed page: 20 hints clipped to one 264 px line
+    (the worst held 1548 px of text), and every hint at --text-base 14 px under its --text-sm 12 px label —
+    `.muted` sets only a colour and `.report-field .hint` set only the one-line clip, so the hint inherited
+    body copy. Every assertion here is the measurement (scrollWidth, fontSize, the option's text), never
+    an element's presence."""
+
+    REPORTS = ("namespace-access", "access-matrix", "privileged-access", "binding-findings", "groups", "users",
+               "dormant-access", "groupsync-health", "compliance-snapshot", "access-certification")   # the fixture's ten (login-activity is off)
+
+    @staticmethod
+    def _hints(page, base, report):
+        page.goto(base + f"#page=reports&cluster=crc-local&report={report}")
+        # THIS form's breadcrumb (view.report changes before the repaint, so a wait on it measured the previous form;
+        # binding-findings has no field at all, so no control id can be waited on)
+        page.wait_for_function(f"() => [...document.querySelectorAll('#report-form .panelbar .mono')].some((m) => m.textContent === '{report}')")
+        page.evaluate("() => { const d = document.querySelector('details.report-advanced'); if (d) d.open = true; }")   # a hint under Advanced is measured too
+        return page.evaluate("""() => [...document.querySelectorAll('#report-form .report-field')].map((f) => {
+            const h = f.querySelector('.hint'), l = f.querySelector('label');
+            if (!h) return null;
+            const hs = getComputedStyle(h);
+            return {text: h.textContent.slice(0, 40), sw: h.scrollWidth, cw: h.clientWidth, hint: hs.fontSize, label: l ? getComputedStyle(l).fontSize : null,
+                    lines: Math.round(h.getBoundingClientRect().height / parseFloat(hs.lineHeight)),
+                    fieldTop: Math.round(f.getBoundingClientRect().top), labelTop: l ? Math.round(l.getBoundingClientRect().top) : null, title: h.getAttribute('title')};
+        }).filter(Boolean)""")
+
+    @staticmethod
+    def _page_fits(page):
+        return page.evaluate("() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+
+    def test_every_hint_shows_all_of_its_text_at_desktop_and_phone_width(self, browser, reporting_server):
+        # D1 — measured on the deployed page: namespace-access 1548 > 264, groups 423 > 264 and 336 > 264 (short,
+        # ordinary sentences, still cut). The whole text, wrapped; the fields of a grid row keep their label on
+        # one line (alignment), and the page grows no horizontal scroll at 375 px.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            for width in (1440, 375):
+                page.set_viewport_size({"width": width, "height": 900})
+                for report in self.REPORTS:
+                    rows = self._hints(page, base, report)
+                    clipped = [(r["text"], r["sw"], r["cw"]) for r in rows if r["sw"] > r["cw"]]
+                    assert not clipped, (width, report, clipped)
+                    assert all(r["title"] is None for r in rows), (report, "a title duplicating visible text is read twice by a screen reader")
+                    # One grid row, one label line. Only the fields that HAVE a label take part: the
+                    # namespace-access preview field is a `.report-field` with no <label> at all, and a
+                    # label that does not exist cannot fall out of line with the ones that do.
+                    by_row: dict[int, set[int]] = {}
+                    for r in rows:
+                        if r["labelTop"] is not None:
+                            by_row.setdefault(r["fieldTop"], set()).add(r["labelTop"])
+                    assert all(len(tops) == 1 for tops in by_row.values()), (width, report, by_row)
+                    sw, cw = self._page_fits(page)
+                    assert sw <= cw, (width, report, sw, cw)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_hint_is_secondary_copy_never_larger_than_its_label(self, browser, reporting_server):
+        # D2 — measured on the deployed page: .report-field label 12 px (--text-sm), .muted.hint 14 px (nothing set
+        # it, so it inherited --text-base). The hint reads at --text-sm, the scale's size for secondary copy: at
+        # its label, never above it.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            sm = page.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--text-sm').trim()")
+            assert sm == "12px", sm
+            for report in self.REPORTS:
+                rows = self._hints(page, base, report)
+                assert rows or not page.evaluate("() => document.querySelectorAll('#report-form .report-field').length"), report   # binding-findings has no field
+                wrong = [(r["text"], r["hint"], r["label"]) for r in rows if r["hint"] != sm or (r["label"] and float(r["hint"][:-2]) > float(r["label"][:-2]))]
+                assert not wrong, (report, wrong)
+                # Not only the elements that carry `.hint`: on the deployed page namespace-access's selector
+                # block held four more at --text-base — two `<span class="muted">` of help copy and the two
+                # `.linkish` buttons beside the preview — because they sat in a `.report-field` and nothing
+                # pinned them. They are the form's own secondary copy and read at its one size.
+                stray = page.evaluate("""(sm) => [...document.querySelectorAll('#report-form .report-field .muted, #report-form .report-field .linkish')]
+                    .map((e) => [e.textContent.replace(/\s+/g, ' ').trim().slice(0, 40), getComputedStyle(e).fontSize])
+                    .filter(([, size]) => size !== sm)""", sm)
+                assert not stray, (report, stray)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_group_option_says_its_member_count_and_a_group_of_nobody_says_zero(self, browser, reporting_server):
+        # D3 — the lookup offered bare names although group_state carries member_count. The count, as of the
+        # snapshot, beside every group option (both source="groups" sites: the Subject block and the groups
+        # report's own field), kept through the in-place narrowing; the other lookups are untouched; a zero
+        # reads "0 members", never a blank; and the menu says whose number it is.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        opts = lambda name: page.evaluate(f"() => Object.fromEntries([...document.querySelectorAll('[data-lookup-opt=\"{name}\"]')].map(o => [o.dataset.value, o.textContent.replace(/\\s+/g, ' ').trim()]))")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix"); page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"groups\"]').length > 0")
+            g = opts("groups")
+            assert g["app-ocp-rbac-alpha-ns-admin"] == "app-ocp-rbac-alpha-ns-admin 2 members", g
+            assert g["app-ocp-rbac-abcd-ns-superuser"] == "app-ocp-rbac-abcd-ns-superuser 0 members", g
+            assert opts("users")["alice"] == "alice", opts("users")
+            assert "as of the snapshot" in page.locator("#report-lookup-access-matrix-groups-menu .rp-menu-head").inner_text().lower()   # uppercased by CSS
+            page.fill("#report-lookup-access-matrix-groups", "abcd")                    # the oninput rebuild, not the paint
+            assert opts("groups") == {"app-ocp-rbac-abcd-ns-superuser": "app-ocp-rbac-abcd-ns-superuser 0 members"}, opts("groups")
+            assert "1 member<" in page.evaluate("() => lookupMenuBody('groups', ['g'], [], '', {g: 1})")   # the singular
+            # the map is parsed JSON and inherits Object.prototype, so a group named for one of its members must
+            # take no count from the prototype chain — `constructor` would otherwise print a function's source
+            assert "rp-n" not in page.evaluate("() => lookupMenuBody('groups', ['constructor'], [], '', {})")
+            # the option still fits its menu at phone width — a count must not buy the menu a horizontal scrollbar
+            page.set_viewport_size({"width": 375, "height": 740}); page.fill("#report-lookup-access-matrix-groups", "")
+            menu = page.evaluate("() => { const m = document.getElementById('report-lookup-access-matrix-groups-menu'); return [m.scrollWidth, m.clientWidth]; }")
+            assert menu[0] <= menu[1], menu
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups"); page.wait_for_selector("#report-form.r-identity")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"groups\"]').length > 0")
+            assert opts("groups")["gsd-test-unattributed"] == "gsd-test-unattributed 0 members", opts("groups")
             assert not errors, errors
         finally:
             ctx.close()
