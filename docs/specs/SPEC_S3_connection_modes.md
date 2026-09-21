@@ -457,6 +457,42 @@ The stanza declares the *mode*; the Secret carries the *credential*. That split 
 values files live in git, and a bearer token must not. The loader refuses a mode beside
 `tokenEnv`/`tokenFile` for the same reason — two sources of truth for one credential (§4).
 
+#### The consumption path is ready for this Secret — with one gap S3d inherits
+
+Reviewed against the Argo CD design it borrows from (2026-09-21). **A retriever writing the shape
+above is consumed as-is**: `parse_secret` reads `metadata.name` and the `data` keys, and **ignores
+annotations entirely**, so the provenance keys pass through untouched.
+
+The borrowed design is followed where it is right and departed from where it is not, each departure
+already reasoned in the code:
+
+| | |
+|---|---|
+| label selector `groupsync-dashboard.io/secret-type=cluster`, server-side, release namespace only | Argo's model |
+| Argo's scope keys (`namespaces`, `clusterResources`, `project`, `shard`) **refused by name** | a Secret copied from Argo with `namespaces: team-a` would be read as a FULL cluster — the opposite of what its author declared |
+| the host is **never** sourced from a Secret | the host authenticates the reader; a Secret must not replace it |
+| a duplicate cluster name loads **neither** Secret | Argo's first-by-name would let `aaa-anything` replace a real cluster's server and token, invisibly, for anyone who may create a Secret here |
+| a shadowed values entry is a finding, not silence | the Secret wins, and the tab says so |
+
+**The gap: the ownership marker is written and never read.** `writer.py` sets
+`groupsync-dashboard.io/managed-by: ui`, the tab's YAML pane renders it, and the tab's own text warns
+that a namespace policy "will still delete a UI-written Secret unless it honours" it — but no code
+reads it back, because the parser ignores annotations.
+
+That costs nothing today: nothing acts on ownership. It stops being free at **S3d**, whose §8.1 rule
+is *only what we made* and which is **the only step that deletes**. Two consequences to settle before
+that loop is written, not while writing it:
+
+1. **The markers need a reader and a contract.** `token-source`, `source-namespace` and
+   `source-service-account` are the rotation address and the ownership proof. If S3b writes one wrong
+   — or a human hand-edits it — nothing notices today, and S3d would take a deleting decision on
+   unvalidated input. Parsing them into `ClusterConfig` (ignored by the poll, surfaced on the tab)
+   turns them from prose into a contract with one place to validate.
+2. **`managed-by` and `token-source` answer different questions** and both are needed: *who created
+   this* (`ui`, or the retriever) and *how the credential was obtained* (`lookup`, or pasted). A
+   Secret carrying neither is a human's, and S3d must stand down on it — which is only enforceable
+   once something reads them.
+
 #### What still has to be decided in S3b
 
 - **The lookup's own RBAC.** Reading another SA's token is `get` on that Secret, or a TokenRequest
