@@ -57,3 +57,27 @@ Outcome in one line: **pending**
 - `docs/specs/README.md` row `S4a`, `test_specs_index.py` id pattern `[A-Z]\d[a-z]?` and count 20,
   `docs/CHANGELOG.md` Unreleased entry. No chart change, no version bump.
 - Review: pending (Codex + OB seats per #288's loop; Cursor cannot execute, measured by the orchestrator).
+
+### The review's six findings (18:2x → 18:17) — commit `d6e5759`, PR #289
+
+- Three seats (Codex gpt-5.6-sol xhigh, Cursor Grok 4.6, OB1-lite) reviewed head `aefe7aa`; C1/C3/C5/C8/C9
+  **CONFIRMED** by all three; six findings, each decided by the business owner and recorded in
+  `docs/REVIEW_S4a.md`. Every fix was written into `docs/specs/SPEC_S4a_fleet_login_session.md`'s blocks
+  first (its notes carry the deviations and the inverted tests) and the files regenerated from the spec.
+- **Found by all three, accepted:** a remote-controlled `expires_in` overflowed the instant arithmetic and
+  the minted token was abandoned (Codex measured `authorize_count 1 delete_count 0`); bounded at int32
+  and guarded by a `BaseException` revoke — both halves. **Found by all three, the strict rule accepted,
+  OB1-lite's narrower retry set rejected:** every answer after the password is on the wire is terminal;
+  only `ConnectError`/`ConnectTimeout` retry (upstream: 401 only for LDAP codes 48/49, 500 for all else,
+  a locked account's code 19 included). **Found by Codex alone, accepted:** a 401 on the revoke is not
+  "already gone". **Found by all three, accepted:** three raise sites left `str(exc)` unscrubbed. **Found
+  by Cursor and OB1-lite, accepted:** the name test was circular — pinned to the `openssl` literal (re-run
+  by OB1: `AVSmBSfwHu_fqo50RnV0Ghp9zEjQrjfPXEV7qa7DuJY`, identical). **Found by Codex, accepted:** a
+  non-UTC injected clock.
+- The corrected `tests/test_fleet_login.py` against the PREVIOUS module (the new constant shimmed in so
+  it imports): **18 failed / 40 passed**; against this head: **58 passed**. Four tests inverted because
+  they asserted the defect (named in the spec's notes and the review record).
+- Full hermetic suite on this head: **4641 passed, 16 skipped, 563 deselected in 227.21 s**. Doc checks
+  over the review record: 1065 passed.
+- Live on CRC as `developer` after the fix: count **0 → 1 → 0**, the session's name present during and
+  gone after, the revoked token dead after **121 s**; manual `oc` count 0 before / 0 after.
