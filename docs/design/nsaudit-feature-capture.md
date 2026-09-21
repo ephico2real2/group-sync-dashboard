@@ -204,6 +204,11 @@ Three further states, all measured or quoted:
 - **self tier, nothing reached**: *"None of your memberships or grants reaches a namespace on this
   cluster. That is your view, not the cluster: a namespace missing here may exist."* Measured through
   the loopback: a viewer with no path gets `count: 0`.
+- **nothing recorded at all** — the third branch of the same ternary, and a different truth from the
+  one above it: *"No namespaces recorded for this cluster yet."* Every cluster in the lab has
+  namespaces, so on this deployment only a search can empty this list; the branch is quoted from the
+  source. The pair matters — a search that hides everything is a fact about the **query** and quotes
+  the denominator, while this one is a fact about the **cluster**.
 
 `alsoLine()` adds a cross-tab line while the box holds a query — measured with `demo`:
 `search everything for demo`.

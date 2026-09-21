@@ -40,8 +40,10 @@ every geometry assertion is computed over the whole document in the browser.
 local-development/.venv/bin/python reports/2026-09-21_nsaudit-mock/render-check.py
 ```
 
-107 checks, all passing. The last of them is the one that matters most: **every one of the 40 caveats
-the live page carries is reachable in the mock**, asserted across nine driven states (the four tiers,
+148 checks, all passing. The last of them is the one that matters most: **every one of the 41 caveats
+the live page carries is reachable in the mock**, asserted across nine driven states — the first of
+which has the namespace index **folded**, because a collapsed section is the likeliest place for a
+caveat to go missing (the four tiers,
 the filtered and unfiltered flat list, a search that matches nothing, and two namespace pages) plus the
 `title` attributes, because the export buttons carry their honesty sentence as a tooltip. A caveat
 behind a disclosure counts — the disclosures are opened — and one that renders in no state at all does
@@ -59,6 +61,9 @@ What it caught while the mock was being built, none of which `node --check` can 
 | the 6-column namespace index laid out 541 px wide inside a 375 px viewport — reachable only by scrolling the card sideways | the index stacks compactly below 620 px; document height at 375 fell from 41,078 px to 21,354 px |
 | five KPI tiles in a 2-column grid painted the empty sixth slot as a sixth, empty, grey tile | the gridlines are each tile's own shadow, clipped at the container's edge, instead of a 1 px gap over a coloured background |
 | the cluster-scope marker in the tier partition rendered nothing — a `clip-path` clips the element's outline with everything else it paints | the shape moved inside an unclipped box, which carries the ring |
+| the index's two new controls wrapped onto two lines at **every** width beside the heading — the controls box was given 431 px where its content needs 585 | they get a row of their own under the heading: search left, fold right |
+| at 375 the same two controls sat in a 260 px-tall empty box — `flex: 1 1 260px` is a *height* once the container turns column, and nothing overflowed or was clipped, so only looking at the render found it | both children size to content below 620 px; the row's height is asserted at all four widths now |
+| the index's drill buttons stopped being clickable — they are inside the fold | the check opens the fold the way a reader does, and asserts that a folded row is not clickable |
 
 ## Contrast, measured rather than modelled
 

@@ -101,6 +101,11 @@ break-glass … with nowhere to migrate to"*), and the platform folding on the n
 deployed demo-prod page listed 54 bindings, 41 of them these"*; `system:image-pullers` in every namespace
 would make *"zero in both"* impossible).
 
+The index's empty states distinguish three things and must keep doing so: *"the search is hiding
+them"* (quoting the denominator — *"All 106 are still there"*), *"No namespaces recorded for this
+cluster yet"*, and the self tier's *"That is your view, not the cluster"*. A refused namespace read is
+a fourth: the list *"cannot attest absence"* and says so rather than looking complete.
+
 The namespace page (`nsDetail`) is part of this tab: labels as KPIs with the *"outside the naming
 convention, so no mnemonic-based report will ever pick it up"* note, `Who reaches it, and through which
 group`, the cluster-wide reach, `Direct grants` with the operational-goal-is-zero line, the sibling

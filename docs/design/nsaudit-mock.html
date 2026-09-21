@@ -447,6 +447,26 @@ th button.sorter .arrow { font-family: var(--font-mono); margin-left: var(--spac
   padding: var(--space-5) var(--space-6); margin: var(--space-4) 0 0;
 }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-bottom: var(--space-5); }
+/* The index's two controls get a row of their own under the heading — search left, fold right, on one
+   line and aligned with each other, in the shell's idiom (the same label, input and disclosure shapes
+   the rest of the page uses). Beside the heading they wrapped onto two lines at every width, measured:
+   the controls box was given 431 px where its content needs 585. Below 620 px they stack full width. */
+.index-controls {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--space-4); min-width: 0; margin: 0 0 var(--space-6);
+}
+.index-controls .find { display: flex; align-items: center; gap: var(--space-4); flex: 1 1 260px; min-width: 0; }
+.index-controls label { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.index-controls input { width: auto; flex: 1 1 auto; min-width: 120px; max-width: 360px; }
+@media (max-width: 620px) {
+  /* The flex BASIS is a height once the direction is column, so `flex: 1 1 260px` on the search
+     group made a 260 px-tall empty box — measured, and invisible to an overflow check because
+     nothing overflowed or was clipped. Both children size to content here. */
+  .index-controls { flex-direction: column; align-items: stretch; }
+  .index-controls .find { flex: 0 0 auto; flex-wrap: wrap; }
+  .index-controls input { flex: 0 0 auto; width: 100%; max-width: none; }
+  .index-controls #index-toggle { flex: 0 0 auto; width: 100%; text-align: left; }
+}
 .controls label { font-size: var(--text-sm); color: var(--text-secondary); }
 .kv { display: grid; grid-template-columns: minmax(96px, 30%) 1fr; gap: var(--space-3) var(--space-5); padding: var(--space-3) 0; border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); min-width: 0; }
 .kv:last-child { border-bottom: 0; }
@@ -548,12 +568,22 @@ const WHO_PREVIEW = 4;
 /* One cell per namespace up to here; past it the partition renders as counts with a note, because
    a hundred cells is a texture rather than a count. */
 const UNIT_MAX = 40;
+/* Above this many rows the namespace index starts folded. Measured on the shipped page: the index
+   is 3,619 px of a 5,153 px document — 106 rows under a 5-row worklist — so on this cluster the
+   audit the page is named after begins above the fold and ends 70 % of the way from the bottom.
+   A row is ~34 px at 1280, so 25 rows is about one screen: below that the fold costs a click and
+   buys nothing, above it the fold is the difference between reading the audit and scrolling past
+   the estate. `mock-trusted` has 7 namespaces and opens; `dashboard-rnd` has 106 and folds. */
+const INDEX_FOLD = 25;
 
 const view = {
   cluster: "dashboard-rnd", tier: "admin", ns: null,
   nsSort: "risk", nsDir: "desc", grantSort: "risk", grantDir: "desc",
   grantsOpen: false, pick: "all", search: "", whoOpen: new Set(), shapeWhoOpen: false,
-  wideOpen: false, countsOpen: false, platformOpen: false
+  wideOpen: false, countsOpen: false, platformOpen: false,
+  // The namespace index's own two controls. `indexOpen: null` means "not decided by the reader",
+  // which is what lets the default follow the size of the estate rather than being a constant.
+  indexSearch: "", indexOpen: null
 };
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -641,8 +671,8 @@ function renderFilters() {
       <input id="f-ns-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
              placeholder="filter by name or label" value="${esc(view.search)}"
              aria-describedby="f-ns-search-help"
-             title='Filters the worklist AND the namespace list by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.'>
-      <span id="f-ns-search-help" class="sr-only">Filters both the exposure worklist and the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.</span></span>
+             title='Filters the namespace list by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.'>
+      <span id="f-ns-search-help" class="sr-only">Filters the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.</span></span>
     ${exportable ? `<span class="grp">Export
       <button type="button" id="export-csv" title="Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.">CSV</button>
       <button type="button" id="export-json" title="Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.">JSON</button>
@@ -786,8 +816,12 @@ function clusterWideCard() {
 }
 
 function worklistCard() {
-  const rows = nsRows().filter((r) => matches([r.namespace, ...(r.users || [])], view.search));
+  /* Not filtered by the bar's box. That box is the shell's, inherited, and on the shipped page it
+     reaches the namespace list and nothing else — measured: typing `legacy` left this table at its
+     full row count and every KPI unchanged. The finding is recorded in the capture; the fix is a
+     search of its own beside the list it searches, not a change to a control this page borrows. */
   const all = nsRows();
+  const rows = all;
   const NS_SORT = {
     risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
     namespace: (r) => r.namespace,
@@ -799,8 +833,7 @@ function worklistCard() {
   const dflt = view.nsSort === "risk" && view.nsDir === "desc";
   return `<section class="card">
     <div class="section-head">
-      <h2>Exposure by namespace <span class="count">· ${rows.length === all.length
-        ? all.length : `${rows.length} of ${all.length} shown`}</span></h2>
+      <h2>Exposure by namespace <span class="count">· ${all.length}</span></h2>
       ${dflt ? "" : `<button type="button" class="linkish" id="ns-reset">Restore risk order</button>`}
     </div>
     <p class="note">Ranked by the <strong>worst privilege granted</strong>, not by count — one forgotten
@@ -823,12 +856,13 @@ function worklistCard() {
         <td data-l="Grants" class="num">${r.bindings}</td>
         <td data-l="Who is exposed" class="who">${whoCell(r)}</td>
       </tr>`).join("")}</tbody></table></div>`
-      : `<p class="empty-note">Nothing matches <strong>${esc(view.search.trim())}</strong>. All ${all.length}
-          are still there — the filter is hiding them. Press Escape in the box to clear.</p>`}
+      : `<p class="empty-note">No namespace holds a direct grant on this cluster. Every finding here is at
+          the cluster scope, in the card above — which reaches all ${lab().namespaces.count} of them.</p>`}
     <p class="note mt-6">A namespace here is a <strong>link</strong>: it opens the
       namespace, where the group paths and the history are. On the shipped page this column is plain text, so
       the worklist is a dead end — the only way through is the list of ${lab().namespaces.count} namespaces
-      further down, or the search box.</p>
+      further down, or the search box in the bar. That box does not reach this table, here or on the shipped
+      page: it is the shell's, and this table is not its subject.</p>
     <p class="note">Cluster-wide grants are in their own card above, not in this table.
       ${lab().audit.excluded_platform} platform ${plural(lab().audit.excluded_platform, "identity", "identities")}
       excluded — system components and <code>kubeadmin</code> are break-glass and cluster-internal, with
@@ -976,14 +1010,47 @@ function inventoryCard() {
   const d = lab(), n = d.namespaces;
   const keys = n.label_keys || [];
   const all = n.namespaces || [];
-  const shown = all.filter((x) => matches([x.name, ...keys.map((k) => (x.labels || {})[k])], view.search));
+  // Free form over the namespace's own fields — its name and every captured label — with the page's
+  // multi-word contract: several words are ANDed, so every word must appear ("demo prod" finds
+  // demo-prod and demo-production; "alice zzz" finds nothing). The bar's box is the page's and
+  // reaches the worklist as well; this one is the section's and reaches this list alone.
+  const fields = (x) => [x.name, ...keys.map((k) => (x.labels || {})[k])];
+  const shown = all.filter((x) => matches(fields(x), view.search) && matches(fields(x), view.indexSearch));
   const src = n.source || {};
-  return `<section class="card">
-    <h2>Namespaces <span class="count">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length} shown`}</span></h2>
+  const barQ = (view.search || "").trim(), ownQ = (view.indexSearch || "").trim();
+  /* THIS section's box reveals the section: filtering something the reader cannot see would make the
+     box look broken, and the "nothing matches" sentence is itself the answer to the query — it has to
+     be on screen to be read. The BAR's box does not, because it is the shell's and this page does not
+     get to change what it does; while the section is folded its control carries the matched count
+     instead, so a bar query is never silently swallowed. */
+  const open = ownQ ? true : (view.indexOpen === null ? all.length <= INDEX_FOLD : view.indexOpen);
+  const countLabel = shown.length === all.length ? `${all.length}` : `${shown.length} of ${all.length}`;
+  const queryWords = [barQ && `<strong>${esc(barQ)}</strong> (the bar)`, ownQ && `<strong>${esc(ownQ)}</strong> (this list)`]
+    .filter(Boolean).join(" and ");
+  return `<section class="card" id="ns-index">
+    <h2>Namespaces <span class="count">· ${countLabel}${shown.length === all.length ? "" : " shown"}</span></h2>
+    <div class="index-controls">
+      <span class="find">
+        <label for="f-index-search">Search this list</label>
+        <input id="f-index-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
+               placeholder="name or label, any words" value="${esc(view.indexSearch)}"
+               aria-describedby="f-index-search-help"
+               title='Searches the namespaces below as you type, over the name and every captured label. Several words are ANDed — every word must appear. Escape clears. Separate from the bar''s Find namespace: neither box clears the other, and both survive the repaint.'>
+        <span id="f-index-search-help" class="sr-only">Searches the namespaces in this section by name or by the value of any captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear. This is separate from the Find namespace box in the filter bar; both apply.</span>
+      </span>
+      <button type="button" id="index-toggle" class="disclose" aria-expanded="${open}" aria-controls="ns-index-body">
+        <span class="arrow" aria-hidden="true">${open ? "▾" : "▸"}</span> ${open ? "Hide" : "Show"} ${
+        shown.length === all.length ? `${all.length} ${plural(all.length, "namespace")}`
+          : `${shown.length} of ${all.length} namespaces`}</button>
+    </div>
     <p class="note">Every namespace the poller sees, not only those with a grant. Click a row — a namespace is
-      an entity here, the third drill-down beside groups and users. The box in the bar finds by name or by any
-      captured label, and it filters <strong>both</strong> this list and the worklist above; on the shipped page
-      it reaches this card only.</p>
+      an entity here, the third drill-down beside groups and users.</p>
+    <p class="note">Two boxes search this list and they combine — a namespace shows when it matches both.
+      <strong>Find namespace</strong> in the bar is the shell's, inherited by every page and unchanged here;
+      <strong>Search this list</strong> is this section's, and is the one the fold answers to. Both are free
+      form over the same fields — the namespace's <strong>name</strong> and <strong>every captured label</strong>
+      (${keys.map((k) => `<code>${esc(k.split("/").pop())}</code>`).join(", ")}) — and both keep the page's
+      multi-word contract: several words are ANDed, so every word must appear. Neither box clears the other.</p>
     ${src.state === "forbidden" ? `<div class="trunc">The namespace read was refused, so this list cannot attest
       absence — a namespace missing here may exist. Grant namespaces [get,list] (chart:
       <code>rbac.namespaces</code>).</div>` : ""}
@@ -991,6 +1058,12 @@ function inventoryCard() {
       ${n.cluster_wide_grants} cluster-wide direct ${plural(n.cluster_wide_grants, "grant")} reach every namespace
       below; the columns count what is bound <em>in</em> each one. A namespace with zero in both is a result an
       access review wants to confirm.</p>
+    ${open ? "" : `<p class="note muted">${all.length} ${plural(all.length, "namespace")} folded away${
+      barQ ? `, <strong>${shown.length}</strong> of them matching <strong>${esc(barQ)}</strong> in the bar` : ""} — this
+      list is ${Math.round((all.length / Math.max(nsRows().length, 1)) * 10) / 10}× the length of the worklist
+      above, and the audit is what the page is named after. Everything above this line stays put when it is
+      folded.</p>`}
+    <div id="ns-index-body"${open ? "" : " hidden"}>
     ${shown.length ? `<div class="scroll-x"><table class="stack compact">
       <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(k.split("/").pop())}</th>`).join("")}
         <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
@@ -1000,8 +1073,13 @@ function inventoryCard() {
         <td data-l="Via groups" class="num${x.via_groups ? "" : " muted"}">${x.via_groups}</td>
         <td data-l="Direct grants" class="num${x.direct_grants ? " err" : " muted"}">${x.direct_grants}</td></tr>`).join("")}</tbody>
     </table></div>`
-      : `<p class="empty-note">Nothing matches <strong>${esc(view.search.trim())}</strong>. All ${all.length} are
-          still there — the filter is hiding them. Press Escape in the box to clear.</p>`}
+      // Two different empty states, never one: a search that hides everything is a fact about the
+      // query and quotes the denominator; an empty list is a fact about the cluster.
+      : all.length
+        ? `<p class="empty-note">Nothing matches ${queryWords}. All ${all.length} are still there — the
+            search is hiding them. Press Escape in a box to clear it.</p>`
+        : `<p class="empty-note">No namespaces recorded for this cluster yet.</p>`}
+    </div>
   </section>`;
 }
 
@@ -1278,6 +1356,14 @@ function shapesCard() {
       <p class="note mt-5">Measured: <code>GET …/namespaces/legacy-payments</code> as
         <code>jeff</code> answers <strong>403</strong> — <code>${esc(LAB.self.detailRefusal)}</code>.</p></div>
 
+    <div class="shape-ex"><span class="lbl">Shape — a cluster with no namespaces recorded</span>
+      <section class="card"><h3>Namespaces <span class="count">· 0</span></h3>
+        <p class="empty-note">No namespaces recorded for this cluster yet.</p></section>
+      <p class="note mt-5">The other empty state, and it must never be confused with the one above it: a search
+        that hides everything is a fact about the <em>query</em> and quotes the denominator
+        (&ldquo;all 106 are still there&rdquo;), while this one is a fact about the <em>cluster</em>. Every cluster
+        in the lab has namespaces, so only a search can empty this list here.</p></div>
+
     <div class="shape-ex"><span class="lbl">Shape — the namespace read was refused</span>
       <div class="trunc">The namespace read was refused (4m ago), so this list cannot attest absence — a
         namespace missing here may exist. Grant namespaces [get,list] (chart:
@@ -1380,7 +1466,8 @@ function wire() {
   const cluster = $("f-cluster");
   if (cluster) cluster.onchange = () => {
     if (!LAB.clusters[cluster.value]) { cluster.value = view.cluster; return; }
-    view.cluster = cluster.value; view.ns = null; view.pick = "all"; view.whoOpen = new Set(); render();
+    view.cluster = cluster.value; view.ns = null; view.pick = "all"; view.whoOpen = new Set();
+    view.indexSearch = ""; view.indexOpen = null; render();
   };
   const tier = $("f-tier");
   if (tier) tier.onchange = () => { view.tier = tier.value; view.ns = null; render(); };
@@ -1401,6 +1488,32 @@ function wire() {
       if (e.key === "Escape" && view.search) { e.preventDefault(); view.search = ""; render(); const el = $("f-ns-search"); if (el) el.focus(); }
     };
   }
+  const indexSearch = $("f-index-search");
+  if (indexSearch) {
+    // Same contract as the bar's box (renderFilters): filter as the reader types, and restore focus
+    // AND caret after the repaint — a fresh input opens with its caret at 0, so a reader typing into
+    // a box that repaints types into the front of their own text.
+    indexSearch.oninput = (e) => {
+      const pos = e.target.selectionStart;
+      view.indexSearch = e.target.value;
+      render();
+      const el = $("f-index-search");
+      if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } }
+    };
+    indexSearch.onkeydown = (e) => {
+      if (e.key === "Escape" && view.indexSearch) {
+        e.preventDefault(); view.indexSearch = ""; render();
+        const el = $("f-index-search"); if (el) el.focus();
+      }
+    };
+  }
+  const indexToggle = $("index-toggle");
+  if (indexToggle) indexToggle.onclick = () => {
+    view.indexOpen = indexToggle.getAttribute("aria-expanded") !== "true";
+    render();
+    const el = $("index-toggle"); if (el) el.focus();
+  };
+
   document.querySelectorAll("button.sorter").forEach((el) => {
     el.onclick = () => {
       if (el.dataset.group === "grant") { view.grantSort = el.dataset.sort; view.grantDir = el.dataset.dir; }

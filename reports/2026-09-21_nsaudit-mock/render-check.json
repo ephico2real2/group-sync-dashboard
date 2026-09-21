@@ -23,13 +23,6 @@
   "legacy-payments",
   "group-sync-operator"
  ],
- "headings while filtered": [
-  "Namespace audit",
-  "Exposure by namespace \u00b7 2 of 4 shown",
-  "Namespaces \u00b7 2 of 106 shown",
-  "Namespace audit",
-  "legacy-payments"
- ],
  "flat list sorted by person": [
   "tmp-contractor-9931",
   "ocp-oauth-bind-serviceid",
@@ -54,6 +47,10 @@
  "deuter critical/warning": [
   "#b24e00",
   "#c18600"
+ ],
+ "document height, folded vs open": [
+  5517,
+  9812
  ],
  "states swept for caveats": 9,
  "375px geometry": {

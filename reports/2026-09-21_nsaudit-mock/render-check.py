@@ -139,21 +139,22 @@ def drive(page):
     check("Restore risk order puts it back", page.evaluate(WORKLIST_NS), before)
     check("and then removes itself", page.evaluate("() => !!document.querySelector('#ns-reset')"), False)
 
-    # ── the one filter box, now reaching both lists ───────────────────────────────────────────
+    # ── the bar's box: inherited from the shell, and left exactly as the shipped page has it ──
     page.fill("#f-ns-search", "legacy"); page.wait_for_timeout(250)
-    check("the box filters the worklist too", page.evaluate(WORKLIST_NS), ["legacy-payments", "legacy-reporting"])
-    check("and the namespace list with it",
-          page.evaluate("() => document.querySelectorAll('#main > section.card:nth-of-type(7) tbody tr').length"), 2)
-    note("headings while filtered", page.evaluate("() => [...document.querySelectorAll('#main h2')].map(h => h.textContent.replace(/\\s+/g,' ').trim())"))
+    check("the bar's box does NOT reach the worklist — that is its shipped scope, unchanged",
+          page.evaluate(WORKLIST_NS), before)
+    check("it filters the namespace list, which is what it has always filtered",
+          page.evaluate("() => document.querySelector('#index-toggle').textContent.replace(/\\s+/g,' ').trim()"),
+          "▸ Show 2 of 106 namespaces")
+    check("and it does not force the section open — the fold answers to the section's own box",
+          page.evaluate("() => document.querySelector('#ns-index-body').hasAttribute('hidden')"), True)
+    check("so the folded section states what the bar's query matched, rather than swallowing it",
+          page.evaluate("() => [...document.querySelectorAll('#ns-index .note')].some(n => /2 of them matching legacy in the bar/.test(n.textContent.replace(/\\s+/g,' ')))"), True)
     check("the caret stays at the end of what was typed",
           page.evaluate("() => [document.activeElement.id, document.activeElement.selectionStart]"), ["f-ns-search", 6])
-    page.fill("#f-ns-search", "zzzz"); page.wait_for_timeout(250)
-    check("an empty result says the filter is hiding them, with the denominator",
-          page.evaluate("() => [...document.querySelectorAll('.empty-note')].map(e => e.textContent.replace(/\\s+/g,' ').trim())"),
-          ok=any("still there" in t for t in page.evaluate("() => [...document.querySelectorAll('.empty-note')].map(e => e.textContent)")))
     page.focus("#f-ns-search"); page.keyboard.press("Escape"); page.wait_for_timeout(250)
     check("Escape clears the box", page.evaluate("() => document.querySelector('#f-ns-search').value"), "")
-    check("and the worklist comes back", page.evaluate(WORKLIST_NS), before)
+    check("and the worklist was never touched by any of it", page.evaluate(WORKLIST_NS), before)
 
     # ── the flat list, its selector and its disclosure ────────────────────────────────────────
     check("Every grant is collapsed by default",
@@ -231,10 +232,17 @@ def drive(page):
     shot(page, "mock-02-namespace-detail-1280.png", full=True)
     page.click("#back"); page.wait_for_timeout(300)
     check("back returns to the audit", page.evaluate("() => document.querySelector('#main h2').textContent.trim()"), "Namespace audit")
-    page.click("#main > section.card:nth-of-type(7) [data-ns] >> nth=0"); page.wait_for_timeout(300)
+    # The index is folded by default now, so its rows are reached the way a reader reaches them:
+    # open the fold first. A control inside a collapsed section is not clickable, and this step
+    # timing out is how that was found rather than assumed.
+    check("the index's rows are not clickable while it is folded",
+          page.evaluate("() => { const b = document.querySelector('#ns-index-body [data-ns]'); return !!b && b.offsetParent === null; }"), True)
+    page.click("#index-toggle"); page.wait_for_timeout(300)
+    page.click("#ns-index-body [data-ns] >> nth=0"); page.wait_for_timeout(300)
     check("a namespace with no captured payload says so rather than inventing one",
           page.evaluate(TXT + ".includes('Rather than draw a plausible')"), True)
     page.click("#back"); page.wait_for_timeout(250)
+    page.evaluate("() => { MOCK.view.indexOpen = null; MOCK.render(); }"); page.wait_for_timeout(200)
 
     # ── the tiers ─────────────────────────────────────────────────────────────────────────────
     page.select_option("#f-tier", "self-jdoe"); page.wait_for_timeout(300)
@@ -303,6 +311,17 @@ def widths(page):
           }).map(e => e.tagName + '.' + e.className + ' ' + e.scrollWidth + '>' + e.clientWidth
                       + ' ' + e.scrollHeight + '>' + e.clientHeight)""")
         check(f"{w}px — nothing clipped inside an overflow:hidden box", clipped, [])
+        # The index's search and its fold: one row where the width allows, stacked where it does not,
+        # and the row's own height asserted — a flex BASIS becomes a height in a column container, and
+        # the 260 px empty box that produced overflowed nothing and was clipped by nothing.
+        ctl = page.evaluate("""() => { const c = document.querySelector('.index-controls').getBoundingClientRect(),
+              i = document.querySelector('#f-index-search').getBoundingClientRect(),
+              b = document.querySelector('#index-toggle').getBoundingClientRect();
+            return { sameRow: Math.abs(i.top - b.top) < 6, height: Math.round(c.height) }; }""")
+        check(f"{w}px — search and fold {'share a row' if w >= 768 else 'stack'}",
+              ctl["sameRow"], w >= 768)
+        check(f"{w}px — the control row is the height of its controls", ctl["height"],
+              ok=ctl["height"] <= (40 if w >= 768 else 110))
         page.evaluate("() => window.scrollTo(0, 0)")
         shot(page, f"mock-0{6 if w == 375 else 7 if w == 393 else 8 if w == 768 else 9}-audit-{w}.png", full=True)
     page.set_viewport_size({"width": 375, "height": 812}); page.wait_for_timeout(300)
@@ -353,6 +372,88 @@ def contrast(page, theme):
     return rows
 
 
+def index_controls(page):
+    """The namespace index's fold and its own free-form search — both driven, both asserted."""
+    page.evaluate("() => { MOCK.view.ns = null; MOCK.view.tier = 'admin'; MOCK.view.search = '';"
+                  " MOCK.view.indexSearch = ''; MOCK.view.indexOpen = null; MOCK.render(); }")
+    page.wait_for_timeout(300)
+    folded = "() => document.querySelector('#ns-index-body').hasAttribute('hidden')"
+    label = "() => document.querySelector('#index-toggle').textContent.replace(/\\s+/g,' ').trim()"
+    check("106 namespaces: the index starts folded", page.evaluate(folded), True)
+    check("the control says how many are behind it", page.evaluate(label), "▸ Show 106 namespaces")
+    check("aria-expanded matches", page.evaluate("() => document.querySelector('#index-toggle').getAttribute('aria-expanded')"), "false")
+    check("the section's heading, notes and cluster-wide line stay outside the fold",
+          page.evaluate("() => [...document.querySelectorAll('#ns-index > .note')].length"), 4)
+    shut = page.evaluate("() => document.documentElement.scrollHeight")
+    page.click("#index-toggle"); page.wait_for_timeout(250)
+    check("the toggle opens it", page.evaluate(folded), False)
+    check("and renders all 106 rows", page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 106)
+    wide = page.evaluate("() => document.documentElement.scrollHeight")
+    check("folding the index is what shortens the page", f"{shut} folded vs {wide} open", ok=shut < wide * 0.6)
+    note("document height, folded vs open", [shut, wide])
+    check("the label turns around", page.evaluate(label), "▾ Hide 106 namespaces")
+    page.click("#index-toggle"); page.wait_for_timeout(250)
+    check("and folds it again", page.evaluate(folded), True)
+
+    # Free form: name and every captured label, several words ANDed.
+    page.fill("#f-index-search", "demo prod"); page.wait_for_timeout(300)
+    check("a search reveals the section rather than filtering what cannot be seen", page.evaluate(folded), False)
+    check("free form matches the name",
+          page.evaluate("() => [...document.querySelectorAll('#ns-index-body tbody tr td:first-child')].map(t => t.textContent.trim())"),
+          ["demo-prod", "demo-production"])
+    check("the heading states both numbers",
+          page.evaluate("() => document.querySelector('#ns-index h2').textContent.replace(/\\s+/g,' ').trim()"),
+          "Namespaces · 2 of 106 shown")
+    check("and so does the control", page.evaluate(label), "▾ Hide 2 of 106 namespaces")
+    check("the section's box does NOT reach the worklist",
+          page.evaluate("() => [...document.querySelectorAll('#main table')][1].querySelectorAll('tbody tr').length"), 4)
+    check("focus and caret survive the repaint",
+          page.evaluate("() => [document.activeElement.id, document.activeElement.selectionStart]"), ["f-index-search", 9])
+    page.fill("#f-index-search", "uat"); page.wait_for_timeout(300)
+    check("free form matches a label value, not only the name",
+          page.evaluate("() => [...document.querySelectorAll('#ns-index-body tbody tr td:first-child')].map(t => t.textContent.trim())"),
+          ok=set(page.evaluate("() => [...document.querySelectorAll('#ns-index-body tbody tr td:first-child')].map(t => t.textContent.trim())")) >= {"beta-uat", "demo-uat"})
+    page.fill("#f-index-search", "demo zzz"); page.wait_for_timeout(300)
+    check("every word must appear — the multi-word contract",
+          page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 0)
+    check("and the empty state quotes the denominator and names the box",
+          page.evaluate("() => document.querySelector('#ns-index .empty-note').textContent.replace(/\\s+/g,' ').trim()"),
+          "Nothing matches demo zzz (this list). All 106 are still there — the search is hiding them. Press Escape in a box to clear it.")
+    page.focus("#f-index-search"); page.keyboard.press("Escape"); page.wait_for_timeout(300)
+    check("Escape clears the section's box", page.evaluate("() => document.querySelector('#f-index-search').value"), "")
+    check("and the fold returns to its default", page.evaluate(folded), True)
+
+    # Two boxes on one page, which must be tellable apart and must not fight.
+    check("each box says what it searches",
+          page.evaluate("() => [...document.querySelectorAll(\"label[for='f-ns-search'], label[for='f-index-search']\")].map(l => l.textContent.trim())"),
+          ["Find namespace", "Search this list"])
+    page.fill("#f-ns-search", "legacy"); page.wait_for_timeout(300)
+    check("the bar's box leaves the section folded", page.evaluate(folded), True)
+    page.fill("#f-index-search", "payments"); page.wait_for_timeout(300)
+    check("the section's box reveals it", page.evaluate(folded), False)
+    check("the two queries are ANDed",
+          page.evaluate("() => [...document.querySelectorAll('#ns-index-body tbody tr td:first-child')].map(t => t.textContent.trim())"),
+          ["legacy-payments"])
+    check("neither box has touched the other's text",
+          page.evaluate("() => [document.querySelector('#f-ns-search').value, document.querySelector('#f-index-search').value]"),
+          ["legacy", "payments"])
+    page.focus("#f-ns-search"); page.keyboard.press("Escape"); page.wait_for_timeout(300)
+    check("clearing one leaves the other standing",
+          page.evaluate("() => [document.querySelector('#f-ns-search').value, document.querySelector('#f-index-search').value]"),
+          ["", "payments"])
+    check("and the section says the two combine",
+          page.evaluate("() => [...document.querySelectorAll('#ns-index .note')].some(n => n.textContent.replace(/\\s+/g,' ').includes('Two boxes search this list and they combine'))"), True)
+    page.fill("#f-index-search", ""); page.wait_for_timeout(300)
+
+    # The default follows the size of the estate, not a constant.
+    page.select_option("#f-cluster", "mock-trusted"); page.wait_for_timeout(400)
+    check("a 7-namespace cluster opens instead, because the fold would buy nothing",
+          page.evaluate(folded), False)
+    check("its control says so", page.evaluate(label), "▾ Hide 7 namespaces")
+    page.select_option("#f-cluster", "dashboard-rnd"); page.wait_for_timeout(400)
+    check("switching back restores the folded default", page.evaluate(folded), True)
+
+
 # ── The contract check ────────────────────────────────────────────────────────────────────────
 # The one risk this whole exercise exists to avoid: `docs/design/tab-feature-contract.md` was
 # written because an earlier pass "reduced these pages to headline + KPIs + a table, and in doing
@@ -382,7 +483,8 @@ CAVEATS = {
     "namespaces: not only those with a grant": "not only those with a grant",
     "namespaces: the third drill-down": "the third drill-down beside groups and users",
     "namespaces: zero in both": "a namespace with zero in both is a result an access review wants to confirm",
-    "namespaces: the filter is hiding them": "the filter is hiding them",
+    "namespaces: the search is hiding them": "the search is hiding them",
+    "namespaces: nothing recorded at all": "no namespaces recorded for this cluster yet",
     "namespaces: a refused read cannot attest absence": "cannot attest absence",
     "self: no wide aggregate is recomputed": "none of the wide view's aggregates",
     "self: says nothing about other accounts": "says nothing about whether other accounts hold direct grants",
@@ -415,11 +517,13 @@ def caveats(page):
     page.evaluate("""() => { MOCK.view.ns = null; MOCK.view.tier = 'admin';
         MOCK.view.countsOpen = true; MOCK.view.grantsOpen = true; MOCK.render(); }""")
     page.wait_for_timeout(250)
+    check("the caveat sweep's first state has the index folded (the case most likely to hide one)",
+          page.evaluate("() => document.querySelector('#ns-index-body').hasAttribute('hidden')"), True)
     grab()
     page.select_option("#ns-pick", "legacy-payments"); page.wait_for_timeout(250); grab()
     page.click("#ns-pick-clear"); page.wait_for_timeout(200)
-    page.fill("#f-ns-search", "zzzz"); page.wait_for_timeout(250); grab()
-    page.fill("#f-ns-search", ""); page.wait_for_timeout(200)
+    page.fill("#f-index-search", "zzzz"); page.wait_for_timeout(250); grab()
+    page.fill("#f-index-search", ""); page.wait_for_timeout(200)
     for tier in ("self-jdoe", "self-alice", "withheld"):
         page.select_option("#f-tier", tier); page.wait_for_timeout(250); grab()
     page.select_option("#f-tier", "admin"); page.wait_for_timeout(250)
@@ -450,6 +554,7 @@ def main():
         page.on("console", lambda m: console.append(m.type + ": " + m.text) if m.type in ("error", "warning") else None)
         page.goto(URL, wait_until="load"); page.wait_for_timeout(600)
         drive(page)
+        index_controls(page)
         caveats(page)
         widths(page)
         contrast(page, None)
