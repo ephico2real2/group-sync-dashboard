@@ -6848,10 +6848,20 @@ class TestKyvernoPage:
         p = _open_as(page, scoped_server, "root")
         p.click("#tab-kyverno")
         p.wait_for_selector("#kyverno-controlled")
+        # The switch is OFF here and the lab table's Pod result is filtered out: two findings.
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
         p.focus("#kyverno-controlled")
         with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
             p.keyboard.press("Enter")
-        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        # THE NEW PAINT, NOT THE OLD ONE (#246). This waited for `Findings · 2` AFTER the toggle —
+        # the count BEFORE it — so it was satisfied by the pre-toggle text and passed without ever
+        # observing the repaint it exists to prove. It won that race on a quiet machine and lost it
+        # under CI's `--tracing retain-on-failure`, where the response had already painted by the
+        # time the wait first evaluated: measured at 3 findings with aria-checked=true, and made to
+        # fail locally every time by inserting a 1.5s pause before the wait.
+        # Switching the control ON includes the Pod result, so the lab table's two findings become
+        # three; that transition is the thing under test.
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 3')")
         assert p.evaluate("() => [document.activeElement.id, document.getElementById('kyverno-controlled').getAttribute('aria-checked')]") == ["kyverno-controlled", "true"]
         kyverno_store.replace_kyverno("crc-local", None, "2026-09-20T12:05:00Z")
         p.evaluate("() => refresh({ auto: true })")
