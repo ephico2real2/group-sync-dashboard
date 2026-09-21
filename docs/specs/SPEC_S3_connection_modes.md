@@ -463,6 +463,55 @@ service-account token is that the kubelet requests a new one once the token is o
 a long-lived token that is nowhere near 80 % of its life still gets a daily refresh, which is the half that keeps
 a multi-day token honest. The tab shows the real date.
 
+**But the 80 % rule only applies to a token that HAS a lifetime, and the path this spec prefers does
+not.** The declared `kubernetes.io/service-account-token` Secret the operator chart ships carries a
+**legacy, non-expiring** token. Measured on the reference cluster, decoding the JWT that
+`group-sync-operator/group-sync-dashboard-cluster-poller-token` holds:
+
+```
+claims present: iss, sub,
+                kubernetes.io/serviceaccount/{namespace, secret.name,
+                                              service-account.name, service-account.uid}
+iat = ABSENT      exp = ABSENT      nbf = ABSENT
+iss = kubernetes/serviceaccount        (the legacy issuer, not the bound-token issuer)
+```
+
+No `exp`. It does not expire, and no clock will ever make it expire. Kubernetes documents this as the
+defined behaviour, not an artefact of this cluster: tokens in manually created
+`kubernetes.io/service-account-token` Secrets **"don't expire and don't rotate"**, and the control plane
+invalidates one by deleting the Secret — including automatically, via the token controller, when the
+**ServiceAccount** itself is deleted ([Service Accounts](https://kubernetes.io/docs/concepts/security/service-accounts/),
+[Managing Service Accounts](https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/)).
+So it stops working when the Secret goes, and at no other moment. So the two credential shapes need two
+different designs, and conflating them is how a reconciler ends up waiting for an expiry that never
+arrives:
+
+| credential | lifetime | what "renewal" means |
+|---|---|---|
+| **declared token Secret** (`kubernetes.io/service-account-token`) | **none** — no `exp` claim at all | there is no clock to track. Rotation is an **action**: delete the Secret so the controller issues a fresh one. Nothing to schedule, and nothing for the 80 % trigger to fire on |
+| **TokenRequest-minted** (#238) | bounded, real `expirationTimestamp` | §8.3's 80 %-or-24-hours trigger applies exactly as written |
+
+Three consequences:
+
+1. **§9.2's `auth_failed` row means different things on the two paths.** On a minted token it can be
+   expiry. On a declared one expiry is *impossible*, so the same failure means the Secret was deleted,
+   the ServiceAccount was recreated with a new uid, or the grant was withdrawn — and re-reading the
+   Secret before reminting is not merely an optimisation, it is the whole fix.
+2. **This is precisely why the tab writes `expires: current` and never `expires: never`** (the
+   operator's ruling on #248). A credential with no expiry must not be rendered as though it had a
+   reassuring one, and "never" is the word an auditor is entitled to object to.
+3. **It puts the preference order in question.** §3 prefers the declared Secret and mints only when none
+   exists, because the chart provisions the declared one. But a non-expiring credential is the thing the
+   audit posture likes least, and TokenRequest exists to avoid it. **Recommendation: prefer the minted
+   token wherever the `create serviceaccounts/<name>/token` grant is present, and fall back to the
+   declared Secret** — the reverse of the current draft. Upstream says the same thing, and more
+   bluntly: for an application outside the cluster, the Kubernetes project *"recommends you avoid this
+   approach, as long-lived bearer tokens represent a security risk"* once disclosed
+   ([Service Accounts](https://kubernetes.io/docs/concepts/security/service-accounts/)). The dashboard
+   is exactly that application. It is a decision for the operator, recorded here with its measurement
+   rather than settled silently, and either way the tab must say which shape a
+   cluster is using, because that is what determines whether renewal is a clock or a deletion.
+
 Worth stating precisely, because an earlier draft overstated it: **Argo CD does not rotate cluster
 credentials *automatically*.** It is not that it cannot — `argocd cluster rotate-auth` exists and rotates
 the `argocd-manager` token on demand, and the documented manual procedure is to delete the token Secret
