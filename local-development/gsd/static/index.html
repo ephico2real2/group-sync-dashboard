@@ -168,6 +168,11 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
+                /* #267: the form's cluster control. `reportClusters` is the set to run on — null means the nav's
+                   cluster alone; an array always holds it (the primary: its lookups, its totals). View state, not
+                   a position: the URL carries the nav's cluster, the extra targets are the form's, like a draft.
+                   `reportBatch` is a several-cluster submission's runs; `reportClusterNote` what a cluster change cleared. */
+                reportClusters: null, reportBatch: null, reportClusterNote: null,
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
@@ -292,7 +297,7 @@ function applyPosition(pos) {
   // belongs to the form it ran from — and closes the names dialog, which describes a selection no
   // longer on screen: the #144 C6-D rule, whose guard below fires on a page change only.
   const nextReport = view.page === "reports" ? (pos.report || null) : null;
-  if (nextReport !== view.report) { view.reportRun = null; closeNsPreview(); }
+  if (nextReport !== view.report) { view.reportRun = null; view.reportBatch = null; closeNsPreview(); }
   view.report = nextReport;
   // #229: an open run belongs to the Library page the same way — no other page's position carries one
   view.run = view.page === "library" ? (pos.run || null) : null;
@@ -337,10 +342,11 @@ function applyPosition(pos) {
       // The selector choices are THIS cluster's captured label values (B3, review #117 C4; P2 selectors):
       // carried across, a cluster-A value would be posted against cluster B — a failed run, or a hidden
       // XOR 422 if the reader then typed explicit names. Drop them; the explicit names are the reader's text.
-      if (view.reportForm["namespace-access"]) {
-        delete view.reportForm["namespace-access"].mnemonics;
-        delete view.reportForm["namespace-access"].selectors;
-      }
+      // #267 widens the rule to every lookup-sourced field of every form (the lookups are keyed per cluster:
+      // a role picked on A may not exist on B) and RECORDS what went, so the form says it rather than
+      // carrying a stale value silently. The form's multi-select follows the nav again.
+      dropClusterBoundFields(view.cluster, nextCluster);
+      view.reportClusters = null;
       clearReportPreview();   // and invalidate any in-flight #107 GET for the cluster we just left
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
@@ -2706,11 +2712,13 @@ function reportFormCard(spec, cat) {
     return paramField(spec, p, form);
   };
   const run = view.reportRun;
-  const status = run ? reportRunStatus(run) : "";
+  const status = run ? reportRunStatus(run) : (view.reportBatch ? reportBatchStatus(view.reportBatch) : "");
+  const targets = reportTargets();
   const [kcat] = REPORT_KIND[spec.name] || ["access"];
   // #149 R7: one ParamSpec-driven shell for all eleven reports — the main grid, the Subject scope as one
-  // framed block, optional fields under Advanced (open when one of them is set), no cluster field (the
-  // nav chose it), a pinned action bar. The selector-map Scope keeps its own block above.
+  // framed block, optional fields under Advanced (open when one of them is set), a pinned action bar. The
+  // selector-map Scope keeps its own block above. #267 adds the cluster control at the top: the nav chose the
+  // primary, the form names it and may add others.
   const subject = spec.params.filter((p) => p.group === "subject");
   const main = spec.params.filter((p) => !p.group && !p.advanced);   // `mnemonics`/`selectors` render through field()'s own cases
   const advanced = spec.params.filter((p) => !p.group && p.advanced);
@@ -2722,15 +2730,16 @@ function reportFormCard(spec, cat) {
       <span class="muted">${esc(spec.title)} · <span class="mono">${esc(spec.name)}</span></span></div>
     <h3>${esc(spec.title)}</h3>
     <div class="filterbar-note">${esc(spec.summary)}</div>
+    ${reportClustersBlock(spec)}
     ${subject.length ? subjectBlock(spec, subject, form) : ""}
     <div class="report-fields">${main.map(field).join("")}</div>
     ${advanced.length ? `<details class="report-advanced" id="report-advanced"${advancedSet ? " open" : ""}><summary>Advanced</summary>
       <div class="report-fields">${advanced.map(field).join("")}</div></details>` : ""}
     <div class="ns-controls mt-4 report-actions">
-      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
+      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !targets.length ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
-      <span class="filterbar-note">json is always written · cluster <span class="mono">${esc(view.cluster || "")}</span></span>
+      <span class="filterbar-note">json is always written · ${targets.length > 1 ? `${targets.length} clusters, one run each` : `cluster <span class="mono">${esc(view.cluster || "")}</span>`}</span>
       <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name && view.reportTotals.cluster === view.cluster ? view.reportTotals.text : "")}</span>
     </div>
     ${status}
@@ -2775,6 +2784,90 @@ function paramField(spec, p, form) {
   }
   const val = raw !== undefined ? raw : (p.default === null ? "" : p.default);
   return `<div class="report-field">${label}<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">${hint}</div>`;
+}
+
+/* #267: the cluster control. The nav's cluster is the PRIMARY — the discovered lookups and the totals preview
+   are its (both keyed per cluster) — and the form may add others: one run per cluster, the same parameters on
+   each, one queue slot on the service. The list is the nav's list (`data.clusters`, the page's own tier);
+   the nav's id when it is not configured is offered as the nav offers it, named for what it is. */
+function reportTargets() {
+  if (!view.cluster) return [];
+  if (!Array.isArray(view.reportClusters)) return [view.cluster];
+  const chosen = view.reportClusters;
+  const ordered = (data.clusters || []).map((c) => c.id).filter((c) => chosen.includes(c));   // the configured order: chips and runs line up
+  return ordered.includes(view.cluster) ? ordered : [view.cluster].concat(ordered);
+}
+
+// A chip's click. Adding never touches the primary; removing the primary promotes the next chosen cluster
+// through navigate() — the same chokepoint the nav's select uses, so the lookups, the totals preview and the
+// cluster-bound fields follow it — and re-applies the set navigate() just reset. The set is never empty.
+function toggleReportCluster(id) {
+  const targets = reportTargets();
+  if (!targets.includes(id)) { view.reportClusters = targets.concat([id]); render(); return; }
+  if (targets.length === 1) return;                      // the last chip is aria-disabled and says so
+  const rest = targets.filter((c) => c !== id);
+  if (id === view.cluster) {
+    navigate({ cluster: rest[0], groupsync: null, group: null, user: null, ns: null });
+    view.reportClusters = rest;
+    render(); refresh();
+    return;
+  }
+  view.reportClusters = rest;
+  render();
+}
+
+/* #267: the report fields that are one cluster's — the lookups (`source` on the ParamSpec: users, groups, roles,
+   providers, mnemonics, oud-groups, namespaces) and the namespace-access selector map, whose values are the
+   catalogue's captured label values per cluster. Dropped from every form that holds one, and recorded when
+   something was actually held, so the form can say what went. Typed text (a prefix, a window) is the reader's
+   and stays. Runs at navigate()'s cluster-change chokepoint, before `view.cluster` moves. */
+function dropClusterBoundFields(from, to) {
+  const specs = (data.reportCatalog && data.reportCatalog.reports) || [];
+  const cleared = {};
+  for (const [name, form] of Object.entries(view.reportForm)) {
+    const spec = specs.find((r) => r.name === name);
+    const bound = new Set(["mnemonics", "selectors"].concat(spec ? spec.params.filter((p) => p.source).map((p) => p.name) : []));
+    for (const key of Object.keys(form)) {
+      if (!bound.has(key)) continue;
+      const v = form[key];
+      const held = Array.isArray(v) ? v.length > 0 : (v && typeof v === "object" ? Object.keys(v).length > 0 : !!v);
+      delete form[key];
+      if (held) (cleared[name] = cleared[name] || []).push(key);
+    }
+  }
+  view.reportClusterNote = Object.keys(cleared).length ? { from, to, cleared } : null;
+}
+
+function reportClustersBlock(spec) {
+  const clusters = data.clusters || [];
+  const targets = reportTargets();
+  const gone = view.cluster && !clusters.some((c) => c.id === view.cluster);
+  const rows = (gone ? [{ id: view.cluster, gone: true }] : []).concat(clusters);
+  const chip = (c) => {
+    const on = targets.includes(c.id), primary = c.id === view.cluster, last = on && targets.length === 1;
+    return `<button type="button" role="checkbox" aria-checked="${on}" class="rp-clu${on ? " sel" : ""}${primary ? " primary" : ""}"
+        data-cluster-pick="${esc(c.id)}" id="report-cluster-${esc(c.id)}"${last ? ' aria-disabled="true" title="at least one cluster runs"' : ""}>
+      <span class="rp-clu-tick" aria-hidden="true">${on ? "✓" : ""}</span>${esc(c.id)}${c.gone ? '<span class="rp-clu-tag">not configured</span>' : ""}${primary ? '<span class="rp-clu-tag nav">lookups · totals</span>' : ""}</button>`;
+  };
+  const note = view.reportClusterNote, cleared = note && note.cleared[spec.name];
+  // A change TO the fleet (#172) records `to: null`, and the boot cycle then stamps the first cluster OUTSIDE
+  // navigate() (the one sanctioned bypass), so no later chokepoint pass rewrites that note: it is the one the
+  // form shows when the reader comes back. Name the fleet for what it is, and quote the cluster the form is on
+  // NOW for the lookups — those are whose they are, whatever the note recorded.
+  const toName = note ? (note.to ? `<span class="mono">${esc(note.to)}</span>` : "the fleet view") : "";
+  const offered = view.cluster ? `<span class="mono">${esc(view.cluster)}</span>'s` : "the selected cluster's";
+  const noteHtml = cleared ? `<div class="rp-clu-note" role="status" id="report-cluster-note">Cluster changed ${note.from ? `from <span class="mono">${esc(note.from)}</span> ` : ""}to ${toName} —
+      <span class="mono">${esc(cleared.join(", "))}</span> picked on ${esc(note.from || "the previous cluster")} ${cleared.length === 1 ? "was" : "were"} cleared; the lookups now offered are ${offered}.
+      <button type="button" class="linkish" id="report-cluster-note-x">dismiss</button></div>` : "";
+  return `<div class="rp-scope clu" id="report-clusters">
+    <div class="rp-scope-top"><span class="t">Clusters <span class="rp-auto">discovered · ${clusters.length} configured</span></span><span class="and muted">one run per cluster · the same parameters on each</span></div>
+    <div class="rp-clusters" role="group" aria-label="Clusters to run on">${rows.map(chip).join("")}</div>
+    <div class="rp-scope-foot"><span class="rp-count-live" id="report-cluster-count">${targets.length} of ${rows.length} cluster${rows.length === 1 ? "" : "s"}</span>
+      <button type="button" class="linkish" id="report-clusters-all"${targets.length < rows.length ? "" : " hidden"}>all ${rows.length}</button>
+      <button type="button" class="linkish" id="report-clusters-one"${targets.length > 1 ? "" : " hidden"}>only ${esc(view.cluster || "")}</button>
+      <span class="muted">lookups and the totals preview are <span class="mono">${esc(view.cluster || "")}</span>'s</span></div>
+    ${noteHtml}
+  </div>`;
 }
 
 // The Subject scope: users and/or groups as one framed block, a live count, Clear (empty = all).
@@ -2850,16 +2943,31 @@ function ensureDiscovered() {
     });
 }
 
-function reportRunStatus(run) {
+// One run's status. In a batch (#267) the block is named for its cluster and is not its own live region —
+// the batch's wrapper announces, so a screen reader hears one change, not one per cluster.
+function reportRunStatus(run, inBatch = false) {
   const done = run.status === "done";
   const failed = run.status === "failed";
   const links = done ? (run.formats || []).concat(["json"]).map((f) =>
     `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}">Download .${esc(f)}</button>`).join(" ") : "";
-  return `<div class="report-status" id="report-status" role="status">
-    <strong>Run ${esc(run.id)}</strong> — ${esc(run.status)}${failed ? `: ${esc(run.error || "")}` : ""}
+  return `<div class="report-status" id="${inBatch ? `report-status-${esc(run.cluster)}` : "report-status"}"${inBatch ? "" : ' role="status"'}>
+    ${inBatch ? `<span class="mono">${esc(run.cluster)}</span> · ` : ""}<strong>Run ${esc(run.id)}</strong> — ${esc(run.status)}${failed ? `: ${esc(run.error || "")}` : ""}
     ${done ? ` · sha256 <code>${esc((run.sha256 || "").slice(0, 16))}…</code> · data as of ${esc(run.snapshot_stamp || "")}` : ""}
     <div class="ns-controls mt-3">${links}</div>
   </div>`;
+}
+
+// #267: a several-cluster submission — each cluster's outcome said separately under one count that quotes
+// its denominator. Partial failure is not failure: two done and one failed is two documents and one reason.
+function reportBatchStatus(b) {
+  const n = b.requested.length;
+  const tally = ["done", "failed", "running", "queued"].map((st) => [st, b.runs.filter((r) => r.status === st).length]).filter(([, k]) => k);
+  // An error with runs already answered is the FOLLOWING-UP's, not the request's: the service said 202, the
+  // runs are queued and the Library will hold them. Calling that "refused" tells the reader the opposite.
+  const head = b.error ? `${n} clusters requested — ${b.runs.length ? "the runs were queued, but following them failed" : "the request was refused"}: ${esc(b.error)}`
+    : `${n} clusters requested — ${tally.length ? tally.map(([st, k]) => `${k} ${st}`).join(" · ") : "submitting…"}`;
+  return `<div class="report-batch" id="report-batch" role="status"><div class="rp-batch-head">${head}</div>
+    ${b.runs.map((r) => reportRunStatus(r, true)).join("")}</div>`;
 }
 
 /* ─── #149 R5: the Reporting status page — three cards, docs/design/reporting-status-mock.html ──────
@@ -3608,6 +3716,22 @@ function wireReports() {
   }
   const clearSubject = $("report-subject-clear");
   if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; scheduleTotals(view.report); render(); refocusLookup("users"); };
+  // #267: the cluster chips (ids, so render()'s by-id restore keeps a keyboard reader on the one they pressed)
+  document.querySelectorAll("[data-cluster-pick]").forEach((el) => {
+    el.onclick = () => { if (el.getAttribute("aria-disabled") === "true") return; toggleReportCluster(el.dataset.clusterPick); };
+  });
+  const allClusters = $("report-clusters-all");
+  if (allClusters) allClusters.onclick = () => { view.reportClusters = (data.clusters || []).map((c) => c.id); render(); };
+  const oneCluster = $("report-clusters-one");
+  if (oneCluster) oneCluster.onclick = () => { view.reportClusters = null; render(); };
+  const noteX = $("report-cluster-note-x");
+  // Dismissed for THIS form only: the note renders per form (`cleared[spec.name]`), so another form's cleared
+  // lookup is still owed to its reader when they open it. The form card only renders for `view.report`.
+  if (noteX) noteX.onclick = () => {
+    const note = view.reportClusterNote;
+    if (note) { delete note.cleared[view.report]; if (!Object.keys(note.cleared).length) view.reportClusterNote = null; }
+    render();
+  };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
@@ -3646,28 +3770,54 @@ function wireReports() {
 async function generateReport(refocus = false) {
   const cat = data.reportCatalog;
   const spec = cat.reports.find((r) => r.name === view.report) || cat.reports.find((r) => r.enabled);
-  if (!spec || !view.cluster) return;
+  const targets = reportTargets();
+  if (!spec || !targets.length) return;
   const params = Object.assign({}, view.reportForm[spec.name] || {});
   const formats = [];
   if ($("report-want-html") && $("report-want-html").checked) formats.push("html");
   if ($("report-want-pdf") && $("report-want-pdf").checked) formats.push("pdf");
-  view.reportSubmitting = true; view.reportRun = null; render();
+  view.reportSubmitting = true; view.reportRun = null; view.reportBatch = null; render();
+  const pending = (r) => r.status === "queued" || r.status === "running";
+  const tick = () => new Promise((r) => setTimeout(r, 1500));
   try {
-    const res = await reportFetch("/api/runs", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ report: spec.name, cluster: view.cluster, params, formats }),
-    });
-    view.reportRun = await res.json();
-    render();
-    // Poll the run, not the page: a render is seconds, and the 60 s repaint is the wrong clock.
-    while (view.reportRun && (view.reportRun.status === "queued" || view.reportRun.status === "running")) {
-      await new Promise((r) => setTimeout(r, 1500));
-      view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
+    if (targets.length === 1) {
+      const res = await reportFetch("/api/runs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: spec.name, cluster: targets[0], params, formats }),
+      });
+      view.reportRun = await res.json();
       render();
+      // Poll the run, not the page: a render is seconds, and the 60 s repaint is the wrong clock.
+      while (view.reportRun && pending(view.reportRun)) {
+        await tick();
+        view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
+        render();
+      }
+    } else {
+      // #267: several clusters, one action — the service queues one run per cluster as one slot and answers
+      // with all of them; each is polled to its own end, so one cluster's failure leaves the others' documents.
+      // The loop holds its own batch and stops when the form no longer shows it (another report opened).
+      const batch = { requested: targets, runs: [], error: null };
+      view.reportBatch = batch;
+      const res = await reportFetch("/api/runs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: spec.name, clusters: targets, params, formats }),
+      });
+      batch.runs = (await res.json()).runs || [];
+      render();
+      while (view.reportBatch === batch && batch.runs.some(pending)) {
+        await tick();
+        for (let i = 0; i < batch.runs.length; i++) {
+          if (pending(batch.runs[i])) batch.runs[i] = await reportGet(`/api/runs/${encodeURIComponent(batch.runs[i].id)}`);
+        }
+        render();
+      }
     }
     data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
-    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message };
+    const error = e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message;
+    if (view.reportBatch) view.reportBatch.error = error;
+    else view.reportRun = { id: "—", status: "failed", error };
   } finally {
     view.reportSubmitting = false; render();
     if (refocus) { const g = $("report-generate"); if (g) g.focus({ preventScroll: true }); }

@@ -1123,7 +1123,7 @@ the three probe paths, which are reachable only on the report Service. One line 
 | `GET /report/healthz`, `GET /report/readyz`, `GET /report/metrics` | none (Service only) | liveness; readiness (artefact volume writable, a snapshot exists); Prometheus exposition (`gsd_report_*`, no names) |
 | `GET /report/api/reports` | ticket | the catalogue: each report, whether enabled, its values key and parameter specs |
 | `GET /report/api/snapshot` | ticket or token | the copy a run would read now: stamp, age, schema, bytes |
-| `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard** |
+| `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard**. `clusters: [...]` in place of `cluster` (#267) queues one run per cluster as one slot and answers `{"runs": [...]}`; a cluster the snapshot lacks fails its own run and no other |
 | `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256, artefact sizes and its standing under retention (`expires_at`, `retained_by`, below) |
 | `GET /report/api/runs/{id}/artifact?format=json\|html\|pdf` | ticket or token | the artefact, `Cache-Control: no-store`, `X-GSD-Report-SHA256`, as an attachment |
 | `GET /report/api/usage?since_id=&limit=` | **token only** | finished runs for the dashboard's pull; viewers read them from the dashboard at the usage tier |
