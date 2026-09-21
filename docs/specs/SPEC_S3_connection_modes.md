@@ -937,6 +937,121 @@ estate. The rules that prevent it:
 4. **Reminting is not logging in.** A remint uses the bootstrap session that already exists, or the
    TokenRequest grant — it is not an excuse to re-enter a password.
 
+#### 9.3.1 What exists today — measured, 2026-09-21
+
+**There is no retry logic at all.** No `retry`, `backoff` or `max_attempts` anywhere in
+`gsd/poller.py` or `gsd/kube.py`. What exists instead:
+
+- a **15 s timeout** per request (`ClusterClient(timeout=15.0)`), tighter for the tier decision;
+- **connect errors, TLS failures and timeouts collapsed into one outcome** — `UNREACHABLE`, redacted,
+  because "we could not talk to it" is operationally different from "it said no";
+- a failed cycle **records the outcome and returns**. A user refresh failing is softer still: logged,
+  and the Users tab keeps last cycle's rows.
+
+So today's model is: **the poll interval is the retry, and a failure is reported rather than fought.**
+For a read-only poller that is defensible — a cluster that is down will still be down in 60 s, and
+hammering it buys nothing.
+
+**S3b breaks that assumption**, which is what §9.3 above already saw coming.
+
+#### 9.3.2 The sequencing problem — the risk starts at S3b, the guard is assigned to S3d
+
+Two additions to the rules above, both about *when* rather than *how*:
+
+1. **The cheap half of the guard belongs with S3b.** The moment S3b performs its first login, a wrong
+   password in a values file can begin the lockout walk — before S3d's coordinator exists. Rule 2
+   above (*a refused password is never retried*) needs **no cross-cluster coordination at all**: one
+   failure, a `login-refused` finding quoting the server's own words, stop. Ship it with S3b, or gate
+   S3b behind S3d.
+2. **Connection and credential errors want opposite policies, and the seam is half built.**
+   `UNREACHABLE` is safe to retry freely — nothing locks. `AUTH_FAILED` against an LDAP-backed login
+   is not. `ClusterError` already carries that distinction; **nothing consumes it for a retry
+   decision yet.**
+
+#### 9.3.3 The three failure classes
+
+| failure | today | should be |
+|---|---|---|
+| `UNREACHABLE` — connect, TLS, timeout | wait for the next poll | **retry, bounded exponential** — nothing locks, and faster recovery means a fresher snapshot |
+| `AUTH_FAILED` — a bearer token | wait for the next poll | **do not retry** — a wrong token is a configuration fact, not a transient |
+| `AUTH_FAILED` — an LDAP login (S3b) | *does not exist yet* | **never retry a refusal** — a second bind locks the one account the whole fleet shares |
+
+#### 9.3.4 Why this is not about report latency
+
+The obvious worry — *"someone runs a report and it times out while we retry"* — **cannot happen, and
+it is worth writing down why, because the instinct is to put a timeout on the report path.**
+
+The report service **never talks to a cluster**. It reads
+`Snapshot(newest_snapshot(settings.snapshot_dir))` — a file. Its only HTTP client is `trigger.py`,
+which posts to the report service itself. So a connection failure cannot make a report slow; it can
+only make that cluster's data in the snapshot **stale**, or **absent** if it was never polled — and
+an absent cluster fails its own run with `unknown cluster in the snapshot` and no other.
+
+**Retry protects snapshot freshness, not request latency.** That is what makes it safe to retry
+generously in the background: the snapshot is the airlock between the two.
+
+```
+  ┌──────────────────── BACKGROUND (poll loop, one thread per cluster) ─────────────────────┐
+  │   every pollInterval (60s)                                                               │
+  │        │                                                                                 │
+  │        ▼                                                                                 │
+  │   credential_pending? ──yes──► LIST IT, DON'T POLL ──► tab: "declares saTokenLookup,     │
+  │        │ no                                             not built" (never an auth_failed │
+  │        ▼                                                for a credential never presented)│
+  │   ┌─────────────┐                                                                        │
+  │   │  CONNECT    │                                                                         │
+  │   └─────┬───────┘                                                                         │
+  │    ┌────┴─────┬──────────────────┬──────────────────────────┐                             │
+  │    ▼          ▼                  ▼                          ▼                             │
+  │   ok     UNREACHABLE        AUTH_FAILED               AUTH_FAILED                         │
+  │    │     connect/TLS/       (bearer token)            (LDAP login — S3b)                  │
+  │    │      timeout                │                          │                             │
+  │    │          │                  │                          │                             │
+  │    │    RETRY, BOUNDED      NO RETRY                 ### NEVER RETRY ###                   │
+  │    │    1s→2s→4s→8s…        token is wrong,          a 2nd bind locks the ONE             │
+  │    │    to a ceiling        not transient            account the fleet shares             │
+  │    │          │                  │                          │                             │
+  │    │    gives up OUT LOUD ───────┴──────────────────────────┘                             │
+  │    │    finding: cluster, account, last error                                              │
+  │    ▼          ▼                                                                            │
+  │  WRITE      snapshot keeps LAST GOOD data (stale, and says so)                             │
+  │  SNAPSHOT                                                                                  │
+  └────────┬───────────────────────────────────────────────────────────────────────────────────┘
+           ▼   /data/report/snapshot.db   ← a FILE. no network, no retry, no timeout.
+  ┌────────┴──────────── FOREGROUND (the reader's request) ─────────────────────────────────┐
+  │   "Generate report" ──► read snapshot ──► seal artefact                                  │
+  │                          ├─ cluster present ─► report, with "Data as of <stamp>"          │
+  │                          └─ cluster absent  ─► that run fails, "unknown cluster in the    │
+  │                                                 snapshot" — no other run is affected      │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 9.3.5 What the loggers must say
+
+The vocabulary already exists and is good: `_log_poll_failure` names the phase, what was in force and
+the fix (#245); `PHASES` is a closed set (`discovery, parse, credential, tls, connect, poll`); and the
+classification is by the message's **provenance**, not a substring, so a proxy's `HTTP 502` body
+mentioning certificates is not reported as a TLS problem this cluster does not have.
+
+Retry needs that vocabulary **extended, not replaced** — the same rule §9.4 already states for
+`attempted=`:
+
+- **`attempt=<n>/<ceiling>`** on every retried failure, so a reader can tell one bad minute from a
+  cluster that has been failing for an hour.
+- **`retry_in=<seconds>`** when backing off, so the next line's absence is explained rather than
+  looking like a hang.
+- **`gave_up=true`** with the ceiling and the last error when the loop stops — a bounded loop that
+  ends silently is indistinguishable from one that is still running.
+- **`suspended=<credential>`** when a refusal suspends a credential *everywhere* (§9.3 rule 1), naming
+  the credential rather than the cluster, because that is the scope of the decision and the reader's
+  next question is "what else did this just stop?".
+- **No new phase.** `connect` and `credential` already name where these fail; a `retry` phase would
+  describe the *mechanism* rather than the place, which is what `phase=` is for.
+
+Every one of these joins the closed set in the same PR that emits it, and the redaction pin is
+extended to drive a failure in each new path with the password in force — the contract §3.1 rule 4
+already sets.
+
 ### 9.4 Help resolve things
 
 Where the loop cannot fix it, it says precisely what would, on the tab and in one log line — that is
