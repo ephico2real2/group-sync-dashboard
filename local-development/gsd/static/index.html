@@ -4988,10 +4988,20 @@ function namespacesCard() {
           <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
           <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>
         </tr>`).join("")}</tbody></table></div>`
+    // THE EMPTY STATE IS CHOSEN BY CAUSE, NOT BY A LADDER (review of #257, Codex C8). It used to fall
+    // through to "No namespaces recorded for this cluster yet" whenever the list came out empty — so a
+    // cluster whose every namespace is a platform one said "1 platform namespace hidden" and "No
+    // namespaces recorded" in the same card: a true sentence about the filter beside a false one about
+    // the cluster. Each branch now answers the question the reader actually has, and the filter's
+    // emptiness is stated before the cluster's.
     : `<div class="empty-note">${q
         ? `Nothing matches <strong>${esc(q)}</strong>. All ${inScope.length} are still there${hidingPlatform
             ? `, and ${platformCount} platform namespace${platformCount === 1 ? " is" : "s are"} hidden besides`
             : ""} — the filter is hiding them. Press Escape in the box to clear.`
+        : hidingPlatform && all.length
+          ? `Every namespace on this cluster is a platform one — all ${platformCount} of them are hidden.
+             ${self ? "That is your view: " : ""}Nothing is missing from the cluster.
+             <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`
         // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
         // fact about their view, not about the cluster (review of #167, Grok F3).
         : (self
@@ -6644,13 +6654,18 @@ function wireNsAudit() {
   // payload, so showing them is a filter change and never a refetch. Focus is restored to the
   // control afterwards: it is the one thing the reader just pressed, and `render()` rebuilds the
   // card under them, which would otherwise drop focus to the document.
-  const showPlatform = document.getElementById("ns-show-platform");
-  if (showPlatform) showPlatform.onclick = () => {
-    view.nsShowPlatform = !view.nsShowPlatform;
-    render();
-    const again = document.getElementById("ns-show-platform");
-    if (again) again.focus();
-  };
+  // Two ids, one behaviour: the control beside the count, and the one inside the empty state a
+  // fully-hidden cluster renders instead of that count (#257, Codex C8).
+  ["ns-show-platform", "ns-show-platform-empty"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.onclick = () => {
+      view.nsShowPlatform = !view.nsShowPlatform;
+      render();
+      const again = document.getElementById("ns-show-platform") || document.getElementById(id);
+      if (again) again.focus();
+    };
+  });
   document.querySelectorAll("[data-sort-key]").forEach((el) => {
     el.onclick = () => {
       const grant = el.dataset.sortGroup === "grant";

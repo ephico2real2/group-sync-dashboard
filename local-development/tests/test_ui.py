@@ -8590,6 +8590,31 @@ class TestPlatformNamespacesAreHiddenByDefault:
         box.press("Escape")
         dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
 
+    def test_a_cluster_whose_every_namespace_is_platform_does_not_contradict_itself(self, dash):
+        """Codex C8 on #257: the empty state fell through a ladder, so a list emptied by the FILTER got
+        the sentence meant for a cluster with nothing recorded. The card said "1 platform namespace
+        hidden" and "No namespaces recorded for this cluster yet" at once — a true sentence about the
+        filter beside a false one about the cluster.
+
+        Driven by narrowing the payload rather than seeding a second cluster: what is under test is
+        which sentence the renderer chooses, and the choice is made from the data it holds."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "Every namespace on this cluster is a platform one" in note, note
+        assert "No namespaces recorded" not in note, note
+        assert "Nothing is missing from the cluster" in note, note
+        # and the reader can act on it from where they are
+        dash.click("#ns-show-platform-empty")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 2")
+        dash.evaluate("() => { view.nsShowPlatform = false; }")
+
     def test_a_hidden_namespace_is_still_reachable_by_its_own_page(self, dash):
         """Filtered on the page, never dropped from the payload — the drill still resolves."""
         dash.evaluate("() => location.hash = '#page=nsaudit&cluster=crc-local&ns=openshift-monitoring'")
