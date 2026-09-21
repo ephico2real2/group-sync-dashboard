@@ -104,11 +104,27 @@ if now.After(iat.Add(maxTTL - jitter)) { return true }
 // Require a refresh if within 20% of the TTL plus a jitter from the expiration time.
 ```
 
-Two conditions, **whichever fires first**: 80 % of the TTL *or* a 24-hour ceiling. Without the
-ceiling, a year-long session — which is what the reference cluster issues — renews on **day 292**, so
-the renewal path runs for the first time in production at the moment of need, with an outage as its
-test. With the ceiling it runs daily, costs one login per cluster per day (the rate §5 already
-prices), and a broken renewal is discovered the next morning rather than nine months later.
+Two conditions, **whichever fires first**: 80 % of the TTL *or* a 24-hour ceiling.
+
+**On a real cluster the 80 % rule is the one that fires, and the ceiling never binds.** OpenShift's
+documented default is `accessTokenMaxAgeSeconds: 86400` — 24 hours, and `0` means "use the default" —
+so 80 % is **19.2 hours**, comfortably inside a daily ceiling. The ceiling exists for the outlier.
+
+**The reference cluster is that outlier, and it is not representative.** CRC sets
+`accessTokenMaxAgeSeconds: 31536000` in `crc-org/snc`'s `oauth_cr.yaml`, commented *"token max age
+set to 365 days"*. At 80 % alone that renews on **day 292** — the renewal path first running in
+production at the moment of need, with an outage as its test.
+
+| | `accessTokenMaxAgeSeconds` | 80 % trigger | what governs |
+|---|---|---|---|
+| real OpenShift, default | 86400 (24 h) | **19.2 h** | the 80 % rule |
+| the reference cluster (CRC) | 31536000 (365 d) | 292 d | **the ceiling** |
+
+**So the lab cannot test the normal path, and that is a trap for #285.** A renewal test run only on
+CRC exercises the *ceiling* and never the 80 % trigger, because 80 % of a year is nine months away.
+Proving the 80 % path needs either a cluster with a realistic `accessTokenMaxAgeSeconds`, or the lab's
+value temporarily lowered, or an injected clock — and the test must state which, because "renewal
+works on CRC" is evidence about the branch that will almost never run in production.
 
 **A second clock the fragment does not carry.** `oauth/cluster .spec.tokenConfig.accessTokenInactivityTimeout`
 (300 s minimum; unset on the reference cluster) invalidates a session that has simply been idle,
