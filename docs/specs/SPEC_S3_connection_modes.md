@@ -241,13 +241,89 @@ rig's job (`local-development/mock-app/deploy/tls-modes/`).
 8. **A second cluster costs one stanza.** Adding `shared-qa` beside `shared-rnd` is four lines and no
    new switch, no GUI step and no hand-made Secret — the test that the file scales to an estate.
 
-## 8. Decomposition
+## 8. Reconciliation — what makes this suit CI/CD
+
+The operator, 2026-09-20: *"this is the way that argocd works now … we just have to make sure we find a
+way to reconcile now. setting up cluster config this way suits cicd and also automation."*
+
+A declared stanza that mints a Secret has created a **derived object**, and a derived object goes stale.
+The declaration is the desired state; the Secret is the observed state; something has to keep them
+equal. That something runs on the discovery cadence — the same 300 s loop that already lists cluster
+Secrets — and it is **level-triggered**: it compares what is declared against what exists, every cycle,
+with no memory of how it got there. Applying the same values file twice changes nothing; applying it to
+a half-connected estate finishes the job. That is the property automation needs, and the reason a
+crashed pod mid-connect is not a broken cluster.
+
+### 8.1 Ownership — only what we made, the way Argo tracks it
+
+Argo CD marks every resource it manages with an `argocd.argoproj.io/tracking-id` annotation — now its
+default tracking method — and **only resources carrying the matching annotation are candidates for
+pruning**, precisely so it never deletes something another tool made. The same rule here:
+
+```yaml
+metadata:
+  annotations:
+    groupsync-dashboard.io/managed-by: cluster-stanza     # this Secret is DERIVED
+    groupsync-dashboard.io/source-cluster: shared-rnd      # from this declaration
+    groupsync-dashboard.io/token-source: lookup            # or: minted
+```
+
+A Secret **without** that annotation was authored by a human or a GitOps process — through the tab, by
+hand, from a repository — and the reconciler never writes to it, never rotates it and never deletes it.
+It is a record in its own right (§2), not our output. The annotation is what separates the two, and
+without it "reconcile" would eventually mean "delete the operator's own work".
+
+### 8.2 The transitions
+
+| what changed | what the reconciler does |
+|---|---|
+| a stanza is **added** | connect (§5) and write the derived Secret |
+| a stanza's **mode or bootstrap account** changes | reconnect and rewrite the Secret in place — the cluster keeps its name, its rows and its history |
+| a stanza's **`apiUrl`** changes | reconnect; a cluster is its **name**, so this is the same cluster at a new address, not a new one |
+| a stanza is **removed** | the derived Secret is deleted and the cluster retires (#96) — it leaves the UI and keeps its history |
+| a derived Secret is **deleted by hand** | re-created next cycle from the declaration. The file is the record; deleting the output does not undeclare the cluster |
+| a derived Secret is **edited by hand** | the declared fields are restored, and the edit is reported as drift on the tab — the same answer Argo gives, for the same reason |
+| an **unowned** Secret names a declared cluster | a **finding** (`cluster-declared-twice`), naming both sources. The declaration wins for polling; the Secret is left untouched, because we did not make it |
+
+The removal row is the one that earns the design. A cluster deleted from the file but left polling from
+an orphaned Secret is the failure this project has already met once — a set-change that displaces objects
+without pruning them leaves them running, and only a matching owner marker makes the cleanup safe.
+
+### 8.3 Renewal — the way Kubernetes does it
+
+The operator's requirement. A minted token carries a real `expirationTimestamp`, and the reconciler
+remints it **before** it expires rather than after a poll fails: Kubernetes' own rule for a projected
+service-account token is that the kubelet requests a new one once the token is older than **80 % of its
+TTL**, or older than 24 hours, so the holder never presents an expired credential. This reconciler uses
+the same 80 % trigger on the same cadence, and the tab shows the real date.
+
+Worth stating plainly, because it is the reason this is not simply "what Argo does": **Argo CD does not
+rotate cluster credentials.** Its documented procedure is manual — delete the token Secret so Kubernetes
+issues a new one, then re-run `argocd cluster add` — and TokenRequest support is listed as future work.
+A token that never expires is the alternative, and the audit position here forbids it (#248: never
+`expires: never`; a declared Secret reads `expires: current`). So renewal is ours to do, and §8.2's loop
+is where it lives.
+
+### 8.4 What CI/CD gets from this
+
+- **Idempotent.** The same values file applied any number of times produces one outcome.
+- **No human step.** Connecting an estate is a merge, not a sequence of GUI actions; the tab remains for
+  the urgent single add (§2).
+- **Reviewable.** The cluster list is a diff, and the reconciler's every action is one `phase=`-tagged
+  log line (#245) naming the cluster and the outcome.
+- **Recoverable.** Any derived object can be deleted and will come back; nothing that a human authored
+  can be destroyed by the loop.
+
+## 9. Decomposition
 
 - **S3a** — the loader AND the parser: the three keys in both, `clusterConfig.fleetAccount` in the
   chart, the relaxed credential requirement, the six refusals, the equivalence guard (§4.1) and the
   `fleet-credential-missing` finding. No network.
 - **S3b** — the onboarding sequence and its findings, behind #119 P2's provider; `oauthTrust` and its
   three modes; the annotations on the written Secret.
+- **S3d** — the reconciler (§8): the ownership annotations, the seven transitions, drift reporting,
+  the 80 % renewal trigger and the `cluster-declared-twice` finding. It is its own step because it is
+  the only one that DELETES, and a deleting loop earns its own review and its own acceptance run.
 - **S3c** — the tab: the mode per cluster, the credential's provenance, the token's source and
   expiry wording (`expires: current` for a declared Secret, a real date for a minted one — #248), and
   a **Connect** action for a stanza waiting on its credential.
