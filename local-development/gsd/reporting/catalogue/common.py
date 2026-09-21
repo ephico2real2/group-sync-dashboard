@@ -318,6 +318,31 @@ def provenance(ctx: RunContext) -> dict:
     }
 
 
+# The provenance rows are read by an auditor, so they say what happened rather than the poller's state
+# word: "ok", "off", "forbidden" and "pending" are this code's vocabulary, not a reader's. "Namespaces"
+# carried the worst of it — `ok — attests absence` put a state token beside a term of art whose meaning
+# (SPEC_C3: "this namespace exists and has no grants", as against "none observed") appears nowhere on the
+# row, and which reads on its face as the report asserting that access is absent. The Notes below the
+# table still carry the full sentence; these are its summary, and `coverage.attests_absence` on the JSON
+# is unchanged — it is a field consumers read (operator, 2026-09-21).
+_NS_READ = {
+    "ok": "every namespace on the cluster was read",
+    "off": "only namespaces with an observed binding were seen (rbac.namespaces is off)",
+    "forbidden": "the namespace read was refused (the rbac.namespaces grant is missing)",
+    "pending": "namespaces had not been read when this snapshot was taken",
+}
+_USERS_READ = {
+    "ok": "read \u2014 \u2018logged in\u2019 means a User object with an identity exists",
+    "forbidden": "refused (the rbac.users grant is missing) \u2014 nothing here says who has logged in",
+    "pending": "not read yet",
+}
+_CAPTURE = {
+    "ok": "on \u2014 attempts are recorded; see the note for since when",
+    "off": "off \u2014 nothing here says when anyone last logged in",
+    "pending": "on, but the oauth-server logs have not been read yet",
+}
+
+
 def provenance_section(ctx: RunContext, cov: dict, params: dict, include_members: bool) -> Section:
     """Page one of every report. Without it a report is a screenshot, not evidence."""
     prov = provenance(ctx)
@@ -331,9 +356,11 @@ def provenance_section(ctx: RunContext, cov: dict, params: dict, include_members
         ("Report service", f"{prov['report_service_version']} @ {prov['commit']}" + (" (DIRTY BUILD — no commit reproduces it)" if prov["dirty"] else "")),
         ("Data as of", f"snapshot {prov['snapshot_stamp']} (taken {age_min:.0f} min before generation; bindings refresh every {prov['binding_interval_seconds']} s); schema {prov['snapshot_schema_version']}"),
         ("Last poll", f"{prov['last_poll']} — {prov['poll_status']}" + (f": {prov['poll_message']}" if prov["poll_status"] not in (None, "ok") and prov["poll_message"] else "")),
-        ("Namespaces", f"{cov['namespaces_read']} — {'attests absence' if cov['attests_absence'] else 'does not attest absence'}"),
-        ("User objects", cov["users_read"]),
-        ("Login capture", cov["login_capture"]),
+        ("Namespaces", f"{_NS_READ[cov['namespaces_read']]} — " + (
+            "a namespace with no grants is reported as having none" if cov["attests_absence"]
+            else "\u2018no grants\u2019 cannot be told from \u2018never read\u2019")),
+        ("User objects", _USERS_READ[cov["users_read"]]),
+        ("Login capture", _CAPTURE[cov["login_capture"]]),
         ("History retained since", ", ".join(f"{k}: {v or 'no rows'}" for k, v in cov["history_retained_since"].items())),
         ("Includes membership rosters", "yes" if include_members else "no"),
         ("Parameters", ", ".join(f"{k}={v}" for k, v in sorted(params.items())) or "none"),
