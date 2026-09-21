@@ -28,8 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
-from .home import (HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes,
-                   is_platform_namespace)
+from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
@@ -2153,7 +2152,7 @@ def build_app(
         # grant counts (`excluded_platform`). A hidden row stays in `namespaces`: it is filtered on the
         # page, never dropped from the payload, so export, search and the drill still reach it.
         for row in rows:
-            row["platform"] = is_platform_namespace(row["name"])
+            row["platform"] = settings.platform_namespaces.matches(row["name"])
         platform = [r for r in rows if r["platform"]]
         source = store.namespaces_source(cluster_id)
         return {
@@ -2269,7 +2268,10 @@ def build_app(
             "scope": scope,
             "full_name": store.user_full_name(cluster_id, me),
             "providers": record["providers"] if record else [],
-            "answer": derive_answer(groups, via, direct),
+            # The SAME classifier the namespace index uses (#255). Home and the audit disagreeing
+            # about what "platform" means would be the divergence this stanza exists to end.
+            "answer": derive_answer(groups, via, direct,
+                                    platform=settings.platform_namespaces.matches),
             "direct": direct,
             "changes": dict(group_changes(events, since), capped_clusters=sorted(capped)),
             "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
