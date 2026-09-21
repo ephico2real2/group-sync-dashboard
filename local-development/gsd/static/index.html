@@ -196,6 +196,11 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 nsNamespace: "all", nsSort: "risk", nsDir: "desc",
                 nsGrantSort: "risk", nsGrantDir: "desc",
                 nsSearch: "",   // #167: the namespace list's pattern box; a preference, never a position
+                /* #257: platform namespaces (openshift-*, kube-*, and the five named ones) are
+                   HIDDEN by default — 67 of 106 on the reference cluster, so two thirds of the
+                   index was platform noise under a five-row worklist. A preference like the box
+                   above: the poll repaint must not restore them under a reader who hid them. */
+                nsShowPlatform: false,
                 lookupSearch: "",   // #174: the one box over all three kinds; carried across "see all matches"
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
                    other control on this page, so a 60s poll repaint does not collapse a list
@@ -4934,7 +4939,15 @@ function namespacesCard() {
   const keys = d.label_keys || [];
   const all = d.namespaces || [];
   const q = (view.nsSearch || "").trim();
-  const shown = all.filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch));
+  // #257: the SAME rule the Home page uses (gsd/home.py is_platform_namespace), decided server-side
+  // and carried on the row, so the page and the app cannot drift into two definitions of "platform".
+  // Filtered here, never dropped from the payload: export, the search and the drill all still reach a
+  // hidden namespace, and the line below says how many are hidden rather than leaving a reader to
+  // wonder why their count moved.
+  const platformCount = d.platform_count != null ? d.platform_count : all.filter((n) => n.platform).length;
+  const hidingPlatform = platformCount > 0 && !view.nsShowPlatform;
+  const inScope = hidingPlatform ? all.filter((n) => !n.platform) : all;
+  const shown = inScope.filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch));
   const source = d.source || {};
   const note = source.state === "forbidden"
     ? `<div class="filterbar-note truncation-note mb-4">The namespace read was refused (${esc(ago(source.observed_at))}), so this list cannot
@@ -4954,6 +4967,17 @@ function namespacesCard() {
       : `<div class="filterbar-note mb-4">${d.cluster_wide_groups} group${d.cluster_wide_groups === 1 ? "" : "s"} bound cluster-wide and
         ${d.cluster_wide_grants} cluster-wide direct grant${d.cluster_wide_grants === 1 ? "" : "s"}${self ? " of yours" : ""} reach every namespace below; the columns count
         what is bound <em>in</em> each one. A namespace with zero in both is a result an access review wants to confirm.</div>`;
+  // THE COUNT IS PART OF THE FILTER, not a footnote. A hidden row a reader cannot see and is not told
+  // about is a row that was deleted as far as they know; and the one case where hiding costs them
+  // something — a hidden namespace that HAS a finding — gets its own clause rather than making them
+  // toggle to find out (#257).
+  const withFindings = d.platform_with_findings || 0;
+  const platformLine = !platformCount ? "" : `<div class="filterbar-note mb-4">${hidingPlatform
+    ? `${platformCount} platform namespace${platformCount === 1 ? "" : "s"} hidden${withFindings
+        ? ` — <strong>${withFindings}</strong> of them ${withFindings === 1 ? "has" : "have"} a direct grant`
+        : ""}. <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
+    : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
+    <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span></div>`;
   const body = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
@@ -4965,14 +4989,17 @@ function namespacesCard() {
           <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>
         </tr>`).join("")}</tbody></table></div>`
     : `<div class="empty-note">${q
-        ? `Nothing matches <strong>${esc(q)}</strong>. All ${all.length} are still there — the filter is hiding them. Press Escape in the box to clear.`
+        ? `Nothing matches <strong>${esc(q)}</strong>. All ${inScope.length} are still there${hidingPlatform
+            ? `, and ${platformCount} platform namespace${platformCount === 1 ? " is" : "s are"} hidden besides`
+            : ""} — the filter is hiding them. Press Escape in the box to clear.`
         // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
         // fact about their view, not about the cluster (review of #167, Grok F3).
         : (self
             ? "None of your memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace missing here may exist."
             : "No namespaces recorded for this cluster yet.")}</div>`;
   return `<section class="card">
-    <h2>Namespaces <span class="muted fw-normal">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length} shown`}</span></h2>
+    <h2>Namespaces <span class="muted fw-normal">· ${shown.length === inScope.length ? inScope.length : `${shown.length} of ${inScope.length} shown`}</span></h2>
+    ${platformLine}
     <div class="filterbar-note mb-4">${self
       ? "The namespaces your own memberships and grants reach — grants affecting you, nothing about other people."
       : "Every namespace the poller sees, not only those with a grant."} Click a row — a namespace is an entity here,
@@ -6613,6 +6640,17 @@ function render() {
    Re-bound after every render because render() replaces main's innerHTML wholesale, which
    discards the previous elements and their handlers along with them. */
 function wireNsAudit() {
+  // #257: the platform toggle. A pure re-render of data already held — the hidden rows are in the
+  // payload, so showing them is a filter change and never a refetch. Focus is restored to the
+  // control afterwards: it is the one thing the reader just pressed, and `render()` rebuilds the
+  // card under them, which would otherwise drop focus to the document.
+  const showPlatform = document.getElementById("ns-show-platform");
+  if (showPlatform) showPlatform.onclick = () => {
+    view.nsShowPlatform = !view.nsShowPlatform;
+    render();
+    const again = document.getElementById("ns-show-platform");
+    if (again) again.focus();
+  };
   document.querySelectorAll("[data-sort-key]").forEach((el) => {
     el.onclick = () => {
       const grant = el.dataset.sortGroup === "grant";
