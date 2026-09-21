@@ -376,9 +376,14 @@ def build_app(
         )
 
     # ── Per-user visibility: the tier decision (docs/SPEC_per_user_visibility.md) ──────────
-    # Decided against the FIRST enabled cluster, deliberately: the oauth-proxy authenticates
+    # Decided against THIS POD'S OWN CLUSTER, deliberately: the oauth-proxy authenticates
     # viewers against the cluster this pod runs on, and that is the entry the chart writes
-    # (kubernetes.default.svc with the pod's own projected ServiceAccount token). The tier it
+    # (kubernetes.default.svc with the pod's own projected ServiceAccount token). That entry is
+    # `settings.host_cluster()` — the one declaring `dashboardController: true`, else the first
+    # enabled (#249). It was written as "the first enabled" until the review of #251 measured
+    # the gap: with a controller declared second, all four resolvers below reviewed against a
+    # REMOTE cluster, so the wide tier was decided by a SubjectAccessReview on a machine whose
+    # answer means nothing here. The tier it
     # yields gates everything this instance SHOWS — rows about other observed clusters
     # included — because the viewer's identity only means something here; remote clusters
     # never see this review.
@@ -387,7 +392,7 @@ def build_app(
     # decision, and building a second decider beside it would leave two answers to one
     # question. The instance is published on app.state below (the seam tests substitute).
     resolver: TierResolver | None = None
-    local_cluster = next((c for c in settings.clusters if c.enabled), None)
+    local_cluster = settings.host_cluster()
     if tier_resolver is None and settings.view_restrictions_enabled and local_cluster is not None:
         resolver = TierResolver(
             local_cluster,
@@ -496,6 +501,21 @@ def build_app(
                 ttl_seconds=float(settings.visibility_tier_ttl_seconds),
                 observe=functools.partial(signals.note_tier_check, "admin"),
             )
+    # WHICH cluster is the host, and whether anyone SAID so (#249; the review of #251 found this
+    # claimed in the chart's notes while nothing shipped it). Four things resolve against this
+    # entry — the tier SubjectAccessReview, the Kyverno breaker URL, `identity: same-as-host` and
+    # `visibility: inherit` — so a reader debugging any of them needs the answer in the pod log,
+    # not in a values file they may not have.
+    if local_cluster is not None:
+        log.info(
+            "controller-cluster name=%s declared=%s detail=%s",
+            local_cluster.name,
+            str(settings.controller_is_declared).lower(),
+            ("the entry carrying dashboardController: true"
+             if settings.controller_is_declared
+             else "the first enabled entry — no entry declares dashboardController, so this "
+                  "moves if clusters[] is reordered or its first entry is disabled"),
+        )
     for c in settings.effective_clusters():
         policy, identity = settings.cluster_policy(c.name)
         if c is local_cluster or policy == VISIBILITY_INHERIT:

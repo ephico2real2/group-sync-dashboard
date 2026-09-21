@@ -113,15 +113,22 @@ Restore the old everyone-sees-everything behaviour only as a deliberate choice:
   --set visibility.enabled=false
 {{- if gt (len .Values.clusters) 1 }}
 
-Several clusters are configured. The reader was authenticated by the FIRST enabled one; what
+Several clusters are configured. The reader was authenticated by this pod's OWN cluster; what
 they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
-{{- /* The host is the FIRST ENABLED entry, not index 0 — the rule gsd.validateClusters and
-       load_settings share; it is printed first (review of D2, both reviewers). */ -}}
+{{- /* The host is the entry declaring `dashboardController: true`, else the first ENABLED entry
+       — the rule gsd.validateClusters and load_settings share; it is printed first (review of D2,
+       both reviewers; the declared controller added by the review of #251, which measured this
+       printing "(host)" against a remote). */ -}}
 {{- $hostIndex := -1 }}
+{{- $declaredIndex := -1 }}
 {{- range $i, $c := .Values.clusters }}
 {{- $enabled := true }}{{- if hasKey $c "enabled" }}{{- $enabled = eq (trim (toString $c.enabled)) "true" }}{{- end }}
 {{- if and $enabled (lt $hostIndex 0) }}{{- $hostIndex = $i }}{{- end }}
+{{- if and $enabled (lt $declaredIndex 0) (hasKey $c "dashboardController") }}
+{{- if eq (trim (toString $c.dashboardController)) "true" }}{{- $declaredIndex = $i }}{{- end }}
 {{- end }}
+{{- end }}
+{{- if ge $declaredIndex 0 }}{{- $hostIndex = $declaredIndex }}{{- end }}
 {{- range $pass := list 0 1 }}
 {{- range $i, $c := $.Values.clusters }}
 {{- $isHost := eq $i $hostIndex }}
