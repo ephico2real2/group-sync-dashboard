@@ -40,7 +40,7 @@ every geometry assertion is computed over the whole document in the browser.
 local-development/.venv/bin/python reports/2026-09-21_nsaudit-mock/render-check.py
 ```
 
-148 checks, all passing. The last of them is the one that matters most: **every one of the 41 caveats
+177 checks, all passing. The last of them is the one that matters most: **every one of the 41 caveats
 the live page carries is reachable in the mock**, asserted across nine driven states — the first of
 which has the namespace index **folded**, because a collapsed section is the likeliest place for a
 caveat to go missing (the four tiers,
@@ -64,6 +64,26 @@ What it caught while the mock was being built, none of which `node --check` can 
 | the index's two new controls wrapped onto two lines at **every** width beside the heading — the controls box was given 431 px where its content needs 585 | they get a row of their own under the heading: search left, fold right |
 | at 375 the same two controls sat in a 260 px-tall empty box — `flex: 1 1 260px` is a *height* once the container turns column, and nothing overflowed or was clipped, so only looking at the render found it | both children size to content below 620 px; the row's height is asserted at all four widths now |
 | the index's drill buttons stopped being clickable — they are inside the fold | the check opens the fold the way a reader does, and asserts that a folded row is not clickable |
+| **every click on the page set the page number to `NaN`** — `document.querySelectorAll("[data-page]")` also matches `<body data-page="nsaudit">`, so the pager's handler ran on every bubbled click, emptied the list and then picked the wrong empty state to explain it | the attribute is `data-index-page` and the selector is scoped to `.pager`; the page number is guarded to a finite integer, and the empty states are chosen by cause rather than by falling through a ladder |
+| the current page number is white on the accent — **3.54:1 in the dark theme**, under the bar for normal text | an `--accent-ink` that flips with the theme: 5.89:1 light, 5.56:1 dark, both measured on the painted button |
+| keying the fold's default on the *filtered* count let the bar's inherited box open the section by a side door | the default is decided by what the section holds after the platform filter, never by what a search narrowed it to |
+
+## The five controls, and how they compose
+
+| control | default | scope |
+|---|---|---|
+| **Find namespace** (filter bar) | empty | the shell's, inherited — the namespace list only, and it does **not** open the fold |
+| **Search this list** (section) | empty | the same list, free form over name and every captured label; opens the fold when it has something to show |
+| **Show 67 platform namespaces** | **off** — 67 of 106 hidden, counted | the product's own `is_platform_namespace`, applied to this index for the first time |
+| **Show / Hide N of M namespaces** | folded above 25 rows *after* the platform filter | the rows only — the heading, the notes and the counts stay outside it |
+| **pages 1…N** | page 1, 25 rows to a page | the filtered set; **every filter resets it to page 1** |
+
+Every count quotes its denominator, in one line that follows the whole chain:
+`106 on this cluster · 67 platform hidden · 39 listed · showing 26–39 on page 2 of 2`.
+
+**No caveat depends on paging.** Asserted, not argued: the paginated region holds exactly two children,
+`DIV.scroll-x` and `NAV.pager`, and none of the 41 caveat clauses appears inside it. The sweep also
+collects a state with the platform namespaces shown and the reader on **page 3**.
 
 ## Contrast, measured rather than modelled
 

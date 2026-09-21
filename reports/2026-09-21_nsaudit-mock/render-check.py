@@ -149,7 +149,7 @@ def drive(page):
     check("and it does not force the section open — the fold answers to the section's own box",
           page.evaluate("() => document.querySelector('#ns-index-body').hasAttribute('hidden')"), True)
     check("so the folded section states what the bar's query matched, rather than swallowing it",
-          page.evaluate("() => [...document.querySelectorAll('#ns-index .note')].some(n => /2 of them matching legacy in the bar/.test(n.textContent.replace(/\\s+/g,' ')))"), True)
+          page.evaluate("() => [...document.querySelectorAll('#ns-index .note')].some(n => /2 namespaces folded away, matching legacy in the bar/.test(n.textContent.replace(/\\s+/g,' ')))"), True)
     check("the caret stays at the end of what was typed",
           page.evaluate("() => [document.activeElement.id, document.activeElement.selectionStart]"), ["f-ns-search", 6])
     page.focus("#f-ns-search"); page.keyboard.press("Escape"); page.wait_for_timeout(250)
@@ -321,7 +321,7 @@ def widths(page):
         check(f"{w}px — search and fold {'share a row' if w >= 768 else 'stack'}",
               ctl["sameRow"], w >= 768)
         check(f"{w}px — the control row is the height of its controls", ctl["height"],
-              ok=ctl["height"] <= (40 if w >= 768 else 110))
+              ok=ctl["height"] <= (40 if w >= 768 else 150))
         page.evaluate("() => window.scrollTo(0, 0)")
         shot(page, f"mock-0{6 if w == 375 else 7 if w == 393 else 8 if w == 768 else 9}-audit-{w}.png", full=True)
     page.set_viewport_size({"width": 375, "height": 812}); page.wait_for_timeout(300)
@@ -380,18 +380,22 @@ def index_controls(page):
     folded = "() => document.querySelector('#ns-index-body').hasAttribute('hidden')"
     label = "() => document.querySelector('#index-toggle').textContent.replace(/\\s+/g,' ').trim()"
     check("106 namespaces: the index starts folded", page.evaluate(folded), True)
-    check("the control says how many are behind it", page.evaluate(label), "▸ Show 106 namespaces")
+    check("the control says how many are behind it, with its denominator",
+          page.evaluate(label), "▸ Show 39 of 106 namespaces")
+    check("the counts line states the whole chain",
+          page.evaluate("() => document.querySelector('#ns-index .counts').textContent.replace(/\\s+/g,' ').trim()"),
+          "106 on this cluster · 67 platform hidden · 39 listed.")
     check("aria-expanded matches", page.evaluate("() => document.querySelector('#index-toggle').getAttribute('aria-expanded')"), "false")
     check("the section's heading, notes and cluster-wide line stay outside the fold",
-          page.evaluate("() => [...document.querySelectorAll('#ns-index > .note')].length"), 4)
+          page.evaluate("() => [...document.querySelectorAll('#ns-index > .note')].length"), 7)
     shut = page.evaluate("() => document.documentElement.scrollHeight")
     page.click("#index-toggle"); page.wait_for_timeout(250)
     check("the toggle opens it", page.evaluate(folded), False)
-    check("and renders all 106 rows", page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 106)
+    check("and renders a page of the 39 that are left", page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 25)
     wide = page.evaluate("() => document.documentElement.scrollHeight")
-    check("folding the index is what shortens the page", f"{shut} folded vs {wide} open", ok=shut < wide * 0.6)
-    note("document height, folded vs open", [shut, wide])
-    check("the label turns around", page.evaluate(label), "▾ Hide 106 namespaces")
+    check("folding the index shortens the page", f"{shut} folded vs {wide} open", ok=shut < wide)
+    note("document height, folded vs open (a page of 25, not all 106)", [shut, wide, wide - shut])
+    check("the label turns around", page.evaluate(label), "▾ Hide 39 of 106 namespaces")
     page.click("#index-toggle"); page.wait_for_timeout(250)
     check("and folds it again", page.evaluate(folded), True)
 
@@ -403,7 +407,7 @@ def index_controls(page):
           ["demo-prod", "demo-production"])
     check("the heading states both numbers",
           page.evaluate("() => document.querySelector('#ns-index h2').textContent.replace(/\\s+/g,' ').trim()"),
-          "Namespaces · 2 of 106 shown")
+          "Namespaces · 2 of 106")
     check("and so does the control", page.evaluate(label), "▾ Hide 2 of 106 namespaces")
     check("the section's box does NOT reach the worklist",
           page.evaluate("() => [...document.querySelectorAll('#main table')][1].querySelectorAll('tbody tr').length"), 4)
@@ -418,7 +422,8 @@ def index_controls(page):
           page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 0)
     check("and the empty state quotes the denominator and names the box",
           page.evaluate("() => document.querySelector('#ns-index .empty-note').textContent.replace(/\\s+/g,' ').trim()"),
-          "Nothing matches demo zzz (this list). All 106 are still there — the search is hiding them. Press Escape in a box to clear it.")
+          "Nothing matches demo zzz (this list). All 39 in this list (and 67 more behind the platform filter)"
+          " are still there — the search is hiding them. Press Escape in a box to clear it.")
     page.focus("#f-index-search"); page.keyboard.press("Escape"); page.wait_for_timeout(300)
     check("Escape clears the section's box", page.evaluate("() => document.querySelector('#f-index-search').value"), "")
     check("and the fold returns to its default", page.evaluate(folded), True)
@@ -450,8 +455,94 @@ def index_controls(page):
     check("a 7-namespace cluster opens instead, because the fold would buy nothing",
           page.evaluate(folded), False)
     check("its control says so", page.evaluate(label), "▾ Hide 7 namespaces")
+    check("and it offers no platform control, because it has no platform namespaces",
+          page.evaluate("() => !!document.querySelector('#f-show-platform')"), False)
     page.select_option("#f-cluster", "dashboard-rnd"); page.wait_for_timeout(400)
     check("switching back restores the folded default", page.evaluate(folded), True)
+
+
+def platform_and_pages(page):
+    """The platform filter (the product's own rule) and the pager, and how the five controls compose."""
+    page.evaluate("""() => { MOCK.view.ns = null; MOCK.view.tier = 'admin'; MOCK.view.search = '';
+        MOCK.view.indexSearch = ''; MOCK.view.showPlatform = false; MOCK.view.indexPage = 1;
+        MOCK.view.indexOpen = true; MOCK.render(); }""")
+    page.wait_for_timeout(300)
+    counts = "() => document.querySelector('#ns-index .counts').textContent.replace(/\\s+/g,' ').trim()"
+    cur = "() => document.querySelector('.page-num[aria-current=page]').textContent.trim()"
+    names = "() => [...document.querySelectorAll('#ns-index-body tbody tr')].map(r => r.children[0].textContent.replace(/\\s+/g,' ').trim())"
+
+    # The classifier is the product's, applied here for the first time.
+    check("the platform filter is on by default and says how many it hides",
+          page.evaluate("() => [document.querySelector('#f-show-platform').checked, document.querySelector(\"label[for='f-show-platform']\").textContent.trim()]"),
+          [False, "Show 67 platform namespaces"])
+    check("67 of 106 is the shipped rule's answer, not a second definition",
+          page.evaluate("""() => { const P = ['openshift-', 'kube-'];
+              const N = new Set(['default','openshift','kube-system','kube-public','kube-node-lease']);
+              const all = MOCK.LAB.clusters['dashboard-rnd'].namespaces.namespaces.map(n => n.name);
+              return all.filter(n => N.has(n) || P.some(p => n.startsWith(p))).length; }"""), 67)
+    check("the page names the rule rather than leaving it implicit",
+          page.evaluate(TXT + ".includes('and the five the cluster fixes')"), True)
+    check("and says the shipped rule does not cover an estate's own operators",
+          page.evaluate(TXT + ".includes('are all still listed here as workloads')"), True)
+    check("it hides rows, never findings — the worklist keeps its platform namespace",
+          page.evaluate(WORKLIST_NS), ok="openshift-console-user-settings" in page.evaluate(WORKLIST_NS))
+    check("and the page says so, naming the row",
+          page.evaluate(TXT + ".includes('This hides rows, never findings')"), True)
+
+    # The pager, over the FILTERED set.
+    check("a page is 25 rows, so 39 is two pages",
+          page.evaluate("() => [...document.querySelectorAll('.page-num')].map(b => b.textContent.trim())"), ["1", "2"])
+    check("page 1 holds a full page", page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 25)
+    check("the range is stated with its denominator",
+          page.evaluate("() => document.querySelector('.page-note').textContent.replace(/\\s+/g,' ').trim()"),
+          "rows 1–25 of 39, 25 to a page")
+    check("Previous is disabled on the first page",
+          page.evaluate("() => [...document.querySelectorAll('.page-step')].map(b => b.disabled)"), [True, False])
+    first_page = page.evaluate(names)
+    page.click(".page-num[data-index-page='2']"); page.wait_for_timeout(300)
+    check("page 2 holds the remainder", page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 14)
+    check("and holds different namespaces", page.evaluate(names), ok=not set(page.evaluate(names)) & set(first_page))
+    check("aria-current moves with it", page.evaluate(cur), "2")
+    check("Next is disabled on the last page",
+          page.evaluate("() => [...document.querySelectorAll('.page-step')].map(b => b.disabled)"), [False, True])
+    check("the counts line follows the page",
+          page.evaluate(counts), "106 on this cluster · 67 platform hidden · 39 listed · showing 26–39 on page 2 of 2.")
+    page.click(".page-step[data-index-page='1']"); page.wait_for_timeout(300)
+    check("Previous walks back", page.evaluate(cur), "1")
+
+    # Every filter resets the page: a page number means nothing once the set under it changes.
+    page.click(".page-num[data-index-page='2']"); page.wait_for_timeout(300)
+    page.check("#f-show-platform"); page.wait_for_timeout(400)
+    check("showing the platform namespaces resets to page 1", page.evaluate(cur), "1")
+    check("and re-pages the whole list",
+          page.evaluate("() => [...document.querySelectorAll('.page-num')].map(b => b.textContent.trim())"), ["1", "2", "3", "4", "5"])
+    check("the counts line drops the hidden segment when nothing is hidden",
+          page.evaluate(counts), "106 on this cluster · showing 1–25 on page 1 of 5.")
+    page.click(".page-num[data-index-page='3']"); page.wait_for_timeout(300)
+    check("a platform row is badged as one, so the filter's subject is visible",
+          page.evaluate("() => document.querySelectorAll('#ns-index-body tbody .badge').length"), 25)
+    page.fill("#f-index-search", "demo"); page.wait_for_timeout(350)
+    check("searching from page 3 lands on page 1 of the matches, not an empty page 3",
+          page.evaluate("() => document.querySelectorAll('#ns-index-body tbody tr').length"), 6)
+    check("and a single page needs no pager",
+          page.evaluate("() => !!document.querySelector('.pager')"), False)
+    check("the counts line says what a page would have counted",
+          page.evaluate(counts), "106 on this cluster · 6 of 106 match the search · showing all 6.")
+    page.fill("#f-index-search", ""); page.uncheck("#f-show-platform"); page.wait_for_timeout(400)
+    check("clearing everything returns the default", page.evaluate(counts),
+          "106 on this cluster · 67 platform hidden · 39 listed · showing 1–25 on page 1 of 2.")
+
+    # Text ON the accent is a different question from text beside it.
+    for theme in (None, "dark"):
+        page.evaluate("(t) => { if (t) document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme'); }", theme)
+        page.wait_for_timeout(250)
+        got = page.evaluate("""() => { const b = document.querySelector('.page-num[aria-current=page]');
+            const cs = getComputedStyle(b); return [cs.color, cs.backgroundColor]; }""")
+        r = ratio(parse(got[0]), parse(got[1]))
+        check(f"{theme or 'light'} — the current page number on the accent ≥ 4.5", round(r, 2), ok=r >= 4.5)
+    page.evaluate("() => document.documentElement.removeAttribute('data-theme')"); page.wait_for_timeout(200)
+    page.evaluate("() => { MOCK.view.indexOpen = null; MOCK.view.indexPage = 1; MOCK.render(); }")
+    page.wait_for_timeout(200)
 
 
 # ── The contract check ────────────────────────────────────────────────────────────────────────
@@ -524,6 +615,12 @@ def caveats(page):
     page.click("#ns-pick-clear"); page.wait_for_timeout(200)
     page.fill("#f-index-search", "zzzz"); page.wait_for_timeout(250); grab()
     page.fill("#f-index-search", ""); page.wait_for_timeout(200)
+    # A paginated list is a new way for a caveat to go missing: collect the open list, its platform
+    # variant and a page other than the first, so a sentence that only lived on page 3 would be seen.
+    page.evaluate("() => { MOCK.view.indexOpen = true; MOCK.view.showPlatform = true; MOCK.view.indexPage = 3; MOCK.render(); }")
+    page.wait_for_timeout(300); grab()
+    page.evaluate("() => { MOCK.view.indexOpen = null; MOCK.view.showPlatform = false; MOCK.view.indexPage = 1; MOCK.render(); }")
+    page.wait_for_timeout(250)
     for tier in ("self-jdoe", "self-alice", "withheld"):
         page.select_option("#f-tier", tier); page.wait_for_timeout(250); grab()
     page.select_option("#f-tier", "admin"); page.wait_for_timeout(250)
@@ -541,6 +638,18 @@ def caveats(page):
     check(f"every one of the {len(CAVEATS)} caveats the live page carries is reachable here",
           len(CAVEATS) - len(missing), len(CAVEATS))
     note("states swept for caveats", len(texts))
+    # A paginated region is a new way for a sentence to become unreachable: one on page 3 is one most
+    # readers never see. Assert that NO caveat lives inside the paginated region at all — the section's
+    # heading, its notes and its counts are outside it by construction, and this is what holds them there.
+    page.evaluate("() => { MOCK.view.indexOpen = true; MOCK.view.showPlatform = true; MOCK.view.indexPage = 1; MOCK.render(); }")
+    page.wait_for_timeout(300)
+    paged = re.sub(r"\s+", " ", page.evaluate("() => document.querySelector('#ns-index-body').innerText")).strip().lower()
+    inside = [k for k, v in CAVEATS.items() if re.sub(r"\s+", " ", v).strip().lower() in paged]
+    check("no caveat lives inside the paginated region, so none can be stranded on page 3", inside, [])
+    note("paginated region holds only rows and the pager",
+         page.evaluate("() => [...document.querySelectorAll('#ns-index-body > *')].map(e => e.tagName + '.' + (e.className || ''))"))
+    page.evaluate("() => { MOCK.view.indexOpen = null; MOCK.view.showPlatform = false; MOCK.render(); }")
+    page.wait_for_timeout(250)
 
 
 def main():
@@ -555,6 +664,7 @@ def main():
         page.goto(URL, wait_until="load"); page.wait_for_timeout(600)
         drive(page)
         index_controls(page)
+        platform_and_pages(page)
         caveats(page)
         widths(page)
         contrast(page, None)

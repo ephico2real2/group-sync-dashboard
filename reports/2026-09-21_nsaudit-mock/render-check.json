@@ -6,7 +6,7 @@
   "Why this is a risk",
   "How to close it",
   "Every grant",
-  "Namespaces \u00b7 106",
+  "Namespaces \u00b7 39 of 106",
   "States this page has, that this cluster does not show"
  ],
  "scope pill": "Full view \u2014 you are seeing everything",
@@ -48,11 +48,16 @@
   "#b24e00",
   "#c18600"
  ],
- "document height, folded vs open": [
-  5517,
-  9812
+ "document height, folded vs open (a page of 25, not all 106)": [
+  5706,
+  6779,
+  1073
  ],
- "states swept for caveats": 9,
+ "states swept for caveats": 10,
+ "paginated region holds only rows and the pager": [
+  "DIV.scroll-x",
+  "NAV.pager"
+ ],
  "375px geometry": {
   "scrollWidth": 375,
   "innerWidth": 375,

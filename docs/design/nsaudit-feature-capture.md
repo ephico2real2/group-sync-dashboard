@@ -213,6 +213,17 @@ Three further states, all measured or quoted:
 `alsoLine()` adds a cross-tab line while the box holds a query — measured with `demo`:
 `search everything for demo`.
 
+**No platform filter, and the product already has the rule.** All 106 rows are listed, of which **67
+are the platform's own** — measured with `local-development/gsd/home.py#is_platform_namespace`, whose
+rule is the prefixes `openshift-` and `kube-` plus the five named namespaces. That function is called
+in exactly one place in the product (`home.py`, for the Home page), so this index does not use it and
+63 % of the list is `openshift-*` and `kube-*`. The rule is prefix-based, so it also leaves an estate's
+own operators among the workloads: `cert-manager`, `kyverno`, `namespace-configuration-operator` and
+`hostpath-provisioner` are all classified as application namespaces by it.
+
+**No paging either.** All 106 rows render at once; `namespacesCard` has no limit, no page and no
+truncation note — unlike the audit's own detail list, which is capped at 200 server-side and says so.
+
 ## The namespace page — `local-development/gsd/static/index.html#function nsDetail`
 
 Measured on `legacy-payments`. Back button label: `← all namespaces`.

@@ -66,6 +66,10 @@
   --tab-clusters: #6b3a12;
   --tab-library: #7a2468;
   --accent: var(--tab-nsaudit);
+  /* Text ON the accent, which is a different question from text beside it. White reads 5.89:1 on the
+     light accent #b3306e and 3.54:1 on the dark one #e0559a — under the bar — so the ink flips with
+     the theme rather than staying white. Measured, in the render check, on the painted button. */
+  --accent-ink: #ffffff;
   --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --text-micro: 10px; --text-xs: 11px; --text-sm: 12px; --text-md: 13px;
@@ -123,6 +127,7 @@
     --tab-kyverno: #5cc4cf;
     --tab-clusters: #e0a060;
     --tab-library: #d489c0;
+    --accent-ink: #0b0b0b;   /* 5.56:1 on the dark accent #e0559a */
     --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
   }
 }
@@ -162,6 +167,7 @@
   --tab-kyverno: #5cc4cf;
   --tab-clusters: #e0a060;
   --tab-library: #d489c0;
+  --accent-ink: #0b0b0b;
   --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
 }
 }
@@ -458,12 +464,40 @@ th button.sorter .arrow { font-family: var(--font-mono); margin-left: var(--spac
 .index-controls .find { display: flex; align-items: center; gap: var(--space-4); flex: 1 1 260px; min-width: 0; }
 .index-controls label { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
 .index-controls input { width: auto; flex: 1 1 auto; min-width: 120px; max-width: 360px; }
+.index-controls .platform-toggle { flex: 0 0 auto; gap: var(--space-3); }
+.index-controls input[type="checkbox"] { width: auto; flex: 0 0 auto; min-width: 0; margin: 0; cursor: pointer; }
+.index-controls .platform-toggle label { cursor: pointer; }
+.note.counts { color: var(--text-secondary); }
+.note.counts strong { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* The pager: numbers a keyboard can reach, the current one marked, and the row range beside them. */
+.pager {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5);
+  margin-top: var(--space-7); padding-top: var(--space-6); border-top: 1px solid var(--gridline);
+}
+.page-nums { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.page-num { font-family: var(--font-mono); min-width: 34px; text-align: center; }
+.page-num[aria-current="page"] {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700;
+}
+.page-step:disabled { color: var(--text-muted); cursor: default; opacity: 0.6; }
+.page-gap { color: var(--text-muted); padding: 0 var(--space-2); }
+.page-note { font-size: var(--text-sm); color: var(--text-secondary); margin-left: auto; }
+.page-note strong { font-family: var(--font-mono); color: var(--text-primary); }
+@media (max-width: 620px) {
+  .pager { justify-content: space-between; }
+  .page-note { margin-left: 0; width: 100%; }
+}
+@media (forced-colors: active) {
+  .page-num[aria-current="page"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+}
+
 @media (max-width: 620px) {
   /* The flex BASIS is a height once the direction is column, so `flex: 1 1 260px` on the search
      group made a 260 px-tall empty box — measured, and invisible to an overflow check because
      nothing overflowed or was clipped. Both children size to content here. */
   .index-controls { flex-direction: column; align-items: stretch; }
   .index-controls .find { flex: 0 0 auto; flex-wrap: wrap; }
+  .index-controls .platform-toggle { flex-direction: row; align-items: center; }
   .index-controls input { flex: 0 0 auto; width: 100%; max-width: none; }
   .index-controls #index-toggle { flex: 0 0 auto; width: 100%; text-align: left; }
 }
@@ -575,15 +609,28 @@ const UNIT_MAX = 40;
    buys nothing, above it the fold is the difference between reading the audit and scrolling past
    the estate. `mock-trusted` has 7 namespaces and opens; `dashboard-rnd` has 106 and folds. */
 const INDEX_FOLD = 25;
+/* A page of the index is the same screenful the fold is measured in, so "folded" and "one page"
+   mean the same amount of list and the reader only has to learn one number. */
+const INDEX_PAGE = 25;
+
+/* Platform namespaces, by the PRODUCT'S OWN rule — `local-development/gsd/home.py`'s
+   `is_platform_namespace`, copied exactly rather than re-derived. The app already classifies
+   namespaces this way for the Home page and calls it in exactly one place, so the index does not
+   use it today; a mock that classified differently would be a divergence somebody implements.
+   Measured on this cluster: 67 of 106 are platform, which is 63 % of the list. */
+const PLATFORM_NAMESPACE_PREFIXES = ["openshift-", "kube-"];
+const PLATFORM_NAMESPACES = new Set(["default", "openshift", "kube-system", "kube-public", "kube-node-lease"]);
+const isPlatformNamespace = (name) =>
+  PLATFORM_NAMESPACES.has(name) || PLATFORM_NAMESPACE_PREFIXES.some((p) => String(name).startsWith(p));
 
 const view = {
   cluster: "dashboard-rnd", tier: "admin", ns: null,
   nsSort: "risk", nsDir: "desc", grantSort: "risk", grantDir: "desc",
   grantsOpen: false, pick: "all", search: "", whoOpen: new Set(), shapeWhoOpen: false,
   wideOpen: false, countsOpen: false, platformOpen: false,
-  // The namespace index's own two controls. `indexOpen: null` means "not decided by the reader",
+  // The namespace index's own controls. `indexOpen: null` means "not decided by the reader",
   // which is what lets the default follow the size of the estate rather than being a constant.
-  indexSearch: "", indexOpen: null
+  indexSearch: "", indexOpen: null, showPlatform: false, indexPage: 1
 };
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -1010,41 +1057,83 @@ function inventoryCard() {
   const d = lab(), n = d.namespaces;
   const keys = n.label_keys || [];
   const all = n.namespaces || [];
-  // Free form over the namespace's own fields — its name and every captured label — with the page's
-  // multi-word contract: several words are ANDed, so every word must appear ("demo prod" finds
-  // demo-prod and demo-production; "alice zzz" finds nothing). The bar's box is the page's and
-  // reaches the worklist as well; this one is the section's and reaches this list alone.
+  const platformCount = all.filter((x) => isPlatformNamespace(x.name)).length;
+  // Order of narrowing, and every step keeps its denominator: the cluster's list, then the platform
+  // filter, then the two searches, then the page.
+  const listed = view.showPlatform ? all : all.filter((x) => !isPlatformNamespace(x.name));
   const fields = (x) => [x.name, ...keys.map((k) => (x.labels || {})[k])];
-  const shown = all.filter((x) => matches(fields(x), view.search) && matches(fields(x), view.indexSearch));
-  const src = n.source || {};
   const barQ = (view.search || "").trim(), ownQ = (view.indexSearch || "").trim();
+  const searching = !!(barQ || ownQ);
+  const shown = listed.filter((x) => matches(fields(x), view.search) && matches(fields(x), view.indexSearch));
+  const src = n.source || {};
   /* THIS section's box reveals the section: filtering something the reader cannot see would make the
      box look broken, and the "nothing matches" sentence is itself the answer to the query — it has to
      be on screen to be read. The BAR's box does not, because it is the shell's and this page does not
      get to change what it does; while the section is folded its control carries the matched count
      instead, so a bar query is never silently swallowed. */
-  const open = ownQ ? true : (view.indexOpen === null ? all.length <= INDEX_FOLD : view.indexOpen);
-  const countLabel = shown.length === all.length ? `${all.length}` : `${shown.length} of ${all.length}`;
+  /* The default is decided by what the section HOLDS (after the platform filter), never by what a
+     search has narrowed it to: keying it on the filtered count let the bar's box open the section by
+     a side door, which is exactly the behaviour this page does not get to give an inherited control. */
+  const open = ownQ ? true : (view.indexOpen === null ? listed.length <= INDEX_FOLD : view.indexOpen);
+  // Pages are over the FILTERED set, so page 1 always exists; the clamp is belt and braces for a
+  // state the reset below should already have prevented.
+  const pages = Math.max(1, Math.ceil(shown.length / INDEX_PAGE));
+  const wanted = Number.isFinite(view.indexPage) ? Math.trunc(view.indexPage) : 1;
+  const page = Math.min(Math.max(1, wanted), pages);
+  const from = (page - 1) * INDEX_PAGE, to = Math.min(from + INDEX_PAGE, shown.length);
+  const rows = shown.slice(from, to);
+  const foldLabel = shown.length === all.length
+    ? `${all.length} ${plural(all.length, "namespace")}`
+    : `${shown.length} of ${all.length} namespaces`;
   const queryWords = [barQ && `<strong>${esc(barQ)}</strong> (the bar)`, ownQ && `<strong>${esc(ownQ)}</strong> (this list)`]
     .filter(Boolean).join(" and ");
+  // One line, every number beside the number it came out of. "39" alone says nothing; "39 of 106"
+  // says what the filter did.
+  const chain = [`<strong>${all.length}</strong> on this cluster`];
+  if (!view.showPlatform && platformCount) chain.push(`<strong>${platformCount}</strong> platform hidden`);
+  if (searching) chain.push(`<strong>${shown.length}</strong> of <strong>${listed.length}</strong> match the search`);
+  else if (!view.showPlatform && platformCount) chain.push(`<strong>${listed.length}</strong> listed`);
+  if (open && shown.length) chain.push(pages > 1
+    ? `showing <strong>${from + 1}–${to}</strong> on page <strong>${page}</strong> of <strong>${pages}</strong>`
+    : `showing all <strong>${shown.length}</strong>`);
   return `<section class="card" id="ns-index">
-    <h2>Namespaces <span class="count">· ${countLabel}${shown.length === all.length ? "" : " shown"}</span></h2>
+    <h2>Namespaces <span class="count">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`}</span></h2>
     <div class="index-controls">
       <span class="find">
         <label for="f-index-search">Search this list</label>
         <input id="f-index-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
                placeholder="name or label, any words" value="${esc(view.indexSearch)}"
                aria-describedby="f-index-search-help"
-               title='Searches the namespaces below as you type, over the name and every captured label. Several words are ANDed — every word must appear. Escape clears. Separate from the bar''s Find namespace: neither box clears the other, and both survive the repaint.'>
+               title='Searches the namespaces below as you type, over the name and every captured label. Several words are ANDed — every word must appear. Escape clears. Separate from the bar&apos;s Find namespace: neither box clears the other, and both survive the repaint.'>
         <span id="f-index-search-help" class="sr-only">Searches the namespaces in this section by name or by the value of any captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear. This is separate from the Find namespace box in the filter bar; both apply.</span>
       </span>
+      ${platformCount ? `<span class="find platform-toggle">
+        <input type="checkbox" id="f-show-platform"${view.showPlatform ? " checked" : ""}>
+        <label for="f-show-platform">Show ${platformCount} platform ${plural(platformCount, "namespace")}</label>
+      </span>` : ""}
       <button type="button" id="index-toggle" class="disclose" aria-expanded="${open}" aria-controls="ns-index-body">
-        <span class="arrow" aria-hidden="true">${open ? "▾" : "▸"}</span> ${open ? "Hide" : "Show"} ${
-        shown.length === all.length ? `${all.length} ${plural(all.length, "namespace")}`
-          : `${shown.length} of ${all.length} namespaces`}</button>
+        <span class="arrow" aria-hidden="true">${open ? "▾" : "▸"}</span> ${open ? "Hide" : "Show"} ${foldLabel}</button>
     </div>
+    <p class="note counts">${chain.join(" · ")}.</p>
     <p class="note">Every namespace the poller sees, not only those with a grant. Click a row — a namespace is
       an entity here, the third drill-down beside groups and users.</p>
+    ${platformCount ? `<p class="note"><strong>${platformCount} of ${all.length}</strong> namespaces on this cluster
+      are the platform's own — ${Math.round((platformCount / all.length) * 100)} % of the list — so they are hidden
+      here by default and counted rather than dropped, the same way this page already excludes platform
+      <em>grants</em> and says so. Platform means <code>openshift-</code>, <code>kube-</code> and the five the
+      cluster fixes (<code>default</code>, <code>openshift</code>, <code>kube-system</code>,
+      <code>kube-public</code>, <code>kube-node-lease</code>): the product's own rule, from
+      <code>local-development/gsd/home.py</code>, not a second definition. That rule is prefix-based, so an
+      estate's own operators are not covered by it — <code>cert-manager</code>, <code>kyverno</code>,
+      <code>namespace-configuration-operator</code> and <code>hostpath-provisioner</code> are all still listed
+      here as workloads. That is the shipped definition behaving as written, not this control failing.</p>
+    <p class="note"><strong>This hides rows, never findings.</strong> The worklist above is not filtered by it:
+      ${(() => { const p = nsRows().filter((r) => isPlatformNamespace(r.namespace));
+        return p.length ? `<code>${p.map((r) => esc(r.namespace)).join("</code>, <code>")}</code>
+          ${plural(p.length, "is", "are")} a platform namespace with a direct grant, so ${p.length === 1 ? "it is" : "they are"}
+          ranked in the audit above and hidden from this list at the same time — which is why every count here
+          names what it counted.` : `no namespace with a direct grant on this cluster is a platform one, so the
+          two lists happen to agree today.`; })()}</p>` : ""}
     <p class="note">Two boxes search this list and they combine — a namespace shows when it matches both.
       <strong>Find namespace</strong> in the bar is the shell's, inherited by every page and unchanged here;
       <strong>Search this list</strong> is this section's, and is the one the fold answers to. Both are free
@@ -1058,29 +1147,60 @@ function inventoryCard() {
       ${n.cluster_wide_grants} cluster-wide direct ${plural(n.cluster_wide_grants, "grant")} reach every namespace
       below; the columns count what is bound <em>in</em> each one. A namespace with zero in both is a result an
       access review wants to confirm.</p>
-    ${open ? "" : `<p class="note muted">${all.length} ${plural(all.length, "namespace")} folded away${
-      barQ ? `, <strong>${shown.length}</strong> of them matching <strong>${esc(barQ)}</strong> in the bar` : ""} — this
-      list is ${Math.round((all.length / Math.max(nsRows().length, 1)) * 10) / 10}× the length of the worklist
-      above, and the audit is what the page is named after. Everything above this line stays put when it is
-      folded.</p>`}
+    ${open ? "" : `<p class="note muted">${shown.length} ${plural(shown.length, "namespace")} folded away${
+      barQ ? `, matching <strong>${esc(barQ)}</strong> in the bar` : ""} — still
+      ${Math.round((shown.length / Math.max(nsRows().length, 1)) * 10) / 10}× the length of the worklist above,
+      and the audit is what the page is named after. Everything above this line stays put when it is folded.</p>`}
     <div id="ns-index-body"${open ? "" : " hidden"}>
-    ${shown.length ? `<div class="scroll-x"><table class="stack compact">
+    ${rows.length ? `<div class="scroll-x"><table class="stack compact">
       <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(k.split("/").pop())}</th>`).join("")}
         <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
-      <tbody>${shown.map((x) => `<tr>
-        <td data-l="Namespace"><button type="button" class="drill" data-ns="${esc(x.name)}">${esc(x.name)}</button></td>
+      <tbody>${rows.map((x) => `<tr>
+        <td data-l="Namespace"><button type="button" class="drill" data-ns="${esc(x.name)}">${esc(x.name)}</button>${
+          isPlatformNamespace(x.name) ? " " + badge("unknown", "platform") : ""}</td>
         ${keys.map((k) => `<td data-l="${esc(k.split("/").pop())}" class="mono muted">${esc((x.labels || {})[k] || "—")}</td>`).join("")}
         <td data-l="Via groups" class="num${x.via_groups ? "" : " muted"}">${x.via_groups}</td>
         <td data-l="Direct grants" class="num${x.direct_grants ? " err" : " muted"}">${x.direct_grants}</td></tr>`).join("")}</tbody>
-    </table></div>`
+    </table></div>
+    ${pages > 1 ? pager(page, pages, from, to, shown.length) : `<p class="note mt-5">All
+      ${shown.length} fit on one page.</p>`}`
       // Two different empty states, never one: a search that hides everything is a fact about the
       // query and quotes the denominator; an empty list is a fact about the cluster.
-      : all.length
-        ? `<p class="empty-note">Nothing matches ${queryWords}. All ${all.length} are still there — the
-            search is hiding them. Press Escape in a box to clear it.</p>`
-        : `<p class="empty-note">No namespaces recorded for this cluster yet.</p>`}
+      : !all.length
+        ? `<p class="empty-note">No namespaces recorded for this cluster yet.</p>`
+        : !listed.length
+          ? `<p class="empty-note">Every namespace on this cluster is a platform one. Tick
+              <strong>Show ${platformCount} platform ${plural(platformCount, "namespace")}</strong> to list them.</p>`
+          : `<p class="empty-note">Nothing matches ${queryWords}. All ${listed.length} in this list${
+              view.showPlatform ? "" : ` (and ${platformCount} more behind the platform filter)`} are still there —
+              the search is hiding them. Press Escape in a box to clear it.</p>`}
     </div>
   </section>`;
+}
+
+/* Numbered pages, because "1, 2, 3" is what a reader reaches for and a Next-only pager hides how much
+   is left. Every page is a button so the keyboard reaches it, the current one is aria-current, and the
+   row range is stated beside them — a page number with no denominator is the same failure as a count
+   with no denominator. Past nine pages the numbers window around the current one rather than wrapping
+   a hundred buttons onto the page. */
+function pager(page, pages, from, to, total) {
+  const nums = [];
+  if (pages <= 9) { for (let i = 1; i <= pages; i += 1) nums.push(i); }
+  else {
+    const near = [1, 2, page - 1, page, page + 1, pages - 1, pages]
+      .filter((i) => i >= 1 && i <= pages).sort((a, b) => a - b);
+    let last = 0;
+    near.forEach((i) => { if (i !== last) { if (i > last + 1) nums.push(null); nums.push(i); last = i; } });
+  }
+  return `<nav class="pager" aria-label="Namespace list pages">
+    <button type="button" class="page-step" data-index-page="${page - 1}"${page === 1 ? " disabled" : ""}>‹ Previous</button>
+    <span class="page-nums">${nums.map((i) => i === null
+      ? `<span class="page-gap" aria-hidden="true">…</span>`
+      : `<button type="button" class="page-num" data-index-page="${i}"${i === page ? ' aria-current="page"' : ""}>${i}</button>`).join("")}</span>
+    <button type="button" class="page-step" data-index-page="${page + 1}"${page === pages ? " disabled" : ""}>Next ›</button>
+    <span class="page-note">rows <strong>${from + 1}–${to}</strong> of <strong>${total}</strong>${
+      total > INDEX_PAGE ? `, ${INDEX_PAGE} to a page` : ""}</span>
+  </nav>`;
 }
 
 /* ── what the other tiers get ──────────────────────────────────────────────────────────────── */
@@ -1467,7 +1587,7 @@ function wire() {
   if (cluster) cluster.onchange = () => {
     if (!LAB.clusters[cluster.value]) { cluster.value = view.cluster; return; }
     view.cluster = cluster.value; view.ns = null; view.pick = "all"; view.whoOpen = new Set();
-    view.indexSearch = ""; view.indexOpen = null; render();
+    view.indexSearch = ""; view.indexOpen = null; view.showPlatform = false; view.indexPage = 1; render();
   };
   const tier = $("f-tier");
   if (tier) tier.onchange = () => { view.tier = tier.value; view.ns = null; render(); };
@@ -1480,12 +1600,13 @@ function wire() {
     search.oninput = (e) => {
       const pos = e.target.selectionStart;
       view.search = e.target.value;
+      view.indexPage = 1;   // it narrows the same list, so the page under it is no longer the page
       render();
       const el = $("f-ns-search");
       if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } }
     };
     search.onkeydown = (e) => {
-      if (e.key === "Escape" && view.search) { e.preventDefault(); view.search = ""; render(); const el = $("f-ns-search"); if (el) el.focus(); }
+      if (e.key === "Escape" && view.search) { e.preventDefault(); view.search = ""; view.indexPage = 1; render(); const el = $("f-ns-search"); if (el) el.focus(); }
     };
   }
   const indexSearch = $("f-index-search");
@@ -1496,17 +1617,38 @@ function wire() {
     indexSearch.oninput = (e) => {
       const pos = e.target.selectionStart;
       view.indexSearch = e.target.value;
+      view.indexPage = 1;   // a page number means nothing once the set under it changes
       render();
       const el = $("f-index-search");
       if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } }
     };
     indexSearch.onkeydown = (e) => {
       if (e.key === "Escape" && view.indexSearch) {
-        e.preventDefault(); view.indexSearch = ""; render();
+        e.preventDefault(); view.indexSearch = ""; view.indexPage = 1; render();
         const el = $("f-index-search"); if (el) el.focus();
       }
     };
   }
+  const platform = $("f-show-platform");
+  if (platform) platform.onchange = () => {
+    view.showPlatform = platform.checked;
+    view.indexPage = 1;
+    render();
+    const el = $("f-show-platform"); if (el) el.focus();
+  };
+  // Scoped to the pager AND named for it: `[data-page]` alone also matched <body data-page="nsaudit">,
+  // so every click anywhere on the page ran this handler and set the page to Number("nsaudit") — NaN,
+  // which emptied the list and picked the wrong empty state to explain it.
+  document.querySelectorAll(".pager [data-index-page]").forEach((el) => {
+    el.onclick = () => {
+      view.indexPage = Number(el.dataset.indexPage);
+      render();
+      // Keep the reader where the pager was rather than at the top of a fresh page of rows.
+      const p = document.querySelector(".pager");
+      if (p) p.scrollIntoView({ block: "center" });
+    };
+  });
+
   const indexToggle = $("index-toggle");
   if (indexToggle) indexToggle.onclick = () => {
     view.indexOpen = indexToggle.getAttribute("aria-expanded") !== "true";
