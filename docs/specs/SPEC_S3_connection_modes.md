@@ -22,7 +22,7 @@ clusters:
     apiUrl: https://kubernetes.default.svc
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    dashboard_controller: true
+    dashboardController: true
 
   - name: shared-rnd                      # a REMOTE cluster, named, with no credential
     apiUrl: https://api.crc.testing:6443
@@ -131,7 +131,7 @@ readers learn them, because §2's equivalence is only real if both accept the sa
    of truth, and the operator meant one of them.
 4. A mode is refused on the **controller** stanza: it is this pod's own cluster and authenticates with
    the mounted ServiceAccount, so there is nothing to connect. Refused by name, the way a second
-   `dashboard_controller` is.
+   `dashboardController` is.
 5. `ldapConnectionBootstrap` without a mode is refused (§3.1 rule 2), and its value is validated as a
    username, not accepted as free text.
 6. Every refusal above names the offending cluster and the key. A pod that will not start must say
@@ -140,10 +140,13 @@ readers learn them, because §2's equivalence is only real if both accept the sa
 **The Secret parser** (`local-development/gsd/clusterconfig/parser.py`) takes the same three keys in
 `config`, with one rule of its own: a Secret carrying `bearerToken` *and* a mode is a **finding**, not
 a crash — the same "two sources of truth" refusal, delivered the way a Secret's problems are always
-delivered, on the tab, with the other clusters still polling.
-
-**What does not change:** a stanza or Secret that names a credential behaves exactly as it does today.
-Nothing here alters an existing configuration, and the acceptance run in §7 pins that.
+delivered, on the tab, with the other clusters still polling. A key it does not know is refused today
+**without being named** — the detail says "config has a 13-character key this contract does not
+define … in case something other than a key name was written into it" — so each new key must also
+join `_ECHOABLE_KEYS` (parser.py), or the operator is told the length of their mistake and not its
+name. That is the mechanism, and it is worth saying exactly: an earlier draft of this spec said the
+key would be "refused by name, the way `dashboardController` is", which was only true *because* #249
+added that key to the echoable set. The naming is not automatic.
 
 ### 4.1 The stanza will keep growing — the discipline that keeps it trackable
 
@@ -167,6 +170,35 @@ divergence the suite catches on the commit that introduces it, not on the cluste
 values file keeps rendering, an existing release keeps polling, and upgrading is never a migration.
 That is what lets the stanza absorb the next ten ideas without any of them being a breaking change.
 
+### 4.2 The loader is not the last refusal — the poll path refuses too
+
+A relaxation that stops at `load_settings` produces a cluster that starts, appears, and then fails
+**every poll for ever**. Driven end to end against a patched copy of the package, the sequence is:
+
+```
+credential_kind of a credential-less stanza   → "file"          (the fall-through, config.py)
+ClusterConfig.resolve_token()                 → ConfigError: neither tokenFile nor tokenEnv configured
+ClusterClient._client()                       → ClusterError(outcome="auth_failed")
+the poller's line                             → cluster-unreachable phase=credential outcome=auth_failed
+                                                cluster=shared-rnd source=values credential=file
+```
+
+Three things are wrong there and all three are S3a's work:
+
+1. **`credential_kind` must gain a word for this state.** It falls through to `file`, so a cluster
+   that has no file is reported as having one. The precedent is already in the code: `oauth` exists
+   as a kind that *cannot be resolved yet* (#119 P2), paired with the finding
+   `oauth-exchange-not-built`. A looked-up credential follows that pattern, not a new invention.
+2. **`resolve_token()` must not be reached before the credential exists.** A cluster awaiting its
+   first lookup is not a broken cluster; it is an unfinished connection, and the reconciler (§8) is
+   what finishes it.
+3. **The outcome must not be `auth_failed`.** Nothing authenticated and nothing was refused —
+   reporting a failed authentication for a credential that was never presented sends the operator
+   to rotate a token that does not exist. It is a distinct state with its own action line.
+
+**What does not change:** a stanza or Secret that names a credential behaves exactly as it does today.
+Nothing here alters an existing configuration, and the acceptance run in §7 pins that.
+
 ## 5. The onboarding sequence, and where each step can fail
 
 ```
@@ -185,27 +217,72 @@ resolve the fleet credential  →  discover the target's OAuth endpoint  →  lo
 | write the cluster Secret | the tab's writes are off, or the name is taken | `writes-disabled` / `secret-exists`, naming the switch or the Secret |
 
 Every one is a finding on the Cluster Configurations tab and a `phase=`-tagged line in the log
-(#245's vocabulary: `phase=credential|oauth|login|lookup|write`), never a crash.
+(#245's vocabulary), never a crash — **and none of those ids exists yet.** The review of this spec
+constructed all seven and every one raised `ValueError: unknown finding code`: `Finding.__post_init__`
+(`gsd/clusterconfig/parser.py`) enforces a **closed set** of nineteen codes, and SPEC_S1 §S1.2 makes
+that set a page contract — *"the tab renders each with its own sentence, so a new code is a page
+change too"*. The same is true of the phases: `phase=` today takes `discovery|parse|credential|tls|
+connect|poll`, so `oauth`, `login`, `lookup` and `write` are new phases, not existing ones.
+
+That is a real cost this spec must schedule rather than assume, and it splits three ways:
+
+1. **Reuse where a code already means the right thing.** `credential-missing` and
+   `oauth-exchange-not-built` already exist and already say what two of these rows say. A new id for
+   an existing meaning is the divergence §4.1 exists to prevent — the same mistake §8.2 made with
+   `shadows-values-entry` and had to retract.
+2. **Add the genuinely new codes to the closed set AND to the page**, in the same PR, because the
+   contract says they travel together. S3b owns that, and its Definition of Done names the page
+   change explicitly.
+3. **Add the new phases to the logging vocabulary** (#245) where the sequence genuinely has steps the
+   existing six do not cover.
+
+Until that lands, an implementer copying this table verbatim gets a `ValueError` at the first
+failure — which is the loudest possible reminder, and better than a silent one, but it is the
+spec's job to say so first.
 
 ## 6. The measured trap this spec exists to record
 
-The OAuth endpoint is **not** covered by the cluster's API CA. Measured from inside the pod on the
-reference cluster (2026-09-21):
+**This section was wrong in the first draft and is corrected here.** The number was right; the cause
+assigned to it was the opposite of what the cluster does, and the default derived from that cause was
+the one mode measured to fail. The review of this spec re-measured it from inside the deployed pod,
+with `curl` *and* with Python's `ssl` — the machinery `ClusterConfig.verify()` actually builds — and
+enumerated the bundles certificate by certificate.
 
-```
-https://oauth-openshift.apps-crc.testing/healthz   with the pod's trust store → 000, verify=19
-                                                    insecure                   → 200
-```
+What the pod measures (CRC 4.22.7, 2026-09-20), against the OAuth route **and** the external API URL:
 
-`verify=19` is *self-signed certificate in certificate chain*: the route is served by the **ingress**
-certificate while `caData` from the ServiceAccount token Secret is the **API server's** CA. A design
-that reuses the cluster's `caData` for the login step will fail on every cluster whose ingress
-certificate is not publicly trusted — which is most of them.
+| target | the dashboard's own trusted bundle | the ServiceAccount's `ca.crt` (`caData`) | insecure |
+|---|---|---|---|
+| `oauth-openshift.apps-crc.testing` | **FAIL** — `verify=19`, self-signed certificate in chain | **OK** | OK |
+| `api.crc.testing:6443` (external) | **FAIL** — `verify=19` | **OK** | OK |
 
-So the login step has its **own** trust setting, with the same three modes as the cluster's:
-`oauthTrust: bundle | caData | insecure`, defaulting to the dashboard's own trusted bundle (an
-enterprise ingress CA usually is in it, while the API's CA usually is not). The two are independent
-and both are shown on the tab.
+`verify=19` is real and reproduces exactly. What it is *not* is a statement about the OAuth route
+being outside the API CA's reach. The ServiceAccount's `ca.crt` is a **bundle**, not "the API
+server's CA", and on this cluster it carries six certificates — the four kube-apiserver signers
+**and** `ingress-operator@…` with the `*.apps-crc.testing` leaf it issued. That is exactly why it
+validates the login endpoint.
+
+The thing that fails is the **dashboard's own injected trust store**
+(`GSD_TRUSTED_CA_FILE`, 147 certificates, 225 713 bytes): the ingress CA is **not** in it
+(`ingress-operator CA present in injected bundle: False`). It fails on the OAuth route and on the
+external API URL alike, so this is not a login-step problem at all — it is what happens to *any*
+outside-the-cluster connection made on the default trust.
+
+So the corrected design:
+
+- The login step still gets its **own** trust setting, `oauthTrust: bundle | caData | insecure` —
+  a separate axis is right, because a cluster may serve its API and its routes from different CAs
+  and nothing guarantees one bundle covers both.
+- **It defaults to `caData`, not `bundle`.** `caData` is the mode measured to work on both endpoints,
+  and it is the one the dashboard obtains for free: `saTokenLookup` already reads `ca.crt` beside
+  the token (§3), so the material is in hand at exactly the moment the login needs it.
+- `bundle` remains for the estate whose ingress CA really is in the corporate store, and the tab
+  says which mode a cluster used — because "it worked here" is not evidence about the next cluster.
+
+**The lesson worth keeping, since it is the one that generalises:** a reproduced number is not a
+confirmed cause. `verify=19` was measured correctly and then explained by the first plausible story
+— "routes are ingress-signed, `caData` is the API CA" — without opening the bundle to see what was
+actually in it. One `openssl`-equivalent enumeration refuted it. Measure the mechanism, not only the
+symptom.
 
 ## 7. Testing it — and why the reference cluster can test it honestly
 
@@ -411,11 +488,14 @@ locking the account.
 
 ## 10. Decomposition
 
-- **S3a** — the loader AND the parser: the three keys in both, `clusterConfig.fleetAccount` in the
+- **S3a** — the loader AND the parser: the three keys in both, the credential kind and poll path of
+  §4.2 (a cluster awaiting its first lookup is not an `auth_failed`), `clusterConfig.fleetAccount` in the
   chart, the relaxed credential requirement, the six refusals, the equivalence guard (§4.1) and the
   `fleet-credential-missing` finding. No network.
 - **S3b** — the onboarding sequence and its findings, behind #119 P2's provider; `oauthTrust` and its
-  three modes; the annotations on the written Secret.
+  three modes (defaulting to `caData`, §6); the annotations on the written Secret. It also owns the
+  **vocabulary**: every new finding code added to the closed set AND to the page in the same PR (the
+  SPEC_S1 §S1.2 contract), and every new `phase=` added to #245's set.
 - **S3d** — the reconciler (§8 and §9): credential recovery, the lockout guard, the self-check, and the ownership annotations, the seven transitions, drift reporting,
   the 80 % renewal trigger, and standing down on an unowned shadow. It is its own step because it is
   the only one that DELETES, and a deleting loop earns its own review and its own acceptance run.
