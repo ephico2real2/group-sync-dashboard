@@ -46,7 +46,7 @@ def _refused(tmp_path, extra: str = "", body: str | None = None) -> str:
 # ── the loader (§4 items 1-6) ──────────────────────────────────────────────────────────────────
 
 class TestTheLoader:
-    @pytest.mark.parametrize("key,kind", [("saTokenLookup", "lookup"), ("userSelfLogin", "self-login")])
+    @pytest.mark.parametrize("key,kind", [("saTokenLookup", "remote-lookup"), ("userSelfLogin", "self-login")])
     def test_a_stanza_declaring_a_mode_loads_without_a_credential(self, tmp_path, key, kind):
         s = _load(tmp_path, f"    {key}: true\n")
         c = s.cluster("shared-rnd")
@@ -114,7 +114,7 @@ class TestTheLoader:
 # ── the parser (§4: the same three keys in `config`, a finding not a crash) ───────────────────
 
 class TestTheParser:
-    @pytest.mark.parametrize("key,kind", [("saTokenLookup", "lookup"), ("userSelfLogin", "self-login")])
+    @pytest.mark.parametrize("key,kind", [("saTokenLookup", "remote-lookup"), ("userSelfLogin", "self-login")])
     def test_a_secret_declaring_a_mode_parses_with_a_pending_credential(self, key, kind):
         c = parse_secret(_secret(config={key: True, BOOTSTRAP_KEY: "svc-gsd"}), host_name="dashboard")
         assert isinstance(c, ClusterConfig)
@@ -197,7 +197,7 @@ class TestThePollPath:
         try:
             assert self._wait(lambda: "host" in self.polled)
             row = next(r for r in store.clusters() if r["id"] == "shared-rnd")
-            assert (row["credential"], row["enabled"], row["source"]) == ("lookup", 1, "values")
+            assert (row["credential"], row["enabled"], row["source"]) == ("remote-lookup", 1, "values")
             assert "shared-rnd" not in poller._cluster_stops, "no poll thread for a pending credential"
             assert "shared-rnd" not in self.polled
             assert any("shared-rnd declares saTokenLookup" in r.getMessage() and "not polling" in r.getMessage()

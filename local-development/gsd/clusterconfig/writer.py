@@ -45,7 +45,7 @@ SOURCE_SERVICE_ACCOUNT_ANNOTATION = "groupsync-dashboard.io/source-service-accou
 #:
 #: NOT A SECOND VOCABULARY. The value IS the `credential_kind` the declaring mode resolves to, so the
 #: chain is one thing end to end: `saTokenLookup: true` -> `ClusterConfig.credential_kind` ->
-#: `"lookup"` -> this annotation. Defining "lookup" again here would be two constants that happen to
+#: `"remote-lookup"` -> this annotation. Defining it again here would be two constants that happen to
 #: be equal today, and the tab would disagree with the Secret the first time one of them moved.
 #: The two differ in what they LEAVE BEHIND, which is why a reader of the Secret needs to be told
 #: which one made it:

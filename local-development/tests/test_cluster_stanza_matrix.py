@@ -130,7 +130,7 @@ def test_the_production_example_loads_and_every_cluster_resolves_as_documented()
     assert by_name["decommissioned-dc"].enabled is False
     # the mode cluster is listed with its reason and is NOT polled until S3b
     rnd = by_name["shared-rnd"]
-    assert rnd.credential_kind == "lookup" and rnd.connection_mode == "saTokenLookup"
+    assert rnd.credential_kind == "remote-lookup" and rnd.connection_mode == "saTokenLookup"
     assert rnd.ldap_connection_bootstrap == "svc.gsd.fleet"
     assert rnd.credential_pending and "S3b" in rnd.credential_pending
 

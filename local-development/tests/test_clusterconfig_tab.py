@@ -115,7 +115,7 @@ class TestProvenanceAndEnabled:
 
     def test_the_three_markers_are_written_when_a_retriever_sets_them(self):
         anns = secret_object(_req(**self.PROV), NS)["metadata"]["annotations"]
-        assert anns[TOKEN_SOURCE_ANNOTATION] == "lookup"
+        assert anns[TOKEN_SOURCE_ANNOTATION] == "remote-lookup"
         assert anns[SOURCE_NAMESPACE_ANNOTATION] == "group-sync-operator"
         assert anns[SOURCE_SERVICE_ACCOUNT_ANNOTATION] == "group-sync-dashboard-cluster-poller"
 
@@ -145,7 +145,7 @@ class TestProvenanceAndEnabled:
     def test_the_marker_is_the_credential_kind_the_mode_resolves_to(self):
         """`token-source` is not a second vocabulary. The operator's chain: `saTokenLookup: true` is
         what the stanza declares, `credential_kind` is what it resolves to, and that word is what the
-        Secret records. Defining "lookup" twice would let the tab and the Secret disagree the first
+        Secret records. Defining the word twice would let the tab and the Secret disagree the first
         time one moved, so this pins them to one object."""
         from gsd.config import CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN, ClusterConfig
 

@@ -184,7 +184,10 @@ class PlatformNamespaces:
 CONNECTION_MODE_KEYS = ("saTokenLookup", "userSelfLogin")
 BOOTSTRAP_KEY = "ldapConnectionBootstrap"
 CONNECTION_KEYS = (*CONNECTION_MODE_KEYS, BOOTSTRAP_KEY)
-CREDENTIAL_LOOKUP = "lookup"            # saTokenLookup: the poller ServiceAccount's token is looked up
+CREDENTIAL_LOOKUP = "remote-lookup"     # saTokenLookup: a ServiceAccount token READ FROM the target
+#: `remote-lookup`, not `lookup`: the word is shown on the tab and written into a Secret's
+#: `token-source`, where "lookup" alone says nothing about WHERE it was looked up or what was
+#: found. It pairs with `self-login` — both say how the credential was got, in two words.
 CREDENTIAL_SELF_LOGIN = "self-login"    # userSelfLogin: the bootstrap account polls as itself
 #: Credential kinds the process cannot resolve yet, each with the reason the poller logs instead of
 #: polling. A kind in this table is never handed to ClusterClient.
