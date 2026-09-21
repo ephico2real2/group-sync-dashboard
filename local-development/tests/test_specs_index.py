@@ -42,7 +42,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
-    assert len(rows) == 17, f"expected seventeen index rows (the programme's thirteen, E1, S1, S2 and T1), matched {sorted(rows)}"
+    assert len(rows) == 18, f"expected eighteen index rows (the programme's thirteen, E1, S1, S2, S3 and T1), matched {sorted(rows)}"
     return rows
 
 
