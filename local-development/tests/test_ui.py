@@ -14,6 +14,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
+import re
 import socket
 import threading
 import time
@@ -8537,6 +8538,97 @@ class TestLibraryPage:
             ctx.close()
 
 
+class TestTheTabBarFitsOneRowOnDesktop:
+    """#253, measured on the DEPLOYED dashboard 2026-09-21: fourteen tabs wanted 1234 px while the bar
+    had 1140 px inside `.wrap`'s 1180 px cap, so the row wrapped at every desktop width — 1440 included —
+    and left `Cluster Configurations` alone on a second line above the fold of every page.
+
+    THIS FIXTURE RENDERS ELEVEN TABS TOTALLING 827 px, which fits whatever the padding is: Reports,
+    Library and Cluster Configurations are gated off on the unrestricted app. A first version of this
+    guard asserted one row against those eleven and passed with the OLD padding too — a test that
+    proved nothing. So the missing three labels are injected before measuring, and what is asserted is
+    the CSS's capacity for the product's real label set rather than whatever this fixture happens to
+    show.
+
+    The wrap itself is deliberate and stays: it is what keeps every tab inside a 375 px viewport
+    (TestTheShellAtPhoneWidth). This asserts only that it does not fire where there is room."""
+
+    #: Every tab label the PRODUCT renders, read from the source rather than hard-coded (review of
+    #: #256, Cursor finding 3): a hard-coded list goes stale the moment a tab is added or renamed,
+    #: which is precisely the change this guard exists to catch.
+    @staticmethod
+    def _shipped_labels() -> list[str]:
+        page = (pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static" / "index.html").read_text()
+        labels = re.findall(r'tab\("[a-z]+",\s*"([^"]+)"\)', page)
+        assert len(labels) >= 14, f"expected the product's full tab set, found {labels}"
+        return labels
+
+    @classmethod
+    def _with_every_shipped_tab(cls, dash):
+        """Clone a real tab for each absent label, so the measurement is of the bar's capacity."""
+        dash.evaluate(
+            """(labels) => {
+                 const bar = document.querySelector('.tabs');
+                 const model = document.querySelector('.tab');
+                 for (const text of labels) {
+                   if ([...bar.querySelectorAll('.tab')].some(t => t.textContent.trim() === text)) continue;
+                   const clone = model.cloneNode(true);
+                   clone.removeAttribute('aria-current');
+                   clone.removeAttribute('id');
+                   clone.dataset.injected = 'true';
+                   clone.textContent = text;
+                   bar.appendChild(clone);
+                 }
+               }""", cls._shipped_labels())
+
+    def test_every_shipped_tab_sits_on_one_row_at_desktop_widths(self, dash):
+        for width in (1280, 1440):
+            dash.set_viewport_size({"width": width, "height": 900})
+            dash.reload()
+            dash.wait_for_selector("button.tab")
+            self._with_every_shipped_tab(dash)
+            dash.wait_for_timeout(250)
+            shape = dash.evaluate(
+                """() => { const t = [...document.querySelectorAll('.tab')];
+                     const bar = document.querySelector('.tabs');
+                     const gap = parseFloat(getComputedStyle(bar).gap) || 0;
+                     return {n: t.length,
+                             rows: new Set(t.map(x => Math.round(x.getBoundingClientRect().top))).size,
+                             need: Math.round(t.reduce((a, x) => a + x.getBoundingClientRect().width, 0)
+                                              + gap * (t.length - 1)),
+                             have: Math.round(bar.getBoundingClientRect().width)}; }""")
+            assert shape["n"] >= 14, f"the injection did not produce the shipped tab count: {shape}"
+            assert shape["rows"] == 1, (
+                f"{width}px: {shape['n']} tabs wrapped onto {shape['rows']} rows "
+                f"(needed {shape['need']}px, bar has {shape['have']}px)")
+            # THE HEADROOM, not just the pass (review of #256, Cursor finding 2). `rows == 1` is true
+            # with one pixel to spare and true with a hundred, and the difference is whether the next
+            # tab or a renamed label re-breaks the bar. 18px is what this fix left: the widest label
+            # in the product is 165px, so the canary is that ONE more average tab would not fit —
+            # which is the honest statement of where this sits, and the signal that the bar needs a
+            # different shape (a scroller or an overflow menu) rather than another four pixels.
+            spare = shape["have"] - shape["need"]
+            average = shape["need"] / shape["n"]
+            assert spare >= 0, shape
+            assert spare < average, (
+                f"{width}px: {spare}px spare is now more than one average tab ({average:.0f}px) — "
+                "if the bar gained room, this canary is stale and the comment on `.tab` should be "
+                "re-measured rather than the assertion loosened")
+
+    def test_the_bar_still_wraps_rather_than_overflowing_at_phone_width(self, dash):
+        """The other half of the trade — tightening the padding must not have turned the wrap into a
+        sideways scroll at 375 px, which is the failure #166 fixed."""
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.reload()
+        dash.wait_for_selector("button.tab")
+        self._with_every_shipped_tab(dash)
+        dash.wait_for_timeout(250)
+        rows, scroll = dash.evaluate(
+            """() => [new Set([...document.querySelectorAll('.tab')]
+                 .map(t => Math.round(t.getBoundingClientRect().top))).size,
+               [document.documentElement.scrollWidth, innerWidth]]""")
+        assert rows > 1, "at 375 px the bar must wrap, not sit on one row"
+        assert scroll[0] <= scroll[1], f"the page scrolls sideways ({scroll[0]} > {scroll[1]})"
 class TestPlatformNamespacesAreHiddenByDefault:
     """#257: the index listed every namespace the poller sees — 67 of 106 on the reference cluster
     were `openshift-*`, `kube-*` or one of the five named, so two thirds of the largest section on

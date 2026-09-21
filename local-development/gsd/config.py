@@ -112,6 +112,69 @@ SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 SA_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 
+# The shipped rule's own constants, imported rather than restated: two copies of this list is the
+# divergence #255 exists to end (`gsd/home.py` is import-free, so there is no cycle).
+from .home import PLATFORM_NAMESPACE_PREFIXES, PLATFORM_NAMESPACES
+
+
+@dataclass(frozen=True)
+class PlatformNamespaces:
+    """Which namespaces are the platform's rather than a workload's (#255).
+
+    THREE AXES, AND EACH ONE IS LOAD-BEARING — measured on the reference cluster against the seven
+    infrastructure namespaces the shipped prefix rule calls application namespaces:
+    `-operator` catches three (`cert-manager-operator`, `group-sync-operator`,
+    `namespace-configuration-operator`), `-manager` one (`cert-manager`), `-provisioner` one
+    (`hostpath-provisioner`), and `kyverno` and `group-sync-dashboard` match no pattern at all and
+    must be named. Prefixes alone miss all seven.
+
+    Plain prefix / suffix / exact-name matching, deliberately: a glob or a regular expression in a
+    values file is an injection surface and an unreviewable diff, and these three cover every case
+    measured. `additional_*` APPENDS to the shipped defaults — an estate that restated the Red Hat
+    list would have to maintain it across OpenShift releases, and the common case is additive.
+    """
+
+    prefixes: tuple[str, ...] = PLATFORM_NAMESPACE_PREFIXES
+    suffixes: tuple[str, ...] = ()
+    names: frozenset[str] = PLATFORM_NAMESPACES
+    additional_prefixes: tuple[str, ...] = ()
+    additional_suffixes: tuple[str, ...] = ()
+    additional_names: frozenset[str] = frozenset()
+
+    def matches(self, name: str) -> bool:
+        """Whether this namespace is the platform's. Exact names first: the cheapest test, and the
+        one an operator reaches for when a name has no pattern in it."""
+        if name in self.names or name in self.additional_names:
+            return True
+        if self.prefixes and name.startswith(self.prefixes):
+            return True
+        if self.additional_prefixes and name.startswith(self.additional_prefixes):
+            return True
+        if self.suffixes and name.endswith(self.suffixes):
+            return True
+        return bool(self.additional_suffixes) and name.endswith(self.additional_suffixes)
+
+    def unmatched(self, names: list[str]) -> dict[str, list[str]]:
+        """Every configured pattern that matches nothing in `names`, by axis.
+
+        A pattern catching zero namespaces is a typo or a convention that was decommissioned, and a
+        stale entry is exactly how an allowlist rots — so it is reportable rather than inert. Only
+        the `additional_*` axes are reported: the shipped defaults legitimately match nothing on a
+        cluster that happens to have no `kube-public`, and telling an operator their defaults are
+        stale would be noise they cannot act on.
+        """
+        stale: dict[str, list[str]] = {}
+        for axis, values, test in (
+            ("additionalPrefixes", self.additional_prefixes, str.startswith),
+            ("additionalSuffixes", self.additional_suffixes, str.endswith),
+        ):
+            missing = [v for v in values if not any(test(n, v) for n in names)]
+            if missing:
+                stale[axis] = missing
+        missing_names = sorted(n for n in self.additional_names if n not in set(names))
+        if missing_names:
+            stale["additionalNames"] = missing_names
+        return stale
 # ── Connection modes (SPEC_S3 §3/§4 — S3a ships the keys, S3b connects) ─────────────────────────
 # A values stanza, or a Secret's `config`, may declare HOW the dashboard obtains a remote cluster's
 # credential instead of carrying one. Both readers learn the same three keys (§2's equivalence), and
@@ -707,6 +770,8 @@ class Settings:
     # these keys, never the whole label map; default () is off. Read from the ConfigMap key
     # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
     namespace_metadata_labels: tuple[str, ...] = ()
+    # Which namespaces are the platform's (#255). Defaults to the rule gsd/home.py ships.
+    platform_namespaces: PlatformNamespaces = PlatformNamespaces()
 
     def effective_clusters(self) -> list[ClusterConfig]:
         """The values list with the Secret-sourced clusters merged (SPEC_S1 C2: a Secret shadows a
@@ -812,6 +877,59 @@ def _audit_mode_setting(raw: dict) -> str:
         return "log"
     log.warning("unmanagedAuditMode=%r is not off/log; using 'off'", source)
     return "off"
+
+
+def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
+    """`platformNamespaces` from the settings file (#255), or the shipped rule when absent.
+
+    Six keys, refused by name like every other stanza this loader reads — a typo must not be a
+    silent no-op that leaves an estate wondering why `-operator` never took effect. `prefixes`,
+    `suffixes` and `names` REPLACE the defaults; the `additional_*` three append to them, which is
+    the case an estate actually wants: adding the operators it installs without restating a Red Hat
+    list that changes between releases.
+    """
+    source = raw.get("platformNamespaces")
+    if source is None:
+        return PlatformNamespaces()
+    if not isinstance(source, dict):
+        raise ConfigError(f"platformNamespaces: expected a mapping, got {source!r}")
+    known = {"prefixes", "suffixes", "names", "additionalPrefixes", "additionalSuffixes", "additionalNames"}
+    unknown = set(source) - known
+    if unknown:
+        raise ConfigError(f"platformNamespaces: unknown key(s) {sorted(unknown)}; "
+                          f"expected any of {', '.join(sorted(known))}")
+
+    def axis(key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        # A LIST IS NEVER SPLIT here either: a namespace name cannot contain a comma, but a
+        # comma-separated string is how a hand-written settings file expresses one, and
+        # _string_list_setting already draws that line for every other list in this file.
+        #
+        # It also strips and drops empties, which is why the padded/empty check an earlier version of
+        # this function carried was DEAD CODE — it ran after the stripping and could never fire
+        # (review of #259, Codex C3). What is worth refusing is the thing the stripping cannot fix:
+        values = _string_list_setting(source, key, default)
+        for value in values:
+            # MATCHING IS LITERAL. Someone writing `team-*` or `oud-?` means a glob, and silence
+            # would leave them with a pattern that matches one absurd namespace and no error. The
+            # three axes are deliberately not globs (#255) — say so where it is written.
+            bad = {c for c in "*?[]" if c in value}
+            if bad:
+                raise ConfigError(
+                    f"platformNamespaces.{key}: {value!r} contains {''.join(sorted(bad))} — matching is "
+                    f"literal, not a glob. A prefix, a suffix or a full name; `team-*` is a prefix "
+                    f"`team-` on additionalPrefixes.")
+        # A repeated pattern is harmless to matching and noise in a diff; collapse it rather than
+        # refusing a values file over a duplicated line.
+        return tuple(dict.fromkeys(values))
+
+    return PlatformNamespaces(
+        prefixes=axis("prefixes", PLATFORM_NAMESPACE_PREFIXES),
+        suffixes=axis("suffixes", ()),
+        names=frozenset(axis("names", tuple(sorted(PLATFORM_NAMESPACES)))),
+        additional_prefixes=axis("additionalPrefixes", ()),
+        additional_suffixes=axis("additionalSuffixes", ()),
+        additional_names=frozenset(axis("additionalNames", ())),
+    )
 
 
 def _string_list_setting(raw: dict, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -1521,6 +1639,7 @@ def load_settings(path: str | Path) -> Settings:
         reporting_ticket_ttl_seconds=_num_setting(raw, "GSD_REPORTING_TICKET_TTL_SECONDS", "reportingTicketTtlSeconds", 300, int),
         namespaces_read_enabled=_bool_setting(raw, "GSD_NAMESPACES_READ_ENABLED", "namespacesReadEnabled", False),
         namespace_metadata_labels=_string_list_setting(raw, "namespaceMetadataLabels", ()),
+        platform_namespaces=_platform_namespaces_setting(raw),
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int

@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gsd.api import build_app
-from gsd.config import ClusterConfig, Settings
+from gsd.config import ClusterConfig, PlatformNamespaces, Settings
 from gsd.store import Store
 from gsd.timeutil import now_iso
 
@@ -361,3 +361,88 @@ class TestPlatformNamespacesAreClassifiedAndCounted:
             body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
         assert body["platform_count"] == 2
         assert body["platform_with_findings"] == 1, body
+
+
+class TestTheConfiguredRuleReachesTheIndex:
+    """#255 on top of #257: the stanza is only worth having if the page uses it. Measured on the
+    reference cluster, the shipped rule leaves seven infrastructure namespaces among the workloads;
+    an estate that names them must see the index hide them."""
+
+    @staticmethod
+    def _client(tmp_path, platform) -> TestClient:
+        db = str(tmp_path / f"cfg-{id(platform)}.db")
+        s = Store(db)
+        now = now_iso()
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        s.record_poll("crc", "ok", None)
+        s.replace_namespaces("crc", [{"name": n, "created_at": now, "phase": "Active", "metadata": {}}
+                                     for n in ("openshift-monitoring", "cert-manager-operator",
+                                               "kyverno", "demo-prod")], now)
+        settings = Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                            db_path=db, oauth_proxy_enabled=True, namespace_metadata_labels=KEYS,
+                            platform_namespaces=platform)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        return TestClient(app)
+
+    def test_the_shipped_default_still_misses_the_estates_own_platform(self, tmp_path):
+        with self._client(tmp_path, PlatformNamespaces()) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_count"] == 1, "only openshift-monitoring, by prefix"
+        assert {n["name"] for n in body["namespaces"] if n["platform"]} == {"openshift-monitoring"}
+
+    def test_the_estates_own_rule_reaches_the_page(self, tmp_path):
+        estate = PlatformNamespaces(additional_suffixes=("-operator",),
+                                    additional_names=frozenset({"kyverno"}))
+        with self._client(tmp_path, estate) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_count"] == 3
+        assert {n["name"] for n in body["namespaces"] if n["platform"]} == {
+            "openshift-monitoring", "cert-manager-operator", "kyverno"}
+        assert {n["name"] for n in body["namespaces"] if not n["platform"]} == {"demo-prod"}, \
+            "a workload must stay a workload"
+
+
+class TestAStalePatternIsReportedWhereItCanBeActedOn:
+    """#255: "a configured pattern that matches nothing is reportable" is a claim the release notes
+    make, and a claim is only kept if something reports it. `unmatched()` existed with a test and no
+    consumer — the same shape as the `controller_is_declared` defect the review of #251 caught, where
+    Chart.yaml described behaviour that shipped nowhere."""
+
+    @staticmethod
+    def _client(tmp_path, platform) -> TestClient:
+        db = str(tmp_path / f"stale-{id(platform)}.db")
+        s = Store(db)
+        now = now_iso()
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        s.record_poll("crc", "ok", None)
+        s.replace_namespaces("crc", [{"name": n, "created_at": now, "phase": "Active", "metadata": {}}
+                                     for n in ("openshift-monitoring", "cert-manager-operator", "demo-prod")], now)
+        settings = Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                            db_path=db, oauth_proxy_enabled=True, namespace_metadata_labels=KEYS,
+                            platform_namespaces=platform)
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        return TestClient(app)
+
+    def test_a_pattern_matching_nothing_on_this_cluster_reaches_the_envelope(self, tmp_path):
+        estate = PlatformNamespaces(additional_suffixes=("-operator", "-typo"),
+                                    additional_names=frozenset({"gone"}))
+        with self._client(tmp_path, estate) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_patterns_unmatched"] == {
+            "additionalSuffixes": ["-typo"], "additionalNames": ["gone"]}, body
+        assert body["platform_count"] == 2, "the patterns that DO match still classify"
+
+    def test_a_clean_configuration_reports_nothing(self, tmp_path):
+        """The report must be silent when there is nothing to say, or it becomes wallpaper."""
+        with self._client(tmp_path, PlatformNamespaces(additional_suffixes=("-operator",))) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_patterns_unmatched"] == {}
+
+    def test_the_shipped_defaults_are_never_reported_as_stale(self, tmp_path):
+        """A cluster with no `kube-public` has not misconfigured anything — telling an operator their
+        SHIPPED defaults matched nothing is noise they cannot act on."""
+        with self._client(tmp_path, PlatformNamespaces()) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_patterns_unmatched"] == {}

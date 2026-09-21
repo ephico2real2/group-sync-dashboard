@@ -28,8 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
-from .home import (HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes,
-                   is_platform_namespace)
+from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
@@ -2153,8 +2152,15 @@ def build_app(
         # grant counts (`excluded_platform`). A hidden row stays in `namespaces`: it is filtered on the
         # page, never dropped from the payload, so export, search and the drill still reach it.
         for row in rows:
-            row["platform"] = is_platform_namespace(row["name"])
+            row["platform"] = settings.platform_namespaces.matches(row["name"])
         platform = [r for r in rows if r["platform"]]
+        # A CONFIGURED PATTERN THAT MATCHES NOTHING IS REPORTABLE (#255), and it has to be reported
+        # somewhere a reader will see — an `unmatched()` nobody calls is a claim the release notes
+        # make and the product does not keep, which is the defect the review of #251 caught in
+        # `controller_is_declared`. Computed over the cluster's own namespace names, so it answers
+        # "your `-operator` matches nothing HERE" rather than "nowhere", which is the actionable
+        # version on a fleet where estates differ.
+        stale_patterns = settings.platform_namespaces.unmatched([r["name"] for r in rows])
         source = store.namespaces_source(cluster_id)
         return {
             "cluster": cluster_id,
@@ -2168,6 +2174,7 @@ def build_app(
             # "67 hidden" is noise removed; "67 hidden, 1 of them with a finding" is a different
             # sentence, and the page must be able to say it without the reader toggling to find out.
             "platform_with_findings": len([r for r in platform if r.get("direct_grants")]),
+            "platform_patterns_unmatched": stale_patterns,
             "cluster_wide_groups": cluster_wide_groups,
             "cluster_wide_grants": cluster_wide_grants,
             "cluster_wide_path": cluster_wide_path,
@@ -2269,7 +2276,10 @@ def build_app(
             "scope": scope,
             "full_name": store.user_full_name(cluster_id, me),
             "providers": record["providers"] if record else [],
-            "answer": derive_answer(groups, via, direct),
+            # The SAME classifier the namespace index uses (#255). Home and the audit disagreeing
+            # about what "platform" means would be the divergence this stanza exists to end.
+            "answer": derive_answer(groups, via, direct,
+                                    platform=settings.platform_namespaces.matches),
             "direct": direct,
             "changes": dict(group_changes(events, since), capped_clusters=sorted(capped)),
             "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),
