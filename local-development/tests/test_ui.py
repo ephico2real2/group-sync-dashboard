@@ -8596,7 +8596,18 @@ class TestTheTabBarFitsOneRowOnDesktop:
                              rows: new Set(t.map(x => Math.round(x.getBoundingClientRect().top))).size,
                              need: Math.round(t.reduce((a, x) => a + x.getBoundingClientRect().width, 0)
                                               + gap * (t.length - 1)),
-                             have: Math.round(bar.getBoundingClientRect().width)}; }""")
+                             // THE CONTAINING BLOCK'S CONTENT WIDTH, not the bar's own. `.tabs` is a
+                             // flex item that shrink-wraps, so `bar.getBoundingClientRect().width`
+                             // EQUALS the sum of its tabs whenever the row fits — which made the
+                             // headroom assertion below vacuous: spare was 0 in every configuration
+                             // that reached it, so `spare < average` was `0 < 80` forever and the
+                             // 18px it claimed to guard was a number the test never saw (audit of
+                             // #256, OB2 A5b). `have` now differs from `need` by the real slack.
+                             have: (() => { const box = bar.parentElement;
+                                            const cs = getComputedStyle(box);
+                                            return Math.round(box.clientWidth
+                                                              - parseFloat(cs.paddingLeft)
+                                                              - parseFloat(cs.paddingRight)); })()}; }""")
             assert shape["n"] >= 14, f"the injection did not produce the shipped tab count: {shape}"
             assert shape["rows"] == 1, (
                 f"{width}px: {shape['n']} tabs wrapped onto {shape['rows']} rows "
