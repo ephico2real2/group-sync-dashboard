@@ -166,17 +166,75 @@ Suite **4419 passed, 15 skipped** (+31).
 
 ---
 
+## Part 7 — the cluster in the report forms (#267 → #269)
+
+### The form names its cluster, and runs on several (14:0x → 14:4x) — commits `97462a1`, `76e7332`, PR #269
+
+The operator's ruling settled the design before it was built: *reports gather from a target cluster*,
+so several clusters is **one run per cluster** — shape A of #267's two — and `cluster` stays a single
+string on the sealed model. The branch was built by a Fable seat; this session merged `main` into it
+(both sides had appended independent test classes to `tests/test_ui.py`; both were kept) and reviewed it.
+
+- **OB1-lite** (Fable 5.1, default effort) took an eight-claim brief and confirmed all eight, working
+  from read-only clones — `tree` = head, `base` = the merge-base, `revert` = head with one file group
+  reverted. The claim worth the pass was C1, the seal: base-vs-head and head-vs-head canonical
+  documents differ on **the same two lines**, so a single-cluster report's shape and data are
+  untouched by the PR.
+- **Three volunteered defects, all page-side, all fixed.** **V1**: the cluster-change note was garbled
+  whenever the previous position was the fleet — the Overview leaves the cluster null (#172), so the
+  change records `to: null` and `esc(note.to)` rendered *"changed from crc-local to — … the lookups
+  now offered are 's."* **V2**: any error after the POST was worded "the request was refused",
+  although the service answered 202 and the runs reach the Library. **V3**: dismiss nulled the note
+  for every form although it renders per form, so a second form's cleared lookup was never said.
+- **Two of the three fixes needed tracing before they could be trusted**, which is the session's
+  standing lesson applied rather than recited. V3's fix keys its delete on `view.report`;
+  `generateReport` has a `|| cat.reports.find(r => r.enabled)` fallback that would have broken that
+  key, but the *render* path has none, so the form card only ever exists for `view.report` — sound
+  once checked. V1's fix quotes `view.cluster` rather than `note.to`, which is only behaviour-preserving
+  because the field drop runs **before** `view.cluster` moves, making the two identical on every path
+  but the fleet.
+- **Found by OB1, a fourth test that did not look.** Two asserts in the list-shape test were bare
+  `== 422`. Measured against a reverted `server.py`: the base answers the *string* detail
+  `"a viewer run names its cluster"`, so those asserts could not tell "refused because the list is
+  empty" from "refused because `clusters` is unknown". Both now name the `loc` and the pydantic error
+  type, and were verified not to hold on base.
+- **Proof, not inspection:** with `index.html` reverted, exactly the three new browser tests fail and
+  the three existing ones pass. Reporting **101**, hermetic **4466 passed / 15 skipped**, browser **552**.
+
+### Walked on five clusters (14:4x) — commit `76e7332`
+
+Deployed through `release-crc.sh --argocd` (Argo Synced/Healthy, image `0.30.0-97462a1824`, commit
+verified in-pod). The lab had been on `0.30.0-977365e25f` — main at the merge-base — so nothing of
+#267 had ever run there. The estate is five configured clusters, which is what the hermetic
+two-cluster fixture cannot be: five runs, five **distinct** seals, five download pairs, under one
+count, with the totals line stating in words that it is the primary's.
+
+- **Stated rather than papered over:** the walk was written expecting `shared-rnd` — the
+  credential-less cluster of SPEC_S3 — to fail its own run and exercise partial failure on real data.
+  It has a snapshot on this lab and sealed like the rest, so that DoD item remains covered **only** by
+  the API test and the browser test's injected `ghost`. The walk's own comment was corrected and the
+  weak `>= 2` assertion tightened to the measured `== 5`, then re-run to re-prove it.
+- **Found by the walk, and it is not this PR: #270.** Two walks of the same head with the same
+  parameters produced a different sha256 for **every** cluster. `canonical()` includes `sections`, and
+  the provenance page puts run facts there — `Generated at (UTC)`, `Run id`, and the snapshot-age
+  phrasing whose `age_seconds(now)` is computed from the run's own clock. `model.py` says the hash is
+  over "the DATA … never over the timestamp, so the same data on two days hashes the same"; it is not.
+  OB1 found the first two independently under a frozen clock; the **third** only appears with a real
+  one, which is why the walk saw it and the probe could not.
+
+---
+
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **10** (#251, #252, #254, #256, #258, #259, #260, #262, #265, #266) |
-| Commits authored | 21 non-merge |
-| Review passes run | 9 — OB2 ×4, OB3 ×2, Cursor ×3, Codex ×3 (one died: "model at capacity") |
+| Pull requests merged | **10** (#251, #252, #254, #256, #258, #259, #260, #262, #265, #266); #264 and #269 reviewed and validated |
+| Commits authored | 23 non-merge |
+| Review passes run | 10 — OB1-lite ×1, OB2 ×4, OB3 ×2, Cursor ×3, Codex ×3 (one died: "model at capacity") |
 | Reviewer findings accepted | the large majority; **2 refuted with evidence** (Codex C5 on #259, a Codex framing on 200% zoom) |
 | **Fixes that were themselves wrong** | **6** — and every one was caught by a different reviewer than the one whose finding it answered |
-| Tests that passed because they did not look | **3** — the tab-bar guard (passed with the old padding), the type guard (never asserted weight or tracking), the headroom canary (`spare` is 0 by construction) |
-| Full suite, final | 4461 passed, 15 skipped (hermetic); test_ui 541 |
+| Tests that passed because they did not look | **4** — the tab-bar guard (passed with the old padding), the type guard (never asserted weight or tracking), the headroom canary (`spare` is 0 by construction), and two bare `== 422` asserts that also hold on the base server |
+| Full suite, final | 4466 passed, 15 skipped (hermetic); test_ui 552; reporting 101 |
 | Longest single loss | ~2 h across three venv rebuilds before the tracked symlink was diagnosed — the evidence was one `git ls-files -s` away each time |
 
 ## Where things are recorded
@@ -187,18 +245,28 @@ Suite **4419 passed, 15 skipped** (+31).
 - `reports/2026-09-21_tabbar-headings-253/` and `reports/2026-09-21_deployed-walk/` — walks with
   assertions
 - Issues opened: #255 (classification as configuration), #257, #261 (the mock's remaining tranche),
-  #267 (the cluster in report forms)
+  #267 (the cluster in report forms), **#270** (the sha256 does not certify the data)
+- `docs/REVIEW_report_form_clusters.md` — the #269 review record, eight claims and three volunteered
+  defects
+- `reports/2026-09-21_report-form-clusters/` — the five-cluster walk, with what it does **not** prove
 
 ## State left behind
 
-- **Deployed:** `main @ 19ffb25b4a` through `release-crc.sh --argocd`, Argo Synced/Healthy, commit
-  verified in-pod. The walk of that head is `reports/2026-09-21_deployed-walk/`.
-- **#264 open** at `53e5f20`: Cursor's four findings fixed by OB2; **C2 is a live defect on it** —
-  with only the section's box missing, the card says "0 of 39 match the search" above "No namespaces
-  recorded for this cluster yet". OB2 is fixing it, and has been asked whether the ladder's *shape*
-  is the defect, since that sentence has now been wrong three times.
-- **#267 with Fable**: the operator's ruling settles it — *reports gather from a target cluster*, so
-  several clusters means one run per cluster, not one run spanning them.
+- **Deployed:** `feat/267-cluster-in-report-forms @ 97462a1824` through `release-crc.sh --argocd`,
+  Argo Synced/Healthy, commit verified in-pod. Before it the lab held main at the merge-base. The
+  walk of that head is `reports/2026-09-21_report-form-clusters/`.
+- **#264 merged** — OB2 fixed Cursor's four findings and then C2, restructuring the empty-state
+  ladder around *which pipeline stage emptied* (`all` → `inScope` → `shown`) rather than patching the
+  instance, after being asked whether the sentence's shape was the defect. It was: proving the fix
+  turned up a fourth unreported instance.
+- **#269 reviewed, validated and walked**, awaiting CI on `76e7332`. The one DoD item its walk could
+  not close is partial failure on a *configured* cluster — see Part 7.
+- **#270 open**: the report sha256 covers run facts, so two runs over one snapshot never agree. Needs
+  a decision (exclude the provenance section, or split it) because the fix changes every existing
+  artefact's hash once.
 - The remaining #261 tranche is unbuilt, and the walk surfaced its first item on the live page:
   `openshift-console-user-settings` is ranked in the worklist and hidden from the index at once, with
   nothing reconciling the two.
+- **#255's expected-grants half** is unbuilt: suppressing known-good direct grants, and
+  `existingConfigMap` for maintaining the list outside the chart.
+- **S3b/S3c/S3d** remain; S3d is explicitly unsafe until its prerequisites land.
