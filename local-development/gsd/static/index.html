@@ -5008,12 +5008,22 @@ function namespacesCard() {
   // something — a hidden namespace that HAS a finding — gets its own clause rather than making them
   // toggle to find out (#257).
   const withFindings = d.platform_with_findings || 0;
+  // A configured pattern matching nothing on THIS cluster: a typo, or a convention that was
+  // decommissioned. Said where the classification is said, because that is where a reader can act
+  // on it, and named rather than counted — "2 patterns match nothing" sends someone to read the
+  // values file, the names send them to the line (#255).
+  const stale = d.platform_patterns_unmatched || {};
+  const staleAxes = Object.keys(stale).filter((k) => (stale[k] || []).length);
+  const stalePatterns = !staleAxes.length ? "" : `<div class="mt-2">⚠ ${staleAxes
+    .map((axis) => `<code>${esc(axis)}</code>: ${stale[axis].map((v) => `<code>${esc(v)}</code>`).join(", ")}`)
+    .join("; ")} ${staleAxes.length === 1 && stale[staleAxes[0]].length === 1 ? "matches" : "match"}
+    no namespace on this cluster — a typo, or a convention that has gone.</div>`;
   const platformLine = !platformCount ? "" : `<div class="filterbar-note mb-4">${hidingPlatform
     ? `${platformCount} platform namespace${platformCount === 1 ? "" : "s"} hidden${withFindings
         ? ` — <strong>${withFindings}</strong> of them ${withFindings === 1 ? "has" : "have"} a direct grant`
         : ""}. <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
     : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
-    <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span></div>`;
+    <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span>${stalePatterns}</div>`;
   // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
   // caught `[data-page]` also matching `<body data-page="nsaudit">`, so every click on the page ran the
   // pager's handler and emptied the list. `aria-current="page"` carries the position to a screen reader,
