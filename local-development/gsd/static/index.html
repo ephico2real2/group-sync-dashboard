@@ -4985,13 +4985,19 @@ function namespacesCard() {
   // explicit `false` used to follow the reader: fold a 106-namespace estate, switch to a cluster with
   // four, and they got a folded four-row list with no empty branch to explain it — the same if
   // hiding platform namespaces took the set below the threshold. A section at or under INDEX_FOLD is
-  // simply open; above it, the reader's choice stands and `null` means "decide by size".
-  const indexOpen = ownQ || inScope.length <= INDEX_FOLD
-    ? true
-    : (view.nsIndexOpen === null ? false : view.nsIndexOpen);
+  // simply open; above it, the reader's choice stands and `null` means "decide by size" — folded.
+  // Typing in THIS box pins the section open for as long as the query lasts, without touching the
+  // reader's choice: Escape returns the section to whatever they had chosen.
+  const foldable = inScope.length > INDEX_FOLD && !ownQ;
+  const indexOpen = !foldable || (view.nsIndexOpen === null ? false : view.nsIndexOpen);
   const pages = Math.max(1, Math.ceil(shown.length / INDEX_PAGE));
   const wanted = Number.isFinite(view.nsIndexPage) ? Math.trunc(view.nsIndexPage) : 1;
   const page = Math.min(Math.max(1, wanted), pages);
+  // WRITTEN BACK, so the state is the page on screen (review of #264, Cursor C5). Every control
+  // resets the page itself; this catches the one path none of them owns — a poll that shrank the set
+  // under a reader on page 5 — where a clamped display over a stale 5 would jump them the moment the
+  // set grew again.
+  if (view.nsIndexPage !== page) view.nsIndexPage = page;
   const from = (page - 1) * INDEX_PAGE, to = Math.min(from + INDEX_PAGE, shown.length);
   const paged = shown.slice(from, to);
   const source = d.source || {};
@@ -5037,13 +5043,15 @@ function namespacesCard() {
   // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
   // caught `[data-page]` also matching `<body data-page="nsaudit">`, so every click on the page ran the
   // pager's handler and emptied the list. `aria-current="page"` carries the position to a screen reader,
-  // and the ends are disabled rather than absent so the control does not move under a reader.
-  const pager = !indexOpen || pages < 2 ? "" : `<nav class="pager" aria-label="Namespace pages">
-    <button type="button" class="linkish" data-index-page="${page - 1}"${page === 1 ? " disabled" : ""}>‹ Previous</button>
+  // and the ends are disabled rather than absent so the control does not move under a reader. Every
+  // button has an id because render() restores focus BY ID: without one, the 60 s repaint dropped a
+  // keyboard reader from the pager to <body> (review of #264, Cursor C5).
+  const pager = !indexOpen || pages < 2 ? "" : `<nav class="pager" id="ns-index-pager" aria-label="Namespace pages">
+    <button type="button" class="linkish" id="ns-index-prev" data-index-page="${page - 1}"${page === 1 ? " disabled" : ""}>‹ Previous</button>
     ${Array.from({ length: pages }, (_, i) => i + 1).map((i) => i === page
-      ? `<button type="button" class="linkish" data-index-page="${i}" aria-current="page"><strong>${i}</strong></button>`
-      : `<button type="button" class="linkish" data-index-page="${i}">${i}</button>`).join(" ")}
-    <button type="button" class="linkish" data-index-page="${page + 1}"${page === pages ? " disabled" : ""}>Next ›</button>
+      ? `<button type="button" class="linkish" id="ns-index-page-${i}" data-index-page="${i}" aria-current="page"><strong>${i}</strong></button>`
+      : `<button type="button" class="linkish" id="ns-index-page-${i}" data-index-page="${i}">${i}</button>`).join(" ")}
+    <button type="button" class="linkish" id="ns-index-next" data-index-page="${page + 1}"${page === pages ? " disabled" : ""}>Next ›</button>
   </nav>`;
   // ONE LINE, EVERY NUMBER BESIDE THE NUMBER IT CAME OUT OF. "39" alone says nothing; "39 of 106" says
   // what the filter did. The chain only names the steps that actually happened, so a small cluster with
@@ -5061,6 +5069,13 @@ function namespacesCard() {
   const foldLabel = shown.length === all.length
     ? `${all.length} namespace${all.length === 1 ? "" : "s"}`
     : `${shown.length} of ${all.length} namespaces`;
+  // THE TOGGLE RENDERS ONLY WHERE IT CAN ACT (review of #264, Cursor C4). A section at or under
+  // INDEX_FOLD cannot fold and one pinned open by its own query cannot either, so on both a button
+  // reading "Hide 9 namespaces" would change nothing when pressed — the furniture the pager rule
+  // already refuses ("no pager until there is a second page"). The numbers it carried are on the
+  // counts line, which every reader gets.
+  const toggle = !foldable ? "" : `<button type="button" class="linkish" id="ns-index-fold" aria-expanded="${indexOpen ? "true" : "false"}"
+            aria-controls="ns-index-body">${indexOpen ? "▾ Hide" : "▸ Show"} ${foldLabel}</button>`;
   const controls = `<div class="row-wrap mb-3">
     <span class="filterbar-note"><label for="f-index-search">Search this list</label>
       <input id="f-index-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
@@ -5070,8 +5085,7 @@ function namespacesCard() {
         the value of any captured label as you type. Several words are combined with AND, so every word
         must appear. Press Escape to clear. This is separate from the Find namespace box in the filter
         bar; both apply.</span></span>
-    <button type="button" class="linkish" id="ns-index-fold" aria-expanded="${indexOpen ? "true" : "false"}"
-            aria-controls="ns-index-body">${indexOpen ? "▾ Hide" : "▸ Show"} ${foldLabel}</button>
+    ${toggle}
   </div>`;
   const body = shown.length
     ? `<div class="scroll-x"><table>
@@ -6783,6 +6797,11 @@ function wireNsAudit() {
     el.onclick = () => {
       view.nsShowPlatform = !view.nsShowPlatform;
       view.nsIndexPage = 1;   // the set changed size; page 4 of the old set may not exist
+      // "SHOW THEM" MEANS SHOW (review of #264, Cursor C4). With the fold still "decide by size", the
+      // platform rows can carry a 20-row open list past INDEX_FOLD, and the reader who asked to see
+      // more would watch the rows vanish behind a fold. Asking for rows opens the list; a fold the
+      // reader chose themselves (an explicit false) stands, and hiding rows never folds a list.
+      if (view.nsShowPlatform && view.nsIndexOpen === null) view.nsIndexOpen = true;
       render();
       const again = document.getElementById("ns-show-platform") || document.getElementById(id);
       if (again) again.focus();
@@ -6792,7 +6811,8 @@ function wireNsAudit() {
   // #261: the fold, the section's own search and the pager.
   const fold = document.getElementById("ns-index-fold");
   if (fold) fold.onclick = () => {
-    view.nsIndexOpen = !(view.nsIndexOpen === null ? fold.getAttribute("aria-expanded") === "true" : view.nsIndexOpen);
+    // The button is only rendered where it can act, so its aria-expanded IS the section's state.
+    view.nsIndexOpen = fold.getAttribute("aria-expanded") !== "true";
     render();
     const again = document.getElementById("ns-index-fold");
     if (again) again.focus();
@@ -6808,45 +6828,49 @@ function wireNsAudit() {
       // IME is composing into — the same rule renderFilters keeps for the bar's boxes. The state is
       // kept, and compositionend paints.
       if (e.isComposing) return;
-      // AND THE CARET GOES BACK WHERE IT WAS, not to the end. Forcing it to the end made editing
-      // mid-string impossible: every keystroke jumped the cursor, so correcting a typo in the middle
-      // of a query was not possible. The bar's boxes have restored the real position since #152.
-      const at = [indexBox.selectionStart, indexBox.selectionEnd];
+      // AND THE CARET STAYS WHERE IT WAS, not at the end. This handler used to force it to the end
+      // after the repaint, which made editing mid-string impossible: every keystroke jumped the
+      // cursor, so a typo in the middle of a query could not be corrected. render() already puts
+      // focus AND the caret back by id — the same restore the 60 s poll relies on — so nothing here
+      // may move it (review of #264, Cursor C3).
       render();
-      const again = document.getElementById("f-index-search");
-      if (!again) return;
-      again.focus();
-      try { again.setSelectionRange(at[0], at[1]); } catch (err) { /* not selectable */ }
     };
     indexBox.addEventListener("compositionstart", () => { searchComposingIn = "f-index-search"; });
     indexBox.addEventListener("compositionend", (e) => {
       searchComposingIn = null;
       view.nsIndexSearch = e.target.value;
+      view.nsIndexPage = 1;
       render();
-      const again = document.getElementById("f-index-search");
-      if (again) again.focus();
     });
     indexBox.addEventListener("blur", () => {
       if (searchComposingIn === "f-index-search") searchComposingIn = null;
     });
     indexBox.onkeydown = (e) => {
-      if (e.key !== "Escape" || !indexBox.value) return;
+      if (e.key !== "Escape" || e.isComposing || !indexBox.value) return;
       e.stopPropagation();   // the shell clears its own box on Escape; this one is not the shell's
-      view.nsIndexSearch = ""; view.nsIndexPage = 1; view.nsIndexOpen = null;
+      // The query's pin on the fold goes with the query; the reader's own choice — opened, folded or
+      // never decided — is not this key's to change.
+      view.nsIndexSearch = ""; view.nsIndexPage = 1;
       render();
-      const again = document.getElementById("f-index-search");
-      if (again) again.focus();
     };
   }
 
   // `data-index-page`, not `data-page`: the mock's render check caught `[data-page]` also matching
   // `<body data-page="nsaudit">`, so every click anywhere ran the pager and emptied the list.
-  document.querySelectorAll("#ns-index-body [data-index-page]").forEach((el) => {
+  document.querySelectorAll("#ns-index-pager [data-index-page]").forEach((el) => {
     el.onclick = () => {
       const to = Number(el.dataset.indexPage);
       if (!Number.isFinite(to)) return;
       view.nsIndexPage = to;
       render();
+      // render() keeps focus on the button pressed, by id. Previous and Next at an end come back
+      // disabled, which is not focusable, so focus would fall to <body> and a keyboard reader would
+      // hear nothing about where they landed: the current page's number is where they are.
+      const nav = document.getElementById("ns-index-pager");
+      if (nav && !nav.contains(document.activeElement)) {
+        const cur = nav.querySelector('[aria-current="page"]');
+        if (cur) cur.focus();
+      }
     };
   });
   document.querySelectorAll("[data-sort-key]").forEach((el) => {

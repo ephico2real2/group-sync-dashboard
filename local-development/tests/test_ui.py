@@ -8781,37 +8781,36 @@ class TestTheNamespaceIndexFoldsSearchesAndPages:
     its own beside the list it searches, and it pages.
 
     The seed holds eleven namespaces, two of them platform, so nine are listed by default: under
-    INDEX_FOLD (25), which is exactly the case that must start OPEN. A fold that costs a click and
-    buys nothing on a small estate is why the default is decided by size rather than fixed."""
+    INDEX_FOLD (25), which is the case that has NO fold. A section this small cannot fold — an explicit
+    fold used to follow a reader from a 106-namespace estate onto a four-row one (review of #264,
+    Cursor C4) — and a toggle that changes nothing when pressed does not render. The fold, the pager
+    and the cluster switch are driven on the estate server below, where the payload is the server's."""
 
     def _open(self, dash):
         dash.click('button.tab:text-is("Namespace audit")')
-        dash.wait_for_selector("h2:text-is('Namespaces')")
+        # The loaded card, not the h2: the Loading card has the same heading, and a wait on it returned
+        # before the payload had arrived (review of #264, Cursor C7).
+        dash.wait_for_selector("#f-index-search")
 
-    def test_a_small_estate_starts_open_and_the_control_says_what_it_holds(self, dash):
+    def test_a_small_estate_is_open_and_has_no_fold_to_offer(self, dash):
+        """Before #264 this asserted a "▾ Hide 9 namespaces" toggle. Once a small section can no longer
+        fold, that button would have done nothing when pressed, so its absence is what is asserted."""
         self._open(dash)
         assert dash.locator("#ns-index-body").is_visible()
-        label = dash.locator("#ns-index-fold").inner_text()
-        assert label.startswith("▾ Hide") and "9" in label, label
-        assert dash.locator("#ns-index-fold").get_attribute("aria-expanded") == "true"
+        assert dash.locator("tr[data-ns]").count() == 9
+        assert dash.locator("tr[data-ns]").first.is_visible()
+        assert dash.locator("#ns-index-fold").count() == 0
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "11 on this cluster" in line and "2 platform hidden" in line and "9 listed" in line, line
 
-    def test_the_fold_hides_the_rows_and_keeps_the_reasons(self, dash):
-        """Only the ROWS fold. Three caveats live in the notes above the table, and collapsing the
-        card would have taken all three with it."""
+    def test_a_fold_carried_in_from_a_larger_estate_cannot_shut_a_small_section(self, dash):
+        """The state a large estate leaves behind — an explicit false — meets nine rows and is ignored.
+        On the head before #264's fix this folded the nine and offered "▸ Show 9 namespaces"."""
         self._open(dash)
-        dash.click("#ns-index-fold")
-        dash.wait_for_function("() => !document.getElementById('ns-index-body') || document.getElementById('ns-index-body').hidden")
-        # `hidden` takes them off the screen, not out of the DOM — count() still sees nine, which is
-        # why this asserts what a reader can SEE. (My own first version of this assertion counted
-        # nodes and passed nothing.)
-        assert not dash.locator("tr[data-ns]").first.is_visible(), "the rows are still on screen"
-        assert dash.locator("#ns-index-body").is_visible() is False
-        card = dash.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
-        assert "not only those with a grant" in card, "the heading's caveat went with the rows"
-        assert "third drill-down" in card, card[:200]
-        assert dash.evaluate("() => document.activeElement.id") == "ns-index-fold"
-        dash.click("#ns-index-fold")
-        dash.wait_for_function("() => { const b = document.getElementById('ns-index-body'); return b && !b.hidden; }")
+        dash.evaluate("() => { view.nsIndexOpen = false; render(); }")
+        assert dash.locator("#ns-index-body").is_visible()
+        assert dash.locator("tr[data-ns]").first.is_visible()
+        assert dash.locator("#ns-index-fold").count() == 0
 
     def test_the_sections_own_search_is_separate_from_the_bars_and_they_combine(self, dash):
         """Two boxes, neither clearing the other: a namespace shows when it matches both."""
@@ -8827,105 +8826,384 @@ class TestTheNamespaceIndexFoldsSearchesAndPages:
         assert dash.evaluate("() => document.getElementById('f-ns-search').value") == "demo", "Escape in one box must not clear the other"
         dash.locator("#f-ns-search").press("Escape")
         dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+        assert dash.evaluate("() => document.getElementById('f-index-search').value") == ""
 
     def test_the_counts_line_quotes_every_denominator(self, dash):
         """"39" alone says nothing; "39 of 106" says what the filter did."""
         self._open(dash)
-        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
-        assert "11 on this cluster" in line and "2 platform hidden" in line and "9 listed" in line, line
         dash.fill("#f-index-search", "prod")
         dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
         line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
         assert "1 of 9 match the search" in line, line
-        dash.locator("#f-index-search").press("Escape")
-
-    def test_the_search_reveals_a_folded_section(self, dash):
-        """Filtering something the reader cannot see makes the box look broken."""
-        self._open(dash)
-        dash.click("#ns-index-fold")
-        dash.wait_for_function("() => document.getElementById('ns-index-body').hidden")
-        dash.fill("#f-index-search", "prod")
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
-        assert dash.locator("#ns-index-body").is_visible()
-        dash.locator("#f-index-search").press("Escape")
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
 
     def test_no_pager_until_there_is_a_second_page(self, dash):
         """Nine rows against a page size of 25: a pager here would be furniture."""
         self._open(dash)
         assert dash.locator("[data-index-page]").count() == 0
 
+    def test_a_mid_string_caret_in_the_sections_box_survives_a_keystroke(self, dash):
+        """Every keystroke used to jump the caret to the end, so a typo in the middle of a query could
+        not be corrected (review of #264, Cursor C3). Measured on 5e6039a: "prod-ns", caret at 2,
+        type "x" → value "prxod-ns" with the caret at 8, not 3."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod-ns")
+        dash.evaluate("() => { const el = document.getElementById('f-index-search'); el.focus(); el.setSelectionRange(2, 2); }")
+        dash.keyboard.type("x")
+        dash.wait_for_function("() => view.nsIndexSearch === 'prxod-ns'")
+        assert dash.evaluate(
+            "() => [document.activeElement.id, document.activeElement.selectionStart, document.activeElement.selectionEnd]"
+        ) == ["f-index-search", 3, 3]
+
+    def test_the_poll_repaint_keeps_focus_and_caret_in_the_sections_box(self, dash):
+        """The contract the filter bar keeps by id in renderFilters. This box lives in #main, which
+        render() replaces wholesale — and render() restores focus and caret by id the same way."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod")
+        dash.evaluate("() => { const el = document.getElementById('f-index-search'); el.focus(); el.setSelectionRange(2, 2); render(); }")
+        assert dash.evaluate("() => [document.activeElement.id, document.activeElement.selectionStart]") == ["f-index-search", 2]
+
+    def test_an_ime_composition_in_the_sections_box_survives_a_poll_mid_conversion(self, dash):
+        """The rule TestGroupSearchIme measures for the bar: a repaint mid-composition commits
+        half-composed kana and opens a second session on the new node. On 5e6039a the composition's
+        own input events repainted #main and the box read かかんかんり."""
+        self._open(dash)
+        dash.focus("#f-index-search")
+        cdp = dash.context.new_cdp_session(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        dash.evaluate("() => render()")  # exactly what the poll does
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-index-search').value")
+        assert got == "かんり", f"a repaint aborted the composition: {got!r}"
+        assert dash.evaluate("() => view.nsIndexSearch") == "かんり"
+        assert dash.evaluate("() => document.activeElement.id") == "f-index-search"
+
+
+def _seed_estates(db_path: str) -> None:
+    """The module seed plus four clusters whose SIZE is the point, each served by the API exactly as a
+    poller-fed cluster is — `label_keys`, real labels, the platform verdict on every row, the counts
+    and the envelope's clauses. Building 106 rows in the browser by assigning to `data.namespaces`
+    skipped everything the server sends around them, and raced the refresh the tab click had just
+    started (review of #264, Cursor C7).
+
+      big-estate  106 namespaces, 67 platform: the reference cluster's shape — 39 listed, two pages.
+      mixed-30     30, 10 platform: 20 listed, open; showing the platform rows crosses INDEX_FOLD.
+      edge-25      25, none platform: exactly the threshold — open, no fold, no pager.
+      edge-26      26, none platform: one over — folded; opened, it pages 25 + 1."""
+    _seed(db_path)
+    now = datetime.now(UTC)
+
+    def ns(name: str, i: int) -> dict:
+        return {"name": name, "created_at": _iso(now - timedelta(days=i)), "phase": "Active",
+                "metadata": {"company.net/mnemonic": f"mn{i % 7}",
+                             "company.net/app-environment": ("prod", "qa", "dev")[i % 3]}}
+
+    estates = {
+        "big-estate": [ns(f"openshift-ns{i}", i) for i in range(67)] + [ns(f"app-ns{i}", i) for i in range(39)],
+        "mixed-30": [ns(f"openshift-ns{i}", i) for i in range(10)] + [ns(f"app-ns{i}", i) for i in range(20)],
+        "edge-25": [ns(f"app-ns{i}", i) for i in range(25)],
+        "edge-26": [ns(f"app-ns{i}", i) for i in range(26)],
+    }
+    store = Store(db_path)
+    try:
+        for cid, rows in estates.items():
+            store.upsert_cluster(cid, f"https://api.{cid}.example.internal:6443", True)
+            store.record_poll(cid, "ok", None)
+            store.replace_namespaces(cid, rows, _iso(now))
+        # One grant inside a platform namespace and one outside, so "1 of them has a direct grant" and a
+        # non-zero Direct grants column are the server's sentences, not the test's.
+        store.replace_user_bindings("big-estate", [
+            {"binding_kind": "RoleBinding", "binding_namespace": "openshift-ns3", "binding_name": "erin-view",
+             "role_kind": "ClusterRole", "role_name": "view", "user_name": "erin", "is_platform": 0},
+            {"binding_kind": "RoleBinding", "binding_namespace": "app-ns5", "binding_name": "erin-edit",
+             "role_kind": "ClusterRole", "role_name": "edit", "user_name": "erin", "is_platform": 0},
+        ], _iso(now))
+    finally:
+        store.close()
+
+
+ESTATES = ("big-estate", "mixed-30", "edge-25", "edge-26")
+
+
+@pytest.fixture(scope="module")
+def estate_server(tmp_path_factory):
+    db = str(tmp_path_factory.mktemp("gsd") / "estates.db")
+    _seed_estates(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z") for cid in ESTATES],
+        db_path=db,
+        login_capture_enabled=True,
+        namespace_metadata_labels=("company.net/mnemonic", "company.net/app-environment"),
+        view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("estate server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
 
 class TestTheIndexOnAnEstateBigEnoughToNeedIt:
     """The seed's nine namespaces are under INDEX_FOLD, so they exercise the small-estate half only.
     The reference cluster has 106 — 67 of them platform — which is the case the fold and the pager
-    exist for. Driven by widening the payload rather than seeding a second cluster: what is under
-    test is what the renderer does with a hundred rows, and the payload is where they come from."""
+    exist for. Every estate here is SERVED: the rows, their labels, the platform verdicts and the
+    envelope come over the wire from `_seed_estates`, and the page is opened at a named position."""
 
-    def _open_big(self, dash, count=106, platform=67):
-        dash.click('button.tab:text-is("Namespace audit")')
-        dash.wait_for_selector("h2:text-is('Namespaces')")
-        dash.evaluate(
-            """([count, platform]) => {
-                 const keys = Object.keys((data.namespaces.namespaces[0] || {}).labels || {});
-                 data.namespaces.namespaces = Array.from({length: count}, (_, i) => ({
-                   name: i < platform ? `openshift-ns${i}` : `app-ns${i}`,
-                   labels: {}, via_groups: 0, direct_grants: 0, platform: i < platform }));
-                 data.namespaces.count = count;
-                 data.namespaces.platform_count = platform;
-                 data.namespaces.platform_with_findings = 0;
-                 view.nsIndexOpen = null; view.nsIndexPage = 1; view.nsIndexSearch = ""; view.nsSearch = "";
-                 render();
-               }""", [count, platform])
-        dash.wait_for_timeout(250)
+    COUNTS = "h2:text-is('Namespaces') ~ div.filterbar-note"
 
-    def test_a_large_estate_starts_folded_and_the_control_says_what_is_behind_it(self, dash):
-        self._open_big(dash)
-        assert dash.locator("#ns-index-body").is_visible() is False
-        label = dash.locator("#ns-index-fold").inner_text()
+    def _open(self, page, base, cluster="big-estate"):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/#page=nsaudit&cluster={cluster}")
+        page.wait_for_selector("#f-index-search")   # the loaded card; the Loading card shares the h2
+        assert not errors, "uncaught JS error on load:\n  " + "\n  ".join(errors)
+        return page
+
+    def _line(self, page):
+        return page.locator(self.COUNTS).last.inner_text()
+
+    def _switch(self, page, cluster, listed):
+        page.select_option("#f-cluster", cluster)
+        page.wait_for_function(
+            "([c, n]) => view.cluster === c && data.namespaces && data.namespaces.cluster === c"
+            " && document.querySelectorAll('tr[data-ns]').length === n", arg=[cluster, listed])
+
+    def test_a_large_estate_starts_folded_and_the_payload_is_the_servers(self, page, estate_server):
+        self._open(page, estate_server)
+        assert page.locator("#ns-index-body").is_visible() is False
+        label = page.locator("#ns-index-fold").inner_text()
         assert label.startswith("▸ Show") and "39 of 106" in label, label
-
-    def test_the_counts_line_follows_the_whole_chain(self, dash):
-        self._open_big(dash)
-        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "false"
+        line = self._line(page)
         assert "106 on this cluster" in line and "67 platform hidden" in line and "39 listed" in line, line
+        # What the browser-built payload never carried: the keys, the labels, the finding's clause.
+        env = page.evaluate("() => [data.namespaces.label_keys, data.namespaces.platform_with_findings, data.namespaces.namespaces[0].labels]")
+        assert env[0] == ["company.net/mnemonic", "company.net/app-environment"], env
+        assert env[1] == 1 and set(env[2]) == {"company.net/mnemonic", "company.net/app-environment"}, env
+        card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "1 of them has a direct grant" in card, card[:400]
 
-    def test_it_pages_over_what_is_left_after_the_platform_filter(self, dash):
-        self._open_big(dash)
-        dash.click("#ns-index-fold")
-        dash.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
-        # 39 non-platform rows at 25 to a page: two pages, 25 then 14.
-        assert dash.locator("tr[data-ns]").count() == 25
-        assert dash.locator("[data-index-page]").count() >= 4   # Previous, 1, 2, Next
-        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
-        assert "showing 1–25 on page 1 of 2" in line, line
-        dash.click('[data-index-page="2"]')
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
-        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
-        assert "showing 26–39 on page 2 of 2" in line, line
+    def test_the_fold_hides_the_rows_and_keeps_the_reasons(self, page, estate_server):
+        """Only the ROWS fold. Three caveats live in the notes above the table, and collapsing the
+        card would have taken all three with it."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        assert page.locator("tr[data-ns]").first.is_visible()
+        assert page.evaluate("() => document.activeElement.id") == "ns-index-fold"
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => document.getElementById('ns-index-body').hidden")
+        # `hidden` takes them off the screen, not out of the DOM — count() still sees 25, which is
+        # why this asserts what a reader can SEE.
+        assert not page.locator("tr[data-ns]").first.is_visible(), "the rows are still on screen"
+        assert page.locator("#ns-index-body").is_visible() is False
+        card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "not only those with a grant" in card, "the heading's caveat went with the rows"
+        assert "third drill-down" in card and "finds by name or by any captured label" in card, card[:400]
+        assert "67 platform namespaces hidden" in card, card[:400]
+        assert page.evaluate("() => document.activeElement.id") == "ns-index-fold"
 
-    def test_showing_the_platform_namespaces_repages_from_one(self, dash):
+    def test_it_pages_over_what_is_left_after_the_platform_filter(self, page, estate_server):
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        # 39 non-platform rows at 25 to a page: two pages, 25 then 14 — and exactly four buttons
+        # (Previous, 1, 2, Next); ">= 4" would have passed with a button per row.
+        assert page.locator("tr[data-ns]").count() == 25
+        assert page.locator("[data-index-page]").count() == 4
+        assert page.locator("#ns-index-prev").is_disabled() and not page.locator("#ns-index-next").is_disabled()
+        assert "showing 1–25 on page 1 of 2" in self._line(page), self._line(page)
+        page.click("#ns-index-page-2")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+        assert page.locator("#ns-index-next").is_disabled() and not page.locator("#ns-index-prev").is_disabled()
+        # The labels came over the wire: every row on page 2 shows its mnemonic, not "—".
+        cells = page.locator("tr[data-ns] td.mono").all_inner_texts()
+        assert cells and all(c.startswith("mn") or c in ("prod", "qa", "dev") for c in cells), cells[:6]
+
+    def test_a_row_on_page_two_still_drills_and_back_returns_to_page_two(self, page, estate_server):
+        """The pager is view state, not the URL: the drill leaves from page 2 and Back lands on it."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        name = page.locator("tr[data-ns]").first.get_attribute("data-ns")
+        page.locator("tr[data-ns]").first.locator("button.drill").click()
+        page.wait_for_function("(n) => view.ns === n && !document.getElementById('f-index-search')", arg=name)
+        assert name in page.locator("#main").inner_text()
+        page.go_back()
+        page.wait_for_selector("#f-index-search")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert page.evaluate("() => [view.ns, view.nsIndexPage]") == [None, 2]
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+
+    def test_showing_the_platform_namespaces_repages_from_one(self, page, estate_server):
         """Every filter change resets the page: 106 rows is five pages, and a reader sitting on page 2
         of the old set must not be left on a page that no longer means what it did."""
-        self._open_big(dash)
-        dash.click("#ns-index-fold")
-        dash.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
-        dash.click('[data-index-page="2"]')
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
-        dash.click("#ns-show-platform")
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
-        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
-        assert "showing 1–25 on page 1 of 5" in line, line
-        dash.evaluate("() => { view.nsShowPlatform = false; view.nsIndexPage = 1; render(); }")
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => view.nsIndexPage === 1 && document.querySelectorAll('tr[data-ns]').length === 25")
+        assert "showing 1–25 on page 1 of 5" in self._line(page), self._line(page)
+        assert page.locator("[data-index-page]").count() == 7
 
-    def test_a_search_from_a_later_page_lands_on_page_one(self, dash):
-        self._open_big(dash)
-        dash.click("#ns-index-fold")
-        dash.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
-        dash.click('[data-index-page="2"]')
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
-        dash.fill("#f-index-search", "app-ns7")
-        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length > 0 && document.querySelectorAll('tr[data-ns]').length <= 11")
-        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
-        assert "match the search" in line and "page 2" not in line, line
-        dash.locator("#f-index-search").press("Escape")
+    def test_showing_platform_rows_never_folds_the_list_the_reader_asked_to_see(self, page, estate_server):
+        """mixed-30: 20 listed and open with no fold to offer. "Show them" takes the set to 30 — past
+        INDEX_FOLD — and "decide by size" used to fold the very rows the click asked for (review of
+        #264, Cursor C4). Hiding them again shrinks the set back under the threshold: open, no fold."""
+        self._open(page, estate_server, "mixed-30")
+        assert page.locator("tr[data-ns]").count() == 20 and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").count() == 0
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        assert page.locator("#ns-index-body").is_visible() and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "true"
+        assert "30 on this cluster" in self._line(page) and "page 1 of 2" in self._line(page), self._line(page)
+        assert page.evaluate("() => view.nsIndexOpen") is True
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 20")
+        assert page.locator("tr[data-ns]").first.is_visible() and page.locator("#ns-index-fold").count() == 0
+
+    def test_a_fold_chosen_here_does_not_follow_the_reader_onto_the_next_cluster(self, page, estate_server):
+        """Open big-estate by hand (an explicit true), search it, page it; switch to crc-local's nine:
+        open, no fold, no query, page 1. Switch back: folded again — the choice was re-armed, not
+        carried (review of #264, Cursor C4; the switch is the real one, through the bar's selector)."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => view.nsIndexOpen === true && !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => view.nsIndexPage === 2")
+        page.fill("#f-index-search", "app-ns3")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 10")
+        self._switch(page, "crc-local", 9)
+        assert page.locator("#ns-index-body").is_visible() and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").count() == 0
+        assert page.evaluate("() => [view.nsIndexOpen, view.nsIndexSearch, view.nsIndexPage, document.getElementById('f-index-search').value]") == [None, "", 1, ""]
+        self._switch(page, "big-estate", 25)
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.locator("#ns-index-fold").inner_text().startswith("▸ Show 39 of 106")
+
+    def test_the_bars_box_narrows_a_folded_section_but_does_not_reveal_it(self, page, estate_server):
+        """The bar's box is the shell's and this page does not get to open the section by its side
+        door; the fold's label carries the matched count so the query is never swallowed."""
+        self._open(page, estate_server)
+        page.fill("#f-ns-search", "app-ns3")
+        page.wait_for_function("() => view.nsSearch === 'app-ns3' && document.getElementById('ns-index-fold').textContent.includes('10 of 106')")
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.evaluate("() => document.getElementById('f-index-search').value") == ""
+        page.locator("#f-ns-search").press("Escape")
+        page.wait_for_function("() => document.getElementById('ns-index-fold').textContent.includes('39 of 106')")
+        assert page.locator("#ns-index-body").is_visible() is False
+
+    def test_the_sections_box_reveals_a_folded_section_and_escape_returns_the_readers_choice(self, page, estate_server):
+        """Typing in THIS box pins the section open — and while it is pinned there is no toggle, because
+        one that folded nothing would be a lie. Escape returns the section to what the reader chose:
+        never decided → folded; opened by hand → still open (on the head before #264 Escape reset the
+        choice and re-folded a section the reader had opened)."""
+        self._open(page, estate_server)
+        page.fill("#f-index-search", "mn3")   # a LABEL value: six of the 39 listed carry mnemonic mn3
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 6")
+        assert page.locator("#ns-index-body").is_visible() and page.locator("#ns-index-fold").count() == 0
+        assert page.locator("tr[data-ns] td.mono").all_inner_texts().count("mn3") == 6
+        assert "6 of 39 match the search" in self._line(page), self._line(page)
+        page.locator("#f-index-search").press("Escape")
+        page.wait_for_function("() => document.getElementById('f-index-search').value === '' && document.activeElement.id === 'f-index-search'")
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "false"
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => view.nsIndexOpen === true")
+        page.fill("#f-index-search", "mn3")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 6")
+        assert page.locator("#ns-index-fold").count() == 0
+        page.locator("#f-index-search").press("Escape")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        assert page.locator("#ns-index-body").is_visible(), "Escape folded a section the reader had opened"
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "true"
+
+    def test_a_search_from_a_later_page_lands_on_page_one(self, page, estate_server):
+        """From page 5 of the 106 into the 39 that match "app-ns": TWO pages remain, so the clamp alone
+        would have parked the reader on page 2 — page 1 is the handler's reset, and only its. (The
+        earlier version searched into a single page, which the display clamp satisfied whatever the
+        handler did — review of #264, Cursor C7.)"""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
+        page.click('[data-index-page="5"]')
+        page.wait_for_function("() => view.nsIndexPage === 5 && document.querySelectorAll('tr[data-ns]').length === 6")
+        page.fill("#f-index-search", "app-ns")
+        page.wait_for_function("() => view.nsIndexPage === 1 && document.querySelectorAll('tr[data-ns]').length === 25")
+        assert "39 of 106 match the search" in self._line(page) and "page 1 of 2" in self._line(page), self._line(page)
+        assert page.locator("#ns-index-page-1").get_attribute("aria-current") == "page"
+
+    def test_exactly_the_threshold_is_open_without_a_fold_and_one_over_folds(self, page, estate_server):
+        self._open(page, estate_server, "edge-25")
+        assert page.locator("tr[data-ns]").count() == 25 and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").count() == 0 and page.locator("[data-index-page]").count() == 0
+        assert "showing all 25" in self._line(page), self._line(page)
+        self._switch(page, "edge-26", 25)
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.locator("#ns-index-fold").inner_text() == "▸ Show 26 namespaces"
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        assert page.locator("tr[data-ns]").count() == 25 and page.locator("[data-index-page]").count() == 4
+        page.click("#ns-index-next")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert "showing 26–26 on page 2 of 2" in self._line(page), self._line(page)
+
+    def test_a_page_past_the_end_is_clamped_into_the_state_not_only_the_display(self, page, estate_server):
+        """A poll can shrink the set under a reader on page 5. The display always clamped; the state
+        kept the stale 5, so the moment the set grew again the reader jumped (review of #264, Cursor C5)."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.evaluate("() => { view.nsIndexPage = 99; render(); }")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+        page.evaluate("() => { view.nsIndexPage = NaN; render(); }")
+        assert page.evaluate("() => view.nsIndexPage") == 1
+        assert "showing 1–25 on page 1 of 2" in self._line(page), self._line(page)
+
+    def test_the_pager_keeps_a_keyboard_reader_on_the_pager(self, page, estate_server):
+        """Buttons with no id fell out of render()'s by-id focus restore: after a click, and after every
+        60 s repaint, focus was on <body> and a screen reader had nothing to announce (review of #264,
+        Cursor C5). A number keeps focus; an end that came back disabled hands it to the current page;
+        and the current page is the one styled as such, by the attribute that names it."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click("#ns-index-page-2")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert page.evaluate("() => [document.activeElement.id, document.activeElement.getAttribute('aria-current')]") == ["ns-index-page-2", "page"]
+        page.evaluate("() => render()")   # the poll
+        assert page.evaluate("() => document.activeElement.id") == "ns-index-page-2"
+        page.click("#ns-index-prev")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        assert page.locator("#ns-index-prev").is_disabled()
+        assert page.evaluate("() => [document.activeElement.id, document.activeElement.getAttribute('aria-current')]") == ["ns-index-page-1", "page"]
+        current, other = page.evaluate(
+            "() => ['ns-index-page-1', 'ns-index-page-2'].map((id) => getComputedStyle(document.getElementById(id)).backgroundColor)")
+        assert current != other and current not in ("rgba(0, 0, 0, 0)", "transparent"), (current, other)
