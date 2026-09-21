@@ -300,6 +300,113 @@ Until that lands, an implementer copying this table verbatim gets a `ValueError`
 failure — which is the loudest possible reminder, and better than a silent one, but it is the
 spec's job to say so first.
 
+### 5.1 The Secret the lookup writes — the artefact, and what reads each field
+
+**Build state, measured on `main` at chart 0.48.0 (2026-09-21).** Say this first, because the stanza
+below reads like working configuration and is not yet:
+
+| piece | state |
+|---|---|
+| the three stanza keys, in both readers | **ships** (S3a) — recorded, refused six ways, equivalence-guarded |
+| a mode cluster is listed and **not polled** | **ships** — `credential_pending`, `poller.py`'s gate |
+| `gsd-cluster-<name>` Secret writer | **ships** (#230 S2) — `SECRET_NAME_PREFIX` in `gsd/clusterconfig/writer.py` |
+| `clusterConfig.fleetAccount.username` in the chart | **ships** (S3a) |
+| **logging in as the bootstrap account and reading the token** | **NOT BUILT** — S3b |
+| **the provenance annotations below** | **NOT BUILT** — S3b; nothing writes or reads them today |
+
+`saTokenLookup` appears in exactly two files (`gsd/config.py`, `gsd/clusterconfig/parser.py`), and
+both only *record* the declaration. No code in the tree performs a login, an exchange or a
+TokenRequest. A hand-made Secret of the shape below is therefore consumed normally — the parser
+accepts its `config`, and the annotations are inert metadata — but nothing produced it and nothing
+will refresh it.
+
+#### The stanza
+
+```yaml
+  - name: shared-rnd
+    apiUrl: https://api.shared-rnd.example.com:6443
+    saTokenLookup: true
+    ldapConnectionBootstrap: svc.gsd.fleet      # optional; overrides clusterConfig.fleetAccount.username
+    enabled: true
+```
+
+#### What S3b does with it
+
+1. Log in to `apiUrl` as **`svc.gsd.fleet`** — the bootstrap account of §3.1, a *person-shaped*
+   account the target cluster's own identity provider authenticates. It is named here, per cluster,
+   only to override the fleet default.
+2. Read the **poller ServiceAccount's** token on that cluster. The bootstrap account's own session is
+   never the polling credential: an OpenShift login session is short-lived by design (§3.2 — the
+   cluster's `accessTokenMaxAgeSeconds`, 24 h by default), while the SA token is the long-lived
+   credential the poll needs.
+3. Write it to **`gsd-cluster-<name>`** in the release namespace — `gsd-cluster-shared-rnd` for the
+   stanza above — in the labelled-Secret shape SPEC_S1 already defines, so the ordinary discovery path
+   picks it up on the next cycle with no restart.
+
+#### The Secret, with a placeholder credential
+
+```yaml
+kind: Secret
+apiVersion: v1
+metadata:
+  name: gsd-cluster-shared-rnd                        # gsd-cluster-<name>, from the stanza
+  namespace: group-sync-dashboard                     # the release namespace; a Secret elsewhere is refused
+  labels:
+    groupsync-dashboard.io/secret-type: cluster       # REQUIRED — what discovery selects on
+    environment: rnd                                  # the fleet's own labels ride along, shown on the tab
+  annotations:
+    groupsync-dashboard.io/token-source: lookup            # how the credential was obtained
+    groupsync-dashboard.io/source-namespace: group-sync-operator
+    groupsync-dashboard.io/source-service-account: group-sync-dashboard-cluster-poller
+stringData:
+  name: shared-rnd                                    # must equal the stanza's `name`
+  server: https://api.shared-rnd.example.com:6443
+  enabled: "true"
+  visibility: inherit
+  identity: same-as-host
+  config: |
+    {"bearerToken":"<the poller SA's token — never in git, never in a manifest>",
+     "tlsClientConfig":{"insecure":false,"caData":"<the target's CA chain, base64 PEM>"}}
+type: Opaque
+```
+
+#### What reads each field
+
+`name`, `server`, `enabled`, `visibility`, `identity` and `config` are SPEC_S1's contract and are
+parsed today. `config.bearerToken` gives `credential_kind: bearer`, which clears
+`credential_pending`, so **writing this Secret is what makes the cluster start polling** — the stanza
+alone never does.
+
+The three annotations are **new with S3b and are provenance, not configuration**. They answer, on the
+Cluster Configurations tab and in a support ticket, the question a bearer token cannot: *where did
+this come from, and what do I rotate?*
+
+- `token-source: lookup` — distinguishes a token the dashboard fetched from one a human pasted. A
+  hand-made Secret omits it, and S3d must not treat an unannotated Secret as its own to refresh or
+  delete (§8.1: only what we made).
+- `source-namespace` / `source-service-account` — **the rotation address.** A bearer token is opaque;
+  without these, "rotate this credential" has no answer but "find whoever created it". With them the
+  next lookup knows exactly which SA on which cluster to read again.
+
+Today's writer sets a different annotation — `groupsync-dashboard.io/managed-by: ui` (#230 S2) — for a
+Secret a person created through the form. The two are orthogonal: `managed-by` says *who* created it,
+`token-source` says *how the credential was obtained*. S3b writes both.
+
+#### Why the token is not in the stanza
+
+The stanza declares the *mode*; the Secret carries the *credential*. That split is the point of S3:
+values files live in git, and a bearer token must not. The loader refuses a mode beside
+`tokenEnv`/`tokenFile` for the same reason — two sources of truth for one credential (§4).
+
+#### What still has to be decided in S3b
+
+- **The lookup's own RBAC.** Reading another SA's token is `get` on that Secret, or a TokenRequest
+  `create` on the SA. §8.3 prefers TokenRequest (bounded lifetime, the 80 % renewal trigger); a legacy
+  SA-token Secret never expires and is invalidated only by deleting it, which is why the tab words it
+  `expires: current` (#248) rather than `never`.
+- **Failure vocabulary.** Every finding this adds joins the closed set *and* the page in the same PR
+  (SPEC_S1 §S1.2), and every new `phase=` joins #245's set.
+
 ## 6. The measured trap this spec exists to record
 
 **This section was wrong in the first draft and is corrected here.** The number was right; the cause
