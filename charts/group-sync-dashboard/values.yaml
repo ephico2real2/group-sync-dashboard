@@ -1199,6 +1199,40 @@ reporting:
     maxUnavailable: 1
     minAvailable: ""
 
+  # Probes
+  # -------------------------------------------------------------------------
+  # THE SAME REASONING AS THE DASHBOARD'S `probes` BLOCK ABOVE, applied to this service — which it
+  # was not before: these periods were hard-coded, and liveness ran five times more often here than
+  # on the dashboard for the same cost profile.
+  #
+  # What each probe costs when it is WRONG decides its period. A failed readiness takes the pod out
+  # of the Service and puts it back — cheap. A failed liveness destroys in-flight state (a render in
+  # progress) and forces a container restart — expensive. So liveness is 300s with failureThreshold
+  # 2 (10 minutes of sustained failure before a wedged pod is restarted), matching the dashboard.
+  #
+  # Readiness is 30s here rather than the dashboard's 15s, for a cost the dashboard does not have:
+  # `/report/readyz` performs a SQLite READ, and every probe contends for the same lock the poller's
+  # writer holds — which is why `sqlite.readerBusyTimeoutMs` is deliberately shorter than the
+  # writer's. Halving the probe rate halves that contention.
+  #
+  # The 1s Kubernetes default timeout is deliberately not used: on a host that suspends and resumes,
+  # every in-flight probe fails with "context deadline exceeded" and liveness kills a healthy
+  # process (observed on the dashboard; it cascaded into a ~4h outage).
+  #
+  # These probes no longer write a log line apiece: the per-request record is at WARNING by default
+  # (`httpLogLevel`), which this service now honours as the dashboard already did.
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 300     # 5 min — see the threshold note before raising this
+      timeoutSeconds: 5
+      failureThreshold: 2    # 2 x 300s = 10 min to restart a wedged pod
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 30      # /report/readyz reads SQLite; each probe contends for the lock
+      timeoutSeconds: 5
+      failureThreshold: 3
+
   # Each report is a module. Nine need nothing but the snapshot and are on. loginActivity FOLLOWS
   # loginCapture.enabled by default ("" = follow); `true` with capture off is refused — a report
   # over a table nothing writes. dormantAccess works without capture (User objects) and gains a

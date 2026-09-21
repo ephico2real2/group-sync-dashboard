@@ -427,3 +427,52 @@ class TestPerLoggerOverridesDegradeRatherThanCrash:
         assert got["http_complaints"] and not got["httpx"]
         assert "sha256~" not in got["http_complaints"][0]
         assert "30-character" in got["http_complaints"][0], "the length is the one fact it does report"
+
+
+class TestTheReportServiceGetsTheSameRequestRecordSetting:
+    """#245 gave `uvicorn.access` a setting because its logger carries propagate=False and its own
+    handler, so GSD_LOG_LEVEL could neither raise nor lower it and, in that module's own words,
+    "/readyz and /metrics wrote a line apiece forever". The fix reached the DASHBOARD only.
+
+    The report service kept writing one line per readiness probe (every 15 s) and per liveness probe
+    — at rest, the whole of its log. Measured on a lab pod's log: 15 of 111 lines were probes while
+    a walk was running, and every one of the remaining 96 was request traffic from that walk.
+    """
+
+    def test_the_entrypoint_turns_the_request_record_down_as_the_dashboards_does(self, monkeypatch) -> None:
+        # The bug was an omission at one call site, so the test is about the call site: the report
+        # service's entrypoint must apply the HTTP level, not merely be able to.
+        import logging as _logging
+
+        from gsd.api import HTTP_LOGGERS
+
+        for name in HTTP_LOGGERS:
+            _logging.getLogger(name).setLevel(_logging.NOTSET)
+        monkeypatch.delenv("GSD_HTTP_LOG_LEVEL", raising=False)
+
+        import gsd.reporting.server as server
+
+        called: list[str] = []
+        monkeypatch.setattr(server, "load_report_settings", lambda: (_ for _ in ()).throw(RuntimeError("stop")))
+        with pytest.raises(RuntimeError, match="stop"):
+            server.create_report_app()          # the log setup runs before the settings load
+        for name in HTTP_LOGGERS:
+            assert _logging.getLogger(name).level == _logging.WARNING, (
+                f"{name} is not turned down by the report service's entrypoint — a probe writes a "
+                f"line apiece forever, which is what #245 fixed for the dashboard"
+            )
+        assert called == []
+
+    def test_info_restores_the_per_request_lines_here_too(self, monkeypatch) -> None:
+        import logging as _logging
+
+        from gsd.api import HTTP_LOGGERS
+
+        monkeypatch.setenv("GSD_HTTP_LOG_LEVEL", "INFO")
+        import gsd.reporting.server as server
+
+        monkeypatch.setattr(server, "load_report_settings", lambda: (_ for _ in ()).throw(RuntimeError("stop")))
+        with pytest.raises(RuntimeError, match="stop"):
+            server.create_report_app()
+        for name in HTTP_LOGGERS:
+            assert _logging.getLogger(name).level == _logging.INFO

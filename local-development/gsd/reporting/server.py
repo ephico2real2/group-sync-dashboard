@@ -634,9 +634,16 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
 
 def create_report_app() -> FastAPI:
     """Entrypoint for `uvicorn gsd.reporting.server:create_report_app --factory`."""
-    from ..api import _resolve_log_level
+    from ..api import _apply_http_log_level, _resolve_log_level
     level, complaint = _resolve_log_level(os.environ.get("GSD_LOG_LEVEL"))
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)-7s %(name)s %(message)s")
     if complaint:
         log.warning("%s", complaint)
+    # GSD_HTTP_LOG_LEVEL governs the per-request record here exactly as it does in the dashboard.
+    # #245 gave `uvicorn.access` a setting because its logger carries propagate=False and its own
+    # handler, so GSD_LOG_LEVEL could neither raise nor lower it and every probe wrote a line
+    # forever — but the fix reached the dashboard only. This service kept writing one line per
+    # readiness probe (every 15 s) and per liveness probe, which at rest is the whole log.
+    for grumble in _apply_http_log_level():
+        log.warning("%s", grumble)
     return build_report_app(load_report_settings())
