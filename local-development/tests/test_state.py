@@ -370,3 +370,49 @@ class TestGroupCountCliff:
     def test_as_dict_carries_the_silence_fields_for_every_kind(self):
         plain = st.Alert("crc", "overdue", "x", "y", "critical").as_dict()
         assert plain["silenced"] is False and plain["silenced_by"] is None
+
+
+class TestAnAlertDetailDoesNotMoveWithTheClock:
+    """#271. An alert's `detail` is rendered verbatim and rides `/api/alerts`, which every page
+    fetches on every 60s poll. The shell skips the repaint only when EVERY payload is byte-identical,
+    so a detail that carries a live age at minute precision defeated the skip on every page, on every
+    poll, for as long as any CR was overdue — dropping the reader's scroll, selection and focus.
+
+    That is the `reportStatus.as_of` failure mode ("no two polls ever matched and the page repainted
+    every minute") loose on the most ordinary alert this dashboard raises. It surfaced as an
+    intermittent CI failure in TestHomeSkipsTheUnchangedPoll, whose two polls caught it only when they
+    straddled a minute — which is why it passed locally and failed twice on CI.
+
+    The details name the INSTANT, which is stable. The CR's own row on the same page still shows the
+    live age, formatted client-side.
+    """
+
+    BASE = datetime(2026, 9, 21, 18, 0, 0, tzinfo=UTC)
+    GRACE, WRITE_WINDOW, NO_SCHEDULE = timedelta(minutes=5), timedelta(hours=1), timedelta(days=1)
+
+    def _details(self, crs, now):
+        return [a.detail for a in st.compute_alerts("c", crs, [], now, self.GRACE, self.WRITE_WINDOW, self.NO_SCHEDULE)]
+
+    def test_an_overdue_crs_detail_is_identical_a_minute_later(self):
+        crs = [{"name": "g", "cluster": "c", "schedule": "0 * * * *",
+                "last_sync_at": (self.BASE - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")}]
+        first = self._details(crs, self.BASE)
+        assert any("stopped firing" in d for d in first), first   # it really is overdue
+        assert first == self._details(crs, self.BASE + timedelta(seconds=61)), \
+            "the overdue detail moved with the clock — every poll now repaints every page (#271)"
+        assert first == self._details(crs, self.BASE + timedelta(hours=3)), "nor over three hours"
+
+    def test_a_stopped_crs_detail_is_identical_a_minute_later(self):
+        # the other branch that carried an age: an unusable schedule, stale past no_schedule_stale_after
+        crs = [{"name": "g", "cluster": "c", "schedule": "not a cron",
+                "last_sync_at": (self.BASE - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")}]
+        first = self._details(crs, self.BASE)
+        assert any("stopped syncing" in d for d in first), first
+        assert first == self._details(crs, self.BASE + timedelta(seconds=61)), \
+            "the sync_stopped detail moved with the clock (#271)"
+
+    def test_the_detail_still_says_when_the_last_sync_was(self):
+        """Stable must not mean uninformative: the instant is still there, and it is the stored one."""
+        stamp = (self.BASE - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        crs = [{"name": "g", "cluster": "c", "schedule": "0 * * * *", "last_sync_at": stamp}]
+        assert any(stamp in d for d in self._details(crs, self.BASE))

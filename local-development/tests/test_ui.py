@@ -4559,21 +4559,110 @@ class TestHome:
 
 
 
+def _hold_server_clock(monkeypatch) -> None:
+    """Freeze `now` for the in-process API for one test (#271). Three payload fields are functions of
+    the clock over an unchanged store — `alerts[].detail` for an overdue CR (`last sync 6h00m ago`,
+    minute precision; measured moving at seed+60 s), `groupsyncs[].next_expected` (every cron fire)
+    and `groupsyncs[].state` (last_sync + interval + grace) — so a test about an unchanged STORE
+    must hold the clock, or it is a lottery on where its polls fall in the minute."""
+    at = datetime.now(UTC)
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return at if tz is None else at.astimezone(tz)
+
+    monkeypatch.setattr("gsd.api.datetime", _Frozen)
+
+
+def _json_diff(a, b, path=""):
+    if type(a) is not type(b):
+        return [(path, a, b)]
+    if isinstance(a, dict):
+        return [d for k in sorted(set(a) | set(b))
+                for d in _json_diff(a.get(k, "<absent>"), b.get(k, "<absent>"), f"{path}.{k}")]
+    if isinstance(a, list):
+        if len(a) != len(b):
+            return [(path + ".len", len(a), len(b))]
+        return [d for i, (x, y) in enumerate(zip(a, b)) for d in _json_diff(x, y, f"{path}[{i}]")]
+    return [] if a == b else [(path, a, b)]
+
+
+def _moved_slots(p, before: str) -> list[str]:
+    """Which fingerprint slots differ between `before` (a `lastFingerprint` read earlier) and the
+    page's current one, path by path, under the page's own slot names (fingerprintSlots()). The
+    assertion that uses this names the moving field; "something repainted" cost two red builds."""
+    after = p.evaluate("() => lastFingerprint")
+    names = p.evaluate("() => Object.keys(fingerprintSlots())")
+    return [f"{names[i]}{path}: {old!r} -> {new!r}"
+            for i, (x, y) in enumerate(zip(json.loads(before), json.loads(after)))
+            for path, old, new in _json_diff(x, y)] or ["(no slot differs — the repaint was not the fingerprint's)"]
+
+
 class TestHomeSkipsTheUnchangedPoll:
     """The shell fingerprints every payload so an automatic poll that changed nothing does not replace
     `#main` — the reader's scroll, selection and focus survive. `/home` echoed the request's clock
     (`changes.since`, second precision), so on Home the fingerprint never matched and every 60 s poll
-    repainted the page (OB3, integration review, C3: three polls, three repaints, one moving field)."""
+    repainted the page (OB3, integration review, C3: three polls, three repaints, one moving field).
 
-    def test_two_automatic_polls_of_an_unchanged_store_leave_the_dom_alone(self, page, scoped_server):
+    The server's clock is held for the test (#271): with it free, `alerts[0].detail` — the seeded
+    overdue CR's age at minute precision — moved whenever the polls straddled a minute since the seed,
+    which two CI runs did and this machine's phase did not."""
+
+    def test_two_automatic_polls_of_an_unchanged_store_leave_the_dom_alone(self, page, scoped_server, monkeypatch):
+        _hold_server_clock(monkeypatch)
         p = _home(page, scoped_server)
         p.wait_for_timeout(1500)   # the boot render has landed; nothing else is in flight
+        before = p.evaluate("() => lastFingerprint")
         p.evaluate("() => { document.querySelector('.home .answer h1').dataset.sentinel = 'kept'; }")
         for _ in range(2):
             p.evaluate("() => refresh({auto: true})")
             p.wait_for_timeout(1500)
         assert p.evaluate("() => document.querySelector('.home .answer h1').dataset.sentinel") == "kept", \
-            "an automatic poll of an unchanged store repainted Home"
+            "an automatic poll of an unchanged store repainted Home; the slots that moved:\n  " + "\n  ".join(_moved_slots(p, before))
+
+
+class TestAnAlertsInstantRendersInTheConfiguredZone:
+    """#271 put the absolute stamp into an alert's detail, because a live age recomputed per request
+    defeats the unchanged-poll repaint skip. The operator's requirement on top of that: it must match
+    the timezone the deployment is set to, as every other timestamp on this page does.
+
+    The division: the SERVER states the instant (stable, so the fingerprint still matches, and it is
+    the stamp a reader quotes), the PAGE presents it in the configured zone. It has to be the page —
+    the zone abbreviation depends on the instant (EST in January, EDT in July), so a zone stamped
+    once server-side mislabels everything across a DST boundary.
+    """
+
+    RAW = "last sync at 2026-09-21T12:00:00Z, schedule '0 * * * *' — stopped"
+
+    def test_the_helper_localises_an_instant_and_leaves_the_rest_alone(self, dash):
+        out = dash.evaluate("(t) => { setDisplayZone({name: 'America/Chicago', abbrev: 'CDT'}); "
+                            "return withLocalInstants(esc(t)); }", self.RAW)
+        assert "2026-09-21T12:00:00Z" not in out, out      # the raw UTC form is gone
+        assert "2026-09-21 07:00:00 CDT" in out, out        # noon UTC is 07:00 CDT
+        assert "schedule &#39;0 * * * *&#39; — stopped" in out, "the rest of the sentence is untouched, still escaped"
+
+    def test_utc_still_says_so_rather_than_dropping_the_marker(self, dash):
+        out = dash.evaluate("(t) => { setDisplayZone(null); return withLocalInstants(esc(t)); }", self.RAW)
+        assert "2026-09-21 12:00:00Z" in out, out
+        assert "T" not in out.split(",")[0], "the T separator is replaced, so it reads as a time not an id"
+
+    def test_a_run_id_is_not_mistaken_for_an_instant(self, dash):
+        # run ids carry a stamp with no dashes or colons; converting one would corrupt a filename
+        rid = "20260921T171114.745714Z-058e"
+        out = dash.evaluate("(t) => { setDisplayZone({name: 'America/Chicago', abbrev: 'CDT'}); "
+                            "return withLocalInstants(esc(t)); }", f"run {rid} failed")
+        assert rid in out, out
+
+    def test_the_rendered_alert_row_carries_no_raw_utc_stamp(self, dash):
+        # the seeded overdue CR reaches the Overview's alerts card; whatever zone the deployment is
+        # set to, the reader must not be shown the wire format
+        dash.wait_for_selector(".alert-row .what")
+        whats = dash.locator(".alert-row .what").all_inner_texts()
+        assert whats, "no alert rows to check"
+        import re as _re
+        raw = [w for w in whats if _re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", w)]
+        assert not raw, f"an alert row shows the raw wire stamp instead of the configured zone: {raw}"
 
 
 class TestVisibilityLabels:
@@ -8283,7 +8372,7 @@ class TestReportFormHintsAndType:
                 # block held four more at --text-base — two `<span class="muted">` of help copy and the two
                 # `.linkish` buttons beside the preview — because they sat in a `.report-field` and nothing
                 # pinned them. They are the form's own secondary copy and read at its one size.
-                stray = page.evaluate("""(sm) => [...document.querySelectorAll('#report-form .report-field .muted, #report-form .report-field .linkish')]
+                stray = page.evaluate(r"""(sm) => [...document.querySelectorAll('#report-form .report-field .muted, #report-form .report-field .linkish')]
                     .map((e) => [e.textContent.replace(/\s+/g, ' ').trim().slice(0, 40), getComputedStyle(e).fontSize])
                     .filter(([, size]) => size !== sm)""", sm)
                 assert not stray, (report, stray)
