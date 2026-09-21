@@ -2704,8 +2704,8 @@ function reportFormCard(spec, cat) {
         <select id="report-selector-${i}" data-param="selectors" data-selector-label="${esc(d.label)}" multiple size="6">
           ${d.values.map((v) => `<option value="${esc(v)}"${selectedFor(form.selectors, d.label).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
         </select>
-        <span class="muted">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
-        + `<div class="report-field"><span class="muted" id="report-preview">${esc(view.reportPreview || "")}</span>
+        <span class="muted hint">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
+        + `<div class="report-field"><span class="muted hint" id="report-preview">${esc(view.reportPreview || "")}</span>
            <button type="button" class="linkish" id="report-preview-clear"${hasSelectors ? "" : " hidden"}>Clear</button>
            <button type="button" class="linkish" id="report-preview-view"${(view.reportPreviewNames || []).length ? "" : " hidden"}>view namespaces</button></div>`;
     }
@@ -2753,7 +2753,7 @@ function paramField(spec, p, form) {
   const id = `report-param-${spec.name}-${p.name}`;
   const raw = form[p.name];
   const label = `<label for="${id}">${esc(p.name)}${p.required ? ' <span class="req" title="required">*</span>' : ""}</label>`;
-  const hint = `<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span>`;
+  const hint = `<span class="muted hint">${esc(p.help)}</span>`;
   if (p.type === "bool") {
     const on = raw !== undefined ? (raw === true || raw === "true") : p.default === true;
     return `<div class="report-field">${label}
@@ -2875,13 +2875,13 @@ function subjectBlock(spec, params, form) {
   const chosen = params.reduce((n, p) => n + (Array.isArray(form[p.name]) ? form[p.name].length : 0), 0);
   return `<div class="rp-scope subj" id="report-subject">
     <div class="rp-scope-top"><span class="t">Subjects <span class="rp-auto">lookup · discovered</span></span><span class="and muted">empty = all · pick users and/or groups, one or more</span></div>
-    <div class="report-fields">${params.map((p) => `<div class="report-field"><label>${esc(p.name)}</label>${lookupControl(spec, p, form)}<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span></div>`).join("")}</div>
+    <div class="report-fields">${params.map((p) => `<div class="report-field"><label>${esc(p.name)}</label>${lookupControl(spec, p, form)}<span class="muted hint">${esc(p.help)}</span></div>`).join("")}</div>
     <div class="rp-scope-foot"><span class="rp-count-live" id="report-subject-count">${chosen ? `${chosen} selected` : "all subjects"}</span>
       <button type="button" class="linkish" id="report-subject-clear"${chosen ? "" : " hidden"}>Clear</button></div>
   </div>`;
 }
 
-const LOOKUP_HEAD = { users: "User objects", groups: "synced groups", providers: "identity providers", roles: "roles bound on the cluster",
+const LOOKUP_HEAD = { users: "User objects", groups: "synced groups · members as of the snapshot", providers: "identity providers", roles: "roles bound on the cluster",
                       mnemonics: "namespace mnemonics", "oud-groups": "exact groups pinned by namespaces", namespaces: "namespaces on the cluster" };
 
 // A tag input over a discovered lookup: click a value to add, its × (or clicking it again) to remove,
@@ -2898,7 +2898,7 @@ function lookupControl(spec, p, form) {
       <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" data-lookup-source="${esc(p.source || "")}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
     ${p.source ? `<div class="rp-menu" id="${id}-menu" role="listbox" aria-label="${esc(LOOKUP_HEAD[p.source] || p.source)}">
       <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${found.values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
-      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
+      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed, found && found.members)}</div>
     </div>` : ""}
   </div>`;
 }
@@ -2914,10 +2914,15 @@ function lookupValues(source, found) {
 // paint and for typing: the first cut painted only the matches of the text typed so far, and a repaint
 // under a query that matched nothing left a menu with no option nodes for later typing to reveal
 // (review of #222, OB3 — measured: "zzz", a repaint, "kube" → no match, though kubeadmin was discovered).
-function lookupMenuBody(name, values, chosen, typed) {
+function lookupMenuBody(name, values, chosen, typed, members) {
   const q = typed.toLowerCase();
   const shown = values.filter((v) => !q || v.toLowerCase().includes(q));
-  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}</div>`).join("")}
+  // `members` (the groups lookup only): the group's member count as of the snapshot, beside its name — a group of
+  // nobody says "0 members", never a blank (operator, 2026-09-21).
+  // `typeof === "number"`, never `v in members`: the map is parsed JSON, so it inherits Object.prototype and a
+  // group named `constructor` or `toString` would satisfy `in` and render a function's source as its count.
+  const count = (v) => members && typeof members[v] === "number" ? ` <span class="rp-n">${esc(String(members[v]))} member${members[v] === 1 ? "" : "s"}</span>` : "";
+  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}${count(v)}</div>`).join("")}
       ${q && !shown.length ? `<div class="rp-nomatch">No match — press Enter to add “${esc(typed)}”</div>` : ""}
       ${shown.length > 200 ? `<div class="rp-nomatch">${shown.length - 200} more — keep typing to narrow</div>` : ""}`;
 }
@@ -3676,7 +3681,7 @@ function wireReports() {
       view.reportLookupText[el.id] = el.value;
       const body = document.querySelector(`#${CSS.escape(el.id)}-menu [data-menu-body]`); if (!body) return;
       const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][el.dataset.lookupSource];
-      body.innerHTML = lookupMenuBody(name, lookupValues(el.dataset.lookupSource, found), listOf(name), el.value.trim());
+      body.innerHTML = lookupMenuBody(name, lookupValues(el.dataset.lookupSource, found), listOf(name), el.value.trim(), found && found.members);
       wireLookupOptions(body);
     };
     el.onkeydown = (e) => {

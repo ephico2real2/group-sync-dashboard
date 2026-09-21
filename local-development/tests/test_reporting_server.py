@@ -1481,6 +1481,19 @@ class TestDiscoveredLookups:
             assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster=nope", headers=_viewer()).status_code == 404
             assert client.get(f"{REPORT_PREFIX}/api/discovered", headers=_viewer()).status_code == 422
             assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}").status_code == 401
+
+    def test_the_groups_lookup_carries_each_groups_member_count_as_of_the_snapshot(self, tmp_path):
+        # Operator, 2026-09-21: picking a group showed no member count although group_state carries one. A sibling
+        # `members` map, so `values` stays the list of strings every consumer reads; a group of nobody says 0.
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            d = client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}", headers=_viewer()).json()["discovered"]
+            assert d["groups"]["values"] == ["empty-group", "hand-made", "ocp-users", "team-a", "team-b"]      # unchanged
+            assert d["groups"]["members"] == {"empty-group": 0, "hand-made": 1, "ocp-users": 3, "team-a": 2, "team-b": 1}
+            assert all("members" not in d[k] for k in d if k != "groups"), "groups only — the operator asked for groups"
+
+
 class TestReportingStatusReview:
     """Review of #221 (OB3): the late predicate's grace sits after the fire; the per-schedule retention
     override the page calls effective is the one the prune applies; the optional keys are validated at
