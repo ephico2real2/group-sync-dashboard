@@ -75,7 +75,7 @@ What differs is only **where the credential comes from**, and that is §3's job.
 | key on the stanza | what the dashboard does | what it stores |
 |---|---|---|
 | **`saTokenLookup: true`** | authenticates to the TARGET cluster as the bootstrap account, reads the poller ServiceAccount's token **and its `ca.crt`** from the declared token Secret the operator chart ships (`group-sync-operator-helm-chart` `55c17bc`), and writes them into a labelled cluster Secret in its own namespace | a cluster Secret whose `config` holds `bearerToken` and `tlsClientConfig.caData`, annotated `token-source: lookup` with the source cluster, namespace, ServiceAccount, minted-at and minted-by |
-| **`userSelfLogin: true`** | polls as the bootstrap account itself, re-authenticating daily | nothing at rest; the token lives in memory only |
+| **`userSelfLogin: true`** | polls as the bootstrap account itself, re-authenticating when its OAuth session expires (§3.2 — the TARGET cluster's lifetime, not a figure we choose) | nothing at rest; the token lives in memory only |
 
 The two are mutually exclusive, and **neither is implied by silence**: a stanza with no credential and
 no mode keeps today's refusal, with today's message. Inferring "they must have meant a lookup" would
@@ -115,6 +115,38 @@ Rules, in the order they are checked:
    (`fleet-credential-missing`, naming the Secret and the key) and not a crashed pod.
 4. The username appears in logs and on the tab; the password appears nowhere — not the database, not a
    log line, not a response, not `/metrics` (the redaction pin covers it).
+
+### 3.2 The login session's lifetime belongs to the target cluster
+
+An OpenShift login session is **24 hours by default, and the target cluster may have changed it.** The
+knob is `oauth/cluster` `.spec.tokenConfig.accessTokenMaxAgeSeconds`; the default when unset (or set to
+`0`) is `86400`. So a `userSelfLogin` credential does not live for "a day" — it lives for however long
+*that* cluster says, and the dashboard must **read the value rather than assume it**.
+
+This is not hypothetical. Measured on the reference cluster (2026-09-21):
+
+```
+$ oc get oauth cluster -o jsonpath='{.spec.tokenConfig}'
+{"accessTokenMaxAgeSeconds":31536000}
+$ oc get oauthaccesstokens -o jsonpath='{.items[0].expiresIn}'
+31536000
+```
+
+**One year**, on live tokens — 365 times the default. Three consequences follow:
+
+1. **Renewal tracks the shorter of the two clocks.** A looked-up ServiceAccount token has its own TTL
+   (§8.3); a `userSelfLogin` session has this one. Whichever expires first decides when the dashboard
+   must act, and the tab shows the real date for each rather than a nominal "daily".
+2. **The reference cluster cannot test expiry.** §7's acceptance run proves the *connection path*; it
+   cannot prove renewal, because nothing it holds expires within any plausible test window. Saying a
+   green run here demonstrates renewal would be claiming a result the lab is incapable of producing.
+   Expiry is tested by setting a short `accessTokenMaxAgeSeconds` on a scratch cluster, or by minting a
+   token with a short `expirationSeconds` through the TokenRequest API — which the spec prefers, since
+   it needs no cluster-wide change to prove a per-cluster behaviour.
+3. **A long session is the audit posture's problem, not the dashboard's to fix** — but it is the
+   dashboard's to *report*. Where a target's `accessTokenMaxAgeSeconds` is far above the default, the
+   tab says so beside that cluster, for the same reason `expires: current` is written rather than
+   `never` (#248): the number a reviewer needs is the real one.
 
 ## 4. What the loader and the parser must change
 
