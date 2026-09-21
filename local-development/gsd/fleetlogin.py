@@ -29,19 +29,35 @@ THREE THINGS THE FLOW DICTATES:
    `obtained_at + expires_in` as an instant — never "daily", and never an age (the operator's
    ruling: server-side text carries instants).
 
-THE RETRY POLICY IS THE HIGH-BLAST-RADIUS PART, and it ships with the first code that can log in:
+THE RETRY POLICY IS THE HIGH-BLAST-RADIUS PART, and it ships with the first code that can log in.
+The line is drawn at THE PASSWORD BEING ON THE WIRE, not at the kind of answer:
 
-  a transport failure (connect refused, TLS, timeout), a 5xx, a malformed answer
+  discovery (no password is sent): any failure
       -> bounded exponential backoff to `RETRY_POLICY.attempts`, then give up OUT LOUD
-  a refused password (401 with a Basic challenge)
-      -> NEVER retried. One failure, one `fleet-login-refused` line, stop.
-  any other 401
-      -> not recorded as a refusal (the password was not necessarily evaluated) — and not retried
-         either, because retrying a 401 whose cause cannot be read IS the lockout walk.
+  the authorize GET failed BEFORE its bytes were written — the socket never opened or the TLS
+  handshake failed (httpx.ConnectError, httpx.ConnectTimeout)
+      -> the same backoff: the target cannot have bound
+  the authorize GET was written and ANYTHING came back — a 401, a 5xx, a 200, a 302 without a
+  token, a read timeout, a dropped connection
+      -> TERMINAL. One `fleet-login-refused` line for a 401 with a Basic challenge, one
+         `fleet-login-failed … not retried` line for everything else. Stop.
 
-The account is one account for the estate and a directory locks it after a few failed binds — the
-account the target authenticates EVERY user with. Suspending the credential across clusters needs a
+WHY EVERY ANSWER IS TERMINAL (review of #289; verified against upstream by the business owner): the
+oauth-server's LDAP authenticator answers 401 only for LDAP result codes 48 and 49
+(pkg/authenticator/password/ldappassword/ldap.go) and EVERY other directory result with 500
+(pkg/osinserver/defaults.go, HandleError) — including code 19, `Exceeded password retry limit`,
+which is what a directory that has ALREADY LOCKED the account says. A "5xx is transient" rule
+therefore retries hardest exactly when the account is locked. A 504 means the upstream took too
+long having RECEIVED the request; a 502 that it answered malformed having received it; a read
+timeout that the request was written. The asymmetry decides it: a wrong retry is an estate-wide
+outage against the account the target authenticates EVERY user with; a missed retry is one delayed
+login that #285's daily ping picks up. Suspending the credential across clusters needs a
 coordinator and is #285's; the half that needs none is here.
+
+A MINTED TOKEN IS NEVER ABANDONED. From the moment the fragment carried a token, nothing leaves the
+login without either handing the token to the caller inside a session or revoking it — whatever
+raises, including what was not predicted. The lifetime the target states is bounded at int32
+(MAX_EXPIRES_IN) because it is remote-controlled and the instant arithmetic is not.
 
 THE SESSION IS A CONTEXT MANAGER. Every login mints an `OAuthAccessToken` on the target and this
 module owns revoking it: `__exit__` deletes it by name after the body ran, after the body raised,
@@ -79,6 +95,11 @@ USER_TOKEN_API = "/apis/oauth.openshift.io/v1/useroauthaccesstokens"
 #: A token since OpenShift 4.6 is `sha256~<random>`, and its OAuthAccessToken object is named
 #: `sha256~<base64url(sha256(<random>))>` so that the token itself is never an object's name.
 TOKEN_PREFIX = "sha256~"
+#: The largest lifetime a target can legitimately state: `OAuthClient.accessTokenMaxAgeSeconds` is an
+#: int32 in oauth.openshift.io/v1. Anything above it is a remote-controlled value that would overflow
+#: the instant arithmetic (review of #289, all three seats): the token is revoked and the answer is
+#: terminal.
+MAX_EXPIRES_IN = 2**31 - 1
 #: The refusal line's outcome. It joins `clusterconfig.FINDING_CODES` — and the tab's sentence for
 #: it — in #284, the step that first puts a lookup's findings on the page (SPEC_S1 §S1.2).
 LOGIN_REFUSED = "login-refused"
@@ -149,6 +170,13 @@ class FleetSession:
     attempts: int
     """How many logins it took; 1 when the first succeeded."""
 
+    def __post_init__(self) -> None:
+        # The instants this session reports carry a `Z`, so what it holds must BE UTC: an injected
+        # clock is normalised at the read (`_as_utc`) and refused here if it slipped past naive
+        # (review of #289, Codex) — a naive datetime cannot be normalised without guessing its zone.
+        if self.obtained_at.utcoffset() is None:
+            raise ValueError("FleetSession.obtained_at must be an aware datetime")
+
     @property
     def expires_at(self) -> datetime:
         """The absolute instant the session dies: `obtained_at + expires_in`. `obtained_at` is the
@@ -158,7 +186,7 @@ class FleetSession:
 
     @property
     def expires_at_iso(self) -> str:
-        return self.expires_at.strftime(STAMP)
+        return self.expires_at.astimezone(UTC).strftime(STAMP)
 
     @property
     def token_name(self) -> str:
@@ -181,6 +209,14 @@ def token_object_name(token: str) -> str:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """An injected clock's reading, in UTC. Aware in any zone is converted; naive is refused, because
+    a `Z`-suffixed instant built from a naive reading would claim a zone it does not have."""
+    if moment.utcoffset() is None:
+        raise ValueError("the clock must return an aware datetime")
+    return moment.astimezone(UTC)
 
 
 class FleetLogin:
@@ -265,7 +301,7 @@ class FleetLogin:
         attempt = 0
         while True:
             attempt += 1
-            obtained_at = self._clock()
+            obtained_at = _as_utc(self._clock())
             try:
                 issuer, endpoint = self._discover()
                 token, expires_in = self._authorize(endpoint)
@@ -281,13 +317,23 @@ class FleetLogin:
                 self._log_retry(exc, attempt, retry_in=wait)
                 self._sleep(wait)
                 continue
-            session = FleetSession(cluster=self.cluster.name, account=self.username, token=token,
-                                   obtained_at=obtained_at, expires_in=expires_in, issuer=issuer,
-                                   attempts=attempt)
-            event(log, logging.INFO, "fleet-login", **self._fields(), oauth=issuer,
-                  expires_at=session.expires_at_iso,
-                  attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
-                  secrets=(self._password, token))
+            # FROM HERE THE TOKEN EXISTS ON THE TARGET, and nothing below may leave this frame
+            # without either handing it to the caller inside a session or revoking it — whatever
+            # raises, including what was not predicted (review of #289: an OverflowError from a
+            # remote-controlled expires_in escaped `__enter__` with the token abandoned). `_authorize`
+            # revokes before it raises, so this guard begins only once it has returned, and no token
+            # is revoked twice.
+            try:
+                session = FleetSession(cluster=self.cluster.name, account=self.username, token=token,
+                                       obtained_at=obtained_at, expires_in=expires_in, issuer=issuer,
+                                       attempts=attempt)
+                event(log, logging.INFO, "fleet-login", **self._fields(), oauth=issuer,
+                      expires_at=session.expires_at_iso,
+                      attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
+                      secrets=(self._password, token))
+            except BaseException:
+                self._revoke(token)
+                raise
             return session
 
     def _discover(self) -> tuple[str, str]:
@@ -312,17 +358,32 @@ class FleetLogin:
             # into: a document naming a plain-http endpoint is a fact about the target, not weather.
             raise LoginError(UNREACHABLE, f"{DISCOVERY_PATH} names no https authorization_endpoint "
                              f"(got {self._scrub(str(endpoint))[:200]!r})", phase="connect", retryable=False)
+        if parts.username is not None or parts.password is not None:
+            # Userinfo on the endpoint is a remote-controlled secret-shaped string that would ride into
+            # every message naming the host (review of #289): refused, and never quoted.
+            raise LoginError(UNREACHABLE, f"{DISCOVERY_PATH} names an authorization_endpoint carrying "
+                             f"userinfo; refused", phase="connect", retryable=False)
         issuer = document.get("issuer")
         return (issuer if isinstance(issuer, str) and issuer else f"https://{parts.netloc}"), endpoint
 
     def _authorize(self, endpoint: str) -> tuple[str, int]:
-        """The challenging-client request, and the token read off the redirect's fragment."""
-        host = urlsplit(endpoint).netloc
+        """The challenging-client request, and the token read off the redirect's fragment.
+
+        ONCE THE GET CARRYING THE PASSWORD IS ISSUED, EVERY OUTCOME IS TERMINAL (the module
+        docstring says why). The one retryable failure here is one provably before the password
+        bytes were written: the socket never opened, or the TLS handshake failed.
+        """
+        host = self._scrub(urlsplit(endpoint).netloc)
         try:
             response = self._client.get(endpoint, params={"client_id": CHALLENGING_CLIENT, "response_type": "token"},
                                         headers=CSRF_HEADER, auth=(self.username, self._password))
-        except httpx.HTTPError as exc:
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            # Provably before the password bytes were written: the target cannot have bound.
             raise self._transport_error(exc) from exc
+        except httpx.HTTPError as exc:
+            # The request may have been written and the target may have bound — a read timeout, a
+            # dropped connection, a non-HTTP answer: terminal.
+            raise self._transport_error(exc, retryable=False) from exc
         if response.status_code == 401:
             # THE REFUSAL, and the one answer that is never retried. Measured (SPEC_S4 §6): a wrong
             # password is a bare 401 with `Www-Authenticate: Basic realm="openshift"` and an empty
@@ -330,7 +391,7 @@ class FleetLogin:
             # username the directory cannot find. A 401 WITHOUT the Basic challenge did not
             # necessarily evaluate the password, so it is not recorded as a refusal; it is not
             # retried either, because retrying a 401 whose cause cannot be read is the lockout walk.
-            challenge = response.headers.get("www-authenticate", "")
+            challenge = self._scrub(response.headers.get("www-authenticate", ""))[:200]
             said = (f"401 Unauthorized from {host}; Www-Authenticate: {challenge or '<absent>'}; "
                     f"body: {self._scrub(response.text)[:200] or '<empty>'}")
             if challenge.strip().lower().startswith("basic"):
@@ -338,26 +399,32 @@ class FleetLogin:
             raise LoginError(UNREACHABLE, f"{said} — no Basic challenge, so this is a client or server "
                              f"fault rather than a refusal; not retried", phase="credential", retryable=False)
         if response.status_code != 302:
+            # The password was on the wire and the target answered: terminal, whatever the status —
+            # a 500 is what the oauth-server says for every directory result but 48/49, a locked
+            # account's code 19 included.
             raise LoginError(UNREACHABLE, f"HTTP {response.status_code} on {host}/oauth/authorize: "
-                             f"{self._scrub(response.text)[:200]}", phase="credential", retryable=True)
+                             f"{self._scrub(response.text)[:200]}; not retried — the password was sent",
+                             phase="credential", retryable=False)
         fragment = parse_qs(urlsplit(response.headers.get("location", "")).fragment)
         token = (fragment.get("access_token") or [""])[0]
         if not token:
+            # The bind happened and the grant failed after it: terminal for the same reason.
             error = (fragment.get("error") or ["<none>"])[0]
             raise LoginError(UNREACHABLE, f"302 from {host} carried no access_token in its Location fragment "
-                             f"(error={self._scrub(error)[:100]}, keys={self._scrub(','.join(sorted(fragment)))[:100]})",
-                             phase="credential", retryable=True)
+                             f"(error={self._scrub(error)[:100]}, keys={self._scrub(','.join(sorted(fragment)))[:100]}); "
+                             f"not retried — the password was sent", phase="credential", retryable=False)
+        raw_expiry = (fragment.get("expires_in") or [None])[0]
         try:
-            expires_in = int((fragment.get("expires_in") or [""])[0])
+            expires_in = int(raw_expiry) if raw_expiry is not None else 0
         except ValueError:
             expires_in = 0
-        if expires_in <= 0:
+        if not 0 < expires_in <= MAX_EXPIRES_IN:
             # A token WAS minted. Revoke it before saying no session could be built from it, and
             # do not retry into a second one: the fragment's shape is a fact about the target.
             self._revoke(token)
             raise LoginError(UNREACHABLE, f"302 from {host} carried a token without a usable expires_in "
-                             f"(got {(fragment.get('expires_in') or [None])[0]!r}); the token was revoked",
-                             phase="credential", retryable=False)
+                             f"(got {self._scrub(str(raw_expiry))[:100]!r}; the bound is 1..{MAX_EXPIRES_IN}); "
+                             f"the token was revoked", phase="credential", retryable=False)
         return token, expires_in
 
     # ── the logout ───────────────────────────────────────────────────────────────────────────
@@ -380,19 +447,26 @@ class FleetLogin:
                                            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
         except httpx.HTTPError as exc:
             problem = self._transport_error(exc, token)
-            phase, detail = problem.phase, problem.message
+            phase, outcome, detail = problem.phase, UNREACHABLE, problem.message
         else:
-            if response.status_code in (200, 401, 404):
-                # Revoked; or the token is already dead (a 401 is what a revoked or expired token
-                # gets); or the object is already gone. Nothing is left on the target either way.
+            if response.status_code in (200, 404):
+                # Revoked, or the object is already gone. ONLY a 404 means gone: a 401 says the DELETE
+                # was not authenticated and nothing about the object (review of #289, Codex).
                 event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown,
                       outcome="revoked" if response.status_code == 200 else "already-gone", secrets=secrets)
                 return
-            phase, detail = "poll", (f"HTTP {response.status_code} on DELETE {USER_TOKEN_API}/<name>: "
-                                     f"{self._scrub(response.text, token)[:200]}")
-        failure(log, "fleet-logout-failed", phase=phase, outcome=UNREACHABLE, **self._fields(), token=shown,
-                action=("the OAuthAccessToken is still on the target and nothing here will try again: "
-                        "delete it there (oc delete oauthaccesstoken <token>) so it does not become litter"),
+            body = self._scrub(response.text, token)[:200] or "<empty body>"
+            if response.status_code == 401:
+                phase, outcome = "credential", AUTH_FAILED
+                detail = (f"401 Unauthorized on DELETE {USER_TOKEN_API}/<name>: the token did not authorise "
+                          f"its own revoke, so the object may still exist — {body}")
+            else:
+                phase, outcome = "poll", UNREACHABLE
+                detail = f"HTTP {response.status_code} on DELETE {USER_TOKEN_API}/<name>: revoke refused — {body}"
+        failure(log, "fleet-logout-failed", phase=phase, outcome=outcome, **self._fields(), token=shown,
+                action=("the OAuthAccessToken may still be on the target and nothing here will try again: "
+                        "delete it there as cluster-admin (oc delete oauthaccesstoken <token>) so it does "
+                        "not become litter"),
                 detail=detail, secrets=secrets)
 
     # ── the vocabulary ───────────────────────────────────────────────────────────────────────
@@ -408,12 +482,14 @@ class FleetLogin:
         secrets = (self._password, *more)
         return redact(redact_text(text, *secrets), secrets)
 
-    def _transport_error(self, exc: httpx.HTTPError, *more: str | None) -> LoginError:
+    def _transport_error(self, exc: httpx.HTTPError, *more: str | None, retryable: bool = True) -> LoginError:
         """A transport failure in the one shape this process gives one — `<ExceptionType>: <text>`,
-        which `is_verify_failure` and the poller's classifier both key on."""
+        which `is_verify_failure` and the poller's classifier both key on. Whether it may be retried
+        is the caller's to say: it depends on whether the password was on the wire, not on the
+        exception."""
         message = self._scrub(f"{type(exc).__name__}: {exc}", *more)
         return LoginError(UNREACHABLE, message, phase="tls" if is_verify_failure(message) else "connect",
-                          retryable=True)
+                          retryable=retryable)
 
     def _log_retry(self, exc: LoginError, attempt: int, *, retry_in: float | None = None,
                    gave_up: bool = False) -> None:
