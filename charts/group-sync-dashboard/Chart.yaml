@@ -215,7 +215,7 @@ type: application
 # what the loader refuses — both modes at once, a mode beside a credential, a mode on the declared
 # controller or the inferred host, and a non-boolean — so a green `helm upgrade` cannot CrashLoop the
 # pod. A stanza that declares nothing behaves exactly as before.
-version: 0.47.0
+version: 0.47.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
