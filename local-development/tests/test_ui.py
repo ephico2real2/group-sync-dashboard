@@ -6700,6 +6700,23 @@ class TestClusterConfigPage:
         twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
         assert twin["metadata"]["labels"]["note"] == "line1\nline2\ttab\r"
 
+    def test_the_twin_is_the_object_the_api_writes_when_a_value_carries_whitespace(self, page, cc_rig):
+        """Round 2 (OB3 C8): a pasted value arrives with its spaces; ccBody() trims, ccYaml() did not, so
+        the pane described `gsd-cluster- west ` — a name the API server refuses — while the API wrote
+        `gsd-cluster-west`. With the writes off, the pane IS the product, so it must be the API's object."""
+        import yaml as _yaml
+        from gsd.clusterconfig.writer import CreateRequest, secret_object
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.click("#cc-ca-trustedBundle")
+        page.fill("#cc-name", "  west  "); page.fill("#cc-server", "  https://api.west.example:6443  ")
+        page.evaluate("() => { view.clusterForm.labels['esc'] = 'a\\u001bb'; render(); }")   # a control character too
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        want = secret_object(CreateRequest(name="west", server="https://api.west.example:6443", credential_kind="bearerToken",
+                                           token="x", tls_mode="trustedBundle", labels={"esc": "a\x1bb"}), "gsd-ns", redact=True)
+        assert twin == want, (twin["metadata"], twin["stringData"])
+
     def test_a_poll_whose_only_change_is_a_finding_repaints_the_tab(self, page, cc_rig):
         """Round 2 (OB2 C11): removing `data.clusterconfigs` from the fingerprint killed NO test — a new
         cluster also changes whoami's `visibility.clusters`, so that repaint rode another payload. A

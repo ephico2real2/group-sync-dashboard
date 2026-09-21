@@ -5616,7 +5616,10 @@ function ccFinding(f) {
    (SPEC_S2 C2: a test holds the two equal field for field). */
 function ccYaml(d) {
   const f = view.clusterForm;
-  const name = f.name || "<name>";
+  // Trimmed exactly as ccBody() sends them: a pasted " west " made the pane describe `gsd-cluster- west `,
+  // a name the API server refuses, while the API wrote `gsd-cluster-west` (round 2, OB3 C8).
+  const name = f.name.trim() || "<name>";
+  const server = f.server.trim();
   const tls = { insecure: f.caMode === "insecure" };
   if (f.caMode === "caData") tls.caData = "<redacted>";
   const cfg = { tlsClientConfig: tls, bearerToken: "<redacted>" };
@@ -5636,7 +5639,7 @@ function ccYaml(d) {
     `  namespace: ${y((d.secrets && d.secrets.namespace) || "<namespace>")}`, "  labels:", labels.join("\n"),
     "  annotations:", `    groupsync-dashboard.io/managed-by: ${y("ui")}`, "type: Opaque", "stringData:",
     // `|-` (strip): a `|` block keeps its final newline, and the API writes none — byte for byte.
-    `  name: ${y(name)}`, `  server: ${y(f.server || "")}`, "  config: |-", `    ${JSON.stringify(cfg)}`,
+    `  name: ${y(name)}`, `  server: ${y(server)}`, "  config: |-", `    ${JSON.stringify(cfg)}`,
     `  visibility: ${y(f.visibility)}`, `  identity: ${y(f.identity)}`, `  enabled: ${y("true")}`].join("\n");
 }
 function ccAddForm(d) {
