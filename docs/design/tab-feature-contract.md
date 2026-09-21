@@ -56,6 +56,65 @@ success`) **survives the refusal card** — CR health is governance data. Distin
 installed" state. The `oc get ... -l rbac.ocp.io/unmanaged=true` hint appears **only** when something is
 audit-stamped. Shares `bindingTable` (and its sort state) with Access granted — one component, two tabs.
 
+### Namespace audit
+
+Captured late — #153 named this page a reference and skipped it, so the one page the contract calls a
+reference is the one page whose features were never written down. The full inventory, measured off the
+running dashboard, is `docs/design/nsaudit-feature-capture.md`; what a redesign may not remove is here.
+
+Six cards: `Namespace audit` (the verdict), `Why this is a risk`, `Exposure by namespace`, `How to close
+it`, `Every grant`, `Namespaces`. The last one is a different subject from the other five — the whole
+namespace index, 106 rows on the reference cluster — and it is the third drill-down, so it stays.
+
+KPIs `Namespaces at risk · People exposed · Grants to migrate · Critical · High`, **all five from the
+per-namespace rollup, which the server neither pages nor filters**. `People exposed` is the *union* of
+the rollup's name lists and not the sum of its `distinct_users`: the sum double-counts anyone with
+grants in more than one namespace (measured: 11 against a truth of 8). `Grants to migrate` is summed the
+same way, because a count taken from the paged list below *"shrinks when the reader narrows the filter,
+which reads as the problem getting smaller because they looked at it closely"*. Narrowing the detail list
+must leave all five unmoved.
+
+`riskTier`'s ranking is the page's argument and must survive intact: **privilege and scope, never
+count** — *"one forgotten cluster-admin outranks twenty view grants, and a page sorted by volume puts the
+twenty first and buries the one"*. Four tiers, each carrying its **word** beside its colour.
+
+`Exposure by namespace` has six columns (`Risk · Namespace · Highest privilege · People · Grants · Who is
+exposed`), five of them sortable through a `<button>` in the `<th>` with `aria-sort`, and a **Restore
+risk order** control that appears only when the order is not the default. `Who is exposed` is bounded by
+`WHO_PREVIEW` = 4 with an honest `+N more`, and the bound's reasoning is load-bearing: the names are
+*"corroboration"*, the full roster is one section down, and an unbounded column *"would decide the width
+of the whole table — on the view that is supposed to be the scannable one"*.
+
+`Every grant` is **collapsed by default** — *"on a cluster with thousands of direct grants rendering
+every row costs time nobody gets value from"* — behind a disclosure that states the server's `total`
+rather than the rendered count. Its namespace selector is a **server-side** filter that opens the
+disclosure with it, its sort ranks roles by privilege and not alphabetically, and its truncation note
+says the rest are *"not hidden findings — they are ranked below these"*.
+
+The runbook's five steps are the tab's other half: identify the role by the naming convention, add the
+person to the group, **wait one sync** (*"deleting first leaves them locked out"*), delete the binding,
+confirm. It ends on the sentence the page is for — *"**Operational goal:** zero rows on this page"* — and
+the zero state is a page of its own, not an empty table.
+
+Two exclusions are stated rather than silent: the platform count (*"system components and `kubeadmin` are
+break-glass … with nowhere to migrate to"*), and the platform folding on the namespace page (*"the
+deployed demo-prod page listed 54 bindings, 41 of them these"*; `system:image-pullers` in every namespace
+would make *"zero in both"* impossible).
+
+The namespace page (`nsDetail`) is part of this tab: labels as KPIs with the *"outside the naming
+convention, so no mnemonic-based report will ever pick it up"* note, `Who reaches it, and through which
+group`, the cluster-wide reach, `Direct grants` with the operational-goal-is-zero line, the sibling
+namespaces, and `History` with its first-observed / granted / revoked vocabulary. It carries **no
+export**, deliberately: offering the audit's export there *"exported rows the reader was not looking
+at"*.
+
+**Visibility.** `/user-bindings` is **self-scoped, not refused** — a reader's own grants are theirs to
+see — so the narrowed page renders `selfGrantsView` and **none of the wide view's aggregates**: a KPI
+recomputed over one person *"keeps its label and changes its meaning"*. The refusal card is reached only
+where there is no identity to key the rows on. Nothing on this page is on `/metrics`: the only public
+trace is one `gsd_alerts_total{kind="direct_user_binding"}` per cluster, so unlike the Cluster Overview
+this tier is not theatre.
+
 ### Logins
 The richest page in the product. Capture-off, nothing-recorded (three sub-variants), and normal states.
 A **stalled-capture** warning computed from the read interval. A window banner stating that
