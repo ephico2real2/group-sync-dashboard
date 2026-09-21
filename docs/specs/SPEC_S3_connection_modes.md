@@ -101,12 +101,70 @@ clusterConfig:
   fleetAccount:
     # The LDAP account the dashboard logs in AS when connecting a cluster that declares a mode.
     # One account for the fleet; a stanza overrides it with ldapConnectionBootstrap.
-    username: ""
+    username: ocp-oauth-bind-serviceid
     # Its password. Never a literal in values — a Secret reference, read at connect time only.
     passwordSecret:
-      name: gsd-fleet-account
-      key: password
+      namespace: openshift-config        # optional; defaults to the release namespace
+      name: ldap-oauth-bind-secret
+      key: bindPassword
 ```
+
+**Named explicitly, never discovered from the OAuth CR** (the operator's ruling, 2026-09-21). The
+account and its Secret could in principle be read off `oauth/cluster` — the cluster's LDAP identity
+provider already names a `bindDN` and a `bindPassword` Secret. This spec deliberately does not, for
+three reasons:
+
+1. It would need `get` on `oauth/cluster`, a **cluster-scoped** read of the cluster's identity
+   configuration, to learn one username.
+2. It would couple S3b to the OAuth CR's shape — a second identity provider, a non-LDAP provider, or
+   a schema change breaks a connector that has nothing to do with authentication config.
+3. It would only ever work where the fleet account **is** the IDP's bind account. Naming it in values
+   lets an estate use a different account, which is the normal case.
+
+That the two happen to coincide on the reference cluster is a convenience, not a mechanism.
+
+#### `passwordSecret.namespace` — a cross-namespace read, and what it costs
+
+`namespace` is optional and defaults to the release namespace. Setting it — as the reference
+configuration does, to `openshift-config` — moves the read outside the namespace boundary the rest of
+this design is built on, and that is not free:
+
+- `templates/cluster-secrets-rbac.yaml` is deliberately **a Role, not a ClusterRole**, because
+  "`secrets` cluster-wide would hand the dashboard every credential on the cluster". A Secret in
+  another namespace needs its own Role **there**, scoped with `resourceNames` to that one Secret, and
+  a RoleBinding for the dashboard's ServiceAccount.
+- The dashboard's chart installs into its own namespace. Creating a RoleBinding in `openshift-config`
+  means either the chart writes into a namespace it does not own — which many clusters refuse, and
+  which is a privilege-escalation surface — or that grant is applied separately and the chart
+  **refuses to start the mode** until it is present, reporting `fleet-credential-missing` naming the
+  namespace, the Secret and the key.
+
+Measured on the reference cluster, 2026-09-21: `ldap-oauth-bind-secret` exists in `openshift-config`
+with key `bindPassword`, and the dashboard's ServiceAccount **cannot read it** (`oc auth can-i get
+secrets/ldap-oauth-bind-secret -n openshift-config` → `no`). The group-sync-operator chart
+establishes the pattern to copy — a dedicated `oauth-secret-extractor` ServiceAccount with a Role in
+`openshift-config` scoped by `resourceNames` to a single Secret — but that grant is for the
+operator's consumer, not this one.
+
+#### Whichever account is named, it must be able to LOG IN
+
+Independent of where the password lives: §3's modes obtain a **token from the target cluster's OAuth
+server**, so the named account has to be one that provider will authenticate. On the reference
+cluster the IDP's user search is
+
+```
+…/dc=ephico2real,dc=com?uid?sub?(&(uid=*)(memberOf=cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com))
+```
+
+so an account authenticates only if it carries a `uid` **and** is a member of that group. A directory
+*bind* identity — `cn=…,ou=TrustedApplications`, an RDN of `cn=`, in a service OU — typically
+satisfies neither: it can bind to the directory so the OAuth server may search it, which is a
+different capability from being findable as a user.
+
+**This is checkable by a directory read and must not be checked by attempting the login.** A lockout
+policy would lock the account the cluster's OAuth uses to authenticate *every* user, so the
+verification is `ldapsearch -s base uid memberOf` against the entry, not a login attempt. If the named
+account turns out not to be loginable, the answer is to name one that is — not to widen the filter.
 
 Rules, in the order they are checked:
 
