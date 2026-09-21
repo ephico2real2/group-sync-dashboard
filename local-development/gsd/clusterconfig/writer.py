@@ -7,7 +7,9 @@ Secret carrying our label — the app checks the label itself before an update o
 RBAC cannot scope a verb by label. The request is validated by the SAME parser discovery runs
 (`parse_secret` on the object about to be written), so a request this module accepts is a Secret the
 next discovery accepts, byte for byte. The credential is never logged here: a finding names the key,
-the audit line names the person, the verb and the Secret.
+the audit line names the person, the verb and the Secret — in #245's `event-name key=value` shape and
+through its emit helper, so the write path and the discovery path speak one vocabulary and the
+credential in play is handed to the one place that redacts.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from ..config import ClusterConfig
 from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
 from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
+from .events import event
 from .parser import Finding, parse_secret
 
 log = logging.getLogger(__name__)
@@ -193,7 +196,8 @@ def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, ho
             if exc.message.startswith("HTTP 409"):
                 raise WriteRefused("secret-exists", f"Secret {name} already exists in {namespace}", conflict=True) from exc
             raise _failed(exc, req.token, obj["stringData"]["config"]) from exc
-    log.info("cluster Secret %s created by %s for cluster %s", name, viewer, req.name)
+    event(log, logging.INFO, "cluster-secret-created", secret=name, namespace=namespace, cluster=req.name,
+          by=viewer, secrets=(req.token,))
     return name
 
 
@@ -247,7 +251,8 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
                 raise WriteRefused("secret-changed", f"Secret {name} changed since it was read — GitOps or another "
                                                      "writer got there first; refresh and rotate again", conflict=True) from exc
             raise _failed(exc, token, data["config"]) from exc
-    log.info("cluster Secret %s credential rotated by %s for cluster %s", name, viewer, cluster)
+    event(log, logging.INFO, "cluster-secret-rotated", secret=name, namespace=namespace, cluster=cluster,
+          by=viewer, secrets=(token,))
 
 
 def delete(host_client: ClusterClient, namespace: str, name: str, *, viewer: str, cluster: str) -> None:
@@ -258,7 +263,7 @@ def delete(host_client: ClusterClient, namespace: str, name: str, *, viewer: str
             host_client._send(client, "DELETE", _path(namespace, name))
         except ClusterError as exc:
             raise _failed(exc) from exc
-    log.info("cluster Secret %s deleted by %s for cluster %s", name, viewer, cluster)
+    event(log, logging.INFO, "cluster-secret-deleted", secret=name, namespace=namespace, cluster=cluster, by=viewer)
 
 
 def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None, timeout: float, viewer: str) -> dict:
@@ -289,8 +294,8 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
         # The probe client redacts its own token from what the remote echoes; scrubbed again here so the
         # sentence that reaches the page never depends on which client raised it.
         out["error"] = _scrub(f"{exc.outcome}: {exc.message}", req.token)
-    log.info("connection test by %s against %s: %s", viewer, req.server,
-             "reachable" if out["reachable"] else "unreachable")
+    event(log, logging.INFO, "connection-tested", cluster=req.name, server=req.server, by=viewer,
+          outcome="reachable" if out["reachable"] else "unreachable", secrets=(req.token,))
     return out
 
 

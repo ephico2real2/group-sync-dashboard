@@ -480,6 +480,21 @@ INFO
 {{- end -}}
 {{- end -}}
 
+# The HTTP REQUEST RECORD's own level (#245): httpx and uvicorn.access, separately from the app's
+# reasoning. The same five values, refused the same way, defaulting to WARNING when unset or null.
+{{- define "gsd.httpLogLevel" -}}
+{{- $raw := .Values.httpLogLevel -}}
+{{- if or (not (hasKey .Values "httpLogLevel")) (kindIs "invalid" $raw) -}}
+WARNING
+{{- else -}}
+{{- $l := upper (trim (toString $raw)) -}}
+{{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
+{{- fail (printf "httpLogLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nThis value governs the HTTP REQUEST RECORD only — httpx (outbound API calls) and uvicorn.access (inbound requests). This app's own loggers are `logLevel`, a different value.\n\nINFO restores the per-request lines that were the default before #245; WARNING keeps the failures and drops the routine 200s." (toString $raw)) -}}
+{{- end -}}
+{{- $l -}}
+{{- end -}}
+{{- end -}}
+
 {{/*
 config.alerts.groupCountCliff, validated at render so a threshold that can never or always
 fire is refused here rather than discovered as silence. Emits nothing; include it for effect.

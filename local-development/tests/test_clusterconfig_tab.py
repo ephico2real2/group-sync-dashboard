@@ -152,7 +152,7 @@ class TestWriter:
             assert create(host, NS, _req(), host_name="c1", taken={}, viewer="root") == "gsd-cluster-west"
         assert host.calls == [("GET", "/api/v1/namespaces/ns/secrets/gsd-cluster-west"), ("POST", "/api/v1/namespaces/ns/secrets")]
         assert host.secrets["gsd-cluster-west"]["metadata"]["annotations"] == {MANAGED_BY_ANNOTATION: "ui"}
-        assert "cluster Secret gsd-cluster-west created by root for cluster west" in caplog.text
+        assert "cluster-secret-created secret=gsd-cluster-west namespace=ns cluster=west by=root" in caplog.text
         assert TOKEN not in caplog.text
         with pytest.raises(WriteRefused) as exc:
             create(host, NS, _req(), host_name="c1", taken={}, viewer="root")
@@ -302,7 +302,8 @@ class TestWriter:
         assert config == {"bearerToken": "new-token-1234", "tlsClientConfig": {"insecure": True}}
         assert base64.b64decode(written["data"]["visibility"]) == b"inherit"
         assert host.calls[-1] == ("PUT", "/api/v1/namespaces/ns/secrets/gsd-cluster-east")
-        assert "credential rotated by root for cluster east" in caplog.text and "new-token-1234" not in caplog.text
+        assert "cluster-secret-rotated secret=gsd-cluster-east namespace=ns cluster=east by=root" in caplog.text
+        assert "new-token-1234" not in caplog.text
 
     def test_a_secret_without_our_label_is_never_touched_and_an_absent_one_is_named(self):
         plain = {"metadata": {"name": "other", "labels": {"app": "x"}}, "data": {}}
@@ -322,7 +323,7 @@ class TestWriter:
         with caplog.at_level(logging.INFO):
             delete(host, NS, "gsd-cluster-east", viewer="root", cluster="east")
         assert "gsd-cluster-east" not in host.secrets and host.calls[-1][0] == "DELETE"
-        assert "cluster Secret gsd-cluster-east deleted by root for cluster east" in caplog.text
+        assert "cluster-secret-deleted secret=gsd-cluster-east namespace=ns cluster=east by=root" in caplog.text
 
     def test_the_connection_test_probes_version_and_identity_and_stores_nothing(self, monkeypatch, caplog):
         answers = {"/version": {"gitVersion": "v1.31.6"}, "/apis/user.openshift.io/v1/users/~": {"metadata": {"name": "system:serviceaccount:ns:reader"}}}
@@ -344,7 +345,8 @@ class TestWriter:
             out = probe_connection(_req(), NS, host_name="c1", timeout=5.0, viewer="root")
         assert out == {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:reader", "error": None}
         assert seen == ["/version", "/apis/user.openshift.io/v1/users/~"]
-        assert "connection test by root against https://api.west.example:6443: reachable" in caplog.text and TOKEN not in caplog.text
+        assert "connection-tested cluster=west server=https://api.west.example:6443 by=root outcome=reachable" in caplog.text
+        assert TOKEN not in caplog.text
         del answers["/apis/user.openshift.io/v1/users/~"]      # a cluster without the OpenShift user API
         assert probe_connection(_req(), NS, host_name="c1", timeout=5.0, viewer="root")["identity"] is None
         answers.clear()
@@ -442,7 +444,7 @@ class TestApi:
         assert app.state.poller.woken == 1
         assert base64.b64decode(host.secrets["gsd-cluster-west"]["data"]["name"]) == b"west"   # stored as the API server stores it
         assert TOKEN not in r.text and TOKEN not in caplog.text
-        assert "cluster Secret gsd-cluster-west created by root for cluster west" in caplog.text
+        assert "cluster-secret-created secret=gsd-cluster-west namespace=ns cluster=west by=root" in caplog.text
 
     @pytest.mark.parametrize("patch,status,code", [
         ({"credential": {"kind": "oauth", "username": "u", "password": "p"}}, 422, "oauth-exchange-not-built"),

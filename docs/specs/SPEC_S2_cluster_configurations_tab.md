@@ -5,7 +5,7 @@
 | Programme | Cluster configuration as labelled Secrets (#230), step S2 of three — after S1 (`SPEC_S1_cluster_secrets.md`) |
 | Batch | S — cluster configuration |
 | Release | — (post-programme) |
-| Version on release | chart 0.43.0 |
+| Version on release | chart 0.44.0 |
 | Issue | [#230](https://github.com/ephico2real2/group-sync-dashboard/issues/230) |
 | Status | in implementation |
 | Source | the agreed mock `docs/design/cluster-configurations-mock.html` (operator: "I approve the design", 2026-09-20) and S1's contract; the orchestrator's own text, no separate design-agent output |
@@ -222,7 +222,8 @@ Administrator tier; registered only when `clusterConfig.secrets.writes.enabled` 
   from the API server is `502 {"detail": "the ServiceAccount may not create Secrets here — the chart's
   clusterConfig.secrets.writes switch renders the grant"}`; any other API error is `502` with the
   server's sentence.
-- On success: one log line `cluster Secret gsd-cluster-<name> created by <viewer> for cluster <name>`
+- On success: one log line `cluster-secret-created secret=gsd-cluster-<name> namespace=<ns> cluster=<name> by=<viewer>`
+  (#245's event shape, through its emit helper)
   (the viewer from the proxy's trusted header — `trusted_viewer(request)` —, the verb, the Secret and
   the cluster id; never a credential-bearing field — the token, the CA, a label), `request_discovery()`, `201 {"secret": "gsd-cluster-<name>",
   "cluster": "<name>", "discovery": "requested"}`.
@@ -233,14 +234,14 @@ Body `{"token": "…"}`. Only a cluster whose source is `secret:<secret>` (`404`
 `409 not-a-secret-cluster` for a values or host cluster). The app GETs the Secret, **checks the label
 itself** (RBAC cannot express "by label": a Secret in the namespace without our label is `409
 not-our-secret`, never touched), replaces `config.bearerToken` in place keeping every other key,
-PUTs it back. Log line `cluster Secret <secret> credential rotated by <viewer> for cluster <name>`;
+PUTs it back. Log line `cluster-secret-rotated secret=<secret> namespace=<ns> cluster=<name> by=<viewer>`;
 `request_discovery()`; `200 {"secret": …, "cluster": …, "discovery": "requested"}`. The old token is
 gone from the cluster on the write; the response never carries either.
 
 ### C4 — `DELETE /api/clusterconfigs/{name}`
 
-Same eligibility and label check as C3. DELETEs the Secret; log line `cluster Secret <secret> deleted
-by <viewer> for cluster <name>`; `request_discovery()` — the next discovery retires the cluster
+Same eligibility and label check as C3. DELETEs the Secret; log line `cluster-secret-deleted secret=<secret>
+namespace=<ns> cluster=<name> by=<viewer>`; `request_discovery()` — the next discovery retires the cluster
 (`enabled=0`, history kept, S1 C3); `200 {"secret": …, "cluster": …, "retired": "on the next discovery"}`.
 
 ### C5 — `POST /api/clusterconfigs/test` (the connection test)
@@ -256,7 +257,7 @@ memory, runs it through `parse_secret` (so every refusal above applies, same cod
 or `{"reachable": false, "server_version": null, "identity": null, "error": "<outcome>: <message>"}` —
 `ClusterError`'s outcome words (`unreachable`, `auth_failed`, `forbidden`). A 404 on `users/~` (a
 cluster without the OpenShift user API) leaves `identity` null with `reachable` true. Nothing is
-stored, registered or logged beyond the line `connection test by <viewer> against <server>: <reachable>`.
+stored, registered or logged beyond the line `connection-tested cluster=<name> server=<server> by=<viewer> outcome=<reachable|unreachable>`.
 
 ### C6 — security (S1 C4, extended to the writes)
 
@@ -276,7 +277,7 @@ stored, registered or logged beyond the line `connection test by <viewer> agains
 
 `clusterConfig.secrets.writes.enabled: false` (OFF by default — the notes) → `clusterSecretsWritesEnabled`
 in the ConfigMap and `create`, `update`, `delete` appended to the `-cluster-secrets` Role's verbs
-(the same Role; off → `get`, `list`, `watch` only). README rows; chart 0.43.0; a CHANGELOG entry.
+(the same Role; off → `get`, `list`, `watch` only). README rows; chart 0.44.0; a CHANGELOG entry.
 
 ### C8 — tests
 
@@ -363,5 +364,5 @@ and the cards. `app.css`: `--tab-clusters` in the three token blocks, `body[data
 
 `values.yaml` `clusterConfig.secrets.writes.enabled: true` under the S1 stanza with its comment;
 `templates/configmap.yaml` `clusterSecretsWritesEnabled`; `templates/cluster-secrets-rbac.yaml` the
-conditional verbs; README rows; `Chart.yaml` 0.43.0 with its history line; `API.md` the four routes;
+conditional verbs; README rows; `Chart.yaml` 0.44.0 with its history line; `API.md` the four routes;
 `docs/CHANGELOG.md` the entry.
