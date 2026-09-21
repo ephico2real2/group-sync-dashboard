@@ -52,7 +52,7 @@ _ECHOABLE_KEYS = {k.lower() for k in (
     *_REFUSED_CONFIG_KEYS, *_REFUSED_TLS_KEYS,
     "bearerToken", "oauth", "tlsClientConfig", "caData", "insecure", "username", "password",
     "name", "server", "config", "visibility", "identity", "enabled",
-    "namespaces", "clusterResources", "project", "shard",
+    "namespaces", "clusterResources", "project", "shard", "dashboardController",
 )}
 
 
@@ -144,6 +144,15 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
             return finding("unsupported-config-key",
                            f"data.{key}: Argo CD's scope/routing key; this contract reads the whole "
                            "cluster and cannot honour it")
+
+    # The controller flag is a VALUES concept (#249): it names this pod's own cluster, and a
+    # Secret-sourced cluster is by definition remote — the chart writes the stanza for the cluster
+    # the pod runs on. Accepting it here would let a Secret claim to be the host, which decides the
+    # oauth-proxy's target and what `same-as-host` resolves against. Refused by name, not ignored.
+    if "dashboardController" in data:
+        return finding("unsupported-config-key",
+                       "data.dashboardController: the controller is declared in the chart's values, "
+                       "not by a Secret — a Secret-sourced cluster is remote by definition")
 
     raw_config = data.get("config")
     if raw_config is None or not raw_config.strip():
