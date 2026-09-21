@@ -132,7 +132,17 @@ $ oc get oauthaccesstokens -o jsonpath='{.items[0].expiresIn}'
 31536000
 ```
 
-**One year**, on live tokens — 365 times the default. Three consequences follow:
+**One year**, on live tokens — 365 times the default.
+
+**A fixed daily refresh is not wrong; it is just not derived.** The session lifetime is an **upper
+bound**, so re-authenticating more often than required is safe — on this cluster a daily refresh is
+simply 364 days earlier than it needs to be, which costs a login and nothing else. It fails in exactly
+one direction: a target that has shortened its session **below** 24 hours, where the daily refresh
+arrives after the credential has already died and every poll in between has failed. Reading the target's
+value buys two things a fixed figure cannot — correctness on a short-session cluster, and the ability to
+refresh at a *fraction* of the real lifetime rather than at a guess.
+
+Three consequences follow:
 
 1. **Renewal tracks the shorter of the two clocks.** A looked-up ServiceAccount token has its own TTL
    (§8.3); a `userSelfLogin` session has this one. Whichever expires first decides when the dashboard
