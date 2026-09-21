@@ -346,6 +346,9 @@ function applyPosition(pos) {
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
       view.nsSearch = "";
+      // The index's own controls are about THIS cluster's list (#264, Cursor C4): a search, a
+      // page and a fold chosen on one estate mean nothing on the next.
+      view.nsIndexSearch = ""; view.nsIndexOpen = null; view.nsIndexPage = 1;
     }
     if (pos.cluster) view.cluster = pos.cluster;
   }
@@ -4978,7 +4981,14 @@ function namespacesCard() {
   // thing this page does not get to do to a control it does not own (the mock's own render check found
   // that). Typing in THIS box reveals the section — filtering something the reader cannot see makes the
   // box look broken, and "nothing matches" is itself the answer to their query.
-  const indexOpen = ownQ ? true : (view.nsIndexOpen === null ? inScope.length <= INDEX_FOLD : view.nsIndexOpen);
+  // A FOLD ONLY HOLDS WHILE THE SECTION IS BIG ENOUGH TO NEED ONE (review of #264, Cursor C4). An
+  // explicit `false` used to follow the reader: fold a 106-namespace estate, switch to a cluster with
+  // four, and they got a folded four-row list with no empty branch to explain it — the same if
+  // hiding platform namespaces took the set below the threshold. A section at or under INDEX_FOLD is
+  // simply open; above it, the reader's choice stands and `null` means "decide by size".
+  const indexOpen = ownQ || inScope.length <= INDEX_FOLD
+    ? true
+    : (view.nsIndexOpen === null ? false : view.nsIndexOpen);
   const pages = Math.max(1, Math.ceil(shown.length / INDEX_PAGE));
   const wanted = Number.isFinite(view.nsIndexPage) ? Math.trunc(view.nsIndexPage) : 1;
   const page = Math.min(Math.max(1, wanted), pages);
@@ -6586,6 +6596,12 @@ function render() {
   // empty menu — review of #224, OB3).
   const caret = focusedId && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   renderFilters();
+  // THE SAME IME RULE, FOR THE INDEX'S OWN BOX (#264, Cursor C3). renderFilters returns early while a
+  // conversion is unfinished because replacing the node commits half-kana and opens a second session
+  // on the new one; `#f-index-search` lives in `#main`, which this function replaces wholesale, so it
+  // needs the same guard. compositionend paints the catch-up.
+  if (searchComposingIn === "f-index-search"
+      && document.activeElement && document.activeElement.id === "f-index-search") return;
   const main = $("main");
   if (view.page === "home") {
     main.innerHTML = homePage();
@@ -6784,13 +6800,35 @@ function wireNsAudit() {
 
   const indexBox = document.getElementById("f-index-search");
   if (indexBox) {
-    indexBox.oninput = () => {
+    indexBox.oninput = (e) => {
       view.nsIndexSearch = indexBox.value;
       view.nsIndexPage = 1;   // EVERY filter change resets the page (#261): narrowing to six matches
-      render();               // while the reader sits on page 3 would otherwise show them nothing.
+                              // while the reader sits on page 3 would otherwise show them nothing.
+      // MID-COMPOSITION BELONGS TO THE IME (#264, Cursor C3). Repainting here replaces the node the
+      // IME is composing into — the same rule renderFilters keeps for the bar's boxes. The state is
+      // kept, and compositionend paints.
+      if (e.isComposing) return;
+      // AND THE CARET GOES BACK WHERE IT WAS, not to the end. Forcing it to the end made editing
+      // mid-string impossible: every keystroke jumped the cursor, so correcting a typo in the middle
+      // of a query was not possible. The bar's boxes have restored the real position since #152.
+      const at = [indexBox.selectionStart, indexBox.selectionEnd];
+      render();
       const again = document.getElementById("f-index-search");
-      if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      if (!again) return;
+      again.focus();
+      try { again.setSelectionRange(at[0], at[1]); } catch (err) { /* not selectable */ }
     };
+    indexBox.addEventListener("compositionstart", () => { searchComposingIn = "f-index-search"; });
+    indexBox.addEventListener("compositionend", (e) => {
+      searchComposingIn = null;
+      view.nsIndexSearch = e.target.value;
+      render();
+      const again = document.getElementById("f-index-search");
+      if (again) again.focus();
+    });
+    indexBox.addEventListener("blur", () => {
+      if (searchComposingIn === "f-index-search") searchComposingIn = null;
+    });
     indexBox.onkeydown = (e) => {
       if (e.key !== "Escape" || !indexBox.value) return;
       e.stopPropagation();   // the shell clears its own box on Escape; this one is not the shell's
