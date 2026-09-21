@@ -36,7 +36,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS cluster (
     id                  TEXT PRIMARY KEY,   -- the configured name; used in API paths
     api_url             TEXT NOT NULL,
-    enabled             INTEGER NOT NULL DEFAULT 1
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    source              TEXT NOT NULL DEFAULT 'values',   -- values | secret:<metadata.name> (SPEC_S1)
+    credential          TEXT NOT NULL DEFAULT ''          -- the KIND only: in-cluster | file | bearer | oauth
 );
 
 -- One row per OBSERVED sync, written only when lastSyncSuccessTime CHANGES (PLAN §6).
@@ -570,6 +572,82 @@ CREATE TABLE IF NOT EXISTS kpi_daily (
     value               REAL NOT NULL,
     PRIMARY KEY(cluster_id, day, metric)
 );
+-- The Kyverno policy module (#165, #170). Read through the policy reports, CEL family only; the
+-- deprecated ClusterPolicy/Policy family's results are COUNTED (legacy_results) and never stored,
+-- so the page can say they exist. `present` is three-valued like the operator's: a row with 0 is
+-- "looked, not installed"; no row is "never looked".
+CREATE TABLE IF NOT EXISTS kyverno_presence (
+    cluster_id          TEXT PRIMARY KEY,
+    present             INTEGER NOT NULL,
+    api_group           TEXT,              -- openreports.io/v1alpha1 | wgpolicyk8s.io/v1alpha2
+    policy_kinds        TEXT,              -- JSON list of the CEL kinds the cluster serves
+    reports             INTEGER NOT NULL DEFAULT 0,
+    legacy_results      INTEGER NOT NULL DEFAULT 0,
+    other_results       INTEGER NOT NULL DEFAULT 0,
+    breaker_total       INTEGER,           -- kyverno_breaker_total; NULL when not scraped
+    breaker_drops       INTEGER,           -- kyverno_breaker_drops; NULL when absent or not scraped
+    observed_at         TEXT NOT NULL
+);
+
+-- The CEL policies, replaced each poll: what the page lists and what says whether a policy can
+-- produce reports at all (background off + Audit means admission-time only).
+CREATE TABLE IF NOT EXISTS kyverno_policy (
+    cluster_id          TEXT NOT NULL,
+    kind                TEXT NOT NULL,
+    namespace           TEXT NOT NULL DEFAULT '',   -- '' for the cluster kinds
+    name                TEXT NOT NULL,
+    admission           INTEGER NOT NULL,
+    background          INTEGER NOT NULL,
+    actions             TEXT NOT NULL,      -- JSON list, e.g. ["Audit"]
+    failure_policy      TEXT NOT NULL,
+    ready               INTEGER,            -- NULL when the status carries no Ready condition
+    generated           INTEGER NOT NULL DEFAULT 0,  -- status.generated: a generated admission policy stands in
+    note                TEXT NOT NULL DEFAULT '',    -- a conditionStatus condition that is not True, else the message when not ready
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, kind, namespace, name)
+);
+
+-- One row per (policy, resource): what the newest reports say. Keyed by policy and the resource's UID
+-- (the report's own name — a deleted-and-recreated resource is a new row set, finding 4), never by
+-- rule: the CEL engine writes no rule name (finding 5, measured on the lab). `policy` is the wire string,
+-- namespace/name for a namespaced policy.
+CREATE TABLE IF NOT EXISTS kyverno_result (
+    cluster_id          TEXT NOT NULL,
+    policy_kind         TEXT NOT NULL,
+    policy              TEXT NOT NULL,
+    resource_kind       TEXT NOT NULL,
+    resource_namespace  TEXT NOT NULL DEFAULT '',
+    resource_name       TEXT NOT NULL,
+    resource_uid        TEXT NOT NULL DEFAULT '',
+    resource_api_version TEXT NOT NULL DEFAULT '',
+    result              TEXT NOT NULL,      -- pass | fail | warn | error | skip
+    severity            TEXT NOT NULL DEFAULT '',
+    category            TEXT NOT NULL DEFAULT '',
+    message             TEXT NOT NULL DEFAULT '',
+    process             TEXT NOT NULL DEFAULT '',   -- background scan | admission review
+    at                  INTEGER,            -- the result's own timestamp (epoch seconds)
+    controlled          INTEGER NOT NULL DEFAULT 0, -- a Pod/ReplicaSet/Job: usually a controller's copy
+    observed_at         TEXT NOT NULL,
+    PRIMARY KEY(cluster_id, policy_kind, policy, resource_uid)
+);
+
+-- Reports are owned by their resource and deleted when emptied (finding 4), so the history lives
+-- HERE: a problem (fail/warn/error) that appeared or cleared between two polls, append-only,
+-- pruned by kyverno.eventsRetentionDays like the other event tables.
+CREATE TABLE IF NOT EXISTS kyverno_result_event (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id          TEXT NOT NULL,
+    policy_kind         TEXT NOT NULL,
+    policy              TEXT NOT NULL,
+    resource_kind       TEXT NOT NULL,
+    resource_namespace  TEXT NOT NULL DEFAULT '',
+    resource_name       TEXT NOT NULL,
+    change              TEXT NOT NULL,      -- appeared | cleared
+    result              TEXT NOT NULL,      -- the problem result that appeared / was last seen
+    message             TEXT NOT NULL DEFAULT '',
+    observed_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS kyverno_result_event_by_time ON kyverno_result_event(cluster_id, observed_at);
 """
 
 
@@ -964,6 +1042,45 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "report_run: (cluster_id, requested_at) for the KPI page's per-cluster reads (review of #157)",
         [
             "CREATE INDEX IF NOT EXISTS report_run_by_cluster_time ON report_run(cluster_id, requested_at)",
+        ],
+    ),
+    (
+        18,
+        "kyverno_presence / kyverno_policy / kyverno_result / kyverno_result_event: the Kyverno policy module (#170)",
+        [
+            """CREATE TABLE IF NOT EXISTS kyverno_presence (
+                   cluster_id TEXT PRIMARY KEY, present INTEGER NOT NULL, api_group TEXT, policy_kinds TEXT,
+                   reports INTEGER NOT NULL DEFAULT 0, legacy_results INTEGER NOT NULL DEFAULT 0,
+                   other_results INTEGER NOT NULL DEFAULT 0, breaker_total INTEGER, breaker_drops INTEGER,
+                   observed_at TEXT NOT NULL)""",
+            """CREATE TABLE IF NOT EXISTS kyverno_policy (
+                   cluster_id TEXT NOT NULL, kind TEXT NOT NULL, namespace TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+                   admission INTEGER NOT NULL, background INTEGER NOT NULL, actions TEXT NOT NULL,
+                   failure_policy TEXT NOT NULL, ready INTEGER, generated INTEGER NOT NULL DEFAULT 0,
+                   note TEXT NOT NULL DEFAULT '', observed_at TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, kind, namespace, name))""",
+            """CREATE TABLE IF NOT EXISTS kyverno_result (
+                   cluster_id TEXT NOT NULL, policy_kind TEXT NOT NULL, policy TEXT NOT NULL,
+                   resource_kind TEXT NOT NULL, resource_namespace TEXT NOT NULL DEFAULT '', resource_name TEXT NOT NULL,
+                   resource_uid TEXT NOT NULL DEFAULT '', resource_api_version TEXT NOT NULL DEFAULT '',
+                   result TEXT NOT NULL, severity TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
+                   message TEXT NOT NULL DEFAULT '', process TEXT NOT NULL DEFAULT '', at INTEGER,
+                   controlled INTEGER NOT NULL DEFAULT 0, observed_at TEXT NOT NULL,
+                   PRIMARY KEY(cluster_id, policy_kind, policy, resource_uid))""",
+            """CREATE TABLE IF NOT EXISTS kyverno_result_event (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT, cluster_id TEXT NOT NULL, policy_kind TEXT NOT NULL,
+                   policy TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_namespace TEXT NOT NULL DEFAULT '',
+                   resource_name TEXT NOT NULL, change TEXT NOT NULL, result TEXT NOT NULL,
+                   message TEXT NOT NULL DEFAULT '', observed_at TEXT NOT NULL)""",
+            "CREATE INDEX IF NOT EXISTS kyverno_result_event_by_time ON kyverno_result_event(cluster_id, observed_at)",
+        ],
+    ),
+    (
+        19,
+        "cluster.source / cluster.credential: clusters declared as labelled Secrets (#230, SPEC_S1)",
+        [
+            "ALTER TABLE cluster ADD COLUMN source TEXT NOT NULL DEFAULT 'values'",
+            "ALTER TABLE cluster ADD COLUMN credential TEXT NOT NULL DEFAULT ''",
         ],
     ),
 ]
@@ -1732,36 +1849,47 @@ class Store:
 
     # -- configuration -----------------------------------------------------------------
 
-    def upsert_cluster(self, cluster_id: str, api_url: str, enabled: bool) -> None:
+    def upsert_cluster(self, cluster_id: str, api_url: str, enabled: bool, *,
+                       source: str = "values", credential: str = "") -> None:
         with self._tx() as conn:
             conn.execute(
-                """INSERT INTO cluster(id, api_url, enabled) VALUES(?,?,?)
+                """INSERT INTO cluster(id, api_url, enabled, source, credential) VALUES(?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET api_url=excluded.api_url,
-                                                 enabled=excluded.enabled""",
-                (cluster_id, api_url, int(enabled)),
+                                                 enabled=excluded.enabled,
+                                                 source=excluded.source,
+                                                 credential=excluded.credential""",
+                (cluster_id, api_url, int(enabled), source, credential),
             )
 
     def clusters(self) -> list[dict]:
         return self._rows(
-            """SELECT c.id, c.api_url, c.enabled,
+            """SELECT c.id, c.api_url, c.enabled, c.source, c.credential,
                       p.status, p.message, p.observed_at AS last_poll
                  FROM cluster c LEFT JOIN poll_outcome p ON p.cluster_id = c.id
                 ORDER BY c.id"""
         )
 
-    def retire_absent_clusters(self, configured_ids: list[str]) -> int:
+    def retire_absent_clusters(self, configured_ids: list[str], *, keep_sources: tuple[str, ...] = ()) -> int:
         """Retire — never delete — every stored cluster the configuration no longer names: set
         enabled=0 so its history and snapshot rows stay, but it leaves the served/active set (#96).
         A cluster disabled in config is already enabled=0 through upsert_cluster; this catches the
-        ones the config dropped entirely. Returns how many rows it retired."""
+        ones the config dropped entirely. Returns how many rows it retired.
+
+        `keep_sources` spares rows whose `source` starts with one of those prefixes, for the one
+        state where absence does not mean gone: the Secret discovery could not LIST (review of
+        #235, Grok C6). On a fresh process the registry has no previous set to stand on, so every
+        `secret:*` cluster would look absent and be retired by an outage we could not see past —
+        "we failed to look" must never read as "they were deleted"."""
         ids = list(configured_ids)
+        clauses, params = ["enabled=1"], []
+        if ids:
+            clauses.append(f"id NOT IN ({','.join('?' for _ in ids)})")
+            params += ids
+        for prefix in keep_sources:
+            clauses.append("(source IS NULL OR source NOT LIKE ?)")
+            params.append(f"{prefix}%")
         with self._tx() as conn:
-            if ids:
-                marks = ",".join("?" for _ in ids)
-                cur = conn.execute(
-                    f"UPDATE cluster SET enabled=0 WHERE enabled=1 AND id NOT IN ({marks})", ids)
-            else:
-                cur = conn.execute("UPDATE cluster SET enabled=0 WHERE enabled=1")
+            cur = conn.execute(f"UPDATE cluster SET enabled=0 WHERE {' AND '.join(clauses)}", params)
             return cur.rowcount
 
     # -- poll results ------------------------------------------------------------------
@@ -2924,7 +3052,7 @@ class Store:
 
     # The history tables retention may touch. A closed tuple, interpolated into SQL by
     # _prune_history — never a caller's string.
-    _HISTORY_TABLES = ("membership_event", "sync_event", "binding_event")
+    _HISTORY_TABLES = ("membership_event", "sync_event", "binding_event", "kyverno_result_event")
 
     def prune_membership_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
         """Delete membership events observed before `before_at`, at most `max_rows`. Returns rows deleted.
@@ -3605,6 +3733,166 @@ class Store:
                 (cluster_id,),
             ),
         }
+
+
+    # ── the Kyverno policy module (#165, #170) ────────────────────────────────────────────────
+
+    def replace_kyverno(self, cluster_id: str, read, observed_at: str) -> dict:
+        """Replace this cluster's Kyverno state from one read; None means no report API is served.
+
+        Returns the transitions it recorded: {"appeared": n, "cleared": n}. A problem result
+        (fail/warn/error) keyed by (policy kind, policy, resource) that was not a problem in the
+        previous state is `appeared`; one that was and is not now — or whose report is gone with its
+        resource (finding 4) — is `cleared`. The first observation of a cluster records no events:
+        a backlog is not a burst of appearances. Like every other replace, one transaction.
+        """
+        from .kyverno import PROBLEM_RESULTS
+        stats = {"appeared": 0, "cleared": 0}
+        with self._write() as conn:
+            seen_before = conn.execute("SELECT present FROM kyverno_presence WHERE cluster_id=?", (cluster_id,)).fetchone()
+            if read is None:
+                conn.execute(
+                    """INSERT INTO kyverno_presence(cluster_id, present, observed_at) VALUES(?,0,?)
+                       ON CONFLICT(cluster_id) DO UPDATE SET present=0, api_group=NULL, policy_kinds=NULL,
+                           reports=0, legacy_results=0, other_results=0, breaker_total=NULL, breaker_drops=NULL,
+                           observed_at=excluded.observed_at""",
+                    (cluster_id, observed_at))
+                conn.execute("DELETE FROM kyverno_policy WHERE cluster_id=?", (cluster_id,))
+                conn.execute("DELETE FROM kyverno_result WHERE cluster_id=?", (cluster_id,))
+                return stats
+            previous = {
+                (r["policy_kind"], r["policy"], r["resource_uid"]): (r["result"], r["resource_kind"], r["resource_namespace"], r["resource_name"])
+                for r in conn.execute(
+                    "SELECT policy_kind, policy, resource_uid, resource_kind, resource_namespace, resource_name, result "
+                    "FROM kyverno_result WHERE cluster_id=? AND result IN ('fail','warn','error')", (cluster_id,))
+            }
+            breaker = read.breaker
+            conn.execute(
+                """INSERT INTO kyverno_presence(cluster_id, present, api_group, policy_kinds, reports, legacy_results,
+                                                 other_results, breaker_total, breaker_drops, observed_at)
+                   VALUES(?,1,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(cluster_id) DO UPDATE SET present=1, api_group=excluded.api_group,
+                       policy_kinds=excluded.policy_kinds, reports=excluded.reports, legacy_results=excluded.legacy_results,
+                       other_results=excluded.other_results, breaker_total=excluded.breaker_total,
+                       breaker_drops=excluded.breaker_drops, observed_at=excluded.observed_at""",
+                (cluster_id, read.api_group, json.dumps(list(read.policy_kinds_served)), read.reports,
+                 read.legacy_results, read.other_results,
+                 None if breaker is None else breaker.total, None if breaker is None else breaker.drops, observed_at))
+            conn.execute("DELETE FROM kyverno_policy WHERE cluster_id=?", (cluster_id,))
+            conn.executemany(
+                """INSERT OR REPLACE INTO kyverno_policy(cluster_id, kind, namespace, name, admission, background, actions,
+                                                          failure_policy, ready, generated, note, observed_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [(cluster_id, p.kind, p.namespace or "", p.name, int(p.admission), int(p.background),
+                  json.dumps(list(p.actions)), p.failure_policy, None if p.ready is None else int(p.ready),
+                  int(p.generated), p.note, observed_at)
+                 for p in read.policies])
+            conn.execute("DELETE FROM kyverno_result WHERE cluster_id=?", (cluster_id,))
+            # Two reports can name the same (policy, resource) — an admission report and a background one —
+            # and the WORSE result keeps the row, never the last one listed.
+            rank = {"error": 0, "fail": 1, "warn": 2, "pass": 3, "skip": 4}
+            current: dict[tuple, object] = {}
+            for r in read.results:
+                key = (r.policy_kind, r.policy, r.resource_uid)
+                held = current.get(key)
+                if held is None or rank.get(r.result, 5) < rank.get(held.result, 5):
+                    current[key] = r
+            conn.executemany(
+                """INSERT INTO kyverno_result(cluster_id, policy_kind, policy, resource_kind, resource_namespace, resource_name,
+                       resource_uid, resource_api_version, result, severity, category, message, process, at, controlled, observed_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [(cluster_id, r.policy_kind, r.policy, r.resource_kind, r.resource_namespace, r.resource_name, r.resource_uid,
+                  r.resource_api_version, r.result, r.severity, r.category, r.message, r.process, r.at, int(r.controlled), observed_at)
+                 for r in current.values()])
+            if seen_before is not None and seen_before["present"]:
+                events = []
+                for key, r in current.items():
+                    if r.result in PROBLEM_RESULTS and key not in previous:
+                        events.append((cluster_id, r.policy_kind, r.policy, r.resource_kind, r.resource_namespace, r.resource_name,
+                                       "appeared", r.result, r.message, observed_at)); stats["appeared"] += 1
+                for key, (result, kind, namespace, name) in previous.items():
+                    now = current.get(key)
+                    if now is None or now.result not in PROBLEM_RESULTS:
+                        events.append((cluster_id, key[0], key[1], kind, namespace, name, "cleared", result, "", observed_at)); stats["cleared"] += 1
+                if events:
+                    conn.executemany(
+                        """INSERT INTO kyverno_result_event(cluster_id, policy_kind, policy, resource_kind, resource_namespace,
+                               resource_name, change, result, message, observed_at) VALUES(?,?,?,?,?,?,?,?,?,?)""", events)
+        return stats
+
+    def kyverno_summary(self, cluster_id: str) -> dict:
+        """The module's state for one cluster: {present: bool|None, api_group, policy_kinds, reports, legacy_results,
+        other_results, breaker_total, breaker_drops, observed_at, results: {pass, fail, …}, policies: n}.
+        `present` None means never looked (no poll since the upgrade)."""
+        row = self._row("SELECT * FROM kyverno_presence WHERE cluster_id=?", (cluster_id,))
+        if row is None:
+            return {"present": None}
+        counts = {r["result"]: r["n"] for r in self._rows(
+            "SELECT result, COUNT(*) AS n FROM kyverno_result WHERE cluster_id=? GROUP BY result", (cluster_id,))}
+        policies = self._row("SELECT COUNT(*) AS n FROM kyverno_policy WHERE cluster_id=?", (cluster_id,))
+        return {
+            "present": bool(row["present"]), "api_group": row["api_group"],
+            "policy_kinds": json.loads(row["policy_kinds"]) if row["policy_kinds"] else [],
+            "reports": row["reports"], "legacy_results": row["legacy_results"], "other_results": row["other_results"],
+            "breaker_total": row["breaker_total"], "breaker_drops": row["breaker_drops"],
+            "observed_at": row["observed_at"],
+            "results": {k: counts.get(k, 0) for k in ("pass", "fail", "warn", "error", "skip")},
+            "policies": policies["n"] if policies else 0,
+        }
+
+    def kyverno_policies(self, cluster_id: str) -> list[dict]:
+        rows = self._rows("SELECT * FROM kyverno_policy WHERE cluster_id=? ORDER BY kind, namespace, name", (cluster_id,))
+        out = []
+        for r in rows:
+            d = dict(r); d["actions"] = json.loads(d["actions"] or "[]")
+            d["admission"] = bool(d["admission"]); d["background"] = bool(d["background"])
+            d["ready"] = None if d["ready"] is None else bool(d["ready"]); d["generated"] = bool(d["generated"])
+            # the wire's policy string: namespace/name for a namespaced kind (results.go:97), the bare name otherwise
+            d["policy"] = f"{r['namespace']}/{r['name']}" if r["namespace"] else r["name"]
+            per = {x["result"]: x["n"] for x in self._rows(
+                "SELECT result, COUNT(*) AS n FROM kyverno_result WHERE cluster_id=? AND policy_kind=? AND policy=? GROUP BY result",
+                (cluster_id, r["kind"], d["policy"]))}
+            d["results"] = {k: per.get(k, 0) for k in ("pass", "fail", "warn", "error", "skip")}
+            out.append(d)
+        return out
+
+    def kyverno_result_counts(self, cluster_id: str) -> dict[tuple[str, str], int]:
+        """{(policy_kind, result): n} — one aggregate, for the metrics (review of #228, Codex: the first cut
+        materialised every row per scrape, 16.7 MiB at 10 000 rows)."""
+        return {(r["policy_kind"], r["result"]): r["n"] for r in self._rows(
+            "SELECT policy_kind, result, COUNT(*) AS n FROM kyverno_result WHERE cluster_id=? GROUP BY policy_kind, result",
+            (cluster_id,))}
+
+    def kyverno_results(self, cluster_id: str, *, problems_only: bool = True, include_controlled: bool = True,
+                        policy: str | None = None, kind: str | None = None, limit: int = 500) -> tuple[list[dict], int]:
+        """The rows, worst first, and the total the filters match (the page states a cut). `policy` narrows to
+        one policy's wire string and `kind` to one policy kind — together they name ONE policy (a
+        ValidatingPolicy and a MutatingPolicy may share a name; review of #228, Codex)."""
+        where = ["cluster_id=?"]; params: list = [cluster_id]
+        if problems_only:
+            where.append("result IN ('fail','warn','error')")
+        if not include_controlled:
+            where.append("controlled=0")
+        if policy:
+            where.append("policy=?"); params.append(policy)
+        if kind:
+            where.append("policy_kind=?"); params.append(kind)
+        clause = " AND ".join(where)
+        total = self._row(f"SELECT COUNT(*) AS n FROM kyverno_result WHERE {clause}", tuple(params))["n"]
+        rows = self._rows(
+            f"""SELECT * FROM kyverno_result WHERE {clause}
+                ORDER BY CASE result WHEN 'error' THEN 0 WHEN 'fail' THEN 1 WHEN 'warn' THEN 2 WHEN 'pass' THEN 3 ELSE 4 END,
+                         policy, resource_namespace, resource_kind, resource_name
+                LIMIT ?""", tuple(params) + (max(0, limit),))
+        return [dict(r) for r in rows], total
+
+    def kyverno_events(self, cluster_id: str, limit: int = 200) -> list[dict]:
+        return [dict(r) for r in self._rows(
+            "SELECT * FROM kyverno_result_event WHERE cluster_id=? ORDER BY observed_at DESC, id DESC LIMIT ?",
+            (cluster_id, max(0, limit)))]
+
+    def prune_kyverno_events(self, cluster_id: str, before_at: str, max_rows: int = 5000) -> int:
+        return self._prune_history("kyverno_result_event", cluster_id, before_at, max_rows)
 
     def upsert_reconcile_error(
         self,

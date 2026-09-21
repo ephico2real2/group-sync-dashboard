@@ -108,6 +108,9 @@
   --tab-usage: #c2410c;
   --tab-reports: #5b6470;      /* documents; 5.69:1 on --page (measured) */
   --tab-kpi: #4a55a3;          /* the KPI page (#157): instrument indigo; measured in tests/test_accessibility.py */
+  --tab-kyverno: #0b6e7a;      /* the Kyverno page (#170): guard-rail teal; measured in tests/test_accessibility.py */
+  --tab-clusters: #6b3a12;     /* the Cluster Configurations page (#230 S2): bronze, 8.90:1 on --page; measured in tests/test_accessibility.py */
+  --tab-library: #7a2468;      /* the Library page (#229): bookmark magenta between policy and nsaudit; 8.74:1 on --page, measured */
   /* Report categories (#147 reports table): a chip label + a per-row rail/wash (--rk). NOT --tab-*
      (those are the active-tab label colours the contrast test audits); mid-tone on --surface-1. */
   --k-access: #4f6b57; --k-rbac: #8a5a3c; --k-identity: #4a5c7a; --k-activity: #7a5170; --k-compliance: #6a6440;
@@ -220,6 +223,9 @@
     --tab-usage: #d9490d;
     --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
     --tab-kpi: #9aa3e6;
+    --tab-kyverno: #5cc4cf;
+    --tab-clusters: #e0a060;    /* 8.67:1 on the dark --page (measured) */
+    --tab-library: #d489c0;      /* 7.53:1 on the dark --page (measured) */
     --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
   }
 }
@@ -270,6 +276,9 @@
   --tab-usage: #d9490d;
   --tab-reports: #98a2b3;      /* 7.55:1 on the dark --page (measured) */
   --tab-kpi: #9aa3e6;
+  --tab-kyverno: #5cc4cf;
+  --tab-clusters: #e0a060;    /* 8.67:1 on the dark --page (measured) */
+  --tab-library: #d489c0;      /* 7.53:1 on the dark --page (measured) */
   --k-access: #7fae8b; --k-rbac: #c8946a; --k-identity: #8ea3c8; --k-activity: #c090b4; --k-compliance: #b3aa72;
 }
 }
@@ -660,6 +669,9 @@ tbody tr:nth-child(even) td { background: var(--zebra); }
   display: inline-block; padding: 1px 7px; /* optical: a one-line chip */ margin: 0 var(--space-2) var(--space-2) 0;
   border: 1px solid var(--border); border-radius: var(--radius-pill);
   font-size: var(--text-sm); background: var(--zebra);
+  /* A token never breaks inside its pill: the table's auto layout allots the Provider column less than
+     its max-content width, and `ldap-local` split at its hyphen into a two-line pill (review of #153, OB3). */
+  white-space: nowrap;
 }
 
 /* A drillable name must LOOK drillable. Without this the usernames rendered as plain
@@ -916,6 +928,9 @@ body[data-page="logins"]   { --accent: var(--tab-logins); }
 body[data-page="usage"]    { --accent: var(--tab-usage); }
 body[data-page="reports"]  { --accent: var(--tab-reports); }
 body[data-page="kpi"]      { --accent: var(--tab-kpi); }
+body[data-page="kyverno"]  { --accent: var(--tab-kyverno); }
+body[data-page="clusters"] { --accent: var(--tab-clusters); }
+body[data-page="library"]  { --accent: var(--tab-library); }
 
 .tabs { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
 .tab {
@@ -987,6 +1002,15 @@ th { text-transform: uppercase; letter-spacing: 0.05em; }
 /* The accent rail on hover, matching the lead-card treatment: the section's colour is how
    this page says "this one", and reusing it for hover keeps one vocabulary. */
 .rowlink:hover td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* The rail is INSET because an outward shadow would be clipped by .scroll-x — so the first column
+   keeps its ink clear of it (#219: the user-History "− left" glyph's ink began at x=1 under a rail
+   spanning x=0..2). Header and cells together, so the column stays aligned at rest. Both :where()s
+   zero what they wrap, so this rule is (0,0,1) — the generic th/td's own, beaten by source order only
+   — while every class-qualified table padding (.kpi-page's 18px, .audit-table's 0, .report-table's)
+   stays authoritative whether it comes earlier or later (review of #226: Grok measured the (0,1,1) the
+   first cut had, which beat .audit-table by order; Codex proposed the second :where()). Today
+   .audit-table, .report-table and .risk-row carry no tr.rowlink anyway. */
+:where(table:has(tr.rowlink)) td:where(:first-child), :where(table:has(tr.rowlink)) th:where(:first-child) { padding-left: 3px; /* optical: the rail's own width */ }
 
 /* Buttons and the disclosure lift very slightly. 1px, not the skill's 2px: these sit in
    dense table headers where a 2px lift reads as the row jumping. */
@@ -1433,3 +1457,175 @@ td.state-cell { min-width: 210px; }
   .kpi-page .meter-row { grid-template-columns: 72px 1fr; }
   .kpi-page .meter-val { grid-column: 2; text-align: left; min-width: 0; }
 }
+
+/* #149 R5: the Reporting status page. The strip is four tiles on a hairline grid (two per row on a
+   phone); each tile is a label, a badge and one mono line of detail. */
+.status-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; /* optical: the hairline between tiles IS the border colour showing through */ background: var(--border);
+  border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; margin-top: var(--space-5); }
+.status-strip .kv { background: var(--surface-1); padding: var(--space-6) var(--space-7); display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.status-strip .k { font-size: var(--text-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.status-strip .v { font-size: var(--text-md); font-weight: 600; display: flex; align-items: center; gap: var(--space-3); }
+.status-strip .d { font-size: var(--text-sm); color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.history-filters { flex-wrap: wrap; gap: var(--space-5); align-items: center; }
+.history-filters select { font: inherit; font-size: var(--text-sm); }
+.history-filters .pager { padding-top: 0; margin-left: auto; }
+#reporting-schedules tr.paused td { color: var(--text-muted); }
+@media (max-width: 720px) { .status-strip { grid-template-columns: repeat(2, 1fr); } }
+
+/* #149 R7: the ParamSpec-driven report shell — one control per parameter type on the design system's
+   tokens; the Subject scope and the namespace Scope share the framed-block treatment. */
+.report-field .hint { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* one line; the full text on hover (title) */
+.report-field .req { color: var(--status-critical); font-weight: 600; }
+.report-advanced { margin-top: var(--space-5); }
+.report-advanced summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary); }
+.report-actions { position: sticky; bottom: 0; background: var(--surface-1); padding-top: var(--space-4); padding-bottom: var(--space-2); }
+.rp-switch { display: inline-flex; align-items: center; gap: var(--space-3); background: none; border: 0; padding: 0; font: inherit; color: var(--text-primary); cursor: pointer; }
+.rp-switch .rp-track { width: 34px; height: 20px; border-radius: var(--radius-pill); background: var(--border); position: relative; transition: background .15s ease; flex: none; }
+.rp-switch .rp-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: var(--radius-round); background: var(--surface-1); transition: left .15s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.rp-switch.on .rp-track { background: var(--accent); }
+.rp-switch.on .rp-knob { left: 16px; }
+.rp-switch .rp-lab { font-size: var(--text-sm); }
+.rp-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-pill); }
+.rp-seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.rp-seg button { font: inherit; font-size: var(--text-sm); padding: var(--space-2) var(--space-5); border: 0; background: var(--surface-1); color: var(--text-secondary); cursor: pointer; }
+.rp-seg button + button { border-left: 1px solid var(--border); }
+.rp-seg button.sel { background: var(--accent); color: var(--surface-1); font-weight: 600; }
+.rp-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rp-num { display: inline-flex; align-items: center; gap: var(--space-3); }
+.rp-num input[type=number] { width: 7ch; }
+.rp-num .rp-unit { font-size: var(--text-sm); color: var(--text-muted); }
+.rp-scope { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-5) var(--space-6); margin-top: var(--space-4); background: var(--surface-1); }
+.rp-scope-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
+.rp-scope-top .t { font-weight: 600; font-size: var(--text-md); }
+.rp-scope .rp-auto { font-size: var(--text-micro); letter-spacing: .05em; color: var(--status-good); border: 1px solid color-mix(in srgb, var(--status-good) 45%, transparent);
+  background: color-mix(in srgb, var(--status-good) 12%, transparent); border-radius: var(--radius-sm); padding: 1px 6px; /* optical: a one-line badge */ font-weight: 500; margin-left: var(--space-3); }
+.rp-scope-top .and { font-size: var(--text-sm); }
+.rp-scope-foot { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
+.rp-count-live { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }   /* the mock's live count: mono, accent */
+.rp-lookup { position: relative; }
+.rp-lookup .rp-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); }
+.rp-lookup .rp-tags input { flex: 1 1 12ch; min-width: 12ch; border: 0; background: none; font: inherit; font-size: var(--text-sm); color: var(--text-primary); padding: var(--space-1) var(--space-2); }
+.rp-lookup .rp-tags input:focus { outline: none; }
+.rp-lookup .rp-tags:focus-within { border-color: var(--accent); }
+.rp-lookup .rp-tag { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--font-mono); font-size: var(--text-sm); padding: 1px var(--space-3); /* optical: a one-line chip */ border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); color: var(--text-primary); }
+.rp-lookup .rp-tag-x { border: 0; background: none; font: inherit; color: var(--text-secondary); cursor: pointer; padding: 0 var(--space-1); line-height: 1; }
+.rp-lookup .rp-tag-x:hover, .rp-lookup .rp-tag-x:focus-visible { color: var(--status-critical); outline: none; }
+.rp-lookup .rp-menu { margin-top: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); max-height: 220px; overflow-y: auto; }
+.rp-lookup .rp-menu-head { font-size: var(--text-micro); letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); padding: var(--space-3) var(--space-5); background: var(--zebra); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
+.rp-lookup .rp-opt { font-family: var(--font-mono); font-size: var(--text-sm); padding: var(--space-2) var(--space-5); cursor: pointer; display: flex; align-items: center; gap: var(--space-3); }
+.rp-lookup .rp-opt::before { content: ""; width: 13px; height: 13px; border-radius: var(--radius-sm); border: 1px solid var(--border); flex: none; }
+.rp-lookup .rp-opt.sel::before { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--surface-1); }
+.rp-lookup .rp-opt:hover, .rp-lookup .rp-opt:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); outline: none; }
+.rp-lookup .rp-nomatch { font-size: var(--text-sm); color: var(--text-muted); padding: var(--space-3) var(--space-5); }
+
+/* ── #230 S2: the Cluster Configurations page — docs/design/cluster-configurations-mock.html, ported. A card per
+   cluster with label/value rows; the source chips coloured by the report-category tokens the mock chose; the
+   Add-cluster form beside its YAML twin, one column under 900 px. Every chip wraps (`overflow-wrap: anywhere`):
+   a long label chip ran 58 px past a 375 px viewport in the draft, measured. */
+.cc-kv { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: var(--space-3) var(--space-5); padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); min-width: 0; }
+.cc-kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
+.cc-kv .v { overflow-wrap: anywhere; min-width: 0; }
+.rp-chip.cc-chip, .cc-chips .rp-chip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.rp-chip.cc-src-values { color: var(--k-rbac); }
+.rp-chip.cc-src-secret { color: var(--k-identity); }
+.rp-chip.cc-src-in-cluster { color: var(--k-access); }
+.cc-chips { display: flex; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+h2 .cc-chips { display: inline-flex; vertical-align: middle; }
+.cc-hint { font-size: var(--text-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.cc-foot { margin-top: var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.cc-consq { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-3); overflow-wrap: anywhere; }
+.cc-acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-4); align-items: center; }
+.cc-panel { margin-top: var(--space-4); padding: var(--space-5) var(--space-6); border: 1px dashed var(--border); border-radius: var(--radius-md); background: var(--zebra); }
+.cc-field { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-6); min-width: 0; }
+.cc-field > .cc-lbl, .cc-field > label { font-size: var(--text-sm); color: var(--text-secondary); }
+.cc-choices { display: flex; flex-direction: column; gap: var(--space-3); }
+.cc-choice { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.cc-choice input { width: auto; flex: none; }
+.cc-stack { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.cc-stack textarea { width: 100%; max-width: 100%; }
+.cc-warn { margin-top: var(--space-3); padding: var(--space-5) var(--space-6); border-left: 3px solid var(--status-warning); /* optical: the rail */
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent); border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-size: var(--text-md); color: var(--text-secondary); overflow-wrap: anywhere; }
+.cc-warn strong { color: var(--text-primary); }
+.cc-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7); min-width: 0; }
+@media (min-width: 900px) { .cc-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.cc-yaml-pane { min-width: 0; }
+.cc-yaml { font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  margin: 0; max-width: 100%; background: var(--zebra); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-6); }
+.cc-btn-acc { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
+/* ─── #229 the Library page (docs/design/report-library-mock.html): one section per configured report, its
+   category colour as the rail (--rk, the Reports table's tokens), run cards never a wide table, the run
+   drawer as a position. ──────────────────────────────────────────────────────────────────────────────── */
+.lib-sec { --rk: var(--accent); border-left: 4px solid var(--rk); }
+.lib-sec.r-access { --rk: var(--k-access); }
+.lib-sec.r-rbac { --rk: var(--k-rbac); }
+.lib-sec.r-identity { --rk: var(--k-identity); }
+.lib-sec.r-activity { --rk: var(--k-activity); }
+.lib-sec.r-compliance { --rk: var(--k-compliance); }
+/* the drawer takes its rail from the report kind the same way (no inline style: the type-scale guard) */
+.drawer.r-access { --rk: var(--k-access); }
+.drawer.r-rbac { --rk: var(--k-rbac); }
+.drawer.r-identity { --rk: var(--k-identity); }
+.drawer.r-activity { --rk: var(--k-activity); }
+.drawer.r-compliance { --rk: var(--k-compliance); }
+.lib-sec.paused { opacity: 0.78; border-left-style: dashed; }
+.lib-sec.compact .empty-note { padding: var(--space-2) 0 0; }
+.lib-sec h2 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.jumps { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-5) 0 0; }
+.jumps a {
+  font-family: var(--font-mono); font-size: var(--text-micro); color: var(--text-secondary);
+  text-decoration: none; border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 2px 9px; /* optical: the pill's own metrics, as .rp-chip */ background: var(--zebra);
+}
+.jumps a:hover { color: var(--text-primary); border-color: var(--accent); }
+.run {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6); margin: 0 0 var(--space-4);
+  cursor: pointer; min-width: 0; max-width: 100%;
+  transition: border-color 160ms ease, transform 160ms ease, background-color 160ms ease;
+}
+.run:hover { border-color: var(--rk, var(--accent)); transform: translateY(-1px); background: var(--zebra); }
+.run:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.run.featured {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk) 10%, transparent), transparent 56%);
+  padding: var(--space-6) var(--space-7);
+}
+.run .when { font-family: var(--font-mono); font-size: var(--text-md); font-weight: 600; overflow-wrap: anywhere; }
+.run .meta { font-size: var(--text-sm); color: var(--text-muted); margin-top: var(--space-1); overflow-wrap: anywhere; }
+.run .fmts { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.run .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-top: var(--space-4); }
+.sec-foot { margin-top: var(--space-4); }
+.cluster-head {
+  font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); margin: var(--space-5) 0 var(--space-3);
+}
+.subh { font-size: var(--text-md); font-weight: 600; margin: var(--space-7) 0 var(--space-4); color: var(--text-secondary); }
+.subh::before {
+  content: ""; display: inline-block; width: 3px; height: 0.85em; margin-right: var(--space-3);
+  border-radius: var(--radius-xs); background: var(--rk); vertical-align: middle;
+}
+.expiry { font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+.reason { font-size: var(--text-sm); color: var(--status-critical); margin-top: var(--space-3); overflow-wrap: anywhere; }
+.overlay {
+  position: fixed; inset: 0; z-index: 30;
+  background: color-mix(in srgb, var(--page) 56%, transparent);
+  display: flex; justify-content: flex-end; align-items: stretch;
+}
+.drawer {
+  width: min(440px, 100%); max-width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto;
+  background: var(--surface-1); border-left: 4px solid var(--rk, var(--accent));
+  box-shadow: var(--elev-1); padding: var(--space-8); min-width: 0;
+}
+.drawer h2 { margin: 0 0 var(--space-4); font-size: var(--text-lg); overflow-wrap: anywhere; }
+.drawer .back { display: inline-block; margin-bottom: var(--space-4); }
+.kv { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: var(--space-3) var(--space-5);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); }
+.kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }
+.kv .v.err { white-space: pre-wrap; }   /* a failed run's error keeps its lines */
+.drawer .acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-6); }
+.btn-acc { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
+.note-found { padding: var(--space-6) 0; color: var(--text-secondary); }

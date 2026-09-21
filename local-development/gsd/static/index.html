@@ -156,7 +156,18 @@ const STATES = {
 };
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
-                report: null, reportLanded: null, reportFocusRow: null, reportForm: {}, reportRun: null, reportSubmitting: false, reportPreview: "",
+                report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
+                kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
+                /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
+                   reader typed; the open rotate panel; the armed delete; the messages under the form and the cards. */
+                clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
+                               labels: {}, labelKey: "", labelVal: "", test: null },
+                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false,
+                run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
+                libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
+                /* #149 R5: the status page's history filters and page. Filters, not positions (the
+                   groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
+                historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
@@ -222,7 +233,7 @@ let searchComposingIn = null;
    state are not: they live in `view` precisely because the page repaints on a timer (60s), one of them
    is a Set, and pushing an entry per sort click would bury the positions a reader wants Back to
    reach under a pile of them. */
-const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns", "report"];
+const POSITION_KEYS = ["page", "cluster", "groupsync", "group", "user", "ns", "report", "run"];
 
 function currentPosition() {
   const pos = {};
@@ -272,6 +283,8 @@ function applyPosition(pos) {
   const nextReport = view.page === "reports" ? (pos.report || null) : null;
   if (nextReport !== view.report) { view.reportRun = null; closeNsPreview(); }
   view.report = nextReport;
+  // #229: an open run belongs to the Library page the same way — no other page's position carries one
+  view.run = view.page === "library" ? (pos.run || null) : null;
       view.alertPage = 1;   // #172: the alerts card's page is view state, never a position
   // `cluster` is part of the position, not context around it. Without it, Back after a cluster
   // switch restores a group name against whichever cluster is now selected — and group names
@@ -303,6 +316,7 @@ function applyPosition(pos) {
       data.logins = null; data.access = null; data.findings = null;
       data.operatorConfigs = null; data.userBindings = null; data.myAccess = null;
       data.namespaces = null; data.ns = null;
+      data.kyverno = null; view.kyvernoPolicy = null; view.kyvernoKind = null;   // #170: a policy name is this cluster's
       data.home = null;   // #158: the answer is the selected cluster's
       // The Users-tab chips name providers and populations of THIS cluster; carried across, a
       // `provider:corp-ldap` chip on a cluster with no such provider would hide every row — the
@@ -370,8 +384,10 @@ function goBack() {
       // entry: there was nothing behind it in this app, and a pushed entry would make the parent's own
       // back control point at the drill-down the reader just rose from.
       const toFleet = view.page === "overview" && view.cluster && !view.groupsync;
+      // #149: the Reporting status page's parent is the Reports page it is linked from.
+      const toReports = view.page === "reporting";
       navigate({ group: null, user: null, groupsync: null, ns: null, report: null,
-                 ...(toFleet ? { cluster: null } : {}) }, { replace: true });
+                 ...(toFleet ? { cluster: null } : {}), ...(toReports ? { page: "reports" } : {}) }, { replace: true });
   refresh();
 }
 
@@ -384,7 +400,7 @@ function goBack() {
 const PAGE_LABEL = {
   home: "home", overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
-  reports: "reports", lookup: "search", kpi: "KPIs",
+  reports: "reports", reporting: "reporting status", lookup: "search", kpi: "KPIs",
 };
 
 function backLabel() {
@@ -395,6 +411,7 @@ function backLabel() {
     // Nothing to return to — a pasted link. goBack() rises to the PARENT of where we are, so the
     // label has to describe that rather than a fixed string: on a GroupSync detail reached by
     // link, "all groups" named a page the button does not open.
+    if (view.page === "reporting") return "← reports";   // #149: the status page's parent
     if (view.report) return "← all reports";   // #173: the parent of a report is the catalogue
     return `← ${PAGE_LABEL[view.page] || "overview"}`;
   }
@@ -466,7 +483,11 @@ window.addEventListener("hashchange", () => {
 // flash "No groups match this filter" for the length of the fetch, a false claim about a
 // cluster nobody had asked yet.
 let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: null,
+             kyverno: null,   // #170: the module's payload for the selected cluster
+             clusterconfigs: null,   // #230 S2: every cluster with its source, for the Cluster Configurations tab
              reportCatalog: null, reportRuns: null, reportTicket: null,
+             library: null,   // #229: every run the service holds, for the Library tab
+             libraryRun: null,   // #229: the positioned run by id — a history past the listing's page still opens (Codex)
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
                 Users tab states the truncation and renders the banner from the wire's fields. */
@@ -590,11 +611,13 @@ function ago(iso) {
   if (!iso) return "never";
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (!isFinite(secs)) return "—";
-  if (secs < 0) return "in " + ago(new Date(Date.now() + (-secs * 1000)).toISOString());
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
+  // A future instant reads "in 40m". The first cut recursed on a mirrored ISO string, which is STILL
+  // in the future, so any value ahead of the browser's clock — a store stamped by a host whose clock
+  // runs ahead, a fixture's stamp — blew the stack and took the whole page with it (#170, measured:
+  // "Maximum call stack size exceeded" for a 40-minute lead).
+  const n = Math.abs(secs);
+  const word = n < 60 ? `${n}s` : n < 3600 ? `${Math.floor(n / 60)}m` : n < 86400 ? `${Math.floor(n / 3600)}h` : `${Math.floor(n / 86400)}d`;
+  return secs < 0 ? `in ${word}` : `${word} ago`;
 }
 
 function badge(state) {
@@ -1056,7 +1079,7 @@ function renderFilters() {
   // keyboard user resting on a tab is dropped to <body> by every timed repaint, losing their place
   // in the tab order.
   const tab = (id, label) =>
-    `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id ? ' aria-current="page"' : ""}>${label}</button>`;
+    `<button class="tab" id="tab-${id}" data-nav="${id}"${view.page === id || (id === "reports" && view.page === "reporting") ? ' aria-current="page"' : ""}>${label}</button>`;   // #149: the status page is Reports' child
   html += `<span class="spacer"></span>
     <nav class="tabs" aria-label="Dashboard sections">
       ${tab("home", "Home")}
@@ -1066,10 +1089,13 @@ function renderFilters() {
       ${tab("users", "Users")}
       ${tab("bindings", "Access granted")}
       ${tab("policy", "RBAC policy")}
+      ${tab("kyverno", "Kyverno")}
       ${tab("nsaudit", "Namespace audit")}
       ${tab("logins", "Logins")}
       ${tab("usage", "Usage")}
       ${reportingEnabled() ? tab("reports", "Reports") : ""}
+      ${reportingEnabled() ? tab("library", "Library") : ""}
+      ${ccMayView() ? tab("clusters", "Cluster Configurations") : ""}
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
@@ -2002,11 +2028,26 @@ function groupsPage() {
     unattributed: "No sync-provider label, so not managed by any GroupSync CR.",
     all: "",
   }[view.groupFilter];
+  // The KPIs are the cluster's, from the server's whole-set counts (`/api/clusters`: the Overview card's
+  // and /metrics' numbers) — never counted from the rows on screen, which a state filter or the self
+  // tier narrows (#153; the contract's whole-set rule). Empty and unattributed carry the warning rail
+  // when they hold any group: each is a problem state the state filter can open.
+  // A never-polled cluster (`status` null — the same three-valued contract as `reachable`) has no counts,
+  // only an empty table's zeros; nothing is shown rather than a healthy-looking 0 / 0 / 0 (review of #225,
+  // Codex and Grok).
+  const cl = (data.clusters || []).find((c) => c.id === view.cluster);
+  const counted = cl && cl.status !== null && ["group_count", "empty_groups", "unattributed_groups"].every((k) => typeof cl[k] === "number");
+  const kpis = counted && !self ? `<div class="kpis mb-5" id="groups-kpis">
+      <div class="kpi"><div class="label">Groups on this cluster</div><div class="value">${cl.group_count}</div></div>
+      <div class="kpi${cl.empty_groups ? " flag-warning" : ""}"><div class="label">Empty</div><div class="value${cl.empty_groups ? "" : " muted"}">${cl.empty_groups}</div></div>
+      <div class="kpi${cl.unattributed_groups ? " flag-warning" : ""}"><div class="label">Unattributed</div><div class="value${cl.unattributed_groups ? "" : " muted"}">${cl.unattributed_groups}</div></div>
+    </div>` : "";
   return `<section class="card">
     <h2>Groups <span class="muted fw-normal">· ${searching
       ? `${rows.length} of ${all.length} shown`
       : `${rows.length} shown`}</span></h2>
     ${scopeBanner("groups", meta)}
+    ${kpis}
     ${note ? `<div class="filterbar-note mt-2">${esc(note)}</div>` : ""}
     ${alsoLine("groups", view.groupSearch)}
     ${searching ? `<div class="filterbar-note mt-2">Filtered by
@@ -2038,7 +2079,7 @@ function groupsPage() {
           <thead><tr><th>Name</th><th class="num">Members</th><th class="num">Grants</th><th>Owner</th>
             <th>Last refreshed</th><th>Source DN</th></tr></thead>
           <tbody>${rows.map((g) => `<tr class="rowlink" data-group="${esc(g.name)}">
-            <td>${esc(g.name)}</td>
+            <td><button type="button" class="drill">${esc(g.name)}</button></td>
             <td class="num">${g.member_count}</td>
             <td class="num ${g.binding_count ? "" : "muted"}">${g.binding_count ?? "—"}</td>
             <td>${ownerCell(g.sync_provider)}</td>
@@ -2046,7 +2087,9 @@ function groupsPage() {
             <td class="muted"><code>${esc(g.ldap_uid || "—")}</code></td>
           </tr>`).join("")}</tbody>
         </table></div>
-        <div class="filterbar-note mt-4">Select a group to see its members.</div>`}
+        <div class="filterbar-note mt-4">Select a group to see its members. The <strong>Owner</strong> dot's colour is
+          assigned by the provider label's position in the cluster's full sorted provider list (crSlot), so a group keeps
+          its colour when you filter.</div>`}
   </section>`;
 }
 
@@ -2189,8 +2232,8 @@ function usersPage() {
     ${self ? "" : `<div class="kpis">
       <div class="kpi"><div class="label">Have logged in</div><div class="value">${total}</div></div>
       <div class="kpi"><div class="label">In a synced group</div><div class="value">${grouped}</div></div>
-      <div class="kpi"><div class="label">Logged in, no synced group</div><div class="value">${loggedInNoGroup}</div></div>
-      <div class="kpi"><div class="label">Synced, never logged in</div><div class="value">${never.count}</div></div>
+      <div class="kpi${loggedInNoGroup ? " flag-warning" : ""}"><div class="label">Logged in, no synced group</div><div class="value">${loggedInNoGroup}</div></div>
+      <div class="kpi${never.count ? " flag-warning" : ""}"><div class="label">Synced, never logged in</div><div class="value">${never.count}</div></div>
     </div>
     ${manual > 0
       ? `<div class="filterbar-note" id="manual-accounts-note">${manual} manual ${manual === 1 ? "account" : "accounts"}
@@ -2256,7 +2299,7 @@ function usersPage() {
             <td><button type="button" class="drill">${esc(u.user_name)}</button>${u.full_name
               ? ` <span class="muted">· ${esc(u.full_name)}</span>` : ""}</td>
             <td>${status(u)}</td>
-            <td class="mono">${provs(u).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
+            <td>${provs(u).length ? provs(u).map((pv) => `<span class="chip mono" title="Identity provider the person has logged in through.">${esc(pv)}</span>`).join(" ") : `<span class="muted">—</span>`}</td>
             <td class="num${(u.group_count || 0) === 0 ? " warn" : ""}">${u.group_count || 0}</td>
             <td>${lastLogin(u)}</td>
             <td class="mono">${u.first_seen_at
@@ -2365,17 +2408,22 @@ function usagePage() {
       rows. The counts above cover all of them.
     </div>` : ""}
     <div class="filterbar-note mt-4">
-      Times render in the server's timezone; the <strong>Day</strong> column is a
+      <strong>Times</strong> render in the server's timezone; the <strong>Day</strong> column is a
       <strong>UTC</strong> date. That split is deliberate rather than an oversight: the day
       is a stored bucket, computed server-side when the activity was recorded, so
       re-labelling it local would misstate rows already written, and re-bucketing would make
       the same column mean one thing before a deploy and another after. Near midnight a
       session can therefore sit on the following UTC day.
-      An interaction is one deliberate action — opening the dashboard,
+    </div>
+    <div class="filterbar-note mt-2">
+      <strong>An interaction</strong> is one deliberate action — opening the dashboard,
       switching tab, drilling in, changing a filter — not one HTTP request: the page
       refreshes itself every 60s and counting those measured how long a tab was left open
       rather than whether anyone used it. Reading time is invisible, so a long look at one
-      page counts once. These are not logins either: the proxy owns this dashboard's session, so
+      page counts once.
+    </div>
+    <div class="filterbar-note mt-2">
+      <strong>These are not logins either:</strong> the proxy owns this dashboard's session, so
       nothing here records a sign-in to it. Logins to the <strong>cluster</strong> are a separate
       record with a separate source — the oauth-server's own log — and they are on the
       <strong>Logins</strong> tab.
@@ -2492,7 +2540,12 @@ async function reportFetch(path, init = {}, retried = false) {
   const res = await fetch(prefix + path, Object.assign({}, init, { headers }));
   if (res.redirected) { const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err; }
   if (res.status === 401 && !retried) return reportFetch(path, init, true);
-  if (!res.ok) { const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status; throw err; }
+  if (!res.ok) {
+    const err = new Error(`${res.status} ${res.statusText} on ${prefix + path}`); err.status = res.status;
+    // A 422 names the parameter it refused; carry that detail so the form can say it (review of #222, Grok).
+    if (res.status === 422) { try { const body = await res.json(); err.detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail); } catch (e) { /* no body */ } }
+    throw err;
+  }
   return res;
 }
 async function reportGet(path) { return (await reportFetch(path)).json(); }
@@ -2509,7 +2562,19 @@ function reportsPage() {
   // #173: the form is a position the reader opens — no report selected means the catalogue alone. A
   // key the catalogue does not carry (a stale link) opens nothing rather than the first report.
   const pick = reports.find((r) => r.name === view.report && r.enabled) || null;
-  return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportRunsCard()}`;
+  return `${reportPickerCard(reports, pick, cat)}${pick ? reportFormCard(pick, cat) : ""}${reportHistoryLink()}`;
+}
+
+// #149 R5: recent runs and the whole history live on the Reporting status page, linked from here — the
+// catalogue is for choosing a report; the count says whether anything has run.
+function reportHistoryLink() {
+  const r = data.reportRuns;
+  if (!r || r.forbidden) return "";
+  const n = r.total != null ? r.total : (r.runs || []).length;
+  return `<section class="card" id="report-history-link"><div class="filterbar-note">
+    ${n === 0 ? "No report has been generated yet." : `${n} run${n === 1 ? "" : "s"} so far.`}
+    <button type="button" class="linkish" id="report-status-link">Reporting status, schedules and history →</button>
+  </div></section>`;
 }
 
 // The catalogue's title for a report key, for the back control ("← Namespace access report"); the key
@@ -2565,6 +2630,10 @@ function reportPickerCard(reports, pick, cat) {
 }
 
 function reportFormCard(spec, cat) {
+  // #143 phase 2: a manual run's reviewer is the signed-in person unless they typed another
+  if (spec.name === "access-certification" && cat.viewer && (view.reportForm[spec.name] || {}).reviewer === undefined) {
+    view.reportForm[spec.name] = { ...(view.reportForm[spec.name] || {}), reviewer: cat.viewer };
+  }
   const form = view.reportForm[spec.name] || {};
   // The mnemonic selector (B3, §3.7): per-cluster label + captured values from the catalogue. Empty when
   // the deployment configures no selector or the snapshot has none — the control then hides.
@@ -2609,36 +2678,151 @@ function reportFormCard(spec, cat) {
            <button type="button" class="linkish" id="report-preview-clear"${hasSelectors ? "" : " hidden"}>Clear</button>
            <button type="button" class="linkish" id="report-preview-view"${(view.reportPreviewNames || []).length ? "" : " hidden"}>view namespaces</button></div>`;
     }
-    const id = `report-param-${spec.name}-${p.name}`;
-    const val = form[p.name] !== undefined ? form[p.name] : (Array.isArray(p.default) ? p.default.join(",") : (p.default === null ? "" : p.default));
-    const label = `<label for="${id}">${esc(p.name)}${p.required ? " *" : ""}</label>`;
-    let input;
-    if (p.type === "bool") input = `<input id="${id}" type="checkbox" data-param="${esc(p.name)}"${val === true || val === "true" ? " checked" : ""}>`;
-    else if (p.type === "enum") input = `<select id="${id}" data-param="${esc(p.name)}">${p.choices.map((c) => `<option value="${esc(c)}"${c === val ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
-    else if (p.type === "int") input = `<input id="${id}" type="number" data-param="${esc(p.name)}" value="${esc(val)}"${p.lo != null ? ` min="${p.lo}"` : ""}${p.hi != null ? ` max="${p.hi}"` : ""}>`;
-    else if (p.type === "date") input = `<input id="${id}" type="date" data-param="${esc(p.name)}" value="${esc(val)}">`;
-    else input = `<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">`;
-    return `<div class="report-field">${label}${input}<span class="muted">${esc(p.help)}</span></div>`;
+    return paramField(spec, p, form);
   };
   const run = view.reportRun;
   const status = run ? reportRunStatus(run) : "";
   const [kcat] = REPORT_KIND[spec.name] || ["access"];
+  // #149 R7: one ParamSpec-driven shell for all eleven reports — the main grid, the Subject scope as one
+  // framed block, optional fields under Advanced (open when one of them is set), no cluster field (the
+  // nav chose it), a pinned action bar. The selector-map Scope keeps its own block above.
+  const subject = spec.params.filter((p) => p.group === "subject");
+  const main = spec.params.filter((p) => !p.group && !p.advanced);   // `mnemonics`/`selectors` render through field()'s own cases
+  const advanced = spec.params.filter((p) => !p.group && p.advanced);
+  const advancedSet = advanced.some((p) => form[p.name] !== undefined && form[p.name] !== "" && String(form[p.name]) !== String(Array.isArray(p.default) ? p.default.join(",") : p.default))
+    || !!(view.reportAdvancedOpen || {})[spec.name];   // opened by the reader: a repaint (the lookups' arrival) must not close it (review of #222, Grok)
+  const formats = [cat.pdf && cat.pdf.enabled ? "PDF" : "", "HTML", "JSON"].filter(Boolean).join(" · ");
   return `<section class="card report-panel r-${esc(kcat)}" id="report-form">
     <div class="panelbar"><button type="button" class="back" id="report-back">${backLabel()}</button>
       <span class="muted">${esc(spec.title)} · <span class="mono">${esc(spec.name)}</span></span></div>
     <h3>${esc(spec.title)}</h3>
     <div class="filterbar-note">${esc(spec.summary)}</div>
-    <div class="report-fields">${spec.params.map(field).join("")}
-      <div class="report-field"><label for="report-cluster">cluster</label>
-        <input id="report-cluster" type="text" value="${esc(view.cluster || "")}" readonly><span class="muted">The cluster selected above.</span></div>
-    </div>
-    <div class="ns-controls mt-4">
-      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate</button>
+    ${subject.length ? subjectBlock(spec, subject, form) : ""}
+    <div class="report-fields">${main.map(field).join("")}</div>
+    ${advanced.length ? `<details class="report-advanced" id="report-advanced"${advancedSet ? " open" : ""}><summary>Advanced</summary>
+      <div class="report-fields">${advanced.map(field).join("")}</div></details>` : ""}
+    <div class="ns-controls mt-4 report-actions">
+      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
+      <span class="filterbar-note">json is always written · cluster <span class="mono">${esc(view.cluster || "")}</span></span>
+      <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name && view.reportTotals.cluster === view.cluster ? view.reportTotals.text : "")}</span>
     </div>
     ${status}
   </section>`;
+}
+
+/* #149 R7 — one control per ParamSpec type. Every control writes view.reportForm[spec][name] and
+   re-renders; text-like inputs keep the data-param onchange path. The id scheme
+   report-param-<spec>-<name> is kept for text, number and date inputs (tests and the preview use it). */
+function paramField(spec, p, form) {
+  const id = `report-param-${spec.name}-${p.name}`;
+  const raw = form[p.name];
+  const label = `<label for="${id}">${esc(p.name)}${p.required ? ' <span class="req" title="required">*</span>' : ""}</label>`;
+  const hint = `<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span>`;
+  if (p.type === "bool") {
+    const on = raw !== undefined ? (raw === true || raw === "true") : p.default === true;
+    return `<div class="report-field">${label}
+      <button type="button" class="rp-switch${on ? " on" : ""}" id="${id}" role="switch" aria-checked="${on}" data-switch="${esc(p.name)}">
+        <span class="rp-track" aria-hidden="true"><span class="rp-knob"></span></span><span class="rp-lab">${on ? "On" : "Off"}</span></button>${hint}</div>`;
+  }
+  if (p.type === "enum") {
+    const val = raw !== undefined && raw !== "" ? raw : p.default;
+    return `<div class="report-field">${label}
+      <div class="rp-seg" role="radiogroup" id="${id}" aria-label="${esc(p.name)}">${p.choices.map((c) =>
+        `<button type="button" id="${id}-${esc(c)}" role="radio" aria-checked="${c === val}" class="${c === val ? "sel" : ""}" data-seg="${esc(p.name)}" data-value="${esc(c)}">${esc(c)}</button>`).join("")}</div>${hint}</div>`;
+  }
+  if (p.type === "int") {
+    const val = raw !== undefined && raw !== "" ? raw : p.default;
+    return `<div class="report-field">${label}<div class="rp-num">
+      <input id="${id}" type="number" data-param="${esc(p.name)}" value="${esc(val)}"${p.lo != null ? ` min="${p.lo}"` : ""}${p.hi != null ? ` max="${p.hi}"` : ""}>
+      ${p.unit ? `<span class="rp-unit">${esc(p.unit)}</span>` : ""}</div>${hint}</div>`;
+  }
+  if (p.type === "date") {
+    return `<div class="report-field">${label}<input id="${id}" type="date" data-param="${esc(p.name)}" value="${esc(raw !== undefined ? raw : (p.default || ""))}">${hint}</div>`;
+  }
+  if (p.type === "csv") return `<div class="report-field">${label}${lookupControl(spec, p, form)}${hint}</div>`;
+  if (p.type === "namespaces") {
+    // #143 phase 2: the discovered namespaces as a picker when the poll listed them (rbac.namespaces); the
+    // text field otherwise — a deployment without the grant keeps the manual entry, with Enter to add.
+    const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster].namespaces;
+    return `<div class="report-field">${label}${lookupControl(spec, found && found.values.length ? p : { ...p, source: "" }, form)}${hint}</div>`;
+  }
+  const val = raw !== undefined ? raw : (p.default === null ? "" : p.default);
+  return `<div class="report-field">${label}<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">${hint}</div>`;
+}
+
+// The Subject scope: users and/or groups as one framed block, a live count, Clear (empty = all).
+function subjectBlock(spec, params, form) {
+  const chosen = params.reduce((n, p) => n + (Array.isArray(form[p.name]) ? form[p.name].length : 0), 0);
+  return `<div class="rp-scope subj" id="report-subject">
+    <div class="rp-scope-top"><span class="t">Subjects <span class="rp-auto">lookup · discovered</span></span><span class="and muted">empty = all · pick users and/or groups, one or more</span></div>
+    <div class="report-fields">${params.map((p) => `<div class="report-field"><label>${esc(p.name)}</label>${lookupControl(spec, p, form)}<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span></div>`).join("")}</div>
+    <div class="rp-scope-foot"><span class="rp-count-live" id="report-subject-count">${chosen ? `${chosen} selected` : "all subjects"}</span>
+      <button type="button" class="linkish" id="report-subject-clear"${chosen ? "" : " hidden"}>Clear</button></div>
+  </div>`;
+}
+
+const LOOKUP_HEAD = { users: "User objects", groups: "synced groups", providers: "identity providers", roles: "roles bound on the cluster",
+                      mnemonics: "namespace mnemonics", "oud-groups": "exact groups pinned by namespaces", namespaces: "namespaces on the cluster" };
+
+// A tag input over a discovered lookup: click a value to add, its × (or clicking it again) to remove,
+// type to narrow the menu (substring, case-insensitive), Enter to add a value the set does not carry.
+function lookupControl(spec, p, form) {
+  const chosen = Array.isArray(form[p.name]) ? form[p.name] : (typeof form[p.name] === "string" && form[p.name] ? form[p.name].split(",").map((x) => x.trim()).filter(Boolean) : []);
+  const id = `report-lookup-${spec.name}-${p.name}`;
+  const found = p.source && data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][p.source];
+  const values = lookupValues(p.source, found);
+  const typed = (view.reportLookupText || {})[id] || "";
+  const settled = !!(data.reportDiscovered && (view.cluster in data.reportDiscovered));   // the cluster's answer is in, whatever it held
+  return `<div class="rp-lookup" data-lookup="${esc(p.name)}">
+    <div class="rp-tags" data-lookup-tags="${esc(p.name)}">${chosen.map((v) => `<span class="rp-tag" data-name="${esc(v)}">${esc(v)} <button type="button" class="rp-tag-x" aria-label="remove ${esc(v)}" data-lookup-remove="${esc(p.name)}" data-value="${esc(v)}">×</button></span>`).join("")}
+      <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" data-lookup-source="${esc(p.source || "")}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
+    ${p.source ? `<div class="rp-menu" id="${id}-menu" role="listbox" aria-label="${esc(LOOKUP_HEAD[p.source] || p.source)}">
+      <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${found.values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
+      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
+    </div>` : ""}
+  </div>`;
+}
+
+// The discovered values a lookup offers; the namespaces picker also offers `(cluster-scoped)`, the one
+// explicit name the poll never lists (review of #224, Grok).
+function lookupValues(source, found) {
+  const values = found ? found.values : [];
+  return source === "namespaces" && values.length ? ["(cluster-scoped)"].concat(values) : values;
+}
+
+// The menu's options for one query — the first 200 matches of the discovered set. One function for the
+// paint and for typing: the first cut painted only the matches of the text typed so far, and a repaint
+// under a query that matched nothing left a menu with no option nodes for later typing to reveal
+// (review of #222, OB3 — measured: "zzz", a repaint, "kube" → no match, though kubeadmin was discovered).
+function lookupMenuBody(name, values, chosen, typed) {
+  const q = typed.toLowerCase();
+  const shown = values.filter((v) => !q || v.toLowerCase().includes(q));
+  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}</div>`).join("")}
+      ${q && !shown.length ? `<div class="rp-nomatch">No match — press Enter to add “${esc(typed)}”</div>` : ""}
+      ${shown.length > 200 ? `<div class="rp-nomatch">${shown.length - 200} more — keep typing to narrow</div>` : ""}`;
+}
+
+// The discovered lookups for the cluster in the nav, fetched once per cluster when a form opens.
+function ensureDiscovered() {
+  if (!view.cluster || !reportingEnabled()) return;
+  data.reportDiscovered = data.reportDiscovered || {};
+  // Presence, not truthiness: whatever the answer's shape, one fetch settles the cluster — a stubbed or
+  // odd reply that left the key unset re-fetched on every paint (an infinite render loop, measured).
+  if (view.cluster in data.reportDiscovered || data.reportDiscovered[`pending:${view.cluster}`]) return;
+  data.reportDiscovered[`pending:${view.cluster}`] = true;
+  const forCluster = view.cluster;
+  reportGet(`/api/discovered?cluster=${encodeURIComponent(forCluster)}`)
+    .then((r) => { data.reportDiscovered[forCluster] = (r && r.discovered) || {}; })
+    .catch(() => { data.reportDiscovered[forCluster] = {}; })            // a 404/503: the menus say "none discovered"
+    .finally(() => {
+      delete data.reportDiscovered[`pending:${forCluster}`];
+      // The lookups' arrival repaints the menus; it does NOT land again — the landing is instant now,
+      // so nothing is in flight for a repaint to cancel, and a reader who scrolled in the meantime
+      // keeps their place (review of #222, Grok).
+      if (view.page === "reports" && view.report) render();
+    });
 }
 
 function reportRunStatus(run) {
@@ -2653,23 +2837,478 @@ function reportRunStatus(run) {
   </div>`;
 }
 
-function reportRunsCard() {
-  const r = data.reportRuns;
-  if (!r || r.forbidden) return "";
-  const rows = r.runs || [];
-  return `<section class="card" id="report-runs">
-    <h3>Recent runs</h3>
-    ${rows.length === 0 ? `<div class="empty-note">No report has been generated yet.</div>` : `<div class="scroll-x"><table>
-      <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th></th></tr></thead>
-      <tbody>${rows.map((x) => `<tr>
-        <td class="mono">${esc(x.requested_at)}</td><td>${esc(x.report)}</td><td>${esc(x.cluster)}</td>
-        <td>${esc(x.generated_by)}</td><td>${esc(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td>
-        <td>${x.status === "done" ? (x.formats || []).concat(["json"]).map((f) =>
-          `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(f)}">.${esc(f)}</button>`).join(" ") : ""}</td>
-      </tr>`).join("")}</tbody></table></div>`}
-    ${r.truncated ? `<div class="truncation-note">Showing ${rows.length} of ${r.total} runs.</div>` : ""}
+/* ─── #149 R5: the Reporting status page — three cards, docs/design/reporting-status-mock.html ──────
+   Everything here is what the report service says about itself (GET /report/api/status) and the
+   history it holds (GET /report/api/runs with server-side filters). No personnel data beyond the
+   `generated_by` a run already carries. */
+function historyQuery() {
+  const f = view.historyFilter, p = new URLSearchParams();
+  for (const k of ["report", "origin", "status", "cluster"]) if (f[k]) p.set(k, f[k]);
+  p.set("limit", String(HISTORY_PAGE)); p.set("offset", String(view.historyPage * HISTORY_PAGE));
+  return `/api/runs?${p.toString()}`;
+}
+const HISTORY_PAGE = 25;
+
+function stateBadge(state, label) {
+  // The app's badge vocabulary: a shape per state (the channel a colourblind reader has), the word
+  // beside it. Run and schedule states map onto it rather than growing a second one.
+  const shape = { done: "ok", ok: "ok", failed: "critical", late: "warning", running: "unknown",
+                  queued: "unknown", never: "unknown", disabled: "unknown" }[state] || "unknown";
+  return `<span class="badge ${shape} st-${esc(state)}"><span class="glyph" aria-hidden="true"></span>${esc(label || state)}</span>`;
+}
+
+function fmtStamp(iso) {                 // 2026-09-16T06:00:00Z → 2026-09-16 06:00 (UTC, as the service stamps)
+  return iso ? esc(iso.replace("T", " ").replace(/:\d\d(?:\.\d+)?Z$/, "").replace("Z", "")) : "—";
+}
+
+function untilShort(iso) {               // "in 3h 12m" / "in 15d" / "1h ago"
+  if (!iso) return "";
+  const secs = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  const a = Math.abs(secs);
+  const span = a < 3600 ? `${Math.max(1, Math.round(a / 60))}m` : a < 86400 ? `${Math.floor(a / 3600)}h ${Math.floor((a % 3600) / 60)}m` : `${Math.round(a / 86400)}d`;
+  return secs >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+function reportingPage() {
+  if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
+  if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  if (narrowedOnHost()) return refusalCard("Reporting status", `The reporting service's status, schedules and history describe the cluster's own reporting surface.`);
+  const st = data.reportStatus, h = data.reportHistory;
+  if (!st || !h) return `<section class="card"><button class="back" id="back">${backLabel()}</button><div class="empty-note">Loading…</div></section>`;
+  if (st.forbidden || h.forbidden) return refusalCard("Reporting status", `The reporting service's status, schedules and history describe the cluster's own reporting surface.`);
+  return `${reportingStatusCard(st)}${reportingSchedulesCard(st)}${reportingHistoryCard(h, st)}`;
+}
+
+function reportingStatusCard(st) {
+  const w = st.window;
+  const windowV = !w.enabled ? "Always open" : w.open_now ? "Open now" : "Closed";
+  const windowD = !w.enabled ? "no run window is configured — automated runs fire whenever scheduled"
+    : `${esc(w.start)}–${esc(w.end)} ${esc(w.timezone)} · ${w.days.length === 7 ? "Mon–Sun" : w.days.map(esc).join(", ")} · ${esc(w.next_change)} ${esc(untilShort(w.next_change_at))}`;
+  const fmt = st.service.formats;
+  const inFlight = st.in_flight.running ? `${st.in_flight.running} running` : "idle";
+  return `<section class="card" id="reporting-status">
+    <button class="back" id="back">${backLabel()}</button>
+    <h2>Reporting status <span class="rp-chip rp-count">report service ${esc(st.service.version)}</span></h2>
+    <div class="filterbar-note">What the report service is configured to do, and whether it is doing it. Read from the service — no personnel data.</div>
+    <div class="status-strip">
+      <div class="kv"><span class="k">Service</span><span class="v">${stateBadge("ok", "On")}</span>
+        <span class="d">${st.service.pdf.enabled ? `PDF ${esc(st.service.pdf.variant)} + HTML` : "HTML only"} · ${st.service.reports_enabled} reports enabled · scheduled runs store ${fmt.scheduled.map(esc).join("+")}</span></div>
+      <div class="kv"><span class="k">Run window</span><span class="v">${stateBadge(!w.enabled || w.open_now ? "ok" : "never", windowV)}</span>
+        <span class="d">${windowD}</span></div>
+      <div class="kv"><span class="k">Retention</span><span class="v">2-tier</span>
+        <span class="d">scheduled: ${st.retention.scheduled.days}d or newest ${st.retention.scheduled.keepPerSchedule} per schedule (cap-exempt) · manual: ${st.retention.manual.days}d or newest ${st.retention.manual.maxRuns}</span></div>
+      <div class="kv"><span class="k">In flight</span><span class="v">${stateBadge(st.in_flight.running ? "running" : "ok", inFlight)}</span>
+        <span class="d">${st.in_flight.queued} queued · ${w.refused_since_start} refused by the window since the service started</span></div>
+    </div>
   </section>`;
 }
+
+function reportingSchedulesCard(st) {
+  const rows = st.schedules || [];
+  const paused = rows.filter((s) => !s.enabled).length;
+  return `<section class="card" id="reporting-schedules">
+    <h3>Scheduled reports <span class="rp-chip rp-count">${rows.length} schedule${rows.length === 1 ? "" : "s"}${paused ? ` · ${paused} paused` : ""}</span></h3>
+    <div class="filterbar-note">Declared in <code>reporting.schedules[]</code> and fired by their CronJobs inside the run window (<code>generated_by = schedule:&lt;name&gt;</code>).
+      <code>enabled: false</code> pauses one without deleting it; "Retention" is its effective policy — keep the N newest, or anything younger than the age, whichever keeps more.</div>
+    ${rows.length === 0 ? `<div class="empty-note">No schedule is configured. Add one under <code>reporting.schedules[]</code> in the chart's values.</div>` : `<div class="scroll-x"><table>
+      <thead><tr><th>Schedule</th><th>Report</th><th>Cadence${st.window.enabled ? ` <span class="muted">(${esc(st.window.timezone)})</span>` : ""}</th><th>Retention</th><th>Enabled</th><th>Last success <span class="muted">(UTC)</span></th><th>Next <span class="muted">(UTC)</span></th><th>Status</th></tr></thead>
+      <tbody>${rows.map((s) => `<tr class="${s.enabled ? "" : "paused"}" data-schedule="${esc(s.name)}">
+        <td class="mono">${esc(s.name)}</td><td class="mono">${esc(s.report)}</td>
+        <td>${esc(s.cadence)}${s.cadence !== s.schedule ? `<br><span class="mono muted">${esc(s.schedule)}</span>` : ""}</td>
+        <td class="mono${s.retention.overridden ? "" : " muted"}">${s.retention.keepPerSchedule} newest · ${s.retention.days} d</td>
+        <td>${stateBadge(s.enabled ? "ok" : "disabled", s.enabled ? "On" : "Paused")}</td>
+        <td class="mono" title="${esc(s.last_success || "")}">${s.last_success ? `${fmtStamp(s.last_success)} <span class="muted">(${esc(ago(s.last_success))})</span>` : "never"}</td>
+        <td class="mono${s.next_fire ? "" : " muted"}">${s.next_fire ? `${fmtStamp(s.next_fire)} <span class="muted">(${esc(untilShort(s.next_fire))})</span>` : "—"}</td>
+        <td>${stateBadge(s.status)}</td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="filterbar-note mt-3"><code>enabled: false</code> keeps a schedule's definition, history and audit trail — the CronJob is suspended (Paused, Next —). Remove the stanza only to retire it. A schedule names no cluster: the service runs it for every enabled cluster in its snapshot. The cadence is read in the CronJob's zone${st.window.enabled ? ` (the run window's, ${esc(st.window.timezone)})` : " (the cluster's)"}; every instant on this page is UTC, as the service stamps it.</div>`}
+  </section>`;
+}
+
+function reportingHistoryCard(h, st) {
+  const f = view.historyFilter;
+  const total = h.total || 0, from = total ? view.historyPage * HISTORY_PAGE + 1 : 0, to = Math.min(total, (view.historyPage + 1) * HISTORY_PAGE);
+  const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE));
+  const facets = h.facets || { reports: [], clusters: [] };
+  const catalogue = (data.reportCatalog && data.reportCatalog.reports || []).map((r) => r.name);
+  const reports = Array.from(new Set([...catalogue, ...facets.reports])).sort();
+  const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label || v)}</option>`;
+  const artefacts = (x) => x.status === "done"
+    ? (x.formats || []).concat(["json"]).map((fm) => `<button type="button" class="linkish" data-artifact="${esc(x.id)}" data-format="${esc(fm)}">.${esc(fm)}</button>`).join(" ")
+    : `<span class="muted">—</span>`;
+  return `<section class="card" id="reporting-history">
+    <h3>Report history <span class="rp-chip rp-count" id="history-count">${total} run${total === 1 ? "" : "s"}</span></h3>
+    <div class="filterbar-note">Every generated report, newest first — manual and scheduled. Each filter runs across the whole history, on the service.</div>
+    <div class="ns-controls history-filters">
+      <label class="filterbar-note">Report <select id="history-report">${opt("", f.report, "All reports")}${reports.map((r) => opt(r, f.report)).join("")}</select></label>
+      <label class="filterbar-note">Origin <select id="history-origin">${opt("", f.origin, "Manual + scheduled")}${opt("person", f.origin, "Manual only")}${opt("schedule", f.origin, "Scheduled only")}</select></label>
+      <label class="filterbar-note">Status <select id="history-status">${opt("", f.status, "Any status")}${["done", "failed", "running", "queued"].map((v) => opt(v, f.status)).join("")}</select></label>
+      <label class="filterbar-note">Cluster <select id="history-cluster">${opt("", f.cluster, "All clusters")}${facets.clusters.map((c) => opt(c, f.cluster)).join("")}</select></label>
+      <span class="pager"><span id="history-range">${from}–${to} of ${total}</span>
+        <button type="button" id="history-prev"${view.historyPage === 0 ? " disabled" : ""}>‹ Prev</button>
+        <button type="button" id="history-next"${view.historyPage + 1 >= pages ? " disabled" : ""}>Next ›</button></span>
+    </div>
+    ${total === 0 ? `<div class="empty-note">${Object.values(f).some(Boolean) ? "No run matches these filters." : "No report has been generated yet."}</div>` : `<div class="scroll-x"><table>
+      <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th>artefacts</th></tr></thead>
+      <tbody>${(h.runs || []).map((x) => `<tr>
+        <td class="mono">${esc(x.requested_at)}</td><td class="mono">${esc(x.report)}</td><td>${esc(x.cluster)}</td>
+        <td>${x.generated_by.startsWith("schedule:") ? `<span class="mono">${esc(x.generated_by)}</span>` : esc(x.generated_by)}</td>
+        <td>${stateBadge(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td><td>${artefacts(x)}</td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="filterbar-note mt-3">Page ${view.historyPage + 1} of ${pages} · page size ${HISTORY_PAGE} · scheduled kept ${st.retention.scheduled.days}d / newest ${st.retention.scheduled.keepPerSchedule} per schedule (cap-exempt) · manual expires in ${st.retention.manual.days}d / newest ${st.retention.manual.maxRuns}</div>`}
+  </section>`;
+}
+
+function wireReporting() {
+  const back = $("back"); if (back) back.onclick = goBack;
+  // The page keeps its rows while the filtered reply is on its way — blanking to "Loading…" for a
+  // filter change made the controls jump under the reader's pointer.
+  // A reply describes the filters it was asked with: one asked before a filter change (this refetch,
+  // or a poll's) must not land under the new controls (review of #221, OB3 — a tiny window, closed).
+  const refetch = async () => {
+    const asked = historyQuery();
+    let got;
+    try { got = await guard403(reportGet(asked)); } catch (e) { got = { forbidden: true }; }
+    if (historyQuery() !== asked) return;
+    data.reportHistory = got; render();
+  };
+  for (const key of ["report", "origin", "status", "cluster"]) {
+    const el = $(`history-${key}`);
+    if (el) el.onchange = () => { view.historyFilter[key] = el.value; view.historyPage = 0; refetch(); };
+  }
+  const prev = $("history-prev"), next = $("history-next");
+  if (prev) prev.onclick = () => { view.historyPage = Math.max(0, view.historyPage - 1); refetch(); };
+  if (next) next.onclick = () => { view.historyPage += 1; refetch(); };
+  document.querySelectorAll("[data-artifact]").forEach((el) => {
+    el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
+  });
+}
+
+/* ─── #229 E1: the Library page — docs/design/report-library-mock.html, docs/specs/SPEC_E1_report_library.md ──
+   A new canvas beside the untouched Reports and Reporting-status pages: one section per configured
+   report (the enabled catalogue crossed with the schedules), headed the way people ask for it, each run
+   with its formats, its failure reason and its standing under retention — which the SERVICE computes
+   (`expires_at`, `retained_by`) by the ranking its prune deletes by; the page only prints it. */
+// The run the position names, by id: null off the library or without a position; `{asked, notFound}` on a 404.
+async function libraryPositionRun() {
+  if (view.page !== "library" || !view.run) return null;
+  const asked = view.run;
+  try { return { ...(await reportGet(`/api/runs/${encodeURIComponent(asked)}`)), asked }; }
+  catch (err) { if (err && err.status === 404) return { asked, notFound: true }; throw err; }
+}
+
+const LIBRARY_RUNS = "/api/runs?limit=1000";   // the API's maximum page; a longer history is said, not cut silently
+
+function libraryNewestFirst(a, b) {
+  // the service's own order: completion (the request time for a run that never completed), the id breaking ties
+  const stamp = (r) => r.finished_at || r.id.slice(0, 15).replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, "$1-$2-$3T$4:$5:$6Z");
+  const d = new Date(stamp(b)) - new Date(stamp(a));
+  return d !== 0 ? d : (a.id < b.id ? 1 : -1);
+}
+
+function fmtBytes(n) {
+  if (n == null) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+/* The standing in words. `retained_by` is the service's reason (SPEC E1 §3); `expires_at` the EARLIEST the
+   run can go. One of the newest K is kept whatever its age — so "at least until" — and longer while it stays
+   among them; beyond K, or manual, the date is the date. */
+function libraryExpiry(run) {
+  if (run.status === "queued" || run.status === "running") return { words: "no expiry (in flight)", date: "" };
+  const by = run.retained_by || "";
+  const m = /^newest:(\d+)\/(\d+)/.exec(by);
+  if (m) return run.expires_at
+    ? { words: `newest ${m[1]} of ${m[2]} · kept at least until`, date: fmtStamp(run.expires_at) }
+    : { words: `newest ${m[1]} of ${m[2]} · kept while it is`, date: "" };
+  // `manual:cap` is the run beyond the cap, and prune's next pass deletes it whatever its age; a run under the
+  // cap with no age bound says `manual:0d` and falls through to "kept indefinitely", as `age:0d` does
+  if (by === "manual:cap") return { words: "beyond the manual run cap — goes on the next prune", date: "" };
+  if (run.expires_at) return { words: `expires ${untilShort(run.expires_at)}`, date: fmtStamp(run.expires_at) };
+  return { words: "kept indefinitely", date: "" };
+}
+
+function libraryExpiryHtml(run) {
+  const w = libraryExpiry(run);
+  return `<span class="expiry">${esc(w.words)}${w.date ? ` · <span class="mono">${w.date}</span>` : ""}</span>`;
+}
+
+function libraryShortTitle(title) {
+  return title.replace(/ report$/i, "").replace(/ snapshot$/i, "").replace(/ and membership changes$/i, "");
+}
+
+/* "Quarterly compliance", "Daily namespace access", "Weekly groups", "Groups — 1st & 16th, paused": the service's own
+   `cadence` (cron.py `describe`) in front of the report's short title — never a regex on the schedule's name. The
+   heading takes the cadence's NAMED word alone (Daily, Weekly, Weekdays, Monthly, Quarterly, Yearly — "Weekly Mon
+   groups" is not how anyone says it; the weekday and the clock are in the section's sub-line), the whole cadence
+   minus its clock when it has no such word ("1st & 16th"), and the title alone when the service could only echo
+   the cron expression. */
+function librarySpokenHead(sched, report) {
+  const short = libraryShortTitle(report.title);
+  const cadence = sched.cadence || "";
+  const named = /^(Daily|Weekly|Weekdays|Monthly|Quarterly|Yearly)\b/.exec(cadence);
+  const cad = named ? named[1] : cadence === sched.schedule ? "" : cadence.replace(/\s+\d{1,2}:\d{2}$/, "");
+  if (!sched.enabled) return cad ? `${short} — ${cad}, paused` : `${short} — paused`;
+  return cad ? `${cad} ${short.charAt(0).toLowerCase()}${short.slice(1)}` : short;
+}
+
+function libraryFormats(run) {
+  const bytes = run.bytes || {};
+  const keys = Object.keys(bytes);
+  if (run.status !== "done" || !keys.length) return "";
+  return `<div class="fmts">${keys.map((f) =>
+    `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}" id="lib-${esc(run.id)}-${esc(f)}">.${esc(f)} · ${esc(fmtBytes(bytes[f]))}</button>`).join("")}</div>`;
+}
+
+function libraryRunCard(run, featured) {
+  const reason = run.status === "failed" && run.error ? `<div class="reason">${esc(String(run.error).split(/\r?\n/)[0])}</div>` : "";
+  const asof = run.snapshot_stamp ? ` · data as of ${fmtStamp(run.snapshot_stamp)}` : "";
+  // an <article>, not a <button>: the format chips inside are buttons, and a button cannot contain one
+  return `<article class="run${featured ? " featured" : ""}" data-run="${esc(run.id)}" id="run-${esc(run.id)}" tabindex="0" role="button" aria-label="Open run ${esc(run.id)}">
+    <div class="when">${fmtStamp(run.requested_at)} <span class="muted">(${esc(ago(run.requested_at))})</span></div>
+    <div class="meta"><span class="mono">${esc(run.cluster)}</span>${asof}</div>
+    ${libraryFormats(run)}
+    ${reason}
+    <div class="row">${stateBadge(run.status)}${libraryExpiryHtml(run)}</div>
+  </article>`;
+}
+
+function libraryClusterBlocks(runs, key) {
+  const byCluster = {};
+  runs.forEach((r) => { (byCluster[r.cluster] = byCluster[r.cluster] || []).push(r); });
+  const groups = Object.keys(byCluster).sort().map((c) => ({ cluster: c, runs: byCluster[c].sort(libraryNewestFirst) }));
+  const many = groups.length > 1;
+  return groups.map((g) => {
+    const [featured, ...earlier] = g.runs;
+    const expandKey = `${key}:${g.cluster}`;
+    const open = !!view.libraryOpen[expandKey];
+    const shown = open ? earlier : earlier.slice(0, 2);
+    const more = earlier.length > 2;
+    return `${many ? `<div class="cluster-head">${esc(g.cluster)}</div>` : ""}
+      ${libraryRunCard(featured, true)}
+      ${shown.map((r) => libraryRunCard(r, false)).join("")}
+      ${more ? `<button type="button" class="linkish" data-expand="${esc(expandKey)}" id="lib-expand-${esc(expandKey)}">${open ? "fewer" : `all ${g.runs.length} →`}</button>` : ""}`;
+  }).join("");
+}
+
+// the link opens the Reports tab with this report's form selected: the words name that action, the arrow says it leaves the page
+// `sid` is the section's id: a report with two schedules has two sections, and an id minted from the
+// report alone would repeat — focus restore lands on the first (review of #233, Grok).
+function libraryGenerateLink(name, again, sid) {
+  return `<button type="button" class="linkish" data-goto-reports="${esc(name)}" id="lib-gen-${esc(sid || name)}">${again ? "Generate another" : "Generate this report"} →</button>`;
+}
+
+function librarySections() {
+  const enabled = ((data.reportCatalog && data.reportCatalog.reports) || []).filter((r) => r.enabled);
+  const schedules = (data.reportStatus && data.reportStatus.schedules) || [];
+  const sections = [];
+  enabled.forEach((report) => {
+    const mine = schedules.filter((s) => s.report === report.name);
+    // Manual runs belong to the REPORT, not to a schedule: a report with two schedules has two sections, and
+    // listing its manual runs under both put every card and its chips on the page twice under one id (review of
+    // #233, OB3 — measured). They are listed once, under the report's first section; the rest carry none.
+    if (mine.length) mine.forEach((sched, i) => sections.push({ report, sched, manuals: i === 0 }));
+    else sections.push({ report, sched: null, manuals: true });
+  });
+  return sections;
+}
+
+function librarySectionHtml(sec, allRuns) {
+  const { report, sched } = sec;
+  const [kcat, klabel] = REPORT_KIND[report.name] || ["access", "report"];
+  const sid = sched ? `sec-${sched.name}` : `sec-${report.name}`;
+  const title = sched ? librarySpokenHead(sched, report) : report.title;
+  const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
+  const manuals = sec.manuals ? allRuns.filter((r) => r.report === report.name && !r.schedule) : [];
+  const paused = !!(sched && !sched.enabled);
+  const empty = !scheduled.length && !manuals.length;
+  const chips = [`<span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span>`];
+  if (sched) {
+    chips.push(stateBadge(sched.status, sched.status === "disabled" ? "paused" : sched.status));
+    if (scheduled.length) chips.push(`<span class="rp-chip rp-count">${scheduled.length} scheduled</span>`);
+    if (manuals.length) chips.push(`<span class="rp-chip rp-count">${manuals.length} manual</span>`);
+  } else if (manuals.length) {
+    chips.push(`<span class="rp-chip rp-count">${manuals.length} manual</span>`);
+  }
+  let body = "";
+  if (empty) {
+    if (paused) body = `<div class="empty-note">Paused — CronJob suspended. Previous fire ${fmtStamp(sched.previous_fire)}. No run in the library.</div>${libraryGenerateLink(report.name, false, sid)}`;
+    else if (sched) body = `<div class="empty-note">No run yet.${sched.next_fire ? ` Next ${esc(sched.cadence)} · ${fmtStamp(sched.next_fire)} (${esc(untilShort(sched.next_fire))}).` : ""}</div>${libraryGenerateLink(report.name, false, sid)}`;
+    else body = `<div class="empty-note">No schedule and no run yet.</div>${libraryGenerateLink(report.name)}`;
+  } else {
+    if (sched && scheduled.length) body += libraryClusterBlocks(scheduled, sid);
+    else if (!sched && manuals.length) body += libraryClusterBlocks(manuals, sid);
+    if (sched && manuals.length) body += `<h3 class="subh">Manual runs</h3>${libraryClusterBlocks(manuals, `${sid}:manual`)}`;
+    body += `<div class="sec-foot">${libraryGenerateLink(report.name, true, sched ? sid : null)}</div>`;
+  }
+  const sub = sched
+    ? `<span class="mono">${esc(sched.name)}</span> · ${esc(sched.cadence)}${sched.cadence !== sched.schedule ? ` · <span class="mono">${esc(sched.schedule)}</span>` : ""} · keep ${sched.retention.keepPerSchedule} newest · ${sched.retention.days}d${sched.retention.overridden ? " (overridden)" : ""}`
+    : esc(report.summary);
+  return `<section class="card lib-sec r-${esc(kcat)}${paused ? " paused" : ""}${empty ? " compact" : ""}" id="${esc(sid)}">
+    <h2>${esc(title)} ${chips.join(" ")}</h2>
+    <div class="filterbar-note">${sub}</div>
+    ${body}
+  </section>`;
+}
+
+function libraryParamRows(run, spec) {
+  const named = {};
+  ((spec && spec.params) || []).forEach((p) => { named[p.name] = p; });
+  const src = run.params || {};
+  const rows = [];
+  if (src.selectors && typeof src.selectors === "object") {
+    Object.keys(src.selectors).forEach((label) => { const v = src.selectors[label]; if (v && v.length) rows.push([label, v.join(", ")]); });
+  }
+  Object.keys(src).forEach((k) => {
+    if (k === "selectors") return;
+    const v = src[k];
+    if (v == null || v === "" || (Array.isArray(v) && !v.length)) return;
+    rows.push([named[k] ? named[k].name : k, typeof v === "boolean" ? (v ? "On" : "Off") : Array.isArray(v) ? v.join(", ") : String(v)]);
+  });
+  return rows.length
+    ? rows.map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span><span class="v mono">${esc(v)}</span></div>`).join("")
+    : `<div class="kv"><span class="k">parameters</span><span class="v muted">none set</span></div>`;
+}
+
+function libraryDuration(run) {
+  if (run.render_seconds != null) return `${run.render_seconds}s`;
+  if (run.started_at && run.finished_at) return `${((new Date(run.finished_at) - new Date(run.started_at)) / 1000).toFixed(3)}s`;
+  return "—";
+}
+
+/* The run drawer: `view.run` is a position (`#page=library&run=<id>`), so the drawer is rendered from it and
+   survives every repaint; closing navigates back to the library. An unknown id says so — never a blank. */
+function libraryDrawer(allRuns) {
+  const id = view.run;
+  const run = allRuns.find((r) => r.id === id) || null;
+  const spec = run ? ((data.reportCatalog && data.reportCatalog.reports) || []).find((r) => r.name === run.report) : null;
+  const [kcat] = (run && REPORT_KIND[run.report]) || ["access"];
+  let inner;
+  if (!run) {
+    inner = `<button type="button" class="back linkish" id="drawer-close">← Library</button>
+      <h2 id="drawer-title">Run not found</h2>
+      <p class="note-found">No run with that id is in the library.</p>`;
+  } else {
+    const bytes = run.bytes || {};
+    const fmts = Object.keys(bytes).length
+      ? Object.keys(bytes).map((f) => `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}" id="drawer-${esc(f)}">.${esc(f)} · ${esc(fmtBytes(bytes[f]))}</button>`).join("")
+      : `<span class="muted">no artefacts</span>`;
+    const kv = (k, v) => `<div class="kv"><span class="k">${k}</span><span class="v mono">${v}</span></div>`;
+    inner = `<button type="button" class="back linkish" id="drawer-close">← Library</button>
+      <h2 id="drawer-title">${esc(spec ? spec.title : run.report)}</h2>
+      <div class="filterbar-note"><span class="mono">${esc(run.id)}</span></div>
+      ${kv("report", esc(run.report))}
+      ${kv("cluster", esc(run.cluster))}
+      ${libraryParamRows(run, spec)}
+      ${kv("requested", fmtStamp(run.requested_at))}
+      ${kv("started", fmtStamp(run.started_at))}
+      ${kv("finished", fmtStamp(run.finished_at))}
+      ${kv("duration", esc(libraryDuration(run)))}
+      ${kv("data as of", run.snapshot_stamp ? fmtStamp(run.snapshot_stamp) : "—")}
+      ${kv("sha256", esc(run.sha256 || "—"))}
+      <div class="kv"><span class="k">formats</span><span class="v">${fmts}</span></div>
+      <div class="kv"><span class="k">generated by</span><span class="v">${run.generated_by && run.generated_by.startsWith("schedule:") ? `<span class="mono">${esc(run.generated_by)}</span>` : esc(run.generated_by)}</span></div>
+      ${kv("schedule", esc(run.schedule || "—"))}
+      <div class="kv"><span class="k">status</span><span class="v">${stateBadge(run.status)}</span></div>
+      ${run.status === "failed" && run.error ? `<div class="kv"><span class="k">error</span><span class="v err">${esc(run.error)}</span></div>` : ""}
+      <div class="kv"><span class="k">expiry</span><span class="v">${libraryExpiryHtml(run)}</span></div>
+      <div class="acts">
+        ${run.status === "done" && bytes.html ? `<button type="button" class="btn btn-acc" data-open-html="${esc(run.id)}" id="drawer-open-html">Open .html in a new tab</button>` : ""}
+        <button type="button" class="btn" id="drawer-copy-link">Copy link</button>
+        <button type="button" class="btn" id="drawer-close-2">Close</button>
+      </div>
+      <p class="filterbar-note mt-3">Open .html fetches with the ticket and opens it here — the artefact URL is not a pasteable link; this run's position is.</p>`;
+  }
+  return `<div class="overlay" id="library-overlay"><aside class="drawer r-${esc(kcat)}" id="library-drawer" role="dialog" aria-labelledby="drawer-title">${inner}</aside></div>`;
+}
+
+function libraryPage() {
+  if (!reportingEnabled()) return `<section class="card"><div class="empty-note">Reporting is not enabled on this deployment.</div></section>`;
+  if (!readerTierKnown()) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const what = `The library holds the generated reports — documents about the cluster's own RBAC surface, its groups and its users.`;
+  if (narrowedOnHost()) return refusalCard("Library", what);
+  const cat = data.reportCatalog, st = data.reportStatus, lib = data.library, pr = data.libraryRun;
+  if ((cat && cat.forbidden) || (st && st.forbidden) || (lib && lib.forbidden) || (pr && pr.forbidden)) return refusalCard("Library", what);
+  if (!cat || !st || !lib) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  const allRuns = (lib.runs || []).slice();
+  // The listing is the API's first page (1 000); a positioned run past it is fetched by id and joined here,
+  // so a pasted link to an old run opens it rather than "Run not found" (review of #233, Codex).
+  const positioned = data.libraryRun;
+  if (positioned && positioned.asked === view.run && !positioned.notFound && !allRuns.some((r) => r.id === positioned.id)) {
+    const { asked, ...run } = positioned; allRuns.push(run);
+  }
+  const sections = librarySections();
+  const nSched = (st.schedules || []).length, nPaused = (st.schedules || []).filter((s) => !s.enabled).length;
+  const jumps = sections.map((sec) => {
+    const id = sec.sched ? `sec-${sec.sched.name}` : `sec-${sec.report.name}`;
+    return `<a href="#${esc(id)}" data-jump="${esc(id)}">${esc(sec.sched ? librarySpokenHead(sec.sched, sec.report) : sec.report.title)}</a>`;
+  }).join("");
+  return `<section class="card" id="library-lead">
+      <h2>Library <span class="rp-chip rp-count">${lib.total} run${lib.total === 1 ? "" : "s"} · ${nSched} schedule${nSched === 1 ? "" : "s"}${nPaused ? ` · ${nPaused} paused` : ""}</span></h2>
+      <div class="filterbar-note">Where the reports are, and which one you want. Organised by the catalogue crossed with <code>reporting.schedules[]</code> — the Reports tab generates; Reporting status is the service. No personnel data beyond <code>generated_by</code>.</div>
+      ${lib.truncated ? `<div class="truncation-note">The newest ${allRuns.length} of ${lib.total} runs are here; the rest are on the Reporting-status page's history.</div>` : ""}
+      <nav class="jumps" aria-label="Reports in this library">${jumps}</nav>
+    </section>
+    ${sections.length ? sections.map((sec) => librarySectionHtml(sec, allRuns)).join("") : `<section class="card"><div class="empty-note">No report is enabled on this deployment.</div></section>`}
+    ${view.run ? libraryDrawer(allRuns) : ""}`;
+}
+
+async function openArtifactInNewTab(runId) {
+  // fetched with the ticket, opened as a blob: the artefact URL itself is ticket-gated and cannot be pasted
+  const res = await reportFetch(`/api/runs/${encodeURIComponent(runId)}/artifact?format=html&download=false`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(new Blob([blob], { type: "text/html" }));
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function wireLibrary() {
+  const main = $("main");
+  main.querySelectorAll("[data-run]").forEach((el) => {
+    // The drawer is a dialog and its first control must take the focus. render() restores the focus BY ID after
+    // the repaint, and the card that was clicked (or held Enter) keeps its id across it — so the restore put a
+    // reader back on the card BEHIND the overlay, where Escape (handled on the overlay) never fired and Tab walked
+    // the cards' chips behind the dialog; only a cold link, with nothing focused, reached the drawer (review of
+    // #233, OB3 — measured). The card gives the focus up before the repaint, so nothing is restored and the
+    // first-control focus below stands.
+    const open = () => { navigate({ run: el.dataset.run }); el.blur(); render(); };
+    el.onclick = (e) => { if (!e.target.closest("[data-artifact]")) open(); };
+    el.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); open(); } };
+  });
+  main.querySelectorAll("[data-artifact]").forEach((el) => {
+    el.onclick = (e) => { e.stopPropagation(); downloadArtifact(el.dataset.artifact, el.dataset.format); };
+  });
+  main.querySelectorAll("[data-expand]").forEach((el) => {
+    el.onclick = () => { view.libraryOpen[el.dataset.expand] = !view.libraryOpen[el.dataset.expand]; render(); };
+  });
+  main.querySelectorAll("[data-goto-reports]").forEach((el) => {
+    el.onclick = () => { navigate({ page: "reports", report: el.dataset.gotoReports, run: null }); render(); refresh(); };
+  });
+  main.querySelectorAll("[data-jump]").forEach((el) => {
+    // an in-page jump, not a position: the hash is the app's, so scroll by hand and leave the URL alone
+    el.onclick = (e) => { e.preventDefault(); const t = $(el.dataset.jump); if (t) { t.scrollIntoView({ block: "start" }); t.focus && t.setAttribute("tabindex", "-1"); t.focus(); } };
+  });
+  const close = () => { const back = view.run ? $(`run-${view.run}`) : null; navigate({ run: null }); render(); const again = back && $(back.id); if (again) again.focus(); };
+  ["drawer-close", "drawer-close-2"].forEach((id) => { const b = $(id); if (b) b.onclick = close; });
+  const overlay = $("library-overlay");
+  if (overlay) {
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    overlay.onkeydown = (e) => { if (e.key === "Escape") close(); };
+    // a run opened by link or click: the drawer's first control takes focus unless the reader is already inside it
+    if (!overlay.contains(document.activeElement)) { const first = $("drawer-close"); if (first) first.focus(); }
+  }
+  const copy = $("drawer-copy-link");
+  if (copy) copy.onclick = () => {
+    const link = location.origin + location.pathname + location.search + hashFor(currentPosition());
+    const done = () => { copy.textContent = "Copied"; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, done); else done();
+  };
+  const openHtml = $("drawer-open-html");
+  if (openHtml) openHtml.onclick = () => { openArtifactInNewTab(openHtml.dataset.openHtml).catch((err) => { openHtml.textContent = `Could not open: ${err.message}`; }); };
+}
+
 
 // A <select multiple> serialises its `value` as the FIRST option only; a report param that takes a list
 // (mnemonics) needs every selected value, so read the element by kind (B3, §3.7).
@@ -2696,6 +3335,43 @@ function clearReportPreview() {
   // that no longer describe any selection must not stay on screen (#143).
   closeNsPreview();
 }
+// #143 phase 3: what the run would produce — build() on the service, nothing rendered or stored — shown
+// beside Generate as "N namespaces · M group bindings · will truncate". Debounced, versioned like the count
+// preview, never blocking Generate; a 422 shows the refusal so the reader fixes the field before running.
+let _totalsTimer = null, _totalsVersion = 0, _totalsKey = null;
+function scheduleTotals(spec, retry = false) {
+  clearTimeout(_totalsTimer);
+  const version = ++_totalsVersion, cluster = view.cluster;
+  if (!spec || !cluster) return;
+  _totalsKey = `${cluster}|${spec}`;
+  _totalsTimer = setTimeout(async () => {
+    const params = Object.assign({}, view.reportForm[spec] || {});
+    let text;
+    try {
+      const r = await (await reportFetch("/api/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                            body: JSON.stringify({ report: spec, cluster, params }) })).json();
+      // the key is the noun, plural in every report's totals; one of a thing drops the s (review of #224, Codex: "1 namespaces")
+      const parts = Object.entries(r.totals || {}).filter(([, v]) => typeof v === "number").map(([k, v]) => `${v} ${v === 1 ? k.replace(/_/g, " ").replace(/s$/, "") : k.replace(/_/g, " ")}`);
+      text = parts.join(" · ") + (r.truncated ? " · will truncate" : "");
+    } catch (e) {
+      if (e.status === 429 && !retry && version === _totalsVersion && view.cluster === cluster && view.report === spec) {
+        // The slot was busy — often this viewer's OWN superseded preview, still building after a report
+        // switch. One retry once it has likely cleared; a second busy answer waits for the next change, as
+        // documented (review of #224, OB3). Blank meanwhile: the text on screen describes the form before
+        // this change.
+        view.reportTotals = { spec, cluster, text: "" };
+        const busy = $("report-totals"); if (busy) busy.textContent = "";
+        _totalsTimer = setTimeout(() => scheduleTotals(spec, true), 1500);
+        return;
+      }
+      text = e.status === 422 ? `preview: ${e.detail || "the parameters were refused"}` : "";   // a preview error never blocks Generate
+    }
+    if (version !== _totalsVersion || view.cluster !== cluster || view.report !== spec) return;
+    view.reportTotals = { spec, cluster, text };                      // keyed by cluster too: a switch must not paint A's totals beside B (review of #224, Grok)
+    const el = $("report-totals"); if (el && el.textContent !== text) el.textContent = text;   // in place: no repaint under the reader
+  }, 500);
+}
+
 function schedulePreview(spec) {
   if (spec !== "namespace-access") { clearReportPreview(); return; }
   clearTimeout(_previewTimer);
@@ -2779,6 +3455,7 @@ function clearNamespaceAccessSelectors() {
   const f = view.reportForm["namespace-access"];
   if (f) delete f.selectors;
   schedulePreview("namespace-access");
+  scheduleTotals("namespace-access");     // the totals beside Generate follow the selection too (review of #224, Grok)
   closeNsPreview();   // empty-selection arm blanks the count; it does not close the names dialog
 }
 
@@ -2791,7 +3468,10 @@ function landReportForm() {
   const bar = document.querySelector("header.top");
   const pos = bar ? getComputedStyle(bar).position : "";
   const shell = bar && (pos === "sticky" || pos === "fixed") ? bar.getBoundingClientRect().height : 0;
-  window.scrollTo({ top: form.getBoundingClientRect().top + window.scrollY - shell - 12, behavior: "smooth" });
+  // Instant, not smooth: a smooth scroll is an animation the browser cancels on the next scroll-affecting
+  // event, and on a long form at phone width it was measured stopping 110 px in (the lookups' menus
+  // had just been painted). The landing is the point; the reader's eye follows a cut fine.
+  window.scrollTo({ top: form.getBoundingClientRect().top + window.scrollY - shell - 12 });
 }
 
 function wireReports() {
@@ -2835,8 +3515,74 @@ function wireReports() {
         f[el.dataset.param] = readParamEl(el);
         if (spec === "namespace-access") schedulePreview(spec);   // re-evaluate: an explicit name XORs the count away
       }
+      scheduleTotals(spec);
     };
   });
+  const link = $("report-status-link");
+  if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
+  // #149 R7: the ParamSpec shell's controls. Each writes the form state and repaints; the lookup's
+  // typed text lives in view.reportLookupText so the repaint keeps it and the caret returns by id.
+  const openSpec = view.report && data.reportCatalog && (data.reportCatalog.reports || []).find((r) => r.name === view.report);
+  if (openSpec && $("report-form") && openSpec.params.some((p) => p.source)) ensureDiscovered();   // only a form with a lookup pays for one
+  if (openSpec && $("report-form") && _totalsKey !== `${view.cluster}|${openSpec.name}`) scheduleTotals(openSpec.name);   // #143: once per form+cluster as it opens
+  const formOf = () => view.reportForm[view.report] || (view.reportForm[view.report] = {});
+  const listOf = (name) => { const f = formOf(); const v = f[name]; return Array.isArray(v) ? v : (typeof v === "string" && v ? v.split(",").map((x) => x.trim()).filter(Boolean) : []); };
+  const after = (name) => { if (view.report === "namespace-access") schedulePreview(view.report); scheduleTotals(view.report); render(); };
+  document.querySelectorAll("[data-switch]").forEach((el) => {
+    el.onclick = () => { const f = formOf(); f[el.dataset.switch] = el.getAttribute("aria-checked") !== "true"; after(el.dataset.switch); };
+  });
+  document.querySelectorAll("[data-seg]").forEach((el) => {
+    el.onclick = () => { formOf()[el.dataset.seg] = el.dataset.value; after(el.dataset.seg); };
+  });
+  document.querySelectorAll("[data-lookup-input]").forEach((el) => {
+    const name = el.dataset.lookupInput;
+    view.reportLookupText = view.reportLookupText || {};
+    el.oninput = () => {
+      // narrow the menu in place — no repaint under a typing reader; rebuilt from the discovered set,
+      // not from the nodes on screen (review of #222, OB3)
+      view.reportLookupText[el.id] = el.value;
+      const body = document.querySelector(`#${CSS.escape(el.id)}-menu [data-menu-body]`); if (!body) return;
+      const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][el.dataset.lookupSource];
+      body.innerHTML = lookupMenuBody(name, lookupValues(el.dataset.lookupSource, found), listOf(name), el.value.trim());
+      wireLookupOptions(body);
+    };
+    el.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault(); const v = el.value.trim(); if (!v) return;
+        const list = listOf(name); if (!list.includes(v)) list.push(v);
+        formOf()[name] = list; view.reportLookupText[el.id] = ""; after(name);
+      } else if (e.key === "Backspace" && !el.value) {
+        const list = listOf(name); if (list.length) { list.pop(); formOf()[name] = list; after(name); }
+      }
+    };
+  });
+  // An option, a × and Clear have no id, so render()'s by-id restore would leave a keyboard reader on
+  // <body>; each puts focus back on the lookup's input (review of #222, Grok and OB3).
+  const refocusLookup = (name) => { const again = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (again) again.focus({ preventScroll: true }); };
+  const wireLookupOptions = (root) => root.querySelectorAll("[data-lookup-opt]").forEach((el) => {
+    const pick = () => {
+      const name = el.dataset.lookupOpt, v = el.dataset.value, list = listOf(name);
+      formOf()[name] = list.includes(v) ? list.filter((x) => x !== v) : list.concat([v]);
+      const input = document.querySelector(`[data-lookup-input="${CSS.escape(name)}"]`); if (input) view.reportLookupText[input.id] = "";
+      after(name); refocusLookup(name);
+    };
+    el.onclick = pick;
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } };
+  });
+  wireLookupOptions(document);
+  document.querySelectorAll("[data-lookup-remove]").forEach((el) => {
+    el.onclick = () => { const name = el.dataset.lookupRemove; formOf()[name] = listOf(name).filter((x) => x !== el.dataset.value); after(name); refocusLookup(name); };
+  });
+  const adv = $("report-advanced");
+  if (adv) {
+    // Recorded on the summary's click, not only on `toggle`: the toggle event is queued as a task, so a
+    // repaint racing it read the old state (review of #222, OB3 — the reader's close was undone).
+    const rec = (open) => { view.reportAdvancedOpen = view.reportAdvancedOpen || {}; view.reportAdvancedOpen[view.report] = open; };
+    adv.querySelector("summary").onclick = () => rec(!adv.open);
+    adv.ontoggle = () => rec(adv.open);
+  }
+  const clearSubject = $("report-subject-clear");
+  if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; scheduleTotals(view.report); render(); refocusLookup("users"); };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
@@ -2894,9 +3640,9 @@ async function generateReport(refocus = false) {
       view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
       render();
     }
-    data.reportRuns = await guard403(reportGet("/api/runs?limit=50"));
+    data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
-    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? "the parameters were refused (see the fields)" : e.message };
+    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message };
   } finally {
     view.reportSubmitting = false; render();
     if (refocus) { const g = $("report-generate"); if (g) g.focus({ preventScroll: true }); }
@@ -3148,7 +3894,7 @@ function captureSection(d, access) {
               : (r.known_user ? "" : ` <span class="chip">${r.has_history
                   ? "removed from every group" : "no synced group"}</span>`)}</td>
             <td>${outcomeBadge(r.outcome)}${refusalBadge(r.refusal_reason)}</td>
-            <td class="mono muted">${esc(r.provider || "—")}</td>
+            <td>${r.provider ? `<span class="chip mono" title="Identity provider the attempt went through.">${esc(r.provider)}</span>` : `<span class="muted">—</span>`}</td>
             <td class="muted">${esc(r.detail || "")}${r.ldap_result_code != null
               ? ` <span class="mono">(LDAP ${r.ldap_result_code})</span>` : ""}</td>
             <td class="mono muted nowrap">${
@@ -3940,7 +4686,7 @@ function bindingsPage() {
         <div class="value">${d.total || 0}</div></div>
       <div class="kpi"><div class="label">Grant a real group</div>
         <div class="value muted">${c.ok || 0}</div></div>
-      <div class="kpi"><div class="label">Need review</div>
+      <div class="kpi${review ? (c.dangling ? " flag-critical" : " flag-warning") : ""}"><div class="label">Need review</div>
         <div class="value ${review ? "" : "muted"}">${review}</div></div>
       <div class="kpi"><div class="label">Built-in</div>
         <div class="value muted">${c.built_in || 0}</div></div>
@@ -4534,6 +5280,582 @@ function wireLookup() {
   });
 }
 
+/* ── Kyverno (#165, #170) ──────────────────────────────────────────────────────────────────
+   The CEL policy family read through the policy reports. Three states are rendered distinctly and
+   never as zero: never polled, not installed (no report API group served), and installed — where the
+   deprecated family's results and the report breaker's drops are first-class states beside the counts.
+   Administrator tier: a finding names a resource cluster-wide. */
+const KYVERNO_REFUSAL = `A policy finding names a resource and says what is wrong with it, cluster-wide, and
+  answers nothing about your own access.`;
+const KYVERNO_RESULT_BADGE = { fail: "critical", error: "critical", warn: "warning", pass: "ok", skip: "unknown" };
+function kyvernoResultBadge(result) {
+  return `<span class="badge ${KYVERNO_RESULT_BADGE[result] || "unknown"}"><span class="glyph" aria-hidden="true"></span>${esc(result)}</span>`;
+}
+
+function kyvernoPage() {
+  const d = data.kyverno;
+  if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
+  if (d.forbidden) return refusalCard("Kyverno", KYVERNO_REFUSAL);
+  const head = `<h2>Kyverno <span class="muted fw-normal">· the CEL policy family</span></h2>`;
+  if (d.enabled === false) {
+    return `<section class="card">${head}
+      <div class="empty-note">The Kyverno module is switched off for this deployment (<code>kyverno.enabled: false</code>):
+        the poller reads no policy reports here.</div></section>`;
+  }
+  if (d.present === null || d.present === undefined) {
+    return `<section class="card">${head}
+      <div class="empty-note">Not polled yet — the binding refresh reads the policy reports, and this cluster has not been
+        read since the module arrived. Nothing here is a statement about the cluster.</div></section>`;
+  }
+  if (!d.present) {
+    return `<section class="card">${head}
+      <div class="empty-note">No policy-report API group is served on <code>${esc(view.cluster)}</code> — neither
+        <code>openreports.io/v1alpha1</code> nor <code>wgpolicyk8s.io/v1alpha2</code> — so Kyverno is not installed
+        there, or its reports API is not. This page reads reports, not policy objects: without them there is nothing
+        to say, and "no findings" would be the wrong thing to say.
+        <span class="muted">Last looked ${esc(ago(d.observed_at))}.</span></div></section>`;
+  }
+  const r = d.results || {};
+  const problems = (r.fail || 0) + (r.error || 0);
+  const policies = d.policies_list || [];
+  const kinds = d.policy_kinds || [];
+  const breakerNote = d.breaker_drops
+    ? `<div class="truncation-note" id="kyverno-breaker">The reports controller's breaker has dropped
+        <strong>${d.breaker_drops}</strong> report${d.breaker_drops === 1 ? "" : "s"} (<code>kyverno_breaker_drops</code>, read
+        ${esc(ago(d.observed_at))}) — results below are <strong>incomplete</strong>, and the missing ones are the
+        newest. Raise <code>--maxBackgroundReports</code> on the background controller or reduce what the policies
+        match.</div>`
+    : d.breaker_total !== null && d.breaker_total !== undefined
+      ? `<div class="filterbar-note" id="kyverno-breaker">No report has been dropped by the breaker
+          (<code>kyverno_breaker_total</code> ${d.breaker_total}, no <code>kyverno_breaker_drops</code> exported — a counter
+          appears on its first increment). The results below are the whole set the controller wrote.</div>`
+      : d.breaker_configured
+        ? `<div class="truncation-note" id="kyverno-breaker">Whether the reports controllers dropped any report is
+            <strong>unknown</strong>: <code>kyverno.metricsUrl</code> is set, but the last scrape of it failed (the poller's
+            log names the endpoint), so the breakers were not read this cycle. The results below may be incomplete.</div>`
+        : `<div class="filterbar-note" id="kyverno-breaker">Whether the reports controllers dropped any report is
+            <strong>unknown</strong>: <code>kyverno.metricsUrl</code> is not set, so the breakers are not read. The results
+            below may be incomplete on a large cluster.</div>`;
+  const legacyNote = d.legacy_results
+    ? `<div class="truncation-note" id="kyverno-legacy"><strong>${d.legacy_results}</strong> result${d.legacy_results === 1 ? "" : "s"}
+        on this cluster come from the deprecated <code>ClusterPolicy</code>/<code>Policy</code> family and are
+        <strong>not shown</strong>. The API says that family will be removed in a future release; this page reads the
+        CEL kinds only (${CEL_KIND_WORDS}). A cluster carrying them is not a clean cluster.</div>`
+    : "";
+  const otherNote = d.other_results
+    ? `<div class="filterbar-note">${d.other_results} result${d.other_results === 1 ? "" : "s"} name a policy kind this page
+        does not know (a source other than the five CEL kinds and the deprecated family); they are listed under
+        <code>other</code>.</div>`
+    : "";
+  const status = `<section class="card">${head}
+    <div class="filterbar-note">Read through <code>${esc(d.api_group || "")}</code>
+      ${esc(ago(d.observed_at))}${kinds.length ? ` · the cluster serves ${kinds.map((k) => `<code>${esc(k)}</code>`).join(", ")}` : " · no CEL policy kind is served"}
+      · <strong>${d.reports}</strong> report${d.reports === 1 ? "" : "s"} written by Kyverno. Results are keyed by policy and
+      resource — the CEL engine writes no rule name.</div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">CEL policies</div><div class="value">${d.policies}</div></div>
+      <div class="kpi${problems ? " flag-critical" : ""}"><div class="label">Failing</div><div class="value${problems ? "" : " muted"}">${problems}</div></div>
+      <div class="kpi${r.warn ? " flag-warning" : ""}"><div class="label">Warnings</div><div class="value${r.warn ? "" : " muted"}">${r.warn || 0}</div></div>
+      <div class="kpi"><div class="label">Passing</div><div class="value">${r.pass || 0}</div></div>
+      <div class="kpi"><div class="label">Skipped</div><div class="value muted">${r.skip || 0}</div></div>
+      <div class="kpi${d.legacy_results ? " flag-warning" : ""}"><div class="label">Not shown (deprecated family)</div><div class="value${d.legacy_results ? "" : " muted"}">${d.legacy_results || 0}</div></div>
+    </div>
+    ${legacyNote}${otherNote}${breakerNote}
+  </section>`;
+
+  const policiesCard = `<section class="card">
+    <h2>Policies <span class="muted fw-normal">· ${policies.length}</span></h2>
+    <div class="filterbar-note">A policy with <strong>background off</strong> and <strong>Audit</strong> only is
+      evaluated at admission time: a resource that existed before the policy is never reported, and a resource it
+      admitted with a pass is its only trace. <strong>Deny</strong> builds no report at all — a blocked request
+      leaves the kube-apiserver audit log as its only record.</div>
+    ${policies.length === 0
+      ? `<div class="empty-note">No CEL policy on this cluster${kinds.length ? "" : " — and no CEL policy kind is served, so an older Kyverno may be installed"}.</div>`
+      : `<div class="scroll-x"><table>
+        <thead><tr><th>Kind</th><th>Policy</th><th>Admission</th><th>Background</th><th>Actions</th><th>Failure policy</th><th>Ready</th>
+          <th class="num">Pass</th><th class="num">Fail</th><th class="num">Warn</th><th class="num">Error</th><th class="num">Skip</th></tr></thead>
+        <tbody>${policies.map((p, i) => `<tr class="rowlink" data-kyverno-policy="${esc(p.policy)}" data-kyverno-kind="${esc(p.kind)}">
+          <td><span class="chip mono">${esc(p.kind)}</span>${p.namespace ? ` <span class="chip">namespaced</span>` : ""}${p.generated ? ` <span class="chip" title="status.generated: a Kubernetes ValidatingAdmissionPolicy stands in for this policy; Kyverno's own webhook and background scan stand down, and its rows come from the admission policy's reports.">generated</span>` : ""}</td>
+          <td><button type="button" class="drill mono" id="kyverno-policy-${i}">${esc(p.policy)}</button></td>
+          <td>${p.admission ? "on" : `<span class="muted">off</span>`}</td>
+          <td>${p.background ? "on" : `<span class="muted">off</span>`}</td>
+          <td class="mono">${(p.actions || []).map(esc).join(", ") || `<span class="muted">—</span>`}</td>
+          <td class="mono">${esc(p.failure_policy)}</td>
+          <td>${p.ready === null ? `<span class="muted">—</span>` : p.ready ? "yes" : `<span class="err">no</span>`}${p.note ? ` <span class="err">${esc(p.note)}</span>` : ""}</td>
+          <td class="num">${p.results.pass}</td>
+          <td class="num${p.results.fail ? " warn" : ""}">${p.results.fail}</td>
+          <td class="num">${p.results.warn}</td>
+          <td class="num${p.results.error ? " warn" : ""}">${p.results.error}</td>
+          <td class="num muted">${p.results.skip}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+      <div class="filterbar-note mt-4">Select a policy to see its findings alone.</div>`}
+  </section>`;
+
+  const rows = d.rows || [];
+  const controlledOn = !!view.kyvernoControlled;
+  const findings = `<section class="card">
+    <h2>Findings <span class="muted fw-normal">· ${d.total}${view.kyvernoPolicy ? ` for <code>${esc(view.kyvernoPolicy)}</code>` : ""}</span></h2>
+    <div class="filterbar mt-2">
+      <button type="button" class="rp-switch${controlledOn ? " on" : ""}" id="kyverno-controlled" role="switch" aria-checked="${controlledOn}">
+        <span class="rp-track" aria-hidden="true"><span class="rp-knob"></span></span>
+        <span class="rp-lab">Include ${(d.controlled_kinds || []).join(", ")}</span></button>
+      ${view.kyvernoPolicy ? `<button type="button" class="linkish" id="kyverno-all-policies">every policy</button>` : ""}
+    </div>
+    <div class="filterbar-note">Results on ${(d.controlled_kinds || []).join(", ")} are usually a controller's copies of one
+      finding — a Deployment's failure repeats on every ReplicaSet and Pod under it. Kyverno's CLI collapses those by
+      rule name, which the CEL family has none of, so they are <strong>filtered here, visibly</strong>: the switch shows
+      them. Every count above includes them.</div>
+    ${d.truncated ? `<div class="truncation-note">Showing the worst <strong>${rows.length}</strong> of <strong>${d.total}</strong>
+        findings. The counts above cover all of them.</div>` : ""}
+    ${rows.length === 0
+      ? `<div class="empty-note">${d.total === 0 && !controlledOn && !view.kyvernoPolicy
+          ? "No failing, erroring or warning result on a resource the switch does not hide."
+          : "No finding matches the filters."}</div>`
+      : `<div class="scroll-x"><table>
+        <thead><tr><th>Result</th><th>Policy</th><th>Resource</th><th>Severity</th><th>Message</th><th title="Kyverno derives this from the policy's evaluation flags, background first — it says what the policy is, not which path wrote the row.">Evaluation</th><th title="The result's own timestamp: re-stamped by every background scan, so it is 'last evaluated', not 'first seen'.">Evaluated</th></tr></thead>
+        <tbody>${rows.map((x) => `<tr>
+          <td>${kyvernoResultBadge(x.result)}</td>
+          <td class="mono">${esc(x.policy)}${x.policy_kind !== "ValidatingPolicy" ? ` <span class="chip mono">${esc(x.policy_kind)}</span>` : ""}</td>
+          <td><span class="mono">${esc(x.resource_kind)}</span> ${esc(x.resource_namespace ? `${x.resource_namespace}/${x.resource_name}` : x.resource_name)}</td>
+          <td>${x.severity ? `<span class="chip">${esc(x.severity)}</span>` : `<span class="muted">—</span>`}${x.category ? ` <span class="muted">${esc(x.category)}</span>` : ""}</td>
+          <td class="muted">${esc(x.message)}</td>
+          <td class="muted">${esc(x.process || "—")}</td>
+          <td class="mono muted nowrap">${x.at ? esc(ago(new Date(x.at * 1000).toISOString())) : "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`}
+  </section>`;
+
+  const events = d.events || [];
+  const history = `<section class="card">
+    <h2>Changes <span class="muted fw-normal">· ${events.length}</span></h2>
+    <div class="filterbar-note">A report is owned by its resource and dies with it, so Kyverno keeps no history. The
+      dashboard records a problem that <strong>appeared</strong> or <strong>cleared</strong> between two reads —
+      a cleared one is either fixed or gone with its resource — for ${KYVERNO_HISTORY_WORDS}.</div>
+    ${events.length === 0
+      ? `<div class="empty-note">No change recorded yet: the first read of a cluster is a baseline, not a burst of appearances.</div>`
+      : `<div class="scroll-x"><table>
+        <thead><tr><th>Change</th><th>Result</th><th>Policy</th><th>Resource</th><th>Observed</th></tr></thead>
+        <tbody>${events.map((e) => `<tr>
+          <td class="${e.change === "appeared" ? "change-added" : "change-removed"}">${e.change === "appeared" ? "+ appeared" : "− cleared"}</td>
+          <td>${kyvernoResultBadge(e.result)}</td>
+          <td class="mono">${esc(e.policy)}</td>
+          <td><span class="mono">${esc(e.resource_kind)}</span> ${esc(e.resource_namespace ? `${e.resource_namespace}/${e.resource_name}` : e.resource_name)}${e.message ? ` <span class="muted">· ${esc(e.message)}</span>` : ""}</td>
+          <td class="mono">${esc(fmtTime(e.observed_at))}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>`}
+  </section>`;
+  return status + policiesCard + findings + history;
+}
+const CEL_KIND_WORDS = "ValidatingPolicy, MutatingPolicy, GeneratingPolicy, DeletingPolicy, ImageValidatingPolicy";
+const KYVERNO_HISTORY_WORDS = "as long as the deployment's retention keeps them (<code>kyverno.eventsRetentionDays</code>)";
+
+function wireKyverno() {
+  // refresh() only — the filter bar's standing rule (#f-state, #f-outcome). Nulling the payload and painting
+  // Loading… first destroyed #kyverno-controlled, so render()'s by-id restore found nothing and a keyboard
+  // reader landed on <body> (review of #228, Grok and Codex). The old rows stay until the new answer lands.
+  const sw = $("kyverno-controlled");
+  if (sw) sw.onclick = () => {
+    view.kyvernoControlled = !view.kyvernoControlled;
+    sw.classList.toggle("on", view.kyvernoControlled); sw.setAttribute("aria-checked", String(view.kyvernoControlled));
+    refresh();
+  };
+  const all = $("kyverno-all-policies");
+  if (all) all.onclick = () => { view.kyvernoPolicy = null; view.kyvernoKind = null; refresh(); };
+  document.querySelectorAll("[data-kyverno-policy]").forEach((el) => {
+    el.onclick = () => { view.kyvernoPolicy = el.dataset.kyvernoPolicy; view.kyvernoKind = el.dataset.kyvernoKind; refresh(); };
+  });
+}
+
+/* ─── #230 S2: the Cluster Configurations tab — docs/specs/SPEC_S2_cluster_configurations_tab.md, the agreed
+   mock docs/design/cluster-configurations-mock.html. One payload (GET /api/clusterconfigs, S1 C5): every cluster
+   with WHERE its configuration came from, the credential's KIND only, the three TLS modes, D2's words, the poll
+   outcome, the current discovery's findings; and the form that writes the same labelled Secret a GitOps process
+   would, with its YAML twin beside it. The form's state lives in view.clusterForm so a poll's repaint never
+   destroys what the reader typed (the Reports form's rule). */
+const CLUSTERS_REFUSAL = `This page lists every cluster this dashboard reads, where each one's configuration came
+  from, and the credential kind that authenticates it — and it writes cluster Secrets. How the fleet is wired is
+  not a self reader's business.`;
+const CC_VIS_MEAN = {
+  inherit: "the host's tier decides",
+  "self-only": "nobody is wide on this cluster",
+  hidden: "polled and alerted on, never served through /api (404 like an unknown id)",
+};
+const CC_ID_MEAN = {
+  none: "fails closed: person-scoped views answer 403 there, cluster health still shows",
+  "same-as-host": "the host's username is the same person on this cluster (clusters share an identity provider)",
+};
+const CC_OAUTH_REASON = "the password-for-token exchange is #119 P2, not built yet";
+const CC_LABEL = "groupsync-dashboard.io/secret-type";
+
+function ccBadge(shape, word) {
+  return `<span class="badge ${shape}"><span class="glyph" aria-hidden="true"></span>${esc(word)}</span>`;
+}
+function ccSourceKind(c) {
+  if (c.host) return "in-cluster";
+  return String(c.source || "").indexOf("secret:") === 0 ? "secret" : "values";
+}
+function ccSourceChip(c) {
+  const kind = ccSourceKind(c);
+  const word = kind === "secret" ? `Secret ${c.source.slice(7)}` : kind === "in-cluster" ? "in-cluster" : "values";
+  return `<span class="rp-chip cc-src-${kind}">${esc(word)}</span>`;
+}
+function ccLabelChips(labels) {
+  const keys = Object.keys(labels || {});
+  if (!keys.length) return `<span class="muted">none</span>`;
+  return `<span class="cc-chips">${keys.map((k) => `<span class="rp-chip cc-chip">${esc(`${k}=${labels[k]}`)}</span>`).join("")}</span>`;
+}
+function ccConnection(c) {
+  const st = c.status || "never";
+  const shape = st === "ok" ? "ok" : st === "never" ? "unknown" : "critical";
+  let out = ccBadge(shape, st);
+  if (st === "ok") out += " reachable";
+  out += ` <span class="mono">${c.last_poll ? fmtStamp(c.last_poll) : "never"}</span>`;
+  if (c.error) out += `<div class="err">${esc(c.error)}</div>`;
+  if (st === "never") out += `<div class="cc-consq">${esc(MEANS.cl_never)}</div>`;
+  return out;
+}
+function ccCredential(c) {
+  const kind = c.credential === "bearer" ? "bearerToken" : c.credential === "in-cluster" ? "serviceAccount" : c.credential;
+  // a retired row from before S1 recorded the kind carries "": say so rather than printing a bare badge
+  let out = kind ? `${esc(kind)} ${ccBadge("ok", "set")}` : `<span class="muted">unknown</span>`;
+  const secretRow = ccSourceKind(c) === "secret";
+  if (secretRow && !c.retired && ccWritesOn()) {
+    const open = view.clusterRotate === c.id;
+    out += ` <button type="button" class="linkish" id="cc-rotate-${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
+    if (open) {
+      out += `<div class="cc-panel"><label for="cc-rotate-token-${esc(c.id)}">New bearer token</label>
+        <input id="cc-rotate-token-${esc(c.id)}" type="password" autocomplete="new-password">
+        <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go-${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
+        <p class="filterbar-note" id="cc-rotate-msg-${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
+    }
+  } else if (c.host) {
+    out += ` <span class="cc-hint">read-only — the pod's own ServiceAccount</span>`;
+  } else if (ccSourceKind(c) === "values") {
+    out += ` <span class="cc-hint">read-only — declared in the chart's values</span>`;
+  } else if (secretRow && !c.retired) {
+    out += ` <span class="cc-hint">rotate it where the Secret is written — ${ccDeploymentWrites()
+      ? "changing cluster configuration is reserved to cluster configuration administrators"
+      : "this deployment's writes are off"}</span>`;
+  }
+  return out;
+}
+/* Two different reasons the form cannot write, and the page must not confuse them (#230): the
+   DEPLOYMENT's switch (clusterConfig.secrets.writes.enabled) and THIS READER's level
+   (clusterconfig:manage). Both must hold for a write control to exist; each has its own sentence. */
+function ccWritesOn() {
+  return ccDeploymentWrites() && ccMayManage();
+}
+function ccDeploymentWrites() {
+  const d = data.clusterconfigs;
+  return !!(d && d.secrets && d.secrets.writes);
+}
+/* The reader's levels, from whoami — the same cached decision the routes ask, so the tab strip, the
+   controls and the API cannot disagree. Absent whoami is indeterminate: no tab and no controls. */
+function ccMayView() {
+  const w = data.whoami;
+  return !!(w && w.clusterconfig && w.clusterconfig.view);
+}
+function ccMayManage() {
+  const w = data.whoami;
+  return !!(w && w.clusterconfig && w.clusterconfig.manage);
+}
+/* A live cluster ALWAYS has an effective mode — `trusted-bundle` when nothing overrides it — so a
+   bare "—" here would hide the very thing a reader debugging a CERTIFICATE_VERIFY_FAILED needs. The
+   only null is a RETIRED row: its Secret is gone or no longer parses, so nothing describes how it was
+   trusted, and the honest answer is "unknown", said with its reason rather than a dash (measured on
+   the lab 2026-09-20: four leftover rows reported `tls: null`, one of them carrying a stale
+   verify-failed error). */
+function ccTls(c) {
+  const t = c.tls || {};
+  if (!c.tls) {
+    return c.retired
+      ? `<span class="muted">unknown</span> <span class="cc-hint">its source no longer describes it</span>`
+      : `<span class="muted">—</span>`;
+  }
+  return t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
+}
+function ccClusterCard(c) {
+  const secretRow = ccSourceKind(c) === "secret";
+  const armed = view.clusterDeleteArmed === c.id;
+  let foot;
+  if (c.retired) {
+    foot = `<div class="cc-foot">its Secret is gone — the history is kept, the cluster is disabled</div>`;
+  } else if (secretRow && !ccWritesOn()) {
+    foot = `<div class="cc-foot">declared by its Secret — delete it there; ${ccDeploymentWrites()
+      ? "changing cluster configuration is reserved to cluster configuration administrators"
+      : "this deployment's writes are off"}</div>`;
+  } else if (secretRow) {
+    foot = `<div class="cc-acts"><button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
+      <span class="cc-hint" id="cc-delete-msg-${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
+  } else if (c.host) {
+    foot = `<div class="cc-foot">the pod's own in-cluster ServiceAccount — not a Secret</div>`;
+  } else {
+    foot = `<div class="cc-foot">declared in the chart's values — remove it there</div>`;
+  }
+  const vis = c.visibility ? `<span class="rp-chip">${esc(c.visibility)}</span> <span class="cc-hint">${esc(CC_VIS_MEAN[c.visibility] || "")}</span>` : `<span class="muted">—</span>`;
+  const ident = c.identity ? `<span class="rp-chip">${esc(c.identity)}</span> <span class="cc-hint">${esc(CC_ID_MEAN[c.identity] || "")}</span>` : `<span class="muted">—</span>`;
+  return `<article class="card cc-cluster" id="cc-cluster-${esc(c.id)}" data-cc-cluster="${esc(c.id)}">
+    <div class="row-wrap"><h2>${esc(c.id)} ${ccSourceChip(c)} ${ccBadge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled")}</h2></div>
+    <div class="cc-kv"><span class="k">server</span><span class="v mono">${esc(c.api_url)}</span></div>
+    <div class="cc-kv"><span class="k">credential</span><span class="v">${ccCredential(c)}</span></div>
+    <div class="cc-kv"><span class="k">tls</span><span class="v">${ccTls(c)}</span></div>
+    <div class="cc-kv"><span class="k">labels</span><span class="v">${ccLabelChips(c.labels)}</span></div>
+    <div class="cc-kv"><span class="k">visibility</span><span class="v">${vis}</span></div>
+    <div class="cc-kv"><span class="k">identity</span><span class="v">${ident}</span></div>
+    <div class="cc-kv"><span class="k">connection</span><span class="v">${ccConnection(c)}</span></div>
+    ${foot}</article>`;
+}
+function ccFinding(f) {
+  return `<article class="card cc-finding">
+    <div class="cc-kv"><span class="k">secret</span><span class="v mono">${esc(f.secret)}</span></div>
+    <div class="cc-kv"><span class="k">code</span><span class="v mono">${esc(f.code)}</span></div>
+    <div class="cc-kv"><span class="k">detail</span><span class="v">${esc(f.detail)}</span></div></article>`;
+}
+/* The Secret the form will write, as GitOps would write it — the API's own object with the credential redacted
+   (SPEC_S2 C2: a test holds the two equal field for field). */
+function ccYaml(d) {
+  const f = view.clusterForm;
+  // Trimmed exactly as ccBody() sends them: a pasted " west " made the pane describe `gsd-cluster- west `,
+  // a name the API server refuses, while the API wrote `gsd-cluster-west` (round 2, OB3 C8).
+  const name = f.name.trim() || "<name>";
+  const server = f.server.trim();
+  const tls = { insecure: f.caMode === "insecure" };
+  if (f.caMode === "caData") tls.caData = "<redacted>";
+  const cfg = { tlsClientConfig: tls, bearerToken: "<redacted>" };
+  // EVERY operator-supplied scalar is quoted, because this pane's whole promise is that applying it
+  // yields the Secret the API would have written. A label value of `true`, `yes`, `on`, `null` or
+  // `8080` is a YAML boolean/null/int unquoted, and Kubernetes label values are strings — so the
+  // twin and the API object differed (Codex C6 measured `{True: False}` against the API's strings).
+  // Double-quoted style covers colons, `#` and leading/trailing space too.
+  // JSON's string encoder IS a YAML double-quoted scalar (YAML is a JSON superset): quotes, backslashes,
+  // control characters and non-ASCII all come back as the API's exact string (round 2, Codex C8 — a hand
+  // escape chain missed the newline, and PyYAML folded it to a space).
+  const y = (v) => JSON.stringify(String(v));
+  // The KEY too: a label key of `on`, `yes` or `true` is a valid Kubernetes key and a YAML 1.1 boolean
+  // unquoted, so `{True: …}` came back where the API writes `{"true": …}` — the same drift as the value.
+  const labels = [`    ${y(CC_LABEL)}: ${y("cluster")}`].concat(Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`));
+  return ["apiVersion: v1", "kind: Secret", "metadata:", `  name: ${y(`gsd-cluster-${name}`)}`,
+    `  namespace: ${y((d.secrets && d.secrets.namespace) || "<namespace>")}`, "  labels:", labels.join("\n"),
+    "  annotations:", `    groupsync-dashboard.io/managed-by: ${y("ui")}`, "type: Opaque", "stringData:",
+    // `|-` (strip): a `|` block keeps its final newline, and the API writes none — byte for byte.
+    `  name: ${y(name)}`, `  server: ${y(server)}`, "  config: |-", `    ${JSON.stringify(cfg)}`,
+    `  visibility: ${y(f.visibility)}`, `  identity: ${y(f.identity)}`, `  enabled: ${y("true")}`].join("\n");
+}
+function ccAddForm(d) {
+  const f = view.clusterForm;
+  const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
+  const ca = (v, label) => `<label class="cc-choice" for="cc-ca-${v}"><input type="radio" name="cc-ca-mode" id="cc-ca-${v}" value="${v}"${f.caMode === v ? " checked" : ""}> ${label}</label>`;
+  const labelChips = Object.keys(f.labels).length
+    ? `<span class="cc-chips">${Object.keys(f.labels).map((k) => `<span class="rp-chip cc-chip">${esc(`${k}=${f.labels[k]}`)} <button type="button" class="linkish" data-cc-drop-label="${esc(k)}">remove</button></span>`).join("")}</span>`
+    : `<span class="muted">none</span>`;
+  const test = f.test;
+  const testHtml = !test ? "" : test.pending ? `<p class="filterbar-note" id="cc-test-result">Testing…</p>`
+    : `<div class="cc-panel" id="cc-test-result">
+        <div class="cc-kv"><span class="k">reachable</span><span class="v">${test.reachable ? ccBadge("ok", "yes") : ccBadge("critical", "no")}</span></div>
+        <div class="cc-kv"><span class="k">server version</span><span class="v mono">${esc(test.server_version || "—")}</span></div>
+        <div class="cc-kv"><span class="k">identity</span><span class="v mono">${esc(test.identity || "—")}</span></div>
+        ${test.error ? `<div class="err">${esc(test.error)}</div>` : ""}</div>`;
+  return `<section class="card" id="cc-add"><h2>Add cluster</h2>
+    <div class="filterbar-note">${ccWritesOn() ? "Writes" : "Describes"} a labelled Secret in <span class="mono">${esc((d.secrets && d.secrets.namespace) || "the pod's namespace")}</span>.
+      The same object from the UI or from a repository — GitOps parity.${d.secrets && d.secrets.enabled === false ? " <strong>Discovery is switched off for this deployment</strong>: a Secret written here is not read." : ""}</div>
+    <div class="cc-grid"><form id="cc-form" novalidate>
+      <div class="cc-field"><label for="cc-name">Name</label>
+        <input id="cc-name" autocomplete="off" value="${esc(f.name)}">
+        <span class="cc-hint">cluster id the dashboard shows and keys on. Secret name becomes <span class="mono">gsd-cluster-&lt;name&gt;</span>.</span></div>
+      <div class="cc-field"><label for="cc-server">Server</label>
+        <input id="cc-server" autocomplete="off" inputmode="url" value="${esc(f.server)}"></div>
+      <div class="cc-field"><span class="cc-lbl">Credential kind</span>
+        <div class="cc-choices">
+          <label class="cc-choice" for="cc-cred-bearer"><input type="radio" name="cc-cred" id="cc-cred-bearer" value="bearerToken" checked> bearer token</label>
+          <label class="cc-choice" for="cc-cred-oauth"><input type="radio" name="cc-cred" id="cc-cred-oauth" value="oauth" disabled> username + password</label>
+        </div>
+        <p class="cc-hint" id="cc-oauth-reason">${esc(CC_OAUTH_REASON)}</p>
+        <label for="cc-token">Bearer token</label>
+        <input id="cc-token" type="password" autocomplete="new-password" value="${esc(f.token)}">
+        <label for="cc-oauth-user">Username</label><input id="cc-oauth-user" disabled>
+        <label for="cc-oauth-password">Password</label><input id="cc-oauth-password" type="password" disabled></div>
+      <div class="cc-field"><span class="cc-lbl">CA</span>
+        <div class="cc-choices">${ca("caData", "paste PEM")}${ca("trustedBundle", "use the trusted bundle")}${ca("insecure", "insecure")}</div>
+        <div class="cc-stack" id="cc-ca-pem-wrap"${f.caMode === "caData" ? "" : " hidden"}><label for="cc-ca-pem">CA PEM</label>
+          <textarea id="cc-ca-pem" rows="4">${esc(f.caPem)}</textarea></div>
+        <p class="cc-hint" id="cc-ca-bundle-note"${f.caMode === "trustedBundle" ? "" : " hidden"}>the dashboard's own trust store — the chart's <span class="mono">trustedCA</span> bundles (the injected OpenShift CA, the enterprise bundle) plus the system store.</p>
+        <div class="cc-warn" id="cc-ca-insecure-warn"${f.caMode === "insecure" ? "" : " hidden"}><strong>insecure</strong> — the API server certificate is not verified. Anyone on the path can impersonate the cluster.</div></div>
+      <div class="cc-field"><label for="cc-visibility">Visibility</label>
+        <select id="cc-visibility">${["inherit", "self-only", "hidden"].map((v) => opt(v, f.visibility, `${v} — ${CC_VIS_MEAN[v]}`)).join("")}</select></div>
+      <div class="cc-field"><label for="cc-identity">Identity</label>
+        <select id="cc-identity">${["none", "same-as-host"].map((v) => opt(v, f.identity, `${v} — ${CC_ID_MEAN[v]}`)).join("")}</select></div>
+      <div class="cc-field"><span class="cc-lbl">Labels</span>
+        <div class="ns-controls">
+          <label for="cc-label-key">key</label><input id="cc-label-key" autocomplete="off" value="${esc(f.labelKey)}">
+          <label for="cc-label-val">value</label><input id="cc-label-val" autocomplete="off" value="${esc(f.labelVal)}">
+          <button type="button" class="btn" id="cc-label-add">Add label</button></div>
+        <div id="cc-label-chips">${labelChips}</div></div>
+      ${ccWritesOn() ? `<div class="cc-acts">
+        <button type="button" class="btn" id="cc-test">Test connection</button>
+        <button type="button" class="btn cc-btn-acc" id="cc-create">Create Secret</button></div>`
+      : ccDeploymentWrites()
+        ? `<div class="filterbar-note" id="cc-writes-off"><strong>This view is read-only for you</strong> — changing cluster
+            configuration is reserved to cluster configuration administrators. Copy the YAML beside the form and hand it to
+            someone who holds that level, or apply it the way your other Secrets arrive; the next discovery picks it up.</div>`
+        : `<div class="filterbar-note" id="cc-writes-off"><strong>This deployment does not write Secrets</strong> — the dashboard is a
+          reader by design, and <code>clusterConfig.secrets.writes.enabled</code> is off (the default). Copy the YAML beside
+          the form and apply it the way your other Secrets arrive; the next discovery picks it up. Turning the switch on is
+          the deliberate decision to let the dashboard mint cluster access.</div>`}
+      <p class="filterbar-note" id="cc-form-msg">${esc(view.clusterMsg.form || "")}</p>
+      ${testHtml}
+    </form><aside class="card cc-yaml-pane"><h3>as GitOps would write it</h3>
+      <div class="cc-acts"><button type="button" class="btn" id="cc-yaml-copy">Copy</button><span class="cc-hint" id="cc-yaml-copy-msg">${esc(view.clusterMsg.copy || "")}</span></div>
+      <pre class="cc-yaml" id="cc-yaml">${esc(ccYaml(d))}</pre>
+      <p class="filterbar-note">The UI writes this Secret; Argo CD, Flux, Kustomize or Vault can write the same label. A controller that prunes
+        the namespace will still delete a UI-written Secret unless it honours <span class="mono">groupsync-dashboard.io/managed-by: ui</span>.</p>
+    </aside></div></section>`;
+}
+function clusterConfigPage() {
+  const d = data.clusterconfigs;
+  if (!d) return `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
+  if (d.forbidden) return refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
+  const clusters = d.clusters || [];
+  const n = { "in-cluster": 0, values: 0, secret: 0 };
+  clusters.forEach((c) => { n[ccSourceKind(c)] += 1; });
+  const s = d.secrets || {};
+  const head = `<section class="card" id="cc-head">
+    <h2>Cluster Configurations <span class="rp-chip rp-count">${clusters.length} cluster${clusters.length === 1 ? "" : "s"}</span></h2>
+    <div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per cluster, the live set. The cluster-configuration tier: <span class="mono">clusterconfig:view</span> reads it, <span class="mono">clusterconfig:manage</span> changes it.</div>
+    <div class="cc-kv"><span class="k">namespace</span><span class="v mono">${esc(s.namespace || "—")}</span></div>
+    <div class="cc-kv"><span class="k">selector</span><span class="v"><code class="mono">${esc(s.label || "")}</code></span></div>
+    <div class="cc-kv"><span class="k">by source</span><span class="v cc-chips">
+      <span class="rp-chip cc-src-in-cluster">in-cluster ${n["in-cluster"]}</span>
+      <span class="rp-chip cc-src-values">values ${n.values}</span>
+      <span class="rp-chip cc-src-secret">Secret ${n.secret}</span></span></div>
+    <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
+      : `${n.secret} Secret${n.secret === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
+    <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
+  const findings = (d.findings || []).map(ccFinding).join("")
+    || `<div class="empty-note">No malformed Secrets. A Secret that fails to parse is a finding with the code named, never a crashed pod.</div>`;
+  return head + clusters.map(ccClusterCard).join("")
+    + `<section class="card" id="cc-findings"><h2>Findings</h2>${findings}</section>`
+    + ccAddForm(d);
+}
+async function apiSend(path, method, body) {
+  const res = await fetch(path, { method, headers: { Accept: "application/json", "Content-Type": "application/json", "X-GSD-Interaction": "1" },
+                                 body: body === undefined ? undefined : JSON.stringify(body) });
+  if (res.redirected || !(res.headers.get("Content-Type") || "").includes("json")) {
+    const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err;
+  }
+  const payload = await res.json();
+  if (!res.ok) {
+    const err = new Error(payload && payload.detail ? String(payload.detail) : `${res.status} ${res.statusText}`);
+    err.status = res.status; throw err;
+  }
+  return payload;
+}
+function ccReadForm() {
+  const f = view.clusterForm;
+  const read = (id, key) => { const el = $(id); if (el) f[key] = el.value; };
+  read("cc-name", "name"); read("cc-server", "server"); read("cc-token", "token"); read("cc-ca-pem", "caPem");
+  read("cc-visibility", "visibility"); read("cc-identity", "identity"); read("cc-label-key", "labelKey"); read("cc-label-val", "labelVal");
+  const mode = document.querySelector('input[name="cc-ca-mode"]:checked');
+  if (mode) f.caMode = mode.value;
+}
+function ccBody() {
+  const f = view.clusterForm;
+  const tls = { mode: f.caMode };
+  if (f.caMode === "caData") tls.caData = btoa(unescape(encodeURIComponent(f.caPem || "")));
+  return { name: f.name.trim(), server: f.server.trim(), credential: { kind: "bearerToken", token: f.token },
+           tls, visibility: f.visibility, identity: f.identity, labels: { ...f.labels } };
+}
+function wireClusterConfig() {
+  const d = data.clusterconfigs;
+  if (!d || d.forbidden) return;
+  // The form's inputs write into view.clusterForm on every keystroke and the YAML pane follows in place —
+  // no render(): the page repaints on the poll from that state, so nothing typed is lost.
+  ["cc-name", "cc-server", "cc-token", "cc-ca-pem", "cc-visibility", "cc-identity", "cc-label-key", "cc-label-val"].forEach((id) => {
+    const el = $(id); if (!el) return;
+    const sync = () => { ccReadForm(); const pre = $("cc-yaml"); if (pre) pre.textContent = ccYaml(d); };
+    el.oninput = sync; el.onchange = sync;
+  });
+  document.querySelectorAll('input[name="cc-ca-mode"]').forEach((el) => {
+    el.onchange = () => { ccReadForm(); render(); };
+  });
+  const addLabel = $("cc-label-add");
+  if (addLabel) addLabel.onclick = () => {
+    ccReadForm();
+    const k = (view.clusterForm.labelKey || "").trim(), v = (view.clusterForm.labelVal || "").trim();
+    if (!k) return;
+    view.clusterForm.labels[k] = v; view.clusterForm.labelKey = ""; view.clusterForm.labelVal = "";
+    render();
+  };
+  document.querySelectorAll("[data-cc-drop-label]").forEach((el) => {
+    el.onclick = () => { delete view.clusterForm.labels[el.dataset.ccDropLabel]; render(); };
+  });
+  const copy = $("cc-yaml-copy");
+  if (copy) copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(ccYaml(d)); view.clusterMsg.copy = "Copied"; }
+    catch (e) { view.clusterMsg.copy = "Copy failed"; }
+    render();
+  };
+  const test = $("cc-test");
+  if (test) test.onclick = async () => {
+    ccReadForm();
+    view.clusterForm.test = { pending: true }; view.clusterMsg.form = ""; render();
+    try { view.clusterForm.test = await apiSend("/api/clusterconfigs/test", "POST", ccBody()); }
+    catch (e) { view.clusterForm.test = null; view.clusterMsg.form = e.message; }
+    render();
+  };
+  const create = $("cc-create");
+  if (create) create.onclick = async () => {
+    ccReadForm();
+    const f = view.clusterForm;
+    if (!f.name.trim() || !f.server.trim() || !f.token) { view.clusterMsg.form = "name, server and a bearer token are required."; render(); return; }
+    // ONE request in flight: a second click while the first POST is out would answer `secret-exists`
+    // and overwrite the "created" sentence with a failure for a Secret that was just written (round 2, Grok C16).
+    if (view.clusterCreating) return;
+    view.clusterCreating = true;
+    view.clusterMsg.form = "Creating…"; render();
+    try {
+      const r = await apiSend("/api/clusterconfigs", "POST", ccBody());
+      view.clusterMsg.form = `Secret ${r.secret} created — discovery ${r.discovery}; the card appears when the next read lands.`;
+      view.clusterForm = ccEmptyForm();
+    } catch (e) { view.clusterMsg.form = e.message; }
+    view.clusterCreating = false;
+    render(); refresh();
+  };
+  document.querySelectorAll("[data-cc-rotate]").forEach((el) => {
+    el.onclick = () => { view.clusterRotate = view.clusterRotate === el.dataset.ccRotate ? null : el.dataset.ccRotate; render(); };
+  });
+  document.querySelectorAll("[data-cc-rotate-go]").forEach((el) => {
+    el.onclick = async () => {
+      const id = el.dataset.ccRotateGo;
+      const field = $(`cc-rotate-token-${id}`);
+      const token = field ? field.value : "";
+      if (!token) { view.clusterMsg[`rotate:${id}`] = "a bearer token is required."; render(); return; }
+      try {
+        await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/credential`, "PUT", { token });
+        view.clusterMsg[`rotate:${id}`] = "token overwritten in place — the old token is gone from the cluster on the write. The value is never shown.";
+      } catch (e) { view.clusterMsg[`rotate:${id}`] = e.message; }
+      if (field) field.value = "";
+      render(); refresh();
+    };
+  });
+  document.querySelectorAll("[data-cc-delete]").forEach((el) => {
+    el.onclick = async () => {
+      const id = el.dataset.ccDelete;
+      if (view.clusterDeleteArmed !== id) { view.clusterDeleteArmed = id; render(); return; }
+      view.clusterDeleteArmed = null;
+      try {
+        const r = await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}`, "DELETE");
+        view.clusterMsg[`delete:${id}`] = `Secret ${r.secret} deleted — the cluster retires ${r.retired}, its history kept.`;
+      } catch (e) { view.clusterMsg[`delete:${id}`] = e.message; }
+      render(); refresh();
+    };
+  });
+}
+function ccEmptyForm() {
+  return { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
+           labels: {}, labelKey: "", labelVal: "", test: null };
+}
+
 function nsAuditPage() {
   const ub = data.userBindings;
   if (!ub) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -5114,7 +6436,13 @@ function render() {
   // keyboard user's focus — on Generate while a report renders, on a table's control — would fall to
   // <body> on every poll. The filter bar restores its own (renderFilters); this is the same rule for
   // the page (the C3 report tab's Generate button is where a repaint happens WHILE the reader waits).
-  const focusedId = document.activeElement && document.activeElement.id;
+  const active = document.activeElement;
+  const focusedId = active && active.id;
+  // The caret too, as renderFilters() keeps the filter bar's: the repaint re-creates a text input, and a
+  // fresh one opens with its caret at 0, so a reader typing into a lookup as the lookups arrived typed into
+  // the FRONT of their own text (measured: "abc" then "XYZ" read "XYZabc"; "al" then "i" read "ial" with an
+  // empty menu — review of #224, OB3).
+  const caret = focusedId && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   renderFilters();
   const main = $("main");
   if (view.page === "home") {
@@ -5139,6 +6467,23 @@ function render() {
   } else if (view.page === "policy") {
     main.innerHTML = policyPage();
     wireDrilldown();
+  } else if (view.page === "kyverno") {
+    main.innerHTML = kyvernoPage();
+    wireKyverno();
+  } else if (view.page === "clusters") {
+    // Reached by URL without the level: the refusal card, not the page — and not a fetch either.
+    // The tab is absent for this reader, so arriving here is a pasted link or a stale bookmark.
+    // But NEVER on silence (the KPI rule): a null whoami — a poll whose whoami request failed keeps
+    // null for it — is indeterminate, and a refusal is a claim about the person. Measured (round 2,
+    // OB2 C3): render() with whoami null painted the refusal card for an administrator on the tab.
+    // (A cold URL never reaches here before whoami: render() runs after the whole boot fetch —
+    // measured too, which is why an earlier "flash" hypothesis was retracted.)
+    if (!readerTierKnown()) {
+      main.innerHTML = `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
+    } else {
+      main.innerHTML = ccMayView() ? clusterConfigPage() : refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
+      if (ccMayView()) wireClusterConfig();
+    }
   } else if (view.page === "kpi") {
     // The same tier rule as the Overview, in the same words: the page is about the clusters and
     // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
@@ -5173,6 +6518,12 @@ function render() {
       const row = view.report ? null : $(`report-pick-${view.reportFocusRow}`); view.reportFocusRow = null;
       if (row) row.focus();
     }
+  } else if (view.page === "reporting") {
+    main.innerHTML = reportingPage();
+    wireReporting();
+  } else if (view.page === "library") {
+    main.innerHTML = libraryPage();
+    wireLibrary();
   } else if (view.page === "usage") {
     main.innerHTML = usagePage();
   } else if (view.page === "bindings") {
@@ -5249,7 +6600,12 @@ function render() {
   main.classList.remove("stale");
   if (focusedId && document.activeElement !== document.getElementById(focusedId)) {
     const el = document.getElementById(focusedId);
-    if (el && main.contains(el)) el.focus({ preventScroll: true });
+    if (el && main.contains(el)) {
+      el.focus({ preventScroll: true });
+      if (caret && typeof el.selectionStart === "number") {
+        try { el.setSelectionRange(Math.min(caret[0], el.value.length), Math.min(caret[1], el.value.length)); } catch (e) { /* an input type without a caret */ }
+      }
+    }
   }
 }
 
@@ -5547,6 +6903,13 @@ async function refresh(opts = {}) {
       if ((view.page === "overview" && !view.groupsync) || view.page === "policy") {
         want.operatorConfigs = clusterGone(guard403(get(`${base}/operator-configs`)));
       }
+      // The Kyverno page (#170): the module's one payload for the selected cluster, with the page's two
+      // filters on the wire (the controlled-kind switch, one policy) — the server does the narrowing.
+      if (view.page === "kyverno" && !narrowedReader()) {
+        const q = new URLSearchParams({ controlled: view.kyvernoControlled ? "true" : "false" });
+        if (view.kyvernoPolicy) { q.set("policy", view.kyvernoPolicy); if (view.kyvernoKind) q.set("kind", view.kyvernoKind); }
+        want.kyverno = clusterGone(guard403(get(`${base}/kyverno?${q}`)));
+      }
       if (view.page === "nsaudit") {
         // The namespace filter is applied SERVER-side, not by filtering a full response in
         // the browser: the point is to stop shipping thousands of rows, and a client-side
@@ -5569,11 +6932,39 @@ async function refresh(opts = {}) {
     if (view.page === "kpi" && !narrowedOnHost()) {
       want.kpi = guard403(get("/api/kpi"));
     }
+    // The Cluster Configurations page (#230 S2): one payload, and only for a reader the
+    // `clusterconfig:view` level admits — a reader without it makes NO request, so the surface
+    // leaves no trace for them at all (#230; the tab is absent for them too).
+    // NOT gated on the wide tier (narrowedOnHost) any more: this surface has a tier OF ITS OWN
+    // (#230), and the route asks `clusterconfig:view` alone. A site may grant `get secrets` to
+    // someone the wide tier narrows; deferring to it here would have shown them an empty page the
+    // API would have answered.
+    if (view.page === "clusters" && ccMayView()) {
+      want.clusterconfigs = guard403(get("/api/clusterconfigs"));
+    }
     if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
       // Through the proxy to the REPORT SERVICE, with the ticket the dashboard minted. A 403 here
       // is the same designed refusal as everywhere else and renders as the same card.
       want.reportCatalog = guard403(reportGet("/api/reports"));
-      want.reportRuns = guard403(reportGet("/api/runs?limit=50"));
+      // limit=1: the catalogue shows the count (`total`) only; the runs live on the status page (#149 R5)
+      want.reportRuns = guard403(reportGet("/api/runs?limit=1"));
+    }
+    if (view.page === "reporting" && reportingEnabled() && !narrowedOnHost()) {
+      // #149 R5/R6: the status page — the service's own account of itself, and the history page the
+      // reader is on, filtered server-side (every filter runs across the whole history).
+      want.reportStatus = guard403(reportGet("/api/status"));
+      want.reportHistory = (async (asked) => { const r = await guard403(reportGet(asked)); return r && !r.forbidden ? { ...r, asked } : r; })(historyQuery());
+    }
+    if (view.page === "library" && reportingEnabled() && !narrowedOnHost()) {
+      // #229: the library is the catalogue crossed with the schedules, over every run the service holds
+      // (limit is the API's maximum; a history past it is said on the page, not silently cut)
+      want.reportCatalog = guard403(reportGet("/api/reports"));
+      want.reportStatus = guard403(reportGet("/api/status"));
+      want.library = guard403(reportGet(LIBRARY_RUNS));
+      // guarded like the three above: a 403 here (a reader demoted between polls, a ticket the service refuses)
+      // otherwise threw past them into the catch below and replaced the page with "Dashboard API error … may have
+      // been deleted" — where the listing's own 403 paints the refusal card (review of #233, OB3 — measured)
+      want.libraryRun = guard403(libraryPositionRun());
     }
     if (view.page === "usage") {
       // 403 is the DESIGNED answer when the OAuth proxy is off: there is no authenticated
@@ -5607,6 +6998,18 @@ async function refresh(opts = {}) {
     }
     if ("findings" in got) data.findings = got.findings;
     if ("kpi" in got) data.kpi = got.kpi;
+    if ("clusterconfigs" in got) data.clusterconfigs = got.clusterconfigs;
+    if (view.page === "clusters" && got.whoami) {   // decided again from the whoami that just arrived — the KPI rule below
+      // From THIS surface's own tier, not the wide one (#230): the whoami that just landed carries
+      // the levels, and a reader without `view` is refused here whatever the wide tier says.
+      if (!ccMayView()) {
+        data.clusterconfigs = { forbidden: true };
+      } else if (got.whoami.authenticated && !("clusterconfigs" in got)) {
+        const body = await guard403(get("/api/clusterconfigs"));
+        if (superseded()) return;
+        data.clusterconfigs = body;
+      }
+    }
     // The KPI page decides again from the whoami that just arrived, as Reports does: the fetch was
     // chosen from the previous cycle's identity, so a reader promoted mid-session would otherwise
     // sit on "Loading…" for a poll interval, and a demoted one would keep the payload in memory.
@@ -5664,24 +7067,56 @@ async function refresh(opts = {}) {
     if ("usage" in got) data.usage = got.usage;
     if ("reportCatalog" in got) data.reportCatalog = got.reportCatalog;
     if ("reportRuns" in got) data.reportRuns = got.reportRuns;
+    if ("reportStatus" in got) data.reportStatus = got.reportStatus;
+    if ("reportHistory" in got && got.reportHistory && historyQuery() === (got.reportHistory.asked || historyQuery())) data.reportHistory = got.reportHistory;
+    if ("library" in got) data.library = got.library;
+    if ("libraryRun" in got) data.libraryRun = got.libraryRun;
     // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
     // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader
     // promoted mid-session otherwise saw "Loading…" for a whole cycle; a demoted one must not
     // keep the catalogue, nor lend a ticket minted under the old identity (review of D2, second
     // pass, Codex; measured: zero report calls on the promoting refresh).
+    if (view.page === "reporting" && reportingEnabled() && got.whoami) {
+      if (narrowedOnHost()) {
+        data.reportStatus = null; data.reportHistory = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("reportStatus" in got)) {
+        // The same catch-up as the Reports page below: the requests above were chosen on the previous
+        // cycle's tier, so a reader promoted mid-session saw "Loading…" for a whole cycle (review of
+        // #221, OB3 — measured: zero status calls on the promoting refresh).
+        data.reportTicket = null;
+        const [status, history] = await Promise.all([guard403(reportGet("/api/status")), guard403(reportGet(historyQuery()))]);
+        if (superseded()) return;
+        data.reportStatus = status; data.reportHistory = history;
+      }
+    }
+    if (view.page === "library" && reportingEnabled() && got.whoami) {
+      // #229: the same catch-up as the two pages above — the requests were chosen on the previous cycle's tier
+      if (narrowedOnHost()) {
+        data.reportCatalog = null; data.reportStatus = null; data.library = null; data.reportTicket = null;
+      } else if (got.whoami.authenticated && !("library" in got)) {
+        data.reportTicket = null;
+        const [catalog, status, library] = await Promise.all([
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/status")), guard403(reportGet(LIBRARY_RUNS)),
+        ]);
+        if (superseded()) return;
+        data.reportCatalog = catalog; data.reportStatus = status; data.library = library;
+      }
+    }
     if (view.page === "reports" && reportingEnabled() && got.whoami) {
       if (narrowedOnHost()) {
         data.reportCatalog = null; data.reportRuns = null; data.reportTicket = null;
       } else if (got.whoami.authenticated && !("reportCatalog" in got)) {
         data.reportTicket = null;
         const [catalog, runs] = await Promise.all([
-          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=50")),
+          guard403(reportGet("/api/reports")), guard403(reportGet("/api/runs?limit=1")),
         ]);
         if (superseded()) return;
         data.reportCatalog = catalog; data.reportRuns = runs;
       }
     }
     if ("operatorConfigs" in got) data.operatorConfigs = got.operatorConfigs;
+    if ("kyverno" in got) data.kyverno = got.kyverno;
+    if (view.page === "kyverno" && narrowedFor(got.whoami)) data.kyverno = { forbidden: true };   // the designed refusal, decided from the whoami that just arrived
     // #172: the fleet view's GroupSync and policy tables are the per-cluster payloads, fetched in
     // parallel AFTER the cluster list is known — one extra stage, and only up to the medium tier
     // (eight clusters): forty clusters must not cost eighty requests a minute for two tables that
@@ -5730,7 +7165,15 @@ async function refresh(opts = {}) {
       data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
       data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
       data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
+      // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
+      // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
+      // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
+      data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
+      data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
+      data.libraryRun,
       data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
+      data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
+      data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
       // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
       // only change was a label or a grant skipped the repaint the comment above forbids skipping).
       data.namespaces, data.ns,

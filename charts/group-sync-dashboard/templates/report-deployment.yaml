@@ -89,6 +89,10 @@ spec:
               value: {{ .Values.reporting.retention.manual.days | quote }}
             - name: GSD_REPORT_MANUAL_RETENTION_MAX_RUNS
               value: {{ .Values.reporting.retention.manual.maxRuns | quote }}
+            # The schedules as the status page needs them (#149 R6): cadence, next fire and effective
+            # retention come from the cron expression and these values, not from a cluster call.
+            - name: GSD_REPORT_SCHEDULES
+              value: {{ include "gsd.reportSchedulesJson" . | quote }}
             - name: GSD_REPORT_FORMATS_SCHEDULED
               value: {{ join "," ((.Values.reporting.formats | default dict).scheduled | default (list "html" "json")) | quote }}
             - name: GSD_REPORT_FORMATS_MANUAL
@@ -108,6 +112,9 @@ spec:
             # The captured Namespace-metadata DIMENSIONS the namespace-access report selects on, as a JSON
             # array (same transport as namespaceMetadataLabels). The report pod reads these; the dashboard
             # poller captures under reporting.namespaceMetadata.labels.
+            # #149 R7: the namespace label that pins an EXACT group; the forms resolve a mnemonic through it.
+            - name: GSD_REPORT_NAMESPACE_GROUP_LABEL
+              value: {{ (.Values.reporting | default dict).namespaceGroupLabel | default "" | quote }}
             - name: GSD_REPORT_NS_SELECTOR_LABELS
               value: {{ (((.Values.reporting | default dict).namespaceSelector) | default dict).labels | default list | toJson | quote }}
             # The global reporting window (design §5). Disabled by default; the timezone defaults to

@@ -341,6 +341,85 @@ class TestDerivations:
         assert cron["spec"]["suspend"] is True
         command = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["command"]
         assert command.count("--format") == 1 and "json" not in command and "html" in command
+    def test_the_schedules_reach_the_report_pod_as_json(self):
+        # #149 R6: the status page reads cadence, enabled and retention from the chart's own values.
+        import json as _json
+        env = {e["name"]: e.get("value") for d in _render(
+            "reporting.schedules[0].name=quarterly", r"reporting.schedules[0].schedule=0 6 1 1\,4\,7\,10 *",
+            "reporting.schedules[0].report=compliance-snapshot", "reporting.schedules[0].retention.keepPerSchedule=12",
+            "reporting.schedules[1].name=paused", r"reporting.schedules[1].schedule=0 6 1\,16 * *",
+            "reporting.schedules[1].report=namespace-access", "reporting.schedules[1].enabled=false",
+            "reporting.schedules[1].params.foo=bar")
+            if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+            for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+        got = _json.loads(env["GSD_REPORT_SCHEDULES"])
+        assert got == [
+            {"name": "quarterly", "schedule": "0 6 1 1,4,7,10 *", "report": "compliance-snapshot", "retention": {"keepPerSchedule": 12}},
+            {"name": "paused", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False},
+        ], got                                                    # params stay out; enabled only when set
+        assert _json.loads({e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+                            for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}["GSD_REPORT_SCHEDULES"]) == []
+
+    def test_the_exact_group_label_reaches_both_pods_and_needs_the_namespaces_grant(self):
+        # #149 R7: the report pod resolves mnemonics through it; the poller captures it as a third label
+        # whether or not the operator listed it; without the Namespace grant it is refused like the labels.
+        docs = _render("rbac.namespaces=true", "reporting.namespaceGroupLabel=company.net/oud-group",
+                       "reporting.namespaceMetadata.labels[0]=company.net/mnemonic")
+        report = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+                  for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert report["GSD_REPORT_NAMESPACE_GROUP_LABEL"] == "company.net/oud-group"
+        ok, out = _render_text(rbac__namespaces="true", reporting__namespaceGroupLabel="company.net/oud-group",
+                               **{"reporting.namespaceMetadata.labels[0]": "company.net/mnemonic"})
+        assert ok, out
+        assert _config_data(out)["namespaceMetadataLabels"] == ["company.net/mnemonic", "company.net/oud-group"]
+        ok, out = _render_text(rbac__namespaces="true", reporting__namespaceGroupLabel="company.net/mnemonic",
+                               **{"reporting.namespaceMetadata.labels[0]": "company.net/mnemonic"})
+        assert _config_data(out)["namespaceMetadataLabels"] == ["company.net/mnemonic"], "already listed: not appended twice"
+        ok, out = _render_text(reporting__namespaceGroupLabel="company.net/oud-group")
+        assert not ok and "namespaceGroupLabel is set but rbac.namespaces is false" in out
+    def test_the_kyverno_module_grants_the_report_and_cel_policy_reads_and_switches_the_poller(self):
+        # #170: kyverno.enabled (default on) adds read-only rules for both report groups and the five CEL kinds
+        # with their namespaced twins — never the deprecated kyverno.io family, never /status, never a write —
+        # and hands the poller its switch, the breaker's scrape URL and the history window through the ConfigMap.
+        docs = _render()
+        role = next(d for d in docs if d.get("kind") == "ClusterRole" and d["metadata"]["name"].endswith("-reader"))
+        rules = {(tuple(r["apiGroups"]), tuple(r["resources"]), tuple(r["verbs"])) for r in role["rules"]}
+        assert (("wgpolicyk8s.io",), ("policyreports", "clusterpolicyreports"), ("list",)) in rules
+        assert (("openreports.io",), ("reports", "clusterreports"), ("list",)) in rules
+        cel = next(r for r in role["rules"] if r["apiGroups"] == ["policies.kyverno.io"])
+        assert set(cel["resources"]) == {"validatingpolicies", "mutatingpolicies", "generatingpolicies", "deletingpolicies",
+                                         "imagevalidatingpolicies", "namespacedvalidatingpolicies", "namespacedmutatingpolicies",
+                                         "namespacedgeneratingpolicies", "namespaceddeletingpolicies", "namespacedimagevalidatingpolicies"}
+        assert cel["verbs"] == ["list"], "list only: the reader never GETs one object"
+        assert not any("kyverno.io" == g for r in role["rules"] for g in r["apiGroups"]), "the deprecated family is never read"
+        assert not any(res.endswith("/status") for r in role["rules"] for res in r["resources"])
+        ok, out = _render_text()
+        assert ok and _config_data(out)["kyvernoEnabled"] is True and _config_data(out)["kyvernoMetricsUrl"] == "" \
+            and _config_data(out)["kyvernoEventsRetentionDays"] == 90
+        ok, out = _render_text(kyverno__enabled="false", kyverno__metricsUrl="http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics")
+        assert ok and _config_data(out)["kyvernoEnabled"] is False
+        off = next(d for d in _render("kyverno.enabled=false") if d.get("kind") == "ClusterRole" and d["metadata"]["name"].endswith("-reader"))
+        assert not any("policies.kyverno.io" in r["apiGroups"] or "wgpolicyk8s.io" in r["apiGroups"] for r in off["rules"])
+
+    def test_a_quoted_false_pauses_the_cronjob_and_the_status_page_alike(self):
+        # Review of #221 (OB3): report-cronjob.yaml suspends on the literal word false (a quoted "false" or a
+        # --set-string is a non-empty string), and the service reads `enabled` as a boolean. Rendered as the
+        # value itself, "false" reached the pod as the string "false", which `is not False` — the page said On
+        # with a next fire, above a CronJob that would never fire. The helper now emits the CronJob's decision.
+        import json as _json, subprocess as _sp
+        done = _sp.run(["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h", "--set", "reporting.enabled=true",
+                        "--set", "persistence.accessMode=ReadWriteMany",
+                        "--set", "reporting.schedules[0].name=a", "--set", "reporting.schedules[0].schedule=0 6 * * *",
+                        "--set", "reporting.schedules[0].report=groups", "--set-string", "reporting.schedules[0].enabled=false"],
+                       capture_output=True, text=True, timeout=120)
+        assert done.returncode == 0, done.stderr
+        import yaml as _yaml
+        docs = [d for d in _yaml.safe_load_all(done.stdout) if d]
+        cron = next(d for d in docs if d.get("kind") == "CronJob")
+        env = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
+               for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
+        assert cron["spec"]["suspend"] is True
+        assert _json.loads(env["GSD_REPORT_SCHEDULES"]) == [{"name": "a", "schedule": "0 6 * * *", "report": "groups", "enabled": False}]
 
     def test_the_origin_formats_reach_the_report_pod(self):
         env = {e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")

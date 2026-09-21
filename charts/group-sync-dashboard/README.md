@@ -167,6 +167,8 @@ container starting, which is a louder failure than the one above but still not a
 | `console.url` | `""` | the console the KPI page's Observe door opens (this namespace's workloads board); empty means discovered from `openshift-config-managed/console-public` by the pod's own identity; the same rule: an absolute `http(s)://` base or the render is refused |
 | `config.alerts.groupCountCliff.silence` | `[]` | exact names or fnmatch globs. Silenced cliffs are still reported (`group_count_cliff_silenced`), dimmed on the Overview. The other silence is the Group annotation `groupsync-dashboard.io/silence-group-count-cliff=true` or `=until=YYYY-MM-DD`, read on every poll, never written |
 | `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else — see [Dashboard log verbosity](#dashboard-log-verbosity--loglevel) for what each promises and which look-alike values are refused |
+| `httpLogLevel` | `WARNING` | the HTTP **request record** — `httpx` (one line per outbound API call) and `uvicorn.access` (one per inbound request) — separately from this app's own reasoning. The default moved from INFO on evidence (#245): measured on a four-cluster lab at a 60s refresh, **1 082 of the pod's 1 784 lines in 90 minutes were httpx request URLs** — 61%, and ~10 000 an hour at forty clusters, against about 12 a cycle at the one cluster the original decision was measured on. `INFO` restores the full per-request record exactly. uvicorn's access lines were unreachable by any setting before this |
+| `clusterConfigLogLevels` | `""` | per-logger overrides, `logger=LEVEL` comma-separated (e.g. `gsd.clusterconfig=DEBUG,httpx=INFO`) — raise one concern without raising every module across every polling cluster. A level set here overrides `logLevel` for that logger in both directions; `root` is refused (that is `logLevel`). Set it in a values file: Helm's `--set` reads the comma as a list separator, so `--set clusterConfigLogLevels=a=DEBUG,b=INFO` keeps only the first pair unless the comma is escaped as `\,`. A bad entry is skipped with a warning rather than failing the pod |
 | `ui.export.enabled` | `true` | CSV/JSON download of the table on screen, built in the browser from what the server served this reader; the file says when the page was partial. Off removes the control |
 | `nameOverride` / `fullnameOverride` | `""` / `""` | standard Helm naming overrides. Changing either after install renames every object, including the PVC — which orphans the accumulated history |
 
@@ -316,6 +318,10 @@ plus one in-flight page.
 | `visibility.adminSar.namespace` | `""` | empty = a cluster-scoped check, the normal case. Set it only for a deliberately namespaced threshold such as `get` `pods/log` in `openshift-authentication` |
 | `visibility.usageAdminSar.apiGroup` / `.resource` / `.verb` | `rbac.authorization.k8s.io` / `clusterrolebindings` / `update` | the SECOND, STRICTER check, for the **Usage tab alone**. The Usage dataset lives only in the dashboard's own database — unreproducible with `oc` — so it must not fall to the wide tier that `cluster-reader` also passes. No *read* check separates `cluster-admin` from `cluster-reader` (the latter may read everything), so the default asks a *write* verb, which `cluster-admin` holds and `cluster-reader` does not. **The dashboard never writes; a SubjectAccessReview only asks whether the subject could.** Independent of `adminSar`: separate review, separate cache. Same exact-lowercase render guard — a miscased or versioned shape fails the render |
 | `visibility.usageAdminSar.namespace` | `""` | empty = a cluster-scoped check, the normal case, which `update clusterrolebindings` is |
+| `visibility.clusterConfigViewSar.apiGroup` / `.resource` / `.verb` | `""` (core) / `secrets` / `get` | **`clusterconfig:view`** — the THIRD tier, for the **Cluster Configurations** surface (#230), modelled on Argo CD's first-class `clusters` resource and its `get` action. Gates `GET /api/clusterconfigs` and the tab's existence: a reader who fails it is not shown that the surface is there. Asked about the objects the surface exposes — the cluster Secrets — so it reads as what it is: you may see cluster credentials if you may read the Secrets that hold them. **Not** the wide `adminSar`: `cluster-reader`, the auditor persona, passes that one by design, and on CRC (2026-09-20) has zero of its 172 rules covering `secrets` |
+| `visibility.clusterConfigManageSar.apiGroup` / `.resource` / `.verb` | `""` (core) / `secrets` / `create` | **`clusterconfig:manage`** — Argo's `clusters, create/update/delete`. Gates the write routes and the form's Create / Rotate / Delete / Test (#230 S2). Asked **separately**: `manage` is never inferred from `view`, so a site may grant the two apart |
+| `visibility.clusterConfigViewSar.namespace` / `visibility.clusterConfigManageSar.namespace` | `""` | empty = **this release's namespace**, where the cluster Secrets live — the opposite of `adminSar`'s empty, because these two questions are namespaced by nature |
+| — | — | **Both levels are asked even when `visibility.enabled` is `false`.** That independence is deliberate: turning cluster-DATA restrictions off must not hand the fleet's wiring to every reader the proxy admits. It means the chart renders the `system:auth-delegator` binding whenever `clusterConfig.secrets.enabled` is on, because a tier that asks a SubjectAccessReview without the grant to ask it refuses everyone — administrators included — with only a log line to say why |
 
 Grant the wide view through your normal RBAC process, never a chart value:
 
@@ -439,8 +445,14 @@ once, never rendered — the same for every renderer (Helm, Flux, Argo CD, Kusto
 | `rbacAuditors.existingClusterRole` | `""` | bind a ClusterRole you made elsewhere instead of the chart's; the chart then renders only the Binding. Must cover the `visibility.adminSar` gate. Requires `createClusterRole=false` |
 | `rbacAuditors.groups` | `[{name: app-ocp-rbac-groupsync-ns-auditor}]` | the groups to bind, each `{name, createLocal}`. The default names the estate's auditor group, bind-only (`createLocal` omitted), so enabling with no override binds it — supply your own list to change it. Bound by name, so a synced group and a local group work the same. `createLocal: true` also creates a local `Group` object; leave it off for a group the group-sync operator owns (the chart refuses `createLocal: true` when the Group already exists under another owner) |
 | `rbac.namespaces` | `false` | adds `get`/`list` on `namespaces` (core group). Lets the report service's namespace report attest **absence** — "this namespace exists and has no grants" — instead of "none observed". Off by default: extra RBAC |
+| `kyverno.enabled` | `true` | the Kyverno policy module (#165, #170): grants `list` on the policy reports (`wgpolicyk8s.io`, `openreports.io`) and the five CEL policy kinds (`policies.kyverno.io`, with their namespaced twins) and turns the poller's read on. Auto-detected per cluster — no policy-report API group is "not installed", said on the page, never zero results. Read-only: no `/status`, no write verb, never the deprecated `kyverno.io` family (the API says it will be removed in a future release; its results are counted so the page can say they exist) |
+| `clusterConfig.secrets.enabled` | `true` | clusters declared as labelled Secrets in the release namespace (#230, `docs/specs/SPEC_S1_cluster_secrets.md`): a Role with `get`, `list`, `watch` on `secrets` there, and the poller's discovery on the binding cadence — a Secret labelled `groupsync-dashboard.io/secret-type: cluster` carrying `name`, `server`, `config` (JSON: `bearerToken` or `oauth{username,password}`, `tlsClientConfig{caData,insecure}`) and the D2 options is polled like a `clusters[]` entry; the host is always `clusters[0]` and a Secret naming it is refused; a Secret that does not parse is a finding on `GET /api/clusterconfigs`, one that vanishes disables its cluster and keeps its history. The credential never leaves the Secret. `false` — no Role, no discovery, the `clusters[]` list alone |
+| `clusterConfig.secrets.writes.enabled` | `false` | the Cluster Configurations tab's writes (#230 S2, `docs/specs/SPEC_S2_cluster_configurations_tab.md`): `create`, `update`, `delete` join the `-cluster-secrets` Role so an administrator can add a cluster from the tab (the same labelled Secret a GitOps process would write, `gsd-cluster-<name>`, annotated `groupsync-dashboard.io/managed-by: ui`), rotate its bearer token in place, or delete it (the cluster retires, its history kept). The app writes only in its own namespace, only Secrets carrying the label (checked by the app — RBAC cannot scope a verb by label), only for a reader holding `clusterconfig:manage` (`visibility.clusterConfigManageSar`, never the wide tier the auditor passes) with a proxy-verified identity, one audit log line per write naming the person, the verb and the Secret; the credential never reaches a response, a log line, the database or `/metrics`. **Off by default**, a stated exception to the on-by-default rule: a write path on Secrets widens the dashboard's read-only posture (its only write anywhere is its own leader Lease), so it stays off until the operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it and removes the exception. Off, no write route is registered (a POST is a `405`) and the tab is read-only, its form still producing the Secret's YAML for a GitOps process to apply |
+| `kyverno.metricsUrl` | `""` | the metrics endpoints the dashboard pod can reach, comma-separated, for the report breakers (`kyverno_breaker_total` / `kyverno_breaker_drops`, summed): reports a breaker dropped are results the page cannot show. Three circuits, one per controller, each on its own endpoint — in-cluster on the host cluster: `http://kyverno-svc-metrics.kyverno.svc:8000/metrics`, `http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics`, `http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics`. Empty leaves the truncation state unknown, said on the page. One GET per endpoint per poll, for the host cluster only — a remote cluster's breaker is unmeasured |
+| `kyverno.eventsRetentionDays` | `90` | the appeared/cleared history of problem results, pruned like the other event tables (`0` keeps forever). A policy report carries no history — it dies with its resource — so this table is the only memory of a finding |
 | `reporting.namespaceMetadata.labels` | `[]` | the Namespace label keys the poll captures per namespace, so the namespace-access report can select on them. Bounded — only these keys, never the whole label map; adding a key needs no migration. Needs `rbac.namespaces=true`; the render refuses labels set while it is off. e.g. `[company.net/mnemonic]` |
-| `reporting.namespaceSelector.labels` | `[]` | the captured DIMENSIONS the namespace-access report offers. Each MUST be one of `reporting.namespaceMetadata.labels` or the render fails. The form renders one multi-select per entry, combined AND across dimensions and OR within one; the dropdown values are auto-discovered from the namespaces. `[]` hides the selector. Set to your cluster's real metadata label keys — e.g. `[company.net/mnemonic, company.net/app-environment]` |
+| `reporting.namespaceGroupLabel` | `""` | the Namespace label whose value is the exact group governing the namespace (e.g. `company.net/oud-group`). The poll captures it beside `namespaceMetadata.labels` whether or not it is listed there; access-certification resolves `group_mnemonic` to that group through it and namespace-access offers it as `group_by: oud-group`. Needs `rbac.namespaces=true`; `""` hides the mnemonic and exact-group lookups |
+| `reporting.namespaceSelector.labels` | `[]` | the captured DIMENSIONS the namespace-access report offers. Each MUST be one of `reporting.namespaceMetadata.labels` or the render fails. The form renders one multi-select per entry, combined AND across dimensions and OR within one; the dropdown values are auto-discovered from the namespaces. `[]` hides the selector. **Order matters:** the first entry is the business mnemonic (the mnemonics lookup, `group_mnemonic`'s resolution with `reporting.namespaceGroupLabel`, `group_by: mnemonic`), the second the app environment (`group_by: app-environment`). Set to your cluster's real metadata label keys — e.g. `[company.net/mnemonic, company.net/app-environment]` |
 | `monitoring.serviceMonitor.enabled` | `true` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent — set it `false` on a bare Kubernetes without them). On by default since 0.36.0: user-workload monitoring is on on the clusters this chart is for |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
@@ -472,16 +484,19 @@ some other way — it then runs at `INFO` and logs a warning rather than failing
 | `INFO` | **the default.** One line per completed unit of work or state change; readable at steady state |
 | `DEBUG` | this app's own reasoning: per-pod login-capture accounting, poll timing and the binding-refresh countdown, row counts per read, which replica holds the Lease and how stale its renewal is, why a reader was put on the narrow tier |
 
-**Two things `logLevel` does not control**, both deliberate:
+**Two things `logLevel` does not control**, both deliberate — and both governed by `httpLogLevel` since #245:
 
 - **Inbound request lines.** uvicorn logs one per request on its own loggers, which carry
-  `propagate=False` and their own handlers at `INFO`, so this value cannot raise or lower them. At
-  `CRITICAL` you still get a line per request and lose every application diagnostic.
-- **Outbound request lines.** `httpx` logs `HTTP Request: GET <url> "200 OK"` at `INFO` itself, so
-  they are present at the default. The transport layer beneath it (`httpcore`, socket and TLS
-  events) is pinned to `WARNING`, because unpinned it was 97% of `DEBUG` output — measured in a live
-  pod, 356 framing lines per 10 of the app's own. Set `GSD_DEBUG_HTTP=true` to restore it when
-  diagnosing a handshake against a corporate CA.
+  `propagate=False` and their own handlers, so **this** value cannot raise or lower them — but
+  `httpLogLevel` now can, and at its `WARNING` default `/readyz` and `/metrics` stop writing a line
+  apiece. Set `httpLogLevel: INFO` to get them back.
+- **Outbound request lines.** `httpx` logs `HTTP Request: GET <url> "200 OK"` at its own `INFO`, and
+  until #245 nothing governed it: measured on a four-cluster lab, **1 082 of the pod's 1 784 lines
+  in 90 minutes** were those URLs. They are governed by `httpLogLevel` now (default `WARNING`), not
+  by this value; `httpLogLevel: INFO` restores them exactly. The transport layer beneath them
+  (`httpcore`, socket and TLS events) is pinned to `WARNING` separately, because unpinned it was 97%
+  of `DEBUG` output — measured in a live pod, 356 framing lines per 10 of the app's own. Set
+  `GSD_DEBUG_HTTP=true` to restore **that** when diagnosing a handshake against a corporate CA.
 
 ### oauth-server log verbosity
 
@@ -1138,6 +1153,28 @@ strategy. Keep both until you have watched a sync on your own cluster.
 > Verified as manifests, not at runtime: the reference cluster has the Argo CRDs installed
 > but no controller running, so the annotations were checked by rendering and applying, not
 > by observing a sync.
+
+## Deploying with Flux or Kustomize
+
+Two more shapes, both from the published chart repository, under `examples/` (#212):
+
+- **Flux** — `examples/flux/helmrelease.yaml`: a `HelmRepository` and one `HelmRelease` per chart,
+  the dashboard's `dependsOn` the grafana one so the `GrafanaDashboard` CR finds its CRD served — and
+  it has to, because helm-controller re-renders a deployed release only when its chart or values
+  change, never on the interval. helm-controller runs a real Helm install through the SDK, so it is
+  the one renderer that needs no caveat: the hook Jobs run as hooks, `lookup` sees the cluster, and
+  the openshift-grafana chart's `crds/` are applied before the render, only when absent (the default
+  `crds: Create`, what `helm install` does; OLM owns them once the operator is in). The grafana
+  release carries `timeout: 15m`, the flag the chart's README gives `helm install`, because
+  helm-controller waits for each hook Job only up to the release timeout. It needs cluster-scoped
+  Flux ≥ 2.3 (OpenShift GitOps is Argo CD: use `gitops/`). Both objects validate
+  against the upstream `helm.toolkit.fluxcd.io/v2` and `source.toolkit.fluxcd.io/v1` CRD schemas,
+  and each release's `values` renders with its chart at the pinned version (checked on 2026-09-20;
+  Flux is not installed on the lab, so the apply itself is not measured).
+- **Kustomize** — `examples/kustomize/kustomization.yaml`: the `helmCharts` inflator for both charts,
+  with `includeCRDs` and `apiVersions` doing what an offline render cannot know, and the caveat that
+  hook Jobs are applied as plain Jobs (a changed Job template needs the old Job deleted first). The
+  same inflator shape is built from the tree in CI by `tests/test_chart_renderers.py`.
 
 ## Upgrading
 

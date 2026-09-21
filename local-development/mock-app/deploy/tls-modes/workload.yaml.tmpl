@@ -1,0 +1,45 @@
+# One more copy of the mock OpenShift API under a NEW name — the same image, the same fixture, its own
+# Service and TLS Secret (${NAME}-tls, issued by the PKI in pki-${MODE}.yaml). Rendered by
+# deploy-tls-modes.sh with NAME and MODE; identical to deploy/mock-openshift-deployment.yaml otherwise,
+# so what differs between the three is ONLY who signed the serving certificate.
+apiVersion: v1
+kind: Service
+metadata:
+  labels: {app: ${NAME}, groupsync-dashboard.io/tls-mode: ${MODE}}
+  name: ${NAME}
+spec:
+  ports: [{name: https, port: 6443}]
+  selector: {app: ${NAME}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels: {app: ${NAME}, groupsync-dashboard.io/tls-mode: ${MODE}}
+  name: ${NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ${NAME}}
+  template:
+    metadata:
+      labels: {app: ${NAME}}
+    spec:
+      containers:
+        - name: mock
+          image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+          imagePullPolicy: Always
+          env:
+            - {name: MOCK_CA_IN, value: /certs}
+            - {name: OPENSSL_armcap, value: "0"}   # CRC on Apple Silicon: see deploy/mock-openshift-deployment.yaml
+            - {name: MOCK_FIXTURE, value: /fixtures/reference.yaml}
+            - {name: MOCK_PORT, value: "6443"}
+          ports: [{containerPort: 6443, name: https}]
+          readinessProbe: {tcpSocket: {port: 6443}, initialDelaySeconds: 3, periodSeconds: 5}
+          volumeMounts:
+            - {mountPath: /certs, name: certs, readOnly: true}
+            - {mountPath: /fixtures, name: fixtures}
+      volumes:
+        - name: certs
+          secret: {secretName: ${NAME}-tls, defaultMode: 420}
+        - name: fixtures
+          configMap: {name: mock-fixture, defaultMode: 420}

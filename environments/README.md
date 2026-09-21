@@ -56,6 +56,7 @@ declare — it only *overrides*, and the table says which way:
 | `loginCapture.source` | `pod-log` | `audit-log` | lab override — a ClusterRole on `get nodes/proxy`, read-only; the audit log names the person at the default verbosity and keeps history |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `rbac.namespaces` | `false` | `true` | lab override — a cluster-scoped read (get, list on namespaces, core group); required for the P2 namespace selector, off by default under the 0.14.0 rule |
+| `kyverno.metricsUrl` | `""` | `http://kyverno-svc-metrics.kyverno.svc:8000/metrics,http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics,http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics` | lab override — the Kyverno module's report breakers (#170): the lab runs Kyverno in `kyverno`, and the three circuits live on three endpoints; empty leaves the truncation state unknown |
 
 **Read the right-hand column as "why this is not the default".** The overrides that remain are
 fail-closed in the chart on purpose, and a plain `helm install` must not do them uninvited:

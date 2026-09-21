@@ -386,6 +386,31 @@ update
 {{- end -}}
 {{- end -}}
 
+{{/*
+The cluster-configuration tier's two SAR blocks (#230): visibility.clusterConfigViewSar and
+visibility.clusterConfigManageSar. ONE parameterised helper rather than eight near-identical ones —
+the two blocks and their four fields validate identically, and a copy per field is four more places
+for a guard to drift. Call it with a dict: {ctx, block, field, default}.
+
+Same discipline as the adminSar helpers: nil-safe (commenting out the sub-keys leaves
+`visibility:` present-but-nil, which a bare field access panics on), and a malformed value FAILS
+THE RENDER rather than silently answering no for every viewer — which here would not demote an
+administrator but lock everyone out of the surface, including the person trying to fix it.
+*/}}
+{{- define "gsd.clusterConfigSarField" -}}
+{{- $sar := (index (.ctx.Values.visibility | default dict) .block) | default dict -}}
+{{- if or (not (hasKey $sar .field)) (kindIs "invalid" (index $sar .field)) -}}
+{{- .default -}}
+{{- else -}}
+{{- $v := trim (toString (index $sar .field)) -}}
+{{- $ok := dict "apiGroup" "^[a-z0-9.-]*$" "resource" "^[a-z0-9-]+(/[a-z0-9-]+)?$" "verb" "^[a-z]+$" "namespace" "^[a-z0-9-]*$" -}}
+{{- if not (regexMatch (index $ok .field) $v) -}}
+{{- fail (printf "visibility.%s.%s %q is not a %s. RBAC matching is exact, so anything else would answer no for every viewer and close the Cluster Configurations surface to everyone." .block .field $v .field) -}}
+{{- end -}}
+{{- $v -}}
+{{- end -}}
+{{- end -}}
+
 # How long a decided tier is cached, per viewer. Whole seconds, and 0 disables caching.
 #
 # This is the ONE knob whose wrong value is a security consequence rather than a broken render, so
@@ -450,6 +475,21 @@ INFO
 {{- $l := upper (trim (toString $raw)) -}}
 {{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
 {{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you are trying to raise the OAUTH-SERVER's verbosity so the Logins tab has something to read, that is the chart's `authLogLevel` value, not this one — a different setting on a different object.\n\nRefused here rather than passed through, because a release value can be corrected before anything is deployed. The app itself is more forgiving with a directly supplied GSD_LOG_LEVEL — it runs at INFO and logs a warning — so this is the stricter of two boundaries, not the only one." (toString $raw)) -}}
+{{- end -}}
+{{- $l -}}
+{{- end -}}
+{{- end -}}
+
+# The HTTP REQUEST RECORD's own level (#245): httpx and uvicorn.access, separately from the app's
+# reasoning. The same five values, refused the same way, defaulting to WARNING when unset or null.
+{{- define "gsd.httpLogLevel" -}}
+{{- $raw := .Values.httpLogLevel -}}
+{{- if or (not (hasKey .Values "httpLogLevel")) (kindIs "invalid" $raw) -}}
+WARNING
+{{- else -}}
+{{- $l := upper (trim (toString $raw)) -}}
+{{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
+{{- fail (printf "httpLogLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nThis value governs the HTTP REQUEST RECORD only — httpx (outbound API calls) and uvicorn.access (inbound requests). This app's own loggers are `logLevel`, a different value.\n\nINFO restores the per-request lines that were the default before #245; WARNING keeps the failures and drops the routine 200s." (toString $raw)) -}}
 {{- end -}}
 {{- $l -}}
 {{- end -}}
@@ -626,6 +666,33 @@ The catalogue names this deployment enables, comma-joined for GSD_REPORT_ENABLED
 switch is a boolean; loginActivity is a tri-state ("" follows loginCapture.enabled). Misspelt values
 refuse, and loginActivity=true with capture off refuses — a report over a table nothing writes.
 */}}
+{{- /* The Namespace label keys the poller captures: reporting.namespaceMetadata.labels plus the
+exact-group label (reporting.namespaceGroupLabel, #149 R7) when set and not already listed — the
+report forms resolve a business mnemonic to the group a namespace pins through it, so the poller
+must capture it whether or not the operator listed it. */ -}}
+{{- define "gsd.namespaceMetadataLabels" -}}
+{{- $labels := (((.Values.reporting | default dict).namespaceMetadata) | default dict).labels | default list -}}
+{{- $group := (.Values.reporting | default dict).namespaceGroupLabel | default "" -}}
+{{- if and $group (not (has $group $labels)) -}}{{- $labels = append $labels $group -}}{{- end -}}
+{{- toJson $labels -}}
+{{- end -}}
+
+{{- /* The reporting.schedules[] entries the report pod's status page describes: name, schedule, report,
+enabled and any per-schedule retention override, as one JSON array (#149 R6). Params, cluster and
+formats are the CronJob's business and stay out of it. `enabled` is emitted as the boolean the CronJob
+decides on — the literal word false suspends it (report-cronjob.yaml) — so a quoted "false" or a
+--set-string cannot leave the page saying On above a CronJob that is paused (review of #221, OB3). */ -}}
+{{- define "gsd.reportSchedulesJson" -}}
+{{- $out := list -}}
+{{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
+{{- $entry := dict "name" $s.name "schedule" $s.schedule "report" $s.report -}}
+{{- if hasKey $s "enabled" -}}{{- $_ := set $entry "enabled" (ne (toString $s.enabled) "false") -}}{{- end -}}
+{{- with $s.retention -}}{{- $_ := set $entry "retention" . -}}{{- end -}}
+{{- $out = append $out $entry -}}
+{{- end -}}
+{{- toJson $out -}}
+{{- end -}}
+
 {{- define "gsd.reportEnabledReports" -}}
 {{- $r := (.Values.reporting | default dict).reports | default dict -}}
 {{- $names := dict "namespaceAccess" "namespace-access" "accessMatrix" "access-matrix" "privilegedAccess" "privileged-access" "bindingFindings" "binding-findings" "groups" "groups" "users" "users" "dormantAccess" "dormant-access" "groupsyncHealth" "groupsync-health" "complianceSnapshot" "compliance-snapshot" "accessCertification" "access-certification" -}}
@@ -708,6 +775,10 @@ false
 {{- $nsLabels := $nsMeta.labels | default list -}}
 {{- if and (gt (len $nsLabels) 0) (not .Values.rbac.namespaces) -}}
 {{- fail "reporting.namespaceMetadata.labels is set but rbac.namespaces is false: the poll never lists Namespace objects, so the mnemonic selector would always be empty. Set rbac.namespaces=true (the extra RBAC is the 0.14.0 exception the namespace report already needs) or clear the labels list." -}}
+{{- end -}}
+{{- /* #149 R7: the exact-group label is captured the same way, and needs the same grant. */ -}}
+{{- if and ((.Values.reporting | default dict).namespaceGroupLabel | default "") (not .Values.rbac.namespaces) -}}
+{{- fail "reporting.namespaceGroupLabel is set but rbac.namespaces is false: the poll never lists Namespace objects, so the label could not be captured. Set rbac.namespaces=true or clear it." -}}
 {{- end -}}
 {{- $nsSelector := (.Values.reporting | default dict).namespaceSelector | default dict -}}
 {{- /* .label was removed in 0.22.0 (the selector is multi-dimension now: .labels). Helm ignores unknown

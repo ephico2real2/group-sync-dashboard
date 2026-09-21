@@ -122,3 +122,18 @@ class ReportingWindow:
                 delta = candidate - now_utc
                 return max(1, int(delta.total_seconds()) + (1 if delta.microseconds else 0))
         raise RuntimeError("a validated reporting window did not open within eight real days")
+
+    def next_change(self, now_aware: _dt.datetime) -> tuple[str, _dt.datetime | None]:
+        """What the window does next and when: ("closes", at) while open, ("opens", at) while closed,
+        ("never", None) for a disabled window (#149 R6 — the status page's "closes in 3h 12m"). The same
+        real-instant scan as seconds_until_open, in the other direction too."""
+        if not self.enabled:
+            return "never", None
+        open_now = self.is_open(now_aware)
+        now_utc = now_aware.astimezone(_dt.UTC)
+        minute = now_utc.replace(second=0, microsecond=0)
+        for step in range(1, 8 * 24 * 60 + 1):
+            candidate = minute + _dt.timedelta(minutes=step)
+            if self.is_open(candidate) != open_now:
+                return ("closes" if open_now else "opens"), candidate
+        raise RuntimeError("a validated reporting window did not change within eight real days")

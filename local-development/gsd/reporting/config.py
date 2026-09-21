@@ -34,6 +34,51 @@ class ReportConfigError(Exception):
     pass
 
 
+def _schedules_env() -> tuple[dict, ...]:
+    """GSD_REPORT_SCHEDULES: a JSON array of {name, schedule, report, enabled?, retention?} rendered by
+    the chart from reporting.schedules[]. Unset or empty = no schedules. A shape that is not that is a
+    startup error, like every other config typo here — the optional keys included: `enabled` is a
+    boolean and `retention` an object of non-negative integer `keepPerSchedule` / `days`, because the
+    status endpoint reads both and a `days: "twelve"` that passed startup was a 500 on every request of
+    it (review of #221, OB3)."""
+    raw = os.environ.get("GSD_REPORT_SCHEDULES", "").strip()
+    if not raw:
+        return ()
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise SystemExit(f"GSD_REPORT_SCHEDULES is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list) or not all(isinstance(x, dict) and isinstance(x.get("name"), str)
+                                                and isinstance(x.get("schedule"), str) and isinstance(x.get("report"), str)
+                                                for x in parsed):
+        raise SystemExit("GSD_REPORT_SCHEDULES must be a JSON array of objects with name, schedule and report")
+    for x in parsed:
+        if "enabled" in x and not isinstance(x["enabled"], bool):
+            raise SystemExit(f"GSD_REPORT_SCHEDULES: schedule {x['name']!r} has enabled={x['enabled']!r}; it must be true or false")
+        retention = x.get("retention")
+        if retention is None:
+            continue
+        if not isinstance(retention, dict) or not set(retention) <= {"keepPerSchedule", "days"} or not all(
+                isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in retention.values()):
+            raise SystemExit(f"GSD_REPORT_SCHEDULES: schedule {x['name']!r} has retention={retention!r}; it takes "
+                             "keepPerSchedule and days, each a non-negative integer")
+    return tuple(parsed)
+
+
+def retention_overrides(settings: "ReportSettings") -> dict[str, tuple[int, int]]:
+    """Per schedule, the (keep, days) its `retention:` stanza overrides, the globals filling the key it
+    leaves out — ONE reading for the prune and for the status page, so the policy the page calls
+    effective is the policy the prune applies (review of #221, OB3: `ArtifactStore.prune` took
+    `overrides` since the two-tier retention landed and nothing ever passed them)."""
+    out: dict[str, tuple[int, int]] = {}
+    for sch in settings.schedules:
+        override = sch.get("retention") or {}
+        if override:
+            out[sch["name"]] = (int(override.get("keepPerSchedule", settings.scheduled_keep_per_schedule)),
+                                int(override.get("days", settings.scheduled_retention_days)))
+    return out
+
+
 def _formats_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     """A comma list of html/pdf (json is always written, so a listed `json` is accepted and dropped);
     unset or empty keeps the default. Anything else is a startup error — a typo must not silently
@@ -151,6 +196,12 @@ class ReportSettings:
     #: Origin-aware formats (design R3): what a run stores when the request names none. A schedule
     #: fires unattended and its document is printed from the HTML on demand, so no PDF by default;
     #: a person's manual run gets the PDF. `json` is always written and is not listed here.
+    #: #149 R7: the namespace label that pins an EXACT group (company.net/oud-group), carried by some
+    #: namespaces only; the mnemonic label is the first selector dimension. Empty hides the lookups.
+    namespace_group_label: str = ""
+    #: The chart's reporting.schedules[] (name, schedule, report, enabled, retention) as JSON, so the
+    #: status page can show cadence, next fire and effective retention without a cluster call (R6).
+    schedules: tuple[dict, ...] = ()
     formats_scheduled: tuple[str, ...] = ("html",)
     formats_manual: tuple[str, ...] = ("html", "pdf")
     marking: str = "Handling: internal — access review evidence"
@@ -206,6 +257,8 @@ def load_report_settings() -> ReportSettings:
         scheduled_retention_days=_int_env("GSD_REPORT_SCHEDULED_RETENTION_DAYS", 90, lo=0, hi=3650),
         manual_retention_days=_int_env("GSD_REPORT_MANUAL_RETENTION_DAYS", 3, lo=0, hi=3650),
         manual_retention_max_runs=_int_env("GSD_REPORT_MANUAL_RETENTION_MAX_RUNS", 500, lo=0, hi=100000),
+        namespace_group_label=os.environ.get("GSD_REPORT_NAMESPACE_GROUP_LABEL", "").strip(),
+        schedules=_schedules_env(),
         formats_scheduled=_formats_env("GSD_REPORT_FORMATS_SCHEDULED", ReportSettings.formats_scheduled),
         formats_manual=_formats_env("GSD_REPORT_FORMATS_MANUAL", ReportSettings.formats_manual),
         marking=os.environ.get("GSD_REPORT_MARKING", ReportSettings.marking),

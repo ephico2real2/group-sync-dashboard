@@ -527,20 +527,52 @@ config:
 #             the next binding refresh, row counts per read, which replica holds the Lease and how stale its
 #             renewal is, and why a given reader was put on the narrow tier.
 #
-# NOT HTTP REQUEST LINES. This value used to claim DEBUG added them; it does not. `httpx` logs
-# `HTTP Request: GET <url> "200 OK"` at INFO itself, so they are already present at the default —
-# measured identical at both levels. The layer below (`httpcore`, socket and TLS events) IS pinned to
-# WARNING, because unpinned it was 97% of DEBUG output: 356 lines of framing per 10 of the app's own.
-# Set GSD_DEBUG_HTTP=true to unpin it when diagnosing a handshake against a corporate CA.
-#
-# INBOUND REQUESTS ARE OUTSIDE THIS VALUE ENTIRELY. uvicorn logs one access line per request on its
-# own loggers, which carry propagate=False and their own handlers at INFO, so `logLevel` cannot raise
-# or lower them — at CRITICAL you still get a line per request and lose every app diagnostic.
+# NOT HTTP REQUEST LINES — THEY HAVE THEIR OWN VALUE NOW (#245). `httpx`'s
+# `HTTP Request: GET <url> "200 OK"` and uvicorn's inbound access lines are governed by
+# `httpLogLevel` below, default WARNING; this value does not raise or lower them. They used to sit
+# at INFO with no setting at all, which at four clusters was 61% of the pod's output. The layer
+# below (`httpcore`, socket and TLS events) is still pinned to WARNING here, because unpinned it was
+# 97% of DEBUG output: 356 lines of framing per 10 of the app's own. Set GSD_DEBUG_HTTP=true to
+# unpin it when diagnosing a handshake against a corporate CA.
 #
 # NOT TO BE CONFUSED WITH `authLogLevel` BELOW, which is a different setting on a different object:
 # it raises the oauth-server's own verbosity, which is what makes that server EMIT the login lines
 # this dashboard reads. If the Logins tab is empty, that is the one to check — not this one.
 logLevel: INFO
+
+# The HTTP REQUEST RECORD, separately from this app's own reasoning (#245). Governs `httpx`
+# (outbound: one line per API call the poller makes) and `uvicorn.access` (inbound: one line per
+# request served, including /readyz and /metrics).
+#
+# WHY IT IS ITS OWN VALUE, AND WHY THE DEFAULT MOVED. httpx's `HTTP Request: GET <url> "200 OK"`
+# lines used to sit at INFO, deliberately — they are semantic, and at ONE cluster they cost about 12
+# lines a cycle. MEASURED ON A FOUR-CLUSTER LAB at a 60s refresh: 1 082 of the pod's 1 784 lines in
+# 90 minutes were those URLs — 61%, and roughly 10 000 an hour at forty clusters. The reasoning was
+# not wrong; the fleet outgrew it. The cluster-connection module now logs the facts those lines were
+# a proxy for (which cluster, which phase, what outcome), so the URLs are the same story told worse.
+#
+# WARNING keeps the failures and drops the routine 200s. Set INFO to restore the full per-request
+# record exactly as it was. uvicorn's access lines were previously unreachable by any setting at
+# all — its logger carries propagate=False and its own handler — so this is the first time they can
+# be turned down.
+httpLogLevel: WARNING
+
+# PER-LOGGER OVERRIDES, for raising one concern without raising the fleet (#245). A comma-separated
+# list of `logger=LEVEL`, applied after the two values above.
+#
+#   clusterConfigLogLevels: "gsd.clusterconfig=DEBUG"        one module's reasoning, nothing else
+#   clusterConfigLogLevels: "gsd.clusterconfig=DEBUG,httpx=INFO"   that, plus the request record
+#
+# Before this, diagnosing one cluster's connection meant GSD_LOG_LEVEL=DEBUG, which turns on every
+# module at once across every polling cluster. An unparseable entry is skipped with a warning rather
+# than failing the pod; the last entry wins for a repeated logger.
+#
+# A LEVEL SET HERE OVERRIDES `logLevel` FOR THAT LOGGER, IN BOTH DIRECTIONS: `gsd.clusterconfig=DEBUG`
+# emits at `logLevel: ERROR`, which is the point — and `gsd.poller=ERROR` silences that module at
+# `logLevel: DEBUG`, which is the trap. `root` is refused with a warning: it is every logger at once,
+# and that level is `logLevel`. Set this in a values file rather than with --set, whose comma is a
+# list separator (escape it as `\,` if you must).
+clusterConfigLogLevels: ""
 
 # Timezone for LOG LINES ONLY. Set it to whoever reads the logs at 3am — correlating an
 # incident against a wall clock is easier than doing UTC arithmetic under pressure.
@@ -988,10 +1020,22 @@ reporting:
     #     - company.net/mnemonic            # <- replace with your enterprise's actual metadata labels
     #     - company.net/app-environment
     labels: []
+  # The Namespace label that pins an EXACT group (#149 R7) — carried by some namespaces only, the ones
+  # that name the group governing them. The report forms resolve a business mnemonic to that group
+  # through it (a naming convention was measured unreliable: beta → app-ocp-rbac-spar-ns-audit, alpha →
+  # bda-rbac-trino-alpha-users), and offer the captured values as a direct group lookup. The poller
+  # captures it as a third namespace label whether or not it is listed under namespaceMetadata.labels.
+  # "" hides the mnemonic and exact-group lookups. ENTERPRISE-SPECIFIC, like the labels above.
+  namespaceGroupLabel: ""
   namespaceSelector:
     # The captured DIMENSIONS the namespace-access report offers (P2, multi-dimension). Each MUST be one
     # of namespaceMetadata.labels; the form renders one multi-select per entry, AND'd across, OR within.
     # [] hides the selector.
+    #
+    # ORDER MATTERS: the FIRST entry is the business mnemonic — the "mnemonics" lookup lists its values,
+    # access-certification resolves group_mnemonic through it (with namespaceGroupLabel), and
+    # namespace-access's group_by "mnemonic" groups by it; the SECOND is the app environment
+    # (group_by "app-environment"). Listed the other way round, a mnemonic resolves environments.
     #
     # Same ENTERPRISE-SPECIFIC keys as namespaceMetadata.labels — set to your cluster's real metadata
     # labels on a remote/production cluster, NOT the company.net/* examples. e.g.
@@ -1217,6 +1261,67 @@ rbac:
   # every poll would put a 403 a minute in the audit log. Requires rbac.users. With
   # rbac.create=false it is only the read switch.
   identities: false
+
+# ---------------------------------------------------------------------------
+# Kyverno policy module  (#165, #170) — the CEL policy family, read through the policy reports
+# ---------------------------------------------------------------------------
+kyverno:
+  # Grants list on the policy reports (wgpolicyk8s.io, openreports.io) and the five CEL policy kinds
+  # with their namespaced twins (policies.kyverno.io), and turns the poller's read on. Auto-detected per cluster: a cluster
+  # serving no policy-report API group records "not installed" and the page says so — never zero
+  # results. Read-only; no /status, no write verb. The deprecated ClusterPolicy/Policy family is
+  # not read (the API says it will be removed in a future release); its results are counted so the
+  # page can say they exist.
+  enabled: true
+  # The metrics endpoints the dashboard pod can reach, for the report breakers
+  # (kyverno_breaker_total / kyverno_breaker_drops): reports a breaker dropped are results the page
+  # cannot show, so the truncation is a state, not a clean cluster. There are THREE circuits, one per
+  # controller, each on its own endpoint — name them all, comma-separated, in-cluster on the host
+  # cluster: http://kyverno-svc-metrics.kyverno.svc:8000/metrics (admission reports),
+  # http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics (background scan reports),
+  # http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics (background-scan reports).
+  # "" leaves the truncation state unknown (said on the page). One GET per endpoint per poll, for the
+  # host cluster only: a remote cluster's breaker is unmeasured, and the page says so.
+  metricsUrl: ""
+  # The appeared/cleared history of problem results, pruned like the other event tables (days;
+  # 0 keeps forever). Reports carry no history of their own — a report dies with its resource.
+  eventsRetentionDays: 90
+
+# ---------------------------------------------------------------------------
+# Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)
+# ---------------------------------------------------------------------------
+# Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
+# is a cluster — `name` (the id the dashboard shows), `server`, `config` (JSON: bearerToken or
+# oauth{username,password}; tlsClientConfig{caData,insecure}), and the D2 options `visibility`,
+# `identity`, `enabled`. The dashboard LISTs them by that label on the binding cadence and polls
+# each like a `clusters[]` entry; written by hand, by the Cluster Configurations tab (S2) or by any
+# GitOps process, the app sees the same object. `clusters[]` above stays the bootstrap source and
+# the host is ALWAYS clusters[0]: a Secret naming the host is refused as a finding. A Secret that
+# does not parse is a finding on the tab, never a crashed pod; one that vanishes disables its
+# cluster and keeps its history.
+#
+# The grant is a namespaced Role: get, list, watch on secrets in the release namespace ONLY (the
+# writes the tab needs are S2's, behind their own switch). The credential never leaves the Secret and
+# the process's memory — not the database, not a log line, not a response, not /metrics.
+clusterConfig:
+  secrets:
+    enabled: true
+    # The Cluster Configurations tab's writes (#230 S2, docs/specs/SPEC_S2_cluster_configurations_tab.md):
+    # an administrator adds a cluster from the tab — the same labelled Secret a GitOps process would
+    # write —, rotates its token in place, or deletes it. OFF by default, a stated exception to the
+    # on-by-default rule (tests/test_values_defaults.py): a write path on Secrets widens the dashboard's
+    # read-only posture (its only write anywhere is its own leader Lease), so it stays off until the
+    # operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it
+    # and removes the exception. Turning it on is the decision to let the dashboard mint cluster
+    # access. On, the Role above
+    # gains create, update and delete on secrets in the release namespace and the four write routes
+    # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
+    # reader holding clusterconfig:manage — visibility.clusterConfigManageSar — with a proxy-verified
+    # identity, one audit log line per write); off, no write route is registered and the tab
+    # is read-only — the form still produces the Secret's YAML for a GitOps process to apply. The
+    # credential never reaches a response, a log line, the database or /metrics either way.
+    writes:
+      enabled: false
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)
@@ -1948,6 +2053,40 @@ visibility:
     apiGroup: rbac.authorization.k8s.io
     resource: clusterrolebindings
     verb: update
+    namespace: ""
+
+  # THE CLUSTER-CONFIGURATION TIER — two levels of its own (#230), modelled on Argo CD's RBAC,
+  # where a first-class `clusters` resource carries `get` and `create/update/delete` actions.
+  # We hold no policy file: every tier here is a SubjectAccessReview against this cluster, so
+  # OpenShift groups and RoleBindings already are that mapping. The two questions are therefore
+  # asked about the very objects the surface exposes — the cluster Secrets themselves:
+  #
+  #   clusterConfigViewSar   (Argo `clusters, get`)      -> the Cluster Configurations tab and
+  #                                                         GET /api/clusterconfigs
+  #   clusterConfigManageSar (Argo `clusters, create…`)  -> the write routes and the form's
+  #                                                         Create / Rotate / Delete / Test (#230 S2)
+  #
+  # It reads as what it is: you may SEE cluster credentials if you may read the Secrets that hold
+  # them, and CHANGE them if you may create those Secrets.
+  #
+  # WHY NOT THE WIDE `adminSar`, measured on CRC 2026-09-20: `cluster-reader` — the deliberate
+  # auditor persona, which passes the wide tier by design — has ZERO of its 172 rules covering
+  # core/`secrets`, and `oc auth can-i {get,list,create,update,delete} secrets` answers `no`. So
+  # the auditor fails both levels by construction and a cluster-admin passes both.
+  #
+  # An empty `namespace` means THIS RELEASE'S namespace, where the cluster Secrets live — the
+  # opposite of `adminSar`'s empty, which means a cluster-scoped check, because these questions
+  # are namespaced by nature. Point them at your own question (a dedicated `fleet-admin`
+  # ClusterRole, say) and both levels move independently: `manage` is never derived from `view`.
+  clusterConfigViewSar:
+    apiGroup: ""
+    resource: secrets
+    verb: get
+    namespace: ""
+  clusterConfigManageSar:
+    apiGroup: ""
+    resource: secrets
+    verb: create
     namespace: ""
 
 # ---------------------------------------------------------------------------

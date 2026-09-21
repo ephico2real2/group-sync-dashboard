@@ -260,6 +260,86 @@ class Snapshot:
         except sqlite3.Error as exc:
             raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
 
+    # -- #149 R7: what the report forms can offer from the snapshot ---------------------------
+
+    DISCOVERED_CAP = 5000
+
+    def discovered(self, cluster_id: str, mnemonic_key: str, group_key: str) -> dict:
+        """The discovered lookups for one cluster: identity providers (from ocp_user.providers), role
+        names (both binding tables), user names, group names, the mnemonic label's values and the
+        exact-group label's values — each sorted, each cut at DISCOVERED_CAP with `truncated` said. One
+        read per set; a form load pays six small queries, not a scan per keystroke.
+
+        A sqlite3.Error from a table read after a clean open becomes SnapshotError HERE, the same wrap
+        as namespace_selector_dimensions, so GET /api/discovered degrades to empty menus instead of a
+        500 and sqlite3 is never named in server.py (review of #222, Codex M4; the storage seam)."""
+        try:
+            return self._discovered(cluster_id, mnemonic_key, group_key)
+        except sqlite3.Error as exc:
+            raise SnapshotError(f"cannot read snapshot {Path(self.path).name}: not readable SQLite data") from exc
+
+    def _discovered(self, cluster_id: str, mnemonic_key: str, group_key: str) -> dict:
+        def cut(values: list[str]) -> dict:
+            return {"values": values[:self.DISCOVERED_CAP], "truncated": len(values) > self.DISCOVERED_CAP}
+        # Bounded reads (review of #222, Grok): LIMIT cap+1 on the two name lists, so a cluster with
+        # fifty thousand users costs the form 5,001 rows, not all of them; the providers come from
+        # the same bounded read, and a blob that is not JSON counts as no provider rather than a 500.
+        limit = self.DISCOVERED_CAP + 1
+        providers: set[str] = set()
+        users: list[str] = []
+        if self.has_table("ocp_user"):
+            for r in self._rows("SELECT user_name, providers FROM ocp_user WHERE cluster_id = ? ORDER BY user_name LIMIT ?", (cluster_id, limit)):
+                users.append(r["user_name"])
+                try:
+                    providers.update(json.loads(r["providers"] or "[]"))
+                except ValueError:
+                    pass
+        roles: set[str] = set()
+        for table in ("rbac_group_binding", "user_binding"):
+            if self.has_table(table):
+                roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?", (cluster_id,)))
+        groups = [g["name"] for g in self._rows("SELECT name FROM group_state WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit))] \
+            if self.has_table("group_state") else []
+        # #143 phase 2: the namespaces the poll listed (rbac.namespaces) — the advanced field's picker; empty
+        # without the grant, and the form falls back to a text field.
+        namespaces = [r["name"] for r in self._rows("SELECT name FROM cluster_namespace WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit))] \
+            if self.has_table("cluster_namespace") else []
+        return {"providers": cut(sorted(providers)), "roles": cut(sorted(roles)), "users": cut(users), "groups": cut(groups),
+                "mnemonics": cut(self.namespace_metadata_values(cluster_id, mnemonic_key)),
+                "oud-groups": cut(self.namespace_metadata_values(cluster_id, group_key)),
+                "namespaces": cut(namespaces)}
+
+    def members_of_groups(self, cluster_id: str, group_names: list[str]) -> set[str]:
+        """The user names that are members of ANY of the groups — a group filter on person-keyed data."""
+        if not group_names or not self.has_table("group_member"):
+            return set()
+        marks = ",".join("?" for _ in group_names)
+        return {r["user_name"] for r in self._rows(
+            f"SELECT DISTINCT user_name FROM group_member WHERE cluster_id = ? AND group_name IN ({marks})",
+            (cluster_id, *group_names))}
+
+    def groups_for_mnemonics(self, cluster_id: str, mnemonic_key: str, group_key: str, mnemonics: list[str]) -> set[str]:
+        """The exact groups a business mnemonic names: the namespaces carrying `mnemonic_key` in
+        `mnemonics`, then the `group_key` label those namespaces pin (#149 R7 — a naming convention
+        was measured unreliable: beta → app-ocp-rbac-spar-ns-audit, alpha → bda-rbac-trino-alpha-users).
+        Namespaces without the group label contribute nothing."""
+        if not mnemonics or not mnemonic_key or not group_key or not self.has_table("cluster_namespace_label"):
+            return set()
+        names = self.namespaces_for_metadata(cluster_id, mnemonic_key, mnemonics)
+        if not names:
+            return set()
+        marks = ",".join("?" for _ in names)
+        return {r["value"] for r in self._rows(
+            f"SELECT DISTINCT value FROM cluster_namespace_label WHERE cluster_id = ? AND key = ? AND name IN ({marks})",
+            (cluster_id, group_key, *names))}
+
+    def namespace_label_map(self, cluster_id: str, key: str) -> dict[str, str]:
+        """namespace → the value of one label, for grouping a namespace report's sections."""
+        if not key or not self.has_table("cluster_namespace_label"):
+            return {}
+        return {r["name"]: r["value"] for r in self._rows(
+            "SELECT name, value FROM cluster_namespace_label WHERE cluster_id = ? AND key = ?", (cluster_id, key))}
+
     def login_capture_status(self, cluster_id: str) -> dict | None:
         return self._row("SELECT started_at, last_read_at FROM login_capture_status WHERE cluster_id = ?", (cluster_id,))
 
@@ -456,10 +536,18 @@ class Snapshot:
 
     # -- login activity -----------------------------------------------------------------------
 
-    def login_summary(self, cluster_id: str, since_iso: str) -> list[dict]:
-        return self._rows("""SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n
-                               FROM login_event WHERE cluster_id = ? AND at >= ?
-                              GROUP BY outcome, provider ORDER BY outcome, provider""", (cluster_id, since_iso))
+    def login_summary(self, cluster_id: str, since_iso: str, user_names: set[str] | None = None) -> list[dict]:
+        """Attempts by outcome and provider in the window; `user_names` narrows them to the subject scope
+        (an empty scope — named groups with no members — counts nothing), None counts the cluster."""
+        sql = "SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n FROM login_event WHERE cluster_id = ? AND at >= ?"
+        params: list = [cluster_id, since_iso]
+        if user_names is not None:
+            if not user_names:
+                return []
+            names = sorted(user_names)
+            sql += " AND user_name IN (" + ",".join("?" for _ in names) + ")"
+            params.extend(names)
+        return self._rows(sql + " GROUP BY outcome, provider ORDER BY outcome, provider", params)
 
     def login_by_user(self, cluster_id: str, since_iso: str, user_name: str | None) -> list[dict]:
         sql = """SELECT user_name, SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes,

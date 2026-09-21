@@ -36,10 +36,41 @@ class ParamSpec:
     lo: int | None = None
     hi: int | None = None
     required: bool = False
+    #: #149 R7 — what the ParamSpec-driven shell needs beyond the type. `source` names a DISCOVERED
+    #: lookup the catalogue serves per cluster from the snapshot ("users", "groups", "providers",
+    #: "roles", "mnemonics", "oud-groups"): a csv with a source renders as a tag input with type-ahead
+    #: over those values (Enter adds a value not in the set). `unit` labels an int ("days"). `advanced`
+    #: folds the field under the Advanced disclosure. `group` renders two fields as one framed block —
+    #: "subject" is the users+groups Subject scope.
+    source: str = ""
+    unit: str = ""
+    advanced: bool = False
+    group: str = ""
 
     def as_json(self) -> dict:
         return {"name": self.name, "type": self.type, "default": self.default, "help": self.help,
-                "choices": list(self.choices), "lo": self.lo, "hi": self.hi, "required": self.required}
+                "choices": list(self.choices), "lo": self.lo, "hi": self.hi, "required": self.required,
+                "source": self.source, "unit": self.unit, "advanced": self.advanced, "group": self.group}
+
+
+def subject_scope() -> tuple[ParamSpec, ParamSpec]:
+    """The Subject scope the subject-centric reports share (#149 R7): all subjects by default, or the
+    named users and/or groups. Replaces the old all/groups/users kind toggle — a specific selection
+    subsumes it: users only = pick users, groups only = pick groups."""
+    return (
+        ParamSpec("users", "csv", [], "Only these users (empty = every subject).", source="users", group="subject"),
+        ParamSpec("groups", "csv", [], "Only these groups (empty = every subject).", source="groups", group="subject"),
+    )
+
+
+def subject_filter(params: dict) -> tuple[set[str] | None, set[str] | None]:
+    """(users, groups) to keep, or None for "all of that kind". With neither named, every subject of
+    both kinds; with only users named, groups are OUT (the reader asked for those users), and the
+    same the other way — the old `users`/`groups` kinds by selection."""
+    users, groups = set(params.get("users") or []), set(params.get("groups") or [])
+    if not users and not groups:
+        return None, None
+    return (users or set()), (groups or set())
 
 
 @dataclass(frozen=True)
@@ -205,12 +236,14 @@ def validate_params(spec: ReportSpec, raw: dict | None) -> dict:
             out[p.name] = [t.strip() for t in _string_items(value, p.name) if t.strip()]
         elif p.type == "selector-map":
             out[p.name] = validate_selector_map(value, p.name)
-        else:  # "str"
+        else:  # "str" — trimmed: a reviewer's name with a trailing space is the same reviewer (#143 phase 2)
             # A string is a string: a number was stringified here while the record said "strings
             # must be strings" (review of C3, second pass, Cursor).
             if not isinstance(value, str):
                 raise ValidationError(f"{p.name} must be a string")
-            s = value
+            s = value.strip()
+            if not s and p.required:
+                raise ValidationError(f"{p.name} is required")
             if len(s) > 200:
                 raise ValidationError(f"{p.name} is longer than 200 characters")
             out[p.name] = s

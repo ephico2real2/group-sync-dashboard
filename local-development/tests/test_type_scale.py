@@ -252,3 +252,18 @@ def test_a_single_ladder_step_is_written_as_its_token(css):
     offenders = [line.strip() for line, _, value in _declarations(css, props)
                  if re.fullmatch(r"(\d+)px", value) and int(value[:-2]) in space]
     assert not offenders, "a ladder step spelled as a literal:\n  " + "\n  ".join(offenders)
+
+
+def test_every_report_shell_class_the_page_writes_has_a_rule(css: str) -> None:
+    """Review of #222 (Codex): `rp-count-live` was written into the Subject scope's markup with no rule
+    behind it, so the live count missed the mock's mono/accent treatment and nothing said so. The
+    report shell's classes carry an `rp-` prefix (a collision with `.num`/`.scope` once made rows
+    unclickable), which makes them cheap to guard: one written into the page without a selector in the
+    stylesheet is a class that styles nothing."""
+    html = INDEX.read_text()
+    written: set[str] = set()
+    for value in re.findall(r'class="([^"]*)"', html):
+        written.update(re.findall(r"\brp-[A-Za-z0-9_-]+\b", value))
+    styled = set(re.findall(r"\.(rp-[A-Za-z0-9_-]+)\b", css))
+    assert written, "the report shell's rp- classes are gone from index.html"
+    assert written - styled == set(), f"written into the page, styled nowhere: {sorted(written - styled)}"

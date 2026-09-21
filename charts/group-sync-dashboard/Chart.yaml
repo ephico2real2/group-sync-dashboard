@@ -178,7 +178,20 @@ type: application
 # CHART 0.37.0 (2026-09-20), MINOR: the oauth-proxy session key and the shared report token are minted
 # on the cluster by a hook (secretsMint), never rendered; their Secrets are <fullname>-oauth-session
 # and <reportName>-shared-token, carried over from the old names on the first upgrade.
-version: 0.38.0
+# CHART 0.41.1 (2026-09-20), PATCH: the chart README gains "Deploying with Flux or Kustomize" (#212);
+# no template or default changes; appVersion unchanged.
+# CHART 0.42.0 (2026-09-20), MINOR: clusters as labelled Secrets (#230 S1) — a namespaced Role on
+# secrets (get, list, watch) and the clusterConfig.secrets.enabled switch, on by default; migration 19.
+# CHART 0.42.1 (2026-09-20), PATCH: visibility.clusterConfigViewSar / .clusterConfigManageSar —
+# the cluster-configuration tier's two SAR questions (#230), defaulting to get/create secrets in
+# the release namespace; no other template or default change.
+# CHART 0.43.0 (2026-09-20), MINOR: two new values — `httpLogLevel` (the HTTP request record,
+# default WARNING, moved off `logLevel` on evidence) and `clusterConfigLogLevels` (per-logger
+# overrides). A default install now logs fewer lines, not more (#245).
+# CHART 0.44.0 (2026-09-20), MINOR: the Cluster Configurations tab's writes (#230 S2) —
+# clusterConfig.secrets.writes.enabled (OFF by default: the dashboard is a reader) adds create, update,
+# delete to the cluster-secrets Role and clusterSecretsWritesEnabled to the ConfigMap when on.
+version: 0.44.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

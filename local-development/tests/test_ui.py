@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import pathlib
 import socket
 import threading
@@ -582,6 +583,101 @@ class TestGroupDrilldown:
         dash.locator(f"tr[data-group='{name}']").click()
         dash.wait_for_selector("#back-groups")
 
+    #: The first column's box model on one table: the ink's offset from the cell's edge (a Range over the
+    #: cell's contents), the computed padding, whether the table carries a rowlink row.
+    _FIRST_COL = """(sel) => {
+        const table = typeof sel === 'string' ? document.querySelector(sel) : sel;
+        const td = table.querySelector('tr.rowlink td:first-child') || table.querySelector('tbody tr td:first-child');
+        const th = table.querySelector('th:first-child');
+        const edge = (el) => { const r = document.createRange(); r.selectNodeContents(el); const b = [...r.getClientRects()].filter(b => b.width > 0)[0]; return b ? +(b.left - el.getBoundingClientRect().left).toFixed(2) : null; };
+        const pad = (el) => parseFloat(getComputedStyle(el).paddingLeft);
+        return { text: td.textContent.trim(), tdInk: edge(td), thInk: edge(th), tdPad: pad(td), thPad: pad(th), hasRowlink: !!table.querySelector('tr.rowlink') };
+    }"""
+
+    def test_the_hover_rail_does_not_paint_under_the_first_cells_text(self, dash):
+        # #219 (OB3, review of #204): the 3px inset hover rail sat under the first cell's ink — the glyph
+        # began at x=1 with the rail spanning x=0..2. The first column keeps 3px clear, header and cells
+        # together, so the column stays aligned at rest. Groups: the cell holds a button, so its box IS the
+        # padding — 0.0px on main.
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        g = dash.evaluate(self._FIRST_COL, "#main table")
+        assert g["hasRowlink"] and g["tdPad"] == 3 and g["thPad"] == 3, g
+        assert g["tdInk"] >= 3, f"the first cell's text starts {g['tdInk']:.1f}px in, under the 3px hover rail"
+
+    def test_the_user_history_minus_left_glyph_clears_the_hover_rail(self, dash):
+        # The issue's own table (review of #226, Grok: the Groups test never opened it): the user page's
+        # History rows are rowlinks and their first cell is the "− left" text — ink, not a button box.
+        # No ink-to-ink alignment clause: a minus's sidebearing is ~1px and a capital's is not.
+        # bob left the group and never logged in, so he is not a row on the Users tab: his page is reached by position
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local&user=bob")
+        dash.wait_for_selector("td.change-removed")
+        h = dash.evaluate("""() => { const h2 = [...document.querySelectorAll('h2')].find(e => e.textContent.startsWith('History'));
+            const table = h2.closest('section').querySelector('table'); return (""" + self._FIRST_COL + """)(table); }""")
+        assert h["text"] == "− left" and h["hasRowlink"] and h["tdPad"] == 3, h
+        assert h["tdInk"] >= 3, f"− left starts {h['tdInk']:.1f}px in, under the rail"
+
+    def test_the_hover_rail_paints_beside_the_minus_left_glyph_not_under_it(self, dash):
+        # #219 at the PAINT level (OB1-lite's re-read of #226): every other test here measures geometry — a
+        # Range rect's offset — which is not what the issue was about. This one reads the pixels. At DPR 1 the
+        # hovered first cell's columns 0..2 are the accent alone, column 3 is the row's background, and the
+        # first column carrying ink is >= 3 (4 in practice: the minus's side-bearing). With the (0,0,1) rule
+        # removed the glyph blends under the rail from x = 1 — measured, both ways.
+        import io
+        from PIL import Image
+        dash.goto(dash.url.split("#")[0] + "#page=groups&cluster=crc-local&user=bob")
+        dash.wait_for_selector("td.change-removed")
+        td = dash.evaluate_handle("""() => { const h2 = [...document.querySelectorAll('h2')].find(e => e.textContent.startsWith('History'));
+            return h2.closest('section').querySelector('table tr.rowlink td:first-child'); }""").as_element()
+        td.hover()
+        dash.wait_for_timeout(150)
+        box = td.bounding_box()
+        im = Image.open(io.BytesIO(dash.screenshot(clip={"x": box["x"], "y": box["y"], "width": 40, "height": box["height"]}))).convert("RGB")
+        w, h = im.size
+        px = im.load()
+        accent = px[0, h // 2]                                             # the rail's own colour, read off the rail
+        bg = px[w - 1, h // 2]
+        cols = {x: {px[x, y] for y in range(1, h - 1)} for x in range(w)}   # the row's 1px borders excluded
+        rail_cols = [x for x in range(w) if cols[x] == {accent}]
+        ink_cols = [x for x in range(w) if cols[x] - {bg, accent}]
+        assert accent != bg and rail_cols[:3] == [0, 1, 2] and 3 not in rail_cols, (accent, bg, rail_cols)
+        assert ink_cols and ink_cols[0] >= 3, f"ink under the rail: the first ink column is {ink_cols[:1]}"
+
+    def test_the_kpi_clusters_keep_their_padding_and_the_audit_table_takes_no_rule(self, dash):
+        # Preservation: the rule is (0,0,1) — both halves in :where() — so .kpi-page's 18px (0,1,1) wins by
+        # specificity wherever it sits; the audit table carries no rowlink and never sees it (Grok, Codex, OB3).
+        dash.locator("button[data-nav='kpi']").click()
+        dash.wait_for_selector(".kpi-page table tr.rowlink")
+        assert dash.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.kpi-page tr.rowlink td:first-child')).paddingLeft)") == 18
+        dash.locator("button[data-nav='nsaudit']").click()
+        dash.wait_for_selector("table.audit-table")
+        a = dash.evaluate("""() => { const table = document.querySelector('table.audit-table'); const risk = table.querySelector('tr.risk-row td:first-child');
+            return { hasRowlink: !!table.querySelector('tr.rowlink'), pad: parseFloat(getComputedStyle(risk).paddingLeft), border: parseFloat(getComputedStyle(risk).borderLeftWidth),
+                     pillFromCell: risk.querySelector('.risk-pill').getBoundingClientRect().left - risk.getBoundingClientRect().left, hover: getComputedStyle(risk).boxShadow }; }""")
+        assert a["hasRowlink"] is False and a["pad"] == 10 and a["border"] == 4 and a["pillFromCell"] >= a["pad"] and "inset" not in a["hover"], a
+        # The cascade by construction, not by source order (Codex): a class-qualified table that DID carry a
+        # rowlink row keeps its own padding — .audit-table's 0, an earlier rule — because the rule is (0,0,1).
+        probe = dash.evaluate("""() => { const host = document.createElement('div'); host.style.cssText = 'position:absolute;left:-10000px;top:0';
+            host.innerHTML = '<table class="audit-table"><thead><tr><th>a</th></tr></thead><tbody><tr class="rowlink"><td>x</td></tr></tbody></table>'
+                           + '<table><thead><tr><th>a</th></tr></thead><tbody><tr class="rowlink"><td>x</td></tr></tbody></table>';
+            document.body.appendChild(host);
+            const pads = [...host.querySelectorAll('td')].map(td => parseFloat(getComputedStyle(td).paddingLeft));
+            host.remove(); return pads; }""")
+        assert probe == [0, 3], probe
+
+    def test_a_tables_own_padding_rule_beats_the_clearance_wherever_it_sits(self, dash):
+        # OB3: a (0,1,1) rule — the shape of .kpi-page td, .audit-table td and .report-table td — placed BEFORE
+        # app.css, where source order cannot help it: it must still win, which only specificity can do.
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        pad = dash.evaluate("""() => {
+            const s = document.createElement('style'); s.textContent = '.own-padding td { padding-left: 17px }';
+            document.head.prepend(s);
+            const table = document.querySelector('tr.rowlink').closest('table'); table.classList.add('own-padding');
+            const v = getComputedStyle(table.querySelector('tr.rowlink td:first-child')).paddingLeft;
+            table.classList.remove('own-padding'); s.remove(); return v; }""")
+        assert pad == "17px", f"the rail clearance beat a table's own padding rule placed before it in the sheet: {pad}"
+
     def test_members_are_listed_with_join_time(self, dash):
         self._open_group(dash, "app-ocp-rbac-alpha-ns-admin")
         body = dash.locator("body").inner_text()
@@ -1056,7 +1152,12 @@ class TestTheShellAtPhoneWidth:
     """#166, measured on the live cluster before the fix: at 375 px the nine-tab bar was 676 px wide,
     `document.documentElement.scrollWidth` 696, and five tabs sat past the edge of a bar that could
     not scroll — unreachable. The shell owns the bar (#152), so the check runs on every tab."""
-    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "nsaudit", "logins", "usage"]
+    # "clusters" is NOT walked here: this class runs on the unrestricted app (view_restrictions_enabled
+    # False), where no SubjectAccessReview is asked for anything — so nothing can tell an auditor from an
+    # administrator, and the Cluster Configurations tier fails closed rather than admitting everyone
+    # (#230). Its phone-width check lives in TestClusterConfigPage, which runs restricted and as a
+    # persona that holds the level.
+    TABS = ["home", "overview", "kpi", "groups", "users", "bindings", "policy", "kyverno", "nsaudit", "logins", "usage"]
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
@@ -4076,8 +4177,13 @@ class _TierByName:
     controls the tier without a cluster. `root` is the administrator persona; everyone
     else is self."""
 
+    def __init__(self, *names):
+        # Defaults to the wide tier's single administrator persona; the Cluster Configurations
+        # tier (#230) constructs its own with the names that hold each of its two levels.
+        self._names = frozenset(names or ("root",))
+
     def resolve(self, viewer):
-        return "all" if viewer == "root" else "self"
+        return "all" if viewer in self._names else "self"
 
 
 @pytest.fixture(scope="module")
@@ -4085,6 +4191,8 @@ def scoped_server(tmp_path_factory):
     """The seeded app behind a simulated oauth proxy, restrictions ON (the D1 default)."""
     db = str(tmp_path_factory.mktemp("gsd-vis") / "ui.db")
     _seed(db)
+    global _SCOPED_DB, _SCOPED_APP
+    _SCOPED_DB = db   # the kyverno_store fixture writes the module's rows into this app's store (#170)
     settings = Settings(
         clusters=[
             ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
@@ -4095,10 +4203,16 @@ def scoped_server(tmp_path_factory):
         # Identity is believable here, unlike in the plain `server` fixture: the tier is
         # keyed off X-Forwarded-User, which is exactly what the proxy would set.
         oauth_proxy_enabled=True,
+        cluster_secrets_writes_enabled=True,   # #230 S2: the Cluster Configurations tests drive the write path
     )
     port = _free_port()
     app = build_app(settings, run_poller=False)
     app.state.tier_resolver = _TierByName()
+    # The Cluster Configurations tier (#230): `root` holds both levels, `viewer` reads without
+    # changing, and everyone else — the auditor persona included — holds neither and gets no tab.
+    app.state.clusterconfig_view_resolver = _TierByName("root", "viewer")
+    app.state.clusterconfig_manage_resolver = _TierByName("root")
+    _SCOPED_APP = app   # the Cluster Configurations tests set the discovered clusters on its registry (#230 S2)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     srv = uvicorn.Server(config)
     thread = threading.Thread(target=srv.run, daemon=True)
@@ -4116,6 +4230,19 @@ def scoped_server(tmp_path_factory):
     yield base
     srv.should_exit = True
     thread.join(timeout=5)
+
+
+_SCOPED_DB: str | None = None
+_SCOPED_APP = None
+
+
+@pytest.fixture
+def kyverno_store(scoped_server):
+    """A second handle on the scoped app's store, for tests that write the Kyverno module's rows (#170)."""
+    s = Store(_SCOPED_DB)
+    yield s
+    s.replace_kyverno("crc-local", None, "2026-09-20T23:59:59Z")   # leave the cluster "looked, absent" for the next test
+    s.close()
 
 
 class TestSignOutControl:
@@ -5202,7 +5329,7 @@ class TestAccessGrantedSelfTier:
         p.evaluate("() => refresh()")
         p.wait_for_function("() => data.whoami && data.whoami.visibility && data.whoami.visibility.scope === 'all'", timeout=10_000)
         p.wait_for_function("() => window.__reportGets.length >= 2", timeout=10_000)
-        assert p.evaluate("() => window.__reportGets") == ["/api/reports", "/api/runs?limit=50"]
+        assert p.evaluate("() => window.__reportGets") == ["/api/reports", "/api/runs?limit=1"]   # the count only (#149 R5)
         assert p.evaluate("() => data.reportCatalog !== null") is True
 
     def test_reports_follow_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
@@ -5829,7 +5956,8 @@ class TestIdentityFirstLogin:
         assert "identity" in alice.inner_text()
         assert "approx." in dash.locator("tr[data-user='kubeadmin']").inner_text()
         assert "exact" not in alice.inner_text().lower()
-        assert "lookup" in alice.locator("span.chip").last.get_attribute("title"), "the chip's title states the caveat"
+        # the status cell's chip — the provider column carries chips of its own since #153
+        assert "lookup" in alice.locator("td:nth-child(2) span.chip").last.get_attribute("title"), "the chip's title states the caveat"
 
     def test_the_identities_note_names_the_state(self, dash):
         dash.locator("button[data-nav='users']").click()
@@ -6133,6 +6261,8 @@ def reporting_server(tmp_path_factory):
     # of it (OB1, review 2 of #179). A test that needs a fixed instant sets clock["now"] and clears it.
     clock = {"now": None}
     report_settings = ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=True, pdf_variant="pdf/a-2b",
+                                     schedules=({"name": "weekly", "schedule": "0 6 * * 1", "report": "groups"},
+                                                {"name": "paused-ns", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False}),   # #149 R5
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
                                      login_capture_enabled=False)
@@ -6184,6 +6314,572 @@ def _reports_page(browser, base, user, fake_clock=False):
     return ctx, page, errors
 
 
+class TestTabUplifts:
+    """#153: the trailing tabs brought to the Namespace-audit bar — presentation only, every feature of
+    docs/design/tab-feature-contract.md kept. The Groups KPIs are the cluster's whole-set counts (the
+    Overview card's, never the rows on screen); a group name is a real button, so the keyboard reaches
+    the drill-down; the problem KPIs carry the warning rail only when they hold anyone."""
+
+    def test_the_groups_kpis_are_the_clusters_counts_not_the_filtered_rows(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#groups-kpis")
+        tiles = lambda: dash.evaluate("() => [...document.querySelectorAll('#groups-kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')])")
+        assert tiles() == [["Groups on this cluster", "4", False], ["Empty", "2", True], ["Unattributed", "1", True]], tiles()
+        # the state filter narrows the rows and leaves the cluster's counts alone
+        dash.select_option("#f-state", "unattributed"); dash.locator("#f-state").dispatch_event("change")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 1")
+        assert tiles()[0] == ["Groups on this cluster", "4", False]
+        dash.select_option("#f-state", "all"); dash.locator("#f-state").dispatch_event("change")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-group]').length === 4")
+
+    def test_a_group_name_is_a_button_the_keyboard_can_drill_with(self, dash):
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        dash.focus("tr[data-group='app-ocp-rbac-alpha-ns-admin'] button.drill")
+        dash.keyboard.press("Enter")
+        dash.wait_for_function("() => view.group === 'app-ocp-rbac-alpha-ns-admin'")
+        assert "Owner" in dash.locator("#main").inner_text()                 # the group detail's KPI row
+        back = " ".join(dash.evaluate("() => { view.group = null; render(); return document.getElementById('main').textContent; }").split())
+        assert "keeps its colour when you filter" in back
+
+    def test_the_users_problem_kpis_carry_the_rail_only_when_they_hold_anyone(self, dash):
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        flagged = dash.evaluate("() => [...document.querySelectorAll('.kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.classList.contains('flag-warning'), k.querySelector('.value').textContent !== '0'])")
+        labels = [f[0] for f in flagged]
+        assert labels == ["Have logged in", "In a synced group", "Logged in, no synced group", "Synced, never logged in"], labels
+        for label, rail, nonzero in flagged:
+            assert rail == (nonzero and label in ("Logged in, no synced group", "Synced, never logged in")), (label, rail, nonzero)
+        # the provider is a chip, one per provider the person logged in through
+        assert dash.locator("tr[data-user='alice'] td:nth-child(3) .chip").all_inner_texts() == ["ldap-local"]
+        assert dash.locator("tr[data-user='kubeadmin'] td:nth-child(3) .chip").all_inner_texts() == ["developer"]
+
+    def test_the_groups_kpis_hide_for_a_never_polled_cluster_and_at_the_self_tier(self, page, scoped_server):
+        # Review of #225 (Codex, Grok): /api/clusters sends integer zeros for a cluster that has never been
+        # polled (`status` null, an empty group_state), and the first cut rendered them as 0 / 0 / 0; a
+        # narrowed reader's list is their own memberships, and the cluster's counts would say its size.
+        p = _open_as(page, scoped_server, "root")
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_selector("#groups-kpis")
+        shown = p.evaluate("""() => {
+            const cl = data.clusters.find(c => c.id === view.cluster);
+            const saved = Object.fromEntries(["status", "group_count", "empty_groups", "unattributed_groups"].map(k => [k, cl[k]]));
+            Object.assign(cl, { status: null, group_count: 0, empty_groups: 0, unattributed_groups: 0 }); render();
+            const visible = document.getElementById("groups-kpis") !== null;
+            Object.assign(cl, saved); render();
+            return [visible, document.getElementById("groups-kpis") !== null];
+        }""")
+        assert shown == [False, True], "a never-polled cluster rendered healthy-looking zero counts"
+        # the rails read the counts: none at zero
+        rails = p.evaluate("() => { const cl = data.clusters.find(c => c.id === view.cluster); const s = [cl.empty_groups, cl.unattributed_groups]; Object.assign(cl, { empty_groups: 0, unattributed_groups: 0 }); render(); const r = [...document.querySelectorAll('#groups-kpis .kpi')].map(k => k.classList.contains('flag-warning')); [cl.empty_groups, cl.unattributed_groups] = s; render(); return r; }")
+        assert rails == [False, False, False], rails
+        a = _open_as(page, scoped_server, "alice")
+        a.locator("button[data-nav='groups']").click()
+        a.wait_for_selector(".scope-banner")
+        assert a.locator("#groups-kpis").count() == 0
+
+    def test_the_groups_table_scrolls_inside_its_container_at_phone_width(self, dash):
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group] button.drill")
+        assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        box = dash.evaluate("() => { const t = document.querySelector('#main table'); const s = t.closest('.scroll-x'); return [t.scrollWidth <= s.clientWidth || s.scrollWidth > s.clientWidth, s.getBoundingClientRect().right <= innerWidth]; }")
+        assert box == [True, True], box
+
+    BASE_FOOTNOTE = (
+        "Times render in the server's timezone; the Day column is a UTC date. That split is deliberate "
+        "rather than an oversight: the day is a stored bucket, computed server-side when the activity was "
+        "recorded, so re-labelling it local would misstate rows already written, and re-bucketing would "
+        "make the same column mean one thing before a deploy and another after. Near midnight a session "
+        "can therefore sit on the following UTC day. An interaction is one deliberate action — opening the "
+        "dashboard, switching tab, drilling in, changing a filter — not one HTTP request: the page refreshes "
+        "itself every 60s and counting those measured how long a tab was left open rather than whether "
+        "anyone used it. Reading time is invisible, so a long look at one page counts once. These are not "
+        "logins either: the proxy owns this dashboard's session, so nothing here records a sign-in to it. "
+        "Logins to the cluster are a separate record with a separate source — the oauth-server's own log — "
+        "and they are on the Logins tab.").split()
+
+    def test_the_usage_footnote_keeps_the_bases_words(self, browser, reporting_server):
+        # Review of #225 (OB3; Codex): three paragraphs, the base's words — the lead-ins are the sentences' own
+        # first words in <strong>, nothing dropped ("Not logins. The proxy…" had replaced "These are not logins
+        # either: the proxy…" — five words gone, a split inside a sentence). The `server` fixture runs without
+        # the proxy, so usage is "not being recorded" there; the reporting fixture records the visit.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=usage")
+            page.wait_for_function("() => document.body.dataset.page === 'usage' && document.body.innerText.includes('Times render')")
+            notes = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note')].filter(n => !n.classList.contains('truncation-note')).map(n => n.innerText)")
+            assert len(notes) == 3, notes
+            assert " ".join(notes).split() == self.BASE_FOOTNOTE
+            leads = page.evaluate("() => [...document.querySelectorAll('#main section.card:last-of-type .filterbar-note > strong:first-child')].map(s => s.textContent)")
+            assert leads == ["Times", "An interaction", "These are not logins either:"], leads
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_users_and_bindings_rails_go_when_the_counts_are_zero(self, dash):
+        # Review of #225 (OB3): a head that flagged the problem tiles unconditionally passed every test above
+        dash.locator("button[data-nav='users']").click()
+        dash.wait_for_selector("tr[data-user]")
+        users = dash.evaluate("""() => { data.users.never_logged_in_members.count = 0;
+            data.users.users.forEach(u => { if ((u.group_count || 0) === 0 && u.logged_in !== false) u.group_count = 1; }); render();
+            return [...document.querySelectorAll('.kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')]); }""")
+        assert users[2:] == [["Logged in, no synced group", "0", False], ["Synced, never logged in", "0", False]], users
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_function("() => data.findings && data.findings.counts && document.body.innerText.includes('Need review')")
+        # the rail follows the worst finding present: critical with a dangling binding, warning with unresolved only,
+        # none at zero — the same severities the sections' badges and the Overview tile carry (OB3, M8)
+        review = dash.evaluate("""() => { const c = data.findings.counts; const out = [];
+            for (const [d, u] of [[1, 0], [0, 2], [0, 0]]) { c.dangling = d; c.unresolved = u; render();
+              const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review');
+              out.push([k.querySelector('.value').textContent, k.classList.contains('flag-critical'), k.classList.contains('flag-warning'), k.querySelector('.value').classList.contains('muted')]); }
+            return out; }""")
+        assert review == [["1", True, False, False], ["2", False, True, False], ["0", False, False, True]], review
+
+    def test_every_groups_tile_holds_under_the_state_filter(self, dash):
+        # Review of #225 (OB3): all three tiles, not the first — a head that counted Empty from the rows on
+        # screen read 1 under the `unattributed` filter and passed the test above
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("#groups-kpis")
+        tiles = lambda: dash.evaluate("() => [...document.querySelectorAll('#groups-kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, k.classList.contains('flag-warning')])")
+        whole = [["Groups on this cluster", "4", False], ["Empty", "2", True], ["Unattributed", "1", True]]
+        for state, rows in (("unattributed", 1), ("empty", 2), ("all", SYNCED_GROUPS)):
+            dash.select_option("#f-state", state); dash.locator("#f-state").dispatch_event("change")
+            dash.wait_for_function(f"() => document.querySelectorAll('tr[data-group]').length === {rows}")
+            assert tiles() == whole, (state, tiles())
+
+    def test_a_provider_chip_is_one_line_at_every_width(self, dash):
+        # Review of #225 (OB3): the Provider column is allotted less than its max-content width by the table's
+        # auto layout, and `ldap-local` broke at its hyphen into a two-line pill — at 1280 px as at 375
+        for width in (1280, 375):
+            dash.set_viewport_size({"width": width, "height": 800})
+            dash.locator("button[data-nav='users']").click()
+            dash.wait_for_selector("tr[data-user] td:nth-child(3) .chip")
+            lines = dash.evaluate("""() => [...document.querySelectorAll('tr[data-user] td:nth-child(3) .chip')].map(c => {
+                const r = document.createRange(); r.selectNodeContents(c);
+                return [c.textContent, new Set([...r.getClientRects()].filter(b => b.width > 0).map(b => Math.round(b.top))).size]; })""")
+            assert lines and all(n == 1 for _, n in lines), (width, lines)
+            assert dash.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_the_owner_note_says_how_the_dot_is_coloured(self, dash):
+        # Review of #225 (Codex, Grok): crSlot() indexes the provider label in the cluster's sorted, flattened
+        # provider list — not the CR's position, which the first sentence claimed
+        dash.locator("button[data-nav='groups']").click()
+        dash.wait_for_selector("tr[data-group]")
+        note = dash.locator("#main .filterbar-note").filter(has_text="Owner").inner_text()
+        assert "provider label's position in the cluster's full sorted provider list" in note and "CR's position" not in note
+
+    def test_the_logins_provider_is_a_chip(self, dash):
+        dash.locator("button[data-nav='logins']").click()
+        dash.wait_for_function("() => [...document.querySelectorAll('#main h3')].some(h => h.textContent === 'Every attempt')")
+        rows = dash.locator("#main section.card:has(h3:text-is('Every attempt')) table tbody tr")
+        dash.wait_for_function("() => document.querySelector('#main section.card h3') !== null")
+        assert rows.count() >= 1 and rows.first.locator(".chip.mono").count() >= 1
+
+    def test_the_bindings_review_kpi_carries_the_rail_when_anything_needs_one(self, dash):
+        dash.locator("button[data-nav='bindings']").click()
+        dash.wait_for_selector(".kpis .kpi")
+        review = dash.evaluate("() => { const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review'); return [k.querySelector('.value').textContent, k.classList.contains('flag-critical') || k.classList.contains('flag-warning')]; }")
+        assert review[1] == (review[0] != "0"), review     # the severity itself: the rails-at-zero test below
+
+
+class TestClusterConfigPage:
+    """#230 S2: the Cluster Configurations tab, from the agreed mock — the cards from a cold URL, the source
+    chips, Rotate/Delete on Secret rows only, the YAML twin following the form, the disabled oauth choice with
+    its reason, the refusal card, a create through the form landing as a card, 375 px, focus."""
+
+    @pytest.fixture
+    def cc_rig(self, scoped_server, monkeypatch):
+        """One discovered cluster on the scoped app's registry, and the write path over an in-memory host."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        from test_clusterconfig_tab import _Host
+        app = _SCOPED_APP
+        settings = app.state.settings
+        assert settings.cluster_secrets_writes_enabled, "the scoped server turns the writes on for this class"
+        host = _Host({"gsd-cluster-east": _secret(labels={"environment": "prod"})})
+        east = parse_secret(_secret(labels={"environment": "prod"}), host_name="crc-local")
+        settings.cluster_registry.namespace = "gsd-ns"
+        settings.cluster_registry.replace([east], [], at="2026-09-20T16:05:12Z")
+        monkeypatch.setattr("gsd.api.ClusterClient", lambda cfg, timeout=15.0: host)
+        monkeypatch.setattr("gsd.api.own_namespace", lambda: "gsd-ns")
+        yield scoped_server, host, settings
+        settings.cluster_registry.replace([], [], at="2026-09-20T23:59:59Z")
+
+    def test_the_cards_from_a_cold_url_with_rotate_and_delete_on_the_secret_row_only(self, page, cc_rig):
+        base, host, settings = cc_rig
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-east")
+        assert page.locator("#cc-head").inner_text().replace("\n", " ").find("3 clusters") >= 0
+        assert "gsd-ns" in page.locator("#cc-head").inner_text()
+        # the source chips: the host is in-cluster, the second values entry is values, the discovered one names its Secret
+        assert page.locator("#cc-cluster-crc-local .rp-chip.cc-src-in-cluster").count() == 1
+        assert page.locator("#cc-cluster-prod-east .rp-chip.cc-src-values").count() == 1
+        assert page.locator("#cc-cluster-east .rp-chip.cc-src-secret").inner_text() == "Secret gsd-cluster-east"
+        assert page.locator("#cc-rotate-east").count() == 1 and page.locator("#cc-delete-east").count() == 1
+        assert page.locator("#cc-cluster-crc-local [data-cc-rotate], #cc-cluster-prod-east [data-cc-rotate]").count() == 0
+        assert page.locator("#cc-cluster-crc-local [data-cc-delete], #cc-cluster-prod-east [data-cc-delete]").count() == 0
+        east = page.locator("#cc-cluster-east").inner_text()
+        assert "bearerToken" in east and "trusted-bundle" in east and "environment=prod" in east and "self-only" in east
+        assert "never polled" in east
+        assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
+        assert page.locator("#cc-cred-oauth").is_disabled() and "#119 P2, not built yet" in page.locator("#cc-oauth-reason").inner_text()
+        assert not errors
+
+    def test_the_yaml_twin_follows_the_form_and_the_ca_mode(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        yaml = page.locator("#cc-yaml").inner_text()
+        assert 'name: "gsd-cluster-west"' in yaml and 'server: "https://api.west.example:6443"' in yaml   # quoted: the twin must parse back as strings
+        assert '"bearerToken":"<redacted>"' in yaml and '"caData":"<redacted>"' in yaml
+        assert '"groupsync-dashboard.io/secret-type": "cluster"' in yaml and 'managed-by: "ui"' in yaml   # keys quoted too (K4)
+        assert 'namespace: "gsd-ns"' in yaml
+        page.click("#cc-ca-insecure"); page.wait_for_selector("#cc-ca-insecure-warn:not([hidden])")
+        yaml = page.locator("#cc-yaml").inner_text()
+        assert '"insecure":true' in yaml and "caData" not in yaml
+        assert page.evaluate("() => document.getElementById('cc-name').value") == "west", "the typed name survived the repaint"
+        page.click("#cc-ca-trustedBundle"); page.wait_for_selector("#cc-ca-bundle-note:not([hidden])")
+        assert '"insecure":false' in page.locator("#cc-yaml").inner_text()
+
+    def test_with_writes_off_the_tab_is_read_only_and_the_yaml_is_the_deliverable(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-create")
+        # the page decides from the payload's `secrets.writes`, so the off state is one field away
+        page.evaluate("() => { data.clusterconfigs.secrets.writes = false; render(); }")
+        assert page.locator("#cc-create").count() == 0 and page.locator("#cc-test").count() == 0
+        assert "does not write Secrets" in page.locator("#cc-writes-off").inner_text()
+        assert page.locator("#cc-rotate-east").count() == 0 and page.locator("#cc-delete-east").count() == 0
+        assert "writes are off" in page.locator("#cc-cluster-east").inner_text()
+        page.fill("#cc-name", "gitops-one")
+        assert 'name: "gsd-cluster-gitops-one"' in page.locator("#cc-yaml").inner_text()
+
+    def test_a_narrowed_reader_gets_the_refusal_card(self, page, cc_rig):
+        # No tab to click any more: a reader without `clusterconfig:view` is not offered the surface
+        # at all (#230), so the refusal is what a pasted URL draws.
+        base, host, settings = cc_rig
+        _open_as(page, base, "alice")
+        assert page.locator("#tab-clusters").count() == 0
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_function("() => document.body.innerText.includes('Withheld, not empty')")
+        assert page.locator("#cc-form").count() == 0
+
+    def test_a_create_through_the_form_writes_the_secret_and_lands_as_a_card_after_the_discovery(self, page, cc_rig):
+        from gsd.clusterconfig import parse_secret
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "tok-west-1234"); page.click("#cc-ca-trustedBundle")
+        page.fill("#cc-label-key", "environment"); page.fill("#cc-label-val", "test"); page.click("#cc-label-add")
+        page.wait_for_function("() => document.body.innerText.includes('environment=test')")
+        page.click("#cc-create")
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('created')")
+        written = host.secrets["gsd-cluster-west"]
+        assert written["metadata"]["labels"] == {"groupsync-dashboard.io/secret-type": "cluster", "environment": "test"}
+        assert written["metadata"]["annotations"] == {"groupsync-dashboard.io/managed-by": "ui"}
+        assert "tok-west-1234" not in page.locator("#main").inner_text()
+        assert page.evaluate("() => document.getElementById('cc-name').value") == "", "the form is cleared after the write"
+        # the discovery the write requested: the poller would replace the registry from the namespace's Secrets
+        east = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(east + [parse_secret(written, host_name="crc-local")], [], at="2026-09-20T16:06:00Z")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_selector("#cc-cluster-west")
+        card = page.locator("#cc-cluster-west").inner_text()
+        assert "Secret gsd-cluster-west" in card and "environment=test" in card and "trusted-bundle" in card
+        # rotate and delete from the card
+        page.click("#cc-rotate-west"); page.wait_for_selector("#cc-rotate-token-west")
+        page.fill("#cc-rotate-token-west", "tok-west-5678"); page.click("#cc-rotate-go-west")
+        page.wait_for_function("() => (document.getElementById('cc-rotate-msg-west') || {innerText: ''}).innerText.includes('overwritten')")
+        import base64 as _b64, json as _json
+        assert _json.loads(_b64.b64decode(host.secrets["gsd-cluster-west"]["data"]["config"]))["bearerToken"] == "tok-west-5678"
+        page.click("#cc-delete-west")
+        assert page.locator("#cc-delete-west").inner_text() == "Confirm delete"
+        page.click("#cc-delete-west")
+        page.wait_for_function("() => (document.getElementById('cc-delete-msg-west') || {innerText: ''}).innerText.includes('deleted')")
+        assert "gsd-cluster-west" not in host.secrets
+
+    def test_the_page_fits_375_and_focus_survives_a_poll(self, page, cc_rig):
+        base, host, settings = cc_rig
+        # A FINDING IS MOUNTED for this one: the findings card renders a Secret name, a code and a
+        # detail on one row, and it is the longest unbroken string the page can draw — the empty
+        # state the other tests leave it in is exactly the state that cannot overflow (review of
+        # #237, Grok).
+        from gsd.clusterconfig import parse_secret
+        from gsd.clusterconfig.parser import Finding
+        from test_clusterconfig import _secret
+        settings.cluster_registry.replace(
+            [parse_secret(_secret(labels={"environment": "prod"}), host_name="crc-local")],
+            [Finding(secret="gsd-cluster-a-rather-long-secret-name-from-gitops",
+                     code="unsupported-config-key",
+                     detail="config.execProviderConfig is not a supported config key for this dashboard")],
+            at="2026-09-20T16:05:12Z")
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.focus("#cc-server"); page.keyboard.type("https://a")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_function("() => !document.getElementById('main').classList.contains('stale')")
+        assert page.evaluate("() => [document.activeElement.id, document.getElementById('cc-server').value]") == ["cc-server", "https://a"]
+        page.set_viewport_size({"width": 375, "height": 740}); page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        beyond = page.evaluate("() => [...document.querySelectorAll('#main *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).length")
+        assert beyond == 0
+
+    # ── the tier on the page (#230): two levels, and the tab's very existence is the first one ────
+    def test_the_auditor_gets_no_tab_no_page_and_makes_no_request_for_it(self, page, cc_rig):
+        """The operator's rule: the auditor must not see this surface OR learn that it exists. So the
+        tab button is absent, a pasted #page=clusters shows the refusal card, and — the part a hidden
+        button alone would not give — the page issues no /api/clusterconfigs request at all."""
+        base, host, settings = cc_rig
+        asked: list[str] = []
+        page.on("request", lambda r: asked.append(r.url))
+        _open_as(page, base, "auditor")
+        assert page.locator("#tab-clusters").count() == 0
+        page.goto(f"{base}/#page=clusters"); page.reload()      # a pasted link, parsed cold
+        page.wait_for_function("() => document.body.innerText.includes('Withheld, not empty')")
+        assert "Withheld, not empty" in page.locator("#main").inner_text()
+        assert page.locator("#cc-head").count() == 0 and page.locator("#cc-form").count() == 0
+        page.wait_for_timeout(300)
+        assert [u for u in asked if "/api/clusterconfigs" in u] == []
+
+    def test_a_view_only_reader_reads_the_cards_and_has_no_write_control(self, page, cc_rig):
+        """`clusterconfig:view` without `manage` — the shape a site gets by granting `get secrets`
+        and not `create secrets`: the tab, the cards and the YAML twin, and nothing that writes."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "viewer")
+        assert page.locator("#tab-clusters").count() == 1
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        for control in ("#cc-create", "#cc-test", "#cc-rotate-east", "#cc-delete-east"):
+            assert page.locator(control).count() == 0, control
+        assert page.locator("#cc-yaml").count() == 1                 # the GitOps twin stays: it writes nothing
+        note = page.locator("#cc-writes-off").inner_text()
+        assert "read-only for you" in note and "clusterConfig.secrets.writes.enabled" not in note
+
+    def test_the_yaml_twin_is_the_object_the_api_would_write(self, page, cc_rig):
+        """The pane's whole promise — "as GitOps would write it" — is that applying it yields the
+        Secret the API writes. So the page's YAML is PARSED and compared field for field with
+        writer.secret_object(), not eyeballed (review of #237, Codex C6 and Grok)."""
+        import yaml as _yaml
+        from gsd.clusterconfig.writer import CreateRequest, secret_object
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.click("#cc-ca-trustedBundle")            # pin the CA mode the comparison is built for
+        # values a naive emitter gets wrong: a label that is a YAML boolean, and one with a colon
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "s3cr3t")
+        page.fill("#cc-label-key", "managed"); page.fill("#cc-label-val", "true")
+        page.click("#cc-label-add")
+        page.fill("#cc-label-key", "team"); page.fill("#cc-label-val", "platform:core")
+        page.click("#cc-label-add")
+        # and a KEY that is a YAML 1.1 boolean — `on` is a valid label key, and unquoted it parsed as True
+        page.fill("#cc-label-key", "on"); page.fill("#cc-label-val", "call")
+        page.click("#cc-label-add")
+        page.wait_for_timeout(200)
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        want = secret_object(CreateRequest(name="west", server="https://api.west.example:6443",
+                                           credential_kind="bearerToken", token="s3cr3t",
+                                           tls_mode="trustedBundle",
+                                           labels={"managed": "true", "team": "platform:core", "on": "call"}),
+                             "gsd-ns", redact=True)
+        assert twin["metadata"] == want["metadata"], (twin["metadata"], want["metadata"])
+        # BYTE FOR BYTE, `config` included: the string, not the parsed object — whitespace, key order and
+        # the absent trailing newline all agree, so applying the pane yields the API's exact Secret.
+        assert twin["stringData"] == want["stringData"], (twin["stringData"]["config"], want["stringData"]["config"])
+        assert twin == want
+        assert "s3cr3t" not in page.locator("#cc-yaml").inner_text()   # the twin never carries the credential
+        # control characters in a value (an <input> strips newlines, so set the state directly): the pane
+        # must still be a YAML document that parses to the API's exact string (round 2, Grok C8)
+        page.evaluate("() => { view.clusterForm.labels['note'] = 'line1\\nline2\\ttab\\r'; render(); }")
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        assert twin["metadata"]["labels"]["note"] == "line1\nline2\ttab\r"
+
+    def test_the_twin_is_the_object_the_api_writes_when_a_value_carries_whitespace(self, page, cc_rig):
+        """Round 2 (OB3 C8): a pasted value arrives with its spaces; ccBody() trims, ccYaml() did not, so
+        the pane described `gsd-cluster- west ` — a name the API server refuses — while the API wrote
+        `gsd-cluster-west`. With the writes off, the pane IS the product, so it must be the API's object."""
+        import yaml as _yaml
+        from gsd.clusterconfig.writer import CreateRequest, secret_object
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.click("#cc-ca-trustedBundle")
+        page.fill("#cc-name", "  west  "); page.fill("#cc-server", "  https://api.west.example:6443  ")
+        page.evaluate("() => { view.clusterForm.labels['esc'] = 'a\\u001bb'; render(); }")   # a control character too
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        want = secret_object(CreateRequest(name="west", server="https://api.west.example:6443", credential_kind="bearerToken",
+                                           token="x", tls_mode="trustedBundle", labels={"esc": "a\x1bb"}), "gsd-ns", redact=True)
+        assert twin == want, (twin["metadata"], twin["stringData"])
+
+    def test_a_poll_whose_only_change_is_a_finding_repaints_the_tab(self, page, cc_rig):
+        """Round 2 (OB2 C11): removing `data.clusterconfigs` from the fingerprint killed NO test — a new
+        cluster also changes whoami's `visibility.clusters`, so that repaint rode another payload. A
+        finding rides nothing else; this is the test the mutant fails."""
+        from gsd.clusterconfig.parser import Finding
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-findings")
+        assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
+        settings.cluster_registry.replace(settings.cluster_registry.discovered(),
+                                          [Finding(secret="gsd-cluster-bad", code="config-not-json", detail="Expecting value: line 1 column 1")],
+                                          at="2026-09-20T16:07:00Z")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_function("() => document.getElementById('cc-findings').innerText.includes('gsd-cluster-bad')")
+
+    def test_a_null_whoami_on_a_poll_paints_loading_on_the_tab_never_the_refusal(self, page, cc_rig):
+        """Round 2 (OB2 C3): `whoami: get(...).catch(() => null)` is assigned unconditionally, so a poll
+        whose whoami failed left `data.whoami` null — and render() painted the refusal card for an
+        administrator until the next poll. Indeterminate is "Loading…", the KPI page's rule."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        page.evaluate("() => { data.whoami = null; render(); }")
+        text = page.locator("#main").inner_text()
+        assert "Loading" in text and "Withheld, not empty" not in text, text
+
+    def test_a_double_click_on_create_sends_one_request(self, page, cc_rig):
+        """Round 2 (Grok C16): the second click's POST answered `secret-exists` and overwrote the
+        'created' sentence with a failure for a Secret that had just been written."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "twice"); page.fill("#cc-server", "https://api.twice.example:6443")
+        page.fill("#cc-token", "tok-twice-1234"); page.click("#cc-ca-trustedBundle")
+        page.locator("#cc-create").dblclick()
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('created')")
+        page.wait_for_timeout(300)
+        assert [m for m, _ in host.calls if m == "POST"] == ["POST"], host.calls
+        assert "secret-exists" not in page.locator("#cc-form-msg").inner_text()
+
+    def test_the_administrator_keeps_every_control(self, page, cc_rig):
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        assert page.locator("#tab-clusters").count() == 1    # the strip's count is conditional (Reports too), the tab's presence is the claim
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        for control in ("#cc-create", "#cc-test", "#cc-rotate-east", "#cc-delete-east"):
+            assert page.locator(control).count() == 1, control
+        # and at phone width, where this class's page test cannot reach: every tab inside the viewport
+        page.set_viewport_size({"width": 375, "height": 740}); page.wait_for_timeout(300)
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        beyond = page.evaluate("() => [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)")
+        assert beyond == [], beyond
+
+
+class TestKyvernoPage:
+    """#170: the Kyverno page's three states, the deprecated-family and breaker notes, the visible
+    controlled-kind filter, the policy narrowing and the history — every number from the wire."""
+
+    def test_never_polled_and_not_installed_are_said_not_zeroed(self, page, scoped_server, kyverno_store):
+        store = kyverno_store
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_function("() => document.body.dataset.page === 'kyverno' && data.kyverno && data.kyverno.present === null && document.body.innerText.includes('Not polled yet')")
+        assert p.locator("#main .kpis").count() == 0, "never polled paints no tiles, not zeros"
+        # a stamp ahead of the browser's clock: ago() used to recurse on it until the stack blew and the page died
+        store.replace_kyverno("crc-local", None, (datetime.now(UTC) + timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        p.evaluate("() => { data.kyverno = null; refresh(); }")
+        p.wait_for_function("() => document.body.innerText.includes('No policy-report API group is served')")
+        assert "Last looked in 39m" in p.locator("#main").inner_text() or "Last looked in 40m" in p.locator("#main").inner_text()
+        assert p.locator("#main .kpis").count() == 0
+        # a narrowed reader gets the designed refusal, never a blank
+        a = _open_as(page, scoped_server, "alice")
+        a.click("#tab-kyverno")
+        a.wait_for_selector(".refusal, .card:has-text('For administrators only')", timeout=10_000)
+
+    def test_the_installed_state_shows_the_counts_the_notes_the_filter_and_the_history(self, page, scoped_server, kyverno_store):
+        from test_kyverno import _FakeClient, _lab_table, read
+        store = kyverno_store
+        store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        table = _lab_table()
+        table["/apis/wgpolicyk8s.io/v1alpha2/clusterpolicyreports"]["items"][2]["results"][0]["result"] = "pass"
+        store.replace_kyverno("crc-local", read(_FakeClient(table)), "2026-09-20T12:05:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-legacy")
+        tiles = p.evaluate("() => [...document.querySelectorAll('#main .kpis .kpi')].map(k => [k.querySelector('.label').textContent, k.querySelector('.value').textContent, [...k.classList].filter(c => c.startsWith('flag-')).join('')])")
+        assert tiles == [["CEL policies", "1", ""], ["Failing", "1", "flag-critical"], ["Warnings", "1", "flag-warning"], ["Passing", "2", ""],
+                         ["Skipped", "0", ""], ["Not shown (deprecated family)", "2", "flag-warning"]], tiles
+        text = p.locator("#main").inner_text()
+        assert "2 results on this cluster come from the deprecated" in " ".join(text.split())
+        assert "unknown" in p.locator("#kyverno-breaker").inner_text() and "kyverno.metricsUrl" in p.locator("#kyverno-breaker").inner_text()
+        # the findings: controlled kinds hidden by default, said; the switch shows them, on the wire
+        kinds = lambda: p.locator("#main section.card:nth-of-type(3) tbody tr td:nth-child(3) .mono").all_inner_texts()
+        assert "Findings · 1" in " ".join(text.split()) and kinds() == ["Deployment"], kinds()
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
+            p.click("#kyverno-controlled")
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        assert sorted(kinds()) == ["Deployment", "Pod"], kinds()
+        # one policy's findings alone
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "policy=restrict-nco-config-writers" in r.url):
+            p.click("[data-kyverno-policy='restrict-nco-config-writers']")
+        p.wait_for_selector("#kyverno-all-policies")
+        assert "some-policy" not in p.locator("#main section.card:nth-of-type(3) tbody").inner_text()
+        # the history: the NamespaceConfig's failure cleared between the two reads
+        hist = p.locator("#main section.card:nth-of-type(4)").inner_text()
+        assert "− cleared" in hist and "baseline-prod-rbac" in hist
+        assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        p.set_viewport_size({"width": 375, "height": 740}); p.wait_for_timeout(300)
+        assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+
+    def test_the_switch_keeps_focus_and_a_kyverno_only_change_repaints_on_the_poll(self, page, scoped_server, kyverno_store):
+        # Review of #228 (Grok, Codex): nulling the payload and painting Loading… first destroyed #kyverno-controlled,
+        # so the by-id restore left a keyboard reader on <body>; and the auto-refresh fingerprint omitted
+        # data.kyverno, so a poll whose only change was Kyverno's updated memory and skipped the DOM.
+        from test_kyverno import _FakeClient, _lab_table, read
+        kyverno_store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-controlled")
+        p.focus("#kyverno-controlled")
+        with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
+            p.keyboard.press("Enter")
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        assert p.evaluate("() => [document.activeElement.id, document.getElementById('kyverno-controlled').getAttribute('aria-checked')]") == ["kyverno-controlled", "true"]
+        kyverno_store.replace_kyverno("crc-local", None, "2026-09-20T12:05:00Z")
+        p.evaluate("() => refresh({ auto: true })")
+        p.wait_for_function("() => document.body.innerText.includes('No policy-report API group is served')")
+        assert p.locator("#main .kpis").count() == 0
+
+    def test_a_policy_button_keeps_focus_across_its_refetch(self, page, scoped_server, kyverno_store):
+        # OB3 (#228): the drill buttons carried no id, so the by-id restore had nothing to put a keyboard reader back on
+        from test_kyverno import _FakeClient, _lab_table, read
+        kyverno_store.replace_kyverno("crc-local", read(_FakeClient(_lab_table())), "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("#kyverno-policy-0")
+        p.focus("#kyverno-policy-0")
+        with p.expect_request(lambda r: "policy=restrict-nco-config-writers" in r.url):
+            p.keyboard.press("Enter")
+        p.wait_for_selector("#kyverno-all-policies")
+        p.wait_for_function("() => !document.getElementById('main').classList.contains('stale')")
+        assert p.evaluate("() => document.activeElement.id") == "kyverno-policy-0"
+
+    def test_a_failing_condition_is_visible_text_and_the_breaker_note_names_its_cause(self, page, scoped_server, kyverno_store):
+        # OB3 (#228): the note was a muted aside after "no" — an RBAC gap the reports controller names must read as the
+        # error it is; and a null breaker has two causes, "kyverno.metricsUrl is not set" and "set, the scrape failed"
+        from gsd.kyverno.reader import KyvernoRead, PolicyView
+        gap = PolicyView("ValidatingPolicy", None, "scan-groups", True, True, ("Audit",), "Fail", False, False,
+                         "RBACPermissionsGranted: reports-controller is missing RBAC to list/watch groups.user.openshift.io")
+        kyverno_store.replace_kyverno("crc-local", KyvernoRead("wgpolicyk8s.io/v1alpha2", policies=[gap], policy_kinds_served=("ValidatingPolicy",)),
+                                      "2026-09-20T12:00:00Z")
+        p = _open_as(page, scoped_server, "root")
+        p.click("#tab-kyverno")
+        p.wait_for_selector("[data-kyverno-policy]")
+        cell = p.locator("#main section.card:nth-of-type(2) tbody tr td:nth-child(7)")
+        assert "no" in cell.inner_text() and "missing RBAC to list/watch groups.user.openshift.io" in cell.inner_text()
+        assert cell.locator(".err").count() == 2, "the note is not visible error text"
+        assert "is not set" in p.locator("#kyverno-breaker").inner_text()   # this server has no kyverno.metricsUrl
+        p.evaluate("() => { data.kyverno.breaker_configured = true; render(); }")   # the same nulls, with the URL configured
+        note = p.locator("#kyverno-breaker").inner_text()
+        assert "is set" in note and "scrape" in note and "is not set" not in note, note
+
+
 class TestReportsTab:
     def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
         """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a
@@ -6224,7 +6920,11 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 11   # Home joined the strip (#158); KPIs (#157)
+            # 13, not 14: the strip is PERSONA-dependent now. Cluster Configurations appears only for
+            # a reader the `clusterconfig:view` level admits (#230), and this walk runs as alice, who
+            # is not one — an auditor must not learn the surface exists; root counts 14 in
+            # TestClusterConfigPage. Home (#158), KPIs (#157), Kyverno (#170), Library (#229) are in.
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
@@ -6241,8 +6941,11 @@ class TestReportsTab:
             login = page.locator("#report-pick-login-activity")
             assert login.is_disabled() and "reporting.reports.loginActivity.enabled" in login.inner_text()
             page.click("#report-pick-namespace-access")
-            page.fill("#report-param-namespace-access-namespaces", "prod-ns")
-            page.locator("#report-param-namespace-access-namespaces").dispatch_event("change")
+            # #143 phase 2: the explicit names are an Advanced picker over the discovered namespaces;
+            # Enter adds a name the poll never listed
+            page.click("details.report-advanced summary")
+            page.fill("#report-lookup-namespace-access-namespaces", "prod-ns"); page.press("#report-lookup-namespace-access-namespaces", "Enter")
+            page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
             gen = page.locator("#report-generate")
             gen.focus()
             gen.click()
@@ -6257,8 +6960,10 @@ class TestReportsTab:
             path = dl.value.path()
             from pathlib import Path
             assert Path(path).read_bytes().startswith(b"%PDF") and dl.value.suggested_filename.endswith(".pdf")
-            page.wait_for_selector("#report-runs tbody tr")
-            assert "namespace-access" in page.locator("#report-runs").inner_text() and "root" in page.locator("#report-runs").inner_text()
+            # #149 R5: the history lives on the Reporting status page, linked from the catalogue
+            page.click("#report-status-link")
+            page.wait_for_selector("#reporting-history tbody tr")
+            assert "namespace-access" in page.locator("#reporting-history").inner_text() and "root" in page.locator("#reporting-history").inner_text()
             assert not errors, errors
         finally:
             ctx.close()
@@ -6293,7 +6998,7 @@ class TestReportsTab:
             assert page.locator("#report-selector-0").get_attribute("data-selector-label") == "company.net/mnemonic"
             assert page.locator("#report-selector-1").get_attribute("data-selector-label") == "company.net/app-environment"
             assert page.locator("#report-selector-0 option").evaluate_all("es => es.map(o => o.value)") == ["beta", "demo"]
-            assert page.locator("#report-param-namespace-access-namespaces").count() == 1      # advanced field kept
+            assert page.locator("#report-lookup-namespace-access-namespaces").count() == 1     # advanced field kept (a picker since #143)
             page.select_option("#report-selector-0", ["beta", "demo"]); page.locator("#report-selector-0").dispatch_event("change")
             page.select_option("#report-selector-1", ["prod"]); page.locator("#report-selector-1").dispatch_event("change")
             assert page.evaluate("() => view.reportForm['namespace-access'].selectors") == {
@@ -6500,6 +7205,7 @@ class TestReportsTab:
             page.evaluate("""() => {
                 window._gate = null;
                 let call = 0;
+                data.reportDiscovered = { "crc-local": {} };      // #143: the namespaces picker's lookup is settled, so the stub counts preview GETs only
                 reportGet = async () => {
                     call += 1;
                     if (call === 1) return {namespaces: 3, names: ["beta-prod", "demo-prod", "demo-production"]};
@@ -6612,7 +7318,9 @@ class TestReportsTab:
                 const f = document.getElementById('report-form');
                 if (!f || view.report !== 'access-certification') return false;
                 const r = f.getBoundingClientRect();
-                return r.bottom > 0 && r.top >= -8 && r.top < 200;
+                // in view, as far up as the document allows: with the history on its own page (#149 R5)
+                // nothing sits below the last form, so a short page clamps the landing at its end
+                return r.bottom > 0 && r.top >= -8 && r.top < innerHeight;
             }""")
             assert not errors, errors
         finally:
@@ -6700,12 +7408,15 @@ class TestReportsTab:
                         row.focus(); page.keyboard.press("Enter")
                     else:
                         row.click()
-                    page.wait_for_function("""(key) => {
-                        const f = document.getElementById('report-form');
-                        if (!f || view.report !== key) return false;
-                        const r = f.getBoundingClientRect();
-                        return r.top >= -1 && r.top < innerHeight && r.bottom > 0;
-                    }""", arg=key, timeout=5_000)
+                    try:
+                        page.wait_for_function("""(key) => {
+                            const f = document.getElementById('report-form');
+                            if (!f || view.report !== key) return false;
+                            const r = f.getBoundingClientRect();
+                            return r.top >= -1 && r.top < innerHeight && r.bottom > 0;
+                        }""", arg=key, timeout=5_000)
+                    except Exception as exc:     # name the key and where its form sits, not just "timeout"
+                        raise AssertionError((width, key, page.evaluate("() => { const f = document.getElementById('report-form'); return f ? [view.report, Math.round(f.getBoundingClientRect().top), innerHeight, scrollY, document.documentElement.scrollHeight] : 'no form'; }"))) from exc
                     wide = page.evaluate("""() => [...document.querySelectorAll('body *')]
                         .filter(e => e.getBoundingClientRect().right > innerWidth + 1)
                         .slice(0, 6).map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className && typeof e.className === 'string' ? '.' + e.className.split(' ').join('.') : ''))""")
@@ -6862,6 +7573,294 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
+        # #149 R5/R6: the strip (service, window, retention, in flight), the schedules (cadence, retention,
+        # enabled, last success, next, status), and the history with server-side filters and paging.
+        base, _, report_app = reporting_server
+        from gsd.reporting.artifacts import Run
+        for i in range(3):
+            report_app.state.store.create(Run(id=f"2099010{i + 1}T000000.000000Z-aaa{i}", report="groups", cluster="crc-local", params={},
+                                              formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended",
+                                              schedule="weekly", requested_at=f"2099-01-0{i + 1}T00:00:00Z", status="done",
+                                              finished_at=f"2099-01-0{i + 1}T00:00:01Z", sha256="ab" * 32))
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-status-link")
+            page.click("#report-status-link")
+            page.wait_for_selector("#reporting-status .status-strip")
+            assert page.evaluate("() => location.hash") == "#page=reporting&cluster=crc-local"
+            assert page.locator("#reporting-status .kv").count() == 4
+            strip = page.locator("#reporting-status").inner_text()
+            assert "reports enabled" in strip and "2-tier" in strip and "refused by the window" in strip
+            assert page.locator("#back").inner_text() == "← reports"
+            # the history: scheduled-only narrows to the three seeded runs, server-side (total, not the page)
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-origin", "schedule")
+            page.wait_for_function("() => document.getElementById('history-count') && document.getElementById('history-count').textContent.startsWith('3 runs')")
+            assert page.locator("#reporting-history tbody tr").count() == 3
+            assert page.locator("#reporting-history tbody").inner_text().count("schedule:weekly") == 3
+            page.select_option("#history-status", "failed")
+            page.wait_for_function("() => document.getElementById('history-count') && document.getElementById('history-count').textContent.startsWith('0 runs')")
+            assert "No run matches these filters." in page.locator("#reporting-history").inner_text()
+            # Back rises to the Reports page
+            page.click("#back")
+            page.wait_for_selector("#report-picker")
+            # 375 px: no horizontal overflow, the strip two per row
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.wait_for_selector("#reporting-status .status-strip")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            assert page.evaluate("() => getComputedStyle(document.querySelector('.status-strip')).gridTemplateColumns.split(' ').length") == 2
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_paramspec_shell_renders_one_control_per_type_and_posts_the_form(self, browser, reporting_server):
+        # #149 R7: bool → switch, enum → segmented, int → number with unit, csv with a source → a tag input
+        # over the discovered lookup with type-ahead (Enter adds a value the set lacks), optional fields
+        # under Advanced, the Subject scope as one block with a count and Clear, no cluster field, the
+        # action bar naming the formats; the POST carries what the controls hold.
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            assert page.locator("#report-cluster").count() == 0, "no cluster field: the nav chose it"
+            assert "JSON" in page.locator("#report-generate").inner_text() and "HTML" in page.locator("#report-generate").inner_text()
+            # the Subject scope: two lookups over the discovered users and groups
+            page.wait_for_function("() => document.querySelectorAll('#report-subject .rp-opt').length > 0")
+            users = page.locator('[data-lookup-opt="users"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            assert "alice" in users and len(users) >= 2                             # the UI fixture's own User objects
+            assert page.locator("#report-subject-count").inner_text() == "all subjects"
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.fill("#report-lookup-access-matrix-groups", "alpha-ns-admin")       # type-ahead narrows the menu (substring)
+            assert page.evaluate("() => [...document.querySelectorAll('[data-lookup-opt=\"groups\"]')].filter(o => !o.hidden).map(o => o.dataset.value)") == ["app-ocp-rbac-alpha-ns-admin"]
+            page.click('[data-lookup-opt="groups"][data-value="app-ocp-rbac-alpha-ns-admin"]')
+            page.wait_for_selector('.rp-tag[data-name="app-ocp-rbac-alpha-ns-admin"]')
+            page.fill("#report-lookup-access-matrix-groups", "not-discovered"); page.press("#report-lookup-access-matrix-groups", "Enter")
+            page.wait_for_selector('.rp-tag[data-name="not-discovered"]')            # Enter adds a value the set lacks
+            assert page.locator("#report-subject-count").inner_text() == "3 selected"
+            page.click('[data-lookup-remove="groups"][data-value="not-discovered"]')
+            page.wait_for_function("() => document.getElementById('report-subject-count').textContent === '2 selected'")
+            # Advanced holds the prefix, closed until it is set
+            assert page.locator("details.report-advanced").get_attribute("open") is None
+            page.click("details.report-advanced summary")
+            page.fill("#report-param-access-matrix-namespace_prefix", "prod"); page.locator("#report-param-access-matrix-namespace_prefix").dispatch_event("change")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            body = _json.loads(info.value.post_data)
+            assert body["params"] == {"users": ["alice"], "groups": ["app-ocp-rbac-alpha-ns-admin"], "namespace_prefix": "prod"}
+            assert "cluster" in body and "subject_kind" not in body["params"]
+            # Clear empties the scope
+            page.click("#report-subject-clear")
+            page.wait_for_function("() => document.getElementById('report-subject-count').textContent === 'all subjects'")
+            # a switch, a segmented control and a unit on the other forms
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form.r-identity")
+            assert page.locator(".rp-num .rp-unit").inner_text() == "days"
+            sw = page.locator('[data-switch="include_members"]')
+            assert sw.get_attribute("aria-checked") == "false" and sw.inner_text().strip() == "Off"
+            sw.click(); page.wait_for_function("() => document.querySelector('[data-switch=\"include_members\"]').getAttribute('aria-checked') === 'true'")
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            seg = page.locator('[data-seg="group_by"]')
+            assert seg.count() == 3 and page.locator('[data-seg="group_by"][aria-checked="true"]').get_attribute("data-value") == "mnemonic"
+            page.click('[data-seg="group_by"][data-value="oud-group"]')
+            page.wait_for_function("() => (view.reportForm['namespace-access'] || {}).group_by === 'oud-group'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_namespace_picker_the_reviewer_prefill_and_the_totals_preview(self, browser, reporting_server):
+        # #143 phases 2–3: the explicit-names field is a picker over the poll's namespaces (Enter still adds an
+        # unlisted one); a manual access-certification run's reviewer is the signed-in name until it is edited;
+        # the totals of what the run would produce sit beside Generate, from POST /api/preview, debounced and
+        # never in the way of Generate (a 422 shows the refusal instead of a number).
+        import json as _json, re as _re
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        previews: list[dict] = []
+        page.on("request", lambda r: previews.append(_json.loads(r.post_data)) if r.url.endswith("/api/preview") and r.method == "POST" else None)
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
+            listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            assert listed == ["(cluster-scoped)", "klt-pass-both", *[f"ns{i}" for i in range(6)], "prod-ns", "quiet-corner"], listed   # the seed's namespaces, in order, behind the one name the poll never lists
+            # the preview runs for the form as it opened: this report needs a scope, so it says so — the
+            # refusal beside Generate before the run is refused, with Generate untouched
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
+            assert "select at least one namespace" in page.locator("#report-totals").inner_text()
+            assert previews and previews[0] == {"report": "namespace-access", "cluster": "crc-local", "params": {}}, previews
+            assert page.locator("#report-generate").is_enabled()
+            # picking one namespace gives the totals of that run
+            page.click('[data-lookup-opt="namespaces"][data-value="prod-ns"]')
+            page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespace ·')", timeout=15_000)
+            totals = page.locator("#report-totals").inner_text()
+            assert totals == "1 namespace · 2 group bindings · 1 user binding", (totals, previews)   # the seed's prod-ns; one of a thing is singular
+            assert previews[-1]["params"]["namespaces"] == ["prod-ns"], previews[-1]
+            assert page.locator("#report-generate").is_enabled()
+            # Clear (the selectors') and a cluster switch leave no confident wrong count beside Generate (Grok)
+            page.evaluate("() => { view.reportForm['namespace-access'] = {}; clearNamespaceAccessSelectors(); }")
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
+            page.evaluate("() => { view.reportForm['namespace-access'] = { namespaces: ['prod-ns'] }; scheduleTotals('namespace-access'); }")
+            page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('1 namespace ·')", timeout=15_000)
+            page.evaluate("() => { navigate({ cluster: 'prod-east', groupsync: null, group: null, user: null }); render(); }")
+            assert page.locator("#report-totals").inner_text() == "", "cluster A's totals must not sit beside cluster B's form"
+            # the reviewer prefill
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
+            page.wait_for_selector("#report-form.r-compliance")
+            assert page.locator("#report-param-access-certification-reviewer").input_value() == "root"
+            # value and change on ONE element: a repaint between a fill and a separate dispatch re-creates the input
+            # with the form's old value, and the change then writes "root" back (measured on CI, a flake)
+            page.locator("#report-param-access-certification-reviewer").evaluate("el => { el.value = '  '; el.dispatchEvent(new Event('change')); }")
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form.r-identity")
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-certification")
+            page.wait_for_selector("#report-form.r-compliance")
+            assert page.locator("#report-param-access-certification-reviewer").input_value() == "  ", "an edit, even a blank one, is kept"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_caret_survives_the_lookups_arrival_repaint(self, browser, reporting_server):
+        # Review of #224 (OB3): the repaint that lands the lookups re-creates the input and refocuses it by
+        # id, but a fresh input opens with its caret at 0 — measured: "abc" then "XYZ" read "XYZabc", and on
+        # the users lookup "al" then "i" read "ial" with an empty menu. renderFilters() already restores the
+        # filter bar's caret; render() now does the same for the page. The service runs in this process, so
+        # holding its discovered read holds the lookups until the text is typed.
+        import threading as _threading
+        from gsd.reporting.snapshot import Snapshot as _Snapshot
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        orig = _Snapshot.discovered
+        release = _threading.Event()
+        def held(self, *a, **k):
+            release.wait(10); return orig(self, *a, **k)
+        _Snapshot.discovered = held
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form")
+            page.focus("#report-lookup-access-matrix-users")
+            page.keyboard.type("al")
+            release.set()
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0", timeout=10_000)
+            page.keyboard.type("i")
+            assert page.locator("#report-lookup-access-matrix-users").input_value() == "ali"
+            assert not errors, errors
+        finally:
+            release.set()
+            _Snapshot.discovered = orig
+            ctx.close()
+
+    def test_the_picker_menu_names_its_source_and_counts_what_the_poll_listed(self, browser, reporting_server):
+        # Review of #224 (OB3): LOOKUP_HEAD had no entry for the new source, so the menu head read the raw
+        # key ("namespaces · 9 discovered"); and with `(cluster-scoped)` offered first the count said 10 for
+        # the nine the poll listed — the token is offered, not discovered.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
+            listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
+            head = page.locator("#report-lookup-namespace-access-namespaces-menu .rp-menu-head").evaluate("e => e.textContent")
+            assert head == f"namespaces on the cluster · {len(listed) - 1} discovered", (head, listed)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_busy_preview_is_retried_once(self, browser, reporting_server):
+        # Review of #224 (OB3): the slot answers 429 to a second preview — often this viewer's OWN superseded
+        # one, still building after a report switch — and the page painted nothing until the next change.
+        # One retry, ~2 s later; a second busy answer still waits for the next change, as documented.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-form")
+            page.wait_for_function("() => /^\\d+ groups/.test(document.getElementById('report-totals').textContent)", timeout=15_000)
+            hits = {"n": 0}
+            def busy_once(route):
+                hits["n"] += 1
+                if hits["n"] == 1:
+                    route.fulfill(status=429, content_type="application/json", body='{"detail":"a preview is already running; try again shortly"}')
+                else:
+                    route.continue_()
+            page.route("**/api/preview", busy_once)
+            page.click('[data-switch="include_members"]')          # a change: the first answer is the 429
+            page.wait_for_function("() => document.getElementById('report-totals').textContent === ''", timeout=5_000)
+            page.wait_for_function("() => /^\\d+ groups/.test(document.getElementById('report-totals').textContent)", timeout=6_000)
+            assert hits["n"] == 2, hits
+            assert not errors, errors
+        finally:
+            page.unroute("**/api/preview")
+            ctx.close()
+
+    def test_an_automatic_refresh_that_changed_nothing_leaves_the_status_page_alone(self, browser, reporting_server):
+        # Review of #221 (OB3): the status payload carries `as_of`, the service's clock, which nothing
+        # renders — and with it in the fingerprint no two polls ever matched, so the page repainted every
+        # minute and dropped the reader's text selection (measured: 84 selected characters → 0; the
+        # Reports page kept its 2147). The fingerprint reads the payload without the stamp.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-status .status-strip")
+            probe = page.evaluate("""async () => {
+                await refresh({ auto: true });
+                const before = document.getElementById('reporting-status');
+                const range = document.createRange(); range.selectNodeContents(before.querySelector('.status-strip'));
+                getSelection().removeAllRanges(); getSelection().addRange(range);
+                const selected = getSelection().toString().length;
+                await new Promise(r => setTimeout(r, 1100));          // the service stamps as_of to the second
+                await refresh({ auto: true });
+                return { repainted: before !== document.getElementById('reporting-status'), selected, kept: getSelection().toString().length };
+            }""")
+            assert probe["repainted"] is False and probe["kept"] == probe["selected"] > 0, probe
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_status_page_catches_up_on_the_refresh_that_promotes_the_host_tier(self, browser, reporting_server):
+        # Review of #221 (OB3): the Reports page reconciles its requests against the whoami that just
+        # arrived (test_reports_catch_up_on_the_refresh_that_promotes_the_host_tier); the status page only
+        # cleared on a demotion, so a reader promoted mid-session saw "← reports / Loading…" for a whole
+        # cycle (measured: zero /api/status calls on the promoting refresh).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        calls: list[str] = []
+        page.on("request", lambda r: calls.append(r.url.split("/report")[-1]) if "/report/api/status" in r.url else None)
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector(".refusal, .card:has-text('For administrators only')", timeout=10_000)
+            page.set_extra_http_headers({"X-Forwarded-User": "root", "X-Forwarded-Email": "root@example.com"})
+            page.evaluate("() => refresh()")
+            page.wait_for_selector("#reporting-status .status-strip", timeout=10_000)
+            assert calls == ["/api/status"], calls
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_span_of_fifty_nine_and_three_quarter_minutes_is_not_sixty(self, browser, reporting_server):
+        # Review of #221 (OB3): untilShort() floored the hours and rounded the minutes, so 3 h 59 m 45 s
+        # read "in 3h 60m" for the last thirty seconds of every hour.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            got = page.evaluate("() => untilShort(new Date(Date.now() + (3 * 3600 + 59 * 60 + 45) * 1000).toISOString())")
+            assert got == "in 3h 59m", got
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_clearing_the_namespace_selector_deselects_everything(self, browser, reporting_server):
         # #147: a <select multiple> has no easy deselect. Clear drops every #report-selector-N,
         # deletes view.reportForm["namespace-access"].selectors, blanks the count, hides the
@@ -6978,21 +7977,533 @@ class TestReportsTab:
         from gsd.reporting.artifacts import Run
         ctx, page, errors = _reports_page(browser, base, "root", fake_clock=True)
         try:
-            page.click('button.tab:text-is("Reports")')
-            page.wait_for_selector("#report-runs")
-            before = page.locator("#report-runs tbody tr").count()
+            page.goto(base + "#page=reporting&cluster=crc-local")           # #149 R5: the history page
+            page.wait_for_selector("#reporting-history")
+            before = page.locator("#reporting-history tbody tr").count()
             run = Run(id="20990101T000000.000000Z-ffff", report="groups", cluster="crc-local", params={}, formats=["html"],
                       generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
                       requested_at="2099-01-01T00:00:00Z", status="done", finished_at="2099-01-01T00:00:01Z", sha256="cd" * 32)
             report_app.state.store.create(run)
             page.clock.fast_forward(61_000)
-            page.wait_for_function(f"document.querySelectorAll('#report-runs tbody tr').length > {before}", timeout=10_000)
-            assert "schedule:weekly" in page.locator("#report-runs").inner_text()
+            page.wait_for_function(f"document.querySelectorAll('#reporting-history tbody tr').length > {before}", timeout=10_000)
+            assert "schedule:weekly" in page.locator("#reporting-history").inner_text()
             assert not errors, errors
         finally:
             ctx.close()
 
 
+class TestReportFormsReview:
+    """Review of #222 (OB3): what the ParamSpec shell lost on a repaint, where a keyboard reader's focus
+    went, what a refused parameter told the reader, and what the lookups' arrival did to a reader who
+    had scrolled. Every case here was measured failing on 7fa4a6e (the Grok pass at 57b2c5c fixed four
+    of them without a UI test; the menu rebuild, the loading head and the ×/Clear/segment focus paths are
+    OB3's); the reviewer default is #143's prefill."""
+
+    def _open(self, browser, base, report="access-matrix", cls="r-access"):
+        ctx, page, errors = _reports_page(browser, base, "root")
+        page.goto(base + f"#page=reports&cluster=crc-local&report={report}")
+        page.wait_for_selector(f"#report-form.{cls}")
+        if report == "access-matrix":
+            page.wait_for_function("() => document.querySelectorAll('#report-subject .rp-opt').length > 0")
+        return ctx, page, errors
+
+    @staticmethod
+    def _options(page, name="users"):
+        return page.evaluate(f"() => [...document.querySelectorAll('[data-lookup-opt=\"{name}\"]')].filter(o => !o.hidden).map(o => o.dataset.value)")
+
+    def test_the_lookup_menu_widens_again_after_a_repaint_under_a_query(self, browser, reporting_server):
+        # measured: "zzz", a repaint (a chip elsewhere, the poll, the lookups' arrival), then "kube" left the
+        # menu at "No match — press Enter to add" although kubeadmin was discovered — the narrowing only hid
+        # nodes, and the repaint under "zzz" had painted none
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            users = page.locator("#report-lookup-access-matrix-users")
+            users.fill("zzz")
+            assert self._options(page) == [] and "No match" in page.locator("#report-lookup-access-matrix-users-menu").inner_text()
+            page.evaluate("() => render()")                                # the poll's repaint, under the query
+            assert users.input_value() == "zzz"                            # the typed text survives it
+            users.fill("kube")
+            assert self._options(page) == ["kubeadmin"], self._options(page)
+            users.fill("")
+            assert self._options(page) == ["alice", "gatekeeper", "kubeadmin"]
+            # and a chip added from the rebuilt menu is a real pick
+            page.click('[data-lookup-opt="users"][data-value="kubeadmin"]')
+            page.wait_for_selector('.rp-tag[data-name="kubeadmin"]')
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_advanced_disclosure_stays_open_across_a_repaint(self, browser, reporting_server):
+        # measured: opened with nothing typed under it, it closed on the first chip added in the Subject block
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelector('details.report-advanced').open")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            assert page.evaluate("() => document.querySelector('details.report-advanced').open") is True
+            page.evaluate("() => render()")                                # and the poll's repaint
+            assert page.evaluate("() => document.querySelector('details.report-advanced').open") is True
+            page.click("details.report-advanced summary")                  # closed by the reader stays closed
+            page.wait_for_function("() => !document.querySelector('details.report-advanced').open")
+            page.evaluate("() => render()")
+            assert page.evaluate("() => document.querySelector('details.report-advanced').open") is False
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_refused_parameter_is_named_in_the_run_status(self, browser, reporting_server):
+        # measured: window_days=0 → 422 "window_days must be between 1 and 3650"; the page said "the parameters
+        # were refused (see the fields)" and the field carried no visible invalid state
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base, "groups", "r-identity")
+        try:
+            page.fill("#report-param-groups-window_days", "0"); page.locator("#report-param-groups-window_days").dispatch_event("change")
+            page.click("#report-generate")
+            page.wait_for_selector("#report-status")
+            page.wait_for_function("() => view.reportRun && view.reportRun.status === 'failed'")
+            assert "window_days must be between 1 and 3650" in page.locator("#report-status").inner_text()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_keyboard_focus_survives_the_repaint_of_idless_controls(self, browser, reporting_server):
+        # measured: Enter or Space on an option, Enter on a chip's ×, Enter on Clear and Enter on a segmented
+        # button all left document.activeElement on <body>; only the switch and the input kept theirs
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            active = lambda: page.evaluate("() => [document.activeElement.tagName, document.activeElement.id, document.activeElement.dataset.value || '']")
+            page.focus('[data-lookup-opt="users"][data-value="alice"]'); page.keyboard.press("Enter")
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            assert active() == ["INPUT", "report-lookup-access-matrix-users", ""], active()
+            page.focus('[data-lookup-opt="users"][data-value="alice"]'); page.keyboard.press(" ")
+            page.wait_for_function("() => !document.querySelector('.rp-tag[data-name=\"alice\"]')")
+            assert active() == ["INPUT", "report-lookup-access-matrix-users", ""], active()
+            page.focus("#report-lookup-access-matrix-groups"); page.keyboard.type("hand-typed"); page.keyboard.press("Enter")
+            page.wait_for_selector('.rp-tag[data-name="hand-typed"]')
+            page.focus('[data-lookup-remove="groups"][data-value="hand-typed"]'); page.keyboard.press("Enter")
+            page.wait_for_function("() => !document.querySelector('.rp-tag[data-name=\"hand-typed\"]')")
+            assert active() == ["INPUT", "report-lookup-access-matrix-groups", ""], active()
+            page.click('[data-lookup-opt="users"][data-value="alice"]'); page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.focus("#report-subject-clear"); page.keyboard.press("Enter")
+            page.wait_for_function("() => document.getElementById('report-subject-count').textContent === 'all subjects'")
+            assert active() == ["INPUT", "report-lookup-access-matrix-users", ""], active()
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access"); page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.focus('[data-seg="group_by"][data-value="oud-group"]'); page.keyboard.press("Enter")
+            page.wait_for_function("() => (view.reportForm['namespace-access'] || {}).group_by === 'oud-group'")
+            assert active() == ["BUTTON", "report-param-namespace-access-group_by-oud-group", "oud-group"], active()
+            assert page.locator("#report-param-namespace-access-group_by-oud-group").get_attribute("aria-checked") == "true"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_lookups_arrival_repaints_without_moving_a_reader_who_scrolled(self, browser, reporting_server):
+        # measured: a reader who scrolled to the top within the fetch's window was put back at the form
+        # (0 → 1956 px) by a second landing the instant scroll no longer needs — the repaint alone leaves
+        # the form's top where the landing put it (12 px), which the second half pins
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.goto(base + "#page=reports&cluster=crc-local"); page.wait_for_selector("#report-picker table.report-table")
+            page.evaluate("() => { document.getElementById('report-pick-access-matrix').click(); window.scrollTo(0, 0); }")
+            page.wait_for_function("() => data.reportDiscovered && ('crc-local' in data.reportDiscovered) && document.querySelectorAll('#report-subject .rp-opt').length > 0")
+            page.wait_for_timeout(200)
+            assert page.evaluate("() => scrollY") == 0
+            # a reader who did not scroll is still landed after the arrival's repaint
+            page.goto(base + "#page=reports&cluster=crc-local"); page.wait_for_selector("#report-picker table.report-table")
+            page.evaluate("() => { delete data.reportDiscovered['crc-local']; }")
+            page.click("#report-pick-access-certification")
+            page.wait_for_function("() => data.reportDiscovered && ('crc-local' in data.reportDiscovered) && document.querySelectorAll('#report-subject .rp-opt').length > 0")
+            page.wait_for_timeout(200)
+            top = page.evaluate("() => document.getElementById('report-form').getBoundingClientRect().top")
+            assert -1 <= top < 100, top
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_pending_lookup_says_loading_not_none_discovered(self, browser, reporting_server):
+        # measured: after the first fetch data.reportDiscovered is an object, so every later paint while a
+        # fetch was in flight (a cluster switch) headed the menu "none discovered"
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        try:
+            page.evaluate("() => { reportGet = () => new Promise(() => {}); delete data.reportDiscovered['crc-local']; render(); }")
+            heads = page.locator(".rp-menu-head").all_inner_texts()
+            assert heads and all(h.lower().endswith("loading…") for h in heads), heads
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+    def test_the_certification_reviewer_defaults_to_the_signed_in_reader(self, browser, reporting_server):
+        # R7: "reviewer/users (ocp_user, default = the signed-in user for a manual run)" — the field was a bare
+        # required string, so a manual run without typing one's own name was a 422
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base, "access-certification", "r-compliance")
+        try:
+            assert page.input_value("#report-param-access-certification-reviewer") == "root"
+            page.fill("#report-param-access-certification-campaign", "Q4"); page.locator("#report-param-access-certification-campaign").dispatch_event("change")
+            page.fill("#report-param-access-certification-due", "2026-12-31"); page.locator("#report-param-access-certification-due").dispatch_event("change")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            import json as _json
+            body = _json.loads(info.value.post_data)
+            assert body["params"]["reviewer"] == "root" and body["params"]["campaign"] == "Q4"
+            page.wait_for_function("() => view.reportRun && view.reportRun.status === 'done'", timeout=30_000)
+            # overtyped, the reader's word wins and survives a repaint
+            page.fill("#report-param-access-certification-reviewer", "Jane"); page.locator("#report-param-access-certification-reviewer").dispatch_event("change")
+            page.evaluate("() => render()")
+            assert page.input_value("#report-param-access-certification-reviewer") == "Jane"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+class TestRowlinkRailClearance:
+    """#219, review of PR #226 (OB3): one selector, `:where(table:has(tr.rowlink))`, reaches fifteen tables across
+    the tabs and drilldowns; every one keeps its first column's ink clear of the 3 px hover rail, header aligned.
+    The sweep is what covers the CHANGELOG's "every rowlink table" — the single-table tests above cover the rule."""
+
+    SWEEP_JS = """() => [...document.querySelectorAll('table:has(tr.rowlink)')].map((table) => {
+        const td = table.querySelector('tr.rowlink td:first-child');
+        const th = table.querySelector('th:first-child');
+        const edge = (el) => { const r = document.createRange(); r.selectNodeContents(el);
+            const b = [...r.getClientRects()].filter(b => b.width > 0)[0];
+            return b ? b.left - el.getBoundingClientRect().left : null; };
+        return { first: th ? th.textContent.trim() : '', td: edge(td), th: th ? edge(th) : null };
+    })"""
+
+    def _clear(self, page, where):
+        tables = page.evaluate(self.SWEEP_JS)
+        assert tables, f"{where}: no rowlink table rendered"
+        for t in tables:
+            assert t["td"] is not None and t["td"] >= 3, f"{where} [{t['first']}]: the first cell's text starts {t['td']:.1f}px in, under the 3px hover rail"
+            assert t["th"] is None or abs(t["td"] - t["th"]) <= 0.5, f"{where} [{t['first']}]: the header starts {t['th']}px in, its cells {t['td']}px"
+        return len(tables)
+
+    def test_every_rowlink_table_keeps_its_first_column_clear_of_the_rail(self, dash, server):
+        def go(hash_, wait):
+            dash.goto(f"{server}/{hash_}")
+            dash.wait_for_selector(f"body[data-page='{hash_[6:].split('&')[0]}'] {wait}")
+        dash.wait_for_selector("tr[data-cr]")
+        seen = self._clear(dash, "#page=overview (fleet)")
+        dash.goto(f"{server}/#page=overview&cluster=crc-local")
+        dash.wait_for_selector("#back"); dash.wait_for_selector("tr[data-cr]")
+        seen += self._clear(dash, "#page=overview&cluster=crc-local")
+        for hash_, wait in (("#page=kpi", ".kpi-page tr.rowlink"), ("#page=groups&cluster=crc-local", "tr[data-group]"),
+                            ("#page=users&cluster=crc-local", "tr[data-user]"), ("#page=nsaudit&cluster=crc-local", "tr[data-ns]")):
+            go(hash_, wait)
+            seen += self._clear(dash, hash_)
+        go("#page=groups&cluster=crc-local", "tr[data-group]")
+        dash.locator("tr[data-group='app-ocp-rbac-alpha-ns-admin']").click()
+        dash.wait_for_selector("#back-groups"); dash.wait_for_selector("tr.rowlink[data-user]")
+        seen += self._clear(dash, "group members")
+        dash.locator(".drill[data-user='bob']").first.click()
+        dash.wait_for_selector("text=Group memberships"); dash.wait_for_selector("td.change-removed")
+        seen += self._clear(dash, "bob's history")
+        go("#page=users&cluster=crc-local", "tr[data-user]")
+        dash.locator("tr[data-user='alice']").click()
+        dash.wait_for_selector("text=Group memberships"); dash.wait_for_selector("tr.rowlink[data-group]")
+        seen += self._clear(dash, "alice's memberships")
+        go("#page=nsaudit&cluster=crc-local", "tr[data-ns='prod-ns']")
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("text=Who reaches it"); dash.wait_for_selector("tr.rowlink[data-group]")
+        seen += self._clear(dash, "prod-ns")
+        go("#page=lookup&cluster=crc-local", ".door")
+        for q, wait in (("demo", "tr[data-ns='prod-ns']"), ("rbac alpha", "tr[data-group]"), ("alice", "tr[data-user]")):
+            dash.fill("#f-lookup-search", q)
+            dash.wait_for_selector(wait)
+            seen += self._clear(dash, f"lookup {q!r}")
+        assert seen == 15, seen   # the tables this sweep reaches on the seed; a station rendering none fails above
+
+
 def test_no_reports_tab_when_the_feature_is_off(dash):
     assert dash.locator('button.tab:text-is("Reports")').count() == 0
     assert dash.evaluate("fetch('/api/report/ticket').then(r => r.status)") == 404
+
+
+class TestLibraryPage:
+    """#229 (SPEC E1): the Library tab — a new canvas beside the untouched Reports and Reporting-status pages.
+    One section per enabled report crossed with the fixture's schedules (`weekly` on groups, `paused-ns` on
+    namespace-access), headed by the service's cadence in words; each run with its formats, its failure reason
+    and the standing the SERVICE computed (`expires_at`/`retained_by`); a run is a position; the drawer never
+    blanks on an unknown id; 375 px without sideways scroll; focus survives the poll's repaint."""
+
+    @staticmethod
+    def _seed(report_app):
+        from gsd.reporting.artifacts import Run
+        store = report_app.state.store
+        if store.get("20990201T000000.000000Z-lib1") is None:
+            store.create(Run(id="20990201T000000.000000Z-lib1", report="groups", cluster="crc-local", params={"window_days": 30},
+                             formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                             requested_at="2099-02-01T00:00:00Z", started_at="2099-02-01T00:00:00Z", finished_at="2099-02-01T00:00:01Z",
+                             status="done", sha256="ef" * 32, bytes={"html": 15880, "json": 21495}, render_seconds=0.035))
+            store.write("20990201T000000.000000Z-lib1", "html", b"<!doctype html><p>library</p>")
+            store.create(Run(id="20990131T000000.000000Z-lib0", report="groups", cluster="crc-local", params={},
+                             formats=["html"], generated_by="schedule:weekly", generated_by_note="unattended", schedule="weekly",
+                             requested_at="2099-01-31T00:00:00Z", started_at="2099-01-31T00:00:00Z", finished_at="2099-01-31T00:00:01Z",
+                             status="failed", error="no namespace matches company.net/mnemonic in (demo, beta)\nsecond line"))
+            store.create(Run(id="20990202T000000.000000Z-libm", report="users", cluster="crc-local", params={"providers": ["ldap"]},
+                             formats=["html", "pdf"], generated_by="jane.smith", generated_by_note="n", schedule=None,
+                             requested_at="2099-02-02T00:00:00Z", started_at="2099-02-02T00:00:00Z", finished_at="2099-02-02T00:00:02Z",
+                             status="done", sha256="ab" * 32, bytes={"html": 7456, "json": 7120, "pdf": 31715}, render_seconds=0.233))
+
+    def test_the_sections_are_the_catalogue_crossed_with_the_schedules_from_a_cold_url(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#library-lead")
+            assert page.locator("#tab-library[aria-current='page']").count() == 1
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Reports and Library, with reporting on
+            heads = page.evaluate("() => [...document.querySelectorAll('.lib-sec h2')].map(h => h.firstChild.textContent.trim())")
+            # the fixture's schedules: `weekly` (0 6 * * 1 → "Weekly Mon 06:00") on groups, `paused-ns` on namespace-access
+            assert "Weekly groups" in heads, heads   # the cadence's named word alone: "Weekly Mon" stays in the sub-line
+            assert any(h.startswith("Namespace access — ") and h.endswith(", paused") for h in heads), heads
+            assert "Users" in heads and "Compliance snapshot" in heads and len(heads) == 10, heads   # every enabled report, once
+            assert page.locator("#sec-paused-ns.paused").count() == 1
+            paused = page.locator("#sec-paused-ns").inner_text()
+            # the section says paused whether or not a manual run of the report exists (another test may have generated one)
+            assert "paused" in paused and ("Paused — CronJob suspended" in paused or "Manual runs" in paused or "1 manual" in paused), paused
+            weekly = page.locator("#sec-weekly")
+            assert "Manual runs" not in weekly.inner_text()
+            text = weekly.inner_text()
+            assert ".html · 16 KB" in text and ".json · 21 KB" in text, text
+            assert "no namespace matches company.net/mnemonic in (demo, beta)" in text and "second line" not in text
+            # the standing is the service's: the failed run is the second newest of `weekly`, kept whatever its age
+            cards = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .run')].map(c => [c.id, c.querySelector('.expiry').textContent])")
+            assert cards[0][0] == "run-20990201T000000.000000Z-lib1" and cards[0][1].startswith("newest 1 of 2 · kept at least until · 2099-05-02 00:00"), cards
+            assert any(c[0] == "run-20990131T000000.000000Z-lib0" and c[1].startswith("newest 2 of 2") for c in cards), cards
+            users = page.locator("#sec-users").inner_text()
+            assert ".pdf · 31 KB" in users and "expires" in users and "1 manual" in users, users
+            assert page.locator("#lib-gen-users").inner_text() == "Generate another →"
+            # a report with no run at all — other tests generate access-matrix and namespace-access runs, dormant-access none
+            assert page.locator("#lib-gen-dormant-access").inner_text() == "Generate this report →"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_run_is_a_position_the_drawer_opens_from_and_closes_back_to(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local&run=20990131T000000.000000Z-lib0")
+            page.wait_for_selector("#library-drawer")
+            drawer = page.locator("#library-drawer").inner_text()
+            assert "Groups and membership changes" in drawer and "schedule:weekly" in drawer and "failed" in drawer
+            assert "no namespace matches company.net/mnemonic in (demo, beta)" in drawer and "second line" in drawer, "the whole error, in the drawer"
+            assert "newest 2 of 2 · kept at least until" in drawer and "no artefacts" in drawer
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close"
+            page.click("#drawer-copy-link")
+            page.wait_for_function("() => document.getElementById('drawer-copy-link').textContent === 'Copied'")   # the clipboard write settles first
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert page.evaluate("() => location.hash") == "#page=library&cluster=crc-local"
+            assert page.evaluate("() => document.activeElement.id") == "run-20990131T000000.000000Z-lib0", "focus returns to the card"
+            # a click opens the done run; its .html opens in a new tab through the ticket
+            page.click("[id='run-20990201T000000.000000Z-lib1']")   # a run id carries a dot: not a bare #selector
+            page.wait_for_selector("#drawer-open-html")
+            assert page.evaluate("() => location.hash") == "#page=library&cluster=crc-local&run=20990201T000000.000000Z-lib1"
+            with ctx.expect_page() as popup:
+                page.click("#drawer-open-html")
+            assert "library" in popup.value.content()
+            page.goto(base + "#page=library&cluster=crc-local&run=nope")   # a hash change on the open page: wait for the new drawer's words
+            page.wait_for_function("() => (document.getElementById('library-drawer') || {}).innerText?.includes('No run with that id is in the library.')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_phone_width_and_the_polls_repaint_keep_the_page_and_the_focus(self, browser, reporting_server):
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root", fake_clock=True)
+        try:
+            page.set_viewport_size({"width": 375, "height": 740})
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-weekly")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            # the poll's only change is one run's status — a fingerprint without data.library skips the repaint
+            # and the card keeps saying done (review of #233, Grok: the earlier form never changed the store)
+            run = report_app.state.store.get("20990201T000000.000000Z-lib1")
+            run.status = "failed"; run.error = "poll-only status change"
+            report_app.state.store.update(run)
+            page.clock.fast_forward(61_000)
+            page.wait_for_function("() => (document.getElementById('run-20990201T000000.000000Z-lib1') || {innerText: ''}).innerText.includes('poll-only status change')")
+            assert page.evaluate("() => document.activeElement.id") == "run-20990201T000000.000000Z-lib1", "the poll's repaint dropped the focus"
+            run.status = "done"; run.error = None; report_app.state.store.update(run)
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            assert page.evaluate("() => document.getElementById('library-drawer').scrollWidth <= document.getElementById('library-drawer').clientWidth")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_two_schedules_on_one_report_mint_distinct_generate_ids(self, browser, reporting_server):
+        # review of #233 (Grok): the id came from the report alone, so a second schedule repeated it
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-weekly")
+            ids = page.evaluate("() => Array.from(document.querySelectorAll('[data-goto-reports]')).map((b) => b.id)")
+            assert len(ids) == len(set(ids)), ids
+            assert "lib-gen-sec-weekly" in ids and "lib-gen-users" in ids, ids
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_positioned_run_beyond_the_listings_page_still_opens(self, browser, reporting_server):
+        # review of #233 (Codex): the drawer searched the first 1 000 rows only; an older run answered
+        # "Run not found" while GET /runs/{id} answered 200
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        target = "20990131T000000.000000Z-lib0"
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            def omit_target(route):
+                response = route.fetch(); body = response.json()
+                body["runs"] = [r for r in body["runs"] if r["id"] != target]
+                body["total"] = max(1001, body["total"]); body["truncated"] = True
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/runs?limit=1000", omit_target)
+            with page.expect_request(lambda r: r.url.endswith(f"/report/api/runs/{target}")):
+                page.goto(base + f"#page=library&cluster=crc-local&run={target}")
+            page.wait_for_selector("#library-drawer")
+            text = page.locator("#library-drawer").inner_text()
+            assert "Run not found" not in text and target in text and "no namespace matches company.net/mnemonic" in text
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_drawer_opened_by_click_or_enter_takes_the_focus_and_escape_closes_it(self, browser, reporting_server):
+        # OB3 (#233): render() restores the focus BY ID after the repaint, and the card that was clicked (or held
+        # Enter) keeps its id — so the restore put the reader back on the card BEHIND the overlay: Escape, handled
+        # on the overlay, never fired, and Tab walked the cards' chips behind the dialog. Only the cold-URL path
+        # (nothing focused) reached the drawer's first control.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("[id='run-20990201T000000.000000Z-lib1']")
+            page.focus("[id='run-20990201T000000.000000Z-lib1']")
+            page.keyboard.press("Enter")
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close", "the dialog takes the focus"
+            page.keyboard.press("Tab")
+            assert page.evaluate("() => !!document.activeElement.closest('#library-overlay')"), "Tab stays inside the dialog"
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert page.evaluate("() => [location.hash, document.activeElement.id]") == ["#page=library&cluster=crc-local", "run-20990201T000000.000000Z-lib1"]
+            page.click("[id='run-20990201T000000.000000Z-lib1'] .when")   # a mouse click, off the format chips
+            page.wait_for_selector("#library-drawer")
+            assert page.evaluate("() => document.activeElement.id") == "drawer-close"
+            page.keyboard.press("Escape")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_manual_runs_of_a_two_schedule_report_are_listed_once(self, browser, reporting_server):
+        # OB3 (#233): a report with two schedules has two sections, and every manual run of the report was rendered
+        # under BOTH — the same `run-<id>` and chip ids twice on one page, so the by-id focus restore and the
+        # drawer's return focus landed on the first. The runs belong to the report: once, under its first section.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            def two_schedules(route):
+                response = route.fetch(); body = response.json()
+                weekly = next(s for s in body["schedules"] if s["name"] == "weekly")
+                body["schedules"].append({**weekly, "name": "twice", "schedule": "0 6 1,16 * *", "cadence": "1st & 16th 06:00"})
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+
+            def with_a_manual_groups_run(route):
+                response = route.fetch(); body = response.json()
+                body["runs"].insert(0, {"id": "20990203T000000.000000Z-gman", "report": "groups", "cluster": "crc-local", "params": {},
+                                        "formats": ["html"], "generated_by": "jane.smith", "generated_by_note": "n", "schedule": None,
+                                        "requested_at": "2099-02-03T00:00:00Z", "status": "done", "started_at": "2099-02-03T00:00:00Z",
+                                        "finished_at": "2099-02-03T00:00:02Z", "error": None, "sha256": "ab" * 32, "snapshot_stamp": None,
+                                        "bytes": {"json": 100}, "pdf_variant": None, "render_seconds": 0.1, "origin": "viewer",
+                                        "expires_at": "2099-02-06T00:00:03Z", "retained_by": "manual:3d"})
+                body["total"] += 1
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/status", two_schedules)
+            page.route("**/report/api/runs?limit=1000", with_a_manual_groups_run)
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#sec-twice")
+            assert page.evaluate("() => document.querySelectorAll(\"[id='run-20990203T000000.000000Z-gman']\").length") == 1
+            assert "Manual runs" in page.locator("#sec-weekly").inner_text() and "Manual runs" not in page.locator("#sec-twice").inner_text()
+            dups = page.evaluate("() => { const seen = {}, d = []; document.querySelectorAll('[id]').forEach((e) => { if (seen[e.id]) d.push(e.id); seen[e.id] = 1; }); return d; }")
+            assert dups == [], dups
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_refused_positioned_run_is_the_refusal_card_not_the_error_panel(self, browser, reporting_server):
+        # OB3 (#233): the positioned run's fetch was the one library request outside guard403, so a 403 on it — a
+        # reader demoted between polls, a ticket the service refuses — replaced the whole page with "Dashboard API
+        # error … The object may have been deleted", where the listing's own 403 paints the refusal card.
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        target = "20990201T000000.000000Z-lib1"
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.route(f"**/report/api/runs/{target}", lambda route: route.fulfill(status=403, json={"detail": "For administrators only."}))
+            page.goto(base + f"#page=library&cluster=crc-local&run={target}")
+            page.wait_for_function("() => document.querySelector('#main').innerText.includes('For administrators only')")
+            text = page.locator("#main").inner_text()
+            assert "Dashboard API error" not in text and "Withheld, not empty" in text, text
+            assert page.locator("#library-drawer").count() == 0 and page.locator(".run").count() == 0
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_manual_cap_words_say_goes_or_kept_as_the_service_decides(self, browser, reporting_server):
+        # OB3 (#233): `manual:cap` is the run the next prune deletes; `manual:0d` the run kept with no age bound
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            standing = {"retained_by": "manual:cap"}
+
+            def with_the_standing(route):
+                response = route.fetch(); body = response.json()
+                for r in body["runs"]:
+                    if r["id"] == "20990202T000000.000000Z-libm":
+                        r["expires_at"], r["retained_by"] = None, standing["retained_by"]
+                route.fulfill(status=response.status, headers=response.headers, json=body)
+            page.route("**/report/api/runs?limit=1000", with_the_standing)
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("[id='run-20990202T000000.000000Z-libm']")
+            words = page.locator("[id='run-20990202T000000.000000Z-libm'] .expiry").inner_text()
+            assert words == "beyond the manual run cap — goes on the next prune", words
+            standing["retained_by"] = "manual:0d"
+            page.evaluate("() => refresh()")
+            page.wait_for_function("() => document.querySelector(\"[id='run-20990202T000000.000000Z-libm'] .expiry\").textContent === 'kept indefinitely'")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_narrowed_reader_gets_the_refusal_card(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "alice")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#main .card")
+            page.wait_for_function("() => document.querySelector('#main').innerText.includes('Library')")
+            text = page.locator("#main").inner_text()
+            assert "lib1" not in text and "jane.smith" not in text
+            assert not errors, errors
+        finally:
+            ctx.close()

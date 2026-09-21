@@ -50,16 +50,44 @@ control per parameter. Anything omitted uses the report's default.
 
 | Report | Parameters (type) |
 |---|---|
-| `namespace-access` | `selectors` (selector-map), `mnemonics` (csv), `namespaces` (namespaces), `include_members` (bool) |
-| `access-matrix` | `subject_kind` (enum), `namespace_prefix` (str) |
+| `namespace-access` | `selectors` (selector-map), `mnemonics` (csv, deprecated), `namespaces` (namespaces), `include_members` (bool), `group_by` (enum: `mnemonic` / `app-environment` / `oud-group`) |
+| `access-matrix` | `users` (csv), `groups` (csv), `namespace_prefix` (str) |
 | `privileged-access` | `include_members` (bool), `roles` (csv) |
-| `groups` | `window_days` (int), `include_members` (bool) |
-| `users` | `providers` (csv) |
-| `login-activity` | `window_days` (int), `user` (str) |
-| `dormant-access` | `dormant_days` (int) |
+| `groups` | `groups` (csv), `window_days` (int), `include_members` (bool) |
+| `users` | `users` (csv), `providers` (csv) |
+| `login-activity` | `window_days` (int), `users` (csv), `groups` (csv) |
+| `dormant-access` | `users` (csv), `groups` (csv), `dormant_days` (int) |
 | `groupsync-health` | `window_days` (int) |
-| `access-certification` | `campaign` (str), `due` (date), `reviewer` (str), `scope` (enum), `include_members` (bool), `group_prefix` (str) |
+| `access-certification` | `campaign` (str, required), `due` (date, required), `reviewer` (str, required), `users` (csv), `groups` (csv), `group_mnemonic` (csv), `include_members` (bool) |
 | `binding-findings`, `compliance-snapshot` | none (cluster + format only) |
+
+`users` and `groups` are the **Subject scope** the subject-centric reports share (#149 R7): empty means
+every subject; naming users only leaves groups out, and the other way round; `login-activity` and
+`dormant-access` read groups as "members of". `group_mnemonic` names business mnemonics that resolve to
+the exact group the namespaces carrying them pin (`reporting.namespaceGroupLabel`). The Reports tab
+offers every csv here as a lookup discovered from the snapshot. The old `subject_kind`, `scope`,
+`group_prefix` and `user` keys are gone: a schedule still naming one is refused with `unknown parameter`
+— rename it as above.
+
+Three things the Reports tab does around a manual run (#143):
+
+- **`namespaces` is a picker.** The explicit names of `namespace-access` (under Advanced) are offered from
+  the namespaces the poller listed for the cluster, like the other lookups; Enter still adds a name the poll
+  never saw, and a deployment whose poller cannot list namespaces gets the plain text field.
+- **The reviewer is you.** `access-certification`'s `reviewer` opens as the signed-in name; an edit, even a
+  blank one, is kept until the page is reloaded. A schedule names its reviewer in `params:`.
+- **The totals before the run.** Beside Generate, the form shows what the run would produce — for
+  `namespace-access` "1 namespace · 4 group bindings · 2 user bindings", with "· will truncate" when the
+  report's row limit cuts a table (the 50-namespace cap on an explicit list is not a truncation: it changes
+  the `namespaces` figure and the artefact's Coverage note says so) — from `POST /report/api/preview`
+  (`{"report", "cluster", "params"}` → `{"report", "cluster", "totals", "truncated", "snapshot"}`): the
+  report's own `build()` over the newest snapshot, nothing rendered or stored, one at a
+  time (a second preview while one runs gets `429`; the form retries once about a second and a half later, then
+  waits for its next change). A
+  parameter the run would refuse shows the refusal there first ("preview: select at least one
+  namespace…"); Generate is never disabled by it. String parameters are trimmed on the way in, so a
+  required field holding only spaces is refused as blank. The picker offers `(cluster-scoped)` first — the
+  one explicit name the poll never lists.
 
 ## Scheduling
 
@@ -126,6 +154,32 @@ A schedule `name` becomes the CronJob's name and the `schedule:<name>` origin ta
 DNS-1123 label. The convention is **`<cadence>-<report>`** — `biweekly-compliance`, `nightly-dormant`,
 `weekly-access-cert` — so the cadence and the report are both legible in the status page and the run
 history.
+
+## The Reporting status page
+
+`#page=reporting`, linked from the Reports catalogue ("Reporting status, schedules and history →"), is
+the report service's own account of itself — read from the service, no personnel data beyond the
+`generated_by` a run already carries:
+
+- **Reporting status** — the service (version, PDF variant, enabled reports, what a scheduled run
+  stores), the **run window** (open or closed now, its hours, zone and days, when it next opens or
+  closes), both **retention** tiers, and what is **in flight** (running, queued, how many automated
+  requests the window refused since the service started).
+- **Scheduled reports** — one row per `reporting.schedules[]` entry: the cadence in words with the
+  expression beneath (read in the CronJob's zone — the run window's when one is configured), the
+  effective retention (a per-schedule override is marked), **On** or **Paused**, the last success, the
+  next fire, and a state: `ok` — the last expected fire has a success after it, or is less than 30
+  minutes old (the grace for the queue and the render); `late` — the last expected fire is more than
+  30 minutes behind and nothing has succeeded since it (a fire the CronJob missed reads the same way);
+  `never` — no success recorded yet; `disabled` — paused. Every instant on the page is UTC, as the
+  service stamps it.
+- **Report history** — every run, newest first, with Report / Origin / Status / Cluster filters that
+  run on the service across the whole history, paged, with the artefact downloads.
+
+Next and previous fires are computed from the cron expression (a spring-forward gap fires nothing, a
+fall-back overlap fires twice, as Kubernetes' cron does), not read from kube-state-metrics — the
+values the chart renders already determine them, and a Prometheus read would need access and RBAC the
+service does not have.
 
 ## Formats and retention
 

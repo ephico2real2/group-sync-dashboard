@@ -12,7 +12,8 @@ SPEC = ReportSpec(
     name="users", title="Users",
     summary="Every User object (a login), its identity providers, group count and direct grants; manual accounts; synced members who have never logged in.",
     values_key="users",
-    params=(ParamSpec("providers", "csv", [], "Only users with an identity from these providers (comma-separated; empty = all)."),),
+    params=(ParamSpec("users", "csv", [], "Only these users (empty = every User object).", source="users"),
+            ParamSpec("providers", "csv", [], "Only users with an identity from these providers (empty = all).", source="providers"),),
 )
 
 
@@ -22,6 +23,9 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     wanted = set(params["providers"])
     if wanted:
         users = [u for u in users if set(u["providers"]) & wanted]
+    if params["users"]:
+        picked = set(params["users"])
+        users = [u for u in users if u["user_name"] in picked]
     logged_in = [u for u in users if u["logged_in"]]
     manual = [u for u in users if not u["logged_in"]]
     without_user = snap.synced_members_without_user(cid)

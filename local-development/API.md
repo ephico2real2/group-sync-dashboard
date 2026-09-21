@@ -78,7 +78,7 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings`, `operator-configs` and `kpi` are the administrator tier** (`403` at self). The
+**`bindings/findings`, `operator-configs`, `kyverno` and `kpi` are the administrator tier** (`403` at self); **`clusterconfigs` is stricter still — `clusterconfig:view`, below.** The
 Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
 for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -131,6 +131,126 @@ never-polled cluster and an unreachable one are different states, and rendering 
 `status` distinguishes `ok` / `auth_failed` / `forbidden` / `unreachable`. `forbidden`
 matters most: a ServiceAccount that can list GroupSyncs but not Groups produces a
 half-populated view that otherwise looks exactly like a cluster with no groups.
+
+### `GET /api/clusterconfigs`
+
+**`clusterconfig:view`, not the administrator tier.** The cluster-configuration tier is two levels of
+its own (#230), modelled on Argo CD's first-class `clusters` resource and asked natively as
+SubjectAccessReviews about the Secrets this surface exposes: **`clusterconfig:view`** (`get secrets` in
+the dashboard's namespace, chart `visibility.clusterConfigViewSar`) gates this route and, at #230 S2,
+the tab's existence; **`clusterconfig:manage`** (`create secrets`, `visibility.clusterConfigManageSar`)
+gates S2's write routes. The two are asked separately — `manage` never implies `view` — and both fail
+closed. This is deliberately **stricter than the administrator tier**, which the auditor persona
+(`cluster-reader`) passes by design: measured on CRC 2026-09-20, that ClusterRole has zero of its 172
+rules covering `secrets`, so the auditor fails both levels and a cluster-admin passes both. A refusal
+names the control and no cluster, Secret or namespace.
+
+Every cluster this instance knows with **where it came from** — the values list
+(`source: values`), a labelled Secret in the pod's own namespace (`source: secret:<metadata.name>`,
+`docs/specs/SPEC_S1_cluster_secrets.md`, #230) — the credential's **kind** and never its value, the
+Secret's other labels, the D2 options as resolved, the poll outcome the cluster table holds, and the
+current discovery cycle's findings. The Cluster Configurations tab (#230 S2) is built on it; the
+writes are S2's.
+
+```json
+{
+  "viewer": "kubeadmin", "scope": "all",
+  "secrets": {"enabled": true, "namespace": "group-sync-dashboard",
+              "label": "groupsync-dashboard.io/secret-type=cluster",
+              "last_discovery": "2026-09-20T16:05:12Z", "error": null},
+  "clusters": [
+    {"id": "crc-local", "source": "values", "host": true, "api_url": "https://kubernetes.default.svc",
+     "enabled": true, "credential": "in-cluster", "labels": {},
+     "visibility": "inherit", "identity": "same-as-host", "tls": {"insecure": false, "ca": "serviceAccount"},
+     "status": "ok", "last_poll": "2026-09-20T16:05:40Z", "error": null, "retired": false},
+    {"id": "ocp-east", "source": "secret:gsd-cluster-ocp-east", "host": false,
+     "api_url": "https://api.ocp-east.example.com:6443", "enabled": true, "credential": "bearer",
+     "labels": {"environment": "prod"}, "visibility": "self-only", "identity": "none",
+     "tls": {"insecure": false, "ca": "caData"},
+     "status": "unreachable", "last_poll": "2026-09-20T16:05:41Z",
+     "error": "ConnectError: [Errno -2] Name or service not known", "retired": false},
+    {"id": "ocp-old", "source": "secret:gsd-cluster-ocp-old", "host": false, "api_url": "https://api.ocp-old.example.com:6443",
+     "enabled": false, "credential": "bearer", "labels": {}, "visibility": null, "identity": null, "tls": null,
+     "status": "ok", "last_poll": "2026-09-19T02:00:00Z", "error": null, "retired": true}
+  ],
+  "findings": [
+    {"secret": "gsd-cluster-broken", "code": "config-not-json",
+     "detail": "Expecting value: line 1 column 1"}
+  ]
+}
+```
+
+**`tls`** says how the cluster's API server certificate is verified, one of three (the operator's ruling,
+2026-09-20): `{"insecure": false, "ca": "trusted-bundle"}` — the default when the Secret names no
+`tlsClientConfig.caData`: the dashboard's own trust store, `GSD_TRUSTED_CA_FILE` (the chart's `trustedCA.*`
+bundles — the injected OpenShift CA and the enterprise ConfigMap, colon-joined) plus the system store;
+`{"insecure": false, "ca": "caData"}` — the Secret's own base64 PEM, this cluster alone; `{"insecure": true,
+"ca": null}` — verification off. A values entry reports `caBundleFile` or `serviceAccount` (the pod's SA CA
+path) the same way. `caData` beside `insecure: true` is refused as the finding `insecure-with-ca`, naming both
+fields. The PEM itself is never on the wire. **A listed cluster always reports an effective mode** — the
+reader supplies `trusted-bundle` when nothing overrides it — so `tls: null` never means "no mode": it appears
+only on a **`retired`** row, whose source no longer describes how it was trusted, and the tab says `unknown`
+there rather than a dash. (A Secret with no `config` key at all is not a cluster: the reader refuses it as the
+finding `config-missing`, and it reaches this payload only as a retired row if it was accepted before.)
+A **`retired`** cluster is one the store still holds but no source names any more — its Secret vanished, or
+its values entry was removed: `enabled: false`, its history kept (#96), listed so the reader knows why it
+is gone rather than finding it missing. `credential` is `in-cluster` (the host's ServiceAccount token path), `file` (a values entry's
+`tokenFile`/`tokenEnv`), `bearer` (a Secret's `bearerToken`) or `oauth` (a Secret's
+`username`/`password` — listed, with the finding `oauth-exchange-not-built`, and not polled until
+#119 P2). A bearer token is minted by a cluster, so it lives inline in that cluster's own Secret — `gsd-cluster-<name>` carries the full ServiceAccount token in `config.bearerToken`; rotation replaces it in place. A shared username/password (the fleet's LDAP service account) is NOT written per cluster: #119 P2 adds `credentialRef: <credential Secret>` for that. `findings[].code` is one of the closed set in `gsd/clusterconfig/__init__.py`; a `discovery-failed`
+finding (the LIST itself failed — the Role absent, the API unreachable) carries `secret: "-"` and the
+previous set of discovered clusters stands. `secrets.enabled=false` (`clusterConfig.secrets.enabled`)
+answers the values list alone with `last_discovery: null`.
+
+### The Cluster Configurations tab's writes (#230 S2)
+
+Four routes, all `clusterconfig:manage` (above — never the wide tier) and each needing a proxy-verified
+identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
+the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
+(`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
+and with the switch off a write-only path is a `404` and a POST on the read path a `405` (a route that was
+never registered, not one that refuses); `GET /api/clusterconfigs` says which in `secrets.writes`. They write only in the pod's own namespace and only Secrets carrying
+`groupsync-dashboard.io/secret-type: cluster` (the app checks the label before every update or delete
+— RBAC cannot scope a verb by label). Each successful write logs one line naming the person, the verb
+and the Secret, and wakes the discovery thread so the result is on `GET /api/clusterconfigs` within
+seconds; a Secret written by GitOps still rides the binding cadence. **The credential never comes
+back**: not in these responses, not in a log line, not in the database, not in `/metrics`
+(`docs/specs/SPEC_S2_cluster_configurations_tab.md`, a test with a sentinel token).
+
+`POST /api/clusterconfigs` → `201` — creates `gsd-cluster-<name>`, labelled, annotated
+`groupsync-dashboard.io/managed-by: ui`. The body:
+
+```json
+{"name": "ocp-west", "server": "https://api.ocp-west.example.com:6443",
+ "credential": {"kind": "bearerToken", "token": "…"},
+ "tls": {"mode": "caData", "caData": "<base64 PEM>"},
+ "visibility": "self-only", "identity": "none", "labels": {"environment": "prod"}}
+```
+
+`tls.mode` is one of `trustedBundle` (the dashboard's own trust store — the default), `caData` (this
+cluster's bundle, base64 PEM in `tls.caData`), `insecure` (verification off). The request is validated by
+the same parser discovery runs, so a refusal carries S1's finding code in `detail` — `422
+oauth-exchange-not-built: the password-for-token exchange is #119 P2, not built yet`, `422
+ca-data-invalid`, `422 name-invalid`, `422 host-cluster-not-from-secret`, `422 unsupported-config-key` (a
+label under the `groupsync-dashboard.io/` prefix) — and a name the instance already knows is `409
+duplicate-cluster-name: <name> is already declared by <source>`; an existing Secret of that name `409
+secret-exists`. A `403` from the API server is `502` naming the chart switch. The answer:
+`{"secret": "gsd-cluster-ocp-west", "cluster": "ocp-west", "discovery": "requested"}`.
+
+`PUT /api/clusterconfigs/{name}/credential` with `{"token": "…"}` → `200` — replaces `bearerToken` in
+place, every other `config` key kept; Secret-sourced clusters only (`404` unknown, `409
+not-a-secret-cluster` for a values or host cluster, `409 not-our-secret` for a Secret without the label).
+The old token is gone from the cluster on the write.
+
+`DELETE /api/clusterconfigs/{name}` → `200 {"secret": …, "cluster": …, "retired": "on the next
+discovery"}` — the same eligibility; the next discovery disables the cluster and keeps its rows.
+
+`POST /api/clusterconfigs/test` — the create body (`name` optional, `labels` ignored) → `200
+{"reachable": true, "server_version": "v1.31.6", "identity": "system:serviceaccount:…", "error": null}`.
+The request goes through the parser (the same refusals), then `GET /version` and `GET
+/apis/user.openshift.io/v1/users/~` with that credential and TLS mode; a cluster without the OpenShift
+user API leaves `identity` null; a failure answers `reachable: false` with `error: "<outcome>: <message>"`.
+Nothing is stored or registered.
 
 ## GroupSync CRs
 
@@ -766,6 +886,43 @@ A CR is currently failing when `error_at` is set and is *later* than `success_at
 `NamespaceConfig` that stops reconciling raises nothing on the cluster — both its conditions
 stay `True` — so new namespaces silently receive no RBAC and drift stops being corrected.
 
+### `GET /api/clusters/{cluster_id}/kyverno`
+
+The Kyverno policy module (#165, #170): the CEL policies (`ValidatingPolicy`, `MutatingPolicy`,
+`GeneratingPolicy`, `DeletingPolicy`, `ImageValidatingPolicy`) the poller listed, what their policy
+reports say about each resource, and the appeared/cleared history. **Administrator tier** (`403` at
+self): a finding names a resource cluster-wide and answers nothing a reader can ask about themselves.
+
+```json
+{
+  "cluster": "crc-local", "scope": "all", "viewer": "kubeadmin", "enabled": true, "breaker_configured": true,
+  "present": true, "api_group": "wgpolicyk8s.io/v1alpha2", "policy_kinds": ["ValidatingPolicy", "MutatingPolicy", "GeneratingPolicy", "DeletingPolicy", "ImageValidatingPolicy"],
+  "reports": 115, "legacy_results": 667, "other_results": 0,
+  "breaker_total": 3949, "breaker_drops": null, "observed_at": "2026-09-20T12:00:00Z",
+  "results": {"pass": 9, "fail": 0, "warn": 0, "error": 0, "skip": 0}, "policies": 1,
+  "policies_list": [{"kind": "ValidatingPolicy", "namespace": "", "name": "restrict-nco-config-writers",
+                     "admission": true, "background": false, "actions": ["Audit"], "failure_policy": "Fail",
+                     "ready": true, "results": {"pass": 9, "fail": 0, "warn": 0, "error": 0, "skip": 0}}],
+  "rows": [], "total": 0, "truncated": false, "events": [], "controlled_kinds": ["Pod", "ReplicaSet", "Job"]
+}
+```
+
+Three states, rendered distinctly: **`present: null`** — never polled since the module arrived;
+**`present: false`** — no policy-report API group is served, Kyverno is not installed (never
+"zero results"); **`present: true`** with **`legacy_results`** counting what the deprecated
+`ClusterPolicy`/`Policy` family wrote that this module does not read (a cluster carrying them is not a
+clean cluster), and **`breaker_drops`** — `kyverno_breaker_drops` as last scraped from the controllers'
+endpoints `kyverno.metricsUrl` names (the host cluster's only; a remote cluster's breaker is unmeasured);
+`null` is "no drop observed, or not scraped", never 0 — **`breaker_configured`** says whether a scrape is
+configured at all, so a null with it true is "the last scrape failed".
+`?problems=false` lists every result; `?controlled=true` includes Pods, ReplicaSets and Jobs (usually a
+controller's copies of one finding — off by default and said on the page); `?policy=` (the wire string —
+`namespace/name` for a namespaced policy) with `?kind=` narrows to one policy — a `ValidatingPolicy` and a
+`MutatingPolicy` may share a name; `total` and `truncated` say what `limit` cut. A result is keyed by policy and resource, never by
+rule: the CEL engine writes no rule name. `events` are the problems (fail/warn/error) that appeared or
+cleared between two polls, newest first — the reports themselves are owned by their resource and carry
+no history.
+
 ### `GET /api/kpi`
 
 The KPI module's in-app surface (#156): every KPI definition rendered as JSON, the 30-day trends,
@@ -967,9 +1124,19 @@ the three probe paths, which are reachable only on the report Service. One line 
 | `GET /report/api/reports` | ticket | the catalogue: each report, whether enabled, its values key and parameter specs |
 | `GET /report/api/snapshot` | ticket or token | the copy a run would read now: stamp, age, schema, bytes |
 | `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard** |
-| `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256 and artefact sizes |
+| `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256, artefact sizes and its standing under retention (`expires_at`, `retained_by`, below) |
 | `GET /report/api/runs/{id}/artifact?format=json\|html\|pdf` | ticket or token | the artefact, `Cache-Control: no-store`, `X-GSD-Report-SHA256`, as an attachment |
 | `GET /report/api/usage?since_id=&limit=` | **token only** | finished runs for the dashboard's pull; viewers read them from the dashboard at the usage tier |
+
+**A run's standing under retention** (#229, the Library tab): every run carries `expires_at` — the
+**earliest** instant it can be deleted, `finished_at` (whole second) + 1 s + the age bound, `null` when no
+age bound applies — and `retained_by`, why it is held now: `newest:<n>/<keep> of <schedule> on <cluster>`
+(one of the newest `keep` of its schedule on its cluster, kept whatever its age — so at least until
+`expires_at`, and longer while it stays among them), `age:<days>d` (a scheduled run beyond the newest
+`keep`, kept while younger; `age:0d` is kept indefinitely), `manual:<days>d` (a manual run within the count
+cap, kept `days`; `manual:0d` is kept indefinitely), `manual:cap` (beyond `manual.maxRuns`: it goes on the
+next prune), or `null` for a queued or running run. Both are
+computed by the ranking the prune deletes by — one plan, two readers — never by the page.
 
 ## Alerts
 

@@ -229,18 +229,46 @@ def test_r5_multi_store_handlers_take_a_snapshot():
     )
 
 
-def test_r6_the_api_is_read_only(spec):
-    """R6: the ServiceAccount is read-only by design, and the API should reflect that."""
-    writes = [
+def _writes(spec) -> list[str]:
+    return sorted(
         f"{method.upper()} {path}"
         for path, ops in spec["paths"].items()
         for method in ops
         if method.lower() not in {"get", "head", "options"}
-    ]
+    )
+
+
+def test_r6_the_api_is_read_only(spec):
+    """R6: the ServiceAccount is read-only by design, and the API should reflect that — at the default.
+    The one exception is opt-in: the Cluster Configurations tab's writes (SPEC_S2 C6) register only when
+    `clusterSecretsWritesEnabled` is on, and the next test holds that set EXACTLY."""
+    writes = _writes(spec)
     assert not writes, (
-        "non-GET endpoints: " + ", ".join(sorted(writes))
+        "non-GET endpoints: " + ", ".join(writes)
         + ". See docs/unmanaged-audit-design.md before adding a write path."
     )
+
+
+CLUSTER_SECRET_WRITES = [
+    "DELETE /api/clusterconfigs/{name}",
+    "POST /api/clusterconfigs",
+    "POST /api/clusterconfigs/test",
+    "PUT /api/clusterconfigs/{name}/credential",
+]
+
+
+def test_r6_the_only_writes_are_the_cluster_secret_routes_and_only_when_switched_on(tmp_path):
+    """The carve-out, exact: with the switch on the schema carries these four write routes and no
+    other; any fifth write, on or off, fails here or above."""
+    import dataclasses
+    from gsd.api import build_app
+    from gsd.config import ClusterConfig, Settings
+    settings = Settings(clusters=[ClusterConfig("c1", "https://api.c1.example.com:6443", token_env="T")],
+                        db_path=str(tmp_path / "w.db"))
+    on = dataclasses.replace(settings, cluster_secrets_writes_enabled=True)
+    assert _writes(build_app(on, run_poller=False).openapi()) == CLUSTER_SECRET_WRITES
+    off = dataclasses.replace(settings, cluster_secrets_writes_enabled=False)
+    assert _writes(build_app(off, run_poller=False).openapi()) == []
 
 
 def test_r7_hidden_routes_are_explained():

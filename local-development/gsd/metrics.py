@@ -60,13 +60,15 @@ ALERT_KINDS = (
 # Vocabularies for the process-event families. Fixed tuples, like STATES and FINDINGS:
 # every combination is pre-seeded to 0 so increase() has a baseline before the first event,
 # and a typo'd label value fails loudly in tests instead of minting a new series.
-TIER_THRESHOLDS = ("admin", "usage")
+# "clusterconfig_view" / "clusterconfig_manage": the two levels of the cluster-configuration
+# tier (#230), each counted apart so a refusal at one is never read as the other breaking.
+TIER_THRESHOLDS = ("admin", "usage", "clusterconfig_view", "clusterconfig_manage")
 TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbidden", "error")
 # The poller's pulls of the report service's usage feed (docs/specs/SPEC_C3_reporting_microservice.md §3.2).
 REPORT_PULL_OUTCOMES = ("ok", "refused", "unreachable", "error")
 TIERS = ("all", "self")
 RETENTION_TABLES = ("login_event", "dashboard_user_activity", "membership_event", "sync_event",
-                    "binding_event", "kpi_daily")
+                    "binding_event", "kpi_daily", "kyverno_result_event")
 # binding_event's two vocabularies. subject_kind is the Kubernetes subject kind, bounded at two;
 # NO label ever carries the subject's name (the public-/metrics rule).
 BINDING_CHANGES = ("added", "removed")

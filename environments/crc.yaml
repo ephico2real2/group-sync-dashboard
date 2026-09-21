@@ -93,12 +93,19 @@ loginCapture:
 rbac:
   namespaces: true
 
+# The Kyverno policy module (#170): the lab runs Kyverno v1.19.1 in `kyverno`; the three report breakers
+# live on three endpoints (discovery §4), all reachable from the pod's network.
+kyverno:
+  metricsUrl: "http://kyverno-svc-metrics.kyverno.svc:8000/metrics,http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics,http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics"
+
 reporting:
   namespaceMetadata:
     # The poller CAPTURES these label keys from every Namespace (bounded set).
     labels:
       - company.net/mnemonic
       - company.net/app-environment
+  # #149 R7: the exact-group label; the poller captures it and the forms resolve mnemonics through it.
+  namespaceGroupLabel: company.net/oud-group
   namespaceSelector:
     # The Reports form OFFERS these as selector dimensions (must be a subset of the captured keys).
     labels:
@@ -117,14 +124,24 @@ reporting:
   # One nightly schedule to exercise the window + the CronJob. namespace-access scoped by the mnemonic
   # dimension (P2), so the schedule shows both features working together. Fires 22:00 New York, inside
   # the window; a manual trigger outside the window would 409 -> the Job records a skip, not a failure.
+  # #149: the first is cluster-agnostic (no `cluster:` — the service fans it out to every enabled
+  # cluster in its snapshot), the second is paused (its CronJob stays, suspended) — the two shapes the
+  # status page has to show and the live checks exercise.
   schedules:
     - name: nightly-namespace-access
       schedule: "0 22 * * *"
       report: namespace-access
-      cluster: crc-local
       params:
         selectors:
           company.net/mnemonic: [demo, beta]
+    - name: quarterly-compliance
+      schedule: "0 6 1 1,4,7,10 *"
+      report: compliance-snapshot
+      retention: {keepPerSchedule: 12, days: 2555}
+    - name: biweekly-groups
+      schedule: "0 6 1,16 * *"
+      report: groups
+      enabled: false
 
 # ---------------------------------------------------------------------------
 # Clusters the dashboard polls

@@ -199,3 +199,4 @@ def test_the_report_image_tag_follows_the_same_rule() -> None:
         assert tag == app or tag.startswith(f"{app}-"), (
             f"reporting.image.tag {tag!r} is not a build of appVersion {app!r}; the report image ships at the "
             f"application's version so its snapshot reader matches the dashboard's schema")
+

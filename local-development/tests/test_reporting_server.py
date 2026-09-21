@@ -83,7 +83,12 @@ class TestItsOwnContract:
                 default = p.default
                 if type(default).__name__ == "FieldInfo" or "Query" in type(default).__name__:
                     assert getattr(default, "description", None), (route.path, p.name)
-        assert non_get == [("POST", f"{REPORT_PREFIX}/api/runs")]
+        # the run POST, and the read-only preview POST beside it (#143 phase 3: build() for the totals,
+        # nothing rendered, nothing stored — the one-write contract of the dashboard's API is untouched)
+        assert sorted(non_get) == [("POST", f"{REPORT_PREFIX}/api/preview"), ("POST", f"{REPORT_PREFIX}/api/runs")]
+        # and the module says so itself (review of #224, OB3: the docstring still claimed one and only one non-GET)
+        import gsd.reporting.server as _srv
+        assert "api/preview" in _srv.__doc__ and "api/runs" in _srv.__doc__
 
     def test_the_unauthenticated_set_is_exactly_the_probes(self, service):
         client, _, _ = service
@@ -1286,3 +1291,416 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
         monkeypatch.setenv("GSD_REPORT_FORMATS_SCHEDULED", "html,pfd")
         with pytest.raises(SystemExit):
             _formats_env("GSD_REPORT_FORMATS_SCHEDULED", ("html",))
+
+
+class TestReportingStatus:
+    """#149 R5/R6: the status endpoint's three cards from what the service already holds, and the
+    history's server-side filters."""
+
+    SCHEDULES = [
+        {"name": "quarterly-compliance", "schedule": "0 6 1 1,4,7,10 *", "report": "compliance-snapshot",
+         "retention": {"keepPerSchedule": 12, "days": 2555}},
+        {"name": "biweekly-namespace-access", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False},
+        {"name": "nightly", "schedule": "0 2 * * *", "report": "groups"},
+    ]
+
+    def _client(self, tmp_path, at=None, **over):
+        from gsd.reporting.window import ReportingWindow
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        w = ReportingWindow.from_strings(enabled=True, timezone="America/New_York", start="02:00", end="06:00",
+                                         days=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+        clock = {"now": at or datetime(2026, 9, 20, 7, 30, tzinfo=UTC)}     # 03:30 EDT: the window is open
+        app = build_report_app(_settings(snapshots, artifacts, window=w, schedules=tuple(self.SCHEDULES), **over),
+                               secret=SECRET, clock=lambda: clock["now"])
+        return TestClient(app), clock
+
+    def test_the_three_cards_come_from_config_window_store_and_signals(self, tmp_path):
+        client, clock = self._client(tmp_path)
+        with client:
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            for _ in range(50):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["runs"] and r["runs"][0]["status"] in ("done", "failed"):
+                    break
+                time.sleep(0.1)
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert s["service"]["pdf"] == {"enabled": True, "variant": "pdf/a-2b"} and s["service"]["reports_enabled"] == 11
+        assert s["service"]["formats"] == {"scheduled": ["html", "json"], "manual": ["html", "pdf", "json"]}
+        assert s["window"]["open_now"] is True and s["window"]["next_change"] == "closes"
+        assert s["window"]["next_change_at"] == "2026-09-20T10:00:00Z"        # 06:00 EDT
+        assert s["window"]["days"] == ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        assert s["retention"] == {"scheduled": {"keepPerSchedule": 2, "days": 90}, "manual": {"days": 3, "maxRuns": 500}}
+        by = {x["name"]: x for x in s["schedules"]}
+        q = by["quarterly-compliance"]
+        assert q["cadence"] == "Quarterly 06:00" and q["retention"] == {"keepPerSchedule": 12, "days": 2555, "overridden": True}
+        assert q["next_fire"] == "2026-10-01T10:00:00Z" and q["status"] == "never"      # no run of it yet
+        p = by["biweekly-namespace-access"]
+        assert p["enabled"] is False and p["next_fire"] is None and p["status"] == "disabled"
+        assert p["retention"] == {"keepPerSchedule": 2, "days": 90, "overridden": False}
+        n = by["nightly"]
+        assert n["cadence"] == "Daily 02:00" and n["last_success"] is not None and n["status"] == "ok"
+
+    def test_a_schedule_whose_last_fire_passed_without_a_success_is_late(self, tmp_path):
+        client, clock = self._client(tmp_path)
+        with client:
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            for _ in range(50):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["runs"] and r["runs"][0]["status"] == "done":
+                    break
+                time.sleep(0.1)
+            clock["now"] = clock["now"] + timedelta(days=2)      # two fires later, no new success
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert {x["name"]: x["status"] for x in s["schedules"]}["nightly"] == "late"
+
+    def test_a_disabled_window_reports_never_changing(self, tmp_path):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+        assert s["window"] == {"enabled": False, "open_now": True, "timezone": None, "start": None, "end": None,
+                               "days": [], "next_change": "never", "next_change_at": None, "refused_since_start": 0}
+        assert s["schedules"] == []
+
+    def test_the_history_filters_run_across_the_whole_history(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts, max_queued_runs=100), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            for i in range(3):
+                client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE)
+            client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "users", "cluster": CLUSTER}, headers=ticket)
+            for _ in range(100):
+                r = client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()
+                if r["total"] == 4 and all(x["status"] in ("done", "failed") for x in r["runs"]):
+                    break
+                time.sleep(0.1)
+            sched = client.get(f"{REPORT_PREFIX}/api/runs?origin=schedule&limit=2", headers=SERVICE).json()
+            assert sched["total"] == 3 and len(sched["runs"]) == 2 and sched["truncated"] is True
+            person = client.get(f"{REPORT_PREFIX}/api/runs?origin=person", headers=SERVICE).json()
+            assert person["total"] == 1 and person["runs"][0]["report"] == "users"
+            assert client.get(f"{REPORT_PREFIX}/api/runs?status=done&cluster={CLUSTER}", headers=SERVICE).json()["total"] == 4
+            assert client.get(f"{REPORT_PREFIX}/api/runs?cluster=nope", headers=SERVICE).json()["total"] == 0
+            assert r["facets"] == {"reports": ["groups", "users"], "clusters": [CLUSTER]}
+            assert client.get(f"{REPORT_PREFIX}/api/runs?origin=robot", headers=SERVICE).status_code == 422
+
+    def test_the_schedules_env_is_validated(self, monkeypatch):
+        from gsd.reporting.config import _schedules_env
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", "")
+        assert _schedules_env() == ()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", '[{"name":"n","schedule":"0 2 * * *","report":"groups"}]')
+        assert _schedules_env()[0]["name"] == "n"
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", '[{"name":"n"}]')
+        with pytest.raises(SystemExit):
+            _schedules_env()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", "not json")
+        with pytest.raises(SystemExit):
+            _schedules_env()
+
+
+class TestDiscoveredLookups:
+    """#149 R7: the discovered lookups a form offers, per cluster, on their own endpoint — never on the
+    catalogue load, which stays one query for the estate (V4-F1)."""
+
+    def test_the_lookups_come_per_cluster_and_the_catalogue_does_not_carry_them(self, tmp_path):
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        app = build_report_app(_settings(snapshots, artifacts, namespace_selector_labels=("company.net/mnemonic",),
+                                         namespace_group_label="company.net/oud-group"), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            cat = client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer()).json()
+            assert "discovered" not in cat and cat["namespaceGroupLabel"] == "company.net/oud-group"
+            d = client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}", headers=_viewer()).json()
+            assert d["cluster"] == CLUSTER and d["discovered"]["users"]["values"] == ["alice", "bob", "erin"]
+            assert d["discovered"]["providers"]["values"] == ["corp_ldap"] and "team-a" in d["discovered"]["groups"]["values"]
+            assert set(d["discovered"]) == {"providers", "roles", "users", "groups", "mnemonics", "oud-groups", "namespaces"}   # namespaces since #143
+            assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster=nope", headers=_viewer()).status_code == 404
+            assert client.get(f"{REPORT_PREFIX}/api/discovered", headers=_viewer()).status_code == 422
+            assert client.get(f"{REPORT_PREFIX}/api/discovered?cluster={CLUSTER}").status_code == 401
+class TestReportingStatusReview:
+    """Review of #221 (OB3): the late predicate's grace sits after the fire; the per-schedule retention
+    override the page calls effective is the one the prune applies; the optional keys are validated at
+    startup like the required ones."""
+
+    NIGHTLY = ({"name": "nightly", "schedule": "0 2 * * *", "report": "groups"},)
+
+    @staticmethod
+    def _done(run_id, day, schedule="nightly"):
+        return Run(id=run_id, report="groups", cluster=CLUSTER, params={}, formats=["html"], generated_by=f"schedule:{schedule}",
+                   generated_by_note="unattended", schedule=schedule, origin="schedule", requested_at=f"{day}T02:00:00Z",
+                   started_at=f"{day}T02:00:01Z", finished_at=f"{day}T02:02:00Z", status="done", sha256="ab" * 32)
+
+    def _status(self, tmp_path, at, schedules=NIGHTLY, seed=(), in_flight=None, **over):
+        tmp_path.mkdir(exist_ok=True)
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        for r in seed:
+            store.create(r)
+        app = build_report_app(_settings(snapshots, artifacts, schedules=schedules, max_queued_runs=0, **over), secret=SECRET, clock=lambda: at)
+        if in_flight is not None:
+            app.state.store.create(in_flight)
+        with TestClient(app) as client:
+            return client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+
+    def test_a_schedule_that_just_fired_is_ok_while_its_run_renders_and_late_half_an_hour_on(self, tmp_path):
+        # Before the fix `last_success < previous_fire - 30 min` was true the instant the fire passed
+        # (yesterday's success is a day older), so every healthy schedule read `late` until its run
+        # finished — measured at fire + 1 s with the run in flight, and at fire + 5 min.
+        yesterday = self._done("20260919T020000.000000Z-aaaa", "2026-09-19")
+        running = Run(id="20260920T020000.000000Z-bbbb", report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                      generated_by="schedule:nightly", generated_by_note="unattended", schedule="nightly", origin="schedule",
+                      requested_at="2026-09-20T02:00:00Z", started_at="2026-09-20T02:00:01Z", status="running")
+        by = lambda s: {x["name"]: x for x in s["schedules"]}["nightly"]  # noqa: E731
+        just_fired = by(self._status(tmp_path / "a", datetime(2026, 9, 20, 2, 0, 1, tzinfo=UTC), seed=[yesterday], in_flight=running))
+        assert just_fired["previous_fire"] == "2026-09-20T02:00:00Z" and just_fired["last_success"] == "2026-09-19T02:02:00Z"
+        assert just_fired["status"] == "ok", just_fired
+        assert by(self._status(tmp_path / "b", datetime(2026, 9, 20, 2, 29, tzinfo=UTC), seed=[yesterday]))["status"] == "ok"
+        assert by(self._status(tmp_path / "c", datetime(2026, 9, 20, 2, 31, tzinfo=UTC), seed=[yesterday]))["status"] == "late"
+        # a success after the fire is ok whatever the hour; no success ever is never
+        today = self._done("20260920T020000.000000Z-cccc", "2026-09-20")
+        assert by(self._status(tmp_path / "d", datetime(2026, 9, 20, 12, 0, tzinfo=UTC), seed=[yesterday, today]))["status"] == "ok"
+        assert by(self._status(tmp_path / "e", datetime(2026, 9, 20, 12, 0, tzinfo=UTC)))["status"] == "never"
+
+    def test_the_retention_override_the_page_reports_is_the_one_the_prune_applies(self, tmp_path):
+        # `ArtifactStore.prune(overrides=...)` has existed since the two-tier retention and nothing passed
+        # it; #221 is the first to declare an override (environments/crc.yaml) and to display it as the
+        # effective policy. Three runs of a quarterly schedule, all older than the global 90 days: the
+        # globals keep the newest 2, the override (12 newest, 2555 days) keeps all three.
+        quarterly = ({"name": "quarterly", "schedule": "0 6 1 1,4,7,10 *", "report": "groups", "retention": {"keepPerSchedule": 12, "days": 2555}},)
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        store = ArtifactStore(str(artifacts))
+        for i, day in enumerate(("2026-01-01", "2026-04-01", "2026-07-01")):
+            store.create(self._done(f"{day.replace('-', '')}T060000.000000Z-q{i:03d}", day, schedule="quarterly"))
+        at = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
+        settings = _settings(snapshots, artifacts, schedules=quarterly, max_queued_runs=0)
+        app = build_report_app(settings, secret=SECRET, clock=lambda: at)
+        with TestClient(app) as client:
+            s = client.get(f"{REPORT_PREFIX}/api/status", headers=SERVICE).json()
+            assert s["schedules"][0]["retention"] == {"keepPerSchedule": 12, "days": 2555, "overridden": True}
+            app.state.runs._last_prune = -10**9            # the hourly gate: due now
+            app.state.runs._maybe_prune()
+            assert client.get(f"{REPORT_PREFIX}/api/runs", headers=SERVICE).json()["total"] == 3, "the prune applied the globals, not the override the page shows"
+        from gsd.reporting.config import retention_overrides            # the one reading both sides share
+        assert retention_overrides(settings) == {"quarterly": (12, 2555)}
+
+    def test_the_schedules_env_refuses_a_malformed_retention_or_enabled_at_startup(self, monkeypatch):
+        # Before: a `retention: {days: "twelve"}` passed startup and GET /report/api/status was a 500.
+        from gsd.reporting.config import _schedules_env
+        good = {"name": "n", "schedule": "0 2 * * *", "report": "groups"}
+        for bad in ({"retention": {"days": "twelve"}}, {"retention": {"keepPerSchedule": None}}, {"retention": [1, 2]},
+                    {"retention": {"days": -1}}, {"retention": {"weeks": 2}}, {"retention": {"days": True}}, {"enabled": "false"}, {"enabled": 0}):
+            monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | bad]))
+            with pytest.raises(SystemExit, match="GSD_REPORT_SCHEDULES: schedule 'n'"):
+                _schedules_env()
+        monkeypatch.setenv("GSD_REPORT_SCHEDULES", json.dumps([good | {"retention": {"days": 12}, "enabled": False}]))
+        assert _schedules_env()[0]["retention"] == {"days": 12}
+
+
+class TestPreviewAndNamespacePicker:
+    """#143 phases 2 and 3: the totals a run would produce, from build() alone; the discovered namespaces."""
+
+    def test_the_preview_answers_totals_without_a_run(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)   # not this
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER,
+                                                                  "params": {"namespaces": "prod-ns,dev-ns"}}, headers=ticket)
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["totals"]["namespaces"] == 2 and body["truncated"] is False and body["snapshot"]
+            assert set(body) == {"report", "cluster", "totals", "truncated", "snapshot"}      # the shape docs/reports/README.md states
+            listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=ticket).json()
+            assert all(x["report"] != "namespace-access" for x in listed["runs"]), "a preview stores no run"
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"nope": 1}}, headers=ticket).status_code == 422
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {}}, headers=ticket).status_code == 422   # no selection
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "nope", "cluster": CLUSTER}, headers=ticket).status_code == 404
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": "nope"}, headers=ticket).status_code == 404
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}).status_code == 401
+
+    def test_the_preview_is_503_without_a_snapshot_and_429_when_busy(self, tmp_path):
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = tmp_path / "s", tmp_path / "a"; snapshots.mkdir(); artifacts.mkdir()
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 503
+        (tmp_path / "b").mkdir()
+        snapshots, artifacts = seeded_dirs(tmp_path / "b")
+        app = build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)
+        with TestClient(app) as client:
+            # one slot: while a preview builds, the next is refused, not queued
+            import threading, time as _t
+            from gsd.reporting import server as srv
+            held = threading.Event()
+            orig = srv.REGISTRY["groups"][1]
+            def slow(snap, ctx, params):
+                held.set(); _t.sleep(0.6); return orig(snap, ctx, params)
+            srv.REGISTRY["groups"] = (srv.REGISTRY["groups"][0], slow)
+            try:
+                th = threading.Thread(target=lambda: client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket))
+                th.start(); held.wait(2)
+                assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 429
+                th.join()
+            finally:
+                srv.REGISTRY["groups"] = (srv.REGISTRY["groups"][0], orig)
+            # the slot is released when the build ends (review of #224, Grok: the test never pinned it) — and on a
+            # refused path too: a 422 raised inside build() must not hold it
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 200
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER}, headers=ticket).status_code == 422
+            assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 200
+            # an unconfigured selector label is refused as a run refuses it
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "namespace-access", "cluster": CLUSTER, "params": {"selectors": {"x/y": ["a"]}}}, headers=ticket)
+            assert r.status_code == 422 and "not configured" in r.json()["detail"]
+
+    def test_the_discovered_namespaces_feed_the_picker_and_a_str_is_trimmed(self, tmp_path):
+        from gsd.reporting.catalogue import REGISTRY, ValidationError, validate_params as vp
+        from reporting_seed import seed_store, write_snapshot
+        store = seed_store(str(tmp_path / "w.db"))
+        store.replace_namespaces(CLUSTER, [{"name": "prod-ns", "created_at": None, "phase": "Active", "metadata": {}},
+                                          {"name": "dev-ns", "created_at": None, "phase": "Active", "metadata": {}}], "2026-09-14T00:00:00Z")
+        d = tmp_path / "snap"; d.mkdir(); path = write_snapshot(store, d); store.close()
+        from gsd.reporting.snapshot import Snapshot
+        with Snapshot(path) as snap:
+            assert snap.discovered(CLUSTER, "", "")["namespaces"]["values"] == ["dev-ns", "prod-ns"]
+        cert = REGISTRY["access-certification"][0]
+        assert vp(cert, {"campaign": " Q3 ", "due": "2026-10-01", "reviewer": " r "})["reviewer"] == "r"
+        with pytest.raises(ValidationError, match="required"):
+            vp(cert, {"campaign": "x", "due": "2026-10-01", "reviewer": "   "})
+
+    def test_the_preview_is_503_when_the_newest_copy_is_unreadable(self, tmp_path):
+        # Review of #224 (OB3): only newest_snapshot() was behind the 503; Snapshot() itself raises
+        # SnapshotError for a copy the service cannot read — torn, or a schema newer than it knows (the
+        # dashboard rolled first) — and that escaped the route as a 500 where readyz says 503.
+        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        snapshots, artifacts = seeded_dirs(tmp_path)
+        (snapshots / "gsd-20991231T235959.000000Z.db").write_bytes(b"not a database")     # newest by name, unreadable
+        with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
+            r = client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
+            assert r.status_code == 503 and "not a readable SQLite database" in r.json()["detail"], r.text
+            assert client.get(f"{REPORT_PREFIX}/readyz").status_code == 503                 # the same answer as the probe's
+
+
+class TestRetentionStanding:
+    """#229 (SPEC E1 §3): `store.retention()` prints the plan `prune()` deletes by — one ranking, two readers.
+    Every case holds the words beside a REAL prune at `expires_at − 1 s` (kept) and at `expires_at`
+    (deleted, unless the rank protects it), so the page can never say one thing and the prune do another."""
+    GLOBALS = dict(scheduled_keep=2, scheduled_days=90, manual_days=3, manual_max_runs=3)
+
+    @staticmethod
+    def _mk(store, run_id, finished, *, schedule=None, status="done", cluster=CLUSTER):
+        by = f"schedule:{schedule}" if schedule else "root"
+        store.create(Run(id=run_id, report="groups", cluster=cluster, params={}, formats=["html"], generated_by=by,
+                         generated_by_note="n", schedule=schedule, requested_at=finished, status=status, finished_at=finished))
+
+    @staticmethod
+    def _at(iso):
+        return datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+    def _prune_keeps(self, store, at, run_id, **over):
+        args = {**self.GLOBALS, **over}
+        store.prune(now=at, **args)
+        return store.get(run_id) is not None
+
+    def test_a_per_schedule_override_drives_the_real_prune_boundary(self, tmp_path):
+        # review of #233 (Codex): with every case on the globals, prune() passing `overrides=None` survived
+        store = ArtifactStore(str(tmp_path))
+        run_id = "20260101T060000.000000Z-w1"
+        self._mk(store, run_id, "2026-01-01T06:00:00Z", schedule="weekly")
+        over = {"overrides": {"weekly": (0, 1)}}
+        standing = store.retention(**self.GLOBALS, **over)[run_id]
+        assert (standing.expires_at, standing.retained_by) == ("2026-01-02T06:00:01Z", "age:1d")
+        assert self._prune_keeps(store, self._at(standing.expires_at) - timedelta(seconds=1), run_id, **over)
+        assert not self._prune_keeps(store, self._at(standing.expires_at), run_id, **over)
+
+    def test_manual_within_the_cap_ages_from_completion_and_the_words_name_the_days(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260901T120000.000000Z-m1", "2026-09-01T12:00:00Z")
+        standing = store.retention(**self.GLOBALS)["20260901T120000.000000Z-m1"]
+        assert standing.retained_by == "manual:3d" and standing.expires_at == "2026-09-04T12:00:01Z"
+        assert self._prune_keeps(store, self._at(standing.expires_at) - timedelta(seconds=1), "20260901T120000.000000Z-m1")
+        assert not self._prune_keeps(store, self._at(standing.expires_at), "20260901T120000.000000Z-m1")
+
+    def test_manual_beyond_the_cap_is_doomed_now_and_says_cap(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        for j in range(4):
+            self._mk(store, f"20260901T12000{j}.000000Z-m{j}", f"2026-09-01T12:00:0{j}Z")
+        plan = store.retention(**self.GLOBALS)
+        assert plan["20260901T120000.000000Z-m0"] == (None, "manual:cap", plan["20260901T120000.000000Z-m0"].doomed_at)
+        assert plan["20260901T120003.000000Z-m3"].retained_by == "manual:3d", "the newest three are within the cap"
+        assert not self._prune_keeps(store, self._at("2026-09-01T12:00:05Z"), "20260901T120000.000000Z-m0"), "gone on the next prune"
+        assert store.get("20260901T120001.000000Z-m1") is not None
+
+    def test_manual_with_no_age_bound_is_held_by_the_cap_alone(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260901T120000.000000Z-m1", "2026-09-01T12:00:00Z")
+        standing = store.retention(**{**self.GLOBALS, "manual_days": 0})["20260901T120000.000000Z-m1"]
+        assert standing == (None, "manual:0d", None)   # like `age:0d`: kept indefinitely
+        assert self._prune_keeps(store, self._at("2036-01-01T00:00:00Z"), "20260901T120000.000000Z-m1", manual_days=0)
+
+    def test_beyond_the_cap_and_under_it_with_no_age_bound_are_told_apart_on_the_wire(self, tmp_path):
+        # OB3 (#233): both carried (None, "manual:cap"), so the page printed "held by the manual run cap alone"
+        # for the run the very next prune deletes — the one case where the words and the deletion disagreed
+        store = ArtifactStore(str(tmp_path))
+        for j in range(3):
+            self._mk(store, f"20260901T12000{j}.000000Z-m{j}", f"2026-09-01T12:00:0{j}Z")
+        beyond = store.retention(**{**self.GLOBALS, "manual_max_runs": 2})["20260901T120000.000000Z-m0"]
+        under = store.retention(**{**self.GLOBALS, "manual_days": 0})["20260901T120000.000000Z-m0"]
+        assert (beyond.expires_at, beyond.retained_by) == (None, "manual:cap")
+        assert (under.expires_at, under.retained_by) == (None, "manual:0d")
+        assert (beyond.expires_at, beyond.retained_by) != (under.expires_at, under.retained_by), "the page reads only these two"
+        assert not self._prune_keeps(store, self._at("2026-09-01T12:00:05Z"), "20260901T120000.000000Z-m0", manual_max_runs=2)
+
+    def test_a_scheduled_run_among_the_newest_keep_is_kept_whatever_its_age_and_says_at_least_until(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260101T060000.000000Z-s1", "2026-01-01T06:00:00Z", schedule="weekly")
+        self._mk(store, "20260108T060000.000000Z-s2", "2026-01-08T06:00:00Z", schedule="weekly")
+        plan = store.retention(**self.GLOBALS)
+        assert plan["20260108T060000.000000Z-s2"] == ("2026-04-08T06:00:01Z", f"newest:1/2 of weekly on {CLUSTER}", None)
+        assert plan["20260101T060000.000000Z-s1"] == ("2026-04-01T06:00:01Z", f"newest:2/2 of weekly on {CLUSTER}", None)
+        # long past both age bounds, both survive: the rank protects them
+        assert self._prune_keeps(store, self._at("2027-01-01T00:00:00Z"), "20260101T060000.000000Z-s1")
+        assert store.get("20260108T060000.000000Z-s2") is not None
+
+    def test_a_scheduled_run_beyond_the_newest_keep_is_aged_and_the_words_say_so(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        for j, day in enumerate(("01", "08", "15")):
+            self._mk(store, f"202601{day}T060000.000000Z-s{j}", f"2026-01-{day}T06:00:00Z", schedule="weekly")
+        standing = store.retention(**self.GLOBALS)["20260101T060000.000000Z-s0"]
+        assert standing.retained_by == "age:90d" and standing.expires_at == "2026-04-01T06:00:01Z"
+        assert self._prune_keeps(store, self._at(standing.expires_at) - timedelta(seconds=1), "20260101T060000.000000Z-s0")
+        assert not self._prune_keeps(store, self._at(standing.expires_at), "20260101T060000.000000Z-s0")
+        assert store.get("20260108T060000.000000Z-s1") is not None, "the second newest stays"
+
+    def test_a_scheduled_run_beyond_keep_with_no_age_bound_is_kept_indefinitely(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        for j, day in enumerate(("01", "08", "15")):
+            self._mk(store, f"202601{day}T060000.000000Z-s{j}", f"2026-01-{day}T06:00:00Z", schedule="weekly")
+        plan = store.retention(**{**self.GLOBALS, "scheduled_days": 0})
+        assert plan["20260101T060000.000000Z-s0"] == (None, "age:0d", None)
+        assert plan["20260115T060000.000000Z-s2"] == (None, f"newest:1/2 of weekly on {CLUSTER}", None)
+        assert self._prune_keeps(store, self._at("2036-01-01T00:00:00Z"), "20260101T060000.000000Z-s0", scheduled_days=0)
+
+    def test_a_per_schedule_override_names_its_own_keep_and_days(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260101T060000.000000Z-q1", "2026-01-01T06:00:00Z", schedule="quarterly")
+        self._mk(store, "20260101T060000.000000Z-w1", "2026-01-01T06:00:00Z", schedule="weekly")
+        plan = store.retention(**self.GLOBALS, overrides={"quarterly": (12, 2555)})
+        assert plan["20260101T060000.000000Z-q1"] == ("2032-12-30T06:00:01Z", f"newest:1/12 of quarterly on {CLUSTER}", None)   # 2 555 days span two leap days
+        assert plan["20260101T060000.000000Z-w1"] == ("2026-04-01T06:00:01Z", f"newest:1/2 of weekly on {CLUSTER}", None)
+
+    def test_a_failed_run_ranks_like_a_done_one_and_a_queued_run_has_no_standing(self, tmp_path):
+        store = ArtifactStore(str(tmp_path))
+        self._mk(store, "20260108T060000.000000Z-f1", "2026-01-08T06:00:00Z", schedule="weekly", status="failed")
+        store.create(Run(id="20260109T060000.000000Z-q1", report="groups", cluster=CLUSTER, params={}, formats=["html"],
+                         generated_by="root", generated_by_note="n", schedule=None, requested_at="2026-01-09T06:00:00Z", status="queued"))
+        plan = store.retention(**self.GLOBALS)
+        assert plan["20260108T060000.000000Z-f1"].retained_by == f"newest:1/2 of weekly on {CLUSTER}"
+        assert "20260109T060000.000000Z-q1" not in plan
+
+    def test_the_api_carries_the_standing_on_the_list_and_on_one_run(self, service):
+        client, app, clock = service
+        r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "formats": ["html"]}, headers=_viewer())
+        run = _wait_done(client, r.json()["id"], _viewer())
+        assert run["retained_by"] == "manual:3d" and run["expires_at"] == datetime.strptime(run["finished_at"], "%Y-%m-%dT%H:%M:%SZ") \
+            .replace(tzinfo=UTC).__add__(timedelta(days=3, seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        listed = client.get(f"{REPORT_PREFIX}/api/runs", headers=_viewer()).json()["runs"][0]
+        assert (listed["expires_at"], listed["retained_by"]) == (run["expires_at"], run["retained_by"])
+        assert "expires_at" in listed and "retained_by" in listed

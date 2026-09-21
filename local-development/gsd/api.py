@@ -33,7 +33,8 @@ from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
 )
-from .kube import TIER_ALL, TIER_SELF, TierResolver
+from .kube import TIER_ALL, TIER_SELF, ClusterClient, TierResolver
+from .kyverno import CONTROLLED_KINDS
 from .leader import LeaderElector, own_namespace
 from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
@@ -316,6 +317,8 @@ def build_app(
     run_poller: bool = True,
     tier_resolver: Callable[[str], str] | None = None,
     usage_tier_resolver: Callable[[str], str] | None = None,
+    clusterconfig_view_resolver: Callable[[str], str] | None = None,
+    clusterconfig_manage_resolver: Callable[[str], str] | None = None,
 ) -> FastAPI:
     """`tier_resolver` answers "which tier is this viewer?" — "all" or "self".
 
@@ -417,6 +420,56 @@ def build_app(
             # failure must not be read as the wide tier breaking, or vice versa.
             observe=functools.partial(signals.note_tier_check, "usage"),
         )
+    # THE CLUSTER-CONFIGURATION TIER, two levels, each its own instance (#230; the operator's
+    # ruling of 2026-09-20 — Argo CD's `clusters` resource with its get / create-update-delete
+    # actions, asked natively as SubjectAccessReviews about the Secrets this surface exposes).
+    # Two resolvers and not one, with separate caches and separate threshold labels, for the
+    # reason SPEC_usage_admin_tier states about the wide tier: one verdict must never answer
+    # another question, and `manage` must not imply `view` by construction.
+    #
+    # An empty namespace setting means THE POD'S OWN — where the cluster Secrets live — because
+    # these questions are namespaced by nature; the wide tier's empty means cluster-scoped.
+    #
+    # INDEPENDENT OF THE WIDE-VIEW SWITCH, deliberately (review of #235, Grok C2). Building these
+    # only when `visibility.enabled` is on — and widening when it is off, as the wide views do —
+    # would mean that turning cluster-DATA restrictions off hands every proxy-admitted reader, the
+    # auditor included, the fleet's wiring. The operator's ruling is not conditional. Usage already
+    # made this call (usage_scope stays self when restrictions are off); this surface goes one step
+    # further and still ASKS, so a cluster-admin keeps the tab either way.
+    #
+    # THE CONSEQUENCE, stated where it bites: with restrictions off a site may not have granted the
+    # auth-delegator role, so the SubjectAccessReview fails and the surface refuses everyone until
+    # that grant exists. That is the fail-closed direction for a view naming cluster credentials,
+    # and the chart's README says so beside the two values.
+    # The namespace the two questions are asked IN. Unknown (no ServiceAccount mount, no
+    # GSD_NAMESPACE) must not silently become a CLUSTER-SCOPED `get secrets` — a different and far
+    # broader question than the one the operator configured (review of #235, Codex C4). None here
+    # means "cannot ask", and the gate refuses rather than asking the wrong thing.
+    cc_namespace = own_namespace() or None
+    clusterconfig_view_tier: TierResolver | None = None
+    clusterconfig_manage_tier: TierResolver | None = None
+    if clusterconfig_view_resolver is None and local_cluster is not None:
+        clusterconfig_view_tier = TierResolver(
+            local_cluster,
+            verb=settings.visibility_clusterconfig_view_sar_verb,
+            resource=settings.visibility_clusterconfig_view_sar_resource,
+            api_group=settings.visibility_clusterconfig_view_sar_api_group,
+            namespace=settings.visibility_clusterconfig_view_sar_namespace or cc_namespace or "",
+            subresource=settings.visibility_clusterconfig_view_sar_subresource,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+            observe=functools.partial(signals.note_tier_check, "clusterconfig_view"),
+        )
+    if clusterconfig_manage_resolver is None and local_cluster is not None:
+        clusterconfig_manage_tier = TierResolver(
+            local_cluster,
+            verb=settings.visibility_clusterconfig_manage_sar_verb,
+            resource=settings.visibility_clusterconfig_manage_sar_resource,
+            api_group=settings.visibility_clusterconfig_manage_sar_api_group,
+            namespace=settings.visibility_clusterconfig_manage_sar_namespace or cc_namespace or "",
+            subresource=settings.visibility_clusterconfig_manage_sar_subresource,
+            ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+            observe=functools.partial(signals.note_tier_check, "clusterconfig_manage"),
+        )
     # ── Per-cluster authorization (docs/ACCESS_CONTROL.md §11) ──────────────────────────
     # One resolver PER remote cluster whose policy is remote-sar, constructed on THAT cluster's
     # ClusterConfig — so the review is created on the remote API with the remote token, and
@@ -443,7 +496,7 @@ def build_app(
                 ttl_seconds=float(settings.visibility_tier_ttl_seconds),
                 observe=functools.partial(signals.note_tier_check, "admin"),
             )
-    for c in settings.clusters:
+    for c in settings.effective_clusters():
         policy, identity = settings.cluster_policy(c.name)
         if c is local_cluster or policy == VISIBILITY_INHERIT:
             continue
@@ -452,7 +505,7 @@ def build_app(
         log.info("%s: per-cluster visibility policy %s, identity %s", c.name, policy, identity)
     if not settings.view_restrictions_enabled and any(
         settings.cluster_policy(c.name)[0] in (VISIBILITY_SELF_ONLY, VISIBILITY_REMOTE_SAR)
-        for c in settings.clusters
+        for c in settings.effective_clusters()
     ):
         log.warning(
             "clusters[].visibility policies are set but view restrictions are OFF, so every "
@@ -663,6 +716,87 @@ def build_app(
             )
         return viewer
 
+    def _clusterconfig_tier(request: Request, level: str) -> str:
+        """One level of the cluster-configuration tier, resolved and counted. Returns TIER_ALL or
+        TIER_SELF; never raises. FAIL CLOSED, which here means TIER_SELF — Argo's
+        `policy.default: deny` in our vocabulary: no identity, no resolver, or an API-server blip
+        all refuse. A blip must not widen a surface that names cluster credentials.
+
+        NO `restrict` SHORT-CIRCUIT (review of #235, Grok C2): the wide views widen when
+        `visibility.enabled` is off, and copying that here would re-admit the very persona this
+        tier exists to exclude. Without the proxy there is no trustworthy identity either, and
+        `trusted_viewer` returns None — which refuses, for the same reason.
+
+        AND NO COMPOSITION WITH ANOTHER TIER (the operator's ruling of 2026-09-20, which reversed an
+        earlier ordering): each level asks ITS OWN question and nothing else. RBAC is additive, so
+        holding the auditor role AND a namespace-admin grant is not a contradiction to resolve; the
+        SAR asks the action's own question, so whoever passes it can already read or create that
+        Secret with `oc` — refusing them here protects nothing, and because the question IS the
+        action, the ServiceAccount that performs the write is not a confused deputy. The auditor is
+        excluded by the plain question, measured: the pure auditor persona answers `no` to both."""
+        injected = (clusterconfig_view_resolver if level == "view" else clusterconfig_manage_resolver)
+        built = (clusterconfig_view_tier if level == "view" else clusterconfig_manage_tier)
+        state = getattr(app.state, f"clusterconfig_{level}_resolver", None)
+        label = f"clusterconfig_{level}"
+        viewer = trusted_viewer(request)
+        resolver = state if state is not None else (built if built is not None else injected)
+        # A question with no namespace is not this tier's question (Codex C4): refuse rather than
+        # widen it to the cluster. A substituted resolver (the test seam) carries its own scope.
+        if state is None and not (settings.visibility_clusterconfig_view_sar_namespace
+                                  or settings.visibility_clusterconfig_manage_sar_namespace
+                                  or cc_namespace):
+            log.warning("cluster-configuration tier: this pod's namespace is unknown and no "
+                        "visibility.clusterConfig*Sar.namespace is set, so the check cannot be "
+                        "asked in a namespace; refusing %s", level)
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        if not viewer or resolver is None:
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        try:
+            tier = resolver.resolve(viewer) if hasattr(resolver, "resolve") else resolver(viewer)
+        except Exception:  # noqa: BLE001
+            log.exception("cluster-configuration %s tier resolution failed for %r; refusing", level, viewer)
+            signals.note_decision(label, TIER_SELF)
+            return TIER_SELF
+        scope = TIER_ALL if tier == TIER_ALL else TIER_SELF
+        signals.note_decision(label, scope)
+        return scope
+
+    def require_clusterconfig_view(request: Request) -> str:
+        """`clusterconfig:view` — Argo's `clusters, get`, asked as `get secrets` in this pod's
+        namespace (Settings carries the measurement). Gates the read route, and in #230 S2 the
+        tab's very existence: a reader who fails it is not shown that the surface is there.
+
+        NOT the wide tier, deliberately. `require_admin_tier` admits cluster-reader — the auditor
+        persona — by design (see usage_scope), and this surface says which clusters this instance
+        reads, from which Secret, under which credential kind and trust mode. The operator's
+        ruling of 2026-09-20: the auditor may neither view nor change it."""
+        if _clusterconfig_tier(request, "view") != TIER_ALL:
+            signals.note_admin_refusal()
+            raise HTTPException(
+                status_code=403,
+                detail="For cluster-configuration administrators only. This view reports how this "
+                       "instance is wired to its clusters — which Secret configures each one, the "
+                       "kind of credential it holds and how its certificate is trusted.",
+            )
+        return TIER_ALL
+
+    def require_clusterconfig_manage(request: Request) -> str:
+        """`clusterconfig:manage` — Argo's `clusters, create/update/delete`, asked as `create
+        secrets` in this pod's namespace. Gates the write routes (#230 S2).
+
+        ASKED SEPARATELY, never inferred from view: a site may grant the two apart, so a reader
+        who may see the wiring is not thereby allowed to change it."""
+        if _clusterconfig_tier(request, "manage") != TIER_ALL:
+            signals.note_admin_refusal()
+            raise HTTPException(
+                status_code=403,
+                detail="Changing cluster configuration is reserved to cluster-configuration "
+                       "administrators. This view remains readable.",
+            )
+        return TIER_ALL
+
     def require_admin_tier(request: Request, cluster_id: str | None = None) -> str:
         """The administrator tier, or a refusal that names itself as one.
 
@@ -744,8 +878,9 @@ def build_app(
         else:
             # Still register configured clusters so the overview lists them as
             # never-polled rather than omitting them entirely.
-            for cluster in settings.clusters:
-                store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled)
+            for cluster in settings.effective_clusters():
+                store.upsert_cluster(cluster.name, cluster.api_url, cluster.enabled,
+                                     source=cluster.source, credential=cluster.credential_kind)
         activity.start()
         yield
         # Before the store closes: stop() does a final flush, and the buffer is only in
@@ -917,6 +1052,230 @@ def build_app(
             "builtin_bindings": counts.get("built_in", 0),
         }
 
+    @app.get("/api/clusterconfigs")
+    @consistent
+    def list_cluster_configs(request: Request) -> dict:
+        """Every cluster this instance knows with WHERE it came from (SPEC_S1 C5): the values list, a
+        labelled Secret (`secret:<name>`), the host; the credential's KIND and never its value; the
+        Secret's other labels; the D2 options; the poll outcome the cluster table holds; and the
+        current discovery cycle's findings. `clusterconfig:view`, not the wide tier: the sources and the
+        findings describe how the fleet is wired, which is not a self reader's — nor the auditor's —
+        business. The Cluster Configurations tab (#230 S2) is built on this payload; the writes are S2's too.
+
+        `clusterconfig:view`, NOT the wide tier: the wide one admits the auditor persona by design
+        and the operator's ruling of 2026-09-20 forbids it here. See require_clusterconfig_view."""
+        require_clusterconfig_view(request)
+        viewer = trusted_viewer(request)
+        # What THIS reader may do, decided here rather than guessed by the page: `secrets.writes` is
+        # the deployment's switch, `can.manage` is the person's level, and the page needs both to tell
+        # "this deployment does not write Secrets" from "you may not change them" (#230 S2).
+        may_manage = _clusterconfig_tier(request, "manage") == TIER_ALL
+        from .clusterconfig import LABEL_SELECTOR
+        registry = settings.cluster_registry
+        host = settings.host_cluster()
+        polled = {row["id"]: row for row in store.clusters()}
+        clusters = []
+        for c in settings.effective_clusters():
+            row = polled.get(c.name) or {}
+            visibility, identity = settings.cluster_policy(c.name)
+            clusters.append({
+                "id": c.name, "source": c.source, "host": host is not None and c.name == host.name,
+                "api_url": c.api_url, "enabled": c.enabled, "credential": c.credential_kind,
+                "labels": dict(c.labels), "visibility": visibility, "identity": identity, "tls": c.tls_mode,
+                "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
+                "retired": False,
+            })
+        # A cluster the store still holds but no source names any more — a Secret that vanished, a values
+        # entry removed — is retired (enabled=0, history kept, #96). The tab shows it as such rather than
+        # letting it disappear: its rows are still there, and the reader should know why.
+        named = {c["id"] for c in clusters}
+        for row in polled.values():
+            if row["id"] in named:
+                continue
+            clusters.append({
+                "id": row["id"], "source": row["source"], "host": False, "api_url": row["api_url"],
+                "enabled": False, "credential": row["credential"], "labels": {},
+                "visibility": None, "identity": None, "tls": None,
+                "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
+                "retired": True,
+            })
+        return {
+            "viewer": viewer, "scope": "all",
+            # What THIS reader may do, decided here rather than guessed by the page: `writes` stays the
+            # deployment's switch, `can.manage` is the person's level, and the page needs both to tell
+            # "this deployment does not write Secrets" from "you may not change them" (#230).
+            "can": {"view": True, "manage": may_manage},
+            "secrets": {"enabled": settings.cluster_secrets_enabled, "writes": bool(settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled),
+                        "namespace": registry.namespace,
+                        "label": LABEL_SELECTOR, "last_discovery": registry.last_discovery, "error": registry.error},
+            "clusters": clusters,
+            "findings": [f.public() for f in registry.findings()],
+        }
+
+    # ── SPEC_S2: the Cluster Configurations tab's writes ─────────────────────────────────────────────
+    # Four routes, each: a proxy-verified identity and `clusterconfig:manage` first, the writes switch second, then the writer module,
+    # which validates through the same parser discovery runs and touches only labelled Secrets in the
+    # pod's own namespace. A successful write wakes the discovery thread so the tab sees the result
+    # within seconds. The credential reaches no response and no log line (tests pin it).
+
+    def _writes_gate(request: Request) -> tuple[str, str, ClusterClient]:
+        """Who may write a cluster Secret, and as whom it is audited.
+
+        AN IDENTITY FIRST, WHATEVER THE READ POSTURE (OB2 design review, #230 C7). `visibilityEnabled=false`
+        is a documented operator choice about READING: every tier answers `all` and, with the proxy off,
+        there is no identity at all. A write into the credential store as the pod's ServiceAccount, audited
+        as "anonymous", is not covered by that choice — so the writes need a proxy-verified viewer and the
+        tier machinery on, or they are refused with the manage tier's own sentence. Then
+        `clusterconfig:manage`, never the wide tier (the auditor persona passes that by design)."""
+        viewer = trusted_viewer(request)
+        if not viewer or not restrict:
+            signals.note_admin_refusal()
+            raise HTTPException(
+                status_code=403,
+                detail="Changing cluster configuration is reserved to cluster-configuration "
+                       "administrators, and needs an authenticated identity to audit the change to.",
+            )
+        require_clusterconfig_manage(request)
+        if not settings.cluster_secrets_enabled:
+            raise HTTPException(status_code=409, detail="cluster Secret discovery is switched off for this deployment")
+        namespace = own_namespace()
+        host = settings.host_cluster()
+        if not namespace or host is None:
+            raise HTTPException(status_code=409, detail="no namespace or no host cluster: the pod's ServiceAccount mount names neither")
+        return viewer, namespace, ClusterClient(host, timeout=settings.request_timeout_seconds)
+
+    def _write_error(exc: Exception) -> HTTPException:
+        from .clusterconfig.writer import WriteFailed, WriteRefused
+        if isinstance(exc, WriteRefused):
+            return HTTPException(status_code=409 if exc.conflict else 422, detail=f"{exc.code}: {exc.detail}")
+        if isinstance(exc, WriteFailed):
+            return HTTPException(status_code=502, detail=f"{exc.outcome}: {exc.message}")
+        raise exc
+
+    # A request may carry ONLY these keys. An unknown one is refused by name rather than dropped:
+    # `{"tls": {"mode": "caData", "caData": …, "insecure": true}}` used to answer 201 and write
+    # `insecure: false`, so a caller who asked for two contradictory things was told they got both —
+    # and the operator's rule for this surface is that caData beside insecure is REFUSED, naming both
+    # fields, never normalised (#230; review of #237, Codex C4). Same for a raw `config` blob: the
+    # shape is the contract, and silently ignoring what does not fit it is how a caller ends up with
+    # a cluster configured differently from what they wrote.
+    _BODY_KEYS = {"name", "server", "credential", "tls", "visibility", "identity", "labels"}
+    # username/password ARE part of the shape — an oauth credential carries them — so they are
+    # accepted here and refused by KIND in the writer, with the reason the operator specified
+    # ("the password-for-token exchange is #119 P2, not built yet"). Refusing them as unknown
+    # fields would replace that sentence with a shape complaint.
+    _CRED_KEYS = {"kind", "token", "username", "password"}
+    _TLS_KEYS = {"mode", "caData"}
+
+    def _reject_unknown(where: str, got: dict, allowed: set[str]) -> None:
+        extra = sorted(set(got) - allowed)
+        if extra:
+            raise HTTPException(status_code=422,
+                                detail=f"{where}: unsupported field(s) {', '.join(extra)}; allowed: {', '.join(sorted(allowed))}")
+
+    def _create_request(body: dict):
+        from .clusterconfig.writer import CreateRequest
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="body: must be an object")
+        cred = body.get("credential") or {}
+        tls = body.get("tls") or {}
+        labels = body.get("labels") or {}
+        if not isinstance(labels, dict):
+            raise HTTPException(status_code=422, detail="labels: must be an object of string to string")
+        if not isinstance(cred, dict) or not isinstance(tls, dict):
+            raise HTTPException(status_code=422, detail="credential and tls: must be objects")
+        _reject_unknown("body", body, _BODY_KEYS)
+        _reject_unknown("credential", cred, _CRED_KEYS)
+        _reject_unknown("tls", tls, _TLS_KEYS)
+        return CreateRequest(
+            name=str(body.get("name") or "").strip(), server=str(body.get("server") or "").strip(),
+            credential_kind=str(cred.get("kind") or "bearerToken"), token=cred.get("token"),
+            tls_mode=str(tls.get("mode") or "trustedBundle"), ca_data=tls.get("caData"),
+            visibility=str(body.get("visibility") or "self-only"), identity=str(body.get("identity") or "none"),
+            labels={str(k): str(v) for k, v in labels.items()},
+        )
+
+    def _taken() -> dict[str, str]:
+        return {c.name: c.source for c in settings.effective_clusters()}
+
+    def _secret_cluster(name: str) -> tuple[str, str]:
+        """(cluster id, Secret name) for a Secret-sourced cluster, or the refusal the contract names."""
+        from .clusterconfig.writer import WriteRefused
+        cluster = settings.cluster(name)
+        if cluster is None:
+            raise HTTPException(status_code=404, detail=f"unknown cluster {name!r}")
+        if not cluster.source.startswith("secret:"):
+            raise _write_error(WriteRefused("not-a-secret-cluster",
+                                            f"{name} is declared by {cluster.source}; only a Secret-sourced cluster is written here",
+                                            conflict=True))
+        return cluster.name, cluster.source.split(":", 1)[1]
+
+    def _request_discovery() -> str:
+        p = getattr(app.state, "poller", None)
+        if p is None:
+            return "on the next cadence"
+        p.request_discovery()
+        return "requested"
+
+    # The write routes exist only when the deployment turns them on (SPEC_S2 C6): the dashboard is a reader
+    # by design — test_r6_the_api_is_read_only holds the default schema to GET/HEAD/OPTIONS, and the chart
+    # renders the matching verbs behind the same switch. Off, the routes are not registered: a POST is a plain 405, never a route that refuses.
+    writes_on = settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled
+    if writes_on:
+        @app.post("/api/clusterconfigs", status_code=201)
+        def create_cluster_config(request: Request, body: dict) -> dict:
+            """SPEC_S2 C2: write a labelled Secret for a new cluster."""
+            from .clusterconfig import writer
+            viewer, namespace, host_client = _writes_gate(request)
+            req = _create_request(body)
+            try:
+                secret = writer.create(host_client, namespace, req, host_name=settings.host_cluster().name,
+                                       taken=_taken(), viewer=viewer)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+            return {"secret": secret, "cluster": req.name, "discovery": _request_discovery()}
+
+        @app.put("/api/clusterconfigs/{name}/credential")
+        def rotate_cluster_credential(request: Request, name: str, body: dict) -> dict:
+            """SPEC_S2 C3: replace the bearer token in place; Secret-sourced clusters only."""
+            from .clusterconfig import writer
+            viewer, namespace, host_client = _writes_gate(request)
+            # ONE key. Refused by name like the create body's (the rule above): a `metadata` or a
+            # `stringData` here was dropped silently, and the caller told they got it (round 2, OB2 C5).
+            _reject_unknown("body", body, {"token"})
+            cluster_id, secret = _secret_cluster(name)
+            try:
+                writer.rotate(host_client, namespace, secret, str(body.get("token") or ""), viewer=viewer, cluster=cluster_id)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+            return {"secret": secret, "cluster": cluster_id, "discovery": _request_discovery()}
+
+        @app.delete("/api/clusterconfigs/{name}")
+        def delete_cluster_config(request: Request, name: str) -> dict:
+            """SPEC_S2 C4: delete the Secret; the next discovery retires the cluster, its rows kept."""
+            from .clusterconfig import writer
+            viewer, namespace, host_client = _writes_gate(request)
+            cluster_id, secret = _secret_cluster(name)
+            try:
+                writer.delete(host_client, namespace, secret, viewer=viewer, cluster=cluster_id)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+            _request_discovery()
+            return {"secret": secret, "cluster": cluster_id, "retired": "on the next discovery"}
+
+        @app.post("/api/clusterconfigs/test")
+        def test_cluster_config(request: Request, body: dict) -> dict:
+            """SPEC_S2 C5: the connection test — the same parser, then /version and users/~; nothing stored."""
+            from .clusterconfig import writer
+            viewer, namespace, _ = _writes_gate(request)
+            body = {**body, "name": body.get("name") or "probe", "labels": {}}
+            req = _create_request(body)
+            try:
+                return writer.test_connection(req, namespace, host_name=settings.host_cluster().name,
+                                              timeout=settings.request_timeout_seconds, viewer=viewer)
+            except (writer.WriteRefused, writer.WriteFailed) as exc:
+                raise _write_error(exc) from exc
+
     @app.get("/api/clusters")
     @consistent
     def list_clusters(request: Request) -> list[dict]:
@@ -943,11 +1302,19 @@ def build_app(
             # A retired cluster (removed from config, marked enabled=0 at poll start) or one disabled
             # in config is not served: its history is kept but it leaves the selector, so it never
             # shows as `ok` with frozen data or stale alerts (#96).
-            if not row["enabled"]:
+            #
+            # THE PREDICATE, not two of its three limbs (review of #235, OB3 C6). A Secret-sourced
+            # cluster can now leave the CONFIGURATION while its row still says enabled=1 — the
+            # discovery replaces the registry first and retires the row second, and on a non-leader
+            # replica the row is not rewritten until the leader's own cycle. In that window
+            # `settings.cluster(id)` is None, and `cluster_policy`'s defensive default for an
+            # unknown id is the WIDEST one, so a cluster its Secret made `self-only` was served to a
+            # wide-tier reader as `inherit`/`all`. `is_served` owns the whole rule and its docstring
+            # predicted this: "the rule has four copies in this file and the fifth site forgot a
+            # limb". The other three sites already walk rows through it.
+            if not is_served(row["id"]):
                 continue
             policy, _ = settings.cluster_policy(row["id"])
-            if policy == VISIBILITY_HIDDEN:
-                continue
             # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
             # administrator of a self-only remote, and the card must not say otherwise.
             _, scope = viewer_scope(request, row["id"])
@@ -1979,6 +2346,48 @@ def build_app(
             **store.operator_configs(cluster_id),
         }
 
+    @app.get("/api/clusters/{cluster_id}/kyverno")
+    @consistent
+    def kyverno(
+        request: Request,
+        cluster_id: str,
+        problems: bool = Query(default=True, description="Only fail/warn/error results (the page's default); false lists every result."),
+        controlled: bool = Query(default=False, description="Include results on Pods, ReplicaSets and Jobs — usually a "
+                                                            "controller's copies of one finding; off by default, said on the page."),
+        # 63 + "/" + 253: a namespaced policy's wire string is `namespace/name`, both parts DNS names at their maxima (OB3)
+        policy: str | None = Query(default=None, max_length=317, description="Only one policy's results (its wire string: "
+                                                                            "namespace/name for a namespaced policy)."),
+        kind: str | None = Query(default=None, pattern=r"^[A-Za-z]{1,40}$", description="With `policy`, the policy's kind — "
+                                                                                       "a ValidatingPolicy and a MutatingPolicy may share a name."),
+        limit: int = Query(default=500, ge=1, le=5000, description="Maximum result rows; `total` says how many match."),
+    ) -> dict:
+        """The Kyverno policy module (#165, #170): the CEL policies, their reports' results, the history.
+
+        Three states the page must render distinctly: `present: null` (never polled since the
+        module arrived), `present: false` (no policy-report API group is served — not installed),
+        and `present: true` with `legacy_results` saying how many results the deprecated family
+        wrote that this module does not read, and `breaker_drops` saying whether the reports
+        controller dropped reports (null: no drop observed, or no scrape configured).
+
+        ADMINISTRATOR TIER ONLY, like the operator configs: a policy finding names a resource and
+        says what is wrong with it, cluster-wide, and answers nothing a reader can ask about
+        themselves.
+        """
+        require_cluster(cluster_id)
+        require_admin_tier(request, cluster_id)
+        summary = store.kyverno_summary(cluster_id)
+        # `breaker_configured` lets the page tell "kyverno.metricsUrl is not set" from "set, and the last scrape
+        # failed": both leave the breaker fields null, and only one of them is a configuration gap (OB3).
+        out = {"cluster": cluster_id, "scope": "all", "viewer": trusted_viewer(request),
+               "enabled": settings.kyverno_enabled, "breaker_configured": bool(settings.kyverno_metrics_url), **summary}
+        if summary.get("present"):
+            rows, total = store.kyverno_results(cluster_id, problems_only=problems, include_controlled=controlled,
+                                                policy=policy, kind=kind, limit=limit)
+            out.update({"policies_list": store.kyverno_policies(cluster_id), "rows": rows, "total": total,
+                        "truncated": len(rows) < total, "events": store.kyverno_events(cluster_id),
+                        "controlled_kinds": list(CONTROLLED_KINDS)})
+        return out
+
     @app.get("/api/clusters/{cluster_id}/membership-changes")
     @consistent
     def membership_changes(
@@ -2364,7 +2773,7 @@ def build_app(
             clusters: dict[str, dict] = {}
             host = settings.host_cluster()
             scope = None
-            for c in settings.clusters:
+            for c in settings.effective_clusters():
                 # A disabled cluster is not served (#96): it must not appear in visibility.clusters
                 # either, or whoami would name a cluster the selector and every tab omit.
                 if not c.enabled:
@@ -2382,6 +2791,19 @@ def build_app(
                 "scope": scope,
                 "enabled": settings.view_restrictions_enabled,
                 "clusters": clusters,
+            }
+            # The Cluster Configurations tier, decided here so the TAB ITSELF can be withheld
+            # (#230): a reader who fails `view` gets no tab button, no dispatch and no fetch —
+            # an auditor must not learn the surface exists by being refused by it. Both levels
+            # ride the same cached resolvers the routes ask, so the strip and the routes cannot
+            # disagree. Absent for an unauthenticated reader, who has no tab either.
+            # EACH LEVEL FROM ITS OWN QUESTION, never derived from the other (the ruling: a level is
+            # its own SAR and composes nothing). `manage` used to read `false` whenever `view` did, so
+            # the strip and the write routes disagreed for a reader granted `create secrets` without
+            # `get` (round 2, OB2 C4). The page still renders no write control without the page.
+            out["clusterconfig"] = {
+                "view": _clusterconfig_tier(request, "view") == TIER_ALL,
+                "manage": _clusterconfig_tier(request, "manage") == TIER_ALL,
             }
         return out
 
@@ -2567,7 +2989,7 @@ def build_app(
             store.clusters()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=503, detail=f"store unavailable: {exc}") from exc
-        return {"status": "ready", "clusters": len(settings.clusters)}
+        return {"status": "ready", "clusters": len(settings.effective_clusters())}
 
     # Served from the image, not from a CDN. Falls back to the CDN only when the vendored
     # bundle is absent — a source checkout that has never been through a container build —
@@ -2732,6 +3154,7 @@ def build_app(
     app.state.store = store
     app.state.signals = signals
     app.state.settings = settings
+    app.state.poller = poller if run_poller else None   # SPEC_S2: a write wakes discovery; None without a poller
     # The visibility seam, published for the handlers and for tests to substitute: a fake
     # resolver here (any object with resolve(viewer) -> "all" | "self") is how a test
     # forces the all tier, the self tier, or an indeterminate answer without a cluster.
@@ -2742,6 +3165,10 @@ def build_app(
     # instance: usage_scope reads only this one, so a test (and the live app) can hold a
     # cluster-reader at scope=all on the wide tier and scope=self on Usage in the same request.
     app.state.usage_tier_resolver = usage_resolver
+    # The two cluster-configuration levels, on their own seams so a test can substitute either
+    # without touching the other or the wide tier (#230).
+    app.state.clusterconfig_view_resolver = clusterconfig_view_tier or clusterconfig_view_resolver
+    app.state.clusterconfig_manage_resolver = clusterconfig_manage_tier or clusterconfig_manage_resolver
     # One resolver per remote-sar cluster, keyed by cluster id — the per-cluster seam. A test
     # installs `{"prod-east": stub}` here to decide a remote without a cluster; a remote with
     # no entry is never wide.
@@ -2779,6 +3206,8 @@ def create_app() -> FastAPI:
         # the point: the reader asked for a level they did not get.
         log.warning("%s", complaint)
     _quiet_transport_framing()
+    for grumble in _apply_http_log_level() + _apply_per_logger_levels():
+        log.warning("%s", grumble)
     return build_app(load_settings(os.environ.get("GSD_CONFIG", "clusters.yaml")))
 
 
@@ -2787,6 +3216,12 @@ def create_app() -> FastAPI:
 #: what you will see and two ways to write one level is not one promise. The chart refuses the same
 #: set at render time; this is the second boundary, for a container configured directly.
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+#: The longest logger name `GSD_LOG_LEVELS` will look up. `logging.getLogger(name)` CREATES the
+#: logger and a placeholder for every dotted prefix of it, each keyed by a copy of that prefix — a
+#: 100 000-character value of `a.a.a…` made 50 016 loggers and 2.2 GB of RSS inside `create_app`
+#: (review of #247, second pass, OB2 C5). The longest name this app owns is under 40 characters.
+MAX_LOGGER_NAME = 200
 
 
 def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
@@ -2848,10 +3283,20 @@ def _quiet_transport_framing() -> None:
     — and the ten lines an operator turned it on for were buried in it. A level that floods is a
     level nobody turns on twice.
 
-    HTTPX IS DELIBERATELY LEFT ALONE. Its `HTTP Request: GET <url> "200 OK"` lines are SEMANTIC —
-    which API call, against which cluster, with what status — and they are the record of what the
-    poller actually asked for. They sit at INFO by httpx's own choice, the chart README documents
-    them as intentionally present at the default, and they cost 12 lines a cycle rather than 356.
+    HTTPX WAS DELIBERATELY LEFT ALONE HERE, AND NOW HAS ITS OWN VARIABLE (#245). The original
+    reasoning stands on its own terms: `HTTP Request: GET <url> "200 OK"` is SEMANTIC — which API
+    call, against which cluster, with what status — and at ONE cluster it cost 12 lines a cycle
+    against httpcore's 356, so thresholding it would have been over-reach. What changed is the
+    fleet, not the argument. MEASURED ON THE LAB AT FOUR CLUSTERS, 60s refresh: 1 784 lines in 90
+    minutes, 1 082 of them httpx request URLs — 61%, and ~10 000 an hour at the forty clusters the
+    cluster-configuration module exists to serve. The decision was outgrown rather than wrong.
+
+    It is also a PROXY for the facts we actually want. Once `gsd.clusterconfig` logs which cluster,
+    which phase and what outcome (see `clusterconfig/events.py`), a list of URLs is the same story
+    told worse. So httpx moves to `GSD_HTTP_LOG_LEVEL` (default WARNING, `INFO` restores exactly
+    today's behaviour) rather than being pinned here — the capability is a variable away, and the
+    line an operator misses most was never the URL.
+
     `httpcore` is the layer below: the same requests, spelled as socket events.
 
     NOT disabled, THRESHOLDED. A TLS handshake failing against a corporate CA bundle is a real
@@ -2865,3 +3310,148 @@ def _quiet_transport_framing() -> None:
     if os.environ.get("GSD_DEBUG_HTTP", "").strip().lower() in {"1", "true", "yes"}:
         return
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+#: The loggers `GSD_HTTP_LOG_LEVEL` governs: the per-request record, inbound and outbound.
+#: `uvicorn.access` is here because its access lines are the same kind of thing as httpx's — one
+#: line per request, useful when you are asking about requests and noise when you are not. It was
+#: previously unreachable by any setting at all: its logger carries propagate=False and its own
+#: handler, so `GSD_LOG_LEVEL` could neither raise nor lower it, and `/readyz` and `/metrics` wrote
+#: a line apiece forever. Naming it here is the first time an operator can turn it down.
+HTTP_LOGGERS = ("httpx", "uvicorn.access")
+
+
+def _apply_http_log_level() -> list[str]:
+    """`GSD_HTTP_LOG_LEVEL` — the per-request record, separately from this app's own reasoning.
+
+    WHY SEPARATE RATHER THAN FOLDED INTO GSD_LOG_LEVEL. They answer different questions. "What is
+    the dashboard doing about cluster ocp-east?" is `gsd.*`; "what HTTP calls went out?" is httpx.
+    Tying them means an operator who wants the first at DEBUG gets a flood of the second, which is
+    exactly the state #245 measured: 61% of the pod's lines were request URLs, and our own module's
+    lines were the ones being hidden.
+
+    DEFAULT WARNING, not OFF. A request that fails is still worth a line; the routine 200s are not.
+    `GSD_HTTP_LOG_LEVEL=INFO` restores the previous behaviour exactly, for whoever wants the full
+    request record back — which is why the old behaviour is a value rather than a deleted feature.
+
+    Returns complaints rather than logging them, for the same reason `_resolve_log_level` does: this
+    can run before the caller has decided what to do with them.
+    """
+    raw = os.environ.get("GSD_HTTP_LOG_LEVEL")
+    complaints: list[str] = []
+    if raw is None or not raw.strip():
+        level = logging.WARNING
+    else:
+        wanted = raw.strip().upper()
+        if wanted in LOG_LEVELS:
+            level = getattr(logging, wanted)
+        else:
+            level = logging.WARNING
+            # The value is not echoed, for the reason `_resolve_log_level` states at length: an
+            # environment variable is a place credentials get miswired.
+            complaints.append(
+                f"GSD_HTTP_LOG_LEVEL is set to a {len(raw)}-character value that is not a log "
+                f"level this app accepts, so the HTTP request record is at WARNING. Use one of "
+                f"{', '.join(LOG_LEVELS)} (case does not matter); INFO restores the per-request "
+                f"lines. This setting governs {', '.join(HTTP_LOGGERS)} only — this app's own "
+                f"loggers are GSD_LOG_LEVEL."
+            )
+    for name in HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(level)
+    return complaints
+
+
+def _apply_per_logger_levels() -> list[str]:
+    """`GSD_LOG_LEVELS=gsd.clusterconfig=DEBUG,httpx=INFO` — raise one concern, not the fleet.
+
+    THE PROBLEM IT SOLVES. Diagnosing one cluster's connection meant `GSD_LOG_LEVEL=DEBUG`, which
+    turns on every module's reasoning at once across however many clusters are polling. The thing
+    you wanted was one logger. With forty clusters that difference is the difference between a
+    readable log and a flood.
+
+    LAST ONE WINS for a repeated logger, and an unparseable pair is skipped with a complaint rather
+    than failing the parse — the same degrade-and-say-so contract as every other log setting here.
+
+    THE NAME IS NOT ECHOED EITHER (review of #247, Grok C4). The first version reported it, arguing
+    that a logger name is structurally public because it names a module. That argument assumes the
+    value IS a logger name — which is exactly the assumption that fails when something else has been
+    miswired into the variable, and "an environment variable is a place credentials get miswired" is
+    the whole reason `_resolve_log_level` refuses to repeat its own. The length and the accepted set
+    are enough to repair the setting; the operator can read their own values file.
+
+    A LEVEL SET HERE OVERRIDES THE ROOT LEVEL, in both directions: `Logger.isEnabledFor` consults the
+    logger's own level, and `callHandlers` walks ancestors' handlers without re-checking ancestors'
+    levels. So `gsd.clusterconfig=DEBUG` emits even at `GSD_LOG_LEVEL=ERROR`, which is the point —
+    and `gsd.poller=ERROR` silences that module even at `GSD_LOG_LEVEL=DEBUG`, which is the trap.
+    The root logger itself is refused here (`root=…` is skipped with a complaint): it is every
+    logger at once, and its level is GSD_LOG_LEVEL's.
+    """
+    raw = os.environ.get("GSD_LOG_LEVELS")
+    if raw is None or not raw.strip():
+        return []
+    # ONE COMPLAINT PER KIND OF MISTAKE, NOT PER ENTRY (second pass, Codex C5): a 100 000-character
+    # `x,x,…` produced 50 000 warning records — 9.7 MB — inside the factory. Counted, the message
+    # stays exact for the one typo and bounded for the flood.
+    malformed = 0
+    root_entries = 0
+    too_long: list[int] = []
+    bad_level: list[int] = []
+    for pair in raw.split(","):
+        if not pair.strip():
+            continue
+        name, sep, value = pair.partition("=")
+        name, value = name.strip(), value.strip().upper()
+        if not sep or not name:
+            malformed += 1
+            continue
+        if len(name) > MAX_LOGGER_NAME:
+            # Refused BEFORE `getLogger` sees it: the lookup is what allocates.
+            too_long.append(len(name))
+            continue
+        if logging.getLogger(name) is logging.getLogger():
+            # `root=CRITICAL` would silence every logger at once — `logging.getLogger("root")` IS
+            # the root logger — with no complaint and no line saying so (review of #247, OB3 C4).
+            # The root's level is GSD_LOG_LEVEL's job, and one setting per level is the contract.
+            root_entries += 1
+            continue
+        if value not in LOG_LEVELS:
+            bad_level.append(len(name))
+            continue
+        logging.getLogger(name).setLevel(getattr(logging, value))
+    complaints: list[str] = []
+    if malformed:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {_count(malformed, 'entry', 'entries')} not of the form name=LEVEL, "
+            f"skipped. The format is a comma-separated list, e.g. gsd.clusterconfig=DEBUG,httpx=INFO."
+        )
+    if too_long:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {_count(len(too_long), 'logger name', 'logger names')} longer than "
+            f"{MAX_LOGGER_NAME} characters (the longest is {max(too_long)}), skipped: no logger this "
+            f"app has is that long, and looking one up allocates a logger per dotted part."
+        )
+    if root_entries:
+        complaints.append(
+            f"GSD_LOG_LEVELS names the root logger ({_count(root_entries, 'entry', 'entries')}), "
+            f"skipped: that would set every logger at once and override GSD_LOG_LEVEL silently. "
+            f"Set GSD_LOG_LEVEL instead."
+        )
+    if len(bad_level) == 1:
+        complaints.append(
+            f"GSD_LOG_LEVELS has a {bad_level[0]}-character logger name set to a value that is "
+            f"not a log level this app accepts, so that logger is unchanged. Neither the name "
+            f"nor the value is repeated here, in case something other than a log setting was "
+            f"wired into it. Use one of {', '.join(LOG_LEVELS)}."
+        )
+    elif bad_level:
+        complaints.append(
+            f"GSD_LOG_LEVELS has {len(bad_level)} logger names set to values that are not log "
+            f"levels this app accepts, so those loggers are unchanged. Neither the names nor the "
+            f"values are repeated here, in case something other than a log setting was wired into "
+            f"it. Use one of {', '.join(LOG_LEVELS)}."
+        )
+    return complaints
+
+
+def _count(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"

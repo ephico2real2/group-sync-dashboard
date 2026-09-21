@@ -13,7 +13,7 @@ SPEC = ReportSpec(
     name="groupsync-health", title="GroupSync and policy-operator health",
     summary="Every GroupSync CR with its computed state, schedule and last sync; reconcile errors (current vs stale); syncs in the window; NamespaceConfig/GroupConfig health.",
     values_key="groupsyncHealth",
-    params=(ParamSpec("window_days", "int", 30, "Sync events in the last N days.", lo=1, hi=3650),),
+    params=(ParamSpec("window_days", "int", 30, "Sync events in the last N days.", lo=1, hi=3650, unit="days"),),
 )
 
 GRACE = timedelta(seconds=120)   # values.yaml config.scheduleGraceSeconds' default; a report tolerance, not the alert's
