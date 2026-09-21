@@ -10,7 +10,9 @@ import ssl
 
 import pytest
 
-from gsd.config import ClusterConfig, ConfigError, load_settings
+import re
+
+from gsd.config import ClusterConfig, ConfigError, PlatformNamespaces, load_settings
 
 BASE = """
 clusters:
@@ -730,3 +732,101 @@ def test_a_non_boolean_controller_is_refused(tmp_path):
     with pytest.raises(ConfigError) as exc:
         load_settings(_clusters_yaml(tmp_path, body))
     assert "must be true or false" in str(exc.value)
+
+
+def _load(tmp_path, body: str):
+    """A settings file with one cluster plus `body`, returning its platform-namespace rule."""
+    path = tmp_path / f"pn-{abs(hash(body)) % 10**8}.yaml"
+    path.write_text("clusters:\n  - name: a\n    apiUrl: https://x\n    tokenEnv: T\n" + body)
+    return load_settings(path).platform_namespaces
+
+
+class TestPlatformNamespacesAreConfigurable:
+    """#255: the judgement of what counts as "platform" was compiled into the image, and it
+    under-classifies a real estate. MEASURED on the reference cluster: the shipped rule calls 67 of
+    106 namespaces platform, and among the 39 it calls workloads are `cert-manager`,
+    `cert-manager-operator`, `group-sync-operator`, `group-sync-dashboard`, `hostpath-provisioner`,
+    `kyverno` and `namespace-configuration-operator` — seven pieces of platform listed as somebody's
+    application.
+
+    THE SEVEN ARE THE TEST. They are also the argument for three axes: `-operator` catches three,
+    `-manager` one, `-provisioner` one, and two match no pattern at all."""
+
+    #: The seven the shipped rule misses, measured on the reference cluster 2026-09-21.
+    MISSED = ("cert-manager", "cert-manager-operator", "group-sync-operator", "group-sync-dashboard",
+              "hostpath-provisioner", "kyverno", "namespace-configuration-operator")
+
+    def test_the_default_is_exactly_the_shipped_rule(self):
+        from gsd.home import is_platform_namespace
+        default = PlatformNamespaces()
+        for name in ("openshift-monitoring", "kube-system", "default", "openshift", "kube-public",
+                     "kube-node-lease", "demo-prod", *self.MISSED):
+            assert default.matches(name) == is_platform_namespace(name), name
+
+    def test_the_three_axes_together_catch_all_seven_and_no_workload(self):
+        estate = PlatformNamespaces(
+            additional_suffixes=("-operator", "-manager", "-provisioner"),
+            additional_names=frozenset({"kyverno", "group-sync-dashboard"}))
+        assert [n for n in self.MISSED if not estate.matches(n)] == []
+        for workload in ("demo-prod", "legacy-payments", "beta-uat", "spar-rnd", "oud-poc-trino"):
+            assert not estate.matches(workload), workload
+
+    def test_no_two_axes_are_enough(self):
+        """The measurement that justifies each axis rather than a preference for three."""
+        suffixes_only = PlatformNamespaces(additional_suffixes=("-operator", "-manager", "-provisioner"))
+        assert sorted(n for n in self.MISSED if not suffixes_only.matches(n)) == \
+            ["group-sync-dashboard", "kyverno"], "suffixes alone leave the two with no pattern"
+        names_only = PlatformNamespaces(additional_names=frozenset({"kyverno", "group-sync-dashboard"}))
+        assert len([n for n in self.MISSED if not names_only.matches(n)]) == 5
+
+    def test_additional_appends_while_the_plain_axis_replaces(self, tmp_path):
+        """An estate adds its own without restating the Red Hat list, which changes between releases."""
+        appended = _load(tmp_path, 'platformNamespaces:\n  additionalPrefixes: ["acme-"]\n')
+        assert appended.matches("openshift-monitoring") and appended.matches("acme-thing")
+        replaced = _load(tmp_path, 'platformNamespaces:\n  prefixes: ["acme-"]\n')
+        assert replaced.matches("acme-thing") and not replaced.matches("openshift-monitoring")
+
+    def test_a_pattern_that_matches_nothing_is_reportable(self):
+        """A suffix catching zero namespaces is a typo or a decommissioned convention, and a stale
+        entry is how an allowlist rots. Only the estate's own axes are reported: telling an operator
+        their SHIPPED defaults matched nothing is noise they cannot act on."""
+        estate = PlatformNamespaces(additional_suffixes=("-operator", "-typo"),
+                                    additional_names=frozenset({"kyverno", "gone"}))
+        stale = estate.unmatched(["cert-manager-operator", "kyverno", "demo-prod"])
+        assert stale == {"additionalSuffixes": ["-typo"], "additionalNames": ["gone"]}, stale
+        assert estate.unmatched(["cert-manager-operator", "kyverno", "-typo", "gone"]) == {}
+
+    @pytest.mark.parametrize("body, wanted", [
+        ('platformNamespaces:\n  additionalSufixes: ["-operator"]\n', "unknown key(s) ['additionalSufixes']"),
+        ('platformNamespaces: "nope"\n', "expected a mapping"),
+        ('platformNamespaces:\n  additionalNames: [3]\n', "every entry must be a string"),
+    ])
+    def test_a_malformed_stanza_is_refused_by_name(self, tmp_path, body, wanted):
+        """A typo must not be a silent no-op that leaves an estate wondering why `-operator` never
+        took effect — the refusal names the key."""
+        with pytest.raises(ConfigError, match=re.escape(wanted)):
+            _load(tmp_path, body)
+
+
+class TestThePatternsAreLiteralAndSaySo:
+    """Review of #259 (Codex C3): the padded/empty check this loader carried was DEAD CODE — it ran
+    after `_string_list_setting` had already stripped and dropped empties, so it could never fire.
+    What is worth refusing is the thing the stripping cannot fix: a pattern someone wrote as a glob."""
+
+    @pytest.mark.parametrize("pattern", ["team-*", "oud-?", "ns[0-9]", "a]b"])
+    def test_a_glob_is_refused_with_the_literal_rule_stated(self, tmp_path, pattern):
+        import json
+        with pytest.raises(ConfigError, match="matching is literal, not a glob"):
+            _load(tmp_path, f"platformNamespaces:\n  additionalNames: {json.dumps([pattern])}\n")
+
+    def test_the_refusal_names_the_axis_that_would_have_worked(self, tmp_path):
+        """`team-*` means a prefix, and the message says which key takes it — a refusal that leaves
+        someone guessing is a refusal they will work around."""
+        with pytest.raises(ConfigError, match=r"additionalPrefixes"):
+            _load(tmp_path, 'platformNamespaces:\n  additionalNames: ["team-*"]\n')
+
+    def test_a_repeated_pattern_is_collapsed_not_refused(self, tmp_path):
+        """Harmless to matching and noise in a diff; a values file should not be rejected over a
+        duplicated line."""
+        assert _load(tmp_path, 'platformNamespaces:\n  additionalSuffixes: ["-op", "-op", "-mgr"]\n'
+                     ).additional_suffixes == ("-op", "-mgr")

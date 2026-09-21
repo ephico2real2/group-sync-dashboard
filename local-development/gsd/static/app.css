@@ -525,7 +525,13 @@ body {
   }
 }
 a { color: inherit; }
-h1, h2, h3 { font-weight: 600; margin: 0; }
+/* WEIGHT AND TRACKING, extended from the one place that already had them (#253). `.home .answer h1`
+   has shipped w700/-0.02em since #158 while every other heading sat at w600 with no tracking at all,
+   and the two most recent agreed mocks (cluster-configurations, report-library) use the Home
+   treatment — so this is the ladder catching up with itself, not a new look. Sizes are unchanged;
+   only weight and optical tracking move, and tracking is negative because these are display sizes
+   set in Space Grotesk, which is drawn loose for UI text. */
+h1, h2, h3 { font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 /* Card headings wear the section accent as a short leading rule. Cheap continuity: the
    Groups tab is teal, so every heading under it is too, and a screenshot is placeable at
    a glance. Decorative only, hence aria-hidden by construction (a ::before pseudo-element
@@ -537,8 +543,8 @@ h1, h2, h3 { font-weight: 600; margin: 0; }
   width: 3px; height: 0.95em; margin-right: var(--space-4); border-radius: var(--radius-xs);
   background: var(--accent);
 }
-h1 { font-size: var(--text-xl); }
-h2 { font-size: var(--text-lg); }
+h1 { font-size: var(--text-xl); letter-spacing: -0.02em; }
+h2 { font-size: var(--text-lg); letter-spacing: -0.015em; }
 h3 { font-size: var(--text-md); color: var(--text-secondary); }
 
 .wrap { max-width: 1180px; margin: 0 auto; padding: var(--space-10) var(--space-10) 64px; /* optical: the page's tail room */ }
@@ -936,7 +942,13 @@ body[data-page="library"]  { --accent: var(--tab-library); }
 .tab {
   position: relative;
   background: none; border: 0; border-radius: var(--radius-md) var(--radius-md) 0 0;
-  padding: 7px var(--space-6) 9px; /* optical: 7 above, 9 below the 3px bar */ font-size: var(--text-md); font-weight: 500;
+  /* 8px sides, not 12: MEASURED 2026-09-21, fourteen tabs wanted 1234px against the 1140px the bar
+     has inside .wrap's 1180 cap, so the row wrapped at EVERY desktop width and left one tab alone
+     on a second line. Four pixels a side gives back 112px and the row fits with 18px spare. The
+     wrap itself stays — it is what keeps every tab inside a 375px viewport (#152/#166) — this only
+     stops it firing where there was room all along. A fifteenth tab will wrap again, and that is
+     the signal the bar needs a different shape rather than another four pixels. */
+  padding: 7px var(--space-4) 9px; /* optical: 7 above, 9 below the 3px bar */ font-size: var(--text-md); font-weight: 500;
   color: var(--text-secondary); cursor: pointer;
   transition: color 160ms ease, background-color 160ms ease;
 }
@@ -983,8 +995,10 @@ body[data-page="library"]  { --accent: var(--tab-library); }
    calls for tracked-out caps is meant for short LABELS, not for prose. Shouting a sentence
    costs exactly the legibility this layer exists to buy, and it grows worse the longer the
    heading. Uppercase is kept for table column headers below, which really are labels. */
-.card > h3 { font-family: var(--font-ui); letter-spacing: -0.005em; }
-.card > h2 { font-family: var(--font-ui); letter-spacing: -0.01em; }
+/* The family is restated here because a card heading may inherit a mono context; the tracking now
+   comes from the ladder above and is no longer duplicated per-scope (#253). */
+.card > h3 { font-family: var(--font-ui); }
+.card > h2 { font-family: var(--font-ui); }
 
 /* Table headers get the same treatment, so a table and a section agree about what a label
    looks like. Already muted and 11px; this adds the tracking that makes uppercase legible. */
@@ -1246,7 +1260,9 @@ mark { background: none; color: inherit; font-weight: 700; }
   border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 9px; /* optical: the badge's own vertical/horizontal */ white-space: nowrap; }
 .pager { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; padding-top: var(--space-5); font-size: var(--text-sm); color: var(--text-muted); }
 .pager button { font: inherit; font-size: var(--text-sm); padding: var(--space-2) var(--space-5); border-radius: var(--radius-pill); }
-.pager button[aria-pressed="true"] { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
+/* The alerts pager marks its page with aria-pressed, the namespace index's with aria-current="page" —
+   the same pill for both, keyed on whichever attribute names the position (#264). */
+.pager button[aria-pressed="true"], .pager button[aria-current="page"] { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
 .pager .ellipsis { color: var(--text-muted); }
 /* The CR and policy tables mark a row that needs a reader with a wash the glyph and the word repeat. */
 tr.attn td { background: color-mix(in srgb, var(--status-critical) 8%, transparent); }
@@ -1502,6 +1518,24 @@ td.state-cell { min-width: 210px; }
 .rp-scope-top .and { font-size: var(--text-sm); }
 .rp-scope-foot { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); }
 .rp-count-live { font-family: var(--font-mono); color: var(--accent); font-weight: 500; }   /* the mock's live count: mono, accent */
+/* #267: the cluster control — one chip per configured cluster with checkbox semantics; the nav's cluster is the
+   primary (its lookups, its totals) and wears the tag. The tick is the state's second carrier beside colour. */
+.rp-clusters { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.rp-clu { display: inline-flex; align-items: center; gap: var(--space-2); font: inherit; font-family: var(--font-mono); font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-1);
+  color: var(--text-secondary); cursor: pointer; transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease; }
+.rp-clu:hover { border-color: var(--accent); transform: translateY(-1px); }
+.rp-clu.sel { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; }
+.rp-clu[aria-disabled="true"] { cursor: default; transform: none; }
+.rp-clu:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rp-clu .rp-clu-tick { display: inline-block; width: 1ch; }
+.rp-clu .rp-clu-tag { font-family: var(--font-ui); font-size: var(--text-micro); letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-left: var(--space-2); }
+.rp-clu.sel .rp-clu-tag.nav { color: var(--accent); }
+.rp-scope.clu .rp-scope-foot { flex-wrap: wrap; row-gap: var(--space-2); }   /* 375 px: the links stay whole, the line wraps */
+.rp-scope.clu .rp-scope-foot .linkish { white-space: nowrap; }
+.rp-clu-note { margin-top: var(--space-4); font-size: var(--text-sm); color: var(--text-secondary); border-left: 3px solid var(--status-warning); padding-left: var(--space-4); }
+.report-batch .rp-batch-head { margin-top: var(--space-5); font-weight: 600; font-size: var(--text-sm); }
+.report-batch .report-status { margin-top: var(--space-3); }
 .rp-lookup { position: relative; }
 .rp-lookup .rp-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1); }
 .rp-lookup .rp-tags input { flex: 1 1 12ch; min-width: 12ch; border: 0; background: none; font: inherit; font-size: var(--text-sm); color: var(--text-primary); padding: var(--space-1) var(--space-2); }

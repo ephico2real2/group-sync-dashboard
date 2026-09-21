@@ -716,6 +716,20 @@ clusters:
   # Every OTHER cluster is a labelled Secret discovered at runtime (#230), not a stanza here — so
   # adding one needs no redeploy. A second stanza is still honoured for a cluster whose credential
   # must come from a file the chart mounts.
+  #
+  # CONNECTION MODES (SPEC_S3, #248 — S3a ships the keys; S3b connects). A remote stanza may declare
+  # HOW the dashboard obtains its credential instead of carrying one:
+  #   - name: shared-rnd
+  #     apiUrl: https://api.shared-rnd.example.com:6443
+  #     saTokenLookup: true              # log in as the fleet account, read the poller SA's token (S3b)
+  #     # userSelfLogin: true            # or: poll as the fleet account itself; nothing at rest (S3b)
+  #     # ldapConnectionBootstrap: uid   # OPTIONAL — overrides clusterConfig.fleetAccount.username here
+  # Exactly one mode. A stanza declaring a mode OMITS tokenEnv/tokenFile (a mode beside a credential is
+  # two sources of truth and is refused); ldapConnectionBootstrap without a mode is refused; a mode on
+  # the hosting cluster is refused — this pod's own cluster authenticates with the mounted
+  # ServiceAccount. Until S3b lands, a mode stanza is listed on the Cluster Configurations tab with its
+  # credential pending and is not polled. The render refuses each of these exactly as the loader does,
+  # so a bad stanza fails `helm template`, not the pod after a green upgrade.
 
 # ---------------------------------------------------------------------------
 # ArgoCD / GitOps
@@ -1311,6 +1325,43 @@ kyverno:
   eventsRetentionDays: 90
 
 # ---------------------------------------------------------------------------
+# Which namespaces are the PLATFORM'S rather than a workload's  (#255)
+# ---------------------------------------------------------------------------
+# The Namespace audit hides these by default and says how many it hid; the Home page uses the same
+# answer. The shipped rule is OpenShift's and Kubernetes' own conventions — and it is not enough for
+# a real estate. MEASURED on the reference cluster: of 106 namespaces it classifies 67, and the 39 it
+# calls workloads include `cert-manager`, `cert-manager-operator`, `group-sync-operator`,
+# `group-sync-dashboard`, `hostpath-provisioner`, `kyverno` and `namespace-configuration-operator` —
+# seven pieces of platform listed as somebody's application.
+#
+# THREE AXES, because no two of them are enough. On that same cluster `-operator` catches three,
+# `-manager` one, `-provisioner` one, and `kyverno` and `group-sync-dashboard` match no pattern at
+# all and have to be named. Prefix matching alone misses all seven.
+#
+# Plain prefix / suffix / exact-name matching, deliberately — no globs and no regular expressions: a
+# regex in a values file is an injection surface and a diff nobody can review, and these three cover
+# every case measured.
+#
+# `prefixes`, `suffixes` and `names` REPLACE the shipped defaults. The `additional*` three APPEND to
+# them, which is what an estate actually wants: add the operators you install without restating a Red
+# Hat list that changes between releases. A key that is not one of the six is refused by name at
+# startup — a typo must not be a silent no-op.
+#
+# The classification is never silent: the page says "67 platform namespaces hidden" with a control to
+# show them, a hidden row stays counted, exportable and drillable, and where a hidden namespace holds
+# a direct grant the page says that too.
+platformNamespaces:
+  # Uncomment to replace the shipped defaults outright (rarely what you want):
+  # prefixes: ["openshift-", "kube-"]
+  # suffixes: []
+  # names: ["default", "openshift", "kube-system", "kube-public", "kube-node-lease"]
+
+  # What THIS estate adds for itself. The examples below are the reference cluster's answer.
+  additionalPrefixes: []
+  additionalSuffixes: []    # e.g. ["-operator", "-manager", "-provisioner"]
+  additionalNames: []       # e.g. ["kyverno", "group-sync-dashboard"]
+
+# ---------------------------------------------------------------------------
 # Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)
 # ---------------------------------------------------------------------------
 # Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
@@ -1345,6 +1396,20 @@ clusterConfig:
     # credential never reaches a response, a log line, the database or /metrics either way.
     writes:
       enabled: false
+  # The fleet account (SPEC_S3 §3.1, #248): the LDAP account the dashboard logs in AS when a cluster
+  # stanza — or a cluster Secret's config — declares a connection mode (saTokenLookup / userSelfLogin).
+  # One account for the fleet; a stanza overrides the username with ldapConnectionBootstrap. S3a
+  # records the setting; S3b reads it at connect time and nowhere else. Where neither names a username,
+  # or the password Secret is unreadable, the cluster is a finding on the tab, not a crashed pod.
+  fleetAccount:
+    # The username. Empty = every mode stanza must name its own ldapConnectionBootstrap.
+    username: ""
+    # Its password: never a literal in values — a Secret in the release namespace, read at connect
+    # time only. The chart does not create it, and the value never reaches a log line, the database,
+    # a response or /metrics (the redaction pin covers it).
+    passwordSecret:
+      name: gsd-fleet-account
+      key: password
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)
