@@ -14,10 +14,11 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-from .config import IDENTITY_NONE, VISIBILITY_SELF_ONLY, ClusterConfig, ConfigError, Settings
+from .config import CREDENTIAL_LOOKUP, IDENTITY_NONE, VISIBILITY_SELF_ONLY, ClusterConfig, ConfigError, Settings
 from .kube import AUTH_FAILED, OK, UNREACHABLE, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
 from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
@@ -203,6 +204,20 @@ def _cluster_shape(cluster: ClusterConfig) -> tuple:
         cluster.api_url, cluster.labels,
         hashlib.sha256(secret_material.encode()).hexdigest()[:12],
     )
+
+
+@dataclass
+class _LookupState:
+    """One cluster's place in the lookup schedule (SPEC_S4b). `key` is what re-arms it."""
+
+    key: tuple = ()
+    attempts: int = 0
+    not_before: float = 0.0
+    gave_up: bool = False
+    last_code: str | None = None
+
+    def reset(self, key: tuple) -> None:
+        self.key, self.attempts, self.not_before, self.gave_up, self.last_code = key, 0, 0.0, False, None
 
 
 #: The last token each cluster resolved, kept for redaction alone. SEE `_credentials` — this is a
@@ -886,6 +901,13 @@ class Poller:
         # holds the prune instead of the prune quietly outrunning it.
         self._backup_state = "pending"
         self._prune_held_logged = False
+        # SPEC_S4b (#284): the saTokenLookup schedule — one state per pending cluster, and the gate
+        # that keeps a refused password off the wire. Both belong to the discovery thread, which is
+        # the one retriever per estate (SPEC_S4 §6); the API reads the resulting findings from the
+        # registry, never from here.
+        from .fleetlookup import CredentialGate
+        self._lookups: dict[str, _LookupState] = {}
+        self._credential_gate = CredentialGate()
 
     def _maybe_backup(self) -> None:
         """Snapshot the irreplaceable history on its own slower schedule.
@@ -1349,7 +1371,11 @@ class Poller:
         try:
             clusters, findings = discover(
                 ClusterClient(host, timeout=self.settings.request_timeout_seconds), namespace,
-                host_name=host.name, values_names=tuple(c.name for c in self.settings.clusters))
+                host_name=host.name, values_names=tuple(c.name for c in self.settings.clusters),
+                # A values stanza that declares a mode expects the retriever's Secret over it
+                # (SPEC_S4 §1); the reader keeps that one out of `shadows-values-entry`.
+                values_modes={c.name: c.credential_kind for c in self.settings.clusters
+                              if c.connection_mode is not None})
         except ClusterError as exc:
             registry.fail(at, f"{exc.outcome}: {exc.message}")
             self._announce_discovery_failure(
@@ -1434,14 +1460,103 @@ class Poller:
                 self._start_cluster_thread(cluster)
                 log.info("cluster %s: polling started (%s)", name, cluster.source)
         for name in running - set(wanted):
-            if name in {c.name for c in self.settings.clusters}:
-                continue    # a values cluster is never stopped at runtime: its config rolls the pod
+            values_entry = next((c for c in self.settings.clusters if c.name == name), None)
+            if values_entry is not None and values_entry.credential_pending is None:
+                continue    # a values cluster with its own credential is never stopped at runtime: its config rolls the pod
+            # A values stanza that declares a mode polls through the Secret the lookup wrote; with that
+            # Secret gone it is pending again and must not poll its stanza (SPEC_S4b, SPEC_S3 §4.2).
             self._cluster_stops[name].set()
 
     def request_discovery(self) -> None:
         """Wake the discovery thread now (SPEC_S2 notes): a Secret the tab just wrote is discovered within
         seconds instead of on the next cadence tick. A GitOps-written Secret still rides the cadence."""
         self._discover_now.set()
+
+    # ── SPEC_S4b (#284): the saTokenLookup lookup ────────────────────────────────────────────────
+
+    def _lookup_key(self, cluster: ClusterConfig) -> tuple:
+        """What re-arms a lookup that gave up: the declaration (its shape) or the fleet credential's
+        ADDRESS. The password's VALUE re-arms through the gate instead (`CredentialGate`)."""
+        s = self.settings
+        return (_cluster_shape(cluster), cluster.ldap_connection_bootstrap or s.fleet_account_username,
+                s.fleet_password_secret_namespace, s.fleet_password_secret_name, s.fleet_password_secret_key)
+
+    def _retrieve_pending(self) -> None:
+        """One pass over every enabled cluster still awaiting its lookup, on the discovery thread,
+        after discovery: the cluster that is due is retrieved, the one that is not is skipped, and a
+        write wakes discovery so the cluster polls within seconds rather than at the next cadence."""
+        from .clusterconfig.events import event
+        from .clusterconfig.writer import secret_name_for
+        from .fleetlookup import LOOKUP_ATTEMPTS, LookupRefused, lookup
+        registry = self.settings.cluster_registry
+        pending = {c.name: c for c in self.settings.effective_clusters()
+                   if c.enabled and c.credential_kind == CREDENTIAL_LOOKUP}
+        for name in [n for n in self._lookups if n not in pending]:
+            # retrieved, disabled or gone: its state and its finding go with it
+            self._lookups.pop(name)
+            registry.set_lookup_finding(name, None)
+        if not pending or (self.elector is not None and not self.elector.is_leader):
+            return
+        host, namespace = self.settings.host_cluster(), own_namespace()
+        if host is None or not namespace:
+            return    # `_discover_once` announced it
+        writes_on = self.settings.cluster_secrets_enabled and self.settings.cluster_secrets_writes_enabled
+        for name, cluster in pending.items():
+            state = self._lookups.setdefault(name, _LookupState())
+            key = self._lookup_key(cluster)
+            if state.key != key:
+                state.reset(key)
+            now = time.monotonic()
+            if state.gave_up or now < state.not_before:
+                continue
+            secret = secret_name_for(name)
+            if not writes_on:
+                # The runtime half of the render refusal: a Secret-declared mode is invisible to
+                # `helm template`, so the switch is checked here too and named.
+                self._lookup_failed(state, name, secret, LookupRefused(
+                    "fleet-write-disabled", f"{name} declares saTokenLookup but this deployment does not write cluster Secrets",
+                    action=("set clusterConfig.secrets.writes.enabled: true (and secrets.enabled) — the lookup writes "
+                            f"{secret}, and create/update on Secrets is the grant that switch renders"), spent=False), now)
+                continue
+            try:
+                result = lookup(cluster, self.settings, ClusterClient(host, timeout=self.settings.request_timeout_seconds),
+                                own_namespace=namespace, gate=self._credential_gate)
+            except LookupRefused as exc:
+                self._lookup_failed(state, name, secret, exc, now)
+                continue
+            self._lookups.pop(name, None)
+            registry.set_lookup_finding(name, None)
+            event(discovery_log, logging.INFO, "fleet-lookup", cluster=name, account=result.account, secret=result.secret,
+                  written=result.written, source=f"{result.sa_token.namespace}/{result.sa_token.service_account}",
+                  last_used=result.sa_token.last_used, attempt=f"{state.attempts + 1}/{LOOKUP_ATTEMPTS}",
+                  secrets=result.secrets)
+            self._discover_now.set()
+
+    def _lookup_failed(self, state: _LookupState, name: str, secret: str, exc, now: float) -> None:
+        """Record the finding, place the cluster on the schedule, and say so — once for a failure
+        that spent nothing (rechecked every cycle), every attempt for one that spent a login."""
+        from .clusterconfig.events import failure
+        from .clusterconfig.parser import Finding
+        from .fleetlookup import LOOKUP_ATTEMPTS, LOOKUP_WAIT_CAP
+        self.settings.cluster_registry.set_lookup_finding(name, Finding(secret, exc.code, f"{exc.detail} — {exc.action}"))
+        if not exc.spent:
+            if state.last_code != exc.code:
+                state.last_code = exc.code
+                failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name,
+                        secret=secret, action=exc.action, detail=exc.detail, secrets=exc.secrets)
+            state.not_before = now
+            return
+        state.attempts += 1
+        state.last_code = exc.code
+        state.gave_up = state.attempts >= LOOKUP_ATTEMPTS
+        wait = None if state.gave_up else min(self.settings.binding_interval_seconds * (2 ** (state.attempts - 1)), LOOKUP_WAIT_CAP)
+        state.not_before = now if wait is None else now + wait
+        action = exc.action if not state.gave_up else (
+            f"gave up after {LOOKUP_ATTEMPTS} attempts: nothing more is tried until the stanza or the fleet credential "
+            f"changes, or the pod restarts — {exc.action}")
+        failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name, secret=secret,
+                attempt=f"{state.attempts}/{LOOKUP_ATTEMPTS}", retry_in=None if wait is None else f"{wait:g}",
+                gave_up="true" if state.gave_up else None, action=action, detail=exc.detail, secrets=exc.secrets)
 
     def _run_discovery(self) -> None:
         """The discovery stage on the binding cadence (SPEC_S1 C3), after the synchronous one in start();
@@ -1454,6 +1569,7 @@ class Poller:
             try:
                 self._discover_once()
                 self._reconcile_threads()
+                self._retrieve_pending()
             except Exception:  # noqa: BLE001 - the discovery thread must never die silently
                 log.exception("unhandled error discovering cluster Secrets")
 
@@ -1502,6 +1618,10 @@ class Poller:
                 continue
             self._start_cluster_thread(cluster)
         if self.settings.cluster_secrets_enabled:
+            if any(c.enabled and c.credential_kind == CREDENTIAL_LOOKUP for c in effective):
+                # SPEC_S4b: a cluster awaiting its lookup does not wait a whole cadence for it. The
+                # lookup runs on the thread, never here — a target that is down must not hold up start.
+                self._discover_now.set()
             thread = threading.Thread(target=self._run_discovery, name="cluster-secrets", daemon=True)
             thread.start()
             self._threads.append(thread)

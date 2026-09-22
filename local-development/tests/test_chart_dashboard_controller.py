@@ -14,9 +14,10 @@ from test_chart_route import _notes_probe_chart
 from test_chart_strategy import CHART
 
 
-def _render_values(tmp_path, clusters: list[dict], chart=CHART, select: str | None = None):
-    values = tmp_path / "values.yaml"
-    values.write_text(yaml.safe_dump({"clusters": clusters}, sort_keys=False))
+def _render_values(tmp_path, clusters: list[dict], chart=CHART, select: str | None = None, values: dict | None = None):
+    values_file = tmp_path / "values.yaml"
+    values_file.write_text(yaml.safe_dump({"clusters": clusters, **(values or {})}, sort_keys=False))
+    values = values_file
     args = ["helm", "template", "t", str(chart), "-f", str(values), "--set", "ingress.host=t.example.com"]
     if select:
         args += ["-s", select]

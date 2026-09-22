@@ -67,7 +67,10 @@ REFUSED = [
 
 def _values(tmp_path, entries, name="v.yaml"):
     p = tmp_path / name
-    p.write_text(yaml.safe_dump({"clusters": entries}), encoding="utf-8")
+    # Rendered with the write grant on: a saTokenLookup row writes its Secret and is refused at
+    # render without it (SPEC_S4b); the switch adds verbs to one Role and changes no other row.
+    p.write_text(yaml.safe_dump({"clusters": entries, "clusterConfig": {"secrets": {"writes": {"enabled": True}}}}),
+                 encoding="utf-8")
     return str(p)
 
 

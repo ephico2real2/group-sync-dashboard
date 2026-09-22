@@ -12,12 +12,14 @@ from test_chart_dashboard_controller import EAST, HOME, _render_values
 from test_chart_strategy import CHART
 
 RND = {"name": "shared-rnd", "apiUrl": "https://api.crc.testing:6443", "saTokenLookup": True}
+#: SPEC_S4b: a saTokenLookup stanza WRITES its Secret, so a green render needs the write grant on.
+WRITES = {"clusterConfig": {"secrets": {"writes": {"enabled": True}}}}
 
 
 class TestTheGuardMirrorsTheLoader:
     def test_a_mode_stanza_renders_and_reaches_the_configmap(self, tmp_path):
         ok, out = _render_values(tmp_path, [HOME, {**RND, "ldapConnectionBootstrap": "svc-gsd.fleet@corp"}],
-                                 select="templates/configmap.yaml")
+                                 select="templates/configmap.yaml", values=WRITES)
         assert ok, out
         docs = [d for d in yaml.safe_load_all(out) if d and d.get("kind") == "ConfigMap"]
         clusters = yaml.safe_load(next(d for d in docs if "clusters.yaml" in d["data"])["data"]["clusters.yaml"])["clusters"]
@@ -54,7 +56,48 @@ class TestTheGuardMirrorsTheLoader:
     def test_helm_lint_passes_with_a_mode_stanza_and_a_fleet_account(self, tmp_path):
         values = tmp_path / "v.yaml"
         values.write_text(yaml.safe_dump({"clusters": [HOME, RND],
-                                          "clusterConfig": {"fleetAccount": {"username": "svc-gsd-fleet"}}}, sort_keys=False))
+                                          "clusterConfig": {"fleetAccount": {"username": "svc-gsd-fleet"},
+                                                            "secrets": {"writes": {"enabled": True}}}}, sort_keys=False))
         done = subprocess.run(["helm", "lint", str(CHART), "-f", str(values), "--set", "ingress.host=t.example.com"],
                               capture_output=True, text=True)
         assert done.returncode == 0, done.stdout + done.stderr
+
+
+class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
+    """SPEC_S4b: a saTokenLookup stanza writes a Secret and discovery reads it back, so the render
+    refuses it without the two switches, above one replica, and with a visibility the Secret parser
+    would refuse — failing `helm template`, not a pod after a green upgrade. userSelfLogin needs none."""
+
+    @pytest.mark.parametrize("values,fragment", [
+        ({}, "cluster shared-rnd declares saTokenLookup but clusterConfig.secrets.writes.enabled is false"),
+        ({"clusterConfig": {"secrets": {"enabled": False, "writes": {"enabled": True}}}},
+         "cluster shared-rnd declares saTokenLookup but clusterConfig.secrets.enabled is false"),
+        # reporting refuses > 1 replica by design (C3) and election must be off there: both set, so the
+        # lookup's rule is the one refusal left to fire (the values test_chart_strategy renders at 2 with)
+        ({**WRITES, "replicaCount": 2, "leaderElection": {"enabled": False}, "reporting": {"enabled": False}},
+         "cluster shared-rnd declares saTokenLookup with replicaCount 2"),
+    ])
+    def test_the_switches_and_the_replica_rule(self, tmp_path, values, fragment):
+        ok, out = _render_values(tmp_path, [HOME, RND], values=values)
+        assert not ok and fragment in out, out[-600:]
+
+    def test_remote_sar_with_the_lookup_is_refused_by_name(self, tmp_path):
+        ok, out = _render_values(tmp_path, [HOME, {**RND, "visibility": "remote-sar", "identity": "same-as-host"}], values=WRITES)
+        assert not ok and "clusters[1] (shared-rnd): visibility remote-sar with saTokenLookup" in out
+
+    def test_self_login_needs_no_write_grant(self, tmp_path):
+        ok, out = _render_values(tmp_path, [HOME, {"name": "shared-rnd", "apiUrl": "https://api.crc.testing:6443", "userSelfLogin": True}])
+        assert ok, out
+
+    def test_the_pod_learns_the_account_and_the_address(self, tmp_path):
+        ok, out = _render_values(tmp_path, [HOME, RND], select="templates/configmap.yaml",
+                                 values={**WRITES, "clusterConfig": {**WRITES["clusterConfig"], "fleetAccount": {
+                                     "username": "svc", "passwordSecret": {"namespace": "openshift-config", "name": "ldap-oauth-bind-secret", "key": "bindPassword"}}}})
+        assert ok, out
+        docs = [d for d in yaml.safe_load_all(out) if d and d.get("kind") == "ConfigMap"]
+        # the settings and the clusters share one key, `clusters.yaml` (templates/configmap.yaml)
+        settings = yaml.safe_load(next(d for d in docs if "clusters.yaml" in d["data"])["data"]["clusters.yaml"])
+        assert (settings["fleetAccountUsername"], settings["fleetPasswordSecretNamespace"], settings["fleetPasswordSecretName"],
+                settings["fleetPasswordSecretKey"]) == ("svc", "openshift-config", "ldap-oauth-bind-secret", "bindPassword")
+        assert (settings["saTokenLookupSourceNamespace"], settings["saTokenLookupSourceServiceAccount"], settings["saTokenLookupTokenSecretName"]) \
+            == ("group-sync-operator", "group-sync-dashboard-cluster-poller", "")

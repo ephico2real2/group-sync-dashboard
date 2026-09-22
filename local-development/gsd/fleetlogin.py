@@ -181,11 +181,15 @@ class LoginError(ClusterError):
     The message never carries the password: every raise site scrubs it first.
     """
 
-    def __init__(self, outcome: str, message: str, *, phase: str, retryable: bool):
+    def __init__(self, outcome: str, message: str, *, phase: str, retryable: bool, host: str | None = None):
         super().__init__(outcome, message)
         self.phase = phase
         self.retryable = retryable
         self.attempts = 0
+        #: The host a TRANSPORT failure was against — the API host (discovery) or the OAuth route
+        #: (authorize) — so a trust failure names which of the two the bundle does not cover
+        #: (SPEC_S4b; the split-CA estate of SPEC_S4a §2.1). None for an answer, which names its own.
+        self.host = host
 
 
 @dataclass(frozen=True)
@@ -438,7 +442,8 @@ class FleetLogin:
         try:
             response = self._client.get(DISCOVERY_PATH, headers={"Accept": "application/json"})
         except httpx.HTTPError as exc:
-            raise self._transport_error(exc) from exc
+            # The API host, userinfo stripped structurally: a values apiUrl may carry one.
+            raise self._transport_error(exc, host=urlsplit(_without_userinfo(self.cluster.api_url) or "").netloc or None) from exc
         if response.status_code != 200:
             raise LoginError(UNREACHABLE, f"HTTP {response.status_code} on {DISCOVERY_PATH}: "
                              f"{self._scrub(response.text)[:200]}", phase="connect", retryable=True)
@@ -486,11 +491,11 @@ class FleetLogin:
                                         headers=CSRF_HEADER, auth=(self.username, self._password))
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             # Provably before the password bytes were written: the target cannot have bound.
-            raise self._transport_error(exc) from exc
+            raise self._transport_error(exc, host=urlsplit(endpoint).netloc) from exc
         except httpx.HTTPError as exc:
             # The request may have been written and the target may have bound — a read timeout, a
             # dropped connection, a non-HTTP answer: terminal.
-            raise self._transport_error(exc, retryable=False) from exc
+            raise self._transport_error(exc, retryable=False, host=urlsplit(endpoint).netloc) from exc
         else:
             # Returned from inside the protected region (final pass, R5-2): the response must not
             # exist in an instruction window outside it. What remains is the store into `_login`'s
@@ -690,7 +695,8 @@ class FleetLogin:
             out = out.replace(secret, "<redacted>")
         return out
 
-    def _transport_error(self, exc: httpx.HTTPError, *more: str | None, retryable: bool = True) -> LoginError:
+    def _transport_error(self, exc: httpx.HTTPError, *more: str | None, retryable: bool = True,
+                         host: str | None = None) -> LoginError:
         """A transport failure in the one shape this process gives one — `<ExceptionType>: <text>`,
         which `is_verify_failure` and the poller's classifier both key on. Whether it may be retried
         is the caller's to say: it depends on whether the password was on the wire, not on the
@@ -699,7 +705,7 @@ class FleetLogin:
         # DECIDE ON THE RAW MESSAGE, THEN SCRUB THE COPY (third pass: a password of `certificate`
         # scrubbed the phrase the classifier keys on and a TLS failure became `phase=connect`).
         phase = "tls" if is_verify_failure(raw) else "connect"
-        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable)
+        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable, host=host)
 
     def _log_retry(self, exc: LoginError, attempt: int, *, retry_in: float | None = None,
                    gave_up: bool = False) -> None:
@@ -710,7 +716,7 @@ class FleetLogin:
                       f"(the INGRESS CA, which the API's bundle may not carry) from this pod")
         else:
             action = f"retrying in {retry_in:g}s; if every attempt fails, the gave_up line says so"
-        failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(),
+        failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(), host=exc.host,
                 attempt=f"{attempt}/{ceiling}", retry_in=None if retry_in is None else f"{retry_in:g}",
                 gave_up="true" if gave_up else None, action=action, detail=exc.message,
                 secrets=(self._password,))
@@ -724,6 +730,6 @@ class FleetLogin:
                             f"authenticates every user with"),
                     detail=exc.message, secrets=(self._password,))
             return
-        failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(),
+        failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(), host=exc.host,
                 action="not retried: fix what detail names before the next lookup or ping",
                 detail=exc.message, secrets=(self._password,))

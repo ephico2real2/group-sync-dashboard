@@ -986,8 +986,27 @@ them on the next start.
 {{- if has $vis (list "hidden" "remote-sar") -}}
 {{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $how $vis) -}}
 {{- end -}}
+{{- else if and (eq $vis "remote-sar") (eq (index $modeOf $name | default "") "saTokenLookup") -}}
+{{- fail (printf "clusters[%d] (%s): visibility remote-sar with saTokenLookup — the lookup writes this cluster as a Secret, and remote-sar is not yet accepted from a Secret (SPEC_S1). Use inherit, self-only or hidden until it is." $i $name) -}}
 {{- else if and (eq $vis "remote-sar") (ne $id "same-as-host") -}}
 {{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host. The review names the host's username on that cluster, which only means something if both clusters share an identity provider — say so explicitly." $i $name) -}}
+{{- end -}}
+{{- end -}}
+{{- /* SPEC_S4b (#284): a saTokenLookup stanza WRITES gsd-cluster-<name> into the release namespace
+       and discovery reads it back, so it depends on two switches this render can see — refused
+       here, not by a finding after a green upgrade. One retriever per estate (SPEC_S4 §6): above
+       one replica every pod polls for itself and each would log in as the fleet account. */ -}}
+{{- range $name, $mode := $modeOf -}}
+{{- if eq $mode "saTokenLookup" -}}
+{{- if not $.Values.clusterConfig.secrets.enabled -}}
+{{- fail (printf "cluster %s declares saTokenLookup but clusterConfig.secrets.enabled is false: the lookup writes gsd-cluster-%s as a labelled Secret and discovery is what reads it back. Turn discovery on, or remove the mode." $name $name) -}}
+{{- end -}}
+{{- if not $.Values.clusterConfig.secrets.writes.enabled -}}
+{{- fail (printf "cluster %s declares saTokenLookup but clusterConfig.secrets.writes.enabled is false: the lookup writes gsd-cluster-%s into the release namespace, and create/update on Secrets is the grant that switch renders (templates/cluster-secrets-rbac.yaml). Set clusterConfig.secrets.writes.enabled: true, or remove the mode." $name $name) -}}
+{{- end -}}
+{{- if gt (int $.Values.replicaCount) 1 -}}
+{{- fail (printf "cluster %s declares saTokenLookup with replicaCount %d: above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that retrieves credentials." $name (int $.Values.replicaCount)) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

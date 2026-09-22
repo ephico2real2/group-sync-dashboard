@@ -193,8 +193,9 @@ CREDENTIAL_SELF_LOGIN = "self-login"    # userSelfLogin: the bootstrap account p
 #: polling. A kind in this table is never handed to ClusterClient.
 CREDENTIAL_PENDING_REASONS = {
     "oauth": "declares oauth (#119 P2, not built)",
-    CREDENTIAL_LOOKUP: "declares saTokenLookup — the token lookup is S3b, not built; nothing has been obtained yet",
-    CREDENTIAL_SELF_LOGIN: "declares userSelfLogin — the fleet login is S3b, not built; nothing has been obtained yet",
+    CREDENTIAL_LOOKUP: "declares saTokenLookup — S3b's lookup has not retrieved a credential yet; the Cluster "
+                       "Configurations tab's findings say why when it is late",
+    CREDENTIAL_SELF_LOGIN: "declares userSelfLogin — the self-login mode is S3b's #285, not built; nothing has been obtained yet",
 }
 #: Every key a values stanza may carry. The parser's accepted `config` keys include CONNECTION_KEYS
 #: too, and tests/test_connection_modes.py fails the commit on which the two sets diverge (§4.1).
@@ -610,6 +611,17 @@ class Settings:
     # (test_r6_the_api_is_read_only, the chart's only-write-is-the-lease guard): off, no write route is
     # registered and the chart renders no write verb; on, the four routes and the three verbs exist.
     cluster_secrets_writes_enabled: bool = False
+    # SPEC_S3 §3.1 / SPEC_S4b: the fleet account and the ADDRESS of its password (never the value —
+    # read at connect time through the chart's one-Secret grant), and what saTokenLookup reads on
+    # every target. `fleet_password_secret_namespace` empty means the pod's own namespace;
+    # `sa_token_lookup_secret_name` empty means `<service account>-token`.
+    fleet_account_username: str = ""
+    fleet_password_secret_namespace: str = ""
+    fleet_password_secret_name: str = "gsd-fleet-account"
+    fleet_password_secret_key: str = "password"
+    sa_token_lookup_namespace: str = "group-sync-operator"
+    sa_token_lookup_service_account: str = "group-sync-dashboard-cluster-poller"
+    sa_token_lookup_secret_name: str = ""
     cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
@@ -1198,6 +1210,14 @@ def _clusterconfig_manage_sar_setting(raw: dict) -> tuple[str, str, str, str, st
                         "create secrets")
 
 
+def _str_setting(raw: dict, env_name: str, yaml_key: str, default: str) -> str:
+    """Env wins over the ConfigMap; an absent or null key is the default. Stripped, never None."""
+    source = os.environ.get(env_name)
+    if source is None:
+        source = raw.get(yaml_key)
+    return str(default if source is None else source).strip()
+
+
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
     """Env wins over the ConfigMap. Accepts the YAML spellings, not Python truthiness.
 
@@ -1659,6 +1679,13 @@ def load_settings(path: str | Path) -> Settings:
         kyverno_enabled=_bool_setting(raw, "GSD_KYVERNO_ENABLED", "kyvernoEnabled", True),
         cluster_secrets_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_ENABLED", "clusterSecretsEnabled", True),
         cluster_secrets_writes_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_WRITES_ENABLED", "clusterSecretsWritesEnabled", False),
+        fleet_account_username=_str_setting(raw, "GSD_FLEET_ACCOUNT_USERNAME", "fleetAccountUsername", ""),
+        fleet_password_secret_namespace=_str_setting(raw, "GSD_FLEET_PASSWORD_SECRET_NAMESPACE", "fleetPasswordSecretNamespace", ""),
+        fleet_password_secret_name=_str_setting(raw, "GSD_FLEET_PASSWORD_SECRET_NAME", "fleetPasswordSecretName", "gsd-fleet-account"),
+        fleet_password_secret_key=_str_setting(raw, "GSD_FLEET_PASSWORD_SECRET_KEY", "fleetPasswordSecretKey", "password"),
+        sa_token_lookup_namespace=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_NAMESPACE", "saTokenLookupSourceNamespace", "group-sync-operator"),
+        sa_token_lookup_service_account=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SERVICE_ACCOUNT", "saTokenLookupSourceServiceAccount", "group-sync-dashboard-cluster-poller"),
+        sa_token_lookup_secret_name=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SECRET_NAME", "saTokenLookupTokenSecretName", ""),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int
