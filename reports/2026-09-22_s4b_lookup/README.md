@@ -13,6 +13,23 @@ created was removed afterwards and the release was put back on `environments/crc
 word `developer`, so the emit helper strips the account name too. The Secrets' `lookup-account`
 annotation shows it.
 
+## Every write this check made on the lab, and its removal
+
+Declared here first, as the business owner's standing rule requires: read-only `oc get` is not
+listed; everything that created, patched or deleted an object is.
+
+| object | why | scope | removed by (proof: `08-removal-proof.txt`) |
+|---|---|---|---|
+| RoleBinding `group-sync-operator/group-sync-dashboard-cluster-poller-token-reader-0` → User `developer` | the read the estate grants the fleet account, so the check logs in as `developer` and never the fleet account | the estate's own Role: `get` on **one** named Secret, no `list` | `oc adm policy remove-role-from-user … developer`; `oc get rolebinding` → none |
+| Secret `group-sync-dashboard/gsd-fleet-account` (`password`) | the fleet password the pod reads through the chart's one-Secret grant | one Secret, one key | `oc delete secret` → NotFound |
+| Role + RoleBinding `group-sync-dashboard/gsd-s4b-tab-view` → User `developer` | the tab's view review is `get` on Secrets in the release namespace; `developer` needed it for the screenshots only | **`get` on every Secret in the release namespace — broader than it should have been.** The tab's review asks about `secrets` generally, but a test grant must be scoped exactly as tightly as a shipped one: `resourceNames` naming the Secrets the check reads, or a screenshot taken as an identity that already holds the tier. It existed about fourteen minutes; recorded here as the lesson, not excused by the duration | `oc delete rolebinding`, `oc delete role` → NotFound |
+| Secret `gsd-cluster-rnd-lookup` (written by the lookup) and `gsd-cluster-rnd-lookup2` (the probe, then rewritten in place) | the two paths under test | labelled cluster Secrets in the release namespace | `oc delete secret` → NotFound; the clusters retired, rows kept |
+| PVCs `group-sync-dashboard-data`, `group-sync-dashboard-report-artifacts`: `managedFields` cleared, then labelled `app.kubernetes.io/version=0.31.0`, `helm.sh/chart=group-sync-dashboard-0.50.0` | the Argo → Helm handover: `helm install` server-side-applied the kept PVCs and hit field-manager conflicts with `argocd-controller`, then with `before-first-apply`, on those two labels | metadata only; the volumes, their binding and their data untouched (`Bound`, the same `volumeName` before and after) | not reverted — they are the labels the release now owns; managers `helm,before-first-apply` |
+| The Helm release itself: the Argo Application deleted, `helm install` from this worktree (rev 1 failed on the PVC conflict, rev 2 failed on the same, rev 3 deployed with `crc-lookup.yaml`, rev 4 deployed with `environments/crc.yaml`) | the plain-Helm loop the spec prescribes for this lab | the lab's dashboard release, as every `release-crc.sh` run does | left on Helm at rev 4, head `a7fafaa`, plain values, the fleet-account Role pruned (0 objects); the Argo handback is `release-crc.sh --argocd main` after the merge |
+
+The values file used (`environments/crc.yaml` plus the stanza and the `passwordSecret` block) was
+not committed and was moved out of the tree before the final redeploy.
+
 ## The values path — a stanza in, a Secret out, the cluster polling
 
 The values file (not committed — `environments/crc.yaml` plus the stanza) added `{name: rnd-lookup, apiUrl: https://api.crc.testing:6443,
