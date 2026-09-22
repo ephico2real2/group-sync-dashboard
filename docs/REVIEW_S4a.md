@@ -46,3 +46,24 @@ The corrected `tests/test_fleet_login.py` run against the **previous** module (`
 `gsd/fleetlogin.py`) and against the fixed one, and the full hermetic suite on the fixed head, are
 recorded with their counts in `docs/session-changelogs/2026-09-21_s3b-a-fleet-login-session.md` and
 on PR #289.
+
+## Confirmation pass on `28d4bec`
+
+Codex ran a harness; Cursor read the source (it has no shell in this session and said so), so where
+the two disagreed Codex's measured result won. Both said not mergeable; seven residual defects, one
+introduced by P1-2. Every fix was written into the spec's blocks first (its notes carry the record)
+and the files regenerated.
+
+| # | finding | Codex | Cursor | decision | reason and fix |
+|---|---|---|---|---|---|
+| R2-1 (P0) | A hostile `Location` still leaks a minted token: `urlsplit()` raised `ValueError: Invalid IPv6 URL` before the token was read (`authorize=1 DELETE=0`), and the P0-1 guard began only after `_authorize` returned. | measured | — | **accepted** | `gsd/fleetlogin.py#FleetLogin._token_from` splits the header on its first `#` and parses the fragment alone — the rest of the URL is never validated — and `_login`'s guard begins the moment the token is bound, with `_expiry_from`, the session and the success line inside it. Measured while applying: `https://example.com]/…` (Codex's shape) is delivered by httpx and makes `urlsplit` raise; `https://[::1/…` is refused by httpx itself in `_send_handling_redirects`, which builds the redirect request even with `follow_redirects=False`, so a token behind such a header is one this process never sees — recorded in the module docstring beside the read timeout as #286's litter. Test: `test_a_hostile_location_never_stands_between_the_mint_and_the_revoke`. |
+| R2-2 (P1) | A failure during cleanup replaced the original exception (`raised=RuntimeError original=Marker`). | measured | — | **accepted** | `_revoke_quietly` surfaces anything `_revoke` raises as a `fleet-logout-failed` line and answers False; the guard and `__exit__` both go through it, and the original exception propagates. Test: `test_a_failure_during_cleanup_never_replaces_the_original_exception`. |
+| R2-3 (P1) | A DELETE answering 500 was reported to the caller as revoked (`DELETE=1 caller_says_revoked=True`); "revoked exactly once" is not an achievable invariant. | measured | — | **accepted; the invariant restated** | *Revocation is attempted exactly once, and a failure is surfaced, never swallowed.* `_revoke` returns whether the target said gone (200/404 only); `FleetLogin.revoked` carries it to the caller; the `expires_in` stop's message says the attempt was made and points at the `fleet-logout` line rather than claiming a result. The module docstring, spec §3.1 and every assertion use the new wording. Test: `test_a_revoke_that_failed_is_surfaced_never_reported_as_revoked`. |
+| R2-4 (P1) | A password shorter than the shared floors (`events.redact` 4, `kube.redact_text` 8) was redacted nowhere. | measured | — | **accepted, locally** | The shared floors are **not changed** — they keep ordinary short strings intact across every log in the codebase. `_scrub` redacts the credential this class holds regardless of length, after the two helpers, longest first. Test: `test_a_password_shorter_than_the_shared_floors_is_still_redacted` (a 3-character password). |
+| R2-5 (P1) | The `ValueError` from parsing a hostile `authorization_endpoint` reached the caller unscrubbed, carrying userinfo (`str_leak=True`). | measured | — | **accepted** | Caught in `_discover`, scrubbed, a non-retryable `connect` stop. Test: `test_a_discovery_endpoint_that_does_not_parse_is_a_scrubbed_stop`, and the pin plants it. |
+| R2-6 (P1) | `issuer` is a remote field never scrubbed and never planted. | — | found | **accepted** | Scrubbed in `_discover`; the pin plants the password in it and asserts on `session.issuer` and the log (`TestTheRedactionPin._drive_everything`). |
+| R2-7 (P2) | A regression from P1-2: the challenge was scrubbed before it was classified, so a password literally `Basic` turned a genuine refusal into `outcome=unreachable`. | measured | — | **accepted** | The raw header decides `is_basic`; only the quoted copy is scrubbed. Decide, then redact. Test: `test_a_password_that_is_literally_basic_still_classifies_the_refusal`. |
+| — | `test_a_token_is_never_abandoned…` raised only from the success line, missing the parsing interval. | noted | — | **accepted** | The test also raises from inside `_expiry_from`. |
+
+Confirmed on this pass and unchanged: the P0-1 bound, the P0-2 strict rule, P1-1 (401 is not gone),
+P2-1 and P2-2.

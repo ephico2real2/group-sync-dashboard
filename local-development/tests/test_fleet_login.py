@@ -105,12 +105,12 @@ def scripted(*answers):
 
 
 def make(target: Target, *, cluster: ClusterConfig | None = None, policy: RetryPolicy = POLICY,
-         clock=None) -> tuple[FleetLogin, list[float]]:
+         clock=None, password: str = PASSWORD) -> tuple[FleetLogin, list[float]]:
     """A FleetLogin wired to the fake target, with the sleeps it asked for recorded and the clock
     held at T0 unless the test brings its own."""
     cluster = cluster or ClusterConfig("east", API, insecure_skip_verify=True)
     sleeps: list[float] = []
-    fl = FleetLogin(cluster, USER, PASSWORD, policy=policy, sleep=sleeps.append, clock=clock or (lambda: T0))
+    fl = FleetLogin(cluster, USER, password, policy=policy, sleep=sleeps.append, clock=clock or (lambda: T0))
     fl._build_client = lambda: httpx.Client(transport=httpx.MockTransport(target), base_url=API,
                                             follow_redirects=False)
     return fl, sleeps
@@ -157,6 +157,19 @@ class TestTheOAuthHostIsDiscovered:
         assert target.authorize == [] and sleeps == []
         assert exc.value.outcome == UNREACHABLE and exc.value.retryable is False and exc.value.phase == "connect"
 
+    def test_a_discovery_endpoint_that_does_not_parse_is_a_scrubbed_stop(self):
+        """Confirmation pass (Codex): `urlsplit` raises `ValueError: Invalid IPv6 URL` on an unclosed
+        literal, and its text reached the caller through no LoginError at all."""
+        hostile = {"authorization_endpoint": f"https://{USER}:{PASSWORD}@[::1/oauth/authorize"}
+        target = Target(login_302(), discovery=hostile)
+        fl, sleeps = make(target)
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+        assert exc.value.retryable is False and exc.value.phase == "connect"
+        assert "does not parse" in exc.value.message and PASSWORD not in str(exc.value)
+        assert target.authorize == [] and sleeps == []
+
     def test_the_issuer_is_the_documents_and_falls_back_to_the_endpoints_host(self):
         with make(Target(login_302()))[0] as s:
             assert s.issuer == OAUTH
@@ -189,6 +202,34 @@ class TestTheTokenIsReadOffTheLocationFragment:
         assert len(target.authorize) == 1 and sleeps == [] and target.revokes == []
         assert exc.value.retryable is False and "server_error" in exc.value.message
 
+    def test_a_hostile_location_never_stands_between_the_mint_and_the_revoke(self):
+        """Confirmation pass (Codex, measured `authorize=1 DELETE=0`): `urlsplit` raised on the
+        malformed URL before the token was read, so a minted token was never named and never
+        revoked. The header is split on its first `#` and the rest of the URL is never validated.
+
+        THE STRING IS THE MEASURED ONE. `https://example.com]/…` is delivered by httpx as a 302 and
+        makes `urlsplit` raise `Invalid IPv6 URL`; `https://[::1/…` is refused by httpx itself
+        (`RemoteProtocolError: Invalid URL in location header`) inside `_send_handling_redirects`,
+        which builds the redirect request even with `follow_redirects=False` — a token minted
+        behind such a header is one this process never sees (the spec records the limit)."""
+        hostile = f"https://example.com]/oauth/token/implicit#access_token={TOKEN}&expires_in=3600"
+        target = Target(httpx.Response(302, headers={"Location": hostile}))
+        with make(target)[0] as s:
+            assert s.token == TOKEN and s.expires_in == 3600
+        assert len(target.revokes) == 1 and target.requests[-1].method == "DELETE"
+        unusable = f"https://example.com]/oauth/token/implicit#access_token={TOKEN}&expires_in=soon"
+        target = Target(httpx.Response(302, headers={"Location": unusable}))
+        fl, _ = make(target)
+        with pytest.raises(LoginError):
+            with fl:
+                pass
+        assert len(target.revokes) == 1, "revocation attempted exactly once"
+        no_token = Target(httpx.Response(302, headers={"Location": "https://a[b/x#error=server_error"}))
+        with pytest.raises(LoginError) as exc:
+            with make(no_token)[0]:
+                pass
+        assert "server_error" in exc.value.message and no_token.revokes == []
+
     def test_an_expiry_beyond_int32_is_bounded_revoked_once_and_terminal(self):
         """Review of #289, all three seats: 999999999999999 passed `int()` and the `<= 0` guard,
         then overflowed the instant arithmetic with an OverflowError that escaped `__enter__` —
@@ -200,7 +241,7 @@ class TestTheTokenIsReadOffTheLocationFragment:
                 pass
         assert exc.value.retryable is False and str(MAX_EXPIRES_IN) in exc.value.message
         assert len(target.authorize) == 1 and sleeps == [] and fl.session is None
-        assert len(target.revokes) == 1, "the token must be revoked exactly once"
+        assert len(target.revokes) == 1, "revocation attempted exactly once"
         with make(Target(login_302(expires_in=str(MAX_EXPIRES_IN))))[0] as s:
             assert s.expires_in == MAX_EXPIRES_IN and s.expires_at_iso.endswith("Z")
         with pytest.raises(LoginError):
@@ -216,7 +257,7 @@ class TestTheTokenIsReadOffTheLocationFragment:
         assert exc.value.retryable is False and exc.value.phase == "credential"
         assert len(target.authorize) == 1 and sleeps == [] and fl.session is None
         assert [r.url.path for r in target.revokes] == [f"{USER_TOKEN_API}/{token_object_name(TOKEN)}"]
-        assert "revoked" in exc.value.message
+        assert "attempted once" in exc.value.message, "the message states the attempt, never a result it cannot know"
 
 
 # ── R4 ─────────────────────────────────────────────────────────────────────────────────────────
@@ -324,8 +365,66 @@ class TestTheSessionLogsOut:
             with fl:
                 pass
         assert fl.session is None
-        assert len(target.revokes) == 1, "revoked exactly once"
+        assert len(target.revokes) == 1, "revocation attempted exactly once"
         assert target.requests[-1].url.path == f"{USER_TOKEN_API}/{token_object_name(TOKEN)}"
+        # ... and from inside the interval between the response and the session (confirmation
+        # pass, Codex: the first version raised only from the success line).
+        monkeypatch.setattr(fleetlogin, "event", real_event)
+        target = Target(login_302())
+        fl, _ = make(target)
+        monkeypatch.setattr(fl, "_expiry_from", lambda fragment, endpoint: (_ for _ in ()).throw(KeyboardInterrupt()))
+        with pytest.raises(KeyboardInterrupt):
+            with fl:
+                pass
+        assert fl.session is None and len(target.revokes) == 1
+
+    def test_a_failure_during_cleanup_never_replaces_the_original_exception(self, monkeypatch, caplog):
+        """Confirmation pass (Codex: `raised=RuntimeError original=Marker`). The revoke's own
+        failure is surfaced as a line and the body's exception is the one that propagates."""
+        class BodyError(Exception):
+            pass
+
+        target = Target(login_302())
+        fl, _ = make(target)
+        monkeypatch.setattr(fl, "_revoke", lambda token: (_ for _ in ()).throw(RuntimeError("cleanup broke")))
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(BodyError):
+                with fl:
+                    raise BodyError()
+        assert fl.revoked is False
+        assert "cleanup broke" in lines(caplog, "fleet-logout-failed")[0]
+        # the same inside the login's own guard
+        target = Target(login_302(expires_in="soon"))
+        fl, _ = make(target)
+        monkeypatch.setattr(fl, "_revoke", lambda token: (_ for _ in ()).throw(RuntimeError("cleanup broke")))
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError):
+                with fl:
+                    pass
+        assert len(lines(caplog, "fleet-logout-failed")) == 2
+
+    def test_a_revoke_that_failed_is_surfaced_never_reported_as_revoked(self, caplog):
+        """Confirmation pass (Codex: `revoke-500: DELETE=1 caller_says_revoked=True`). The invariant
+        is that revocation is ATTEMPTED exactly once and a failure is surfaced — `revoked` is False,
+        the line says so — never that the object is gone."""
+        for status, expected in ((200, True), (404, True), (500, False), (401, False)):
+            target = Target(login_302(), revoke=httpx.Response(status, text="answer"))
+            fl, _ = make(target)
+            with caplog.at_level(logging.WARNING):
+                with fl:
+                    pass
+            assert fl.revoked is expected, status
+            assert len(target.revokes) == 1, "revocation attempted exactly once"
+        assert len(lines(caplog, "fleet-logout-failed")) == 2
+        target = Target(login_302(expires_in="soon"), revoke=httpx.Response(500, text="oops"))
+        fl, _ = make(target)
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        assert "attempted once" in exc.value.message and "was revoked" not in exc.value.message
+        assert len(target.revokes) == 1 and len(lines(caplog, "fleet-logout-failed")) == 3
+        assert fl.revoked is None, "nothing was handed to the caller, so nothing was revoked on exit"
 
     def test_the_object_name_is_the_measured_derivation(self):
         """PINNED TO A LITERAL, never regenerated from the code under test (review of #289, Cursor
@@ -414,6 +513,19 @@ class TestTheRetryPolicy:
         assert "Www-Authenticate: Basic" in line, "the server's own words — the status line and the challenge"
         assert "attempt=" not in line and "retry_in=" not in line and "gave_up=" not in line
         assert lines(caplog, "fleet-login-failed") == []
+
+    def test_a_password_that_is_literally_basic_still_classifies_the_refusal(self, caplog):
+        """Confirmation pass (Codex): P1-2's scrub ran BEFORE the challenge was classified, so a
+        password of `Basic` redacted a genuine refusal into `unreachable`. Decide, then redact."""
+        target = Target(refused_401())
+        fl, _ = make(target, password="Basic")
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        assert exc.value.outcome == AUTH_FAILED and len(target.authorize) == 1
+        assert len(lines(caplog, "fleet-login-refused")) == 1
+        assert "Basic" not in exc.value.message and "<redacted> realm" in exc.value.message
 
     def test_a_refusal_is_a_typed_cluster_error_the_caller_can_branch_on(self):
         with pytest.raises(ClusterError) as exc:
@@ -622,12 +734,15 @@ class TestTheRedactionPin:
                 "Location": f"{OAUTH}/oauth/token/implicit#error={PASSWORD}&error_description={PASSWORD}"})))
             failing(Target(login_302(), discovery={
                 "authorization_endpoint": f"https://{USER}:{PASSWORD}@oauth.example.com/oauth/authorize"}))
+            failing(Target(login_302(), discovery={                                         # does not parse
+                "authorization_endpoint": f"https://{USER}:{PASSWORD}@[::1/oauth/authorize"}))
             failing(Target(httpx.Response(401, text=f"csrf pw={PASSWORD}")))                # not a refusal, stopped
             failing(Target(login_302(expires_in=f"{PASSWORD}")))                            # revoke inside the login
             failing(Target(httpx.Response(503, text=f"down pw={PASSWORD}")))                # terminal HTTP answer
             failing(Target(lambda request: httpx.ReadTimeout(f"timed out pw={PASSWORD}")))  # terminal transport
-            with make(Target(login_302()))[0]:                                              # fleet-login, fleet-logout
-                pass
+            planted_issuer = {"issuer": f"https://{PASSWORD}.example", "authorization_endpoint": f"{OAUTH}/oauth/authorize"}
+            with make(Target(login_302(), discovery=planted_issuer))[0] as session:         # fleet-login, fleet-logout
+                assert PASSWORD not in session.issuer and "<redacted>" in session.issuer
             with make(Target(login_302(), revoke=httpx.Response(500, text=f"echo {TOKEN} {PASSWORD}")))[0]:
                 pass                                                                        # fleet-logout-failed
         return errors
@@ -643,10 +758,23 @@ class TestTheRedactionPin:
 
     def test_the_error_handed_to_the_caller_carries_no_password(self, caplog):
         errors = self._drive_everything(caplog)
-        assert len(errors) == 9
+        assert len(errors) == 10
         for exc in errors:
             assert PASSWORD not in exc.message and PASSWORD not in str(exc), exc.message
             assert TOKEN not in exc.message
+
+    def test_a_password_shorter_than_the_shared_floors_is_still_redacted(self, caplog):
+        """Confirmation pass (Codex): `events.redact` floors at 4 and `kube.redact_text` at 8, so a
+        three-character password reached the message AND the log. The floors are theirs and stay;
+        the module scrubs the credential it holds regardless of length."""
+        target = Target(refused_401(body="denied pw=abc"))
+        fl, _ = make(target, password="abc")
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        assert "pw=abc" not in exc.value.message and "pw=<redacted>" in exc.value.message
+        assert "pw=abc" not in "\n".join(caplog.messages)
 
     def test_the_source_declares_every_event_it_emits_and_passes_secrets_on_each(self):
         tree = ast.parse(pathlib.Path(fleetlogin.__file__).read_text())
