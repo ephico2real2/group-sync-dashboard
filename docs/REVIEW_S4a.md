@@ -67,3 +67,35 @@ and the files regenerated.
 
 Confirmed on this pass and unchanged: the P0-1 bound, the P0-2 strict rule, P1-1 (401 is not gone),
 P2-1 and P2-2.
+
+### A gap in what the suite could prove — closed after the confirmation pass
+
+Both reviewers raised **"API CA ≠ ingress CA"** as a plausible operational risk for the first non-CRC
+cluster. The business owner measured why it had never been caught: **the reference lab is
+structurally blind to it.** CRC's `kube-root-ca.crt` (the poller ServiceAccount's `ca.crt`) carries
+six certificates, re-measured by OB1 with `openssl x509 -noout -subject`:
+
+```
+c0  OU=openshift, CN=kube-apiserver-lb-signer
+c1  OU=openshift, CN=kube-apiserver-localhost-signer
+c2  OU=openshift, CN=kube-apiserver-service-network-signer
+c3  CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898
+c4  CN=*.apps-crc.testing                       <- the ingress LEAF
+c5  CN=ingress-operator@1785325954              <- the ingress CA
+```
+
+So an API-only bundle verifies the OAuth host on CRC, and the split cannot occur there; a green CRC
+run is not proof that a customer bundle is sufficient. On a cluster whose ingress is re-signed by an
+enterprise PKI the login fails at the authorize step, after discovery succeeded. Two cautions the
+owner recorded from building the reproduction: `curl` on a Mac gives a false pass (it falls back to
+the system keychain, which trusts the CRC ingress CA) — verify TLS with Python's `ssl`; and a CA made
+with a bare `openssl req -x509` lacks `basicConstraints`/`keyUsage`, so the failure reads
+`CA cert does not include key usage extension` rather than the real `unable to get local issuer
+certificate`.
+
+| decision | what landed |
+|---|---|
+| **accepted: a permanent hermetic test, no cluster** | `TestTheSplitCATheLabCannotShow` in `local-development/tests/test_fleet_login.py`: two CAs generated per test with `openssl` under `tmp_path` (proper CA extensions, SAN `localhost`/`127.0.0.1`, `serverAuth`), CA A signing a loopback API server that serves the discovery document, CA B signing a loopback OAuth server that records every `Authorization` header; the bundle carries only A. Assertions in the owner's order: the credential never reached the OAuth host; discovery succeeded first; `phase=tls outcome=unreachable retryable=True`, two attempts; no password in `str(exc)` or the log; the `gave_up` action names the ingress CA. |
+| **accepted: the control** | The same fixture with both CAs reaches the OAuth host exactly once (`Basic …`) and stops on the fixture's token-less 302 (`retryable=False`), so zero hits cannot be mistaken for a broken fixture. |
+| `cryptography` vs `openssl` | `cryptography` is not a dependency of this project; the fixture shells out to `openssl` (OpenSSL 3.6.4 on the machine that ran it) and skips cleanly without it. No key material is committed. |
+| the configuration contract | **not implemented here** — it is #284's (the owner posted the measurement there); the spec's §2.1 and this record say only that the lab cannot show the failure. |

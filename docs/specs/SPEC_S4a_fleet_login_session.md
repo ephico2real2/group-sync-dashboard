@@ -207,6 +207,20 @@ serves are `docs/specs/SPEC_S3_connection_modes.md` §3; the account is §3.1 th
   never see. `test_a_token_without_a_usable_expiry…` asserts the restated wording ("attempted once")
   instead of "revoked".
 
+- **A gap in what the suite could prove, closed hermetically (the business owner, after the
+  confirmation pass).** Both reviewers raised "API CA ≠ ingress CA" as a plausible risk for the
+  first non-CRC cluster, and the owner measured why no run had ever caught it: the reference lab is
+  structurally blind to it (§2.1 — the six-certificate listing, re-measured by OB1 from the poller
+  SA's bundle, includes the ingress leaf and CA). `TestTheSplitCATheLabCannotShow` generates two CAs
+  with `openssl` under `tmp_path` (with `basicConstraints`/`keyUsage`, so the rejection is the
+  real-world `unable to get local issuer certificate`), runs two loopback TLS servers, and asserts
+  in the owner's order: the credential never reached the OAuth host; discovery succeeded first;
+  `phase=tls outcome=unreachable retryable=True`; no password in `str(exc)` or the log; the
+  `gave_up` action names the ingress CA — with a both-CAs control that reaches the host once and
+  stops on the fixture's token-less 302. `cryptography` is not a dependency of this project, so the
+  fixture shells out to `openssl` and skips without it. The configuration contract that closes the
+  gap is #284's (the owner posted the measurement there); nothing of it is implemented here.
+
 ## 1. Scope — login only
 
 Obtain a session from a target cluster as the fleet account, read its expiry, apply the retry policy,
@@ -279,6 +293,35 @@ Four facts the design rests on, each load-bearing:
 
 The 401 shape of a refusal is **not** re-measured here — it would take a wrong password — and is
 taken from SPEC_S4 §6: a bare `401` with `Www-Authenticate: Basic realm="openshift"` and an empty body.
+
+### 2.1 What the reference lab cannot show: an API CA that is not the ingress CA
+
+A green run on CRC is **not** evidence that a customer's bundle is sufficient, and the reason is
+structural. The poller ServiceAccount's `ca.crt` (`kube-root-ca.crt`) on the lab carries six
+certificates, measured 2026-09-21 with `openssl x509 -noout -subject` over each:
+
+```
+c0  OU=openshift, CN=kube-apiserver-lb-signer
+c1  OU=openshift, CN=kube-apiserver-localhost-signer
+c2  OU=openshift, CN=kube-apiserver-service-network-signer
+c3  CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898
+c4  CN=*.apps-crc.testing                       <- the ingress LEAF
+c5  CN=ingress-operator@1785325954              <- the ingress CA
+```
+
+Two of the six are the ingress certificate and its CA, so on CRC a stanza carrying only the API's
+bundle verifies the OAuth host too, and the split between the two can never occur there. That merge
+is a CRC convenience, not normal OpenShift: on a cluster whose ingress is re-signed by an enterprise
+PKI (this estate runs cert-manager with an enterprise CA and a Venafi TPP issuer) the API bundle will
+not carry the ingress CA, and the login fails at the authorize step with
+`unable to get local issuer certificate` — after discovery succeeded. **Two cautions for whoever
+tests this by hand:** `curl` on a Mac gives a false pass (it falls back to the system keychain, which
+trusts the CRC ingress CA), so TLS claims are verified with Python's `ssl`, which is what the
+dashboard uses; and a CA made with a bare `openssl req -x509` lacks `basicConstraints`/`keyUsage`,
+so the failure then reads `CA cert does not include key usage extension` — a fixture defect, not
+the real rejection. `TestTheSplitCATheLabCannotShow` reproduces the split hermetically, two local
+CAs and two loopback TLS servers, with a control that proves the fixture. The configuration contract
+that closes the gap (which bundle a stanza must carry) is #284's, not this step's.
 
 ## 3. Design
 
@@ -1029,9 +1072,16 @@ from __future__ import annotations
 import ast
 import base64
 import hashlib
+import http.server
+import json
 import logging
 import pathlib
+import shutil
+import ssl
+import subprocess
+import threading
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -1699,6 +1749,168 @@ class TestTLSFollowsTheClustersMode:
         assert isinstance(exc.value.__cause__, ConfigError)
         line = lines(caplog, "fleet-login-failed")[0]
         assert "phase=tls" in line and "tls=caBundleFile" in line and "not retried" in line
+
+
+# ── R7, the split the reference lab cannot show ───────────────────────────────────────────────
+
+OPENSSL = shutil.which("openssl")
+
+_CA_CNF = """[req]
+distinguished_name = dn
+x509_extensions = ca
+prompt = no
+[dn]
+CN = {name}
+[ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+"""
+_SERVER_EXT = """basicConstraints = CA:FALSE
+subjectAltName = DNS:localhost, IP:127.0.0.1
+extendedKeyUsage = serverAuth
+keyUsage = critical, digitalSignature, keyEncipherment
+"""
+
+
+def _pki(root: pathlib.Path, name: str) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    """A CA with the extensions a real issuer carries — a bare `req -x509` lacks basicConstraints
+    and keyUsage, and the failure then reads `CA cert does not include key usage extension`, a
+    defect in the fixture rather than the real-world rejection — and a localhost server certificate
+    it signed (SAN for localhost and 127.0.0.1, serverAuth). Returns (ca.crt, server.crt,
+    server.key). Generated per test under tmp_path; nothing is committed."""
+    cnf = root / f"ca{name}.cnf"
+    cnf.write_text(_CA_CNF.format(name=f"test-ca-{name}"))
+    ext = root / "server.ext"
+    ext.write_text(_SERVER_EXT)
+    ca_crt, ca_key = root / f"ca{name}.crt", root / f"ca{name}.key"
+    srv_crt, srv_key, csr = root / f"srv{name}.crt", root / f"srv{name}.key", root / f"srv{name}.csr"
+
+    def run(*args: object) -> None:
+        subprocess.run([OPENSSL, *map(str, args)], check=True, capture_output=True)
+
+    run("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", ca_key, "-out", ca_crt, "-days", "2",
+        "-config", cnf, "-subj", f"/CN=test-ca-{name}")
+    run("req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", srv_key, "-out", csr, "-subj", "/CN=localhost")
+    run("x509", "-req", "-in", csr, "-CA", ca_crt, "-CAkey", ca_key, "-CAcreateserial", "-out", srv_crt,
+        "-days", "2", "-extfile", ext)
+    return ca_crt, srv_crt, srv_key
+
+
+class _QuietServer(http.server.ThreadingHTTPServer):
+    """A handshake a client refuses raises in the handler thread; that is the point, not noise."""
+
+    def handle_error(self, request, client_address) -> None:
+        pass
+
+
+class _TlsServer:
+    """One loopback HTTPS server on its own thread."""
+
+    def __init__(self, crt: pathlib.Path, key: pathlib.Path, handler: type) -> None:
+        self.server = _QuietServer(("127.0.0.1", 0), handler)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(crt), str(key))
+        self.server.socket = ctx.wrap_socket(self.server.socket, server_side=True)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def split_estate(tmp_path):
+    """CA A signs the API server and CA B signs the OAuth server — the shape of a customer cluster
+    whose ingress is re-signed by an enterprise PKI — plus a record of every Authorization header
+    the OAuth host received and of every discovery the API host answered. Two bundles: A alone, and
+    A with B (the control)."""
+    if OPENSSL is None:
+        pytest.skip("openssl is not on PATH; the split-CA fixture generates its certificates with it")
+    ca_a, api_crt, api_key = _pki(tmp_path, "A")
+    ca_b, oauth_crt, oauth_key = _pki(tmp_path, "B")
+    seen: dict = {"discovery": 0, "authorization": []}
+
+    class OAuthHost(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["authorization"].append(self.headers.get("Authorization"))
+            self.send_response(302)
+            self.send_header("Location", "https://localhost/oauth/token/implicit#error=fixture")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    oauth = _TlsServer(oauth_crt, oauth_key, OAuthHost)
+    document = json.dumps({"issuer": f"https://localhost:{oauth.port}",
+                           "authorization_endpoint": f"https://localhost:{oauth.port}/oauth/authorize"}).encode()
+
+    class ApiHost(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["discovery"] += 1
+            self.send_response(200 if self.path == DISCOVERY_PATH else 404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(document if self.path == DISCOVERY_PATH else b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    api = _TlsServer(api_crt, api_key, ApiHost)
+    api_only = tmp_path / "api-only.crt"
+    api_only.write_text(ca_a.read_text())
+    both = tmp_path / "both.crt"
+    both.write_text(ca_a.read_text() + ca_b.read_text())
+    try:
+        yield SimpleNamespace(api_url=f"https://localhost:{api.port}", api_only=str(api_only), both=str(both), seen=seen)
+    finally:
+        oauth.close()
+        api.close()
+
+
+class TestTheSplitCATheLabCannotShow:
+    """The reference lab is structurally blind to this (SPEC_S4a §2.1): CRC's kube-root-ca.crt
+    carries six certificates and two of them are the ingress leaf and the ingress CA, so an
+    API-only bundle verifies the OAuth host too. On a customer cluster whose ingress is re-signed by
+    an enterprise PKI it will not, and the login must fail at the authorize step WITHOUT the
+    credential reaching the host. `curl` on a Mac gives a false pass here (the system keychain);
+    Python's ssl is what the dashboard uses and what this drives — two real TLS servers, no mock."""
+
+    POLICY = RetryPolicy(attempts=2, base_seconds=0.01)
+
+    def test_an_api_only_bundle_never_sends_the_credential_to_an_ingress_signed_oauth_host(self, split_estate, caplog):
+        cluster = ClusterConfig("split", split_estate.api_url, ca_bundle_file=split_estate.api_only)
+        fl = FleetLogin(cluster, USER, PASSWORD, policy=self.POLICY)
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        # 1. the point: the credential never reached the OAuth host
+        assert split_estate.seen["authorization"] == [], "the credential reached the OAuth host"
+        # 2. discovery succeeded first, so this proves the SPLIT and not merely a bad bundle
+        assert split_estate.seen["discovery"] >= 1, "discovery failed: the test would pass for the wrong reason"
+        # 3. a TLS failure before the password was written is the one class that still retries
+        assert exc.value.phase == "tls" and exc.value.outcome == UNREACHABLE and exc.value.retryable is True
+        assert exc.value.attempts == 2
+        assert "unable to get local issuer certificate" in exc.value.message
+        # 4. no password anywhere
+        whole = "\n".join(caplog.messages)
+        assert PASSWORD not in str(exc.value) and PASSWORD not in whole
+        # 5. the gave_up action names the ingress CA
+        last = lines(caplog, "fleet-login-failed")[-1]
+        assert "gave_up=true" in last and "attempt=2/2" in last and "INGRESS CA" in last and "tls=caBundleFile" in last
+
+    def test_the_control_a_bundle_with_both_cas_reaches_the_oauth_host(self, split_estate):
+        """Without this, zero hits cannot be told from a broken fixture."""
+        cluster = ClusterConfig("split", split_estate.api_url, ca_bundle_file=split_estate.both)
+        fl = FleetLogin(cluster, USER, PASSWORD, policy=self.POLICY)
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+        headers = split_estate.seen["authorization"]
+        assert len(headers) == 1 and headers[0].startswith("Basic "), headers
+        assert exc.value.retryable is False and exc.value.phase == "credential", "a 302 without a token is terminal"
 
 
 # ── R8 ─────────────────────────────────────────────────────────────────────────────────────────
