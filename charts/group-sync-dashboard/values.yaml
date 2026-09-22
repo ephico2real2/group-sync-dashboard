@@ -733,9 +733,13 @@ clusters:
   # Exactly one mode. A stanza declaring a mode OMITS tokenEnv/tokenFile (a mode beside a credential is
   # two sources of truth and is refused); ldapConnectionBootstrap without a mode is refused; a mode on
   # the hosting cluster is refused — this pod's own cluster authenticates with the mounted
-  # ServiceAccount. Until S3b lands, a mode stanza is listed on the Cluster Configurations tab with its
-  # credential pending and is not polled. The render refuses each of these exactly as the loader does,
-  # so a bad stanza fails `helm template`, not the pod after a green upgrade.
+  # ServiceAccount. A saTokenLookup stanza is retrieved on the next discovery cycle (SPEC_S4b): the
+  # dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target
+  # (clusterConfig.saTokenLookup below) and writes gsd-cluster-<name> here, which discovery then
+  # polls like any other Secret. It needs clusterConfig.secrets.writes.enabled, and its CA must
+  # cover both the API host and the OAuth route. A userSelfLogin stanza is still pending (#285).
+  # The render refuses each of these exactly as the loader does, so a bad stanza fails
+  # `helm template`, not the pod after a green upgrade.
 
 # ---------------------------------------------------------------------------
 # ArgoCD / GitOps
@@ -1426,8 +1430,11 @@ clusterConfig:
     # on-by-default rule (tests/test_values_defaults.py): a write path on Secrets widens the dashboard's
     # read-only posture (its only write anywhere is its own leader Lease), so it stays off until the
     # operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it
-    # and removes the exception. Turning it on is the decision to let the dashboard mint cluster
-    # access. On, the Role above
+    # and removes the exception. Turning it on is the decision to let the dashboard WRITE cluster
+    # Secrets — the one grant, with two consumers that each declare their own intent: a person on
+    # the tab (an identity and clusterconfig:manage), and the saTokenLookup lookup (a stanza that
+    # says so, per cluster; SPEC_S4b). It does not split, because a second switch would gate the
+    # same verbs twice and decide nothing the stanza does not. On, the Role above
     # gains create, update and delete on secrets in the release namespace and the four write routes
     # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
     # reader holding clusterconfig:manage — visibility.clusterConfigManageSar — with a proxy-verified
@@ -1477,6 +1484,33 @@ clusterConfig:
       # Secret and the key if the grant is absent — it does not crash.
       rbac:
         create: true
+  # WHAT `saTokenLookup` READS on every target (SPEC_S4b, #284): the poller ServiceAccount's permanent
+  # token, held in a `kubernetes.io/service-account-token` Secret the operator chart creates beside
+  # the ServiceAccount. One convention for the fleet — the operator chart provisions the same names
+  # on every cluster — so the defaults are its names and a default install needs nothing here.
+  #
+  # AN ONBOARDING PRECONDITION, NOT AN ASSUMPTION. Kubernetes stopped creating token Secrets in 1.24
+  # and OpenShift 4.16 stopped generating them for the registry, so on a modern target the Secret
+  # exists only because someone created it (type kubernetes.io/service-account-token, annotated
+  # kubernetes.io/service-account.name=<the ServiceAccount>; the control plane fills it). When it is
+  # absent the tab says so in those words: `sa-token-secret-missing` — create the token Secret on
+  # the target. The fleet account needs `get` on that ONE Secret there (resourceNames), never list.
+  #
+  # THE STANZA'S CA MUST COVER TWO HOSTS. The login touches the API host (the OAuth discovery
+  # document) AND the OAuth route (/oauth/authorize), and an estate whose ingress is re-signed by an
+  # enterprise PKI signs them differently. `caBundleFile` on a saTokenLookup stanza (or the trusted
+  # bundle, when the stanza names none) must verify BOTH, and the finding names which host failed.
+  # A green run on CRC proves nothing about this: its API bundle already carries the ingress CA.
+  # The Secret the lookup writes carries the DECLARED trust, so a later re-login has what worked.
+  #
+  # NEEDS clusterConfig.secrets.writes.enabled (above): the lookup writes gsd-cluster-<name>, and
+  # create/update on Secrets is the grant that switch renders. A stanza with it off fails
+  # `helm template`; a Secret-declared mode with it off is a `fleet-write-disabled` finding.
+  saTokenLookup:
+    sourceNamespace: group-sync-operator
+    sourceServiceAccount: group-sync-dashboard-cluster-poller
+    # The token Secret's name on the target. Empty = <sourceServiceAccount>-token.
+    tokenSecretName: ""
 
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's logs)

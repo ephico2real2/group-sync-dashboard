@@ -17,6 +17,10 @@ class ClusterRegistry:
         self.last_discovery: str | None = None
         self.error: str | None = None
         self.namespace: str | None = None
+        # SPEC_S4b: the lookup's standing finding per cluster, set by the retriever and cleared when
+        # the lookup succeeds or the cluster stops being pending. Separate from `_findings`, which a
+        # discovery replaces every cycle — a lookup finding must survive the cycles between attempts.
+        self._lookups: dict[str, Finding] = {}
 
     def replace(self, clusters: list[ClusterConfig], findings: list[Finding], *, at: str, error: str | None = None) -> None:
         with self._lock:
@@ -38,9 +42,18 @@ class ClusterRegistry:
     def findings(self) -> list[Finding]:
         with self._lock:
             out = list(self._findings)
+            out.extend(self._lookups[name] for name in sorted(self._lookups))
             if self.error:
                 out.append(Finding("-", "discovery-failed", self.error))
             return out
+
+    def set_lookup_finding(self, cluster: str, finding: Finding | None) -> None:
+        """The lookup's standing finding for one cluster (SPEC_S4b); None clears it."""
+        with self._lock:
+            if finding is None:
+                self._lookups.pop(cluster, None)
+            else:
+                self._lookups[cluster] = finding
 
     def merge(self, values: list[ClusterConfig]) -> list[ClusterConfig]:
         """The values list with the discovered clusters laid over it: a Secret shadows a values entry

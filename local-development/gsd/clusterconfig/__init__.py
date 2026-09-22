@@ -22,6 +22,11 @@ FINDING_CODES = (
     "visibility-invalid", "identity-invalid", "enabled-invalid",
     "host-cluster-not-from-secret", "duplicate-cluster-name", "shadows-values-entry",
     "oauth-exchange-not-built", "discovery-failed",
+    # SPEC_S4b (#284): the saTokenLookup lookup's findings, held per cluster by the registry until
+    # the lookup succeeds. Each names its fix in `detail`; the tab renders code and detail as it does
+    # every other finding.
+    "fleet-credential-missing", "fleet-write-disabled", "login-refused", "login-failed",
+    "sa-token-secret-missing", "sa-token-unreadable", "sa-token-invalidated", "lookup-write-failed",
 )
 
 from .parser import Finding, parse_secret  # noqa: E402

@@ -1,0 +1,17 @@
+# proof of removal, 2026-09-22T06:04:30Z
+$ oc -n group-sync-operator get rolebinding | grep -c token-reader-0
+0
+$ oc -n group-sync-dashboard get role,rolebinding gsd-s4b-tab-view
+Error from server (NotFound): roles.rbac.authorization.k8s.io "gsd-s4b-tab-view" not found
+Error from server (NotFound): rolebindings.rbac.authorization.k8s.io "gsd-s4b-tab-view" not found
+$ oc -n group-sync-dashboard get secret gsd-cluster-rnd-lookup gsd-cluster-rnd-lookup2 gsd-fleet-account
+Error from server (NotFound): secrets "gsd-cluster-rnd-lookup" not found
+Error from server (NotFound): secrets "gsd-cluster-rnd-lookup2" not found
+Error from server (NotFound): secrets "gsd-fleet-account" not found
+$ oc auth can-i get secrets/group-sync-dashboard-cluster-poller-token -n group-sync-operator --as=developer
+no
+$ oc -n group-sync-dashboard get pvc -o custom-columns=NAME:.metadata.name,VOLUME:.spec.volumeName,MANAGERS:.metadata.managedFields[*].manager
+$ oc -n group-sync-dashboard get pvc -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,VOLUME:.spec.volumeName,VERSION-LABEL:.metadata.labels.app\.kubernetes\.io/version,CHART-LABEL:.metadata.labels.helm\.sh/chart,MANAGERS:.metadata.managedFields[*].manager
+NAME                                    STATUS   VOLUME                                     VERSION-LABEL   CHART-LABEL                   MANAGERS
+group-sync-dashboard-data               Bound    pvc-f065b7a4-535c-4ef1-868c-58f5afee4953   0.31.0          group-sync-dashboard-0.50.0   helm,before-first-apply
+group-sync-dashboard-report-artifacts   Bound    pvc-08c7d45c-a3eb-47be-8506-f24ea7a3e0e3   0.31.0          group-sync-dashboard-0.50.0   helm,before-first-apply

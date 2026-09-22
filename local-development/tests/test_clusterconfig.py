@@ -221,6 +221,23 @@ class TestRegistryAndReader:
 
 # ── the store (migration 19) ─────────────────────────────────────────────────────────────────────────────
 
+    def test_the_lookups_own_secret_over_the_stanza_that_asked_for_it_is_not_a_shadow(self):
+        """SPEC_S4 §1: a values stanza declaring a mode EXPECTS the retriever's Secret over it. Only a
+        Secret whose token-source names the kind the stanza resolves to is spared; a Secret over a
+        mode-less entry, or one carrying no provenance, is still shadowing something a person wrote."""
+        from gsd.clusterconfig.writer import TOKEN_SOURCE_ANNOTATION
+        ours = _secret("gsd-cluster-rnd", cluster="rnd")
+        ours["metadata"]["annotations"] = {TOKEN_SOURCE_ANNOTATION: "remote-lookup"}
+        hand_made = _secret("gsd-cluster-old", cluster="old")
+        hand_made["metadata"]["annotations"] = {TOKEN_SOURCE_ANNOTATION: "lookup"}     # the pre-#282 word
+        plain = _secret("gsd-cluster-west", cluster="west")
+        client = _FakeClient({"/api/v1/namespaces/ns/secrets": {"items": [ours, hand_made, plain]}})
+        clusters, findings = discover(client, "ns", host_name="host", values_names=("rnd", "old", "west"),
+                                      values_modes={"rnd": "remote-lookup", "old": "remote-lookup"})
+        assert sorted(c.name for c in clusters) == ["old", "rnd", "west"]
+        assert sorted(f.secret for f in findings if f.code == "shadows-values-entry") == ["gsd-cluster-old", "gsd-cluster-west"]
+
+
 class TestStore:
     def test_the_cluster_row_carries_its_source_and_credential_kind_never_a_value(self, tmp_path):
         s = Store(str(tmp_path / "s.db"))

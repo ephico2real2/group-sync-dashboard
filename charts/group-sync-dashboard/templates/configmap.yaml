@@ -85,6 +85,19 @@ data:
     # Clusters as labelled Secrets (#230, SPEC_S1): the discovery switch; the Role is cluster-secrets-rbac.yaml.
     clusterSecretsEnabled: {{ .Values.clusterConfig.secrets.enabled }}
     clusterSecretsWritesEnabled: {{ .Values.clusterConfig.secrets.writes.enabled }}
+    # The fleet account (SPEC_S3 §3.1) and what saTokenLookup reads (SPEC_S4b): the username and the
+    # password Secret's ADDRESS — the password itself is read at connect time through the grant
+    # fleet-account-rbac.yaml renders, and never rendered anywhere.
+    fleetAccountUsername: {{ .Values.clusterConfig.fleetAccount.username | quote }}
+    fleetPasswordSecretNamespace: {{ .Values.clusterConfig.fleetAccount.passwordSecret.namespace | quote }}
+    fleetPasswordSecretName: {{ .Values.clusterConfig.fleetAccount.passwordSecret.name | quote }}
+    fleetPasswordSecretKey: {{ .Values.clusterConfig.fleetAccount.passwordSecret.key | quote }}
+    saTokenLookupSourceNamespace: {{ .Values.clusterConfig.saTokenLookup.sourceNamespace | quote }}
+    saTokenLookupSourceServiceAccount: {{ .Values.clusterConfig.saTokenLookup.sourceServiceAccount | quote }}
+    saTokenLookupTokenSecretName: {{ .Values.clusterConfig.saTokenLookup.tokenSecretName | quote }}
+    # How many replicas this release runs: the lookup is one retriever per estate (SPEC_S4 §6), and a
+    # Secret-declared mode is invisible to the render, so the pod refuses it above one replica itself.
+    replicaCount: {{ int .Values.replicaCount }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}

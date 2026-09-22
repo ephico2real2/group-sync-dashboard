@@ -15,6 +15,7 @@ from __future__ import annotations
 from ..config import ClusterConfig
 from . import LABEL_SELECTOR
 from .parser import Finding, parse_secret
+from .writer import TOKEN_SOURCE_ANNOTATION
 
 #: What to do about each refusal, in the operator's terms rather than the parser's. `action=` is the
 #: fix, not the diagnosis (#245): a line that says only what broke leaves the reader to translate,
@@ -64,7 +65,12 @@ def finding_event(code: str) -> tuple[str, str, str]:
 
 
 def discover(cluster_client, namespace: str, *, host_name: str | None,
-             values_names: tuple[str, ...] = ()) -> tuple[list[ClusterConfig], list[Finding]]:
+             values_names: tuple[str, ...] = (),
+             values_modes: dict[str, str] | None = None) -> tuple[list[ClusterConfig], list[Finding]]:
+    """`values_modes` maps a values entry's name to the credential kind its declared connection mode
+    resolves to (`remote-lookup` / `self-login`, SPEC_S3 §3). A Secret over such an entry whose
+    `token-source` annotation names that same kind is the retriever's own write (SPEC_S4 §1) — the
+    Secret is MEANT to win there, so it is not a shadow finding. Any other shadow still is."""
     path = f"/api/v1/namespaces/{namespace}/secrets"
     with cluster_client._client() as client:
         items = cluster_client._list_all_with(client, path, {"labelSelector": LABEL_SELECTOR})
@@ -72,11 +78,14 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
     items.sort(key=lambda o: str((o.get("metadata") or {}).get("name") or ""))
     parsed_ok: list[ClusterConfig] = []
     findings: list[Finding] = []
+    token_source: dict[str, str | None] = {}   # Secret name -> its token-source annotation, if any
     for obj in items:
         parsed = parse_secret(obj, host_name=host_name)
         if isinstance(parsed, Finding):
             findings.append(parsed)
             continue
+        meta = obj.get("metadata") or {}
+        token_source[str(meta.get("name") or "")] = (meta.get("annotations") or {}).get(TOKEN_SOURCE_ANNOTATION)
         parsed_ok.append(parsed)
     # FAIL CLOSED ON A DUPLICATE NAME (design review of #230, OB2). "The first by metadata.name wins"
     # let a Secret named to sort first — `aaa-anything` — replace the server and the token of a
@@ -100,8 +109,13 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
         parsed = group[0]
         secret_name = parsed.source.split(":", 1)[1]
         if parsed.name in values_names:
-            findings.append(Finding(secret_name, "shadows-values-entry",
-                                    f"{parsed.name} is also a values entry; the Secret wins"))
+            # The retriever's own Secret over the stanza that asked for it is the design, not a
+            # shadow (SPEC_S4 §1): the values entry declares the mode, the Secret says it came from it.
+            ours = (values_modes or {}).get(parsed.name) is not None \
+                and token_source.get(secret_name) == (values_modes or {}).get(parsed.name)
+            if not ours:
+                findings.append(Finding(secret_name, "shadows-values-entry",
+                                        f"{parsed.name} is also a values entry; the Secret wins"))
         if parsed.credential_kind == "oauth":
             findings.append(Finding(secret_name, "oauth-exchange-not-built",
                                     f"{parsed.name} declares oauth; the exchange is #119 P2 and the cluster is not polled"))
