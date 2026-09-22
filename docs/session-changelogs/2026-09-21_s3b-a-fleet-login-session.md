@@ -170,3 +170,86 @@ Outcome in one line: **pending**
   skipped, 563 deselected in 231.77 s**. Doc checks: 991 passed (a stale citation of the deleted
   helper in the review record was replaced with plain text; the record keeps the history).
 - Live on CRC as `developer`: count **0 → 1 → 0**, token dead after **121 s**; manual count 0 / 0.
+
+---
+
+## Part 2 — the orchestration, and what research changed (2026-09-21 → 2026-09-22)
+
+The entries above are the implementer's. This part is the orchestrator's: what merged, what the
+research overturned, and the two decisions that were wrong and are recorded as such.
+
+### #283 merged and closed (2026-09-22 04:25) — `400c5f5`, PR #289
+
+Five review rounds across Codex (`gpt-5.6-sol` xhigh), Cursor (Grok 4.6) and OB1-lite; **21 findings**.
+Validated before merge: the orchestrator's own suite run on the PR head (**4659 passed, 16 skipped,
+0 failed**, matching the implementer's), CI green, the deploy `Synced/Healthy` with `readyz`/`healthz`/
+`metrics` all 200 and the module's constants read back **inside the pod**, and an independent live run
+(`count_before=0 during=1 after=0`, the revoked token dead after **121 s**).
+
+**Two of the 21 findings were caused by the orchestrator's own instructions**, and are recorded in
+`docs/REVIEW_S4a.md` as such rather than attributed to a reviewer:
+
+- A redaction rule ("redact the credential regardless of length") that corrupted classification
+  inputs — measured: password `app` turned the issuer into
+  `https://oauth-openshift.<redacted>s.example.com`, and password `certificate` made
+  `ConnectError: certificate verify failed` stop classifying, giving `phase=connect` instead of `tls`.
+- A `Location`-header fix shaped as *recovery* — which **RFC 9110 §5.5** refuted (see below).
+
+**One reviewer claim was refuted and rejected**: that a large fragment could make `parse_qs` raise.
+Measured: 200 000 fields, no raise. Recorded with the measurement so the record does not overstate
+the reviewers.
+
+### The standard beat the reasoning — `Location` is a singleton field
+
+`RFC 9110 §5.5` classifies `Location` as a singleton, and states that a *systems control client*
+"might consider any form of error recovery to be dangerous". The orchestrator had specified a fix
+that searched **every** `Location` value for a token; that is the recovery the RFC warns against, and
+it was **attacker-steerable** — a target sending two `Location` headers would choose which token
+became the cluster credential. Replaced with count-then-refuse plus a best-effort revoke. **The
+standard produced less code, not more**: `_fragments_of` and `_token_in` were deleted.
+
+### A research claim of the orchestrator's, retracted
+
+Posted to #284 and #285: that the stored ServiceAccount token carries a **one-year fuse** from the
+Kubernetes legacy-token cleaner. **Refuted by the implementer from upstream source, then verified
+here before retracting.** `legacy_serviceaccount_token_cleaner.go:171` skips any Secret the
+ServiceAccount's `.secrets` does not reference, and a manually created token Secret — the only kind
+OpenShift 4.16+ has — is never referenced. Measured on the lab: the poller ServiceAccount's `.secrets`
+lists **only** its dockercfg, while the token Secret points back by annotation. A `last-used` **tracking**
+label had been read as a countdown. Retracted on both issues with the citation.
+
+### Merges (all validated on `main` after merging, branches deleted as a separate step)
+
+| PR | what | evidence |
+|---|---|---|
+| **#290** | `SPEC_S4` §9 still described #285's renewal as `0.8 × lifetime`, superseded by the fixed margin §3.1 states | on CRC's measured `expires_in=31536000`, the stale rule renews **73 days** early vs **2 h** — five needless tokens a year per cluster, the litter #286 exists to stop |
+| **#292** | the adversarial-review skill gains **Step 0: research first, spec second, code third** | the two findings above, neither reachable by code-reading, reasoning, or any of three reviewer seats |
+| **#294** | `SPEC_S4b` — #284's design, **reviewed and merged before its implementation existed** | 57 fenced blocks, each anchor matching exactly once when applied |
+| **#296** | the brief template names the interpreter's absolute path and requires a reviewer without it to say so in its first line | two Codex passes had run source-only on `httpx ModuleNotFoundError`, visible only in stderr |
+
+### Issues opened
+
+- **#291** — five rounds grew `fleetlogin.py` **443 → 729 lines (+61%)**, against the repo's rule that a
+  review must not grow the code's complexity. Behaviour-preserving consolidation, tracked separately
+  so it is not mixed into a fix PR.
+- **#293** — a labelled ConfigMap of cluster stanzas that **generates** the Secrets, so nobody
+  hand-makes one. Researched against prior art: it is essentially External Secrets Operator's
+  `ExternalSecret`, and Argo CD is Secret-only because **its** declaration contains the kubeconfig
+  while ours separates declaration from credential.
+
+### Measured on the lab, and kept
+
+- The estate's Role grants the fleet account **two** retrieval paths, both scoped to one named object:
+  `get` on the token Secret, and `create` on `serviceaccounts/token` (**TokenRequest**). The operator
+  mandated the long-term token; the TokenRequest grant is recorded as deliberately unused.
+- **CRC cannot reproduce the split-CA failure**: its `kube-root-ca.crt` is six certificates, two of
+  them the ingress leaf and the ingress CA. That merge is a CRC convenience, so a customer whose
+  ingress is enterprise-signed fails where the lab cannot. Closed with a hermetic two-CA test plus a
+  control, mutation-checked (forcing `verify=False` fails the split test while the control passes).
+- A locked 389-ds account returns LDAP code **19** — not 48/49 — so `oauth-server` answers **HTTP 500**,
+  not 401. Before #283 that was retried five times against an already-locked account.
+
+### #284 in flight at the time of writing
+
+PR #295, three review rounds: **7 → 5 → 2** findings, with the code getting *simpler* each round —
+the last round **deleted** `final` rather than adding a guard. Not logged here until merged.
