@@ -378,6 +378,99 @@ the target is CRC itself — the injected bundle cannot verify a self-signed `ku
 certificate (Case D) — but it means this stanza does **not** exercise the path a real remote cluster
 takes, which is to declare no CA at all and inherit the injected one.
 
+## 5c. Case E — the production trust path, with nothing declared per cluster
+
+Cases B–D left one gap: the injected bundle had never been the trust that actually worked. Closing it
+required changing the cluster, not the code.
+
+### Step E1 — give the proxy a bundle that covers this cluster too
+
+The injected bundle carries the system trust merged with `proxy/cluster.spec.trustedCA`. It could not
+verify CRC because CRC's API is self-signed by `kube-apiserver-lb-signer`, which is in no public
+trust store. So the proxy's bundle was extended with the cluster's own CA:
+
+```sh
+oc get cm ldap-enterprise-ca-bundle -n openshift-config -o jsonpath='{.data.ca-bundle\.crt}' > enterprise.crt
+oc get cm kube-root-ca.crt -n default -o jsonpath='{.data.ca\.crt}' > cluster.crt
+cat enterprise.crt cluster.crt > combined.crt
+oc create configmap enterprise-and-cluster-ca-bundle -n openshift-config --from-file=ca-bundle.crt=combined.crt
+oc patch proxy cluster --type=merge -p '{"spec":{"trustedCA":{"name":"enterprise-and-cluster-ca-bundle"}}}'
+```
+
+Result:
+
+```
+enterprise.crt  1 cert  (O=Enterprise IT, OU=Directory Services, CN=LDAP Enterprise Root CA)
+cluster.crt     6 certs (kube-root-ca)
+combined        7 certs, 9173 bytes
+proxy patched: ldap-enterprise-ca-bundle -> enterprise-and-cluster-ca-bundle
+```
+
+OpenShift re-injected within twelve seconds:
+
+```
+ConfigMap group-sync-dashboard-trusted-ca   225717 -> 232926 bytes   (+7209, the cluster CA)
+context the app builds from it              147 -> 152 CA certs
+```
+
+(+5 rather than +6: `get_ca_certs()` counts CAs, and `kube-root-ca` includes the
+`*.apps-crc.testing` leaf, which is not one.)
+
+### Step E2 — remove the per-cluster CA from the stanza
+
+```yaml
+  - name: shared-rnd
+    apiUrl: https://api.crc.testing:6443
+    saTokenLookup: true
+    enabled: true
+    # no caBundleFile, no caData — the path a real remote cluster takes
+```
+
+### Step E3 — delete the Secret and watch
+
+Result:
+
+```
+fleet-login   cluster=shared-rnd account=ocp-oauth-bind-serviceid tls=trusted-bundle
+              oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-22T15:25:25Z
+fleet-logout  outcome=revoked
+fleet-lookup  secret=gsd-cluster-shared-rnd written=created attempt=1/5
+cluster-resolved cycle=3 cluster=shared-rnd credential=bearer tls=trusted-bundle
+polled shared-rnd: 3 CRs, 62 groups
+```
+
+**`tls=trusted-bundle`** — compare Case C's `tls=serviceAccount`. Nothing is declared on the stanza;
+the trust came entirely through the proxy and the injection. And it is the same `tls=trusted-bundle`
+that **failed** in Case B with `CERTIFICATE_VERIFY_FAILED`; the only thing that changed is what the
+proxy's `trustedCA` contains.
+
+### Step E4 — the written Secret inherits it too
+
+```
+written Secret: insecure=False, caData ABSENT
+cluster-resolved: tls=trusted-bundle
+```
+
+#284 decided the written Secret carries **the declaration's trust, verbatim**. The declaration had no
+CA, so the Secret has none, so the steady-state **poll** also falls through to the injected bundle.
+The login and the poll use the same trust, which is the property that decision exists to guarantee.
+
+Challenging-client tokens for the fleet account: **2 before, 2 after**.
+
+### What this now proves
+
+The whole chain a real remote cluster depends on, with no per-cluster configuration:
+
+```
+proxy/cluster trustedCA -> inject-trusted-cabundle -> the mount -> GSD_TRUSTED_CA_FILE
+  -> _trusted_ca_context() -> ClusterConfig.verify() -> the handshake -> login -> token -> poll
+```
+
+### Reverting
+
+The original `proxy/cluster` spec and the original `ldap-enterprise-ca-bundle` ConfigMap are both
+backed up; reverting is one `oc patch` back to the old name.
+
 ## 6. What is NOT proven by any of this
 
 Stated plainly, because a validation document that only lists successes is not evidence.
@@ -388,10 +481,10 @@ Stated plainly, because a validation document that only lists successes is not e
   cluster.insecure_skip_verify: return "insecure", None`, writing `tlsClientConfig.insecure` and no
   CA) and `test_fleet_login.py` covers it hermetically (`verify is False`, `tls=insecure` on the log
   line), but no live retrieval has run with it.
-- **The injected trusted bundle is proven at the TLS layer only.** Case D shows it verifies the
-  enterprise-signed `mock-trusted` endpoint, which is the trust a real remote cluster would use — but
-  that endpoint is a mock with no OAuth server (HTTP 404 on the discovery document), so no login or
-  token read has ever run over it. The enterprise path is proven to the handshake and no further.
+- ~~The injected trusted bundle is proven at the TLS layer only.~~ **CLOSED by Case E**: after the
+  proxy's `trustedCA` was extended with the cluster's own CA, a stanza declaring **no** CA completed a
+  full login, token read, write and poll on `tls=trusted-bundle`. What remains unproven is only the
+  *network* hop — the target is still this same cluster.
 - **A wrong fleet password was never tested**, deliberately. The gate that makes it safe
   (`bound` + `phase=credential` -> one bind, never repeated for that password) is proven by harness in
   #284's review, not against this directory.
