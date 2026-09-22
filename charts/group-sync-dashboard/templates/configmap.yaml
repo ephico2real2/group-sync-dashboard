@@ -95,6 +95,9 @@ data:
     saTokenLookupSourceNamespace: {{ .Values.clusterConfig.saTokenLookup.sourceNamespace | quote }}
     saTokenLookupSourceServiceAccount: {{ .Values.clusterConfig.saTokenLookup.sourceServiceAccount | quote }}
     saTokenLookupTokenSecretName: {{ .Values.clusterConfig.saTokenLookup.tokenSecretName | quote }}
+    # How many replicas this release runs: the lookup is one retriever per estate (SPEC_S4 §6), and a
+    # Secret-declared mode is invisible to the render, so the pod refuses it above one replica itself.
+    replicaCount: {{ int .Values.replicaCount }}
     # Retention on the irreplaceable history; 0 keeps forever. See values.yaml config.retention.
     membershipEventsRetentionDays: {{ .Values.config.retention.membershipEventsDays }}
     syncEventsRetentionDays: {{ .Values.config.retention.syncEventsDays }}

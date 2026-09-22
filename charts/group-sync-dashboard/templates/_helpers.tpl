@@ -994,8 +994,7 @@ them on the next start.
 {{- end -}}
 {{- /* SPEC_S4b (#284): a saTokenLookup stanza WRITES gsd-cluster-<name> into the release namespace
        and discovery reads it back, so it depends on two switches this render can see — refused
-       here, not by a finding after a green upgrade. One retriever per estate (SPEC_S4 §6): above
-       one replica every pod polls for itself and each would log in as the fleet account. */ -}}
+       here, not by a finding after a green upgrade. */ -}}
 {{- range $name, $mode := $modeOf -}}
 {{- if eq $mode "saTokenLookup" -}}
 {{- if not $.Values.clusterConfig.secrets.enabled -}}
@@ -1004,10 +1003,13 @@ them on the next start.
 {{- if not $.Values.clusterConfig.secrets.writes.enabled -}}
 {{- fail (printf "cluster %s declares saTokenLookup but clusterConfig.secrets.writes.enabled is false: the lookup writes gsd-cluster-%s into the release namespace, and create/update on Secrets is the grant that switch renders (templates/cluster-secrets-rbac.yaml). Set clusterConfig.secrets.writes.enabled: true, or remove the mode." $name $name) -}}
 {{- end -}}
-{{- if gt (int $.Values.replicaCount) 1 -}}
-{{- fail (printf "cluster %s declares saTokenLookup with replicaCount %d: above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that retrieves credentials." $name (int $.Values.replicaCount)) -}}
 {{- end -}}
 {{- end -}}
+{{- /* One retriever per estate (SPEC_S4 §6), held wherever a lookup is POSSIBLE and not only where a
+       values stanza declares one (review of #295, P0-2): a Secret may declare the mode at any time,
+       and above one replica election is off, so every replica would log in as the fleet account. */ -}}
+{{- if and $.Values.clusterConfig.secrets.writes.enabled (gt (int $.Values.replicaCount) 1) -}}
+{{- fail (printf "clusterConfig.secrets.writes.enabled with replicaCount %d: a cluster Secret may declare saTokenLookup at any time, and above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that writes cluster Secrets, or turn writes off." (int $.Values.replicaCount)) -}}
 {{- end -}}
 {{- end -}}
 

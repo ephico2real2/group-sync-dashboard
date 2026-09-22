@@ -72,14 +72,24 @@ class LookupRefused(Exception):
 
     `code` is in CODES; `detail` says what happened and `action` what to change (#245: the fix, not
     the diagnosis), neither ever a credential; `spent` is whether a login was attempted — the
-    poller's schedule counts spent failures and rechecks the free ones every cycle; `secrets` are
-    the values in play, for the emit helper to strip from the line the poller writes.
+    poller's schedule counts spent failures and rechecks the free ones every cycle; `final` is a
+    spent failure that must not be attempted again on any schedule (the password was on the wire
+    and the target did not say no — review of #295, P0-1); `secrets` are the values in play, for
+    the emit helper to strip from the line the poller writes.
     """
 
-    def __init__(self, code: str, detail: str, *, action: str, spent: bool):
+    def __init__(self, code: str, detail: str, *, action: str, spent: bool, final: bool = False,
+                 secrets: tuple[str, ...] = ()):
         super().__init__(f"{code}: {detail}")
-        self.code, self.detail, self.action, self.spent = code, detail, action, spent
-        self.secrets: tuple[str, ...] = ()
+        self.code, self.detail, self.action, self.spent, self.final = code, detail, action, spent, final
+        self.secrets: tuple[str, ...] = tuple(secrets)
+
+    def scrub(self, secrets: list[str]) -> None:
+        """Every secret in play out of `detail`, `action` AND `args` — `str(exc)` is what a caller
+        that did not read the fields prints (review of #295, P1-1)."""
+        self.secrets = tuple(v for v in (*self.secrets, *secrets) if v)
+        self.detail, self.action = _scrub(self.detail, list(self.secrets)), _scrub(self.action, list(self.secrets))
+        self.args = (f"{self.code}: {self.detail}",)
 
 
 class CredentialGate:
@@ -213,25 +223,35 @@ def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSour
                             spent=True) from exc
     meta = obj.get("metadata") or {}
     labels, annotations = meta.get("labels") or {}, meta.get("annotations") or {}
-    if obj.get("type") != SA_TOKEN_SECRET_TYPE:
-        raise LookupRefused("sa-token-unreadable", f"{where} is type {str(obj.get('type'))!r}, not {SA_TOKEN_SECRET_TYPE}; not stored",
-                            action="point clusterConfig.saTokenLookup.tokenSecretName at the ServiceAccount's token Secret", spent=True)
-    owner = annotations.get(SA_NAME_ANNOTATION)
-    if owner != source.service_account:
-        raise LookupRefused("sa-token-unreadable", f"{where} belongs to ServiceAccount {str(owner)!r}, not "
-                                                   f"{source.service_account!r}; not stored",
-                            action="check clusterConfig.saTokenLookup.sourceServiceAccount against the Secret's annotation", spent=True)
-    invalid_since = labels.get(INVALID_SINCE_LABEL)
-    if invalid_since:
-        raise LookupRefused("sa-token-invalidated", f"{where} carries {INVALID_SINCE_LABEL}={invalid_since}: the target's "
-                                                    f"legacy-token cleaner invalidated it after a year unused and the API "
-                                                    f"server refuses it; not stored",
-                            action=("delete and recreate the token Secret on the target (the control plane fills the new "
-                                    "one), or remove that label to allow the token temporarily"), spent=True)
+    # THE TOKEN IS DECODED FIRST (review of #295, P1-1): whatever this function refuses below, the
+    # token the Secret carried rides the refusal's `secrets`, so no quoted field can carry it out.
     try:
         token = base64.b64decode((obj.get("data") or {}).get("token") or "", validate=True).decode("utf-8").strip()
     except (binascii.Error, UnicodeDecodeError, ValueError):
         token = ""
+    carried = (token,) if token else ()
+    # A remote-controlled NAME is described by its length, never echoed — the parser's rule for a key
+    # this contract does not know (`parser._unknown_key`), applied to the type and the owner.
+    kind = obj.get("type")
+    if kind != SA_TOKEN_SECRET_TYPE:
+        raise LookupRefused("sa-token-unreadable", f"{where} is not type {SA_TOKEN_SECRET_TYPE} (its type is "
+                                                   f"{len(str(kind or ''))} characters long); not stored",
+                            action="point clusterConfig.saTokenLookup.tokenSecretName at the ServiceAccount's token Secret",
+                            spent=True, secrets=carried)
+    owner = annotations.get(SA_NAME_ANNOTATION)
+    if owner != source.service_account:
+        raise LookupRefused("sa-token-unreadable", f"{where} is not {source.service_account!r}'s: its "
+                                                   f"{SA_NAME_ANNOTATION} annotation is {len(str(owner or ''))} characters "
+                                                   f"long and does not match; not stored",
+                            action="check clusterConfig.saTokenLookup.sourceServiceAccount against the Secret's annotation",
+                            spent=True, secrets=carried)
+    if INVALID_SINCE_LABEL in labels:
+        # PRESENCE, not truthiness (review of #295, P1-5): Kubernetes allows an empty label value.
+        raise LookupRefused("sa-token-invalidated", f"{where} carries the {INVALID_SINCE_LABEL} label: the target's "
+                                                    f"legacy-token cleaner invalidated it after a year unused and the API "
+                                                    f"server refuses it; not stored",
+                            action=("delete and recreate the token Secret on the target (the control plane fills the new "
+                                    "one), or remove that label to allow the token temporarily"), spent=True, secrets=carried)
     if not token:
         raise LookupRefused("sa-token-unreadable", f"{where} has no token yet",
                             action="the token controller fills a new Secret within seconds; nothing to do unless it stays empty",
@@ -300,6 +320,14 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     session is a context manager, so the login's token is revoked whatever the read does. With
     `write=False` (#285's ping) nothing is written and the token is returned in the result.
     """
+    if write and not (settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled):
+        # THE SWITCH IS CHECKED HERE, not only by the caller (review of #295, P1-4): a second caller —
+        # #285's ping with write=True, #293's feed — must not bypass it. Before any password is read.
+        raise LookupRefused("fleet-write-disabled", f"{cluster.name} declares saTokenLookup but this deployment does not "
+                                                    f"write cluster Secrets",
+                            action=("set clusterConfig.secrets.writes.enabled: true (and secrets.enabled) — the lookup "
+                                    f"writes {secret_name_for(cluster.name)}, and create/update on Secrets is the grant "
+                                    "that switch renders"), spent=False)
     source = LookupSource.from_settings(settings)
     account = fleet_account(settings, cluster)
     password = fleet_password(host_client, settings, own_namespace)
@@ -315,27 +343,41 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                 secrets.append(session.token)
                 sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
         except LoginError as exc:
-            if exc.outcome == AUTH_FAILED:
+            if exc.bound and exc.phase == "credential":
+                # THE TARGET EVALUATED THE PASSWORD — refused it (401), answered 500 (what the
+                # oauth-server says for every directory result but 48/49, a LOCKED account's code 19
+                # included), or answered without a token. Never sent again while it is this password
+                # (review of #295, P0-1): re-entering #283's terminal answer from a schedule is the
+                # lockout walk one layer up. `AUTH_FAILED` is the refusal's word; the rest read as failed.
                 gate.refuse(account, password)
-                raise LookupRefused("login-refused", exc.message,
-                                    action=(f"the target refused the password for {account}: rotate the fleet password "
-                                            f"Secret or correct ldapConnectionBootstrap — it is not sent again while it is "
-                                            f"the same password"), spent=True) from exc
+                code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
+                raise LookupRefused(code, f"phase={exc.phase}: {exc.message}",
+                                    action=(f"the target answered the login for {account} without a session: rotate the "
+                                            f"fleet password Secret or correct ldapConnectionBootstrap, or check the "
+                                            f"account is not locked — it is not sent again while it is the same password"),
+                                    spent=True) from exc
             which = f" against {exc.host}" if exc.host else ""
             hint = ""
             if exc.phase == "tls":
                 hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "
                         "which the API's bundle may not carry)")
+            # `bound` with any other phase: the GET was written and nothing came back (a read timeout,
+            # a dropped connection). The target may have bound; #283 made it terminal, so this lookup
+            # is FINAL — no schedule retries it — without gating the account fleet-wide on what may
+            # have been a slow proxy.
             raise LookupRefused("login-failed", f"phase={exc.phase}{which}: {exc.message}",
-                                action=f"fix what detail names on the target or the stanza{hint}", spent=True) from exc
+                                action=(f"fix what detail names on the target or the stanza{hint}"
+                                        + (" — the password was sent and nothing came back, so this is not retried until "
+                                           "the stanza or the fleet credential changes" if exc.bound else "")),
+                                spent=True, final=exc.bound) from exc
         secrets.append(sa_token.token)
         written = store(host_client, own_namespace, cluster, settings, sa_token, account=account) if write else None
     except LookupRefused as exc:
         # The boundary every refusal crosses: whatever a step quoted — a remote annotation, an API
-        # server's echo — leaves here without the password, the session or the token in it, and the
-        # poller's line is handed the same values to strip again.
-        exc.secrets = tuple(secrets)
-        exc.detail, exc.action = _scrub(exc.detail, secrets), _scrub(exc.action, secrets)
+        # server's echo — leaves here without the password, the session or the token in it (the
+        # token a refused read carried rides `exc.secrets` already), and the poller's line is handed
+        # the same values to strip again.
+        exc.scrub(secrets)
         raise
     return LookupResult(cluster=cluster.name, account=account, sa_token=sa_token, secret=secret_name_for(cluster.name),
                         written=written, secrets=tuple(secrets))

@@ -109,7 +109,7 @@ after a green upgrade looks like an outage rather than a config error.
 | **`insecureSkipVerify` + `caBundleFile`** | *renders* | **refused** |
 | `saTokenLookup` without `clusterConfig.secrets.writes.enabled` | **refused** | starts; the tab reports `fleet-write-disabled` (a Secret-declared mode reaches this half) |
 | `saTokenLookup` without `clusterConfig.secrets.enabled` | **refused** | starts; the cluster stays pending |
-| `saTokenLookup` with `replicaCount > 1` | **refused** | starts (one retriever per estate, SPEC_S4 §6) |
+| `clusterConfig.secrets.writes.enabled` with `replicaCount > 1` — a lookup is possible, stanza or not | **refused** | starts; a lookup reports `fleet-write-disabled` (one retriever per estate, SPEC_S4 §6) |
 | `saTokenLookup` with `visibility: remote-sar` | **refused** | starts; the write would be refused `visibility-invalid` |
 
 The chart's guard covers the connection-mode and host rules; the remaining four are the loader's

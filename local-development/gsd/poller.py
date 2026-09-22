@@ -1500,7 +1500,10 @@ class Poller:
         host, namespace = self.settings.host_cluster(), own_namespace()
         if host is None or not namespace:
             return    # `_discover_once` announced it
-        writes_on = self.settings.cluster_secrets_enabled and self.settings.cluster_secrets_writes_enabled
+        # ONE RETRIEVER PER ESTATE (SPEC_S4 §6), the runtime half: above one replica election is off, so
+        # `elector` is None and every replica would reach here — and a Secret-declared mode is invisible
+        # to the render's refusal (review of #295, P0-2). The switch itself is checked inside `lookup`.
+        many = self.elector is None and self.settings.replica_count > 1
         for name, cluster in pending.items():
             state = self._lookups.setdefault(name, _LookupState())
             key = self._lookup_key(cluster)
@@ -1510,13 +1513,12 @@ class Poller:
             if state.gave_up or now < state.not_before:
                 continue
             secret = secret_name_for(name)
-            if not writes_on:
-                # The runtime half of the render refusal: a Secret-declared mode is invisible to
-                # `helm template`, so the switch is checked here too and named.
+            if many:
                 self._lookup_failed(state, name, secret, LookupRefused(
-                    "fleet-write-disabled", f"{name} declares saTokenLookup but this deployment does not write cluster Secrets",
-                    action=("set clusterConfig.secrets.writes.enabled: true (and secrets.enabled) — the lookup writes "
-                            f"{secret}, and create/update on Secrets is the grant that switch renders"), spent=False), now)
+                    "fleet-write-disabled", f"{name} declares saTokenLookup on a release of {self.settings.replica_count} "
+                                            f"replicas without leader election: every replica would log in as the fleet account",
+                    action="run one replica for a release that retrieves credentials (SPEC_S4 §6, one retriever per estate)",
+                    spent=False), now)
                 continue
             try:
                 result = lookup(cluster, self.settings, ClusterClient(host, timeout=self.settings.request_timeout_seconds),
@@ -1548,11 +1550,14 @@ class Poller:
             return
         state.attempts += 1
         state.last_code = exc.code
-        state.gave_up = state.attempts >= LOOKUP_ATTEMPTS
+        # A FINAL failure ends the schedule at once (review of #295, P0-1): the password was sent and
+        # the target did not answer, so another attempt is another bind against an account that may
+        # be locked. The line says `gave_up=true` on attempt 1.
+        state.gave_up = exc.final or state.attempts >= LOOKUP_ATTEMPTS
         wait = None if state.gave_up else min(self.settings.binding_interval_seconds * (2 ** (state.attempts - 1)), LOOKUP_WAIT_CAP)
         state.not_before = now if wait is None else now + wait
         action = exc.action if not state.gave_up else (
-            f"gave up after {LOOKUP_ATTEMPTS} attempts: nothing more is tried until the stanza or the fleet credential "
+            f"gave up after {state.attempts} attempt(s): nothing more is tried until the stanza or the fleet credential "
             f"changes, or the pod restarts — {exc.action}")
         failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name, secret=secret,
                 attempt=f"{state.attempts}/{LOOKUP_ATTEMPTS}", retry_in=None if wait is None else f"{wait:g}",

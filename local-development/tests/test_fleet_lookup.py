@@ -136,6 +136,7 @@ class TestTheLoop:
         assert obj["stringData"]["visibility"] == "self-only" and obj["stringData"]["identity"] == "none"
         assert result.written == "created" and result.sa_token.last_used == "2026-09-22"
         assert len(wire.revokes) == 1, "the login's token is revoked; the stored one is the target's"
+        assert set(result.secrets) == {PASSWORD, TOKEN, SA_TOKEN}
 
     def test_write_false_is_the_ping_the_same_read_and_nothing_stored(self, wire):
         result, host = run(RND, write=False)
@@ -194,16 +195,20 @@ class TestTheTargetsSecretIsCheckedBeforeItIsStored:
         (httpx.Response(404, text="not found"), "sa-token-secret-missing", "create the token Secret on the target"),
         (httpx.Response(403, text="forbidden"), "sa-token-unreadable", "get on that one Secret"),
         (httpx.Response(200, json=sa_secret(labels={INVALID_SINCE_LABEL: "2027-09-22"})), "sa-token-invalidated", "invalidated it after a year unused"),
-        (httpx.Response(200, json=sa_secret(sa="somebody-else")), "sa-token-unreadable", "belongs to ServiceAccount 'somebody-else'"),
-        (httpx.Response(200, json=sa_secret(type_="Opaque")), "sa-token-unreadable", "not kubernetes.io/service-account-token"),
+        (httpx.Response(200, json=sa_secret(labels={INVALID_SINCE_LABEL: ""})), "sa-token-invalidated", "invalidated it after a year unused"),
+        (httpx.Response(200, json=sa_secret(sa="somebody-else")), "sa-token-unreadable", "13 characters long and does not match"),
+        (httpx.Response(200, json=sa_secret(type_="Opaque")), "sa-token-unreadable", "is not type kubernetes.io/service-account-token"),
         (httpx.Response(200, json=sa_secret(token="")), "sa-token-unreadable", "has no token yet"),
     ])
     def test_each_refusal_names_its_fix_stores_nothing_and_still_logs_out(self, wire, answer, code, words):
+        """The empty `invalid-since` value is review of #295, P1-5: the label's PRESENCE is the fact."""
         wire.secret = answer
         with pytest.raises(LookupRefused) as exc:
             run(RND)
         assert exc.value.code == code and exc.value.spent is True
         assert words in exc.value.detail + " " + exc.value.action
+        assert "somebody-else" not in exc.value.detail and "Opaque" not in exc.value.detail, "a remote name is never echoed"
+        assert SA_TOKEN not in str(exc.value) + exc.value.detail + exc.value.action
         assert len(wire.revokes) == 1, "the session is revoked after a failed read too"
 
     def test_every_code_this_module_raises_is_in_the_closed_set(self):
@@ -235,6 +240,32 @@ class TestARefusedPasswordIsGated:
             run(RND, host)
         assert exc.value.code == "fleet-credential-missing" and exc.value.spent is False
         assert "gsd-fleet-account" in exc.value.detail and wire.authorize == []
+
+    def test_a_500_on_authorize_is_one_bind_and_a_gated_credential(self, wire):
+        """Review of #295, P0-1: a LOCKED account answers 500 (code 19 is not 48/49), #283 made it
+        terminal inside the login, and the schedule must not re-enter it — one bind, then the gate."""
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        gate = CredentialGate()
+        with pytest.raises(LookupRefused) as first:
+            run(RND, gate=gate)
+        assert first.value.code == "login-failed" and first.value.spent is True and len(wire.authorize) == 1
+        with pytest.raises(LookupRefused) as second:
+            run(RND, gate=gate)
+        assert second.value.code == "login-refused" and second.value.spent is False
+        assert len(wire.authorize) == 1, "a 500 was retried — that is the lockout walk one layer up"
+
+    def test_a_read_timeout_after_the_password_was_sent_is_final_but_gates_no_account(self, wire):
+        """The GET was written and nothing came back: #283 makes it terminal; here it ends the lookup's
+        schedule (final) without gating the account fleet-wide on what may have been a slow proxy."""
+        wire.answers = [lambda r: httpx.ReadTimeout("timed out"), login_302()]
+        gate = CredentialGate()
+        with pytest.raises(LookupRefused) as exc:
+            run(RND, gate=gate)
+        assert exc.value.code == "login-failed" and exc.value.spent is True and exc.value.final is True
+        assert "not retried until" in exc.value.action and len(wire.authorize) == 1
+        assert not gate.refused(USER, PASSWORD), "a timeout is not a refusal of the password"
+        result, _ = run(RND, gate=gate)
+        assert result.written == "created", "a later declaration change may try again"
 
 
 # ── R5 ─────────────────────────────────────────────────────────────────────────────────────────
@@ -290,14 +321,45 @@ class TestTheSchedule:
         finding = next(f for f in poller.settings.cluster_registry.findings() if f.code == "sa-token-secret-missing")
         assert finding.secret == "gsd-cluster-rnd" and "create the token Secret on the target" in finding.detail
 
-    def test_writes_off_is_a_free_finding_said_once_and_no_login(self, tmp_path, monkeypatch, caplog):
-        called = []
-        monkeypatch.setattr(fleetlookup, "lookup", lambda *a, **kw: called.append(1))
+    def test_writes_off_is_a_free_finding_said_once_and_no_login(self, tmp_path, monkeypatch, caplog, wire):
+        """The switch is checked inside `lookup()` (review of #295, P1-4), before any password is read
+        and before any login; the poller announces the free finding once and rechecks every cycle."""
         poller = self._poller(tmp_path, monkeypatch, writes=False)
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: FakeHost())
         with caplog.at_level(logging.INFO, logger="gsd"):
             poller._retrieve_pending(); poller._retrieve_pending()
-        assert called == [] and sum(m.startswith("fleet-lookup-failed ") for m in caplog.messages) == 1
+        assert wire.requests == [] and sum(m.startswith("fleet-lookup-failed ") for m in caplog.messages) == 1
         assert [f.code for f in poller.settings.cluster_registry.findings()] == ["fleet-write-disabled"]
+
+    def test_the_lookup_itself_refuses_to_write_with_the_switch_off_and_the_ping_needs_no_grant(self, wire):
+        with pytest.raises(LookupRefused) as exc:
+            run(RND, s=settings(RND, writes=False))
+        assert exc.value.code == "fleet-write-disabled" and exc.value.spent is False and wire.requests == []
+        result, host = run(RND, write=False, s=settings(RND, writes=False))
+        assert result.written is None and host.writes == [] and len(wire.reads) == 1
+
+    def test_above_one_replica_without_an_elector_no_replica_retrieves(self, tmp_path, monkeypatch, caplog, wire):
+        """Review of #295, P0-2: with election off `elector` is None on every replica, and a
+        Secret-declared mode is invisible to the render's refusal — so the pod refuses it itself."""
+        import dataclasses
+        poller = self._poller(tmp_path, monkeypatch)
+        poller.settings = dataclasses.replace(poller.settings, replica_count=2)
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert wire.requests == []
+        finding, = poller.settings.cluster_registry.findings()
+        assert finding.code == "fleet-write-disabled" and "2 replicas" in finding.detail
+
+    def test_a_final_failure_gives_up_on_the_first_attempt(self, tmp_path, monkeypatch, caplog):
+        def final(*a, **kw):
+            raise LookupRefused("login-failed", "nothing came back", action="check the target", spent=True, final=True)
+        monkeypatch.setattr(fleetlookup, "lookup", final)
+        poller = self._poller(tmp_path, monkeypatch)
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending(); poller._retrieve_pending()
+        lines = [m for m in caplog.messages if m.startswith("fleet-lookup-failed ")]
+        assert len(lines) == 1 and "attempt=1/5" in lines[0] and "gave_up=true" in lines[0] and "retry_in=" not in lines[0]
+        assert poller._lookups["rnd"].gave_up
 
     def test_success_clears_the_finding_and_wakes_discovery(self, tmp_path, monkeypatch, caplog):
         from gsd.fleetlookup import LookupResult, SaToken
@@ -335,6 +397,18 @@ class TestNoCredentialReachesALine:
         with caplog.at_level(logging.DEBUG, logger="gsd"):
             with pytest.raises(LookupRefused) as exc:
                 run(RND)
-        text = exc.value.detail + exc.value.action + " ".join(caplog.messages)
-        assert PASSWORD not in text and TOKEN not in text
-        assert set(exc.value.secrets) >= {PASSWORD, TOKEN}, "the poller's line is handed everything in play"
+        text = str(exc.value) + exc.value.detail + exc.value.action + " ".join(caplog.messages)
+        assert PASSWORD not in text and TOKEN not in text and SA_TOKEN not in text, "review of #295, P1-1: all three"
+        assert set(exc.value.secrets) >= {PASSWORD, TOKEN, SA_TOKEN}, "the poller's line is handed everything in play"
+
+
+class TestTheSwitchReadsAWord:
+    def test_a_quoted_false_in_the_configmap_does_not_enable_writes(self, tmp_path):
+        """Review of #295, P1-3: `bool("false")` is True, so the ConfigMap path enabled writes on an
+        explicit disable. The env path already read the word; the ConfigMap path now does too."""
+        from gsd.config import load_settings
+        clusters = "clusters:\n  - name: host\n    apiUrl: https://kubernetes.default.svc\n    tokenEnv: X\n"
+        for spelling, expected in (('"false"', False), ("false", False), ('"true"', True), ("true", True), ('"no"', False)):
+            path = tmp_path / "c.yaml"
+            path.write_text(clusters + f"clusterSecretsWritesEnabled: {spelling}\n")
+            assert load_settings(str(path)).cluster_secrets_writes_enabled is expected, spelling

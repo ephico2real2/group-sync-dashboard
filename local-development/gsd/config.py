@@ -622,6 +622,9 @@ class Settings:
     sa_token_lookup_namespace: str = "group-sync-operator"
     sa_token_lookup_service_account: str = "group-sync-dashboard-cluster-poller"
     sa_token_lookup_secret_name: str = ""
+    # How many replicas the chart runs (ConfigMap `replicaCount`): the lookup refuses to run above one
+    # without an elector, because every replica would log in (SPEC_S4 §6; review of #295, P0-2).
+    replica_count: int = 1
     cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
@@ -1226,7 +1229,15 @@ def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> boo
     """
     source = os.environ.get(env_name)
     if source is None:
-        return bool(raw.get(yaml_key, default))
+        # THE CONFIGMAP PATH READS A WORD TOO (review of #295, P1-3): `bool("false")` is True, so a
+        # quoted `clusterSecretsWritesEnabled: "false"` ENABLED writes. A real YAML boolean is itself;
+        # a string is the same word set as the env path; anything else keeps truthiness, said aloud.
+        value = raw.get(yaml_key, default)
+        if isinstance(value, bool):
+            return value
+        if not isinstance(value, str):
+            return bool(value)
+        source = value
     word = source.strip().lower()
     if word in ("true", "yes", "on", "1"):
         return True
@@ -1686,6 +1697,7 @@ def load_settings(path: str | Path) -> Settings:
         sa_token_lookup_namespace=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_NAMESPACE", "saTokenLookupSourceNamespace", "group-sync-operator"),
         sa_token_lookup_service_account=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SERVICE_ACCOUNT", "saTokenLookupSourceServiceAccount", "group-sync-dashboard-cluster-poller"),
         sa_token_lookup_secret_name=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SECRET_NAME", "saTokenLookupTokenSecretName", ""),
+        replica_count=_num_setting(raw, "GSD_REPLICA_COUNT", "replicaCount", 1, int),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int

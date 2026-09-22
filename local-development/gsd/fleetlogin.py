@@ -181,7 +181,8 @@ class LoginError(ClusterError):
     The message never carries the password: every raise site scrubs it first.
     """
 
-    def __init__(self, outcome: str, message: str, *, phase: str, retryable: bool, host: str | None = None):
+    def __init__(self, outcome: str, message: str, *, phase: str, retryable: bool, host: str | None = None,
+                 bound: bool = False):
         super().__init__(outcome, message)
         self.phase = phase
         self.retryable = retryable
@@ -190,6 +191,12 @@ class LoginError(ClusterError):
         #: (authorize) — so a trust failure names which of the two the bundle does not cover
         #: (SPEC_S4b; the split-CA estate of SPEC_S4a §2.1). None for an answer, which names its own.
         self.host = host
+        #: THE LINE THE MODULE DOCSTRING DRAWS, AS A FIELD: the password was on the wire. True for every
+        #: answer the target gave (`phase=credential`) and for a transport failure AFTER the authorize
+        #: GET was written (a read timeout, a dropped connection), so a caller that schedules logins
+        #: (SPEC_S4b) can refuse to bind again — a locked account answers 500, and re-entering the
+        #: login from outside is the lockout walk one layer up (review of #295, P0-1).
+        self.bound = bound or phase == "credential"
 
 
 @dataclass(frozen=True)
@@ -495,7 +502,7 @@ class FleetLogin:
         except httpx.HTTPError as exc:
             # The request may have been written and the target may have bound — a read timeout, a
             # dropped connection, a non-HTTP answer: terminal.
-            raise self._transport_error(exc, retryable=False, host=urlsplit(endpoint).netloc) from exc
+            raise self._transport_error(exc, retryable=False, host=urlsplit(endpoint).netloc, bound=True) from exc
         else:
             # Returned from inside the protected region (final pass, R5-2): the response must not
             # exist in an instruction window outside it. What remains is the store into `_login`'s
@@ -696,7 +703,7 @@ class FleetLogin:
         return out
 
     def _transport_error(self, exc: httpx.HTTPError, *more: str | None, retryable: bool = True,
-                         host: str | None = None) -> LoginError:
+                         host: str | None = None, bound: bool = False) -> LoginError:
         """A transport failure in the one shape this process gives one — `<ExceptionType>: <text>`,
         which `is_verify_failure` and the poller's classifier both key on. Whether it may be retried
         is the caller's to say: it depends on whether the password was on the wire, not on the
@@ -705,7 +712,7 @@ class FleetLogin:
         # DECIDE ON THE RAW MESSAGE, THEN SCRUB THE COPY (third pass: a password of `certificate`
         # scrubbed the phrase the classifier keys on and a TLS failure became `phase=connect`).
         phase = "tls" if is_verify_failure(raw) else "connect"
-        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable, host=host)
+        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable, host=host, bound=bound)
 
     def _log_retry(self, exc: LoginError, attempt: int, *, retry_in: float | None = None,
                    gave_up: bool = False) -> None:

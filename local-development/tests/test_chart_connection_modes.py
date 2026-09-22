@@ -75,11 +75,21 @@ class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
         # reporting refuses > 1 replica by design (C3) and election must be off there: both set, so the
         # lookup's rule is the one refusal left to fire (the values test_chart_strategy renders at 2 with)
         ({**WRITES, "replicaCount": 2, "leaderElection": {"enabled": False}, "reporting": {"enabled": False}},
-         "cluster shared-rnd declares saTokenLookup with replicaCount 2"),
+         "clusterConfig.secrets.writes.enabled with replicaCount 2"),
     ])
     def test_the_switches_and_the_replica_rule(self, tmp_path, values, fragment):
         ok, out = _render_values(tmp_path, [HOME, RND], values=values)
         assert not ok and fragment in out, out[-600:]
+
+    def test_the_replica_rule_holds_without_a_values_stanza(self, tmp_path):
+        """Review of #295, P0-2: a Secret may declare the mode at any time, so the rule is on the
+        switch that makes a lookup possible, not on a stanza the render happens to see."""
+        ok, out = _render_values(tmp_path, [HOME], values={**WRITES, "replicaCount": 2, "leaderElection": {"enabled": False},
+                                                            "reporting": {"enabled": False}})
+        assert not ok and "clusterConfig.secrets.writes.enabled with replicaCount 2" in out, out[-600:]
+        ok, out = _render_values(tmp_path, [HOME], values={"replicaCount": 2, "leaderElection": {"enabled": False},
+                                                            "reporting": {"enabled": False}})
+        assert ok, out[-600:]     # writes off: two replicas render as before
 
     def test_remote_sar_with_the_lookup_is_refused_by_name(self, tmp_path):
         ok, out = _render_values(tmp_path, [HOME, {**RND, "visibility": "remote-sar", "identity": "same-as-host"}], values=WRITES)
@@ -101,3 +111,4 @@ class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
                 settings["fleetPasswordSecretKey"]) == ("svc", "openshift-config", "ldap-oauth-bind-secret", "bindPassword")
         assert (settings["saTokenLookupSourceNamespace"], settings["saTokenLookupSourceServiceAccount"], settings["saTokenLookupTokenSecretName"]) \
             == ("group-sync-operator", "group-sync-dashboard-cluster-poller", "")
+        assert settings["replicaCount"] == 1
