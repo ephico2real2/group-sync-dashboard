@@ -27,6 +27,10 @@ C5. <dependents, `needs:`, workflows that call this one>. CLAIM: …
 C6. <the next real use of this change on this repository>. Run it in a copy and read the result; refute
     anything an operator would have to fix by hand.
 C7. <what could go red with no code change>. CLAIM: … name every source and the worst one.
+C8. <the safety budget over the system, with its scope>. CLAIM: at most N <binds/writes/deletes> per (<key>)
+    per <process | replica | restart>. Drive the real schedule and give a TABLE: outcome by attempt-count
+    across two direct calls, the schedule, a state reset and an irrelevant config edit. Re-ask the previous
+    issue's guarantees against this head: can anything here make that module run twice?
 
 Finish with: the single most important finding, and anything you saw that was not asked — each with its full
 snippet and test, the same as a claim.
