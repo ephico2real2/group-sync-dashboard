@@ -1550,14 +1550,11 @@ class Poller:
             return
         state.attempts += 1
         state.last_code = exc.code
-        # A FINAL failure ends the schedule at once (review of #295, P0-1): the password was sent and
-        # the target did not answer, so another attempt is another bind against an account that may
-        # be locked. The line says `gave_up=true` on attempt 1.
-        state.gave_up = exc.final or state.attempts >= LOOKUP_ATTEMPTS
+        state.gave_up = state.attempts >= LOOKUP_ATTEMPTS
         wait = None if state.gave_up else min(self.settings.binding_interval_seconds * (2 ** (state.attempts - 1)), LOOKUP_WAIT_CAP)
         state.not_before = now if wait is None else now + wait
         action = exc.action if not state.gave_up else (
-            f"gave up after {state.attempts} attempt(s): nothing more is tried until the stanza or the fleet credential "
+            f"gave up after {LOOKUP_ATTEMPTS} attempts: nothing more is tried until the stanza or the fleet credential "
             f"changes, or the pod restarts — {exc.action}")
         failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name, secret=secret,
                 attempt=f"{state.attempts}/{LOOKUP_ATTEMPTS}", retry_in=None if wait is None else f"{wait:g}",

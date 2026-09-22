@@ -44,7 +44,7 @@ from .clusterconfig.writer import (
     MANAGED_BY_LOOKUP, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
     store_lookup,
 )
-from .clusterconfig.events import redact
+from .clusterconfig.events import is_transport_message, redact
 from .config import ClusterConfig, Settings
 from .fleetlogin import FleetLogin, LoginError
 from .kube import AUTH_FAILED, ClusterClient, ClusterError, redact_text
@@ -72,16 +72,13 @@ class LookupRefused(Exception):
 
     `code` is in CODES; `detail` says what happened and `action` what to change (#245: the fix, not
     the diagnosis), neither ever a credential; `spent` is whether a login was attempted — the
-    poller's schedule counts spent failures and rechecks the free ones every cycle; `final` is a
-    spent failure that must not be attempted again on any schedule (the password was on the wire
-    and the target did not say no — review of #295, P0-1); `secrets` are the values in play, for
-    the emit helper to strip from the line the poller writes.
+    poller's schedule counts spent failures and rechecks the free ones every cycle; `secrets` are
+    the values in play, for the emit helper to strip from the line the poller writes.
     """
 
-    def __init__(self, code: str, detail: str, *, action: str, spent: bool, final: bool = False,
-                 secrets: tuple[str, ...] = ()):
+    def __init__(self, code: str, detail: str, *, action: str, spent: bool, secrets: tuple[str, ...] = ()):
         super().__init__(f"{code}: {detail}")
-        self.code, self.detail, self.action, self.spent, self.final = code, detail, action, spent, final
+        self.code, self.detail, self.action, self.spent = code, detail, action, spent
         self.secrets: tuple[str, ...] = tuple(secrets)
 
     def scrub(self, secrets: list[str]) -> None:
@@ -93,23 +90,25 @@ class LookupRefused(Exception):
 
 
 class CredentialGate:
-    """SPEC_S4 §6's in-memory half: a password the target refused is never sent again while it is
-    the same password. Keyed on (username, sha256(password)) — the password is not in the
-    declaration, so the normal fix, rotating the Secret, changes no stanza and must re-arm this
-    by itself. Durable and replica-shared in #285."""
+    """SPEC_S4 §6's in-memory half: a password a target evaluated — or may have — is never sent to
+    THAT target again while it is the same password. Keyed on (target, username, sha256(password)):
+    the target, because a 500 from one cluster must not stop a healthy one on the same account
+    (review of #295, second pass, R2-1); the digest, because the password is not in the declaration,
+    so the normal fix — rotating the Secret — changes no stanza and must re-arm this by itself.
+    Best-effort and per process; the durable, replica-shared gate is #285's."""
 
     def __init__(self) -> None:
-        self._refused: set[tuple[str, str]] = set()
+        self._refused: set[tuple[str, str, str]] = set()
 
     @staticmethod
-    def _key(username: str, password: str) -> tuple[str, str]:
-        return username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+    def _key(target: str, username: str, password: str) -> tuple[str, str, str]:
+        return target.rstrip("/"), username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
 
-    def refused(self, username: str, password: str) -> bool:
-        return self._key(username, password) in self._refused
+    def refused(self, target: str, username: str, password: str) -> bool:
+        return self._key(target, username, password) in self._refused
 
-    def refuse(self, username: str, password: str) -> None:
-        self._refused.add(self._key(username, password))
+    def refuse(self, target: str, username: str, password: str) -> None:
+        self._refused.add(self._key(target, username, password))
 
 
 @dataclass(frozen=True)
@@ -148,6 +147,14 @@ class LookupResult:
     secrets: tuple[str, ...] = field(repr=False, compare=False, default=())
 
 
+def _status_only(message: str) -> str:
+    """A `ClusterError` message without any remote body: `HTTP 500 on /path: <body>` becomes
+    `HTTP 500 on /path`. A body is remote-controlled and can carry the very token this lookup is
+    reading, which was never decoded and so is not among the secrets a refusal is scrubbed against
+    (review of #295, second pass, R2-3). A transport message is this process's own words and is kept."""
+    return message if is_transport_message(message) else message.split(": ", 1)[0]
+
+
 def _scrub(text: str, secrets: list[str]) -> str:
     """Every secret in play out of free text, in the spellings the two helpers know and then, whatever
     its length, the raw value — `fleetlogin.FleetLogin._scrub`'s rule, applied at this module's one
@@ -181,7 +188,7 @@ def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace
         with host_client._client() as client:
             obj = host_client._get(client, f"/api/v1/namespaces/{ns}/secrets/{name}", {})
     except ClusterError as exc:
-        raise LookupRefused("fleet-credential-missing", f"cannot read {where}: {exc.outcome}: {exc.message}",
+        raise LookupRefused("fleet-credential-missing", f"cannot read {where}: {exc.outcome}: {_status_only(exc.message)}",
                             action=action, spent=False) from exc
     try:
         password = base64.b64decode((obj.get("data") or {}).get(key) or "", validate=True).decode("utf-8").strip()
@@ -217,7 +224,7 @@ def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSour
                         f"create one, so it is an onboarding step — a kubernetes.io/service-account-token Secret "
                         f"named {source.secret_name} annotated {SA_NAME_ANNOTATION}={source.service_account}, "
                         f"which the control plane then fills"), spent=True) from exc
-        raise LookupRefused("sa-token-unreadable", f"{where}: {exc.outcome}: {exc.message}",
+        raise LookupRefused("sa-token-unreadable", f"{where}: {exc.outcome}: {_status_only(exc.message)}",
                             action=("grant the fleet account get on that one Secret on the target (resourceNames), "
                                     "and check the ServiceAccount and Secret names in clusterConfig.saTokenLookup"),
                             spent=True) from exc
@@ -225,9 +232,11 @@ def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSour
     labels, annotations = meta.get("labels") or {}, meta.get("annotations") or {}
     # THE TOKEN IS DECODED FIRST (review of #295, P1-1): whatever this function refuses below, the
     # token the Secret carried rides the refusal's `secrets`, so no quoted field can carry it out.
+    # `TypeError` too (second pass, R2-3): a non-scalar `data.token` must be a refusal, not a crash
+    # in front of the refusals this decode exists to feed.
     try:
         token = base64.b64decode((obj.get("data") or {}).get("token") or "", validate=True).decode("utf-8").strip()
-    except (binascii.Error, UnicodeDecodeError, ValueError):
+    except (binascii.Error, UnicodeDecodeError, ValueError, TypeError):
         token = ""
     carried = (token,) if token else ()
     # A remote-controlled NAME is described by its length, never echoed — the parser's rule for a key
@@ -333,43 +342,41 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     password = fleet_password(host_client, settings, own_namespace)
     secrets: list[str] = [password]
     try:
-        if gate.refused(account, password):
-            raise LookupRefused("login-refused", f"the target refused this password for {account} and it has not changed",
+        if gate.refused(cluster.api_url, account, password):
+            raise LookupRefused("login-refused", f"{cluster.name} evaluated this password for {account} already and it "
+                                                 f"has not changed",
                                 action=("rotate the fleet password Secret, or correct ldapConnectionBootstrap — no login is "
-                                        "attempted until the password moves (SPEC_S4 §6)"), spent=False)
+                                        "attempted against this target until the password moves (SPEC_S4 §6)"), spent=False)
         knobs = {"clock": clock} if clock is not None else {}
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
                 secrets.append(session.token)
                 sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
         except LoginError as exc:
-            if exc.bound and exc.phase == "credential":
-                # THE TARGET EVALUATED THE PASSWORD — refused it (401), answered 500 (what the
-                # oauth-server says for every directory result but 48/49, a LOCKED account's code 19
-                # included), or answered without a token. Never sent again while it is this password
-                # (review of #295, P0-1): re-entering #283's terminal answer from a schedule is the
-                # lockout walk one layer up. `AUTH_FAILED` is the refusal's word; the rest read as failed.
-                gate.refuse(account, password)
-                code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
-                raise LookupRefused(code, f"phase={exc.phase}: {exc.message}",
-                                    action=(f"the target answered the login for {account} without a session: rotate the "
-                                            f"fleet password Secret or correct ldapConnectionBootstrap, or check the "
-                                            f"account is not locked — it is not sent again while it is the same password"),
-                                    spent=True) from exc
             which = f" against {exc.host}" if exc.host else ""
+            if exc.bound:
+                # THE PASSWORD WAS ON THE WIRE. The target evaluated it — refused it (401), answered
+                # 500 (what the oauth-server says for every directory result but 48/49, a LOCKED
+                # account's code 19 included), answered without a token — or may have: a read timeout
+                # after the GET was written. Never sent to THIS target again while it is this password
+                # (review of #295, P0-1 and second pass R2-1): re-entering #283's terminal answer from a
+                # schedule is the lockout walk one layer up, and an in-memory "final" that any shape
+                # change re-arms is not a stop. `AUTH_FAILED` is the refusal's word; the rest read as failed.
+                gate.refuse(cluster.api_url, account, password)
+                code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
+                raise LookupRefused(code, f"phase={exc.phase}{which}: {exc.message}",
+                                    action=(f"the password for {account} was sent to {cluster.name} and no session came "
+                                            f"back: rotate the fleet password Secret or correct ldapConnectionBootstrap, "
+                                            f"or check the account is not locked — it is not sent there again while it "
+                                            f"is the same password"), spent=True) from exc
             hint = ""
             if exc.phase == "tls":
                 hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "
                         "which the API's bundle may not carry)")
-            # `bound` with any other phase: the GET was written and nothing came back (a read timeout,
-            # a dropped connection). The target may have bound; #283 made it terminal, so this lookup
-            # is FINAL — no schedule retries it — without gating the account fleet-wide on what may
-            # have been a slow proxy.
+            # Before the write — the socket never opened or the handshake failed: nothing was bound,
+            # and the schedule may try again.
             raise LookupRefused("login-failed", f"phase={exc.phase}{which}: {exc.message}",
-                                action=(f"fix what detail names on the target or the stanza{hint}"
-                                        + (" — the password was sent and nothing came back, so this is not retried until "
-                                           "the stanza or the fleet credential changes" if exc.bound else "")),
-                                spent=True, final=exc.bound) from exc
+                                action=f"fix what detail names on the target or the stanza{hint}", spent=True) from exc
         secrets.append(sa_token.token)
         written = store(host_client, own_namespace, cluster, settings, sa_token, account=account) if write else None
     except LookupRefused as exc:

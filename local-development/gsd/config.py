@@ -1222,28 +1222,29 @@ def _str_setting(raw: dict, env_name: str, yaml_key: str, default: str) -> str:
 
 
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
-    """Env wins over the ConfigMap. Accepts the YAML spellings, not Python truthiness.
+    """Env wins over the ConfigMap. Accepts a real boolean or one of the YAML spellings, and NOTHING
+    else, from either source.
 
-    ``bool("false")`` is True, so a plain cast would turn every explicit disable in an env
-    var into an enable — silently, and in the direction that grants rather than withholds.
+    ``bool("false")`` is True, so a plain cast turned an explicit disable into an enable — silently,
+    and in the direction that grants rather than withholds; the ConfigMap path did exactly that
+    until review of #295 (P1-3), and then a number or a list still decided the switch by truthiness
+    (`bool([False])` is True — second pass, R2-4). Anything that is not a boolean or a word is the
+    default, and the warning names the source it came from. A null is an absent key.
     """
-    source = os.environ.get(env_name)
+    source, where = os.environ.get(env_name), env_name
     if source is None:
-        # THE CONFIGMAP PATH READS A WORD TOO (review of #295, P1-3): `bool("false")` is True, so a
-        # quoted `clusterSecretsWritesEnabled: "false"` ENABLED writes. A real YAML boolean is itself;
-        # a string is the same word set as the env path; anything else keeps truthiness, said aloud.
-        value = raw.get(yaml_key, default)
-        if isinstance(value, bool):
-            return value
-        if not isinstance(value, str):
-            return bool(value)
-        source = value
-    word = source.strip().lower()
-    if word in ("true", "yes", "on", "1"):
-        return True
-    if word in ("false", "no", "off", "0"):
-        return False
-    log.warning("%s=%r is not a boolean; using %r", env_name, source, default)
+        if raw.get(yaml_key) is None:
+            return default
+        source, where = raw[yaml_key], yaml_key
+    if isinstance(source, bool):
+        return source
+    if isinstance(source, str):
+        word = source.strip().lower()
+        if word in ("true", "yes", "on", "1"):
+            return True
+        if word in ("false", "no", "off", "0"):
+            return False
+    log.warning("%s=%r is not a boolean; using %r", where, source, default)
     return default
 
 

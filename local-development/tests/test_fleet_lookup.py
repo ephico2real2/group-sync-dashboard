@@ -254,18 +254,31 @@ class TestARefusedPasswordIsGated:
         assert second.value.code == "login-refused" and second.value.spent is False
         assert len(wire.authorize) == 1, "a 500 was retried — that is the lockout walk one layer up"
 
-    def test_a_read_timeout_after_the_password_was_sent_is_final_but_gates_no_account(self, wire):
-        """The GET was written and nothing came back: #283 makes it terminal; here it ends the lookup's
-        schedule (final) without gating the account fleet-wide on what may have been a slow proxy."""
+    def test_a_read_timeout_after_the_password_was_sent_gates_that_target(self, wire):
+        """The GET was written and nothing came back: the target may have bound, #283 makes it
+        terminal, and the same password must not reach THAT target again — an in-memory "final" that
+        any shape change re-armed was not a stop (review of #295, second pass, R2-1/R2-2)."""
         wire.answers = [lambda r: httpx.ReadTimeout("timed out"), login_302()]
         gate = CredentialGate()
         with pytest.raises(LookupRefused) as exc:
             run(RND, gate=gate)
-        assert exc.value.code == "login-failed" and exc.value.spent is True and exc.value.final is True
-        assert "not retried until" in exc.value.action and len(wire.authorize) == 1
-        assert not gate.refused(USER, PASSWORD), "a timeout is not a refusal of the password"
-        result, _ = run(RND, gate=gate)
-        assert result.written == "created", "a later declaration change may try again"
+        assert exc.value.code == "login-failed" and exc.value.spent is True and len(wire.authorize) == 1
+        assert gate.refused(API, USER, PASSWORD)
+        with pytest.raises(LookupRefused) as again:
+            run(RND, gate=gate)
+        assert again.value.code == "login-refused" and again.value.spent is False
+        assert len(wire.authorize) == 1, "the password reached a target that may have bound it, twice"
+
+    def test_the_gate_is_per_target_so_a_sick_cluster_does_not_stop_a_healthy_one(self, wire):
+        """Review of #295, second pass, R2-1: keyed without the target, a 500 from A blocked B."""
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        gate = CredentialGate()
+        with pytest.raises(LookupRefused):
+            run(RND, gate=gate)
+        other = ClusterConfig("east", "https://api.east.example.com:6443", sa_token_lookup=True, ldap_connection_bootstrap=USER)
+        result, _ = run(other, gate=gate, s=settings(other))
+        assert result.written == "created" and len(wire.authorize) == 2
+        assert gate.refused(API, USER, PASSWORD) and not gate.refused(other.api_url, USER, PASSWORD)
 
 
 # ── R5 ─────────────────────────────────────────────────────────────────────────────────────────
@@ -350,16 +363,21 @@ class TestTheSchedule:
         finding, = poller.settings.cluster_registry.findings()
         assert finding.code == "fleet-write-disabled" and "2 replicas" in finding.detail
 
-    def test_a_final_failure_gives_up_on_the_first_attempt(self, tmp_path, monkeypatch, caplog):
-        def final(*a, **kw):
-            raise LookupRefused("login-failed", "nothing came back", action="check the target", spent=True, final=True)
-        monkeypatch.setattr(fleetlookup, "lookup", final)
-        poller = self._poller(tmp_path, monkeypatch)
-        with caplog.at_level(logging.INFO, logger="gsd"):
-            poller._retrieve_pending(); poller._retrieve_pending()
-        lines = [m for m in caplog.messages if m.startswith("fleet-lookup-failed ")]
-        assert len(lines) == 1 and "attempt=1/5" in lines[0] and "gave_up=true" in lines[0] and "retry_in=" not in lines[0]
-        assert poller._lookups["rnd"].gave_up
+    def test_a_non_scalar_token_and_an_error_body_are_refusals_that_carry_nothing(self, wire):
+        """Review of #295, second pass, R2-3: a `data.token` that is not a string raised TypeError in
+        front of every refusal; a 500 body on the Secret GET carried the token straight into the
+        finding, because an undecoded token is not among the secrets a refusal is scrubbed against."""
+        wire.answers = [login_302(), login_302()]      # two logins, one per probe
+        odd = sa_secret(); odd["data"]["token"] = 123
+        wire.secret = httpx.Response(200, json=odd)
+        with pytest.raises(LookupRefused) as exc:
+            run(RND)
+        assert exc.value.code == "sa-token-unreadable" and "has no token yet" in exc.value.detail
+        wire.secret = httpx.Response(500, text=f"boom {SA_TOKEN} boom")
+        with pytest.raises(LookupRefused) as exc:
+            run(RND)
+        assert exc.value.code == "sa-token-unreadable" and "HTTP 500 on " in exc.value.detail
+        assert SA_TOKEN not in str(exc.value) + exc.value.detail + exc.value.action, "a remote body is never quoted"
 
     def test_success_clears_the_finding_and_wakes_discovery(self, tmp_path, monkeypatch, caplog):
         from gsd.fleetlookup import LookupResult, SaToken
@@ -412,3 +430,23 @@ class TestTheSwitchReadsAWord:
             path = tmp_path / "c.yaml"
             path.write_text(clusters + f"clusterSecretsWritesEnabled: {spelling}\n")
             assert load_settings(str(path)).cluster_secrets_writes_enabled is expected, spelling
+
+    def test_a_value_that_is_neither_a_boolean_nor_a_word_is_the_default_and_names_its_source(self, tmp_path, caplog):
+        """Review of #295, second pass, R2-4: `2`, `-1` and `[false]` enabled the switch by truthiness,
+        silently; `null` and `[]` disabled it silently; the warning named the env variable for a
+        ConfigMap value. The default is off, so every odd spelling must read as off, and say so."""
+        from gsd.config import load_settings
+        clusters = "clusters:\n  - name: host\n    apiUrl: https://kubernetes.default.svc\n    tokenEnv: X\n"
+        for spelling in ("2", "-1", "[false]", "[]", '""', "maybe", "{a: 1}"):
+            path = tmp_path / "c.yaml"
+            path.write_text(clusters + f"clusterSecretsWritesEnabled: {spelling}\n")
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger="gsd"):
+                assert load_settings(str(path)).cluster_secrets_writes_enabled is False, spelling
+            assert any("clusterSecretsWritesEnabled=" in m and "not a boolean" in m for m in caplog.messages), spelling
+        path = tmp_path / "c.yaml"
+        path.write_text(clusters + "clusterSecretsWritesEnabled: null\n")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="gsd"):
+            assert load_settings(str(path)).cluster_secrets_writes_enabled is False
+        assert caplog.messages == [], "a null is an absent key, not an odd value"
