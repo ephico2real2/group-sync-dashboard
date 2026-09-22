@@ -340,7 +340,9 @@ _trusted_ca_context()         -> SSLContext | certs loaded: 147
 ClusterConfig(no CA).verify() -> SSLContext | certs: 147
 ```
 
-A stanza that declares **no** CA resolves to the injected bundle — 147 certificates including the
+A stanza that declares **no** CA resolves to the injected bundle — 147 certificates at the time of
+this measurement (Case C; it is **152** after Case E added this cluster's own CAs, which is what the
+cluster carries now) including the
 enterprise CA — and that is the context the login hands to `httpx`.
 
 ### The precedence, and why it is a fallback rather than a merge
@@ -514,14 +516,15 @@ ENTERPRISE_CM=ldap-enterprise-ca-bundle ./refresh-cluster-wide-ca.sh            
 ENTERPRISE_CM=ldap-enterprise-ca-bundle ./refresh-cluster-wide-ca.sh --apply    # and do it
 ```
 
-Result:
+Result — a verbatim re-run on 2026-09-22, **after** the change had been applied, which is why it
+ends in the idempotency short-circuit rather than a dry-run summary:
 
 ```
 proxy/cluster trustedCA : enterprise-and-cluster-ca-bundle
-enterprise source       : openshift-config/ldap-enterprise-ca-bundle
+enterprise source      : openshift-config/ldap-enterprise-ca-bundle
 
-enterprise CA:
-  KEEP    3646d  O=Enterprise IT, OU=Directory Services, CN=LDAP Enterprise Root CA
+enterprise CA (from openshift-config/ldap-enterprise-ca-bundle):
+  KEEP    3646d  O=Enterprise IT, OU=Directory Services, CN=LDAP Enterp
   enterprise: 1 of 1 kept
 
 this cluster's CAs (kube-root-ca.crt):
@@ -529,12 +532,19 @@ this cluster's CAs (kube-root-ca.crt):
   KEEP    3594d  OU=openshift, CN=kube-apiserver-localhost-signer
   KEEP    3594d  OU=openshift, CN=kube-apiserver-service-network-signer
   KEEP    3594d  CN=openshift-kube-apiserver-operator_localhost-recover
-  drop     674d  CN=*.apps-crc.testing  (not a CA — a leaf cannot anchor a chain)
+  drop     674d  CN=*.apps-crc.testing  (not an anchor — not a CA and not self-signed)
   KEEP     674d  CN=ingress-operator@1785325954
   cluster: 5 of 6 kept
 
 combined: 6 CA certificate(s), 7949 bytes
+
+Already current: proxy names 'enterprise-and-cluster-ca-bundle' and its contents match. Nothing to do.
 ```
+
+An earlier revision of this section carried a hand-edited transcript instead of this one: it showed
+the full subject `...CN=LDAP Enterprise Root CA`, which the script cannot print because line 88 ends
+`| cut -c1-54`, and a heading (`enterprise CA:`) that no version of the code emits. Three reviewers
+caught it. The pre-apply run was not captured verbatim at the time and is not reconstructed here.
 
 Six real authorities where the hand-made bundle had seven entries in 9,173 bytes.
 
@@ -555,8 +565,16 @@ First dry run, before the fix:
 Fixed two ways, because one alone would not be enough:
 
 - **`ENTERPRISE_CM`** names the original source explicitly, rather than trusting the current state;
-- **deduplication by SHA-256 fingerprint**, so any input is safe regardless. The same authority
-  arriving from two sources is one anchor; a bundle listing it twice is merely larger.
+- **deduplication by SHA-256 fingerprint**. The same authority arriving from two sources is one
+  anchor; a bundle listing it twice is merely larger.
+
+**These two do NOT make any input safe, and an earlier revision of this line said they did.** Dedup
+prevents *duplication*, not *loss*. Adversarial review found four inputs that silently dropped an
+anchor — chiefly `oc get cm X -o jsonpath='{.data.ca-bundle\.crt}'` exiting **0 with empty output**
+when the ConfigMap exists under a different data key, which `openshift-config/ca-config-map` on this
+very cluster does. What makes an input safe is the guard on the RESULT: the run now inventories the
+anchors in the bundle the proxy names today and refuses to write if any of them would be missing
+(`ALLOW_DROP=1` to override deliberately).
 
 After the fix, both routes converge on the same six certificates — the explicit source and the
 read-back both produce `combined: 6 CA certificate(s), 7949 bytes`.
@@ -582,7 +600,12 @@ oauth-openshift.apps-crc.testing   OK
 polled shared-rnd: 3 CRs, 62 groups
 ```
 
-**The count staying at 152 while the file shrank is the proof the filtering was right.**
+**The count staying at 152 while the file shrank is consistent with the filtering being right**: the
+bytes that left were a duplicate and a leaf, neither of which is an anchor. It is not by itself proof
+— the count is blind to a certificate that is kept wrongly, and review demonstrated one (a leaf whose
+`basicConstraints` DER merely spells `CA:TRUE` defeated a text grep of openssl's output). The keep
+test is now anchored and falls back to a self-signed check; the result guard is what actually protects
+the invariant.
 
 ### A caution the run demonstrated
 
