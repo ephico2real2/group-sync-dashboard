@@ -116,3 +116,26 @@ Outcome in one line: **pending**
   both-CAs control (one `Basic` header, terminal 302). Both **ran, not skipped** (2 passed in 2.90 s).
 - Full hermetic suite: **4650 passed, 16 skipped, 563 deselected in 231.70 s**. Doc checks: 990 passed.
 - Nothing of #284's configuration contract implemented; `cryptography` not added (not a dependency).
+
+### The third pass, and the split-CA proof made unskippable in CI (20:2x → 19:48) — commit `f2c221f`, PR #289
+
+- **The CI-skip change (the operator):** a `-q` CI log could not show whether the split-CA pair ran;
+  the counts (local 4650/16, CI 4652/13) reconciled under both hypotheses. Matched the suite's existing
+  convention (`test_chart_grafana_dashboard.py`: `pytest.fail` under `CI`, `pytest.skip` otherwise)
+  rather than a new marker. Proven locally in both directions: `PATH=/nonexistent` with `CI` unset →
+  2 skipped; with `CI=true` → `Failed: … must never be skipped here`. Measured from the CI logs: on
+  `28d4bec` (before the pair) **4643 passed, 13 skipped**; on `0169ce7` (with it) **4652 passed, 13
+  skipped** — the skipped count did not move across two skippable tests, so they were running.
+- **Third Codex pass, four findings, all accepted; R3-3 is a reversal of the operator's own round-2
+  decision, recorded as such.** The guard is now anchored on the response (`_token_in` re-read on
+  failure) instead of on a binding that three refactors moved; `revoked` is the target's answer from
+  every site; redaction is scoped by three rules (classify raw, never substring-redact a structured
+  value, free text only); the revoke tests assert `revoked` per status.
+- **Found while applying R3-3, mine (measured):** the first classification-word test passed on the OLD
+  module because its message carried the uppercase `CERTIFICATE_VERIFY_FAILED` marker the
+  case-sensitive scrub left intact; the test uses the lowercase phrase alone and fails before.
+- The corrected `tests/test_fleet_login.py` against the previous module (`06494b5`): **10 failed / 61
+  passed**; against this head: **71 passed**. Full hermetic suite: **4656 passed, 16 skipped, 563
+  deselected in 230.40 s**. Doc checks: 991 passed.
+- Live on CRC as `developer`: count **0 → 1 → 0**, issuer `https://oauth-openshift.apps-crc.testing`
+  intact, the revoked token dead after **121 s**; manual `oc` count 0 before / 0 after.
