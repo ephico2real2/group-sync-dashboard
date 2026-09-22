@@ -91,6 +91,42 @@ fresh clone is Step 2's `codex exec` (no login), then Step 4's `.venv/bin/python
 - Nothing under `.agents/` — that tree is third-party skill installs and is ignored; this pass does not
   read it.
 
+## Step 0 — RESEARCH FIRST, SPEC SECOND, CODE THIRD
+
+The operator's rule, 2026-09-22, after #283 took five review rounds: *"Research first, spec second,
+code third."* Measured cost of skipping it on that one issue: **21 findings, the module grown 443 →
+729 lines, and two findings caused by the orchestrator's own instructions.**
+
+**Before specifying anything** that touches a wire format, an auth flow, a platform lifecycle or a
+deprecation, read the primary source and measure it on the lab. Two findings in #283 came from
+documents that existed the whole time and were reachable by neither code-reading, reasoning, nor any
+of the three reviewer seats:
+
+- **RFC 9110 §5.5 — `Location` is a singleton field.** The orchestrator had specified a fix that
+  hunted every `Location` value for a token. The RFC states a *systems control client* "might consider
+  any form of error recovery to be dangerous" — and the fix was **attacker-steerable**: a hostile
+  target sending two `Location` headers would choose which token became the cluster credential. Four
+  reviewers and the orchestrator all missed it. The RFC turned the fix from "recover" into "refuse",
+  which was also the smaller change.
+- **The Kubernetes legacy service-account-token cleaner** (GA 1.30) invalidates a token Secret unused
+  for a year — and #284 is built on storing exactly such a token. Confirmed live on the lab
+  (OpenShift 4.22.7 stamping `kubernetes.io/legacy-token-last-used`). It would not have failed until a
+  year after shipping, past every review, test and CRC run.
+
+**In order:**
+
+1. **Research.** `WebSearch` the RFC / upstream source / vendor doc; read upstream code when behaviour
+   is disputed (`gh api repos/<org>/<repo>/contents/<path>` settled the LDAP 48/49-vs-500 question
+   outright); then **measure the claim on the lab**. Cite the source in the code comment AND the spec.
+2. **Spec, reviewed before any code exists.** Rounds 2 and 3 of #283 were defects introduced *by
+   fixes*. A design problem caught in a spec costs one round; in code it cost three.
+3. **Code**, applied from the spec's fenced blocks, never from recollection.
+
+**Where a standard exists, follow it rather than inventing recovery behaviour.** It is more defensible
+than anything derived locally and it usually means *less* code — the one round of #283 that deleted
+helpers was the round driven by an RFC. This composes with the repo rule that a review must not grow
+the code's complexity: patching from first principles accretes, a standard tells you what to delete.
+
 ## Step 1 — the brief (never "review this")
 
 One numbered claim per thing you want confirmed or refuted, each naming the exact file, symbol and
