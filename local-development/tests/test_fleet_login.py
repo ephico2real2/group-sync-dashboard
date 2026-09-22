@@ -16,6 +16,7 @@ import hashlib
 import http.server
 import json
 import logging
+import os
 import pathlib
 import shutil
 import ssl
@@ -265,6 +266,7 @@ class TestTheTokenIsReadOffTheLocationFragment:
         assert len(target.authorize) == 1 and sleeps == [] and fl.session is None
         assert [r.url.path for r in target.revokes] == [f"{USER_TOKEN_API}/{token_object_name(TOKEN)}"]
         assert "attempted once" in exc.value.message, "the message states the attempt, never a result it cannot know"
+        assert fl.revoked is True, "and `revoked` states the result the target gave (200)"
 
 
 # ── R4 ─────────────────────────────────────────────────────────────────────────────────────────
@@ -385,6 +387,70 @@ class TestTheSessionLogsOut:
                 pass
         assert fl.session is None and len(target.revokes) == 1
 
+    def test_an_interruption_inside_the_extraction_still_revokes(self, monkeypatch):
+        """Third pass (Codex, `authorize=1 DELETE=0`): the guard began after `_token_from` returned,
+        so an interruption inside it — after the token was bound — abandoned the token. The guard is
+        anchored on the RESPONSE now and re-reads the token off it, so the window cannot exist."""
+        real_parse_qs = fleetlogin.parse_qs
+        calls: list[int] = []
+
+        def parse_then_die(query: str):
+            calls.append(1)
+            result = real_parse_qs(query)
+            if len(calls) == 1 and "access_token" in result:
+                raise KeyboardInterrupt()          # the token is in hand, and the frame is leaving
+            return result
+
+        monkeypatch.setattr(fleetlogin, "parse_qs", parse_then_die)
+        target = Target(login_302())
+        fl, _ = make(target)
+        with pytest.raises(KeyboardInterrupt):
+            with fl:
+                pass
+        assert fl.session is None and len(target.revokes) == 1 and fl.revoked is True
+        # and after `_token_from` returned but before anything else ran
+        monkeypatch.setattr(fleetlogin, "parse_qs", real_parse_qs)
+        target = Target(login_302())
+        fl, _ = make(target)
+        real_token_from = fl._token_from
+
+        def bind_then_die(response, endpoint):
+            real_token_from(response, endpoint)
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(fl, "_token_from", bind_then_die)
+        with pytest.raises(KeyboardInterrupt):
+            with fl:
+                pass
+        assert len(target.revokes) == 1 and fl.revoked is True
+
+    def test_revoked_is_what_the_target_answered_from_every_site(self, monkeypatch, caplog):
+        """Third pass (Codex): the guard's revoke discarded the answer, and a `fleet-logout` line
+        that failed to write after a 200 was reported as a failed revoke."""
+        target = Target(login_302(expires_in="soon"))      # the guard's site, DELETE 200
+        fl, _ = make(target)
+        with pytest.raises(LoginError):
+            with fl:
+                pass
+        assert fl.revoked is True and len(target.revokes) == 1
+        real_event = fleetlogin.event
+
+        def emitter_that_dies(log, level, name, **fields):
+            if name == "fleet-logout":
+                raise RuntimeError("the emitter broke")
+            real_event(log, level, name, **fields)
+
+        monkeypatch.setattr(fleetlogin, "event", emitter_that_dies)
+        target = Target(login_302())
+        fl, _ = make(target)
+        with caplog.at_level(logging.WARNING):
+            with fl:
+                pass
+        assert fl.revoked is True, "a line that fails to write is not a failed revoke"
+        assert lines(caplog, "fleet-logout-failed") == []
+        assert not any("failed before the target answered" in m for m in caplog.messages)
+        assert any("fleet-logout line could not be written (revoked=True)" in m for m in caplog.messages)
+
     def test_a_failure_during_cleanup_never_replaces_the_original_exception(self, monkeypatch, caplog):
         """Confirmation pass (Codex: `raised=RuntimeError original=Marker`). The revoke's own
         failure is surfaced as a line and the body's exception is the one that propagates."""
@@ -393,7 +459,7 @@ class TestTheSessionLogsOut:
 
         target = Target(login_302())
         fl, _ = make(target)
-        monkeypatch.setattr(fl, "_revoke", lambda token: (_ for _ in ()).throw(RuntimeError("cleanup broke")))
+        monkeypatch.setattr(fl, "_delete_token", lambda token: (_ for _ in ()).throw(RuntimeError("cleanup broke")))
         with caplog.at_level(logging.WARNING):
             with pytest.raises(BodyError):
                 with fl:
@@ -403,7 +469,7 @@ class TestTheSessionLogsOut:
         # the same inside the login's own guard
         target = Target(login_302(expires_in="soon"))
         fl, _ = make(target)
-        monkeypatch.setattr(fl, "_revoke", lambda token: (_ for _ in ()).throw(RuntimeError("cleanup broke")))
+        monkeypatch.setattr(fl, "_delete_token", lambda token: (_ for _ in ()).throw(RuntimeError("cleanup broke")))
         with caplog.at_level(logging.WARNING):
             with pytest.raises(LoginError):
                 with fl:
@@ -431,7 +497,13 @@ class TestTheSessionLogsOut:
                     pass
         assert "attempted once" in exc.value.message and "was revoked" not in exc.value.message
         assert len(target.revokes) == 1 and len(lines(caplog, "fleet-logout-failed")) == 3
-        assert fl.revoked is None, "nothing was handed to the caller, so nothing was revoked on exit"
+        assert fl.revoked is False, "the target answered 500: not revoked, from this site too (R3-2, R3-4)"
+        target = Target(login_302(expires_in="soon"))
+        fl, _ = make(target)
+        with pytest.raises(LoginError):
+            with fl:
+                pass
+        assert fl.revoked is True and len(target.revokes) == 1
 
     def test_the_object_name_is_the_measured_derivation(self):
         """PINNED TO A LITERAL, never regenerated from the code under test (review of #289, Cursor
@@ -696,6 +768,22 @@ class TestTLSFollowsTheClustersMode:
 
 OPENSSL = shutil.which("openssl")
 
+
+def _require_openssl() -> None:
+    """A developer machine without `openssl` skips the split-CA proof; CI never may. The suite's
+    convention for a tool a proof depends on (`test_chart_grafana_dashboard.py`, promtool): under
+    `CI` — which GitHub Actions always sets — a missing tool FAILS the test, so the one test that
+    proves the credential is never sent to an OAuth host the bundle cannot verify cannot silently
+    stop running (the business owner could not tell from a `-q` CI log whether it had)."""
+    if OPENSSL is not None:
+        return
+    if os.environ.get("CI"):
+        pytest.fail("openssl is not on PATH and this is CI: the split-CA proof must never be skipped "
+                    "here — it is the only test that proves the credential is not sent to an OAuth host "
+                    "the bundle cannot verify; put openssl on the runner's PATH")
+    pytest.skip("openssl is not on PATH; the split-CA fixture generates its certificates with it")
+
+
 _CA_CNF = """[req]
 distinguished_name = dn
 x509_extensions = ca
@@ -739,14 +827,17 @@ def _pki(root: pathlib.Path, name: str) -> tuple[pathlib.Path, pathlib.Path, pat
 
 
 class _QuietServer(http.server.ThreadingHTTPServer):
-    """A handshake a client refuses raises in the handler thread; that is the point, not noise."""
+    """A handshake a client refuses raises in the handler thread; that is the point, not noise.
+    `handle_error` is consulted only for an exception while HANDLING an accepted connection —
+    a bind failure raises from the constructor and is never routed here."""
 
     def handle_error(self, request, client_address) -> None:
         pass
 
 
 class _TlsServer:
-    """One loopback HTTPS server on its own thread."""
+    """One loopback HTTPS server on a daemon thread, shut down by the fixture's `finally`; a test
+    that fails cannot leave a listener behind, and a bind failure raises here, in the test."""
 
     def __init__(self, crt: pathlib.Path, key: pathlib.Path, handler: type) -> None:
         self.server = _QuietServer(("127.0.0.1", 0), handler)
@@ -767,8 +858,7 @@ def split_estate(tmp_path):
     whose ingress is re-signed by an enterprise PKI — plus a record of every Authorization header
     the OAuth host received and of every discovery the API host answered. Two bundles: A alone, and
     A with B (the control)."""
-    if OPENSSL is None:
-        pytest.skip("openssl is not on PATH; the split-CA fixture generates its certificates with it")
+    _require_openssl()
     ca_a, api_crt, api_key = _pki(tmp_path, "A")
     ca_b, oauth_crt, oauth_key = _pki(tmp_path, "B")
     seen: dict = {"discovery": 0, "authorization": []}
@@ -798,7 +888,11 @@ def split_estate(tmp_path):
         def log_message(self, *args):
             pass
 
-    api = _TlsServer(api_crt, api_key, ApiHost)
+    try:
+        api = _TlsServer(api_crt, api_key, ApiHost)
+    except BaseException:
+        oauth.close()
+        raise
     api_only = tmp_path / "api-only.crt"
     api_only.write_text(ca_a.read_text())
     both = tmp_path / "both.crt"
@@ -909,9 +1003,9 @@ class TestTheRedactionPin:
             failing(Target(login_302(expires_in=f"{PASSWORD}")))                            # revoke inside the login
             failing(Target(httpx.Response(503, text=f"down pw={PASSWORD}")))                # terminal HTTP answer
             failing(Target(lambda request: httpx.ReadTimeout(f"timed out pw={PASSWORD}")))  # terminal transport
-            planted_issuer = {"issuer": f"https://{PASSWORD}.example", "authorization_endpoint": f"{OAUTH}/oauth/authorize"}
+            planted_issuer = {"issuer": f"https://{USER}:{PASSWORD}@oauth.example", "authorization_endpoint": f"{OAUTH}/oauth/authorize"}
             with make(Target(login_302(), discovery=planted_issuer))[0] as session:         # fleet-login, fleet-logout
-                assert PASSWORD not in session.issuer and "<redacted>" in session.issuer
+                assert session.issuer == "https://oauth.example", "userinfo stripped structurally, host intact"
             with make(Target(login_302(), revoke=httpx.Response(500, text=f"echo {TOKEN} {PASSWORD}")))[0]:
                 pass                                                                        # fleet-logout-failed
         return errors
@@ -944,6 +1038,38 @@ class TestTheRedactionPin:
                     pass
         assert "pw=abc" not in exc.value.message and "pw=<redacted>" in exc.value.message
         assert "pw=abc" not in "\n".join(caplog.messages)
+
+    def test_a_password_that_is_a_substring_of_a_host_leaves_the_issuer_intact(self):
+        """Third pass — the round-2 rule "scrub regardless of length, everywhere" was the
+        orchestrator's and was wrong: password `app` turned the issuer into
+        `https://oauth-openshift.<redacted>s.example.com`. A structured value the operator acts on
+        is never substring-redacted."""
+        with make(Target(login_302()), password="app")[0] as s:
+            assert s.issuer == OAUTH
+
+    def test_userinfo_in_the_issuer_is_stripped_structurally(self):
+        planted = {"issuer": f"https://{USER}:{PASSWORD}@oauth.example:8443/x", "authorization_endpoint": f"{OAUTH}/oauth/authorize"}
+        with make(Target(login_302(), discovery=planted))[0] as s:
+            assert s.issuer == "https://oauth.example:8443/x"
+        unusable = {"issuer": "http://plain.example", "authorization_endpoint": f"{OAUTH}/oauth/authorize"}
+        with make(Target(login_302(), discovery=unusable))[0] as s:
+            assert s.issuer == OAUTH, "a non-https issuer falls back to the endpoint's host"
+
+    def test_a_password_that_is_a_classification_word_does_not_change_the_phase(self, caplog):
+        """Third pass: password `certificate` scrubbed the phrase `is_verify_failure` keys on and a
+        TLS failure became `phase=connect`. Classify raw, scrub the copy. THE MESSAGE CARRIES ONLY
+        THE LOWERCASE PHRASE: with the uppercase `CERTIFICATE_VERIFY_FAILED` marker beside it the old
+        case-sensitive scrub left that marker intact and the classifier still matched, so the test
+        passed on the defect — measured while writing it."""
+        tls = lambda request: httpx.ConnectError("certificate verify failed (_ssl.c:1010)")
+        target = Target(tls, tls, tls, tls, tls)
+        fl, _ = make(target, password="certificate")
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        assert exc.value.phase == "tls" and "certificate" not in exc.value.message
+        assert all("phase=tls" in m for m in lines(caplog, "fleet-login-failed"))
 
     def test_the_source_declares_every_event_it_emits_and_passes_secrets_on_each(self):
         tree = ast.parse(pathlib.Path(fleetlogin.__file__).read_text())

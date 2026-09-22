@@ -99,3 +99,32 @@ certificate`.
 | **accepted: the control** | The same fixture with both CAs reaches the OAuth host exactly once (`Basic …`) and stops on the fixture's token-less 302 (`retryable=False`), so zero hits cannot be mistaken for a broken fixture. |
 | `cryptography` vs `openssl` | `cryptography` is not a dependency of this project; the fixture shells out to `openssl` (OpenSSL 3.6.4 on the machine that ran it) and skips cleanly without it. No key material is committed. |
 | the configuration contract | **not implemented here** — it is #284's (the owner posted the measurement there); the spec's §2.1 and this record say only that the lab cannot show the failure. |
+
+## Third pass on the restructured control flow (with the CI-skip change)
+
+Codex, harness-driven: all 21 `httpx.HTTPError` classes, statuses 100–599, exceptions injected
+inside the new helpers. E1 (the lockout property is total) and E5 (no message or log leakage) clean.
+Four findings, batched with the CI-skip change. **One of the four is a reversal of an orchestrator
+decision, not a reviewer finding, and is marked as such.**
+
+| # | finding | source | decision | reason and fix |
+|---|---|---|---|---|
+| R3-1 (P0) | The cleanup guard was still one step too late: an interruption inside `_token_from`, after the token was bound, measured `authorize=1 DELETE=0`. The third iteration of the same window — each refactor moved "the moment the token is bound". | Codex, measured | **accepted — made structural, not moved** | The guard in `gsd/fleetlogin.py#FleetLogin._login` is anchored on the **response**, not on any later binding: on any exception it re-reads the token off the response's own `Location` header (`_token_in`, pure and total, split on the first `#`) and revokes it. There is no line between "the token exists in this process" and "an exception here revokes it", because the response has carried it since the request returned, and no future refactor of the extraction can reopen the window. The boundaries Codex confirmed (expiry `0`, `-1`, non-numeric, `MAX+1`, `1`, `MAX`) stay: nothing inside the guard revokes, so revocation is attempted exactly once. Test: `test_an_interruption_inside_the_extraction_still_revokes` — `parse_qs` raises inside the extraction on its first call; DELETE count 1. |
+| R3-2 (P1) | `revoked` lied two ways: the guard's revoke discarded the answer (invalid expiry + DELETE 200 → `revoked is None`), and a `fleet-logout` emitter failing after a 200 gave `revoked=False` with a line falsely saying the revoke "failed before the target answered". | Codex, measured | **accepted** | `_delete_token` is the wire only and answers as a value (`_RevokeAnswer`); `_revoke` — the one boundary every site goes through — records `revoked` from what the target said **before** writing the line, and a line that fails to write falls back to the stdlib logger without touching `revoked`. Test: `test_revoked_is_what_the_target_answered_from_every_site`. |
+| **R3-3 (P1)** | **A reversal of the orchestrator's round-2 decision** ("make `_scrub` redact the credential regardless of length"). Measured harms: password `app` → issuer `https://oauth-openshift.<redacted>s.example.com`; password `certificate` → `ConnectError: certificate verify failed` no longer classifies, `phase=connect` instead of `tls` — R2-7's defect in a new place: a scrub altering a string the code derives meaning from. | Codex measured it; **the orchestrator's call was wrong** and is retracted here | **corrected — scoped, not reverted** | Three rules, now general in the module: (1) never scrub a classification input — the 401 challenge and the transport message are classified raw, only the displayed copy is scrubbed (`_transport_error`); (2) never scrub a structured value the operator acts on — the issuer and the endpoint's host are never substring-redacted; userinfo is stripped from the issuer **structurally** (`_without_userinfo` rebuilds `scheme://host/path`), so a legitimate host containing the password survives; (3) length-agnostic redaction stays only for free remote text (bodies, challenge values, error strings). Tests: `test_a_password_that_is_a_substring_of_a_host_leaves_the_issuer_intact`, `test_a_password_that_is_a_classification_word_does_not_change_the_phase`, `test_userinfo_in_the_issuer_is_stripped_structurally`. |
+| R3-4 (P2) | The round-2 rewording ("attempted") flattened the outcomes: a test accepted `revoked=None`, and DELETE 200 and 500 satisfied the same assertions. | Codex | **accepted** | With `revoked` truthful, every revoke test asserts the value per status: 200 → True, 404 → True, 500 → False, 401 → False, including on the expiry-stop path (`test_a_revoke_that_failed_is_surfaced_never_reported_as_revoked`, `test_a_token_without_a_usable_expiry…`). |
+
+### The CI-skip change (the business owner, between the passes)
+
+A `-q` CI log cannot show whether the split-CA pair ran or skipped, and the local/CI counts
+reconciled under both hypotheses. The skip is a developer-machine courtesy only: under `CI` a missing
+`openssl` **fails** the tests (`_require_openssl`), matching the suite's existing convention for a
+tool a proof depends on (`test_chart_grafana_dashboard.py`, promtool) rather than a new marker. Proven
+locally in both directions (skip with `CI` unset; `Failed: … must never be skipped here` with
+`CI=true`). `cryptography` stays out — a dependency added to avoid a shell-out that works on every
+runner and Mac is not worth it. The servers run on daemon threads shut down in the fixture's
+`finally`; a bind failure on the second server closes the first; `handle_error` is consulted only for
+an exception while handling an accepted connection, so it cannot hide a bind failure. The CI counts
+before and after are on PR #289: on `28d4bec` (before the pair) `4643 passed, 13 skipped`; on
+`0169ce7` (with it) `4652 passed, 13 skipped` — the skipped count did not move across the addition of
+two skippable tests, which already says they ran.

@@ -59,10 +59,22 @@ from the moment the 302 is in hand, nothing leaves the login without either hand
 the caller inside a session or ATTEMPTING ITS REVOCATION EXACTLY ONCE, and a failed revocation is
 SURFACED — a `fleet-logout-failed` line, `FleetLogin.revoked` False — never swallowed and never
 reported as success. Whatever raises, including what was not predicted; and cleanup never replaces
-the exception it is cleaning up after. The token is read off the header WITHOUT validating the rest
-of the URL (a hostile `Location` must not stand between the mint and the name of what was minted),
-and the lifetime the target states is bounded at int32 (MAX_EXPIRES_IN) because it is
-remote-controlled and the instant arithmetic is not. What this cannot cover, and both are why the
+the exception it is cleaning up after. THE GUARD IS ANCHORED ON THE RESPONSE, NOT ON A BINDING:
+on any failure it re-reads the token off the response's own header (`_token_in`, pure and total),
+so there is no line between "the token exists in this process" and "an exception here revokes
+it" — three refactors moved "the moment the token is bound" and each reopened the window (review
+of #289, three passes). The token is read off the header WITHOUT validating the rest of the URL (a
+hostile `Location` must not stand between the mint and the name of what was minted), and the
+lifetime the target states is bounded at int32 (MAX_EXPIRES_IN) because it is remote-controlled
+and the instant arithmetic is not. `FleetLogin.revoked` is what the target answered, recorded from
+EVERY revoke site.
+
+REDACTION NEVER TOUCHES WHAT THE CODE DERIVES MEANING FROM (the third pass, correcting the
+second): a classification input — the 401 challenge, a transport message's OpenSSL phrases — is
+classified RAW and only the quoted copy is scrubbed; a structured value the operator acts on — the
+issuer URL, the endpoint's host — is never substring-redacted, and userinfo is stripped from it
+structurally; length-agnostic redaction is kept only for genuinely free remote text (bodies,
+challenge values, error strings), where mangling costs a less readable quote and nothing else. What this cannot cover, and both are why the
 answer is terminal rather than retried: a request the target answered after this process stopped
 listening (a read timeout), and a 302 whose `Location` httpx itself cannot parse (it builds the
 redirect request even with `follow_redirects=False` and raises `RemoteProtocolError`) — either may
@@ -164,6 +176,19 @@ class LoginError(ClusterError):
 
 
 @dataclass(frozen=True)
+class _RevokeAnswer:
+    """What the target said to a DELETE, decided on the wire before any line is written about it."""
+
+    gone: bool
+    """True only when the target answered 200 (revoked) or 404 (already gone)."""
+    word: str
+    """revoked | already-gone | unauthenticated | refused | unanswered — the line's `outcome=` word."""
+    phase: str
+    outcome: str
+    detail: str | None
+
+
+@dataclass(frozen=True)
 class FleetSession:
     """One login as the fleet account: the token, whose it is, and when it dies."""
 
@@ -218,6 +243,21 @@ def token_object_name(token: str) -> str:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _without_userinfo(url: str) -> str | None:
+    """A URL rebuilt from its parts without any userinfo — `scheme://host[:port]/path` — or None
+    when it is not an https URL with a host. STRUCTURAL, not a substring redaction (third pass: the
+    round-2 scrub turned `…apps.example.com` into `…<redacted>s.example.com` for a password of
+    `app`); a host that happens to contain the password is the operator's host and survives."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    host = parts.netloc.rpartition("@")[2]
+    if parts.scheme != "https" or not host:
+        return None
+    return f"{parts.scheme}://{host}{parts.path}"
 
 
 def _as_utc(moment: datetime) -> datetime:
@@ -282,7 +322,7 @@ class FleetLogin:
     def __exit__(self, exc_type, exc, tb) -> bool:
         try:
             if self.session is not None:
-                self.revoked = self._revoke_quietly(self.session.token)
+                self._revoke(self.session.token)
         finally:
             self._close()
         return False
@@ -318,7 +358,6 @@ class FleetLogin:
             try:
                 issuer, endpoint = self._discover()
                 response = self._authorize(endpoint)
-                token, fragment = self._token_from(response, endpoint)
             except LoginError as exc:
                 exc.attempts = attempt
                 if not exc.retryable:
@@ -331,14 +370,16 @@ class FleetLogin:
                 self._log_retry(exc, attempt, retry_in=wait)
                 self._sleep(wait)
                 continue
-            # FROM HERE THE TOKEN EXISTS ON THE TARGET, and nothing below may leave this frame
-            # without either handing it to the caller inside a session or attempting its revocation
-            # exactly once — whatever raises, including what was not predicted (review of #289: an
-            # OverflowError from a remote-controlled expires_in escaped `__enter__` with the token
-            # abandoned; the confirmation pass: a hostile Location did the same one step earlier).
-            # `_token_from` binds the token before anything else is validated, so the guard begins
-            # the moment there is a name to revoke, and revocation is attempted once.
+            # FROM HERE THE TARGET MAY HAVE MINTED A TOKEN: the response is in hand, and this guard
+            # holds until the session is returned. THE CLEANUP DEPENDS ON NO LATER BINDING (third
+            # pass, Codex: an interruption after the token was bound inside `_token_from` still
+            # abandoned it — the third time "the moment the token is bound" moved with a refactor).
+            # On any exception the guard re-reads the token off the RESPONSE ITSELF (`_token_in`,
+            # pure and total), so there is no line between "the token exists in this process" and
+            # "an exception here revokes it": the response has carried it since the request returned.
+            # Revocation is attempted exactly once: nothing inside this block revokes.
             try:
+                token, fragment = self._token_from(response, endpoint)
                 expires_in = self._expiry_from(fragment, endpoint)
                 session = FleetSession(cluster=self.cluster.name, account=self.username, token=token,
                                        obtained_at=obtained_at, expires_in=expires_in, issuer=issuer,
@@ -348,7 +389,9 @@ class FleetLogin:
                       attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
                       secrets=(self._password, token))
             except BaseException as problem:
-                self._revoke_quietly(token)
+                minted = self._token_in(response)
+                if minted is not None:
+                    self._revoke(minted)
                 if isinstance(problem, LoginError):
                     problem.attempts = attempt
                     self._log_stop(problem)
@@ -388,16 +431,17 @@ class FleetLogin:
             # every message naming the host (review of #289): refused, and never quoted.
             raise LoginError(UNREACHABLE, f"{DISCOVERY_PATH} names an authorization_endpoint carrying "
                              f"userinfo; refused", phase="connect", retryable=False)
-        # The issuer is a remote field too: it reaches the caller on the session and the log as
-        # `oauth=`, so it is scrubbed like every other one (confirmation pass, Cursor).
+        # The issuer is a remote field that reaches the caller on the session and the log as
+        # `oauth=` — and it is a URL the operator acts on, so userinfo is stripped STRUCTURALLY
+        # rather than by redaction (third pass; the round-2 scrub mangled a legitimate host).
         issuer = document.get("issuer")
-        issuer = self._scrub(issuer)[:200] if isinstance(issuer, str) and issuer else f"https://{parts.netloc}"
-        return issuer, endpoint
+        rebuilt = _without_userinfo(issuer) if isinstance(issuer, str) and issuer else None
+        return rebuilt or f"https://{parts.netloc}", endpoint
 
     def _authorize(self, endpoint: str) -> httpx.Response:
         """The challenging-client request. Returns the response; reading the token off it is
         `_token_from`, kept apart so that everything after the response is in hand runs under the
-        never-abandoned guard in `_login`.
+        never-abandoned guard in `_login` — which re-reads the token off this response on failure.
 
         ONCE THE GET CARRYING THE PASSWORD IS ISSUED, EVERY OUTCOME IS TERMINAL (the module
         docstring says why). The one retryable failure here is one provably before the password
@@ -415,13 +459,26 @@ class FleetLogin:
             raise self._transport_error(exc, retryable=False) from exc
         return response
 
+    @staticmethod
+    def _fragment_of(response: httpx.Response) -> dict[str, list[str]]:
+        """The `Location` fragment, parsed on its own. The header is split on its first `#` and the
+        rest of the URL is NEVER validated, because a hostile `Location` (an unclosed IPv6 literal
+        makes `urlsplit` raise) must not stand between the mint and the name of what was minted
+        (confirmation pass, Codex: `authorize=1 DELETE=0`). Total: it cannot raise."""
+        location = response.headers.get("location", "")
+        return parse_qs(location.split("#", 1)[1] if "#" in location else "")
+
+    @classmethod
+    def _token_in(cls, response: httpx.Response) -> str | None:
+        """The token a response minted, or None — what the never-abandoned guard re-reads on
+        failure. Pure and total, and it depends on nothing bound later than the response."""
+        if response.status_code != 302:
+            return None
+        return (cls._fragment_of(response).get("access_token") or [None])[0] or None
+
     def _token_from(self, response: httpx.Response, endpoint: str) -> tuple[str, dict[str, list[str]]]:
-        """The token and the whole fragment off a 302's `Location` header; the typed stop for
-        every other answer. The header is split on its first `#` and the fragment parsed on its
-        own — the rest of the URL is NEVER validated, because a hostile `Location` (an unclosed
-        IPv6 literal makes `urlsplit` raise) must not stand between the mint and the name of what
-        was minted (confirmation pass, Codex: `authorize=1 DELETE=0`)."""
-        host = self._scrub(urlsplit(endpoint).netloc)   # `_discover` proved the endpoint parses
+        """The token and the whole fragment off a 302, or the typed stop for every other answer."""
+        host = urlsplit(endpoint).netloc   # structured, and `_discover` refused userinfo: never scrubbed
         if response.status_code == 401:
             # THE REFUSAL, and the one answer that is never retried. Measured (SPEC_S4 §6): a wrong
             # password is a bare 401 with `Www-Authenticate: Basic realm="openshift"` and an empty
@@ -448,8 +505,7 @@ class FleetLogin:
             raise LoginError(UNREACHABLE, f"HTTP {response.status_code} on {host}/oauth/authorize: "
                              f"{self._scrub(response.text)[:200]}; not retried — the password was sent",
                              phase="credential", retryable=False)
-        location = response.headers.get("location", "")
-        fragment = parse_qs(location.split("#", 1)[1] if "#" in location else "")
+        fragment = self._fragment_of(response)
         token = (fragment.get("access_token") or [""])[0]
         if not token:
             # The bind happened and the grant failed after it: terminal for the same reason.
@@ -463,7 +519,7 @@ class FleetLogin:
         """`expires_in` as the target stated it, bounded. Runs under the never-abandoned guard: a
         token WAS minted, so the guard attempts its revocation once and does not retry into a
         second one — the fragment's shape is a fact about the target."""
-        host = self._scrub(urlsplit(endpoint).netloc)
+        host = urlsplit(endpoint).netloc
         raw_expiry = (fragment.get("expires_in") or [None])[0]
         try:
             expires_in = int(raw_expiry) if raw_expiry is not None else 0
@@ -478,63 +534,71 @@ class FleetLogin:
 
     # ── the logout ───────────────────────────────────────────────────────────────────────────
 
-    def _revoke(self, token: str) -> bool:
-        """`oc logout`: DELETE the OAuthAccessToken by name, authorised by the token itself. True
-        only when the target said the object is gone (200, or 404 — already gone); False for every
-        surfaced failure, which is said out loud with the object's name, because that token is then
-        litter on the target and #286's sweep deletes nothing it did not create. Never raises for a
-        transport or HTTP failure; `_revoke_quietly` is the boundary for anything else.
+    def _delete_token(self, token: str) -> _RevokeAnswer:
+        """THE WIRE ONLY — `oc logout`: DELETE the OAuthAccessToken by name, authorised by the token
+        itself — answered as a value, before any line is written about it. `gone` is True only when
+        the target said so: 200, or 404 (already gone). ONLY a 404 means gone: a 401 says the DELETE
+        was not authenticated and nothing about the object (review of #289, Codex). A transport
+        failure is an answer here, never a raise.
 
         The object is gone the moment the DELETE answers 200. The token itself may go on authenticating
         from the API server's token cache for about two minutes (121 s measured on the reference
         cluster) — a fact for #285's "a 401 means re-authenticate" rule, not litter: nothing on the
         target names it any more, and `oc get oauthaccesstokens` shows it gone at once."""
         name = token_object_name(token)
-        shown = name if token.startswith(TOKEN_PREFIX) else None   # an unprefixed name IS the token
-        secrets = (self._password, token)
         try:
             response = self._client.delete(f"{USER_TOKEN_API}/{name}",
                                            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
         except httpx.HTTPError as exc:
             problem = self._transport_error(exc, token)
-            phase, outcome, detail = problem.phase, UNREACHABLE, problem.message
-        else:
-            if response.status_code in (200, 404):
-                # Revoked, or the object is already gone. ONLY a 404 means gone: a 401 says the DELETE
-                # was not authenticated and nothing about the object (review of #289, Codex).
-                event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown,
-                      outcome="revoked" if response.status_code == 200 else "already-gone", secrets=secrets)
-                return True
-            body = self._scrub(response.text, token)[:200] or "<empty body>"
-            if response.status_code == 401:
-                phase, outcome = "credential", AUTH_FAILED
-                detail = (f"401 Unauthorized on DELETE {USER_TOKEN_API}/<name>: the token did not authorise "
-                          f"its own revoke, so the object may still exist — {body}")
-            else:
-                phase, outcome = "poll", UNREACHABLE
-                detail = f"HTTP {response.status_code} on DELETE {USER_TOKEN_API}/<name>: revoke refused — {body}"
-        failure(log, "fleet-logout-failed", phase=phase, outcome=outcome, **self._fields(), token=shown,
-                action=("the OAuthAccessToken may still be on the target and nothing here will try again: "
-                        "delete it there as cluster-admin (oc delete oauthaccesstoken <token>) so it does "
-                        "not become litter"),
-                detail=detail, secrets=secrets)
-        return False
+            return _RevokeAnswer(False, "unanswered", problem.phase, UNREACHABLE, problem.message)
+        if response.status_code == 200:
+            return _RevokeAnswer(True, "revoked", "poll", "revoked", None)
+        if response.status_code == 404:
+            return _RevokeAnswer(True, "already-gone", "poll", "already-gone", None)
+        body = self._scrub(response.text, token)[:200] or "<empty body>"
+        if response.status_code == 401:
+            return _RevokeAnswer(False, "unauthenticated", "credential", AUTH_FAILED,
+                                 f"401 Unauthorized on DELETE {USER_TOKEN_API}/<name>: the token did not authorise "
+                                 f"its own revoke, so the object may still exist — {body}")
+        return _RevokeAnswer(False, "refused", "poll", UNREACHABLE,
+                             f"HTTP {response.status_code} on DELETE {USER_TOKEN_API}/<name>: revoke refused — {body}")
 
-    def _revoke_quietly(self, token: str) -> bool:
-        """`_revoke`, and cleanup never replaces the exception it is cleaning up after (confirmation
-        pass, Codex: a revoke that raised inside the guard replaced the body's own error). Anything
-        `_revoke` raises is surfaced as a `fleet-logout-failed` line and answered False."""
+    def _revoke(self, token: str) -> bool:
+        """The ONE boundary every revoke site goes through — the exit and the login's guard alike.
+
+        Three things, in this order, and the order is the point (third pass, Codex): the wire
+        answers; `revoked` records what the TARGET said, from every site, so the caller (#284, #285)
+        reads the truth about what was left behind; and only then is the line written — a line that
+        fails to write after a 200 is not a failed revoke, and is said as what it is. Never raises:
+        cleanup never replaces the exception it is cleaning up after (confirmation pass), so a fault
+        of this process on the wire path is surfaced as a `fleet-logout-failed` line and answered
+        False, and a fault while writing the line falls back to the stdlib logger, which cannot raise.
+        """
+        shown = token_object_name(token) if token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
+        secrets = (self._password, token)
         try:
-            return self._revoke(token)
-        except BaseException as exc:  # noqa: BLE001 - the original exception, if any, is the one to raise
-            failure(log, "fleet-logout-failed", phase="connect", outcome=UNREACHABLE, **self._fields(),
-                    token=token_object_name(token) if token.startswith(TOKEN_PREFIX) else None,
-                    action=("the revoke itself failed before the target answered; the OAuthAccessToken may "
-                            "still be on the target: delete it there as cluster-admin "
-                            "(oc delete oauthaccesstoken <token>)"),
-                    detail=f"{type(exc).__name__}: {self._scrub(str(exc), token)[:200]}",
-                    secrets=(self._password, token))
-            return False
+            answer = self._delete_token(token)
+        except BaseException as exc:  # noqa: BLE001 - the wire never raises; this is a fault of this process
+            answer = _RevokeAnswer(False, "unanswered", "connect", UNREACHABLE,
+                                   f"{type(exc).__name__}: {self._scrub(str(exc), token)[:200]} — the revoke "
+                                   f"itself failed before the target answered")
+        self.revoked = answer.gone
+        try:
+            if answer.gone:
+                event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown, outcome=answer.word,
+                      secrets=secrets)
+            else:
+                failure(log, "fleet-logout-failed", phase=answer.phase, outcome=answer.outcome, **self._fields(),
+                        token=shown,
+                        action=("the OAuthAccessToken may still be on the target and nothing here will try "
+                                "again: delete it there as cluster-admin (oc delete oauthaccesstoken <token>) "
+                                "so it does not become litter"),
+                        detail=answer.detail, secrets=secrets)
+        except BaseException as exc:  # noqa: BLE001 - the LINE failed, not the revoke; `revoked` already holds the answer
+            log.warning("fleet-logout line could not be written (revoked=%s): %s: %s", answer.gone,
+                        type(exc).__name__, self._scrub(str(exc), token)[:200])
+        return answer.gone
 
     # ── the vocabulary ───────────────────────────────────────────────────────────────────────
 
@@ -544,12 +608,19 @@ class FleetLogin:
                 "tls": "insecure" if mode["insecure"] else mode["ca"]}
 
     def _scrub(self, text: str, *more: str | None) -> str:
-        """Every secret in play out of `text`, in both spellings the two helpers know — `gsd.kube`'s
-        JSON-escaped forms and the emit helper's — and then, REGARDLESS OF LENGTH, the raw value of
-        each (confirmation pass, Codex: both helpers keep a floor so ordinary short strings are not
-        mangled across every log in the codebase, and a three-character password passed through
-        both). The floors are theirs and stay; the credential this class was handed is redacted
-        here whatever its length, longest first. Before any truncation, always."""
+        """Every secret in play out of FREE REMOTE TEXT — a body, a challenge value, an error string,
+        a transport message's quoted copy — in both spellings the two helpers know (`gsd.kube`'s
+        JSON-escaped forms and the emit helper's) and then, REGARDLESS OF LENGTH, the raw value of
+        each (confirmation pass: a three-character password passed both helpers' floors; the floors
+        are theirs and stay). Before any truncation, always.
+
+        THREE RULES ON WHERE THIS MAY BE APPLIED (third pass, correcting the round-2 instruction
+        "regardless of length, everywhere" — measured: a password of `app` turned the issuer into
+        `…<redacted>s.example.com`, and one of `certificate` unclassified a TLS failure into
+        `phase=connect`): never on a classification input — decide on the raw value, scrub the
+        displayed copy; never on a structured value the operator acts on — the issuer, the endpoint's
+        host — where userinfo is stripped structurally instead; only on free text, where mangling
+        costs a less readable quote and nothing else."""
         secrets = tuple(v for v in (self._password, *more) if v)
         out = redact(redact_text(text, *secrets), secrets)
         for secret in sorted(secrets, key=len, reverse=True):
@@ -561,9 +632,11 @@ class FleetLogin:
         which `is_verify_failure` and the poller's classifier both key on. Whether it may be retried
         is the caller's to say: it depends on whether the password was on the wire, not on the
         exception."""
-        message = self._scrub(f"{type(exc).__name__}: {exc}", *more)
-        return LoginError(UNREACHABLE, message, phase="tls" if is_verify_failure(message) else "connect",
-                          retryable=retryable)
+        raw = f"{type(exc).__name__}: {exc}"
+        # DECIDE ON THE RAW MESSAGE, THEN SCRUB THE COPY (third pass: a password of `certificate`
+        # scrubbed the phrase the classifier keys on and a TLS failure became `phase=connect`).
+        phase = "tls" if is_verify_failure(raw) else "connect"
+        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable)
 
     def _log_retry(self, exc: LoginError, attempt: int, *, retry_in: float | None = None,
                    gave_up: bool = False) -> None:
