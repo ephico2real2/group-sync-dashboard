@@ -314,6 +314,19 @@ flowchart TD
   A bearer token is minted BY a cluster, so it lives IN that cluster's Secret.
   A username and password reach the whole fleet, so they live in ONE credential
   Secret that many clusters reference.
+
+  RETRIEVED (SPEC_S4b, #284) — a stanza that says saTokenLookup: true
+  ───────────────────────────────────  ─────────────────────────────────────────
+  remote-lookup                        the dashboard logs in as the fleet account
+               the target's poller SA (fleet-login … fleet-logout, #283), GETs that
+               token, read once           SA's token Secret on the target by name, and
+                                          writes gsd-cluster-<name> here: `fleet-lookup
+                                          written=created|updated`. Then it is a
+                                          `bearer` row above. Every failure is one
+                                          `fleet-lookup-failed phase=credential
+                                          outcome=<finding>` line — attempt=n/5,
+                                          retry_in=, gave_up=true — and a standing
+                                          finding on the tab until the next success.
 ```
 
 ---
