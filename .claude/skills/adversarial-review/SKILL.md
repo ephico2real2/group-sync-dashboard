@@ -141,25 +141,34 @@ It survived spec review because the spec described the login and the scheduler *
 each was correct alone. Composition is where the property died and neither section owned it.
 
 **So every safety claim in a brief is written as a budget over the system**, not a property of a
-function — *"at most one bind per (target, credential), ever"*, never *"this function does not
-retry"*. Demand a **table**: outcome by attempt-count, measured across repeated calls, the real
-schedule, a state reset, and an irrelevant config edit. That table found the defect on #284 after
-reading the code had missed it three times — the orchestrator's, the implementer's, and a reviewer's
-`CONFIRMED`.
+function — and **the scope is part of the claim**. *"At most one bind per (target, credential) per
+process"* is checkable; *"ever"* is not, and on #284 it would have been false: `CredentialGate`'s own
+docstring says "Best-effort and per process; the durable, replica-shared gate is #285's", so a restart
+or a second replica binds again. A budget stated wider than the code can honour is refuted by the
+first reviewer who measures a restart. Demand a **table**: outcome by attempt-count, measured across
+two direct calls, the real schedule, a state reset, and an irrelevant config edit. Counting is what
+found the composition defect on #284 — `lookup_calls_for_one_unchanged_spent_failure=5` — and both
+round-one reviewers REFUTED the retry claim on it, after the orchestrator and the implementer had each
+read the code and missed it.
 
 **And carry the previous issue's claims into the next brief.** #283 asked "can this module retry?";
 #284 had to ask "can anything make this module run twice?". A merged guarantee is not a standing one.
 
-### What this bought, measured
+### What the two disciplines bought, measured
+
+The rounds and findings are Step 0's result. The composition defect is this step's — and note that the
+spec review did NOT catch it.
 
 | | rounds | findings | code |
 |---|---|---|---|
-| #283 — code first, research late | 5 | 21 | `fleetlogin.py` **443 → 729 lines (+61%)**, tracked as a defect (#291) |
-| #284 — research first, spec reviewed before any code | 3 | 7 → 5 → 2 | got **simpler** each round; the last round **deleted** a mechanism |
+| #283 — code first, research late | 5 | 21 | `fleetlogin.py` **443 → 729 lines (+65%)**, tracked as a defect (#291) |
+| #284 — research first, spec reviewed before any code | 3 | 7 → 5 → 2 | `fleetlookup.py` 346 → 410 lines (**+18.5%**), 13 → 15 `def`s — it grew too, a quarter as fast; the deletion was round two (`final`, 9e1abb2), not the last round |
 
-Two of #283's 21 findings were caused by the orchestrator's own instructions. On #284 the implementer
-**overruled the orchestrator twice with evidence** and was right both times. Record that in the review
-document: a record listing only other people's mistakes is worth less than one that does not.
+Two of #283's 21 findings were caused by the orchestrator's own instructions (R3-3 and R5-1 in
+`REVIEW_S4a.md`). On #284 the implementer **departed from the brief twice with evidence** and both
+departures are in the merged code — though the two-tier `final` shape attached to the first was the
+orchestrator's own decision, retracted on round two's measurement. Record that in the review document:
+a record listing only other people's mistakes is worth less than one that does not.
 
 ## Step 1 — the brief (never "review this")
 
@@ -176,8 +185,10 @@ and a snippet is what lets you trace the mechanism before deciding. State the co
 commits, no tracked-file edits, run the thing under review only in a COPY outside the repository, create
 nothing inside the tree, delete every temp file. Cover: the semantics the change relies on (a GitHub
 expression, an option's default, a wheel's tag), the OFF state and every switch interaction, fidelity to
-the spec's NEW blocks, dependents (`needs:`), and what would go wrong on the NEXT real use.
-`brief-template.md` beside this file is the skeleton. Write the brief to a scratchpad file and pass the
+the spec's NEW blocks, dependents (`needs:`), what would go wrong on the NEXT real use, and — for
+anything that can bind, write, delete or retry — the safety property as a **budget over the system
+with its scope** (Step 0b: "at most N per (key) per process / replica / restart"), with the previous
+issue's guarantees re-asked against this head. `brief-template.md` beside this file is the skeleton. Write the brief to a scratchpad file and pass the
 file's contents verbatim to both reviewers.
 
 ## Step 2 — launch all three, each to its own output
@@ -314,7 +325,8 @@ confirmation pass and it still finds things (Cursor found the all-dots reason af
 
 1. Local tests, spec verification and CI green BEFORE the review; PR open early with `Closes #N`.
 2. Brief written to a file: numbered claims, exact locations, artefact demanded, snippet + failing test
-   demanded for refutations, constraints stated.
+   demanded for refutations, constraints stated, every safety property as a budget with its scope and
+   the attempt-count table demanded (Step 0b).
 3. Probe Codex and Grok if anything changed; launch all three with the exact invocations above — own
    output files, own subdirectories, Codex with stdin closed (`< /dev/null`) and its stderr header read
    back, OB1 with the same brief and the read-only paragraph.
