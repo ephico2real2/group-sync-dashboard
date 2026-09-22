@@ -11,6 +11,7 @@ fleet account, a trust-store measurement, and the gaps that remain untested.
 - [3. Case B — the real fleet account, with no CA declared (the failure)](#3-case-b--the-real-fleet-account-with-no-ca-declared-the-failure)
 - [4. Case C — the real fleet account, with trust declared (the success)](#4-case-c--the-real-fleet-account-with-trust-declared-the-success)
 - [5. Case D — which trust store verifies which host](#5-case-d--which-trust-store-verifies-which-host)
+- [5d. Making the trust bundle repeatable](#5d-making-the-trust-bundle-repeatable--refresh-cluster-wide-cash)
 - [6. What is NOT proven by any of this](#6-what-is-not-proven-by-any-of-this)
 - [7. Findings](#7-findings)
 
@@ -471,6 +472,129 @@ proxy/cluster trustedCA -> inject-trusted-cabundle -> the mount -> GSD_TRUSTED_C
 The original `proxy/cluster` spec and the original `ldap-enterprise-ca-bundle` ConfigMap are both
 backed up; reverting is one `oc patch` back to the old name.
 
+## 5d. Making the trust bundle repeatable — `refresh-cluster-wide-ca.sh`
+
+Case E changed the cluster by hand. That is not a procedure anyone should repeat from memory, and the
+certificate expiry dates say it will have to be repeated.
+
+### Step F1 — check what expires, before designing anything
+
+```sh
+# every certificate in kube-root-ca, with days remaining
+oc get cm kube-root-ca.crt -n default -o jsonpath='{.data.ca\.crt}' | <split and openssl x509 -enddate>
+```
+
+Result:
+
+```
+  [0]   3594d  2036-07-26  OU=openshift, CN=kube-apiserver-lb-signer
+  [1]   3594d  2036-07-26  OU=openshift, CN=kube-apiserver-localhost-signer
+  [2]   3594d  2036-07-26  OU=openshift, CN=kube-apiserver-service-network-signer
+  [3]   3594d  2036-07-26  CN=openshift-kube-apiserver-operator_localhost-recovery-...
+  [4]    674d  2028-07-28  CN=*.apps-crc.testing
+  [5]    674d  2028-07-28  CN=ingress-operator@1785325954
+```
+
+Two things follow, and neither was obvious before measuring:
+
+1. **The API signers last a decade; the INGRESS CA does not.** When it rotates in ~2 years, a bundle
+   built from the old one stops verifying the **OAuth route** — and every lookup fails at `phase=tls`.
+   So this is a *refresh* script, not a setup step.
+2. **`[4]` is a LEAF certificate**, not an authority. It cannot sign anything, so it contributes
+   nothing to a trust bundle — and Case E bundled it, because the manual procedure copied
+   `kube-root-ca` wholesale.
+
+### Step F2 — the script
+
+`local-development/refresh-cluster-wide-ca.sh`. Dry run by default; `--apply` backs up the proxy spec
+and the named ConfigMap before changing anything.
+
+```sh
+ENTERPRISE_CM=ldap-enterprise-ca-bundle ./refresh-cluster-wide-ca.sh            # report only
+ENTERPRISE_CM=ldap-enterprise-ca-bundle ./refresh-cluster-wide-ca.sh --apply    # and do it
+```
+
+Result:
+
+```
+proxy/cluster trustedCA : enterprise-and-cluster-ca-bundle
+enterprise source       : openshift-config/ldap-enterprise-ca-bundle
+
+enterprise CA:
+  KEEP    3646d  O=Enterprise IT, OU=Directory Services, CN=LDAP Enterprise Root CA
+  enterprise: 1 of 1 kept
+
+this cluster's CAs (kube-root-ca.crt):
+  KEEP    3594d  OU=openshift, CN=kube-apiserver-lb-signer
+  KEEP    3594d  OU=openshift, CN=kube-apiserver-localhost-signer
+  KEEP    3594d  OU=openshift, CN=kube-apiserver-service-network-signer
+  KEEP    3594d  CN=openshift-kube-apiserver-operator_localhost-recover
+  drop     674d  CN=*.apps-crc.testing  (not a CA — a leaf cannot anchor a chain)
+  KEEP     674d  CN=ingress-operator@1785325954
+  cluster: 5 of 6 kept
+
+combined: 6 CA certificate(s), 7949 bytes
+```
+
+Six real authorities where the hand-made bundle had seven entries in 9,173 bytes.
+
+### Step F3 — the bug the first dry run caught
+
+Reading the enterprise CA from *whatever the proxy currently names* is correct on the first run and
+**wrong on the second**: by then the proxy names the script's own output, so the cluster CAs are read
+back in and added again.
+
+First dry run, before the fix:
+
+```
+  enterprise: 6 of 7 kept        <- "enterprise" was really enterprise+cluster
+  cluster:    5 of 6 kept
+  combined:   11 CA certificate(s)   <- 5 duplicates
+```
+
+Fixed two ways, because one alone would not be enough:
+
+- **`ENTERPRISE_CM`** names the original source explicitly, rather than trusting the current state;
+- **deduplication by SHA-256 fingerprint**, so any input is safe regardless. The same authority
+  arriving from two sources is one anchor; a bundle listing it twice is merely larger.
+
+After the fix, both routes converge on the same six certificates — the explicit source and the
+read-back both produce `combined: 6 CA certificate(s), 7949 bytes`.
+
+### Step F4 — applied, and idempotent
+
+Result of `--apply`, then running it again unchanged:
+
+```
+ConfigMap openshift-config/enterprise-and-cluster-ca-bundle written (6 CA certificate(s))
+proxy/cluster.spec.trustedCA -> enterprise-and-cluster-ca-bundle
+
+Already current: proxy names 'enterprise-and-cluster-ca-bundle' and its contents match. Nothing to do.
+```
+
+### Step F5 — the effect, measured
+
+```
+injected ConfigMap   232926 -> 231702 bytes     (-1224, the leaf)
+CA certs in context  152    -> 152              (unchanged — a leaf was never an anchor)
+api.crc.testing                    OK
+oauth-openshift.apps-crc.testing   OK
+polled shared-rnd: 3 CRs, 62 groups
+```
+
+**The count staying at 152 while the file shrank is the proof the filtering was right.**
+
+### A caution the run demonstrated
+
+Patching `proxy/cluster` rolls cluster operators. Mid-verification the kubelet went away:
+
+```
+error: Internal error occurred: ... dial tcp 192.168.126.11:10250: connect: connection refused
+```
+
+It returned within thirty seconds and the dashboard pod never restarted, but the script says so
+before it acts, and anyone running it on something that matters should expect it.
+
 ## 6. What is NOT proven by any of this
 
 Stated plainly, because a validation document that only lists successes is not evidence.
@@ -501,4 +625,6 @@ Stated plainly, because a validation document that only lists successes is not e
 | The injected bundle verifies the **enterprise-signed** endpoint; the ServiceAccount bundle verifies the lab's own hosts; neither verifies both — so trust is declared per target | Case D |
 | The enterprise CA reaches the pod: `inject-trusted-cabundle` + `proxy/cluster trustedCA` = the 2 KB that makes `mock-trusted` verifiable | Case D |
 | A measurement against a guessed path produced a wrong conclusion, corrected by reading `GSD_TRUSTED_CA_FILE` | Case D, Step D1 |
+| The trust bundle is rebuilt by a re-runnable script; the ingress CA expires in 674 days and will need it | Case F |
+| A leaf certificate in a trust bundle costs 1,224 bytes and anchors nothing | Case F, Step F1 |
 | Cross-cluster, `insecure: true`, and a wrong password remain untested live | Section 6 |
