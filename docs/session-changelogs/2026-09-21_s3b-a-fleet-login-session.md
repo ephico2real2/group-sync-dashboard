@@ -139,3 +139,19 @@ Outcome in one line: **pending**
   deselected in 230.40 s**. Doc checks: 991 passed.
 - Live on CRC as `developer`: count **0 → 1 → 0**, issuer `https://oauth-openshift.apps-crc.testing`
   intact, the revoked token dead after **121 s**; manual `oc` count 0 before / 0 after.
+
+### Round five — every `Location` header is read (21:0x → 22:59) — commit `9a40691`, PR #289
+
+- The final scoped pass could execute nothing; the operator verified each claim on this head and OB1
+  re-measured before writing: `headers.get` comma-joins two `Location` headers and `_token_in` returned
+  **None** for a token in the second (R5-1, **accepted, P0**); `get_list` separates them, and a
+  pre-joined single value — the case `get_list` alone misses — is covered by splitting every `#`.
+  R5-2/R5-3/R5-4 **accepted** (narrow). The `parse_qs` claim **refuted**: 200 000 fields → 200 000 keys,
+  no raise; recorded in `docs/REVIEW_S4a.md` with both measurements, nothing implemented.
+- F2 confirmed by the operator: `revoked` truthful from every site, the structural guard holds; its
+  shape was not changed.
+- The corrected `tests/test_fleet_login.py` against the previous module (`f2c221f`): **4 failed / 70
+  passed** — exactly the four new tests; against this head: **74 passed**. Full hermetic suite: **4660
+  passed, 16 skipped, 563 deselected in 231.14 s**. Doc checks: 992 passed.
+- Live on CRC as `developer`: count **0 → 1 → 0**, the revoked token dead after **121 s**; manual `oc`
+  count 0 before / 0 after.
