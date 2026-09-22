@@ -289,6 +289,95 @@ It is a mock serving group-sync CRs and RBAC reads, not an OAuth server. TLS suc
 the injected bundle — which is the part that was previously unproven — but there is no authorization
 endpoint to log in to and no ServiceAccount token Secret to read.
 
+## 5b. How the trusted bundle reaches a remote cluster's handshake
+
+Traced through the code and then proven live in the pod, because "the CA is mounted" and "the code
+uses it to authenticate" are different claims.
+
+### The chain
+
+```
+proxy/cluster  trustedCA: ldap-enterprise-ca-bundle
+  |
+  v   OpenShift merges it with the system bundle into any ConfigMap labelled
+  |   config.openshift.io/inject-trusted-cabundle: "true"
+  v
+ConfigMap group-sync-dashboard-trusted-ca        (the chart creates it EMPTY; OpenShift fills it)
+  |
+  v   mounted by the Deployment
+  v
+/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt
+  |
+  v   named by the env the chart sets
+  v
+GSD_TRUSTED_CA_FILE                              (colon-separated, like SSL_CERT_FILE)
+  |
+  v   gsd/config.py::_trusted_ca_context()
+  v
+one ssl.SSLContext                               (bundles LOADED IN TURN, never concatenated to /tmp)
+  |
+  v   gsd/config.py::ClusterConfig.verify()      — the fallback when no per-cluster CA is declared
+  v
+gsd/fleetlogin.py::FleetLogin._build_client()    — "the one TLS decision (SPEC_S3 §6)"
+  |
+  v
+the TLS handshake against the REMOTE cluster
+```
+
+### Proven in the pod
+
+```sh
+oc exec deploy/group-sync-dashboard -c dashboard -- python3 -c \
+  "<read the env, build the context, call verify() on a stanza with no CA>"
+```
+
+Result:
+
+```
+GSD_TRUSTED_CA_FILE           = /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt
+_trusted_ca_context()         -> SSLContext | certs loaded: 147
+ClusterConfig(no CA).verify() -> SSLContext | certs: 147
+```
+
+A stanza that declares **no** CA resolves to the injected bundle — 147 certificates including the
+enterprise CA — and that is the context the login hands to `httpx`.
+
+### The precedence, and why it is a fallback rather than a merge
+
+`ClusterConfig.verify()` resolves in this order:
+
+| | |
+|---|---|
+| `insecureSkipVerify: true` | `False` — no verification at all |
+| `caData` | a context from that data |
+| `caBundleFile` | a context from that file |
+| **nothing declared** | **the injected bundle** (`_trusted_ca_context()`) |
+| no bundle mounted either | the system default |
+
+The code states why the last two are not merged:
+
+> "Deliberately a fallback rather than a merge: a cluster that names its own bundle is making a
+> specific statement about what it trusts, and silently widening that would be the wrong kind of
+> helpful."
+
+And why the injected bundle is the intended default for external clusters:
+
+> "This is what makes EXTERNAL clusters work without per-cluster configuration. Their API servers are
+> usually signed by a corporate CA, which is not in Python's default trust store, so verification
+> fails and the cluster shows as unreachable — a TLS problem that presents as an outage."
+
+Two robustness details worth knowing: the context is **cached on the env value** rather than globally,
+so changing the configured paths takes effect instead of being masked; and **a null result is not
+cached**, because the injected ConfigMap is populated asynchronously and caching its absence would
+mean never picking it up without a restart.
+
+### The consequence for this lab's stanza
+
+`shared-rnd` declares `caBundleFile`, so it **overrides** the injected bundle. That is necessary while
+the target is CRC itself — the injected bundle cannot verify a self-signed `kube-apiserver-lb-signer`
+certificate (Case D) — but it means this stanza does **not** exercise the path a real remote cluster
+takes, which is to declare no CA at all and inherit the injected one.
+
 ## 6. What is NOT proven by any of this
 
 Stated plainly, because a validation document that only lists successes is not evidence.

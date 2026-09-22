@@ -168,13 +168,13 @@ clusters:
   - name: shared-rnd
     apiUrl: https://api.crc.testing:6443
     saTokenLookup: true
-    # THE TRUST MUST COVER BOTH HOSTS the login touches: the API (the well-known document) and the
-    # OAuth route (the authorize request). Measured on this lab: the pod's own ServiceAccount bundle
-    # is kube-root-ca, which verifies api.crc.testing AND oauth-openshift.apps-crc.testing, because
-    # CRC merges the ingress CA into it. Without this the login fails at phase=tls before the
-    # password is ever sent — safe, but the cluster never connects (measured 2026-09-22:
-    # tls=trusted-bundle, CERTIFICATE_VERIFY_FAILED, five attempts, zero binds).
-    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    # NO PER-CLUSTER CA ON PURPOSE — this is the path a real remote cluster takes. With nothing
+    # declared, ClusterConfig.verify() falls back to the bundle OpenShift injects
+    # (GSD_TRUSTED_CA_FILE), which carries the system trust merged with proxy/cluster's trustedCA.
+    # That bundle now also carries this cluster's own CA, because proxy/cluster.spec.trustedCA was
+    # pointed at `enterprise-and-cluster-ca-bundle` (the enterprise root plus kube-root-ca), so the
+    # injected bundle verifies api.crc.testing and the OAuth route as well as enterprise-signed
+    # endpoints. Declaring a caBundleFile here would OVERRIDE that and stop exercising the real path.
     enabled: true
   - name: mock
     apiUrl: https://mock-openshift:6443
