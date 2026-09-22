@@ -152,11 +152,22 @@ reporting:
 # namespaces too. Its token + CA live in the mock-cluster-creds Secret, mounted at /etc/gsd/mock by
 # the mock-creds volume (patched onto the Deployment; preserved across `helm upgrade` by 3-way merge).
 clusters:
+  # HELM REPLACES LISTS, IT DOES NOT MERGE THEM. values.yaml's `clusters` default is discarded the
+  # moment this file declares its own, so the host stanza is REPEATED here deliberately — dropping it
+  # does not inherit it, it deletes it, and the first enabled entry silently becomes the controller
+  # (measured: removing it made shared-rnd the host and the render refused, naming exactly that).
   - name: dashboard
     dashboardController: true
     apiUrl: https://kubernetes.default.svc
     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
     caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+  # shared-rnd is RETRIEVED, not hand-made: the stanza declares saTokenLookup, and the dashboard logs
+  # in as clusterConfig.fleetAccount, reads that cluster's poller ServiceAccount token and writes
+  # gsd-cluster-shared-rnd itself (SPEC_S4b, #284).
+  - name: shared-rnd
+    apiUrl: https://api.crc.testing:6443
+    saTokenLookup: true
     enabled: true
   - name: mock
     apiUrl: https://mock-openshift:6443
@@ -180,3 +191,13 @@ clusterConfig:
   secrets:
     writes:
       enabled: true
+  # The fleet account, stated explicitly rather than inherited: the LDAP identity the dashboard
+  # authenticates to a TARGET cluster as, to read that cluster's poller ServiceAccount token
+  # (SPEC_S4b). Measured on this cluster: `oc get user ocp-oauth-bind-serviceid` exists, so the
+  # account authenticates, and the estate's token-reader Role already binds it.
+  fleetAccount:
+    username: ocp-oauth-bind-serviceid
+    passwordSecret:
+      namespace: openshift-config
+      name: ldap-oauth-bind-secret
+      key: bindPassword
