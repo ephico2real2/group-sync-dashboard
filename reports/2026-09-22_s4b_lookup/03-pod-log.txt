@@ -1,0 +1,10 @@
+2026-09-22 01:45:31,763-0400 INFO    gsd.clusterconfig discovery cycle=1 namespace=group-sync-dashboard seen=5 accepted=4 refused=1 added=mock-privateca,mock-selfsigned,mock-trusted,shared-rnd refused_now=gsd-cluster-mock-refusal:insecure-with-ca
+2026-09-22 01:45:57,205-0400 INFO    gsd.poller shared-rnd: unmanaged-grant discovery — 1 outside the policy system, 0 resolved since the last cycle. Full detail: GET /api/clusters/shared-rnd/bindings/findings
+2026-09-22 01:45:57,262-0400 INFO    gsd.poller dashboard: unmanaged-grant discovery — 1 outside the policy system, 0 resolved since the last cycle. Full detail: GET /api/clusters/dashboard/bindings/findings
+2026-09-22 01:50:31,862-0400 INFO    gsd.fleetlogin fleet-login cluster=rnd-lookup account=<redacted> tls=serviceAccount oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-22T05:50:31Z
+2026-09-22 01:50:31,874-0400 INFO    gsd.fleetlogin fleet-logout cluster=rnd-lookup account=<redacted> tls=serviceAccount token=sha256~<redacted> outcome=revoked
+2026-09-22 01:50:31,882-0400 INFO    gsd.clusterconfig fleet-lookup cluster=rnd-lookup account=<redacted> secret=gsd-cluster-rnd-lookup written=created source=group-sync-operator/group-sync-dashboard-cluster-poller last_used=2026-09-22 attempt=1/5
+2026-09-22 01:50:31,889-0400 INFO    gsd.clusterconfig discovery cycle=4 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 added=rnd-lookup
+2026-09-22 01:50:32,088-0400 INFO    gsd.poller rnd-lookup: unmanaged-grant discovery — 1 outside the policy system, 0 resolved since the last cycle. Full detail: GET /api/clusters/rnd-lookup/bindings/findings
+2026-09-22 01:51:57,188-0400 INFO    gsd.poller shared-rnd: unmanaged-grant discovery — 1 outside the policy system, 0 resolved since the last cycle. Full detail: GET /api/clusters/shared-rnd/bindings/findings
+2026-09-22 01:51:57,297-0400 INFO    gsd.poller dashboard: unmanaged-grant discovery — 1 outside the policy system, 0 resolved since the last cycle. Full detail: GET /api/clusters/dashboard/bindings/findings
