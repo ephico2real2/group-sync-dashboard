@@ -52,7 +52,18 @@ below.
   re-login through that Secret fail at the OAuth host on exactly the split-CA estate the lab cannot
   show. So: `caBundleFile` → its bytes as `caData`; a declaring Secret's `caData` → kept;
   `insecureSkipVerify` → `insecure`; the trusted bundle → no `caData`. The poll then verifies with
-  what the login verified with, and a ping can log in again with the same trust.
+  what the login verified with, and a ping can log in again with the same trust. This is #283's
+  split-CA research (SPEC_S4a §2.1, raised by both reviewers of PR #289) carried forward into the
+  one place it decides something; the business owner confirmed it on approval (2026-09-22).
+- **The cluster type label is stamped last, unconditionally — the operator's requirement, stated
+  on approval.** Measured on the merged tree: `validate()` refuses a caller label under the app's
+  prefix, but `secret_object()` merges caller labels *after* the app's, so called without
+  `validate()` with `groupsync-dashboard.io/secret-type: onboard` it produced a Secret labelled
+  `onboard` — one discovery cannot see. The invariant "a written Secret always carries
+  `secret-type: cluster`" held by convention (every caller validated first); `store_lookup` and
+  #293's ConfigMap feed are new callers, the latter with labels someone else wrote. One line in
+  §3.10 makes it structural, byte-identical for every input that validates today; `validate()`'s
+  refusal stays.
 - **`managed-by` for a lookup-written Secret is `sa-token-lookup`** (SPEC_S4 §10.3): the stanza key
   in kebab case, so `saTokenLookup: true` → `managed-by: sa-token-lookup` reads as one thing.
   `token-source` stays `remote-lookup`, the credential kind — the two answer different questions.
@@ -833,6 +844,25 @@ New text:
     source_namespace: str | None = None
     source_service_account: str | None = None
     lookup_account: str | None = None
+```
+
+**File:** `local-development/gsd/clusterconfig/writer.py` — edit
+
+Old text:
+
+```python
+    labels = {SECRET_TYPE_LABEL: SECRET_TYPE_CLUSTER, **{str(k): str(v) for k, v in (req.labels or {}).items()}}
+```
+
+New text:
+
+```python
+    # THE TYPE LABEL IS STAMPED LAST, so no caller-supplied label can replace it (SPEC_S4b, the
+    # operator's requirement): `validate()` refuses the app's prefix, but this function has callers
+    # that do not validate — the lookup, and #293's ConfigMap feed whose labels someone else wrote —
+    # and a Secret without `secret-type: cluster` is one discovery cannot see. Byte-identical for
+    # every input `validate()` accepts.
+    labels = {**{str(k): str(v) for k, v in (req.labels or {}).items()}, SECRET_TYPE_LABEL: SECRET_TYPE_CLUSTER}
 ```
 
 **File:** `local-development/gsd/clusterconfig/writer.py` — edit
@@ -1880,6 +1910,16 @@ class TestTheLoop:
         config = json.loads(host.writes[0][2]["stringData"]["config"])
         assert config["tlsClientConfig"] == {"insecure": False, "caData": base64.b64encode(pem.read_bytes()).decode()}
 
+    def test_the_type_label_is_stamped_whatever_labels_a_caller_supplies(self):
+        """The operator's requirement (SPEC_S4b notes): an invariant, not a convention. `validate()`
+        refuses the app's prefix, but `secret_object()` has callers that do not validate — measured
+        on the merged tree, a caller label `secret-type: onboard` replaced the discovery label."""
+        from gsd.clusterconfig import SECRET_TYPE_LABEL
+        from gsd.clusterconfig.writer import CreateRequest, secret_object
+        req = CreateRequest(name="x", server=API, credential_kind="bearerToken", token="tok-12345678",
+                            labels={SECRET_TYPE_LABEL: "onboard", "environment": "rnd"})
+        assert secret_object(req, "ns")["metadata"]["labels"] == {"environment": "rnd", SECRET_TYPE_LABEL: "cluster"}
+
 
 # ── R2 ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -2470,3 +2510,10 @@ The evidence — the log lines, the two `jq` outputs, the counts — is committe
 - **S3c** (the tab) reads the four annotations for its provenance card and words a lookup-written
   credential `expires: current` — permanent while used, dead with its Secret or with the cleaner's
   stamp.
+- **#293** — a labelled ConfigMap of cluster stanzas (label key `config-type: onboard|sideload`;
+  `secret-type` stays Secret-only) that generates the Secrets through this lookup, so nobody
+  hand-makes one. It depends on this step, and on the type label being stamped last (§3.10): its
+  labels are authored by someone else. Prior art, for the reader who asks why this is not Argo CD's
+  model: Argo's cluster declaration *is* a Secret because it carries the kubeconfig, whereas this
+  design separates the declaration (a stanza, a ConfigMap) from the credential the lookup obtains —
+  the shape of External Secrets Operator's `ExternalSecret`, not of `argocd cluster add`.
