@@ -24,7 +24,7 @@ INDEX = SPECS / "README.md"
 INDEX_ROW = re.compile(
     # ids A–D are the 2026-09 programme's batches on its R1–R7 ladder; a later batch (E, #229; S, #230) sits
     # after the ladder with `—` for its release, and its header's Release row starts with the same dash
-    r"^\| (?P<id>[A-Z]\d) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
+    r"^\| (?P<id>[A-Z]\d[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
     r"(?P<release>R\d|—) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
     re.M,
 )
@@ -42,7 +42,8 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
-    assert len(rows) == 19, f"expected nineteen index rows (the programme's thirteen, E1, S1, S2, S3, S4 and T1), matched {sorted(rows)}"
+    # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
+    assert len(rows) == 20, f"expected twenty index rows (the programme's thirteen, E1, S1, S2, S3, S4, S4a and T1), matched {sorted(rows)}"
     return rows
 
 

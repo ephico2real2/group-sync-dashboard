@@ -73,7 +73,7 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
     The credential is passed to the emit helper so a token echoed inside an error body cannot reach
     the log — `ClusterClient._redact` scrubs its own, and this is the second boundary.
     """
-    from .clusterconfig.events import failure
+    from .clusterconfig.events import failure, is_verify_failure
     mode = cluster.tls_mode
     tls = "insecure" if mode["insecure"] else mode["ca"]
     secrets = _credentials(cluster)
@@ -98,11 +98,7 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
     # is a remote's answer, and a remote's words decide nothing here.
     kind = message.split(":", 1)[0].strip()
     transport = kind.isidentifier()
-    lowered = message.lower()
-    verify_failed = transport and any(
-        phrase in lowered for phrase in
-        ("certificate_verify_failed", "certificate verify failed", "sslcertverificationerror",
-         "self-signed certificate", "self signed certificate", "unable to get local issuer"))
+    verify_failed = is_verify_failure(message)
 
     if verify_failed and not mode["insecure"]:
         if mode["ca"] == "caData":
