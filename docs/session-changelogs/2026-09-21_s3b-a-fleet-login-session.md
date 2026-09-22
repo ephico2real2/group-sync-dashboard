@@ -102,3 +102,17 @@ Outcome in one line: **pending**
 - Full hermetic suite: **4648 passed, 16 skipped, 563 deselected in 230.06 s**. Doc checks: 990 passed.
 - Live on CRC as `developer`: count **0 → 1 → 0**, name present during and gone after, the revoked
   token dead after **121 s**; manual `oc` count 0 before / 0 after.
+
+### The split the lab cannot show (19:5x → 19:25) — commit `06494b5`, PR #289
+
+- **Found by both reviewers as a plausible risk, measured by the operator as a lab blind spot,
+  accepted:** CRC's `kube-root-ca.crt` carries the ingress leaf and CA among its six certificates, so
+  the API-CA/ingress-CA split cannot occur on the reference cluster. Re-measured from the poller SA's
+  bundle with `openssl x509 -noout -subject`: six subjects, `c4 CN=*.apps-crc.testing`,
+  `c5 CN=ingress-operator@1785325954`. Recorded in the spec's §2.1 and `docs/REVIEW_S4a.md`.
+- `TestTheSplitCATheLabCannotShow`: two CAs generated per test with OpenSSL 3.6.4 (config-file
+  extensions; measured before writing the block: A-only bundle → `unable to get local issuer
+  certificate`, A+B → 200), two loopback TLS servers, the owner's five assertions in order, plus the
+  both-CAs control (one `Basic` header, terminal 302). Both **ran, not skipped** (2 passed in 2.90 s).
+- Full hermetic suite: **4650 passed, 16 skipped, 563 deselected in 231.70 s**. Doc checks: 990 passed.
+- Nothing of #284's configuration contract implemented; `cryptography` not added (not a dependency).
