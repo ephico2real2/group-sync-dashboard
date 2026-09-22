@@ -81,3 +81,24 @@ Outcome in one line: **pending**
   over the review record: 1065 passed.
 - Live on CRC as `developer` after the fix: count **0 → 1 → 0**, the session's name present during and
   gone after, the revoked token dead after **121 s**; manual `oc` count 0 before / 0 after.
+
+### The confirmation pass's seven findings (19:0x → 19:03) — commits `00f862e` (merge of main), `1bded21`, PR #289
+
+- `origin/main` merged in first (#290, SPEC_S4 §9's renewal formula) so CI runs on a current head.
+- Codex (harness) and Cursor (reading) on `28d4bec`: **not mergeable**, seven residual defects, one
+  introduced by P1-2; Codex's measured result wins where they disagree. All seven **accepted**,
+  written into the spec's blocks first, recorded in `docs/REVIEW_S4a.md`'s "Confirmation pass".
+- **Found while applying R2-1, mine (measured):** the first test's hostile `Location`
+  (`https://[::1/…`) was refused by httpx itself — `RemoteProtocolError` from
+  `_send_handling_redirects`, which builds the redirect request even with `follow_redirects=False` —
+  so the 302 never reached the module. The measured case Codex hit is `https://example.com]/…`:
+  delivered as a 302, `urlsplit` raises. The test uses that; the limit (a token this process never
+  sees) is recorded in the module docstring beside the read timeout.
+- The invariant **restated** at the owner's instruction: revocation is attempted exactly once and a
+  failure is surfaced, never swallowed; `FleetLogin.revoked` carries the answer. Nothing shared
+  (`events.redact`, `kube.redact_text`) changed.
+- The corrected `tests/test_fleet_login.py` against the previous module: **10 failed / 54 passed**
+  (the `Basic` case reproduced Codex's `unreachable`); against this head: **64 passed**.
+- Full hermetic suite: **4648 passed, 16 skipped, 563 deselected in 230.06 s**. Doc checks: 990 passed.
+- Live on CRC as `developer`: count **0 → 1 → 0**, name present during and gone after, the revoked
+  token dead after **121 s**; manual `oc` count 0 before / 0 after.
