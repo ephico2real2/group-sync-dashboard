@@ -8,7 +8,12 @@ as nothing. For EVERY finding — a REFUTED verdict, a PLAUSIBLE verdict that na
 volunteer at the end — give the FULL code of the fix: the whole function, block or file section as it should
 read, with the file path and where it goes, never a fragment or a description; AND a test that fails before
 the fix and passes after, in full. A finding without its full snippet and its test is not a finding and will
-be discarded. Measure; do not reason from memory. The interpreter is <venv>/bin/python. Do not modify tracked
+be discarded. Measure; do not reason from memory. The interpreter is
+`local-development/.venv/bin/python` IN THE MAIN CHECKOUT — a detached review worktree has no `.venv`, so use
+that absolute path rather than the one beside your copy. **If you cannot import the project's dependencies
+(`httpx`, `fastapi`, `pytest`), SAY SO IN YOUR FIRST LINE and mark every claim you could not drive as
+PLAUSIBLE rather than CONFIRMED** — a source-only pass is materially weaker than a driven one, and the
+orchestrator must know which it received. Do not modify tracked
 files, do not commit, run the thing under review only in a COPY outside the repository, create NOTHING inside
 the repository tree, delete every temp file you create.
 
