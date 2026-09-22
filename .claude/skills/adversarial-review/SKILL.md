@@ -127,6 +127,40 @@ than anything derived locally and it usually means *less* code — the one round
 helpers was the round driven by an RFC. This composes with the repo rule that a review must not grow
 the code's complexity: patching from first principles accretes, a standard tells you what to delete.
 
+## Step 0b — measure the BUDGET over the system, not the property of a function
+
+Added after #284, which is the measured counter-example to reviewing components in isolation.
+
+**#283** spent five rounds hardening the fleet login: no 401 retried, every outcome terminal once the
+password is on the wire, proved across statuses 100–599 and all 21 `httpx.HTTPError` classes.
+**#284 then called that login from a scheduler**, and only `AUTH_FAILED` gated — so the HTTP 500 a
+**locked** 389-ds account returns (LDAP code 19, not 48/49) was re-invoked five times. The lockout
+walk was back, one layer up, in a PR whose spec had been reviewed before it was written.
+
+It survived spec review because the spec described the login and the scheduler **separately**, and
+each was correct alone. Composition is where the property died and neither section owned it.
+
+**So every safety claim in a brief is written as a budget over the system**, not a property of a
+function — *"at most one bind per (target, credential), ever"*, never *"this function does not
+retry"*. Demand a **table**: outcome by attempt-count, measured across repeated calls, the real
+schedule, a state reset, and an irrelevant config edit. That table found the defect on #284 after
+reading the code had missed it three times — the orchestrator's, the implementer's, and a reviewer's
+`CONFIRMED`.
+
+**And carry the previous issue's claims into the next brief.** #283 asked "can this module retry?";
+#284 had to ask "can anything make this module run twice?". A merged guarantee is not a standing one.
+
+### What this bought, measured
+
+| | rounds | findings | code |
+|---|---|---|---|
+| #283 — code first, research late | 5 | 21 | `fleetlogin.py` **443 → 729 lines (+61%)**, tracked as a defect (#291) |
+| #284 — research first, spec reviewed before any code | 3 | 7 → 5 → 2 | got **simpler** each round; the last round **deleted** a mechanism |
+
+Two of #283's 21 findings were caused by the orchestrator's own instructions. On #284 the implementer
+**overruled the orchestrator twice with evidence** and was right both times. Record that in the review
+document: a record listing only other people's mistakes is worth less than one that does not.
+
 ## Step 1 — the brief (never "review this")
 
 One numbered claim per thing you want confirmed or refuted, each naming the exact file, symbol and
