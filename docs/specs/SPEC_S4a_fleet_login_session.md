@@ -279,6 +279,22 @@ serves are `docs/specs/SPEC_S3_connection_modes.md` §3; the account is §3.1 th
   the owner measured 200 000 fields without a raise, OB1 the same; `parse_qs` enforces a field limit
   only when `max_num_fields` is passed. No guard, no test.
 
+  **R5-1's shape retracted by the owner after research, and this spec follows the research.** The
+  first fix (commit `9a40691`: read every `Location` value and every `#`-segment, pick the first
+  fragment carrying a token) was error recovery from a malformed construct. RFC 9110 §5.5 classifies
+  `Location` as a **singleton field** — more than one is malformed, not two candidates — and says a
+  "systems control client might consider any form of error recovery to be dangerous"; and "the first
+  one carrying a token" is a rule the target controls (`Location: …#access_token=ATTACKER_CHOSEN`
+  first, the real one second). Replaced by less code: `get_list` is used to **count**, more than one
+  `Location` is a typed terminal stop and never a session, what the response carried is revoked
+  best-effort with `best_effort=true` on the line and `revoked` truthful (None when nothing could be
+  named — #286's litter, said in the message), and exactly one `Location` takes the simple path
+  (first `#`, `parse_qs`). A value a proxy joined itself is one malformed value, not recovered. No
+  evidence exists that a legitimate OpenShift OAuth server sends two `Location` headers — the
+  measured flow sends one. `_fragments_of` and `_token_in` are deleted; `_minted_by` returns what the
+  guard needs and nothing more. The implicit-flow note (RFC 9700 / OAuth 2.1 deprecation; why its
+  threats do not apply here) is in the module docstring and §2.2.
+
 ## 1. Scope — login only
 
 Obtain a session from a target cluster as the fleet account, read its expiry, apply the retry policy,
@@ -352,6 +368,19 @@ Four facts the design rests on, each load-bearing:
 The 401 shape of a refusal is **not** re-measured here — it would take a wrong password — and is
 taken from SPEC_S4 §6: a bare `401` with `Www-Authenticate: Basic realm="openshift"` and an empty body.
 
+### 2.2 The flow is the OAuth implicit grant — deprecated for browsers, and this is not a browser
+
+`response_type=token` is the OAuth **implicit** grant, which RFC 9700 and OAuth 2.1 deprecate
+(https://oauth.net/2/grant-types/implicit/), chiefly because a token in a URL fragment leaks through
+browser history and the `Referer` header. Neither threat applies to this client: it is not a
+browser, it never follows the redirect (`follow_redirects=False`), and the fragment never reaches a
+page. The flow is not chosen here — OpenShift's CLI login path (`openshift-challenging-client`)
+defines it — and this module's use of it avoids the reason it was deprecated. A future reader should
+not "fix" it. Related and also from the standard: `Location` is a **singleton field** (RFC 9110
+§5.5, https://www.rfc-editor.org/rfc/rfc9110.html), so a 302 carrying more than one is malformed,
+and this is the "systems control client" for which the RFC says error recovery "might be dangerous"
+— §3.1 refuses it rather than choosing among its values.
+
 ### 2.1 What the reference lab cannot show: an API CA that is not the ingress CA
 
 A green run on CRC is **not** evidence that a customer's bundle is sufficient, and the reason is
@@ -405,6 +434,7 @@ retry is an estate-wide outage; a missed retry is one delayed login #285's daily
 | authorize | **401 with a Basic challenge — the refusal** | **`auth_failed`** | `credential` | **never retried.** One line, `fleet-login-refused outcome=login-refused`, quoting the status line and the challenge. Stop. |
 | authorize | 401 without a Basic challenge | `unreachable` | `credential` | **terminal**, and not called a refusal (notes) |
 | authorize | any other non-302 — a 200, 403, 429, 5xx, a proxy page | `unreachable` | `credential` | **terminal** — the password was sent; a 500 may be a locked account |
+| authorize | 302 carrying more than one `Location` | `unreachable` | `credential` | **terminal, malformed** (RFC 9110 §5.5: a singleton field) — never a session; what it carried is revoked best-effort (`best_effort=true` on the line), `revoked` True only if every attempt said gone, None if nothing could be named (#286's litter, said so) |
 | authorize | 302 without `access_token` (or with `#error=`) | `unreachable` | `credential` | **terminal** — the bind happened and the grant failed after it |
 | authorize | 302 with a token but `expires_in` missing, non-numeric, ≤ 0 or > 2³¹−1 (`MAX_EXPIRES_IN`) | `unreachable` | `credential` | **the token is revoked at once**, then **terminal** |
 | after the 302 is in hand | anything that raises before the session is returned (`BaseException`) — inside the extraction, the lifetime check, the session, the success line | — | — | **revocation is attempted exactly once**, of the token the guard re-reads off the **response** (`_token_in`), so no binding can be too late; a failed revoke is surfaced (`fleet-logout-failed`), never swallowed and never reported as success; `revoked` records the target's answer from this site too; the original exception propagates unchanged |
@@ -484,10 +514,23 @@ the caller inside a session or ATTEMPTING ITS REVOCATION EXACTLY ONCE, and a fai
 SURFACED — a `fleet-logout-failed` line, `FleetLogin.revoked` False — never swallowed and never
 reported as success. Whatever raises, including what was not predicted; and cleanup never replaces
 the exception it is cleaning up after. THE GUARD IS ANCHORED ON THE RESPONSE, NOT ON A BINDING:
-on any failure it re-reads the token off the response's own header (`_token_in`, pure and total),
-so there is no line between "the token exists in this process" and "an exception here revokes
-it" — three refactors moved "the moment the token is bound" and each reopened the window (review
-of #289, three passes). The token is read off the header WITHOUT validating the rest of the URL (a
+on any failure it re-reads what the response's own `Location` carried (`_minted_by`, pure and
+total), so there is no line between "the token exists in this process" and "an exception here
+revokes it" — three refactors moved "the moment the token is bound" and each reopened the window
+(review of #289, three passes). `Location` IS A SINGLETON FIELD (RFC 9110 §5.5,
+https://www.rfc-editor.org/rfc/rfc9110.html): a 302 carrying more than one is MALFORMED, and this
+is the "systems control client" the RFC says "might consider any form of error recovery to be
+dangerous" — choosing among candidate tokens would be a rule the target controls. So more than
+one `Location` is a typed terminal stop, never a session; anything such a response carried is
+revoked best-effort and said so, and a token that cannot be confidently named is #286's litter,
+logged as such — never recovered from, never silently dropped.
+
+THE FLOW IS OPENSHIFT'S, NOT A CHOICE MADE HERE. `response_type=token` is the OAuth implicit grant,
+which RFC 9700 / OAuth 2.1 deprecate (https://oauth.net/2/grant-types/implicit/) because a token
+in a URL fragment leaks through browser history and the Referer header. Neither threat applies to
+this client: it is not a browser, it never follows the redirect (`follow_redirects=False`), and the
+fragment never reaches a page. OpenShift's CLI login path defines the flow; this module's use of it
+avoids the reason it was deprecated. Do not "fix" it. The token is read off the header WITHOUT validating the rest of the URL (a
 hostile `Location` must not stand between the mint and the name of what was minted), and the
 lifetime the target states is bounded at int32 (MAX_EXPIRES_IN) because it is remote-controlled
 and the instant arithmetic is not. `FleetLogin.revoked` is what the target answered, recorded from
@@ -816,10 +859,10 @@ class FleetLogin:
             # holds until the session is returned. THE CLEANUP DEPENDS ON NO LATER BINDING (third
             # pass, Codex: an interruption after the token was bound inside `_token_from` still
             # abandoned it — the third time "the moment the token is bound" moved with a refactor).
-            # On any exception the guard re-reads the token off the RESPONSE ITSELF (`_token_in`,
+            # On any exception the guard re-reads what the RESPONSE ITSELF carried (`_minted_by`,
             # pure and total), so there is no line between "the token exists in this process" and
             # "an exception here revokes it": the response has carried it since the request returned.
-            # Revocation is attempted exactly once: nothing inside this block revokes.
+            # Revocation is attempted exactly once per token: nothing inside this block revokes.
             try:
                 token, fragment = self._token_from(response, endpoint)
                 expires_in = self._expiry_from(fragment, endpoint)
@@ -831,9 +874,12 @@ class FleetLogin:
                       attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
                       secrets=(self._password, token))
             except BaseException as problem:
-                minted = self._token_in(response)
-                if minted is not None:
-                    self._revoke(minted)
+                minted, malformed = self._minted_by(response)
+                if minted:
+                    # A well-formed 302 carries one token. A MALFORMED one (more than one Location)
+                    # is refused above, and whatever it carried is revoked best-effort — one attempt
+                    # each, `revoked` True only if the target said gone for all of them.
+                    self.revoked = all([self._revoke(token, best_effort=malformed) for token in minted])
                 if isinstance(problem, LoginError):
                     problem.attempts = attempt
                     self._log_stop(problem)
@@ -906,40 +952,28 @@ class FleetLogin:
             return response
 
     @staticmethod
-    def _fragments_of(response: httpx.Response) -> list[dict[str, list[str]]]:
-        """Every fragment a 302 could carry, parsed on its own — the rest of each URL is NEVER
-        validated, because a hostile `Location` (an unclosed IPv6 literal makes `urlsplit` raise)
-        must not stand between the mint and the name of what was minted (confirmation pass).
-
-        EVERY `Location` VALUE, AND EVERY `#`-SEGMENT OF EACH (final pass, R5-1, measured): httpx
-        keeps repeated headers apart in `get_list` but COMMA-JOINS them in `get`, so a first-`#`
-        split of the joined string never saw a token in the second header — a minted token the
-        guard could not name. A proxy that joined the duplicates itself hands ONE value holding two
-        URLs, which `get_list` alone would also miss; splitting each value on every `#` covers both,
-        and a fragment cannot legitimately contain a `#`. Total: it cannot raise."""
-        return [parse_qs(segment)
-                for value in response.headers.get_list("location")
-                for segment in value.split("#")[1:]]
+    def _fragment_of(location: str) -> dict[str, list[str]]:
+        """ONE `Location` value's fragment, parsed on its own: split on the first `#`, `parse_qs`.
+        The rest of the URL is NEVER validated, because a hostile `Location` (an unclosed IPv6
+        literal makes `urlsplit` raise) must not stand between the mint and the name of what was
+        minted (confirmation pass). No multi-segment scan and no candidate selection: a value that
+        holds two URLs (a proxy joined duplicates itself) is one malformed value, not two candidates,
+        and what its second URL carried is #286's litter. Total: it cannot raise."""
+        return parse_qs(location.split("#", 1)[1] if "#" in location else "")
 
     @classmethod
-    def _fragment_of(cls, response: httpx.Response) -> dict[str, list[str]]:
-        """THE fragment: the first that carries an `access_token`, else the first there is, else
-        empty. The session path (`_token_from`) and the guard (`_token_in`) both read this one, so
-        they cannot disagree about which token exists — a divergence there would be worse than
-        either bug."""
-        fragments = cls._fragments_of(response)
-        for fragment in fragments:
-            if (fragment.get("access_token") or [""])[0]:
-                return fragment
-        return fragments[0] if fragments else {}
-
-    @classmethod
-    def _token_in(cls, response: httpx.Response) -> str | None:
-        """The token a response minted, or None — what the never-abandoned guard re-reads on
-        failure. Pure and total, and it depends on nothing bound later than the response."""
+    def _minted_by(cls, response: httpx.Response) -> tuple[list[str], bool]:
+        """(the access_token each `Location` value carried, whether the response is MALFORMED) —
+        what the never-abandoned guard re-reads on failure. `Location` is a singleton field
+        (RFC 9110 §5.5): `get_list` is used to COUNT, never to choose, and a response with more than
+        one is malformed. The tokens are returned only so that a malformed response's litter can be
+        revoked best-effort; a session is never built from one. Pure and total."""
         if response.status_code != 302:
-            return None
-        return (cls._fragment_of(response).get("access_token") or [None])[0] or None
+            return [], False
+        locations = response.headers.get_list("location")
+        tokens = [token for token in ((cls._fragment_of(value).get("access_token") or [""])[0]
+                                      for value in locations) if token]
+        return tokens, len(locations) > 1
 
     def _token_from(self, response: httpx.Response, endpoint: str) -> tuple[str, dict[str, list[str]]]:
         """The token and the whole fragment off a 302, or the typed stop for every other answer."""
@@ -970,7 +1004,18 @@ class FleetLogin:
             raise LoginError(UNREACHABLE, f"HTTP {response.status_code} on {host}/oauth/authorize: "
                              f"{self._scrub(response.text)[:200]}; not retried — the password was sent",
                              phase="credential", retryable=False)
-        fragment = self._fragment_of(response)
+        locations = response.headers.get_list("location")
+        if len(locations) > 1:
+            # RFC 9110 §5.5: Location is a singleton field, so this response is MALFORMED — and a
+            # systems control client does not recover from a malformed construct (§5.5, "might
+            # consider any form of error recovery to be dangerous"): picking a candidate token would
+            # be a rule the target controls. No session; the guard revokes what it carried best-effort.
+            raise LoginError(UNREACHABLE, f"302 from {host} carried {len(locations)} Location headers — "
+                             f"malformed (RFC 9110 §5.5: Location is a singleton field); a systems client "
+                             f"does not recover, so no session is built and anything it minted is revoked "
+                             f"best-effort (a token it could not name is #286's litter)",
+                             phase="credential", retryable=False)
+        fragment = self._fragment_of(locations[0] if locations else "")
         token = (fragment.get("access_token") or [""])[0]
         if not token:
             # The bind happened and the grant failed after it: terminal for the same reason.
@@ -1029,8 +1074,10 @@ class FleetLogin:
         return _RevokeAnswer(False, name, "refused", "poll", UNREACHABLE,
                              f"HTTP {response.status_code} on DELETE {USER_TOKEN_API}/<name>: revoke refused — {body}")
 
-    def _revoke(self, token: str) -> bool:
+    def _revoke(self, token: str, *, best_effort: bool = False) -> bool:
         """The ONE boundary every revoke site goes through — the exit and the login's guard alike.
+        `best_effort` marks a token read off a MALFORMED response (more than one Location): the
+        line says so, because whether the target minted it at all is not known.
 
         Three things, in this order, and the order is the point (third pass, Codex): the wire
         answers; `revoked` records what the TARGET said, from every site, so the caller (#284, #285)
@@ -1054,10 +1101,10 @@ class FleetLogin:
         try:
             if answer.gone:
                 event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown, outcome=answer.word,
-                      secrets=secrets)
+                      best_effort="true" if best_effort else None, secrets=secrets)
             else:
                 failure(log, "fleet-logout-failed", phase=answer.phase, outcome=answer.outcome, **self._fields(),
-                        token=shown,
+                        token=shown, best_effort="true" if best_effort else None,
                         action=("the OAuthAccessToken may still be on the target and nothing here will try "
                                 "again: delete it there as cluster-admin (oc delete oauthaccesstoken <token>) "
                                 "so it does not become litter"),
@@ -1474,37 +1521,62 @@ class TestTheTokenIsReadOffTheLocationFragment:
                 pass
         assert "server_error" in exc.value.message and no_token.revokes == []
 
-    def test_a_token_in_a_second_location_header_is_still_named(self):
-        """Final pass (R5-1, measured by the owner and re-measured here): httpx COMMA-JOINS repeated
-        headers in `get`, so a first-`#` split of the joined string never saw a token in the second
-        header — `_token_in` returned None for a minted token. Every value (`get_list`) and every
-        `#`-segment of each is read, and the session path and the guard read the same choice."""
+    def test_two_location_headers_are_malformed_a_stop_and_a_best_effort_revoke(self, caplog):
+        """Final pass (R5-1), as corrected by the owner: `Location` is a singleton field (RFC 9110
+        §5.5), so two of them are a malformed response — never a session, whichever value carries
+        the token, because choosing would be a rule the target controls. What it carried is revoked
+        best-effort and `revoked` is truthful about that; a token that cannot be named is litter,
+        said so."""
         implicit = f"{OAUTH}/oauth/token/implicit"
         second = [("Location", f"{implicit}#error=denied"),
                   ("Location", f"{implicit}#access_token={TOKEN}&expires_in=60")]
-        assert FleetLogin._token_in(httpx.Response(302, headers=second)) == TOKEN
+        assert FleetLogin._minted_by(httpx.Response(302, headers=second)) == ([TOKEN], True)
         target = Target(httpx.Response(302, headers=second))
-        with make(target)[0] as s:
-            assert s.token == TOKEN and s.expires_in == 60
-        assert len(target.revokes) == 1
-        # the error path: the token is in the second header and its expiry is unusable
-        unusable = [("Location", f"{implicit}#error=denied"),
-                    ("Location", f"{implicit}#access_token={TOKEN}&expires_in=soon")]
-        target = Target(httpx.Response(302, headers=unusable))
+        fl, sleeps = make(target)
+        with caplog.at_level(logging.INFO):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        assert fl.session is None and sleeps == [] and exc.value.retryable is False
+        assert "malformed" in exc.value.message and "RFC 9110" in exc.value.message
+        assert len(target.revokes) == 1 and fl.revoked is True, "what it carried was revoked, best-effort"
+        assert "best_effort=true" in lines(caplog, "fleet-logout")[0]
+        # two tokens: both revoked, one attempt each; one refused -> revoked is False
+        both = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"),
+                ("Location", f"{implicit}#access_token=sha256~AnotherTokenTheTargetChose0000000000&expires_in=60")]
+        target = Target(httpx.Response(302, headers=both))
         fl, _ = make(target)
         with pytest.raises(LoginError):
             with fl:
                 pass
-        assert len(target.revokes) == 1 and fl.revoked is True
-        # the reverse order, a single header, and a value a proxy joined itself (get_list alone misses it)
-        first = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"), ("Location", f"{implicit}#error=denied")]
-        with make(Target(httpx.Response(302, headers=first)))[0] as s:
-            assert s.token == TOKEN
+        assert len(target.revokes) == 2 and fl.revoked is True
+        target = Target(httpx.Response(302, headers=both), revoke=httpx.Response(500, text="oops"))
+        fl, _ = make(target)
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError):
+                with fl:
+                    pass
+        assert len(target.revokes) == 2 and fl.revoked is False
+        assert any("best_effort=true" in m for m in lines(caplog, "fleet-logout-failed"))
+        # no token in either: nothing to revoke, and the message says the litter is #286's
+        none = [("Location", f"{implicit}#error=denied"), ("Location", f"{implicit}#error=denied")]
+        target = Target(httpx.Response(302, headers=none))
+        fl, _ = make(target)
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+        assert target.revokes == [] and fl.revoked is None and "#286" in exc.value.message
+        # exactly one Location: the simple path, unchanged — and a value a proxy joined itself is
+        # ONE malformed value, not two candidates: no session, no recovery
         with make(Target(login_302(expires_in="60")))[0] as s:
             assert s.token == TOKEN and s.expires_in == 60
         joined = {"Location": f"{implicit}#error=denied, {implicit}#access_token={TOKEN}&expires_in=60"}
-        with make(Target(httpx.Response(302, headers=joined)))[0] as s:
-            assert s.token == TOKEN and s.expires_in == 60
+        target = Target(httpx.Response(302, headers=joined))
+        fl, _ = make(target)
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+        assert "no access_token" in exc.value.message and target.revokes == []
 
     def test_an_expiry_beyond_int32_is_bounded_revoked_once_and_terminal(self):
         """Review of #289, all three seats: 999999999999999 passed `int()` and the `<= 0` guard,

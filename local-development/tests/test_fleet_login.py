@@ -238,37 +238,62 @@ class TestTheTokenIsReadOffTheLocationFragment:
                 pass
         assert "server_error" in exc.value.message and no_token.revokes == []
 
-    def test_a_token_in_a_second_location_header_is_still_named(self):
-        """Final pass (R5-1, measured by the owner and re-measured here): httpx COMMA-JOINS repeated
-        headers in `get`, so a first-`#` split of the joined string never saw a token in the second
-        header — `_token_in` returned None for a minted token. Every value (`get_list`) and every
-        `#`-segment of each is read, and the session path and the guard read the same choice."""
+    def test_two_location_headers_are_malformed_a_stop_and_a_best_effort_revoke(self, caplog):
+        """Final pass (R5-1), as corrected by the owner: `Location` is a singleton field (RFC 9110
+        §5.5), so two of them are a malformed response — never a session, whichever value carries
+        the token, because choosing would be a rule the target controls. What it carried is revoked
+        best-effort and `revoked` is truthful about that; a token that cannot be named is litter,
+        said so."""
         implicit = f"{OAUTH}/oauth/token/implicit"
         second = [("Location", f"{implicit}#error=denied"),
                   ("Location", f"{implicit}#access_token={TOKEN}&expires_in=60")]
-        assert FleetLogin._token_in(httpx.Response(302, headers=second)) == TOKEN
+        assert FleetLogin._minted_by(httpx.Response(302, headers=second)) == ([TOKEN], True)
         target = Target(httpx.Response(302, headers=second))
-        with make(target)[0] as s:
-            assert s.token == TOKEN and s.expires_in == 60
-        assert len(target.revokes) == 1
-        # the error path: the token is in the second header and its expiry is unusable
-        unusable = [("Location", f"{implicit}#error=denied"),
-                    ("Location", f"{implicit}#access_token={TOKEN}&expires_in=soon")]
-        target = Target(httpx.Response(302, headers=unusable))
+        fl, sleeps = make(target)
+        with caplog.at_level(logging.INFO):
+            with pytest.raises(LoginError) as exc:
+                with fl:
+                    pass
+        assert fl.session is None and sleeps == [] and exc.value.retryable is False
+        assert "malformed" in exc.value.message and "RFC 9110" in exc.value.message
+        assert len(target.revokes) == 1 and fl.revoked is True, "what it carried was revoked, best-effort"
+        assert "best_effort=true" in lines(caplog, "fleet-logout")[0]
+        # two tokens: both revoked, one attempt each; one refused -> revoked is False
+        both = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"),
+                ("Location", f"{implicit}#access_token=sha256~AnotherTokenTheTargetChose0000000000&expires_in=60")]
+        target = Target(httpx.Response(302, headers=both))
         fl, _ = make(target)
         with pytest.raises(LoginError):
             with fl:
                 pass
-        assert len(target.revokes) == 1 and fl.revoked is True
-        # the reverse order, a single header, and a value a proxy joined itself (get_list alone misses it)
-        first = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"), ("Location", f"{implicit}#error=denied")]
-        with make(Target(httpx.Response(302, headers=first)))[0] as s:
-            assert s.token == TOKEN
+        assert len(target.revokes) == 2 and fl.revoked is True
+        target = Target(httpx.Response(302, headers=both), revoke=httpx.Response(500, text="oops"))
+        fl, _ = make(target)
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(LoginError):
+                with fl:
+                    pass
+        assert len(target.revokes) == 2 and fl.revoked is False
+        assert any("best_effort=true" in m for m in lines(caplog, "fleet-logout-failed"))
+        # no token in either: nothing to revoke, and the message says the litter is #286's
+        none = [("Location", f"{implicit}#error=denied"), ("Location", f"{implicit}#error=denied")]
+        target = Target(httpx.Response(302, headers=none))
+        fl, _ = make(target)
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+        assert target.revokes == [] and fl.revoked is None and "#286" in exc.value.message
+        # exactly one Location: the simple path, unchanged — and a value a proxy joined itself is
+        # ONE malformed value, not two candidates: no session, no recovery
         with make(Target(login_302(expires_in="60")))[0] as s:
             assert s.token == TOKEN and s.expires_in == 60
         joined = {"Location": f"{implicit}#error=denied, {implicit}#access_token={TOKEN}&expires_in=60"}
-        with make(Target(httpx.Response(302, headers=joined)))[0] as s:
-            assert s.token == TOKEN and s.expires_in == 60
+        target = Target(httpx.Response(302, headers=joined))
+        fl, _ = make(target)
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+        assert "no access_token" in exc.value.message and target.revokes == []
 
     def test_an_expiry_beyond_int32_is_bounded_revoked_once_and_terminal(self):
         """Review of #289, all three seats: 999999999999999 passed `int()` and the `<= 0` guard,
