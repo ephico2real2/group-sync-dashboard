@@ -155,3 +155,18 @@ Outcome in one line: **pending**
   passed, 16 skipped, 563 deselected in 231.14 s**. Doc checks: 992 passed.
 - Live on CRC as `developer`: count **0 → 1 → 0**, the revoked token dead after **121 s**; manual `oc`
   count 0 before / 0 after.
+
+### R5-1 corrected by the standard — `Location` is a singleton field (21:4x → 23:08) — commit `e42bf60`, PR #289
+
+- **The operator retracted the R5-1 shape after research** (RFC 9110 §5.5: `Location` is a singleton
+  field; a systems control client "might consider any form of error recovery to be dangerous"; the
+  recovery was attacker-steerable). The recovery helpers shipped in `9a40691` are **deleted**: more
+  than one `Location` is a typed terminal stop, what it carried is revoked best-effort (`best_effort=true`
+  on the line, `revoked` truthful, None when nothing could be named and the message says #286), and one
+  `Location` takes the simple path. The implicit-flow deprecation note recorded in §2.2 (no code).
+- No evidence a legitimate OpenShift OAuth server sends two `Location` headers; CRC sends one.
+- The corrected `tests/test_fleet_login.py` against `9a40691`: **1 failed / 73 passed** — the new
+  malformed-response test; against this head: **74 passed**. Full hermetic suite: **4659 passed, 16
+  skipped, 563 deselected in 231.77 s**. Doc checks: 991 passed (a stale citation of the deleted
+  helper in the review record was replaced with plain text; the record keeps the history).
+- Live on CRC as `developer`: count **0 → 1 → 0**, token dead after **121 s**; manual count 0 / 0.
