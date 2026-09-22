@@ -269,6 +269,18 @@ class TestARefusedPasswordIsGated:
         assert again.value.code == "login-refused" and again.value.spent is False
         assert len(wire.authorize) == 1, "the password reached a target that may have bound it, twice"
 
+    def test_one_target_spelled_three_ways_is_one_gate_entry(self):
+        """Third pass, R3-1: a stanza edited from api.example.com to API.example.com was a new key and
+        the password went to the same target again. httpx canonicalises the host; a malformed URL
+        must not raise inside the gate."""
+        gate = CredentialGate()
+        gate.refuse("https://api.example.com:6443", USER, PASSWORD)
+        for spelling in ("https://api.example.com:6443/", "https://API.Example.COM:6443", "https://API.example.com:6443/"):
+            assert gate.refused(spelling, USER, PASSWORD), spelling
+        assert not gate.refused("https://api.example.com:6444", USER, PASSWORD), "a different port is a different target"
+        gate.refuse("https://[::1/broken", USER, PASSWORD)
+        assert gate.refused("https://[::1/broken/", USER, PASSWORD), "the fallback key, not an exception"
+
     def test_the_gate_is_per_target_so_a_sick_cluster_does_not_stop_a_healthy_one(self, wire):
         """Review of #295, second pass, R2-1: keyed without the target, a 500 from A blocked B."""
         wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
@@ -362,6 +374,30 @@ class TestTheSchedule:
         assert wire.requests == []
         finding, = poller.settings.cluster_registry.findings()
         assert finding.code == "fleet-write-disabled" and "2 replicas" in finding.detail
+
+    def test_a_gated_credential_says_gave_up_once_and_then_is_silent_but_still_re_read(self, tmp_path, monkeypatch, caplog, wire):
+        """Third pass, R3-2: after the gate fires, each cycle took the free refusal silently forever.
+        The operator must see `gave_up=true` once; the cheap per-cycle read of the password Secret
+        stays, because it is the rotation detector — and a rotated password resumes the login."""
+        clock = [1000.0]
+        monkeypatch.setattr("gsd.poller.time.monotonic", lambda: clock[0])
+        host = FakeHost()
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: host)
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        poller = self._poller(tmp_path, monkeypatch)
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()                     # the bind: spent, attempt=1/5, gates the target
+            clock[0] += 10 * poller.settings.binding_interval_seconds
+            poller._retrieve_pending()                     # the gate: free, announced once with gave_up=true
+            poller._retrieve_pending(); poller._retrieve_pending()   # silent, still re-reading the password
+        lines = [m for m in caplog.messages if m.startswith("fleet-lookup-failed ")]
+        assert len(lines) == 2 and "attempt=1/5" in lines[0] and "outcome=login-failed" in lines[0]
+        assert "outcome=login-refused" in lines[1] and "gave_up=true" in lines[1] and "until the fleet password Secret" in lines[1]
+        assert len(wire.authorize) == 1, "the gate held across the cycles"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert len(wire.authorize) == 2 and any(m.startswith("fleet-lookup ") for m in caplog.messages), "a rotated password resumed the login"
 
     def test_a_non_scalar_token_and_an_error_body_are_refusals_that_carry_nothing(self, wire):
         """Review of #295, second pass, R2-3: a `data.token` that is not a string raised TypeError in

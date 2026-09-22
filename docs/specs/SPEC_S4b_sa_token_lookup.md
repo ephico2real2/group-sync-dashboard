@@ -191,6 +191,28 @@ re-applied from these blocks):
     is built — and SPEC_S4 §9 assigns the durable, replica-shared gate to **#285**. Not built here;
     the render and runtime refusals stay as tight as they are, the operational guidance until #285
     is one replica, and #285 inherits the requirement with the measurement (§6).
+- **Third pass on `9e1abb2` (the schedule driven for real; two findings):**
+  - **R3-1 — a hostname case change re-entered the walk.** The gate key stripped a trailing slash
+    and nothing else; `config.py` preserves the `apiUrl`'s case, so a stanza edited from
+    `api.example.com` to `API.example.com` was a new key and the password went to the same
+    directory-backed target again (measured: +1 authorize). The key is now the URL as `httpx.URL`
+    canonicalises it — host case and IDNA, not a whole-string lowercase that would mangle a path —
+    with the bare `rstrip("/")` kept as the fallback so a malformed `apiUrl` cannot raise inside
+    the gate.
+  - **R3-2 — a gated credential looped quietly.** After the gate fired, every cycle re-read the
+    password Secret, took the free refusal, and the operator never saw `gave_up=true`. Two fixes
+    were offered — set `gave_up` on the free refusal, or announce once and go silent — and neither
+    is taken as offered. Setting `gave_up` would be wrong: the schedule's re-arm key cannot see the
+    password *value* (only `lookup()` reads it), so a rotated password would never be noticed and
+    the cluster would stay stuck until a restart; the per-cycle read (one local `get`, no bind) **is**
+    the rotation detector and stays. The free refusal was already announced once, on transition;
+    what it lacked was the word. It now carries **`gave_up=true`** and an action that says the target
+    is not tried again until the fleet password Secret or the stanza changes, and that this is
+    re-checked each cycle at no cost. `LookupRefused.gated` marks it.
+  - **The gate's digest is 64 bits of the password's sha256, on purpose.** "The password changed"
+    is therefore probabilistic; a collision **over-blocks** — refuses a password that did change —
+    and never causes an extra bind. That is the safe direction; do not "fix" it to a full digest
+    for the wrong reason, and do not shorten it.
 - **Not a finding, recorded so nobody "fixes" it:** the lab's log lines read `account=<redacted>`
   because CRC's `developer` password *is* the word `developer`, and the redactor strips the
   substring wherever it appears. Over-redaction on this lab is the correct behaviour; exempting
@@ -1301,6 +1323,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import httpx
+
 from .clusterconfig.writer import (
     MANAGED_BY_LOOKUP, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
     store_lookup,
@@ -1333,13 +1357,16 @@ class LookupRefused(Exception):
 
     `code` is in CODES; `detail` says what happened and `action` what to change (#245: the fix, not
     the diagnosis), neither ever a credential; `spent` is whether a login was attempted — the
-    poller's schedule counts spent failures and rechecks the free ones every cycle; `secrets` are
-    the values in play, for the emit helper to strip from the line the poller writes.
+    poller's schedule counts spent failures and rechecks the free ones every cycle; `gated` is the
+    free refusal the gate gives — terminal until the credential changes, said once with
+    `gave_up=true` (third pass, R3-2); `secrets` are the values in play, for the emit helper to
+    strip from the line the poller writes.
     """
 
-    def __init__(self, code: str, detail: str, *, action: str, spent: bool, secrets: tuple[str, ...] = ()):
+    def __init__(self, code: str, detail: str, *, action: str, spent: bool, gated: bool = False,
+                 secrets: tuple[str, ...] = ()):
         super().__init__(f"{code}: {detail}")
-        self.code, self.detail, self.action, self.spent = code, detail, action, spent
+        self.code, self.detail, self.action, self.spent, self.gated = code, detail, action, spent, gated
         self.secrets: tuple[str, ...] = tuple(secrets)
 
     def scrub(self, secrets: list[str]) -> None:
@@ -1363,7 +1390,16 @@ class CredentialGate:
 
     @staticmethod
     def _key(target: str, username: str, password: str) -> tuple[str, str, str]:
-        return target.rstrip("/"), username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+        # THE TARGET AS httpx CANONICALISES IT (third pass, R3-1): host case and IDNA, not a whole-string
+        # lowercase that would mangle a path or a port. `api.example.com` and `API.example.com/` are one
+        # directory-backed target and one gate entry. A malformed URL falls back to the bare string:
+        # the gate must never raise. The digest is 64 bits ON PURPOSE — a collision over-blocks, never
+        # binds again.
+        try:
+            canonical = str(httpx.URL(target)).rstrip("/")
+        except httpx.InvalidURL:
+            canonical = target.rstrip("/")
+        return canonical, username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
 
     def refused(self, target: str, username: str, password: str) -> bool:
         return self._key(target, username, password) in self._refused
@@ -1606,8 +1642,9 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
         if gate.refused(cluster.api_url, account, password):
             raise LookupRefused("login-refused", f"{cluster.name} evaluated this password for {account} already and it "
                                                  f"has not changed",
-                                action=("rotate the fleet password Secret, or correct ldapConnectionBootstrap — no login is "
-                                        "attempted against this target until the password moves (SPEC_S4 §6)"), spent=False)
+                                action=("not tried again until the fleet password Secret or the stanza changes — rotate the "
+                                        "Secret, or correct ldapConnectionBootstrap; the password is re-read each cycle at no "
+                                        "cost and the login resumes when it moves (SPEC_S4 §6)"), spent=False, gated=True)
         knobs = {"clock": clock} if clock is not None else {}
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
@@ -1851,10 +1888,15 @@ New text:
         from .fleetlookup import LOOKUP_ATTEMPTS, LOOKUP_WAIT_CAP
         self.settings.cluster_registry.set_lookup_finding(name, Finding(secret, exc.code, f"{exc.detail} — {exc.action}"))
         if not exc.spent:
+            # Announced on transition only. A GATED refusal says `gave_up=true` (third pass, R3-2): no
+            # login is tried against that target until the credential changes — and the cheap per-cycle
+            # read stays, because it is what notices the change; the schedule's key cannot see the
+            # password's value.
             if state.last_code != exc.code:
                 state.last_code = exc.code
                 failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name,
-                        secret=secret, action=exc.action, detail=exc.detail, secrets=exc.secrets)
+                        secret=secret, gave_up="true" if exc.gated else None, action=exc.action, detail=exc.detail,
+                        secrets=exc.secrets)
             state.not_before = now
             return
         state.attempts += 1
@@ -2225,6 +2267,18 @@ class TestARefusedPasswordIsGated:
         assert again.value.code == "login-refused" and again.value.spent is False
         assert len(wire.authorize) == 1, "the password reached a target that may have bound it, twice"
 
+    def test_one_target_spelled_three_ways_is_one_gate_entry(self):
+        """Third pass, R3-1: a stanza edited from api.example.com to API.example.com was a new key and
+        the password went to the same target again. httpx canonicalises the host; a malformed URL
+        must not raise inside the gate."""
+        gate = CredentialGate()
+        gate.refuse("https://api.example.com:6443", USER, PASSWORD)
+        for spelling in ("https://api.example.com:6443/", "https://API.Example.COM:6443", "https://API.example.com:6443/"):
+            assert gate.refused(spelling, USER, PASSWORD), spelling
+        assert not gate.refused("https://api.example.com:6444", USER, PASSWORD), "a different port is a different target"
+        gate.refuse("https://[::1/broken", USER, PASSWORD)
+        assert gate.refused("https://[::1/broken/", USER, PASSWORD), "the fallback key, not an exception"
+
     def test_the_gate_is_per_target_so_a_sick_cluster_does_not_stop_a_healthy_one(self, wire):
         """Review of #295, second pass, R2-1: keyed without the target, a 500 from A blocked B."""
         wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
@@ -2318,6 +2372,30 @@ class TestTheSchedule:
         assert wire.requests == []
         finding, = poller.settings.cluster_registry.findings()
         assert finding.code == "fleet-write-disabled" and "2 replicas" in finding.detail
+
+    def test_a_gated_credential_says_gave_up_once_and_then_is_silent_but_still_re_read(self, tmp_path, monkeypatch, caplog, wire):
+        """Third pass, R3-2: after the gate fires, each cycle took the free refusal silently forever.
+        The operator must see `gave_up=true` once; the cheap per-cycle read of the password Secret
+        stays, because it is the rotation detector — and a rotated password resumes the login."""
+        clock = [1000.0]
+        monkeypatch.setattr("gsd.poller.time.monotonic", lambda: clock[0])
+        host = FakeHost()
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: host)
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        poller = self._poller(tmp_path, monkeypatch)
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()                     # the bind: spent, attempt=1/5, gates the target
+            clock[0] += 10 * poller.settings.binding_interval_seconds
+            poller._retrieve_pending()                     # the gate: free, announced once with gave_up=true
+            poller._retrieve_pending(); poller._retrieve_pending()   # silent, still re-reading the password
+        lines = [m for m in caplog.messages if m.startswith("fleet-lookup-failed ")]
+        assert len(lines) == 2 and "attempt=1/5" in lines[0] and "outcome=login-failed" in lines[0]
+        assert "outcome=login-refused" in lines[1] and "gave_up=true" in lines[1] and "until the fleet password Secret" in lines[1]
+        assert len(wire.authorize) == 1, "the gate held across the cycles"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert len(wire.authorize) == 2 and any(m.startswith("fleet-lookup ") for m in caplog.messages), "a rotated password resumed the login"
 
     def test_a_non_scalar_token_and_an_error_body_are_refusals_that_carry_nothing(self, wire):
         """Review of #295, second pass, R2-3: a `data.token` that is not a string raised TypeError in

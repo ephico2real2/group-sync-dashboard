@@ -1542,10 +1542,15 @@ class Poller:
         from .fleetlookup import LOOKUP_ATTEMPTS, LOOKUP_WAIT_CAP
         self.settings.cluster_registry.set_lookup_finding(name, Finding(secret, exc.code, f"{exc.detail} — {exc.action}"))
         if not exc.spent:
+            # Announced on transition only. A GATED refusal says `gave_up=true` (third pass, R3-2): no
+            # login is tried against that target until the credential changes — and the cheap per-cycle
+            # read stays, because it is what notices the change; the schedule's key cannot see the
+            # password's value.
             if state.last_code != exc.code:
                 state.last_code = exc.code
                 failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name,
-                        secret=secret, action=exc.action, detail=exc.detail, secrets=exc.secrets)
+                        secret=secret, gave_up="true" if exc.gated else None, action=exc.action, detail=exc.detail,
+                        secrets=exc.secrets)
             state.not_before = now
             return
         state.attempts += 1

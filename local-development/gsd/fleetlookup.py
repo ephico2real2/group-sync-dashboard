@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import httpx
+
 from .clusterconfig.writer import (
     MANAGED_BY_LOOKUP, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
     store_lookup,
@@ -72,13 +74,16 @@ class LookupRefused(Exception):
 
     `code` is in CODES; `detail` says what happened and `action` what to change (#245: the fix, not
     the diagnosis), neither ever a credential; `spent` is whether a login was attempted — the
-    poller's schedule counts spent failures and rechecks the free ones every cycle; `secrets` are
-    the values in play, for the emit helper to strip from the line the poller writes.
+    poller's schedule counts spent failures and rechecks the free ones every cycle; `gated` is the
+    free refusal the gate gives — terminal until the credential changes, said once with
+    `gave_up=true` (third pass, R3-2); `secrets` are the values in play, for the emit helper to
+    strip from the line the poller writes.
     """
 
-    def __init__(self, code: str, detail: str, *, action: str, spent: bool, secrets: tuple[str, ...] = ()):
+    def __init__(self, code: str, detail: str, *, action: str, spent: bool, gated: bool = False,
+                 secrets: tuple[str, ...] = ()):
         super().__init__(f"{code}: {detail}")
-        self.code, self.detail, self.action, self.spent = code, detail, action, spent
+        self.code, self.detail, self.action, self.spent, self.gated = code, detail, action, spent, gated
         self.secrets: tuple[str, ...] = tuple(secrets)
 
     def scrub(self, secrets: list[str]) -> None:
@@ -102,7 +107,16 @@ class CredentialGate:
 
     @staticmethod
     def _key(target: str, username: str, password: str) -> tuple[str, str, str]:
-        return target.rstrip("/"), username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+        # THE TARGET AS httpx CANONICALISES IT (third pass, R3-1): host case and IDNA, not a whole-string
+        # lowercase that would mangle a path or a port. `api.example.com` and `API.example.com/` are one
+        # directory-backed target and one gate entry. A malformed URL falls back to the bare string:
+        # the gate must never raise. The digest is 64 bits ON PURPOSE — a collision over-blocks, never
+        # binds again.
+        try:
+            canonical = str(httpx.URL(target)).rstrip("/")
+        except httpx.InvalidURL:
+            canonical = target.rstrip("/")
+        return canonical, username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
 
     def refused(self, target: str, username: str, password: str) -> bool:
         return self._key(target, username, password) in self._refused
@@ -345,8 +359,9 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
         if gate.refused(cluster.api_url, account, password):
             raise LookupRefused("login-refused", f"{cluster.name} evaluated this password for {account} already and it "
                                                  f"has not changed",
-                                action=("rotate the fleet password Secret, or correct ldapConnectionBootstrap — no login is "
-                                        "attempted against this target until the password moves (SPEC_S4 §6)"), spent=False)
+                                action=("not tried again until the fleet password Secret or the stanza changes — rotate the "
+                                        "Secret, or correct ldapConnectionBootstrap; the password is re-read each cycle at no "
+                                        "cost and the login resumes when it moves (SPEC_S4 §6)"), spent=False, gated=True)
         knobs = {"clock": clock} if clock is not None else {}
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
