@@ -211,38 +211,83 @@ deleted. A declared stanza does not race a hand-made Secret; it waits for it to 
 
 ## 5. Case D — which trust store verifies which host
 
-Measured from **inside the dashboard pod**, because that is the only place the answer is authoritative.
+Measured from **inside the dashboard pod**, because that is the only place the answer is
+authoritative — and against the file the application actually uses.
+
+### Step D1 — find the bundle the app reads
+
+A first attempt at this measurement tested `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`, a
+guess, and concluded the injected bundle verified nothing. **That was wrong.** The app names its
+bundle explicitly:
 
 ```sh
-oc exec deploy/group-sync-dashboard -c dashboard -- python3 -c "<ssl handshake against each host>"
+oc get deploy group-sync-dashboard -o jsonpath='{...volumeMounts[*]}{...env[*]}'
 ```
 
 Result:
 
-| bundle | `api.crc.testing:6443` | `oauth-openshift.apps-crc.testing:443` |
-|---|---|---|
-| injected trusted-bundle | **SSLCertVerificationError** | **SSLCertVerificationError** |
-| ServiceAccount `ca.crt` | OK | OK |
+```
+trusted-ca-injected -> /etc/pki/ca-trust/extracted/pem/injected
+GSD_TRUSTED_CA_FILE=/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt
+```
 
-The chart **does** ship the injected bundle and it **is** mounted:
+### Step D2 — the measurement
+
+Three targets: the lab's own API and OAuth route, and `mock-trusted` — an onboarded endpoint in this
+namespace whose certificate is signed by the **enterprise CA**.
+
+Result:
+
+| bundle | size | `api.crc.testing` | `oauth-openshift…` | `mock-trusted` |
+|---|---|---|---|---|
+| **`GSD_TRUSTED_CA_FILE` (injected)** | 225,717 B | VERIFY-FAIL | VERIFY-FAIL | **OK** |
+| system `tls-ca-bundle.pem` | 223,752 B | VERIFY-FAIL | VERIFY-FAIL | VERIFY-FAIL |
+| ServiceAccount `ca.crt` | 7,209 B | OK | OK | VERIFY-FAIL |
+
+**The ~2 KB between the injected bundle and the system one is `ldap-enterprise-ca-bundle`, and it is
+exactly what makes the enterprise-signed endpoint verifiable.** The injection works, end to end:
 
 ```
 ConfigMap group-sync-dashboard-trusted-ca
   label config.openshift.io/inject-trusted-cabundle: "true"
   data  ca-bundle.crt (225717 bytes)
-  mount trusted-ca-injected  ->  the dashboard pod
+  mount trusted-ca-injected  ->  /etc/pki/ca-trust/extracted/pem/injected
 proxy/cluster trustedCA = ldap-enterprise-ca-bundle
 ```
 
-**Why it still fails here:** `inject-trusted-cabundle` supplies the *system* trust plus the *proxy's*
-`trustedCA`. It does not include the cluster's **own** API server CA, which on CRC is self-signed by
-`kube-apiserver-lb-signer`. So the injected bundle cannot verify CRC, while the ServiceAccount bundle
-— which is `kube-root-ca` — verifies both hosts, because CRC merges the ingress CA into it.
+### Step D3 — what this means for choosing trust
 
-**For a real remote cluster the opposite is true**: an enterprise-signed API would be verified by the
-injected bundle (it carries `ldap-enterprise-ca-bundle`), and the local ServiceAccount CA would be
-irrelevant. The right trust source depends on the target, which is why the stanza declares it per
-cluster rather than the chart assuming one.
+Each store is right for a different target, and none is right for all three:
+
+- **The injected bundle** carries the system trust plus the proxy's `trustedCA`. It verifies anything
+  signed by the enterprise CA — which is what a **real remote cluster** in this estate would be. It
+  does **not** carry the lab's own API CA, which is self-signed by `kube-apiserver-lb-signer`.
+- **The ServiceAccount bundle** is `kube-root-ca`. It verifies the lab's API and OAuth route (CRC
+  merges the ingress CA into it) and nothing outside the cluster.
+
+So the stanza must declare its trust **per target**, and the chart is right not to assume one. For
+`shared-rnd` — which on this lab points at CRC itself — the ServiceAccount bundle is correct. For a
+genuine remote cluster, the injected bundle is.
+
+### Step D4 — why the enterprise path stops here
+
+`mock-trusted` proves the **trust layer** but cannot complete a lookup:
+
+```sh
+GET https://mock-trusted:6443/.well-known/oauth-authorization-server
+GET https://mock-trusted:6443/api/v1/namespaces/group-sync-operator/secrets/...-token
+```
+
+Result:
+
+```
+/.well-known/oauth-authorization-server                HTTP 404
+/api/v1/namespaces/group-sync-operator/secrets/group   HTTP 404
+```
+
+It is a mock serving group-sync CRs and RBAC reads, not an OAuth server. TLS succeeds against it on
+the injected bundle — which is the part that was previously unproven — but there is no authorization
+endpoint to log in to and no ServiceAccount token Secret to read.
 
 ## 6. What is NOT proven by any of this
 
@@ -254,8 +299,10 @@ Stated plainly, because a validation document that only lists successes is not e
   cluster.insecure_skip_verify: return "insecure", None`, writing `tlsClientConfig.insecure` and no
   CA) and `test_fleet_login.py` covers it hermetically (`verify is False`, `tls=insecure` on the log
   line), but no live retrieval has run with it.
-- **The injected trusted bundle was never the trust that worked.** Case D shows why on this lab, but
-  the path an estate would actually use in production has not been exercised end to end.
+- **The injected trusted bundle is proven at the TLS layer only.** Case D shows it verifies the
+  enterprise-signed `mock-trusted` endpoint, which is the trust a real remote cluster would use — but
+  that endpoint is a mock with no OAuth server (HTTP 404 on the discovery document), so no login or
+  token read has ever run over it. The enterprise path is proven to the handshake and no further.
 - **A wrong fleet password was never tested**, deliberately. The gate that makes it safe
   (`bound` + `phase=credential` -> one bind, never repeated for that password) is proven by harness in
   #284's review, not against this directory.
@@ -269,5 +316,7 @@ Stated plainly, because a validation document that only lists successes is not e
 | The written Secret is discoverable **by construction** — the label is stamped by the writer | Case C |
 | The session revokes its own token; the retrieval leaves no litter | Cases A and C |
 | A hand-made Secret **shadows** a declared stanza; the lookup waits rather than racing | Case C |
-| The injected bundle cannot verify a self-signed cluster; trust must be declared per target | Case D |
+| The injected bundle verifies the **enterprise-signed** endpoint; the ServiceAccount bundle verifies the lab's own hosts; neither verifies both — so trust is declared per target | Case D |
+| The enterprise CA reaches the pod: `inject-trusted-cabundle` + `proxy/cluster trustedCA` = the 2 KB that makes `mock-trusted` verifiable | Case D |
+| A measurement against a guessed path produced a wrong conclusion, corrected by reading `GSD_TRUSTED_CA_FILE` | Case D, Step D1 |
 | Cross-cluster, `insecure: true`, and a wrong password remain untested live | Section 6 |
