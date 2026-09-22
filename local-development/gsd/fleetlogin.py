@@ -181,6 +181,8 @@ class _RevokeAnswer:
 
     gone: bool
     """True only when the target answered 200 (revoked) or 404 (already gone)."""
+    name: str | None
+    """The object's name as the wire used it, or None when the wire was never reached."""
     word: str
     """revoked | already-gone | unauthenticated | refused | unanswered — the line's `outcome=` word."""
     phase: str
@@ -245,6 +247,19 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _describe(exc: BaseException) -> str:
+    return type(exc).__name__
+
+
+def _text_of(exc: BaseException) -> str:
+    """`str(exc)`, and never the reason cleanup raises: an exception whose `__str__` raises would
+    otherwise replace the exception being cleaned up after (final pass, R5-3)."""
+    try:
+        return str(exc)
+    except BaseException:  # noqa: BLE001 - the description is all that is left to say
+        return "<unprintable>"
+
+
 def _without_userinfo(url: str) -> str | None:
     """A URL rebuilt from its parts without any userinfo — `scheme://host[:port]/path` — or None
     when it is not an https URL with a host. STRUCTURAL, not a substring redaction (third pass: the
@@ -252,12 +267,15 @@ def _without_userinfo(url: str) -> str | None:
     `app`); a host that happens to contain the password is the operator's host and survives."""
     try:
         parts = urlsplit(url)
+        hostname, port = parts.hostname, parts.port     # `.port` raises on a port that is not a number
     except ValueError:
         return None
-    host = parts.netloc.rpartition("@")[2]
-    if parts.scheme != "https" or not host:
+    if parts.scheme != "https" or not hostname:
+        # `https://:bad/x` has no host and `https://host:bad/x` no usable port: both would rebuild
+        # into a malformed authority, so both fall back to the endpoint's host (final pass, R5-4).
         return None
-    return f"{parts.scheme}://{host}{parts.path}"
+    del port
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}{parts.path}"
 
 
 def _as_utc(moment: datetime) -> datetime:
@@ -457,16 +475,39 @@ class FleetLogin:
             # The request may have been written and the target may have bound — a read timeout, a
             # dropped connection, a non-HTTP answer: terminal.
             raise self._transport_error(exc, retryable=False) from exc
-        return response
+        else:
+            # Returned from inside the protected region (final pass, R5-2): the response must not
+            # exist in an instruction window outside it. What remains is the store into `_login`'s
+            # local after this call returns — one bytecode, and inherent to any call boundary.
+            return response
 
     @staticmethod
-    def _fragment_of(response: httpx.Response) -> dict[str, list[str]]:
-        """The `Location` fragment, parsed on its own. The header is split on its first `#` and the
-        rest of the URL is NEVER validated, because a hostile `Location` (an unclosed IPv6 literal
-        makes `urlsplit` raise) must not stand between the mint and the name of what was minted
-        (confirmation pass, Codex: `authorize=1 DELETE=0`). Total: it cannot raise."""
-        location = response.headers.get("location", "")
-        return parse_qs(location.split("#", 1)[1] if "#" in location else "")
+    def _fragments_of(response: httpx.Response) -> list[dict[str, list[str]]]:
+        """Every fragment a 302 could carry, parsed on its own — the rest of each URL is NEVER
+        validated, because a hostile `Location` (an unclosed IPv6 literal makes `urlsplit` raise)
+        must not stand between the mint and the name of what was minted (confirmation pass).
+
+        EVERY `Location` VALUE, AND EVERY `#`-SEGMENT OF EACH (final pass, R5-1, measured): httpx
+        keeps repeated headers apart in `get_list` but COMMA-JOINS them in `get`, so a first-`#`
+        split of the joined string never saw a token in the second header — a minted token the
+        guard could not name. A proxy that joined the duplicates itself hands ONE value holding two
+        URLs, which `get_list` alone would also miss; splitting each value on every `#` covers both,
+        and a fragment cannot legitimately contain a `#`. Total: it cannot raise."""
+        return [parse_qs(segment)
+                for value in response.headers.get_list("location")
+                for segment in value.split("#")[1:]]
+
+    @classmethod
+    def _fragment_of(cls, response: httpx.Response) -> dict[str, list[str]]:
+        """THE fragment: the first that carries an `access_token`, else the first there is, else
+        empty. The session path (`_token_from`) and the guard (`_token_in`) both read this one, so
+        they cannot disagree about which token exists — a divergence there would be worse than
+        either bug."""
+        fragments = cls._fragments_of(response)
+        for fragment in fragments:
+            if (fragment.get("access_token") or [""])[0]:
+                return fragment
+        return fragments[0] if fragments else {}
 
     @classmethod
     def _token_in(cls, response: httpx.Response) -> str | None:
@@ -545,23 +586,23 @@ class FleetLogin:
         from the API server's token cache for about two minutes (121 s measured on the reference
         cluster) — a fact for #285's "a 401 means re-authenticate" rule, not litter: nothing on the
         target names it any more, and `oc get oauthaccesstokens` shows it gone at once."""
-        name = token_object_name(token)
+        name = token_object_name(token)   # derived ONCE, here, where the wire needs it (final pass, R5-3)
         try:
             response = self._client.delete(f"{USER_TOKEN_API}/{name}",
                                            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
         except httpx.HTTPError as exc:
             problem = self._transport_error(exc, token)
-            return _RevokeAnswer(False, "unanswered", problem.phase, UNREACHABLE, problem.message)
+            return _RevokeAnswer(False, name, "unanswered", problem.phase, UNREACHABLE, problem.message)
         if response.status_code == 200:
-            return _RevokeAnswer(True, "revoked", "poll", "revoked", None)
+            return _RevokeAnswer(True, name, "revoked", "poll", "revoked", None)
         if response.status_code == 404:
-            return _RevokeAnswer(True, "already-gone", "poll", "already-gone", None)
+            return _RevokeAnswer(True, name, "already-gone", "poll", "already-gone", None)
         body = self._scrub(response.text, token)[:200] or "<empty body>"
         if response.status_code == 401:
-            return _RevokeAnswer(False, "unauthenticated", "credential", AUTH_FAILED,
+            return _RevokeAnswer(False, name, "unauthenticated", "credential", AUTH_FAILED,
                                  f"401 Unauthorized on DELETE {USER_TOKEN_API}/<name>: the token did not authorise "
                                  f"its own revoke, so the object may still exist — {body}")
-        return _RevokeAnswer(False, "refused", "poll", UNREACHABLE,
+        return _RevokeAnswer(False, name, "refused", "poll", UNREACHABLE,
                              f"HTTP {response.status_code} on DELETE {USER_TOKEN_API}/<name>: revoke refused — {body}")
 
     def _revoke(self, token: str) -> bool:
@@ -575,15 +616,17 @@ class FleetLogin:
         of this process on the wire path is surfaced as a `fleet-logout-failed` line and answered
         False, and a fault while writing the line falls back to the stdlib logger, which cannot raise.
         """
-        shown = token_object_name(token) if token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
-        secrets = (self._password, token)
+        # NOTHING IS COMPUTED BEFORE THE WIRE THAT THE WIRE DOES NOT NEED (final pass, R5-3): the
+        # name is derived once, inside `_delete_token`, and comes back on the answer for the line.
         try:
             answer = self._delete_token(token)
         except BaseException as exc:  # noqa: BLE001 - the wire never raises; this is a fault of this process
-            answer = _RevokeAnswer(False, "unanswered", "connect", UNREACHABLE,
-                                   f"{type(exc).__name__}: {self._scrub(str(exc), token)[:200]} — the revoke "
+            answer = _RevokeAnswer(False, None, "unanswered", "connect", UNREACHABLE,
+                                   f"{_describe(exc)}: {self._scrub(_text_of(exc), token)[:200]} — the revoke "
                                    f"itself failed before the target answered")
         self.revoked = answer.gone
+        shown = answer.name if answer.name and token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
+        secrets = (self._password, token)
         try:
             if answer.gone:
                 event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown, outcome=answer.word,
@@ -596,8 +639,11 @@ class FleetLogin:
                                 "so it does not become litter"),
                         detail=answer.detail, secrets=secrets)
         except BaseException as exc:  # noqa: BLE001 - the LINE failed, not the revoke; `revoked` already holds the answer
-            log.warning("fleet-logout line could not be written (revoked=%s): %s: %s", answer.gone,
-                        type(exc).__name__, self._scrub(str(exc), token)[:200])
+            try:
+                log.warning("fleet-logout line could not be written (revoked=%s): %s: %s", answer.gone,
+                            _describe(exc), self._scrub(_text_of(exc), token)[:200])
+            except BaseException:  # noqa: BLE001, S110 - the last resort: cleanup can never raise (final pass, R5-3)
+                pass
         return answer.gone
 
     # ── the vocabulary ───────────────────────────────────────────────────────────────────────

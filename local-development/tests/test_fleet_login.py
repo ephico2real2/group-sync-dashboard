@@ -238,6 +238,38 @@ class TestTheTokenIsReadOffTheLocationFragment:
                 pass
         assert "server_error" in exc.value.message and no_token.revokes == []
 
+    def test_a_token_in_a_second_location_header_is_still_named(self):
+        """Final pass (R5-1, measured by the owner and re-measured here): httpx COMMA-JOINS repeated
+        headers in `get`, so a first-`#` split of the joined string never saw a token in the second
+        header — `_token_in` returned None for a minted token. Every value (`get_list`) and every
+        `#`-segment of each is read, and the session path and the guard read the same choice."""
+        implicit = f"{OAUTH}/oauth/token/implicit"
+        second = [("Location", f"{implicit}#error=denied"),
+                  ("Location", f"{implicit}#access_token={TOKEN}&expires_in=60")]
+        assert FleetLogin._token_in(httpx.Response(302, headers=second)) == TOKEN
+        target = Target(httpx.Response(302, headers=second))
+        with make(target)[0] as s:
+            assert s.token == TOKEN and s.expires_in == 60
+        assert len(target.revokes) == 1
+        # the error path: the token is in the second header and its expiry is unusable
+        unusable = [("Location", f"{implicit}#error=denied"),
+                    ("Location", f"{implicit}#access_token={TOKEN}&expires_in=soon")]
+        target = Target(httpx.Response(302, headers=unusable))
+        fl, _ = make(target)
+        with pytest.raises(LoginError):
+            with fl:
+                pass
+        assert len(target.revokes) == 1 and fl.revoked is True
+        # the reverse order, a single header, and a value a proxy joined itself (get_list alone misses it)
+        first = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"), ("Location", f"{implicit}#error=denied")]
+        with make(Target(httpx.Response(302, headers=first)))[0] as s:
+            assert s.token == TOKEN
+        with make(Target(login_302(expires_in="60")))[0] as s:
+            assert s.token == TOKEN and s.expires_in == 60
+        joined = {"Location": f"{implicit}#error=denied, {implicit}#access_token={TOKEN}&expires_in=60"}
+        with make(Target(httpx.Response(302, headers=joined)))[0] as s:
+            assert s.token == TOKEN and s.expires_in == 60
+
     def test_an_expiry_beyond_int32_is_bounded_revoked_once_and_terminal(self):
         """Review of #289, all three seats: 999999999999999 passed `int()` and the `<= 0` guard,
         then overflowed the instant arithmetic with an OverflowError that escaped `__enter__` —
@@ -450,6 +482,51 @@ class TestTheSessionLogsOut:
         assert lines(caplog, "fleet-logout-failed") == []
         assert not any("failed before the target answered" in m for m in caplog.messages)
         assert any("fleet-logout line could not be written (revoked=True)" in m for m in caplog.messages)
+
+    def test_authorize_returns_from_inside_its_protected_region(self):
+        """Final pass (R5-2): `return response` sat after the `try`, so the response existed in an
+        instruction window outside the protected region. What remains — the store into `_login`'s
+        local after the call returns — is one bytecode and inherent to any call boundary."""
+        tree = ast.parse(pathlib.Path(fleetlogin.__file__).read_text())
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_authorize")
+        assert not [n for n in fn.body if isinstance(n, ast.Return)], "a return outside the try"
+        tries = [n for n in fn.body if isinstance(n, ast.Try)]
+        assert tries and any(isinstance(n, ast.Return) for t in tries for n in ast.walk(t))
+
+    def test_a_failure_before_the_wire_cannot_replace_the_original_exception(self, monkeypatch, caplog):
+        """Final pass (R5-3): the object name was derived for the LOG before the wire, outside the
+        protected path, so a failure there escaped `_revoke` — and the fallback logger could raise."""
+        class BodyError(Exception):
+            pass
+
+        real_name = fleetlogin.token_object_name
+        monkeypatch.setattr(fleetlogin, "token_object_name",
+                            lambda token: (_ for _ in ()).throw(RuntimeError("naming broke")))
+        target = Target(login_302())
+        fl, _ = make(target)
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(BodyError):
+                with fl:
+                    raise BodyError()
+        assert fl.revoked is False and "naming broke" in lines(caplog, "fleet-logout-failed")[0]
+        # the last resort: the line's emitter AND the fallback logger both raise
+        monkeypatch.setattr(fleetlogin, "token_object_name", real_name)
+        real_event = fleetlogin.event
+
+        def emitter_that_dies(log, level, name, **fields):
+            if name == "fleet-logout":
+                raise RuntimeError("the emitter broke")
+            real_event(log, level, name, **fields)
+
+        monkeypatch.setattr(fleetlogin, "event", emitter_that_dies)
+        monkeypatch.setattr(fleetlogin.log, "warning",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("the logger broke")))
+        target = Target(login_302())
+        fl, _ = make(target)
+        with pytest.raises(BodyError):
+            with fl:
+                raise BodyError()
+        assert fl.revoked is True and len(target.revokes) == 1
 
     def test_a_failure_during_cleanup_never_replaces_the_original_exception(self, monkeypatch, caplog):
         """Confirmation pass (Codex: `raised=RuntimeError original=Marker`). The revoke's own
@@ -1054,6 +1131,11 @@ class TestTheRedactionPin:
         unusable = {"issuer": "http://plain.example", "authorization_endpoint": f"{OAUTH}/oauth/authorize"}
         with make(Target(login_302(), discovery=unusable))[0] as s:
             assert s.issuer == OAUTH, "a non-https issuer falls back to the endpoint's host"
+        # final pass (R5-4): a malformed authority falls back too, rather than being rebuilt malformed
+        for bad in ("https://:bad/x", "https://host:bad/x"):
+            assert fleetlogin._without_userinfo(bad) is None, bad
+            with make(Target(login_302(), discovery={"issuer": bad, "authorization_endpoint": f"{OAUTH}/oauth/authorize"}))[0] as s:
+                assert s.issuer == OAUTH, bad
 
     def test_a_password_that_is_a_classification_word_does_not_change_the_phase(self, caplog):
         """Third pass: password `certificate` scrubbed the phrase `is_verify_failure` keys on and a
