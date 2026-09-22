@@ -6810,6 +6810,19 @@ class TestClusterConfigPage:
         twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
         assert twin["metadata"]["labels"]["note"] == "line1\nline2\ttab\r"
 
+    def test_the_twins_type_label_cannot_be_replaced_by_a_form_label(self, page, cc_rig):
+        """Review of #295, P1-2: the pane emitted the app's label first and the form's after, so a
+        label spelled `groupsync-dashboard.io/secret-type: onboard` parsed to a Secret discovery
+        cannot see — the merge-order defect secret_object() had just been fixed for."""
+        import yaml as _yaml
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.evaluate("() => { view.clusterForm.labels['groupsync-dashboard.io/secret-type'] = 'onboard'; render(); }")
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        assert twin["metadata"]["labels"]["groupsync-dashboard.io/secret-type"] == "cluster"
+
     def test_the_twin_is_the_object_the_api_writes_when_a_value_carries_whitespace(self, page, cc_rig):
         """Round 2 (OB3 C8): a pasted value arrives with its spaces; ccBody() trims, ccYaml() did not, so
         the pane described `gsd-cluster- west ` — a name the API server refuses — while the API wrote

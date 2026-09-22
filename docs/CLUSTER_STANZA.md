@@ -41,7 +41,7 @@ truth for one credential is a stanza whose author meant one of them.
 |---|---|---|
 | `tokenFile` = the SA path | `in-cluster` | yes |
 | `tokenEnv` or `tokenFile` | `file` | yes |
-| `saTokenLookup: true` | `lookup` | **no — pending** |
+| `saTokenLookup: true` | `remote-lookup` | **after the lookup** — the dashboard logs in as the fleet account, reads the poller SA's token on the target and writes `gsd-cluster-<name>`, which then polls (SPEC_S4b); needs `clusterConfig.secrets.writes.enabled` |
 | `userSelfLogin: true` | `self-login` | **no — pending** |
 | a Secret's `bearerToken` | `bearer` | yes |
 | a Secret's `oauth {username, password}` | `oauth` | **no — pending (#119 P2)** |
@@ -73,7 +73,7 @@ Each rendered and loaded. All twelve are accepted by both readers.
 | 3 | remote + `tokenFile` | polled, token re-read per use |
 | 4 | remote + `tokenEnv` + `caBundleFile` | polled, pinned CA |
 | 5 | remote + `tokenEnv` + `insecureSkipVerify` | polled, verification off |
-| 6 | remote + `saTokenLookup` | listed, pending, not polled |
+| 6 | remote + `saTokenLookup` | retrieved on the next discovery cycle, then polled through its written Secret; renders only with `clusterConfig.secrets.writes.enabled` |
 | 7 | remote + `userSelfLogin` | listed, pending, not polled |
 | 8 | remote + `saTokenLookup` + `ldapConnectionBootstrap` | as 6, with a per-cluster bootstrap account |
 | 9 | remote + `visibility: self-only` | every viewer is the self tier there |
@@ -107,6 +107,10 @@ after a green upgrade looks like an outage rather than a config error.
 | **a duplicate `name`** | *renders* | **refused** |
 | **`apiUrl` without a scheme** | *renders* | **refused** |
 | **`insecureSkipVerify` + `caBundleFile`** | *renders* | **refused** |
+| `saTokenLookup` without `clusterConfig.secrets.writes.enabled` | **refused** | starts; the tab reports `fleet-write-disabled` (a Secret-declared mode reaches this half) |
+| `saTokenLookup` without `clusterConfig.secrets.enabled` | **refused** | starts; the cluster stays pending |
+| `clusterConfig.secrets.writes.enabled` with `replicaCount > 1` — a lookup is possible, stanza or not | **refused** | starts; a lookup reports `fleet-write-disabled` (one retriever per estate, SPEC_S4 §6) |
+| `saTokenLookup` with `visibility: remote-sar` | **refused** | starts; the write would be refused `visibility-invalid` |
 
 The chart's guard covers the connection-mode and host rules; the remaining four are the loader's
 alone, because `templates/configmap.yaml` passes `clusters` through with `toYaml` and the pod is

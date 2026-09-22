@@ -119,6 +119,105 @@ Corrections to the issue's comments, fact-led:
   (`LegacyServiceAccountTokenNoAutoGeneration`, beta on by default 1.24, GA 1.26). The consequence
   the issue draws is right either way: on a modern target nothing creates the Secret unasked.
 
+Review of PR #295 (Codex and Cursor, 2026-09-22; seven findings, each corrected here first and then
+re-applied from these blocks):
+
+- **P0-1 — the scheduler re-entered a login #283 had made terminal.** Only `AUTH_FAILED` gated the
+  credential; every other answer became `login-failed` and the schedule called `lookup()` again — a
+  fresh bind, up to five, which for a *locked* account (LDAP code 19 → the oauth-server's HTTP 500)
+  is the lockout walk one layer up. **Fix shape, and where it departs from the reviewers':** the
+  brief proposed gating on `phase == "credential"`. That misses one case #283 also made terminal — a
+  read timeout or dropped connection *after* the authorize GET was written (`phase=connect`,
+  `retryable=False`): the password was on the wire and the target may have bound. So `LoginError`
+  now carries **`bound`** — #283's own line, "the password was on the wire", as a field: True for
+  every `phase=credential` answer and for that one transport branch. *As first written* the lookup
+  gated the credential on `bound and phase == "credential"` and made any other `bound` failure
+  "final" in the schedule; **the second pass (R2-1 below) refuted the second half** — the schedule's
+  state re-arms on any shape change — so now every `bound` answer gates, and the gate carries the
+  target. TLS and connect failures before the write still retry, correctly: nothing was bound. A
+  500 on authorize is one bind and a gated (target, credential).
+- **P0-2 — the replica rule reached only a values stanza.** The `replicaCount > 1` refusal sat inside
+  `range $modeOf`; a Secret-declared mode on a two-replica release with election off (which
+  `deployment.yaml` requires above one replica) retrieved on **every** replica, because with election
+  off `elector` is None. The rule now holds wherever a lookup is *possible*: at render,
+  `clusterConfig.secrets.writes.enabled` with `replicaCount > 1` is refused; at runtime the pod
+  learns `replicaCount` through the ConfigMap and a lookup on a multi-replica release without an
+  elector is `fleet-write-disabled`, whose meaning widens to "this deployment is not configured to
+  let the lookup write".
+- **P1-1 — the retrieved token could reach the tab.** `read_sa_token` raised on the type, owner and
+  `invalid-since` paths before decoding `data.token`, so the token was not among the secrets the
+  refusal was scrubbed against, and the owner and type were quoted raw. Now the token is decoded
+  first and rides every refusal's `secrets`; the owner and the type are described by length, never
+  echoed (the parser's rule for remote-controlled names); `LookupRefused.scrub` rewrites `detail`,
+  `action` **and `args`**, so `str(exc)` is clean too. The pin asserts the SA token's absence, which
+  it had not — a test that looked like it checked.
+- **P1-2 — the tab's GitOps YAML had the writer's merge-order bug.** `ccYaml` emitted the app's label
+  first and the form's labels after; the app's label goes last, as `secret_object()` now does.
+- **P1-3 — a quoted `"false"` enabled writes.** `_bool_setting`'s ConfigMap path was
+  `bool(raw.get(...))`; it now reads the word exactly as its env path does. A real YAML boolean is
+  unchanged; any other type keeps truthiness, with the warning.
+- **P1-4 — `lookup(write=True)` trusted its caller to check the switch.** It checks
+  `secrets.enabled and writes.enabled` itself, before any password is read; the poller's own
+  pre-check is gone, so the rule lives in one place. `write=False` needs no grant.
+- **P1-5 — `invalid-since` was tested by truthiness.** Kubernetes allows an empty label value; the
+  label must be *absent*: `INVALID_SINCE_LABEL in labels`.
+- **Second pass on `129307b` (Codex with a working interpreter; five refutations, each corrected
+  here first):**
+  - **R2-1 — the gate was too narrow and too broad at once.** Too narrow: a post-write transport
+    failure was made "final" in `_LookupState`, which re-arms on *any* shape change — a `visibility`
+    edit sent the same password to the same target again. Too broad: the key omitted the target,
+    so a 500 from target A blocked every login to a healthy target B on the same account
+    (measured). One fix closes both: the gate is keyed on **(target `api_url`, username,
+    sha256(password))** and **every `bound` answer gates** — the target evaluated the password or
+    may have. `final` is gone. The business owner retracted the earlier "keep two tiers" decision
+    on the measurement; the stored code stays `login-refused` for a 401 and `login-failed` otherwise.
+  - **R2-2 — the test that blessed the regression is inverted:** after a read timeout the same
+    credential must not reach that target again; a different target on the same account still may.
+  - **R2-3 — moving the decode first put a new failure in front of the error handling:** a
+    non-scalar `data.token` raised `TypeError` before any refusal. The decode now also catches
+    `TypeError`. And a `ClusterError` message carries a remote body (`HTTP 500 on …: <body>`) that
+    can hold the very token being read, which was never decoded and so never scrubbed: messages
+    quoted by the lookup are cut at the status (`_status_only`), for the target's Secret and the
+    local password Secret alike; a transport message is this process's own words and is kept.
+  - **R2-4 — `_bool_setting` still decided on odd values:** `2`, `-1` and `[false]` enabled writes
+    silently, `null` and `[]` disabled silently, and the warning named the env variable for a
+    ConfigMap value. It now accepts a real boolean or one of the words and nothing else; anything
+    else is the default, with a warning naming the source it came from. A null is absent.
+  - **R2-5 — the replica guard is best-effort, and that is recorded rather than patched.** Two
+    pollers with `replica_count=1` and no elector, a stale and a new lease holder, a rollout's two
+    pods, an HPA past a ConfigMap that says 1: none is caught by an in-memory state, and the chart
+    itself calls election "best-effort, not a write fence". True mutual exclusion across replicas
+    needs a claim the cluster arbitrates — a Lease acquired by compare-and-swap before `FleetLogin`
+    is built — and SPEC_S4 §9 assigns the durable, replica-shared gate to **#285**. Not built here;
+    the render and runtime refusals stay as tight as they are, the operational guidance until #285
+    is one replica, and #285 inherits the requirement with the measurement (§6).
+- **Third pass on `9e1abb2` (the schedule driven for real; two findings):**
+  - **R3-1 — a hostname case change re-entered the walk.** The gate key stripped a trailing slash
+    and nothing else; `config.py` preserves the `apiUrl`'s case, so a stanza edited from
+    `api.example.com` to `API.example.com` was a new key and the password went to the same
+    directory-backed target again (measured: +1 authorize). The key is now the URL as `httpx.URL`
+    canonicalises it — host case and IDNA, not a whole-string lowercase that would mangle a path —
+    with the bare `rstrip("/")` kept as the fallback so a malformed `apiUrl` cannot raise inside
+    the gate.
+  - **R3-2 — a gated credential looped quietly.** After the gate fired, every cycle re-read the
+    password Secret, took the free refusal, and the operator never saw `gave_up=true`. Two fixes
+    were offered — set `gave_up` on the free refusal, or announce once and go silent — and neither
+    is taken as offered. Setting `gave_up` would be wrong: the schedule's re-arm key cannot see the
+    password *value* (only `lookup()` reads it), so a rotated password would never be noticed and
+    the cluster would stay stuck until a restart; the per-cycle read (one local `get`, no bind) **is**
+    the rotation detector and stays. The free refusal was already announced once, on transition;
+    what it lacked was the word. It now carries **`gave_up=true`** and an action that says the target
+    is not tried again until the fleet password Secret or the stanza changes, and that this is
+    re-checked each cycle at no cost. `LookupRefused.gated` marks it.
+  - **The gate's digest is 64 bits of the password's sha256, on purpose.** "The password changed"
+    is therefore probabilistic; a collision **over-blocks** — refuses a password that did change —
+    and never causes an extra bind. That is the safe direction; do not "fix" it to a full digest
+    for the wrong reason, and do not shorten it.
+- **Not a finding, recorded so nobody "fixes" it:** the lab's log lines read `account=<redacted>`
+  because CRC's `developer` password *is* the word `developer`, and the redactor strips the
+  substring wherever it appears. Over-redaction on this lab is the correct behaviour; exempting
+  `account=` from scrubbing would leak the password on any estate where the two differ.
+
 ## 1. The loop — four stages, one missing
 
 ```
@@ -229,9 +328,10 @@ Helm reads `environments/crc.yaml`. A live check must say which mechanism it use
 | what is read | `GET /api/v1/namespaces/{sourceNamespace}/secrets/{tokenSecretName}` on the target, as the session; refused unless it is type `kubernetes.io/service-account-token`, annotated for `sourceServiceAccount`, and not labelled `legacy-token-invalid-since` |
 | what is written | values path: `writer.create` with `CreateRequest(token_source=remote-lookup, source_namespace, source_service_account, lookup_account, managed_by=sa-token-lookup, tls = the declaration's, visibility/identity = `Settings.cluster_policy`)`. Secret path: `writer.store_lookup` — `config` becomes `{bearerToken, tlsClientConfig}` (mode and bootstrap keys leave), the four annotations are set, labels and `managed-by` are kept |
 | the CA the stanza must carry | **both hosts** — the API host (`/.well-known/oauth-authorization-server`) and the OAuth route (`/oauth/authorize`), which an enterprise PKI signs separately. A trust failure names the host |
-| the write grant | `clusterConfig.secrets.writes.enabled` — refused at render for a stanza (and `secrets.enabled: false`, `replicaCount > 1`, `visibility: remote-sar`), refused at runtime as `fleet-write-disabled` for a Secret-declared mode |
+| the write grant | `clusterConfig.secrets.writes.enabled` — refused at render for a stanza (and `secrets.enabled: false`, `visibility: remote-sar`); `writes.enabled` with `replicaCount > 1` refused at render stanza or not; at runtime `lookup()` itself refuses `fleet-write-disabled` with the switch off, and the poller refuses it above one replica without an elector |
 | the shadow | a lookup-written Secret over the stanza that asked for it is not `shadows-values-entry` (the reader compares the Secret's `token-source` with the stanza's credential kind) |
 | the seam for #285 | `fleetlookup.lookup(..., write=False)` — login, read, revoke, return the token, write nothing |
+| the lockout gate | in memory, keyed on (target, username, sha256(password)): every answer that reached the target after the password was written gates that target; a healthy target on the same account is unaffected; best-effort across replicas until #285 |
 | failure vocabulary | eight codes in `FINDING_CODES`, all `phase=credential`: `fleet-credential-missing`, `fleet-write-disabled`, `login-refused`, `login-failed`, `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated`, `lookup-write-failed`; two events, `fleet-lookup` and `fleet-lookup-failed`, the latter with S4a's `attempt=`, `retry_in=`, `gave_up=` |
 
 ### 3.2 `charts/group-sync-dashboard/values.yaml` — the address, the two-host contract, the switch
@@ -348,6 +448,9 @@ New text:
     saTokenLookupSourceNamespace: {{ .Values.clusterConfig.saTokenLookup.sourceNamespace | quote }}
     saTokenLookupSourceServiceAccount: {{ .Values.clusterConfig.saTokenLookup.sourceServiceAccount | quote }}
     saTokenLookupTokenSecretName: {{ .Values.clusterConfig.saTokenLookup.tokenSecretName | quote }}
+    # How many replicas this release runs: the lookup is one retriever per estate (SPEC_S4 §6), and a
+    # Secret-declared mode is invisible to the render, so the pod refuses it above one replica itself.
+    replicaCount: {{ int .Values.replicaCount }}
 ```
 
 ### 3.4 `charts/group-sync-dashboard/templates/_helpers.tpl` — refused at render
@@ -377,8 +480,7 @@ New text:
 {{- end -}}
 {{- /* SPEC_S4b (#284): a saTokenLookup stanza WRITES gsd-cluster-<name> into the release namespace
        and discovery reads it back, so it depends on two switches this render can see — refused
-       here, not by a finding after a green upgrade. One retriever per estate (SPEC_S4 §6): above
-       one replica every pod polls for itself and each would log in as the fleet account. */ -}}
+       here, not by a finding after a green upgrade. */ -}}
 {{- range $name, $mode := $modeOf -}}
 {{- if eq $mode "saTokenLookup" -}}
 {{- if not $.Values.clusterConfig.secrets.enabled -}}
@@ -387,10 +489,13 @@ New text:
 {{- if not $.Values.clusterConfig.secrets.writes.enabled -}}
 {{- fail (printf "cluster %s declares saTokenLookup but clusterConfig.secrets.writes.enabled is false: the lookup writes gsd-cluster-%s into the release namespace, and create/update on Secrets is the grant that switch renders (templates/cluster-secrets-rbac.yaml). Set clusterConfig.secrets.writes.enabled: true, or remove the mode." $name $name) -}}
 {{- end -}}
-{{- if gt (int $.Values.replicaCount) 1 -}}
-{{- fail (printf "cluster %s declares saTokenLookup with replicaCount %d: above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that retrieves credentials." $name (int $.Values.replicaCount)) -}}
 {{- end -}}
 {{- end -}}
+{{- /* One retriever per estate (SPEC_S4 §6), held wherever a lookup is POSSIBLE and not only where a
+       values stanza declares one (review of #295, P0-2): a Secret may declare the mode at any time,
+       and above one replica election is off, so every replica would log in as the fleet account. */ -}}
+{{- if and $.Values.clusterConfig.secrets.writes.enabled (gt (int $.Values.replicaCount) 1) -}}
+{{- fail (printf "clusterConfig.secrets.writes.enabled with replicaCount %d: a cluster Secret may declare saTokenLookup at any time, and above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that writes cluster Secrets, or turn writes off." (int $.Values.replicaCount)) -}}
 {{- end -}}
 {{- end -}}
 ```
@@ -545,7 +650,61 @@ New text:
     sa_token_lookup_namespace: str = "group-sync-operator"
     sa_token_lookup_service_account: str = "group-sync-dashboard-cluster-poller"
     sa_token_lookup_secret_name: str = ""
+    # How many replicas the chart runs (ConfigMap `replicaCount`): the lookup refuses to run above one
+    # without an elector, because every replica would log in (SPEC_S4 §6; review of #295, P0-2).
+    replica_count: int = 1
     cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
+```
+
+**File:** `local-development/gsd/config.py` — edit
+
+Old text:
+
+```python
+    """Env wins over the ConfigMap. Accepts the YAML spellings, not Python truthiness.
+
+    ``bool("false")`` is True, so a plain cast would turn every explicit disable in an env
+    var into an enable — silently, and in the direction that grants rather than withholds.
+    """
+    source = os.environ.get(env_name)
+    if source is None:
+        return bool(raw.get(yaml_key, default))
+    word = source.strip().lower()
+    if word in ("true", "yes", "on", "1"):
+        return True
+    if word in ("false", "no", "off", "0"):
+        return False
+    log.warning("%s=%r is not a boolean; using %r", env_name, source, default)
+    return default
+```
+
+New text:
+
+```python
+    """Env wins over the ConfigMap. Accepts a real boolean or one of the YAML spellings, and NOTHING
+    else, from either source.
+
+    ``bool("false")`` is True, so a plain cast turned an explicit disable into an enable — silently,
+    and in the direction that grants rather than withholds; the ConfigMap path did exactly that
+    until review of #295 (P1-3), and then a number or a list still decided the switch by truthiness
+    (`bool([False])` is True — second pass, R2-4). Anything that is not a boolean or a word is the
+    default, and the warning names the source it came from. A null is an absent key.
+    """
+    source, where = os.environ.get(env_name), env_name
+    if source is None:
+        if raw.get(yaml_key) is None:
+            return default
+        source, where = raw[yaml_key], yaml_key
+    if isinstance(source, bool):
+        return source
+    if isinstance(source, str):
+        word = source.strip().lower()
+        if word in ("true", "yes", "on", "1"):
+            return True
+        if word in ("false", "no", "off", "0"):
+            return False
+    log.warning("%s=%r is not a boolean; using %r", where, source, default)
+    return default
 ```
 
 **File:** `local-development/gsd/config.py` — edit
@@ -589,6 +748,7 @@ New text:
         sa_token_lookup_namespace=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_NAMESPACE", "saTokenLookupSourceNamespace", "group-sync-operator"),
         sa_token_lookup_service_account=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SERVICE_ACCOUNT", "saTokenLookupSourceServiceAccount", "group-sync-dashboard-cluster-poller"),
         sa_token_lookup_secret_name=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SECRET_NAME", "saTokenLookupTokenSecretName", ""),
+        replica_count=_num_setting(raw, "GSD_REPLICA_COUNT", "replicaCount", 1, int),
 ```
 
 The four existing tests that assert `"S3b" in credential_pending` (`tests/test_connection_modes.py`,
@@ -990,7 +1150,8 @@ Old text:
 New text:
 
 ```python
-    def __init__(self, outcome: str, message: str, *, phase: str, retryable: bool, host: str | None = None):
+    def __init__(self, outcome: str, message: str, *, phase: str, retryable: bool, host: str | None = None,
+                 bound: bool = False):
         super().__init__(outcome, message)
         self.phase = phase
         self.retryable = retryable
@@ -999,6 +1160,12 @@ New text:
         #: (authorize) — so a trust failure names which of the two the bundle does not cover
         #: (SPEC_S4b; the split-CA estate of SPEC_S4a §2.1). None for an answer, which names its own.
         self.host = host
+        #: THE LINE THE MODULE DOCSTRING DRAWS, AS A FIELD: the password was on the wire. True for every
+        #: answer the target gave (`phase=credential`) and for a transport failure AFTER the authorize
+        #: GET was written (a read timeout, a dropped connection), so a caller that schedules logins
+        #: (SPEC_S4b) can refuse to bind again — a locked account answers 500, and re-entering the
+        #: login from outside is the lockout walk one layer up (review of #295, P0-1).
+        self.bound = bound or phase == "credential"
 ```
 
 **File:** `local-development/gsd/fleetlogin.py` — edit
@@ -1045,7 +1212,7 @@ New text:
         except httpx.HTTPError as exc:
             # The request may have been written and the target may have bound — a read timeout, a
             # dropped connection, a non-HTTP answer: terminal.
-            raise self._transport_error(exc, retryable=False, host=urlsplit(endpoint).netloc) from exc
+            raise self._transport_error(exc, retryable=False, host=urlsplit(endpoint).netloc, bound=True) from exc
 ```
 
 **File:** `local-development/gsd/fleetlogin.py` — edit
@@ -1060,7 +1227,7 @@ New text:
 
 ```python
     def _transport_error(self, exc: httpx.HTTPError, *more: str | None, retryable: bool = True,
-                         host: str | None = None) -> LoginError:
+                         host: str | None = None, bound: bool = False) -> LoginError:
 ```
 
 **File:** `local-development/gsd/fleetlogin.py` — edit
@@ -1076,7 +1243,7 @@ New text:
 
 ```python
         phase = "tls" if is_verify_failure(raw) else "connect"
-        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable, host=host)
+        return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable, host=host, bound=bound)
 ```
 
 **File:** `local-development/gsd/fleetlogin.py` — edit
@@ -1156,11 +1323,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import httpx
+
 from .clusterconfig.writer import (
     MANAGED_BY_LOOKUP, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
     store_lookup,
 )
-from .clusterconfig.events import redact
+from .clusterconfig.events import is_transport_message, redact
 from .config import ClusterConfig, Settings
 from .fleetlogin import FleetLogin, LoginError
 from .kube import AUTH_FAILED, ClusterClient, ClusterError, redact_text
@@ -1188,34 +1357,55 @@ class LookupRefused(Exception):
 
     `code` is in CODES; `detail` says what happened and `action` what to change (#245: the fix, not
     the diagnosis), neither ever a credential; `spent` is whether a login was attempted — the
-    poller's schedule counts spent failures and rechecks the free ones every cycle; `secrets` are
-    the values in play, for the emit helper to strip from the line the poller writes.
+    poller's schedule counts spent failures and rechecks the free ones every cycle; `gated` is the
+    free refusal the gate gives — terminal until the credential changes, said once with
+    `gave_up=true` (third pass, R3-2); `secrets` are the values in play, for the emit helper to
+    strip from the line the poller writes.
     """
 
-    def __init__(self, code: str, detail: str, *, action: str, spent: bool):
+    def __init__(self, code: str, detail: str, *, action: str, spent: bool, gated: bool = False,
+                 secrets: tuple[str, ...] = ()):
         super().__init__(f"{code}: {detail}")
-        self.code, self.detail, self.action, self.spent = code, detail, action, spent
-        self.secrets: tuple[str, ...] = ()
+        self.code, self.detail, self.action, self.spent, self.gated = code, detail, action, spent, gated
+        self.secrets: tuple[str, ...] = tuple(secrets)
+
+    def scrub(self, secrets: list[str]) -> None:
+        """Every secret in play out of `detail`, `action` AND `args` — `str(exc)` is what a caller
+        that did not read the fields prints (review of #295, P1-1)."""
+        self.secrets = tuple(v for v in (*self.secrets, *secrets) if v)
+        self.detail, self.action = _scrub(self.detail, list(self.secrets)), _scrub(self.action, list(self.secrets))
+        self.args = (f"{self.code}: {self.detail}",)
 
 
 class CredentialGate:
-    """SPEC_S4 §6's in-memory half: a password the target refused is never sent again while it is
-    the same password. Keyed on (username, sha256(password)) — the password is not in the
-    declaration, so the normal fix, rotating the Secret, changes no stanza and must re-arm this
-    by itself. Durable and replica-shared in #285."""
+    """SPEC_S4 §6's in-memory half: a password a target evaluated — or may have — is never sent to
+    THAT target again while it is the same password. Keyed on (target, username, sha256(password)):
+    the target, because a 500 from one cluster must not stop a healthy one on the same account
+    (review of #295, second pass, R2-1); the digest, because the password is not in the declaration,
+    so the normal fix — rotating the Secret — changes no stanza and must re-arm this by itself.
+    Best-effort and per process; the durable, replica-shared gate is #285's."""
 
     def __init__(self) -> None:
-        self._refused: set[tuple[str, str]] = set()
+        self._refused: set[tuple[str, str, str]] = set()
 
     @staticmethod
-    def _key(username: str, password: str) -> tuple[str, str]:
-        return username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+    def _key(target: str, username: str, password: str) -> tuple[str, str, str]:
+        # THE TARGET AS httpx CANONICALISES IT (third pass, R3-1): host case and IDNA, not a whole-string
+        # lowercase that would mangle a path or a port. `api.example.com` and `API.example.com/` are one
+        # directory-backed target and one gate entry. A malformed URL falls back to the bare string:
+        # the gate must never raise. The digest is 64 bits ON PURPOSE — a collision over-blocks, never
+        # binds again.
+        try:
+            canonical = str(httpx.URL(target)).rstrip("/")
+        except httpx.InvalidURL:
+            canonical = target.rstrip("/")
+        return canonical, username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
 
-    def refused(self, username: str, password: str) -> bool:
-        return self._key(username, password) in self._refused
+    def refused(self, target: str, username: str, password: str) -> bool:
+        return self._key(target, username, password) in self._refused
 
-    def refuse(self, username: str, password: str) -> None:
-        self._refused.add(self._key(username, password))
+    def refuse(self, target: str, username: str, password: str) -> None:
+        self._refused.add(self._key(target, username, password))
 
 
 @dataclass(frozen=True)
@@ -1254,6 +1444,14 @@ class LookupResult:
     secrets: tuple[str, ...] = field(repr=False, compare=False, default=())
 
 
+def _status_only(message: str) -> str:
+    """A `ClusterError` message without any remote body: `HTTP 500 on /path: <body>` becomes
+    `HTTP 500 on /path`. A body is remote-controlled and can carry the very token this lookup is
+    reading, which was never decoded and so is not among the secrets a refusal is scrubbed against
+    (review of #295, second pass, R2-3). A transport message is this process's own words and is kept."""
+    return message if is_transport_message(message) else message.split(": ", 1)[0]
+
+
 def _scrub(text: str, secrets: list[str]) -> str:
     """Every secret in play out of free text, in the spellings the two helpers know and then, whatever
     its length, the raw value — `fleetlogin.FleetLogin._scrub`'s rule, applied at this module's one
@@ -1287,7 +1485,7 @@ def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace
         with host_client._client() as client:
             obj = host_client._get(client, f"/api/v1/namespaces/{ns}/secrets/{name}", {})
     except ClusterError as exc:
-        raise LookupRefused("fleet-credential-missing", f"cannot read {where}: {exc.outcome}: {exc.message}",
+        raise LookupRefused("fleet-credential-missing", f"cannot read {where}: {exc.outcome}: {_status_only(exc.message)}",
                             action=action, spent=False) from exc
     try:
         password = base64.b64decode((obj.get("data") or {}).get(key) or "", validate=True).decode("utf-8").strip()
@@ -1323,31 +1521,43 @@ def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSour
                         f"create one, so it is an onboarding step — a kubernetes.io/service-account-token Secret "
                         f"named {source.secret_name} annotated {SA_NAME_ANNOTATION}={source.service_account}, "
                         f"which the control plane then fills"), spent=True) from exc
-        raise LookupRefused("sa-token-unreadable", f"{where}: {exc.outcome}: {exc.message}",
+        raise LookupRefused("sa-token-unreadable", f"{where}: {exc.outcome}: {_status_only(exc.message)}",
                             action=("grant the fleet account get on that one Secret on the target (resourceNames), "
                                     "and check the ServiceAccount and Secret names in clusterConfig.saTokenLookup"),
                             spent=True) from exc
     meta = obj.get("metadata") or {}
     labels, annotations = meta.get("labels") or {}, meta.get("annotations") or {}
-    if obj.get("type") != SA_TOKEN_SECRET_TYPE:
-        raise LookupRefused("sa-token-unreadable", f"{where} is type {str(obj.get('type'))!r}, not {SA_TOKEN_SECRET_TYPE}; not stored",
-                            action="point clusterConfig.saTokenLookup.tokenSecretName at the ServiceAccount's token Secret", spent=True)
+    # THE TOKEN IS DECODED FIRST (review of #295, P1-1): whatever this function refuses below, the
+    # token the Secret carried rides the refusal's `secrets`, so no quoted field can carry it out.
+    # `TypeError` too (second pass, R2-3): a non-scalar `data.token` must be a refusal, not a crash
+    # in front of the refusals this decode exists to feed.
+    try:
+        token = base64.b64decode((obj.get("data") or {}).get("token") or "", validate=True).decode("utf-8").strip()
+    except (binascii.Error, UnicodeDecodeError, ValueError, TypeError):
+        token = ""
+    carried = (token,) if token else ()
+    # A remote-controlled NAME is described by its length, never echoed — the parser's rule for a key
+    # this contract does not know (`parser._unknown_key`), applied to the type and the owner.
+    kind = obj.get("type")
+    if kind != SA_TOKEN_SECRET_TYPE:
+        raise LookupRefused("sa-token-unreadable", f"{where} is not type {SA_TOKEN_SECRET_TYPE} (its type is "
+                                                   f"{len(str(kind or ''))} characters long); not stored",
+                            action="point clusterConfig.saTokenLookup.tokenSecretName at the ServiceAccount's token Secret",
+                            spent=True, secrets=carried)
     owner = annotations.get(SA_NAME_ANNOTATION)
     if owner != source.service_account:
-        raise LookupRefused("sa-token-unreadable", f"{where} belongs to ServiceAccount {str(owner)!r}, not "
-                                                   f"{source.service_account!r}; not stored",
-                            action="check clusterConfig.saTokenLookup.sourceServiceAccount against the Secret's annotation", spent=True)
-    invalid_since = labels.get(INVALID_SINCE_LABEL)
-    if invalid_since:
-        raise LookupRefused("sa-token-invalidated", f"{where} carries {INVALID_SINCE_LABEL}={invalid_since}: the target's "
+        raise LookupRefused("sa-token-unreadable", f"{where} is not {source.service_account!r}'s: its "
+                                                   f"{SA_NAME_ANNOTATION} annotation is {len(str(owner or ''))} characters "
+                                                   f"long and does not match; not stored",
+                            action="check clusterConfig.saTokenLookup.sourceServiceAccount against the Secret's annotation",
+                            spent=True, secrets=carried)
+    if INVALID_SINCE_LABEL in labels:
+        # PRESENCE, not truthiness (review of #295, P1-5): Kubernetes allows an empty label value.
+        raise LookupRefused("sa-token-invalidated", f"{where} carries the {INVALID_SINCE_LABEL} label: the target's "
                                                     f"legacy-token cleaner invalidated it after a year unused and the API "
                                                     f"server refuses it; not stored",
                             action=("delete and recreate the token Secret on the target (the control plane fills the new "
-                                    "one), or remove that label to allow the token temporarily"), spent=True)
-    try:
-        token = base64.b64decode((obj.get("data") or {}).get("token") or "", validate=True).decode("utf-8").strip()
-    except (binascii.Error, UnicodeDecodeError, ValueError):
-        token = ""
+                                    "one), or remove that label to allow the token temporarily"), spent=True, secrets=carried)
     if not token:
         raise LookupRefused("sa-token-unreadable", f"{where} has no token yet",
                             action="the token controller fills a new Secret within seconds; nothing to do unless it stays empty",
@@ -1416,42 +1626,63 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     session is a context manager, so the login's token is revoked whatever the read does. With
     `write=False` (#285's ping) nothing is written and the token is returned in the result.
     """
+    if write and not (settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled):
+        # THE SWITCH IS CHECKED HERE, not only by the caller (review of #295, P1-4): a second caller —
+        # #285's ping with write=True, #293's feed — must not bypass it. Before any password is read.
+        raise LookupRefused("fleet-write-disabled", f"{cluster.name} declares saTokenLookup but this deployment does not "
+                                                    f"write cluster Secrets",
+                            action=("set clusterConfig.secrets.writes.enabled: true (and secrets.enabled) — the lookup "
+                                    f"writes {secret_name_for(cluster.name)}, and create/update on Secrets is the grant "
+                                    "that switch renders"), spent=False)
     source = LookupSource.from_settings(settings)
     account = fleet_account(settings, cluster)
     password = fleet_password(host_client, settings, own_namespace)
     secrets: list[str] = [password]
     try:
-        if gate.refused(account, password):
-            raise LookupRefused("login-refused", f"the target refused this password for {account} and it has not changed",
-                                action=("rotate the fleet password Secret, or correct ldapConnectionBootstrap — no login is "
-                                        "attempted until the password moves (SPEC_S4 §6)"), spent=False)
+        if gate.refused(cluster.api_url, account, password):
+            raise LookupRefused("login-refused", f"{cluster.name} evaluated this password for {account} already and it "
+                                                 f"has not changed",
+                                action=("not tried again until the fleet password Secret or the stanza changes — rotate the "
+                                        "Secret, or correct ldapConnectionBootstrap; the password is re-read each cycle at no "
+                                        "cost and the login resumes when it moves (SPEC_S4 §6)"), spent=False, gated=True)
         knobs = {"clock": clock} if clock is not None else {}
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
                 secrets.append(session.token)
                 sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
         except LoginError as exc:
-            if exc.outcome == AUTH_FAILED:
-                gate.refuse(account, password)
-                raise LookupRefused("login-refused", exc.message,
-                                    action=(f"the target refused the password for {account}: rotate the fleet password "
-                                            f"Secret or correct ldapConnectionBootstrap — it is not sent again while it is "
-                                            f"the same password"), spent=True) from exc
             which = f" against {exc.host}" if exc.host else ""
+            if exc.bound:
+                # THE PASSWORD WAS ON THE WIRE. The target evaluated it — refused it (401), answered
+                # 500 (what the oauth-server says for every directory result but 48/49, a LOCKED
+                # account's code 19 included), answered without a token — or may have: a read timeout
+                # after the GET was written. Never sent to THIS target again while it is this password
+                # (review of #295, P0-1 and second pass R2-1): re-entering #283's terminal answer from a
+                # schedule is the lockout walk one layer up, and an in-memory "final" that any shape
+                # change re-arms is not a stop. `AUTH_FAILED` is the refusal's word; the rest read as failed.
+                gate.refuse(cluster.api_url, account, password)
+                code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
+                raise LookupRefused(code, f"phase={exc.phase}{which}: {exc.message}",
+                                    action=(f"the password for {account} was sent to {cluster.name} and no session came "
+                                            f"back: rotate the fleet password Secret or correct ldapConnectionBootstrap, "
+                                            f"or check the account is not locked — it is not sent there again while it "
+                                            f"is the same password"), spent=True) from exc
             hint = ""
             if exc.phase == "tls":
                 hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "
                         "which the API's bundle may not carry)")
+            # Before the write — the socket never opened or the handshake failed: nothing was bound,
+            # and the schedule may try again.
             raise LookupRefused("login-failed", f"phase={exc.phase}{which}: {exc.message}",
                                 action=f"fix what detail names on the target or the stanza{hint}", spent=True) from exc
         secrets.append(sa_token.token)
         written = store(host_client, own_namespace, cluster, settings, sa_token, account=account) if write else None
     except LookupRefused as exc:
         # The boundary every refusal crosses: whatever a step quoted — a remote annotation, an API
-        # server's echo — leaves here without the password, the session or the token in it, and the
-        # poller's line is handed the same values to strip again.
-        exc.secrets = tuple(secrets)
-        exc.detail, exc.action = _scrub(exc.detail, secrets), _scrub(exc.action, secrets)
+        # server's echo — leaves here without the password, the session or the token in it (the
+        # token a refused read carried rides `exc.secrets` already), and the poller's line is handed
+        # the same values to strip again.
+        exc.scrub(secrets)
         raise
     return LookupResult(cluster=cluster.name, account=account, sa_token=sa_token, secret=secret_name_for(cluster.name),
                         written=written, secrets=tuple(secrets))
@@ -1615,7 +1846,10 @@ New text:
         host, namespace = self.settings.host_cluster(), own_namespace()
         if host is None or not namespace:
             return    # `_discover_once` announced it
-        writes_on = self.settings.cluster_secrets_enabled and self.settings.cluster_secrets_writes_enabled
+        # ONE RETRIEVER PER ESTATE (SPEC_S4 §6), the runtime half: above one replica election is off, so
+        # `elector` is None and every replica would reach here — and a Secret-declared mode is invisible
+        # to the render's refusal (review of #295, P0-2). The switch itself is checked inside `lookup`.
+        many = self.elector is None and self.settings.replica_count > 1
         for name, cluster in pending.items():
             state = self._lookups.setdefault(name, _LookupState())
             key = self._lookup_key(cluster)
@@ -1625,13 +1859,12 @@ New text:
             if state.gave_up or now < state.not_before:
                 continue
             secret = secret_name_for(name)
-            if not writes_on:
-                # The runtime half of the render refusal: a Secret-declared mode is invisible to
-                # `helm template`, so the switch is checked here too and named.
+            if many:
                 self._lookup_failed(state, name, secret, LookupRefused(
-                    "fleet-write-disabled", f"{name} declares saTokenLookup but this deployment does not write cluster Secrets",
-                    action=("set clusterConfig.secrets.writes.enabled: true (and secrets.enabled) — the lookup writes "
-                            f"{secret}, and create/update on Secrets is the grant that switch renders"), spent=False), now)
+                    "fleet-write-disabled", f"{name} declares saTokenLookup on a release of {self.settings.replica_count} "
+                                            f"replicas without leader election: every replica would log in as the fleet account",
+                    action="run one replica for a release that retrieves credentials (SPEC_S4 §6, one retriever per estate)",
+                    spent=False), now)
                 continue
             try:
                 result = lookup(cluster, self.settings, ClusterClient(host, timeout=self.settings.request_timeout_seconds),
@@ -1655,10 +1888,15 @@ New text:
         from .fleetlookup import LOOKUP_ATTEMPTS, LOOKUP_WAIT_CAP
         self.settings.cluster_registry.set_lookup_finding(name, Finding(secret, exc.code, f"{exc.detail} — {exc.action}"))
         if not exc.spent:
+            # Announced on transition only. A GATED refusal says `gave_up=true` (third pass, R3-2): no
+            # login is tried against that target until the credential changes — and the cheap per-cycle
+            # read stays, because it is what notices the change; the schedule's key cannot see the
+            # password's value.
             if state.last_code != exc.code:
                 state.last_code = exc.code
                 failure(discovery_log, "fleet-lookup-failed", phase="credential", outcome=exc.code, cluster=name,
-                        secret=secret, action=exc.action, detail=exc.detail, secrets=exc.secrets)
+                        secret=secret, gave_up="true" if exc.gated else None, action=exc.action, detail=exc.detail,
+                        secrets=exc.secrets)
             state.not_before = now
             return
         state.attempts += 1
@@ -1896,6 +2134,7 @@ class TestTheLoop:
         assert obj["stringData"]["visibility"] == "self-only" and obj["stringData"]["identity"] == "none"
         assert result.written == "created" and result.sa_token.last_used == "2026-09-22"
         assert len(wire.revokes) == 1, "the login's token is revoked; the stored one is the target's"
+        assert set(result.secrets) == {PASSWORD, TOKEN, SA_TOKEN}
 
     def test_write_false_is_the_ping_the_same_read_and_nothing_stored(self, wire):
         result, host = run(RND, write=False)
@@ -1954,16 +2193,20 @@ class TestTheTargetsSecretIsCheckedBeforeItIsStored:
         (httpx.Response(404, text="not found"), "sa-token-secret-missing", "create the token Secret on the target"),
         (httpx.Response(403, text="forbidden"), "sa-token-unreadable", "get on that one Secret"),
         (httpx.Response(200, json=sa_secret(labels={INVALID_SINCE_LABEL: "2027-09-22"})), "sa-token-invalidated", "invalidated it after a year unused"),
-        (httpx.Response(200, json=sa_secret(sa="somebody-else")), "sa-token-unreadable", "belongs to ServiceAccount 'somebody-else'"),
-        (httpx.Response(200, json=sa_secret(type_="Opaque")), "sa-token-unreadable", "not kubernetes.io/service-account-token"),
+        (httpx.Response(200, json=sa_secret(labels={INVALID_SINCE_LABEL: ""})), "sa-token-invalidated", "invalidated it after a year unused"),
+        (httpx.Response(200, json=sa_secret(sa="somebody-else")), "sa-token-unreadable", "13 characters long and does not match"),
+        (httpx.Response(200, json=sa_secret(type_="Opaque")), "sa-token-unreadable", "is not type kubernetes.io/service-account-token"),
         (httpx.Response(200, json=sa_secret(token="")), "sa-token-unreadable", "has no token yet"),
     ])
     def test_each_refusal_names_its_fix_stores_nothing_and_still_logs_out(self, wire, answer, code, words):
+        """The empty `invalid-since` value is review of #295, P1-5: the label's PRESENCE is the fact."""
         wire.secret = answer
         with pytest.raises(LookupRefused) as exc:
             run(RND)
         assert exc.value.code == code and exc.value.spent is True
         assert words in exc.value.detail + " " + exc.value.action
+        assert "somebody-else" not in exc.value.detail and "Opaque" not in exc.value.detail, "a remote name is never echoed"
+        assert SA_TOKEN not in str(exc.value) + exc.value.detail + exc.value.action
         assert len(wire.revokes) == 1, "the session is revoked after a failed read too"
 
     def test_every_code_this_module_raises_is_in_the_closed_set(self):
@@ -1995,6 +2238,57 @@ class TestARefusedPasswordIsGated:
             run(RND, host)
         assert exc.value.code == "fleet-credential-missing" and exc.value.spent is False
         assert "gsd-fleet-account" in exc.value.detail and wire.authorize == []
+
+    def test_a_500_on_authorize_is_one_bind_and_a_gated_credential(self, wire):
+        """Review of #295, P0-1: a LOCKED account answers 500 (code 19 is not 48/49), #283 made it
+        terminal inside the login, and the schedule must not re-enter it — one bind, then the gate."""
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        gate = CredentialGate()
+        with pytest.raises(LookupRefused) as first:
+            run(RND, gate=gate)
+        assert first.value.code == "login-failed" and first.value.spent is True and len(wire.authorize) == 1
+        with pytest.raises(LookupRefused) as second:
+            run(RND, gate=gate)
+        assert second.value.code == "login-refused" and second.value.spent is False
+        assert len(wire.authorize) == 1, "a 500 was retried — that is the lockout walk one layer up"
+
+    def test_a_read_timeout_after_the_password_was_sent_gates_that_target(self, wire):
+        """The GET was written and nothing came back: the target may have bound, #283 makes it
+        terminal, and the same password must not reach THAT target again — an in-memory "final" that
+        any shape change re-armed was not a stop (review of #295, second pass, R2-1/R2-2)."""
+        wire.answers = [lambda r: httpx.ReadTimeout("timed out"), login_302()]
+        gate = CredentialGate()
+        with pytest.raises(LookupRefused) as exc:
+            run(RND, gate=gate)
+        assert exc.value.code == "login-failed" and exc.value.spent is True and len(wire.authorize) == 1
+        assert gate.refused(API, USER, PASSWORD)
+        with pytest.raises(LookupRefused) as again:
+            run(RND, gate=gate)
+        assert again.value.code == "login-refused" and again.value.spent is False
+        assert len(wire.authorize) == 1, "the password reached a target that may have bound it, twice"
+
+    def test_one_target_spelled_three_ways_is_one_gate_entry(self):
+        """Third pass, R3-1: a stanza edited from api.example.com to API.example.com was a new key and
+        the password went to the same target again. httpx canonicalises the host; a malformed URL
+        must not raise inside the gate."""
+        gate = CredentialGate()
+        gate.refuse("https://api.example.com:6443", USER, PASSWORD)
+        for spelling in ("https://api.example.com:6443/", "https://API.Example.COM:6443", "https://API.example.com:6443/"):
+            assert gate.refused(spelling, USER, PASSWORD), spelling
+        assert not gate.refused("https://api.example.com:6444", USER, PASSWORD), "a different port is a different target"
+        gate.refuse("https://[::1/broken", USER, PASSWORD)
+        assert gate.refused("https://[::1/broken/", USER, PASSWORD), "the fallback key, not an exception"
+
+    def test_the_gate_is_per_target_so_a_sick_cluster_does_not_stop_a_healthy_one(self, wire):
+        """Review of #295, second pass, R2-1: keyed without the target, a 500 from A blocked B."""
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        gate = CredentialGate()
+        with pytest.raises(LookupRefused):
+            run(RND, gate=gate)
+        other = ClusterConfig("east", "https://api.east.example.com:6443", sa_token_lookup=True, ldap_connection_bootstrap=USER)
+        result, _ = run(other, gate=gate, s=settings(other))
+        assert result.written == "created" and len(wire.authorize) == 2
+        assert gate.refused(API, USER, PASSWORD) and not gate.refused(other.api_url, USER, PASSWORD)
 
 
 # ── R5 ─────────────────────────────────────────────────────────────────────────────────────────
@@ -2050,14 +2344,74 @@ class TestTheSchedule:
         finding = next(f for f in poller.settings.cluster_registry.findings() if f.code == "sa-token-secret-missing")
         assert finding.secret == "gsd-cluster-rnd" and "create the token Secret on the target" in finding.detail
 
-    def test_writes_off_is_a_free_finding_said_once_and_no_login(self, tmp_path, monkeypatch, caplog):
-        called = []
-        monkeypatch.setattr(fleetlookup, "lookup", lambda *a, **kw: called.append(1))
+    def test_writes_off_is_a_free_finding_said_once_and_no_login(self, tmp_path, monkeypatch, caplog, wire):
+        """The switch is checked inside `lookup()` (review of #295, P1-4), before any password is read
+        and before any login; the poller announces the free finding once and rechecks every cycle."""
         poller = self._poller(tmp_path, monkeypatch, writes=False)
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: FakeHost())
         with caplog.at_level(logging.INFO, logger="gsd"):
             poller._retrieve_pending(); poller._retrieve_pending()
-        assert called == [] and sum(m.startswith("fleet-lookup-failed ") for m in caplog.messages) == 1
+        assert wire.requests == [] and sum(m.startswith("fleet-lookup-failed ") for m in caplog.messages) == 1
         assert [f.code for f in poller.settings.cluster_registry.findings()] == ["fleet-write-disabled"]
+
+    def test_the_lookup_itself_refuses_to_write_with_the_switch_off_and_the_ping_needs_no_grant(self, wire):
+        with pytest.raises(LookupRefused) as exc:
+            run(RND, s=settings(RND, writes=False))
+        assert exc.value.code == "fleet-write-disabled" and exc.value.spent is False and wire.requests == []
+        result, host = run(RND, write=False, s=settings(RND, writes=False))
+        assert result.written is None and host.writes == [] and len(wire.reads) == 1
+
+    def test_above_one_replica_without_an_elector_no_replica_retrieves(self, tmp_path, monkeypatch, caplog, wire):
+        """Review of #295, P0-2: with election off `elector` is None on every replica, and a
+        Secret-declared mode is invisible to the render's refusal — so the pod refuses it itself."""
+        import dataclasses
+        poller = self._poller(tmp_path, monkeypatch)
+        poller.settings = dataclasses.replace(poller.settings, replica_count=2)
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert wire.requests == []
+        finding, = poller.settings.cluster_registry.findings()
+        assert finding.code == "fleet-write-disabled" and "2 replicas" in finding.detail
+
+    def test_a_gated_credential_says_gave_up_once_and_then_is_silent_but_still_re_read(self, tmp_path, monkeypatch, caplog, wire):
+        """Third pass, R3-2: after the gate fires, each cycle took the free refusal silently forever.
+        The operator must see `gave_up=true` once; the cheap per-cycle read of the password Secret
+        stays, because it is the rotation detector — and a rotated password resumes the login."""
+        clock = [1000.0]
+        monkeypatch.setattr("gsd.poller.time.monotonic", lambda: clock[0])
+        host = FakeHost()
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: host)
+        wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
+        poller = self._poller(tmp_path, monkeypatch)
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()                     # the bind: spent, attempt=1/5, gates the target
+            clock[0] += 10 * poller.settings.binding_interval_seconds
+            poller._retrieve_pending()                     # the gate: free, announced once with gave_up=true
+            poller._retrieve_pending(); poller._retrieve_pending()   # silent, still re-reading the password
+        lines = [m for m in caplog.messages if m.startswith("fleet-lookup-failed ")]
+        assert len(lines) == 2 and "attempt=1/5" in lines[0] and "outcome=login-failed" in lines[0]
+        assert "outcome=login-refused" in lines[1] and "gave_up=true" in lines[1] and "until the fleet password Secret" in lines[1]
+        assert len(wire.authorize) == 1, "the gate held across the cycles"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert len(wire.authorize) == 2 and any(m.startswith("fleet-lookup ") for m in caplog.messages), "a rotated password resumed the login"
+
+    def test_a_non_scalar_token_and_an_error_body_are_refusals_that_carry_nothing(self, wire):
+        """Review of #295, second pass, R2-3: a `data.token` that is not a string raised TypeError in
+        front of every refusal; a 500 body on the Secret GET carried the token straight into the
+        finding, because an undecoded token is not among the secrets a refusal is scrubbed against."""
+        wire.answers = [login_302(), login_302()]      # two logins, one per probe
+        odd = sa_secret(); odd["data"]["token"] = 123
+        wire.secret = httpx.Response(200, json=odd)
+        with pytest.raises(LookupRefused) as exc:
+            run(RND)
+        assert exc.value.code == "sa-token-unreadable" and "has no token yet" in exc.value.detail
+        wire.secret = httpx.Response(500, text=f"boom {SA_TOKEN} boom")
+        with pytest.raises(LookupRefused) as exc:
+            run(RND)
+        assert exc.value.code == "sa-token-unreadable" and "HTTP 500 on " in exc.value.detail
+        assert SA_TOKEN not in str(exc.value) + exc.value.detail + exc.value.action, "a remote body is never quoted"
 
     def test_success_clears_the_finding_and_wakes_discovery(self, tmp_path, monkeypatch, caplog):
         from gsd.fleetlookup import LookupResult, SaToken
@@ -2095,9 +2449,86 @@ class TestNoCredentialReachesALine:
         with caplog.at_level(logging.DEBUG, logger="gsd"):
             with pytest.raises(LookupRefused) as exc:
                 run(RND)
-        text = exc.value.detail + exc.value.action + " ".join(caplog.messages)
-        assert PASSWORD not in text and TOKEN not in text
-        assert set(exc.value.secrets) >= {PASSWORD, TOKEN}, "the poller's line is handed everything in play"
+        text = str(exc.value) + exc.value.detail + exc.value.action + " ".join(caplog.messages)
+        assert PASSWORD not in text and TOKEN not in text and SA_TOKEN not in text, "review of #295, P1-1: all three"
+        assert set(exc.value.secrets) >= {PASSWORD, TOKEN, SA_TOKEN}, "the poller's line is handed everything in play"
+
+
+class TestTheSwitchReadsAWord:
+    def test_a_quoted_false_in_the_configmap_does_not_enable_writes(self, tmp_path):
+        """Review of #295, P1-3: `bool("false")` is True, so the ConfigMap path enabled writes on an
+        explicit disable. The env path already read the word; the ConfigMap path now does too."""
+        from gsd.config import load_settings
+        clusters = "clusters:\n  - name: host\n    apiUrl: https://kubernetes.default.svc\n    tokenEnv: X\n"
+        for spelling, expected in (('"false"', False), ("false", False), ('"true"', True), ("true", True), ('"no"', False)):
+            path = tmp_path / "c.yaml"
+            path.write_text(clusters + f"clusterSecretsWritesEnabled: {spelling}\n")
+            assert load_settings(str(path)).cluster_secrets_writes_enabled is expected, spelling
+
+    def test_a_value_that_is_neither_a_boolean_nor_a_word_is_the_default_and_names_its_source(self, tmp_path, caplog):
+        """Review of #295, second pass, R2-4: `2`, `-1` and `[false]` enabled the switch by truthiness,
+        silently; `null` and `[]` disabled it silently; the warning named the env variable for a
+        ConfigMap value. The default is off, so every odd spelling must read as off, and say so."""
+        from gsd.config import load_settings
+        clusters = "clusters:\n  - name: host\n    apiUrl: https://kubernetes.default.svc\n    tokenEnv: X\n"
+        for spelling in ("2", "-1", "[false]", "[]", '""', "maybe", "{a: 1}"):
+            path = tmp_path / "c.yaml"
+            path.write_text(clusters + f"clusterSecretsWritesEnabled: {spelling}\n")
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger="gsd"):
+                assert load_settings(str(path)).cluster_secrets_writes_enabled is False, spelling
+            assert any("clusterSecretsWritesEnabled=" in m and "not a boolean" in m for m in caplog.messages), spelling
+        path = tmp_path / "c.yaml"
+        path.write_text(clusters + "clusterSecretsWritesEnabled: null\n")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="gsd"):
+            assert load_settings(str(path)).cluster_secrets_writes_enabled is False
+        assert caplog.messages == [], "a null is an absent key, not an odd value"
+```
+
+#### `local-development/gsd/static/index.html` and `tests/test_ui.py` — the twin's label goes last
+
+**File:** `local-development/gsd/static/index.html` — edit
+
+Old text:
+
+```
+  const labels = [`    ${y(CC_LABEL)}: ${y("cluster")}`].concat(Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`));
+```
+
+New text:
+
+```
+  // THE APP'S LABEL LAST, exactly as secret_object() stamps it (SPEC_S4b; review of #295, P1-2): YAML keeps the
+  // later duplicate, so a form label spelled `groupsync-dashboard.io/secret-type` must not win here either.
+  const labels = Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`).concat([`    ${y(CC_LABEL)}: ${y("cluster")}`]);
+```
+
+**File:** `local-development/tests/test_ui.py` — edit
+
+Old text:
+
+```python
+    def test_the_twin_is_the_object_the_api_writes_when_a_value_carries_whitespace(self, page, cc_rig):
+```
+
+New text:
+
+```python
+    def test_the_twins_type_label_cannot_be_replaced_by_a_form_label(self, page, cc_rig):
+        """Review of #295, P1-2: the pane emitted the app's label first and the form's after, so a
+        label spelled `groupsync-dashboard.io/secret-type: onboard` parsed to a Secret discovery
+        cannot see — the merge-order defect secret_object() had just been fixed for."""
+        import yaml as _yaml
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.evaluate("() => { view.clusterForm.labels['groupsync-dashboard.io/secret-type'] = 'onboard'; render(); }")
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        assert twin["metadata"]["labels"]["groupsync-dashboard.io/secret-type"] == "cluster"
+
+    def test_the_twin_is_the_object_the_api_writes_when_a_value_carries_whitespace(self, page, cc_rig):
 ```
 
 #### `local-development/tests/test_clusterconfig.py` — the reader's shadow rule
@@ -2204,11 +2635,21 @@ class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
         # reporting refuses > 1 replica by design (C3) and election must be off there: both set, so the
         # lookup's rule is the one refusal left to fire (the values test_chart_strategy renders at 2 with)
         ({**WRITES, "replicaCount": 2, "leaderElection": {"enabled": False}, "reporting": {"enabled": False}},
-         "cluster shared-rnd declares saTokenLookup with replicaCount 2"),
+         "clusterConfig.secrets.writes.enabled with replicaCount 2"),
     ])
     def test_the_switches_and_the_replica_rule(self, tmp_path, values, fragment):
         ok, out = _render_values(tmp_path, [HOME, RND], values=values)
         assert not ok and fragment in out, out[-600:]
+
+    def test_the_replica_rule_holds_without_a_values_stanza(self, tmp_path):
+        """Review of #295, P0-2: a Secret may declare the mode at any time, so the rule is on the
+        switch that makes a lookup possible, not on a stanza the render happens to see."""
+        ok, out = _render_values(tmp_path, [HOME], values={**WRITES, "replicaCount": 2, "leaderElection": {"enabled": False},
+                                                            "reporting": {"enabled": False}})
+        assert not ok and "clusterConfig.secrets.writes.enabled with replicaCount 2" in out, out[-600:]
+        ok, out = _render_values(tmp_path, [HOME], values={"replicaCount": 2, "leaderElection": {"enabled": False},
+                                                            "reporting": {"enabled": False}})
+        assert ok, out[-600:]     # writes off: two replicas render as before
 
     def test_remote_sar_with_the_lookup_is_refused_by_name(self, tmp_path):
         ok, out = _render_values(tmp_path, [HOME, {**RND, "visibility": "remote-sar", "identity": "same-as-host"}], values=WRITES)
@@ -2230,6 +2671,7 @@ class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
                 settings["fleetPasswordSecretKey"]) == ("svc", "openshift-config", "ldap-oauth-bind-secret", "bindPassword")
         assert (settings["saTokenLookupSourceNamespace"], settings["saTokenLookupSourceServiceAccount"], settings["saTokenLookupTokenSecretName"]) \
             == ("group-sync-operator", "group-sync-dashboard-cluster-poller", "")
+        assert settings["replicaCount"] == 1
 ```
 
 **File:** `local-development/tests/test_chart_fleet_account_rbac.py` — edit
@@ -2363,7 +2805,7 @@ New text:
 | **`insecureSkipVerify` + `caBundleFile`** | *renders* | **refused** |
 | `saTokenLookup` without `clusterConfig.secrets.writes.enabled` | **refused** | starts; the tab reports `fleet-write-disabled` (a Secret-declared mode reaches this half) |
 | `saTokenLookup` without `clusterConfig.secrets.enabled` | **refused** | starts; the cluster stays pending |
-| `saTokenLookup` with `replicaCount > 1` | **refused** | starts (one retriever per estate, SPEC_S4 §6) |
+| `clusterConfig.secrets.writes.enabled` with `replicaCount > 1` — a lookup is possible, stanza or not | **refused** | starts; a lookup reports `fleet-write-disabled` (one retriever per estate, SPEC_S4 §6) |
 | `saTokenLookup` with `visibility: remote-sar` | **refused** | starts; the write would be refused `visibility-invalid` |
 ```
 
@@ -2411,7 +2853,7 @@ New text:
 ```markdown
 ## Unreleased
 
-- **A `saTokenLookup` stanza is retrieved: the dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target, and writes the cluster Secret itself (#284; SPEC_S4 step B, `docs/specs/SPEC_S4b_sa_token_lookup.md`; app 0.31.0, chart 0.50.0).** The one stage of the loop that was missing: a stanza in `values.yaml` declares the intent, #283's session logs in as the fleet account, one `GET` reads the poller ServiceAccount's `kubernetes.io/service-account-token` Secret **by name** on the target (the estate grants `get` on that one Secret by `resourceNames` and refuses `list`; a manually created token Secret is not in the ServiceAccount's `.secrets`, measured), and the shipped writer produces `gsd-cluster-<name>` in the release namespace with the discovery label — so the cluster polls on the next discovery cycle with no restart. What this adds is the **values**: `token-source: remote-lookup`, the source namespace and ServiceAccount, `managed-by: sa-token-lookup`, and `lookup-account` (the account used, so a Secret that declared the mode and is **updated in place** keeps its per-cluster account for #285's re-login). The written Secret carries the **declaration's trust** — the bundle that verified both the API host and the OAuth route — never the target's `ca.crt`, which verifies only the first. Nothing is revoked here: the stored token is the target's, the login's token is revoked by the session. **The stanza's CA must cover two hosts**, and a trust failure names which one failed. **Reads before it stores:** the Secret must be the right type, belong to the named ServiceAccount, and not carry `kubernetes.io/legacy-token-invalid-since` — the cleaner's stamp on an auto-generated token unused for a year, after which the API server refuses it (upstream `legacy_serviceaccount_token_cleaner.go`; it applies only to Secrets the ServiceAccount's `.secrets` references, so a manually created one is never stamped). A missing Secret says *create the token Secret on the target* — OpenShift 4.16 and Kubernetes 1.24 stopped creating them. **The schedule is bounded by cost:** a failure that spent a login counts, `attempt=n/5`, backing off 5, 10, 20, 40 minutes, then gives up out loud until the stanza or the fleet credential changes; a refused password is never sent again while it is the same password (SPEC_S4 §6's in-memory gate); a failure that spent nothing is rechecked every cycle and said once. Eight finding codes join the closed set, all `phase=credential`, and the lookup's own Secret over the stanza that asked for it is no longer a `shadows-values-entry`. **The write grant is a hard dependency:** a stanza with `clusterConfig.secrets.writes.enabled: false` fails `helm template` (as does one with discovery off, `replicaCount > 1`, or `visibility: remote-sar`), and a Secret-declared mode with it off is a `fleet-write-disabled` finding. The switch does not split — it is one grant, and each consumer declares its own intent. The pod now learns the fleet account's address and `clusterConfig.saTokenLookup` (what it reads on every target, defaulting to the operator chart's names) through the ConfigMap; `example-production.yaml` turns writes on for its mode stanza.
+- **A `saTokenLookup` stanza is retrieved: the dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target, and writes the cluster Secret itself (#284; SPEC_S4 step B, `docs/specs/SPEC_S4b_sa_token_lookup.md`; app 0.31.0, chart 0.50.0).** The one stage of the loop that was missing: a stanza in `values.yaml` declares the intent, #283's session logs in as the fleet account, one `GET` reads the poller ServiceAccount's `kubernetes.io/service-account-token` Secret **by name** on the target (the estate grants `get` on that one Secret by `resourceNames` and refuses `list`; a manually created token Secret is not in the ServiceAccount's `.secrets`, measured), and the shipped writer produces `gsd-cluster-<name>` in the release namespace with the discovery label — so the cluster polls on the next discovery cycle with no restart. What this adds is the **values**: `token-source: remote-lookup`, the source namespace and ServiceAccount, `managed-by: sa-token-lookup`, and `lookup-account` (the account used, so a Secret that declared the mode and is **updated in place** keeps its per-cluster account for #285's re-login). The written Secret carries the **declaration's trust** — the bundle that verified both the API host and the OAuth route — never the target's `ca.crt`, which verifies only the first. Nothing is revoked here: the stored token is the target's, the login's token is revoked by the session. **The stanza's CA must cover two hosts**, and a trust failure names which one failed. **Reads before it stores:** the Secret must be the right type, belong to the named ServiceAccount, and not carry `kubernetes.io/legacy-token-invalid-since` — the cleaner's stamp on an auto-generated token unused for a year, after which the API server refuses it (upstream `legacy_serviceaccount_token_cleaner.go`; it applies only to Secrets the ServiceAccount's `.secrets` references, so a manually created one is never stamped). A missing Secret says *create the token Secret on the target* — OpenShift 4.16 and Kubernetes 1.24 stopped creating them. **The schedule is bounded by cost:** a failure that spent a login counts, `attempt=n/5`, backing off 5, 10, 20, 40 minutes, then gives up out loud until the stanza or the fleet credential changes; a refused password is never sent again while it is the same password (SPEC_S4 §6's in-memory gate); a failure that spent nothing is rechecked every cycle and said once. Eight finding codes join the closed set, all `phase=credential`, and the lookup's own Secret over the stanza that asked for it is no longer a `shadows-values-entry`. **The write grant is a hard dependency:** a stanza with `clusterConfig.secrets.writes.enabled: false` fails `helm template` (as does one with discovery off, `replicaCount > 1`, or `visibility: remote-sar`), and a Secret-declared mode with it off is a `fleet-write-disabled` finding. The switch does not split — it is one grant, and each consumer declares its own intent. The pod now learns the fleet account's address and `clusterConfig.saTokenLookup` (what it reads on every target, defaulting to the operator chart's names) through the ConfigMap; `example-production.yaml` turns writes on for its mode stanza. The review of its PR closed seven holes before it shipped: a login the target answered without a session (a refused password, or the 500 a **locked** account earns) is never re-entered by the schedule — one bind, then the credential is gated; a release that writes cluster Secrets refuses more than one replica at render and at runtime, stanza or not; the retrieved token rides every refusal's redaction; the tab's GitOps YAML stamps the type label last as the writer does; a quoted `"false"` in the ConfigMap no longer enables writes; and the cleaner's `invalid-since` label counts by presence, not value.
 ```
 
 ## 4. Tests — what fails before and passes after
@@ -2440,9 +2882,9 @@ stanza and `{name: rnd, apiUrl: https://api.crc.testing:6443, saTokenLookup: tru
 | values | expected |
 |---|---|
 | defaults | refused: `cluster rnd declares saTokenLookup but clusterConfig.secrets.writes.enabled is false` |
-| `clusterConfig.secrets.writes.enabled: true` | renders; the cluster-secrets Role carries `create`, `update`, `delete`; the ConfigMap carries the seven keys of §3.3 |
+| `clusterConfig.secrets.writes.enabled: true` | renders; the cluster-secrets Role carries `create`, `update`, `delete`; the ConfigMap carries the eight keys of §3.3 |
 | `… writes.enabled: true`, `secrets.enabled: false` | refused, naming `secrets.enabled` |
-| `… writes.enabled: true`, `replicaCount: 2`, `leaderElection.enabled: false` | refused, naming `replicaCount 2` |
+| `… writes.enabled: true`, `replicaCount: 2`, `leaderElection.enabled: false`, `reporting.enabled: false` — with or without the stanza | refused: `clusterConfig.secrets.writes.enabled with replicaCount 2` |
 | the stanza with `userSelfLogin: true` instead, defaults | renders |
 | a Secret-declared mode | invisible to the render by construction; the runtime finding is the proof |
 
@@ -2501,7 +2943,14 @@ The evidence — the log lines, the two `jq` outputs, the counts — is committe
 
 - **#285** calls `fleetlookup.lookup(cluster, settings, host_client, own_namespace=…, gate=…, write=False)`
   for the daily ping and reads `LookupResult.sa_token.last_used`; it makes `CredentialGate` durable
-  and shared, re-arms a `gave_up` lookup on its own schedule, and — for an estate whose token Secret
+  and shared, re-arms a `gave_up` lookup on its own schedule, and **owns true mutual exclusion
+  across replicas** (review of #295, second pass, R2-5): the in-memory gate and leader election are
+  best-effort — two pollers without an elector, a stale and a new lease holder, a rollout's two pods,
+  an HPA past a ConfigMap that says one replica — so before a `FleetLogin` is built, a claim the
+  cluster arbitrates is taken: a Lease named for the (target, account) pair, acquired by
+  compare-and-swap on its `resourceVersion` with a holder identity and a short expiry, refused when
+  another holder's claim is live, released on exit. Until it lands, the operational guidance is one
+  replica. And — for an estate whose token Secret
   is auto-generated — treats a cluster that has stopped polling as the fuse running, since the ping
   does not stamp `last-used` and the poll does. The account to re-login as is the Secret's
   `lookup-account`; the trust is the Secret's `tlsClientConfig`, which is what verified both hosts.

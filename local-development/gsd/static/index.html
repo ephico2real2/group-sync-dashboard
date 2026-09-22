@@ -6000,7 +6000,9 @@ function ccYaml(d) {
   const y = (v) => JSON.stringify(String(v));
   // The KEY too: a label key of `on`, `yes` or `true` is a valid Kubernetes key and a YAML 1.1 boolean
   // unquoted, so `{True: …}` came back where the API writes `{"true": …}` — the same drift as the value.
-  const labels = [`    ${y(CC_LABEL)}: ${y("cluster")}`].concat(Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`));
+  // THE APP'S LABEL LAST, exactly as secret_object() stamps it (SPEC_S4b; review of #295, P1-2): YAML keeps the
+  // later duplicate, so a form label spelled `groupsync-dashboard.io/secret-type` must not win here either.
+  const labels = Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`).concat([`    ${y(CC_LABEL)}: ${y("cluster")}`]);
   return ["apiVersion: v1", "kind: Secret", "metadata:", `  name: ${y(`gsd-cluster-${name}`)}`,
     `  namespace: ${y((d.secrets && d.secrets.namespace) || "<namespace>")}`, "  labels:", labels.join("\n"),
     "  annotations:", `    groupsync-dashboard.io/managed-by: ${y("ui")}`, "type: Opaque", "stringData:",

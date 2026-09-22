@@ -1,0 +1,23 @@
+{
+  "clusters": [
+    {
+      "id": "rnd-lookup",
+      "source": "secret:gsd-cluster-rnd-lookup",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "caData"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-22T05:53:31Z",
+      "error": null
+    }
+  ],
+  "findings": [
+    {
+      "secret": "gsd-cluster-mock-refusal",
+      "code": "insecure-with-ca",
+      "detail": "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"
+    }
+  ]
+}

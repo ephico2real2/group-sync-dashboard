@@ -83,9 +83,10 @@ clusters:
   # `clusterConfig.fleetAccount.username` for this cluster only; without a mode it configures a login
   # that would never happen, and is refused.
   #
-  # UNTIL S3b LANDS this cluster is listed on the Cluster Configurations tab with its credential
-  # pending and is NOT POLLED — deliberately, so it is never reported as `auth_failed` for a
-  # credential that was never presented.
+  # The lookup runs on the next discovery cycle (SPEC_S4b): a login as `svc.gsd.fleet`, one GET of
+  # the poller ServiceAccount's token Secret on the target, and `gsd-cluster-shared-rnd` written
+  # here — which needs `clusterConfig.secrets.writes.enabled` below, and a CA that verifies BOTH the
+  # API host and the OAuth route (the trusted bundle here; a `caBundleFile` where it does not).
   - name: shared-rnd
     apiUrl: https://api.shared-rnd.example.com:6443
     saTokenLookup: true
@@ -107,7 +108,7 @@ clusterConfig:
   secrets:
     enabled: true        # discover clusters from labelled Secrets — no redeploy to add one
     writes:
-      enabled: false     # the Cluster Configurations tab's Create/Rotate/Delete; off by default
+      enabled: true      # off by default; ON here because the saTokenLookup stanza above WRITES its Secret
 
 # The bundle every cluster without its own `caBundleFile` verifies against.
 trustedCA:

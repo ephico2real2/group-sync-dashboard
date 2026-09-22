@@ -47,7 +47,9 @@ class TestItRendersOnlyWhenAFleetAccountIsInUse:
 
     def test_a_mode_stanza_alone_is_enough(self, tmp_path):
         # the username may live on the stanza (ldapConnectionBootstrap); the PASSWORD is still this one
-        ok, out = _render(tmp_path, {}, clusters=[HOME, {**MODE, "ldapConnectionBootstrap": "svc.gsd.fleet"}])
+        # SPEC_S4b: a saTokenLookup stanza also needs the write grant, or the render refuses it
+        ok, out = _render(tmp_path, {"clusterConfig": {"secrets": {"writes": {"enabled": True}}}},
+                          clusters=[HOME, {**MODE, "ldapConnectionBootstrap": "svc.gsd.fleet"}])
         assert ok, out
         assert len(_objects(out)) == 2, "a stanza declaring a mode needs the password grant"
 
