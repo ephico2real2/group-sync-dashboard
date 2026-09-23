@@ -6615,6 +6615,38 @@ function directUserGrants(ub) {
   // distinct.
   const people = new Set(rows.flatMap((r) => r.users || [])).size;
 
+  // THE CLUSTER SCOPE IS A SCOPE, NOT A NAMESPACE (#261 §3). The rollup carries it as one more entry,
+  // `(cluster-scoped)`, and the table below used to rank it as a row called CLUSTER-WIDE between the
+  // namespaces — the one entry whose blast radius is every row of the index further down. It gets its own
+  // card above the worklist, built from that rollup entry and nothing else: the rollup is never paged and
+  // never filtered, while the grant list below is both, so a card built from `bindings` would empty itself
+  // the moment the reader picked a namespace there. The KPIs keep counting it as one entry — the shipped
+  // numbers — and the card says so, so the tile and the table still add up where a reader checks them.
+  const wide = rows.find((r) => r.namespace === "(cluster-scoped)") || null;
+  const nsTotal = data.namespaces && !data.namespaces.forbidden && data.namespaces.count != null
+    ? data.namespaces.count : null;
+  const wideCard = `<section class="card">
+    <h3>Cluster-wide direct grants <span class="muted fw-normal">· ${wide ? wide.bindings : 0}</span></h3>
+    ${wide ? `<div class="filterbar-note mb-4">
+        These name a person at the <strong>cluster</strong> scope, so each one grants every namespace on this
+        cluster${nsTotal != null ? ` — all ${nsTotal} of them` : ""}. A scope, not a namespace: the table below
+        ranks namespaces only, and the <strong>Namespaces at risk</strong> tile above counts it as one entry.</div>
+      <div class="scroll-x"><table class="audit-table">
+        <thead><tr><th>Risk</th><th>Highest privilege</th><th class="num">People</th><th class="num">Grants</th>
+          <th>Who is exposed</th></tr></thead>
+        <tbody><tr class="risk-row risk-${wide.risk.key}">
+          <td><span class="risk-pill risk-${wide.risk.key}">${esc(wide.risk.label)}</span></td>
+          <td><code class="priv">${esc(PRIVILEGE_NAME[wide.worst_privilege] || "view")}</code></td>
+          <td class="num strong">${wide.distinct_users}</td>
+          <td class="num">${wide.bindings}</td>
+          <td class="muted who">${whoCell(wide)}</td>
+        </tr></tbody></table></div>
+      <div class="filterbar-note mt-4">Each binding, with the name to delete, is in <strong>Every grant</strong>
+        below: choose <em>cluster-wide</em> in its Namespace selector.</div>`
+      : `<div class="filterbar-note">No binding names a person at the cluster scope. Every finding below is
+          confined to one namespace, which is the smaller problem.</div>`}
+  </section>`;
+
   const NS_SORT = {
     risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
     namespace: (r) => r.namespace,
@@ -6622,7 +6654,7 @@ function directUserGrants(ub) {
     people: (r) => r.distinct_users || 0,
     grants: (r) => r.bindings || 0,
   };
-  const sorted = sortBy(rows, NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
+  const sorted = sortBy(rows.filter((r) => r !== wide), NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
   const sortedGrants = grantsSorted(ub);
 
   if (!rows.length) {
@@ -6693,6 +6725,8 @@ function directUserGrants(ub) {
     </div>
   </section>
 
+  ${wideCard}
+
   <section class="card">
     <h3>Exposure by namespace</h3>
     <div class="filterbar-note mb-4">
@@ -6702,7 +6736,7 @@ function directUserGrants(ub) {
         ? `<button type="button" class="linkish" data-ns-reset>Restore risk order</button>`
         : ""}
     </div>
-    <div class="scroll-x"><table class="audit-table">
+    ${sorted.length ? `<div class="scroll-x"><table class="audit-table">
       <thead><tr>
         ${sortableTh("Risk", "risk", view.nsSort, view.nsDir, "ns")}
         ${sortableTh("Namespace", "namespace", view.nsSort, view.nsDir, "ns")}
@@ -6713,14 +6747,25 @@ function directUserGrants(ub) {
       </tr></thead>
       <tbody>${sorted.map((r) => `<tr class="risk-row risk-${r.risk.key}">
         <td><span class="risk-pill risk-${r.risk.key}">${esc(r.risk.label)}</span></td>
-        <td class="ns-cell">${r.namespace === "(cluster-scoped)"
-            ? `<strong class="err">CLUSTER-WIDE</strong>` : `<strong>${esc(r.namespace)}</strong>`}</td>
+        <td class="ns-cell">${
+            // THE WORKLIST DRILLS (#261 §3). The view this page tells you to work from was the one place a
+            // namespace was plain text. A button carrying data-ns, which wireNsPage() already binds: the same
+            // drill as the index below, and keyboard-reachable. Not a tr.rowlink — the row keeps its risk
+            // tint and rail, and tr[data-ns] stays the index's rows alone. The cluster scope is not in this
+            // table: it has its own card above (#261 §3).
+            // The id is for render(), which restores focus BY ID: without one the 60 s repaint dropped a
+            // keyboard reader on this button to <body> (measured). A namespace name is a DNS label, id-safe.
+            `<button type="button" class="drill" id="ns-drill-${esc(r.namespace)}" data-ns="${esc(r.namespace)}"><strong>${esc(r.namespace)}</strong></button>`}</td>
         <td><code class="priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</code></td>
         <td class="num strong">${r.distinct_users}</td>
         <td class="num">${r.bindings}</td>
         <td class="muted who">${whoCell(r)}</td>
       </tr>`).join("")}</tbody>
-    </table></div>
+    </table></div>`
+      // Reachable only with the cluster scope as the sole finding: the table is empty, and the reader is
+      // told where the finding went rather than shown a header over nothing.
+      : `<div class="empty-note">No namespace holds a direct grant on this cluster. Every finding here is at
+          the cluster scope, in the card above.</div>`}
     ${ub.excluded_platform ? `<div class="filterbar-note mt-4">
       ${ub.excluded_platform} platform identit${ub.excluded_platform === 1 ? "y" : "ies"}
       excluded — system components and <code>kubeadmin</code> are break-glass and
