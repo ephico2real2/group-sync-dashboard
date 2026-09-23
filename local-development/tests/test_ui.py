@@ -3322,6 +3322,36 @@ class TestNamespaceAuditPage:
         who = dash.locator("td.who").all_inner_texts()
         assert any("cn=jdoe,ou=people,dc=ephico2real,dc=com" in w for w in who), who
 
+    @pytest.mark.parametrize("width", [375, 1280])
+    def test_a_names_separator_never_starts_a_line_and_the_cell_never_overflows(self, dash, width):
+        """Review of #329 (Grok, Codex, OB1-lite, C11): the space before " ·" was a break opportunity inside
+        a cell that breaks names anywhere, so the dot led a line whenever a name's last line was nearly full
+        (measured: 17 of 240 name lengths at 375, 2 at 1280). A sweep of lengths crosses those boundaries on
+        any font: no dot may sit below its name's last character, and no cell may overflow — the fix must
+        not trade the wrap for a whole-name nowrap."""
+        self._open(dash)
+        dash.set_viewport_size({"width": width, "height": 900})
+        result = dash.evaluate("""() => {
+          const row = data.userBindings.by_namespace.find((r) => r.namespace === 'prod-ns');
+          const separated = [], overflowing = [];
+          for (const ch of ['m', 'i', 'w']) for (let k = 1; k <= 80; k++) {
+            const name = ch.repeat(k);
+            row.users = [name, 'z']; view.nsWhoOpen.add('prod-ns'); render();
+            const cell = [...document.querySelectorAll('td.who')].find((td) => td.textContent.includes(name));
+            const chip = cell.querySelector('.who-name');
+            const dot = chip.querySelector('[aria-hidden]');
+            const walker = document.createTreeWalker(chip, NodeFilter.SHOW_TEXT);
+            let lastText = null, node;
+            while ((node = walker.nextNode())) if (!dot.contains(node) && node.data.length) lastText = node;
+            const range = document.createRange();
+            range.setStart(lastText, lastText.data.length - 1); range.setEnd(lastText, lastText.data.length);
+            if (dot.getClientRects()[0].top > range.getClientRects()[0].bottom - 2) separated.push(ch + k);
+            if (cell.scrollWidth > cell.clientWidth + 1) overflowing.push(ch + k);
+          }
+          return {separated, overflowing};
+        }""")
+        assert result == {"separated": [], "overflowing": []}, result
+
     def test_who_is_exposed_separates_the_names_a_reader_copies(self, dash):
         """#261 §3: the names were inline-blocks 6 px apart with no character between them, so the cell's text —
         what a reader copies — read `asmithbwilliamsjdoe`. The separator is " · ", not a comma: a user name can

@@ -812,6 +812,8 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
 }
 /* No margin: the separator is text now (index.html#function whoCell), and its space is the gap. */
 .audit-table .who-name { display: inline-block; }
+/* The last character and the separator wrap as one (index.html#function whoCell): the dot never leads a line. */
+.audit-table .who-tail { white-space: nowrap; }
 .who-more { margin-left: var(--space-1); white-space: nowrap; }
 .priv { font-weight: 600; }
 
