@@ -220,7 +220,7 @@ type: application
 # the ConfigMap; a saTokenLookup stanza is refused at render without `clusterConfig.secrets.writes.enabled`
 # and `secrets.enabled`, with `replicaCount > 1`, or with `visibility: remote-sar`. appVersion moves to
 # application 0.31.0 (below). A release declaring no mode renders exactly as before.
-version: 0.51.0
+version: 0.52.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

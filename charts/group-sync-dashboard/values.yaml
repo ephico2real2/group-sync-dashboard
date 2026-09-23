@@ -1560,9 +1560,20 @@ loginCapture:
   # is READ ACCESS TO EVERYTHING THE KUBELET SERVES OVER GET on those nodes — every container's
   # logs on them (/containerLogs), the kube-apiserver and openshift-apiserver audit logs, the
   # journal — and `list nodes` to find the control-plane nodes. That is categorically wider than
-  # a namespaced pods/log Role and it is a standing capability, which is why this defaults to
-  # pod-log despite the audit log being the better source in every other respect. Narrow it with
-  # auditLog.nodeNames below (resourceNames on nodes/proxy, and no list at all).
+  # a namespaced pods/log Role, and it is a standing capability.
+  #
+  # IT IS NEVERTHELESS THE DEFAULT, by decision (2026-09-23). Capturing who logged in is what this
+  # feature is FOR, and the audit log is the only source that does it without raising the OAuth
+  # server's verbosity — which rolls it, a login outage at one replica. The previous default paired
+  # `enabled: true` with `source: pod-log` while `authLogLevel` stayed off, so a plain install
+  # captured no named login at all: the chart shipped a feature switched on and unable to work.
+  # Between a wide read-only grant an operator can see and narrow, and a feature that silently does
+  # nothing, the grant is the honest choice. TURN IT OFF with `enabled: false` if the grant is
+  # unacceptable — that is the override, not a source that cannot deliver.
+  #
+  # NARROW IT with auditLog.nodeNames below (resourceNames on nodes/proxy, and no list at all).
+  # That is the recommended production shape: name the control-plane nodes and the cluster-wide
+  # `list` disappears entirely.
   #
   # HOW IT MEETS authLogLevel: with source audit-log, Debug is unnecessary. The chart REFUSES
   # source=audit-log together with authLogLevel.enabled=true — it will not roll the OAuth server
@@ -1572,7 +1583,14 @@ loginCapture:
   #   2. authLogLevel.manage=false once the rollout has finished.
   # The audit log is the authoritative record from then on; pod-log rows already stored are kept,
   # and an audit event that corresponds to one is linked to it rather than recorded twice.
-  source: pod-log
+  #
+  # DEPRECATION: `pod-log` and the whole `authLogLevel` Job machinery are on their way out — the
+  # audit log is the supported path. Tracked so the removal is a decision and not a drift.
+  #
+  # HOW THE AUDIT PATH WORKS end to end — the node-proxy request, what it needs on a REMOTE cluster
+  # and which chart grants it, what counts as a login, and a worked example you can run against the
+  # lab's mock cluster: docs/AUDIT_LOG_CAPTURE.md
+  source: audit-log
 
   auditLog:
     # Which nodes hold the file: the control-plane nodes. A label selector, listed each cycle.
