@@ -3328,6 +3328,73 @@ class TestNamespaceAuditPage:
         kpi = dash.locator(".kpi", has_text="Grants to migrate").first
         assert kpi.locator(".value").inner_text().strip() == "3"
 
+    def test_the_cluster_scope_is_its_own_card_not_a_row_among_the_namespaces(self, dash):
+        """#261 §3: CLUSTER-WIDE was ranked as a row of the namespace table. It is a scope, not a namespace,
+        and its blast radius is every row of the index below. carol's cluster-admin ClusterRoleBinding gets a
+        card of its own above the worklist; the table ranks namespaces only; the headline numbers do not move.
+        The card is built from the rollup — never paged, never filtered — so narrowing Every grant to one
+        namespace, which refetches `bindings` without carol's row, leaves it whole."""
+        self._open(dash)
+        headings = [" ".join(h.split()) for h in dash.locator("#main section.card h3").all_inner_texts()]
+        wide = [i for i, h in enumerate(headings) if h.startswith("Cluster-wide direct grants")]
+        assert wide and headings[wide[0] + 1] == "Exposure by namespace", headings
+        card = dash.locator("section.card", has=dash.locator("h3", has_text="Cluster-wide direct grants"))
+        text = " ".join(card.inner_text().split())
+        assert "carol" in text and "Critical" in text and "cluster-admin" in text, text
+        assert "every namespace on this cluster" in text and "counts it as one entry" in text, text
+        assert "choose cluster-wide in its Namespace selector" in text, "the card shows the rollup; the bindings are one step away"
+        assert dash.locator("#ns-pick option[value='(cluster-scoped)']").count() == 1, "and that step exists"
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        assert "CLUSTER-WIDE" not in worklist.inner_text()
+        assert worklist.locator("td.ns-cell").all_inner_texts() == ["prod-ns", "dev-ns"]
+        kpis = [v.strip() for v in dash.locator(".kpi.big .value").all_inner_texts()]
+        assert kpis == ["3", "2", "3", "1", "1"], kpis
+        dash.select_option("#ns-pick", "prod-ns")
+        dash.wait_for_function("() => data.userBindings && data.userBindings.namespace === 'prod-ns'")
+        assert "carol" in card.inner_text(), "the card followed the grant list's filter"
+
+    def test_each_half_of_the_split_says_so_when_it_is_empty(self, dash):
+        """With the cluster scope out of the table, a cluster whose only direct grant is cluster-wide would
+        paint an empty table under "Exposure by namespace", and one with none would paint an empty card —
+        each must say where the findings are instead. Driven from the payload: what is under test is the
+        choice of sentence."""
+        self._open(dash)
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        card = dash.locator("section.card", has=dash.locator("h3", has_text="Cluster-wide direct grants"))
+        dash.evaluate("""() => { window.__rollup = data.userBindings.by_namespace;
+            data.userBindings.by_namespace = window.__rollup.filter((r) => r.namespace === '(cluster-scoped)'); render(); }""")
+        assert worklist.locator("table").count() == 0
+        assert "No namespace holds a direct grant on this cluster" in worklist.inner_text()
+        assert "carol" in card.inner_text()
+        dash.evaluate("""() => { data.userBindings.by_namespace = window.__rollup.filter((r) => r.namespace !== '(cluster-scoped)'); render(); }""")
+        assert worklist.locator("td.ns-cell").all_inner_texts() == ["prod-ns", "dev-ns"]
+        assert "No binding names a person at the cluster scope" in card.inner_text(), card.inner_text()
+
+    def test_the_worklists_namespaces_open_their_pages(self, dash):
+        """#261 §3: the worklist's namespace cell was plain text — no `data-ns`, no button — so the view the
+        page tells you to work from was the one place a namespace did not drill. Each namespace is a real
+        button (Tab, Enter, Space); the cluster scope is not a namespace and has no page to open; the index's
+        own rows are untouched. dev-ns is named by a grant and not held by the store, so its page is the
+        `present: false` one, not an error."""
+        self._open(dash)
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        drills = worklist.locator("tbody button.drill[data-ns]")
+        assert drills.evaluate_all("els => els.map(e => e.dataset.ns)") == ["prod-ns", "dev-ns"]
+        assert worklist.locator("tbody [data-ns='(cluster-scoped)']").count() == 0
+        assert dash.locator("tr[data-ns]").count() == 9, "the index's rows are the index's"
+        drills.first.focus()
+        dash.evaluate("() => render()")   # exactly what the 60 s poll does; render() restores focus BY ID
+        assert dash.evaluate("() => document.activeElement.id") == "ns-drill-prod-ns", "the repaint dropped the reader's focus"
+        dash.keyboard.press("Enter")
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local&ns=prod-ns"
+        dash.go_back()
+        dash.wait_for_selector("h3:text-is('Exposure by namespace')")
+        worklist.locator("tbody button.drill[data-ns='dev-ns']").click()
+        dash.wait_for_selector("h2:has-text('dev-ns')")
+        main = dash.locator("#main").inner_text()
+        assert "no longer on the cluster" in main and "Dashboard API error" not in main, main[:300]
+
 
 class TestUsagePage:
     """The Usage tab had no browser test either, and was broken in the default config.
