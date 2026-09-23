@@ -67,7 +67,9 @@ class TestThePdbSelectsTheDeploymentOnly:
         assert pdb["spec"].get("minAvailable") == 1 and "maxUnavailable" not in pdb["spec"]
 
     def test_the_selector_matches_the_dashboard_pod_and_no_hook_pod(self):
-        docs = _render("authLogLevel.manage=true", "authLogLevel.enabled=true")
+        # source=pod-log because the chart refuses authLogLevel.enabled with the audit-log
+        # default (0.52.0): it will not roll the OAuth server as a side effect of a read setting.
+        docs = _render("authLogLevel.manage=true", "authLogLevel.enabled=true", "loginCapture.source=pod-log")
         selector = _one(docs, "PodDisruptionBudget", "t-group-sync-dashboard")["spec"]["selector"]["matchLabels"]
         deployment = _one(docs, "Deployment", "t-group-sync-dashboard")
         assert _matches(selector, deployment["spec"]["template"]["metadata"]["labels"])
@@ -100,7 +102,8 @@ class TestThePdbSelectsTheDeploymentOnly:
         assert _matches(_one(docs, "PodDisruptionBudget", "t-group-sync-dashboard")["spec"]["selector"]["matchLabels"], labels)
 
     def test_the_service_does_not_route_to_a_hook_pod_either(self):
-        docs = _render("authLogLevel.manage=true", "authLogLevel.enabled=true")
+        # source=pod-log: the chart refuses authLogLevel.enabled with the audit-log default (0.52.0).
+        docs = _render("authLogLevel.manage=true", "authLogLevel.enabled=true", "loginCapture.source=pod-log")
         selector = _one(docs, "Service", "t-group-sync-dashboard")["spec"]["selector"]
         assert _matches(selector, _one(docs, "Deployment", "t-group-sync-dashboard")["spec"]["template"]["metadata"]["labels"])
         for job in (d for d in docs if d.get("kind") == "Job"):
