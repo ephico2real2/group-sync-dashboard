@@ -104,3 +104,47 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
 
 def _ordered_ids() -> list[str]:
     return [m["id"] for m in INDEX_ROW.finditer(INDEX.read_text())]
+
+
+def test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached() -> None:
+    """A spec at `specified` that the CHANGELOG does not yet record by name (`SPEC_<id>`) has shipped
+    nothing, so the versions it names are the ones its release WILL carry — above Chart.yaml's and
+    pyproject.toml's current rungs. S4c said `chart 0.51.0` on a main at 0.52.1, and 0.51.0 had already
+    shipped (review of #325, all three seats; the test is OB1-lite's). S3 and S4b are recorded by name
+    (their steps shipped) and their `specified` status is the index's own drift, not this rule's."""
+    chart = re.search(r"^version: (\d+\.\d+\.\d+)$",
+                      (REPO / "charts/group-sync-dashboard/Chart.yaml").read_text(), re.M).group(1)
+    app = re.search(r'^version = "(\d+\.\d+\.\d+)"$', (REPO / "local-development/pyproject.toml").read_text(), re.M).group(1)
+    changelog = (REPO / "docs/CHANGELOG.md").read_text()
+    as_tuple = lambda v: tuple(int(x) for x in v.split("."))  # noqa: E731
+    checked = []
+    for fid, row in ROWS.items():
+        if row["status"] != "specified" or re.search(rf"SPEC_{fid}[_ §.:,)]", changelog):
+            continue
+        m_chart = re.search(r"chart (\d+\.\d+\.\d+)", row["version"])
+        m_app = re.search(r"app (\d+\.\d+\.\d+)", row["version"])
+        if m_chart:
+            checked.append(fid)
+            assert as_tuple(m_chart.group(1)) > as_tuple(chart), (fid, row["version"], f"Chart.yaml is already {chart}")
+        if m_app:
+            assert as_tuple(m_app.group(1)) > as_tuple(app), (fid, row["version"], f"pyproject.toml is already {app}")
+    assert "S4c" in checked, checked
+
+
+def test_s4c_gates_every_bound_failure_per_account() -> None:
+    """#315: a lockout is per DIRECTORY account, and a locked account's 500 cannot be told from a sick
+    target's. The review of #325 (the operator's ruling) made the gate one entry per account for every
+    bound failure; a per-target entry anywhere in the Lease's contract would let T clusters present one
+    wrong or locked password T times."""
+    text = (SPECS / "SPEC_S4c_credential_lifecycle.md").read_text()
+    budgets = text.split("### 3.2", 1)[1].split("### 3.3", 1)[0]
+    lease = text.split("### 3.3", 1)[1].split("### 3.4", 1)[0]
+    assert "per (account, password) until the password\n  changes, across every target, replica and restart" in budgets, \
+        "B2 is not the account's budget"
+    for shape in ("one target", "T targets sharing one account", "after a restart", "two replicas"):
+        assert f"| {shape} |" in budgets, f"the system table lacks the row `{shape}`"
+    assert "refused: dict | None" in lease and "def gated(self, digest: str)" in lease
+    body = text.split("## Orchestrator's notes", 1)[1].split("## 0.", 1)[1]   # the design, not the history
+    for stale in ("refused: dict[str, dict]", "gated(self, target", "gated_anywhere", "gated(target, digest)",
+                  "one entry per target"):
+        assert stale not in body, f"a per-target contract survives: {stale}"

@@ -5,7 +5,7 @@
 | Programme | Cluster configuration as labelled Secrets (#230), continued — S4 designed the retrieval; S4a shipped the login; S4b shipped the lookup; this is step C, the only part that runs on a clock |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; S4 step C, the issue's own label S3b-C) |
-| Version on release | app 0.32.0, chart 0.51.0 |
+| Version on release | app 0.32.0, chart 0.53.0 |
 | Issue | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) |
 | Status | specified |
 | Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22 |
@@ -30,8 +30,21 @@ reading — `oc get user`, the recorded measurements — never by trying.
 
 ## Orchestrator's notes
 
-None yet. This spec is at review; decisions taken where it is found silent or wrong are recorded here
-first, with the reason, and only then applied.
+Decisions taken at review, recorded first and then applied:
+
+- **The gate is per ACCOUNT for every bound failure** (review of #325, 2026-09-23: Codex, Grok and OB1-lite;
+  the operator's ruling). All three reviewers refuted the draft's B2: its gate was one entry per target,
+  so T clusters on one fleet account could present one wrong password T times, and a lockout is per
+  directory account (#315). Grok and OB1-lite proposed splitting by outcome — a 401 per account, a 500
+  per target, keeping R2-1 ("a 500 from target A must not stop a healthy target B"). Codex proposed every
+  bound failure per account, because a locked account's 500 (LDAP code 19) cannot be told from a sick
+  target's 500, so the per-target half still walks an already-locked account T times. **The operator chose
+  Codex's rule, reversing R2-1**: a lockout of the account everyone logs in with is the worse outage; the
+  price is that one sick target's 500 stops binds on every target of the account until the password
+  rotates or the entry is cleared (§5, question 7). §3.4's ping already stood down on either kind for the
+  same reason; every other path now does too.
+- **The release versions** are app 0.32.0, chart 0.53.0 (all three reviewers): the draft's chart 0.51.0
+  had already shipped (#307), and main is at 0.52.1 (#317).
 
 ## 0. The requirement, in business terms
 
@@ -48,8 +61,8 @@ polling:
 3. **A wrong password starts the lockout walk** — one bind per cluster per cycle, per replica, again
    after every restart — and locks the account every cluster shares, converting one broken stanza into
    an estate where nobody can log in. *Prevented by* a **per-credential gate that is durable and
-   replica-shared**: a refused password is sent to a target once, and neither a restart nor a second
-   pod sends it again.
+   replica-shared**: a failed bind is presented **once per account** — one bind for the whole estate,
+   however many clusters share the account — and neither a restart nor a second pod sends it again.
 
 The blast-radius asymmetry that decides every choice below (SPEC_S4a §3.1): *a wrong retry is an
 estate-wide outage against the account the target authenticates every user with; a missed retry is
@@ -125,7 +138,7 @@ five attempts, waits 1 + 2 + 4 + 8 = 15 s, each attempt at most discovery + auth
 `requestTimeoutSeconds` = 30 s at the default) costs at most **165 s** and *binds nothing* unless the
 target answers. The renewal is re-attempted once per poll cycle (`pollIntervalSeconds`, 60 s) until
 `expires_at`, so a one-hour session has at most ⌊900 / 60⌋ = 15 acquisition attempts in its window —
-and the first one the target *answers* is terminal for that (target, password) (§3.2, budget B2). The
+and the first one the target *answers* is terminal for that (account, password) (§3.2, budget B2). The
 window is a budget for *unreachable* targets; a *refusing* target consumes exactly one bind of it.
 
 **The floor the schedule needs.** The renewal check runs on the poll cadence, so a renewal starts at
@@ -323,13 +336,18 @@ read: absence means never, not zero"* — and `gsd_backup_last_success_timestamp
   stated: a holder paused past `claim_seconds` (§3.3) can still bind after its claim was judged
   expired and re-taken — one extra bind per pause, never a walk, and narrowed to one round-trip by the
   re-read immediately before the authorize GET.
-- **B2 — at most one *answered* authorize per (target, account, password) until the password
-  changes, across replicas and restarts.** *Held by* the gate on the Lease's annotations: every
-  `LoginError.bound` answer (`gsd/fleetlogin.py#LoginError`) is recorded there **before** the finding
-  is raised, and every bind path reads it **inside** the claim before building a `FleetLogin`.
-  Scope: **the estate**, as long as the Lease is readable. Residual: if the Lease cannot be written
-  (RBAC absent), the write is refused and **no bind happens at all** (fail closed, §3.3) — the
-  in-memory `CredentialGate` is then the only memory and the finding says so.
+- **B2 — at most one *answered* failed authorize per (account, password) until the password
+  changes, across every target, replica and restart.** *Held by* the account entry on the Lease
+  (`refused`, §3.3): every `LoginError.bound` answer (`gsd/fleetlogin.py#LoginError`) — a 401, and a
+  500 alike, since a locked account's code 19 arrives as a 500 that cannot be told from a sick
+  target's (SPEC_S4a §3.1) — is recorded there **before** the finding is raised, and every bind path
+  (the lookup, the ping, a `self-login` acquisition) reads it **inside** the claim before building a
+  `FleetLogin`. The target that answered is recorded as evidence; it is not part of the key (#315: a
+  lockout is per directory account). Scope: **the estate**, as long as the Lease is readable.
+  Residuals: if the Lease cannot be written (RBAC absent), the write is refused and **no bind happens
+  at all** (fail closed, §3.3) — the in-memory `CredentialGate` is then the only memory and the finding
+  says so; and a 500 from one sick target stops every target of the account until the password rotates
+  or the entry is cleared — the price the operator chose over walking a locked account (§5, question 7).
 - **B3 — at most one ping bind per (account, password) per `fleetPingIntervalSeconds`, across
   replicas and restarts.** *Held by* `ping-last-attempt` and `ping-digest` on the Lease, read inside
   the claim. Twenty clusters on one account are one bind, because the ping is keyed on the account
@@ -345,6 +363,21 @@ read: absence means never, not zero"* — and `gsd_backup_last_success_timestamp
   `self-login` session exits when its replacement is in hand or the cluster stops. Scope: per token;
   a failed revoke is a `fleet-logout-failed` line naming the object, never silence (#283's rule).
 
+**The budget over the system, for one wrong or locked password on one account.** T is the number of
+targets that can present the account's password — `saTokenLookup` stanzas still pending plus
+`userSelfLogin` stanzas — with the ping on and the Lease writable. Binds are what the directory counts
+against its lockout threshold, whose value and reset window this lab cannot measure (§5, question 2):
+
+| shape | binds the directory sees | why |
+|---|---|---|
+| one target | **1** | the first bound answer writes the account entry; nothing binds again until the password changes |
+| T targets sharing one account | **1** | the entry is the account's: the other T − 1 read it inside their claim and stand down (B1 serialises them, B2 stops them) |
+| after a restart | **+0** | the entry is on the Lease; the new pod reads it before its first claim; `ping-last-attempt` keeps the ping off |
+| two replicas | **+0**, plus at most one per paused winner (B1's residual) | the CAS admits one claimant; the loser reads the entry the winner wrote |
+
+Never "at most N per cluster": whatever the number of clusters on the account, a wrong or locked
+password is presented to the directory once.
+
 ### 3.3 The account Lease — `gsd/fleetstate.py` (new module)
 
 One object per fleet account, in the release namespace. Shape, as the API server holds it:
@@ -359,10 +392,11 @@ metadata:
     groupsync-dashboard.io/lease-type: fleet-account
   annotations:
     groupsync-dashboard.io/account: ocp-oauth-bind-serviceid
-    # THE GATE: one entry per target, keyed on the target as httpx canonicalises it (R3-1);
+    # THE GATE: ONE entry per account (§3.2 B2) — the last bound failure for this (account, password),
+    # from whichever target answered; `target` (as httpx canonicalises it, R3-1) is evidence, not the key.
     # `digest` is the 64-bit sha256 prefix CredentialGate already uses (R3-2: a collision over-blocks,
     # never binds). A rotated password is a different digest and does not match.
-    groupsync-dashboard.io/refused: '{"https://api.crc.testing:6443": {"digest": "9f2a…", "at": "2026-09-22T14:03:11Z", "code": "login-refused"}}'
+    groupsync-dashboard.io/refused: '{"digest": "9f2a…", "at": "2026-09-22T14:03:11Z", "code": "login-refused", "target": "https://api.crc.testing:6443"}'
     # THE PING'S BOOKKEEPING — instants, never ages.
     groupsync-dashboard.io/ping-last-attempt: "2026-09-22T06:00:04Z"
     groupsync-dashboard.io/ping-last-ok: "2026-09-22T06:00:05Z"
@@ -399,15 +433,15 @@ class FleetRecord:
     resource_version: str | None
     holder: str
     holder_until: datetime | None          # renewTime + leaseDurationSeconds, or None when unheld
-    refused: dict[str, dict]               # target -> {digest, at, code}
+    refused: dict | None                   # {digest, at, code, target}: the account entry; target is evidence
     ping_last_attempt: datetime | None
     ping_last_ok: datetime | None
     ping_last_outcome: str | None
     ping_last_target: str | None
     ping_digest: str | None
 
-    def gated(self, target: str, digest: str) -> dict | None: ...
-    def gated_anywhere(self, digest: str) -> dict | None: ...
+    def gated(self, digest: str) -> dict | None:
+        """The account entry when its digest matches, whatever the target — every bind path's rule (B2)."""
 
 
 class FleetLease:
@@ -424,9 +458,10 @@ class FleetLease:
         a 409 on the POST is someone else's create — refused, not retried into)."""
     def release(self, record: FleetRecord) -> None:
         """PUT holder="" with the CAS; a failure is logged once and the claim expires on its own."""
-    def refuse(self, record: FleetRecord, target: str, digest: str, code: str, at: datetime) -> FleetRecord: ...
+    def refuse(self, record: FleetRecord, target: str, digest: str, code: str, at: datetime) -> FleetRecord:
+        """Write the account entry (one CAS PUT); `target` is recorded as evidence, not as the key."""
     def clear_other_digests(self, record: FleetRecord, digest: str) -> FleetRecord:
-        """A password that changed retires the entries for the old one (bounded: one entry per target)."""
+        """A password that changed retires the entry for the old one."""
     def note_ping(self, record: FleetRecord, *, at: datetime, ok: bool, outcome: str, target: str,
                   digest: str) -> FleetRecord: ...
 
@@ -444,15 +479,15 @@ def claim_seconds(settings) -> int:
 **The protocol every bind path follows, in this order and no other:**
 
 1. `record = lease.claim()` — CAS; `ClaimHeld` → stop, silently (DEBUG), try next cycle.
-2. `record.gated(target, digest)` / `gated_anywhere(digest)` (which one is the caller's rule, §3.4–3.6)
+2. `record.gated(digest)` — the account entry, the same rule on every path (B2)
    → a gated credential is a free refusal (`LookupRefused(..., gated=True)`, R3-2's shape), said once
    with `gave_up=true`, and the claim is released.
 3. **Re-read the Lease once more** (`lease.read()`): the holder must still be this identity and the
    claim not expired. Anything else → release nothing, bind nothing (the claim was lost while the
    gate was being read). This is the one round-trip the residual in B1 is narrowed to.
 4. Bind: build `FleetLogin` (`gsd/fleetlogin.py#FleetLogin`), run the caller's body.
-5. On `LoginError.bound` → `lease.refuse(record, target, digest, code, at)` **before** the finding
-   is raised — the durable write comes first, the in-memory `CredentialGate.refuse` second, so a crash
+5. On `LoginError.bound` → `lease.refuse(record, target, digest, code, at)` — the account entry,
+   with the answering target as evidence — **before** the finding is raised — the durable write comes first, the in-memory `CredentialGate.refuse` second, so a crash
    between the two loses the cheap copy, never the durable one.
 6. `lease.release(record)` in a `finally`.
 
@@ -493,8 +528,8 @@ def _ping_accounts(self) -> None:
   differs from `ping-digest` (a rotation is confirmed once, within one cadence). Both read from the
   Lease inside the claim, so a restart at 23:59 does not ping again at 00:00 and a second replica
   reads the same instant.
-- **Stands down when** `record.gated_anywhere(digest)` — any target's entry for this (account,
-  password), whether a 401 or a bound-and-failed 500. Decided on the asymmetry: a 500 from one target
+- **Stands down when** `record.gated(digest)` — the account entry for this (account, password),
+  whether a 401 or a bound-and-failed 500, from any target. Decided on the asymmetry: a 500 from one target
   *may* be code 19 (the account already locked, SPEC_S4a §3.1), and one more bind a day against a
   locked account is the walk in a health check's clothing. The stand-down is a free finding, said
   once: `fleet-ping-failed … outcome=<the gating code> gave_up=true suspended=<account> scope=ping
@@ -569,8 +604,9 @@ class SelfLoginSessions:
 ```
 
 **Acquisition** (first cycle, and every renewal) runs §3.3's protocol against the account's Lease —
-`gated(target, digest)`, the per-target rule, because a 500 from target A must not stop a healthy
-target B (R2-1) — then `FleetLogin(cluster, account, password, timeout=…).__enter__()`. On success the
+`gated(digest)`, the account entry every path reads (B2): a failure written by any target parks
+this acquisition too, after a restart and on another replica alike (R2-1 is reversed by the operator's
+ruling, Orchestrator's notes) — then `FleetLogin(cluster, account, password, timeout=…).__enter__()`. On success the
 **new** state replaces the old and the old `FleetLogin.__exit__` runs, so the superseded token is
 revoked *after* its replacement exists; the poll never runs without a credential, and the token cache
 window #283 measured (a revoked token authenticates for ~121 s) is irrelevant because the old token
@@ -637,7 +673,7 @@ cluster carries `self-login-lifetime-too-short` naming both numbers and the fix 
 | `gsd/static/index.html` | the two rows (§3.10) |
 | `charts/…/values.yaml`, `templates/configmap.yaml` | `clusterConfig.fleetAccount.ping.{enabled, intervalSeconds}` → `fleetPingEnabled`, `fleetPingIntervalSeconds` |
 | `charts/…/templates/rbac.yaml`, `templates/_helpers.tpl` | the Lease grant's condition; `gsd.fleetAccountInUse` shared with `fleet-account-rbac.yaml`; `userSelfLogin` with `replicaCount > 1` refused |
-| `charts/…/Chart.yaml`, `pyproject.toml`, `gsd/__init__.py` | chart 0.51.0, app 0.32.0 |
+| `charts/…/Chart.yaml`, `pyproject.toml`, `gsd/__init__.py` | chart 0.53.0, app 0.32.0 — the next minor rungs after 0.52.1 and 0.31.0 on 2026-09-23; re-assigned at the implementing PR if the ladder has moved |
 | docs | §3.13 |
 
 ### 3.8 The chart
@@ -735,9 +771,10 @@ host: `FakeHost._get`/`_send` answer the `coordination.k8s.io` paths, enforce th
 
 - **R1 — the claim is a CAS.** Two `FleetLease` instances for one account, interleaved: the second
   PUT answers 409, `claim()` raises `ClaimHeld`, and the authorize count on the wire is **1**.
-- **R2 — the gate is on the object.** A 401 refusal writes `refused[target]` before the finding; a
-  *new* `Poller` (a restart) and a second `FleetLease` (a replica) both read it and neither binds: the
-  authorize count stays 1 across two processes. A rotated password (a new digest) binds once.
+- **R2 — the gate is on the object, and it is the account's.** A bound failure (a 401, and a 500)
+  through target A writes the account entry before the finding; a *new* `Poller` (a restart), a second
+  `FleetLease` (a replica) and a bind path aimed at target B all read it and none binds: the authorize
+  count stays **1** across two processes and three targets. A rotated password (a new digest) binds once.
 - **R3 — the ping is one bind per account per cadence.** Twenty `remote-lookup` clusters on one
   account: one authorize per cadence; the target rotates by name; `ping-last-attempt` on the object
   makes a restarted poller skip until the cadence; a rotated password pings within one cadence.
@@ -806,7 +843,7 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
 ### 3.13 Documents
 
 - `docs/CHANGELOG.md` — one Unreleased bullet in the house style (what changed, why, the numbers).
-- `charts/group-sync-dashboard/Chart.yaml` — `# CHART 0.51.0 (…), MINOR:` history line; `version`,
+- `charts/group-sync-dashboard/Chart.yaml` — `# CHART 0.53.0 (…), MINOR:` history line; `version`,
   `appVersion`.
 - `charts/group-sync-dashboard/README.md` — the two values rows; the conditional-rules paragraph
   (§3.8); the log-level ladder's ERROR row gains "the fleet-account Lease unwritable".
@@ -825,7 +862,7 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
 | **pod restart mid-window** (a claim was held) | the new pod GETs the Lease: the old claim is live until `renewTime + claim_seconds` (≤ 195 s at defaults) → `ClaimHeld`, silent, next cycle. The gate and the ping instants are on the object, so nothing is re-bound and nothing is re-pinged | B1, B2, B3 |
 | **two replicas** (a hand `scale`, a rollover's overlap, a partition, someone's HPA) | both read the gate; both try the CAS; one 409s and stands down. The render refuses the shapes it can see (§3.8); the claim covers the rest | B1 |
 | **a paused winner** (GC, throttling) past `claim_seconds` | the claim is judged expired and re-taken; the paused pod's bind may still go out when it resumes — one extra bind, narrowed by the re-read before the authorize GET; never a walk, because its answer is gated like any other | B1's stated residual |
-| **rotated password** | a new digest: no gate entry matches; the old entries for the account are retired; the ping confirms within one cadence (one bind); `self-login` clusters resume on their next cycle | B2, B3 |
+| **rotated password** | a new digest: the gate entry does not match; the old entry for the account is retired; the ping confirms within one cadence (one bind); `self-login` clusters resume on their next cycle | B2, B3 |
 | **a directory that has already locked the account** | the first bind answers 500 (code 19 → `HandleError`), `bound=True`, `login-failed` on the object; every path on that account stands down (ping, lookup, `self-login`); the finding says *check the account is not locked*. Nothing here can unlock it, and nothing here binds again while it is locked | B2 |
 | **the Lease is unreadable / unwritable** (RBAC drift, `rbac.create: false`, a 5xx) | `fleet-state-unavailable`, announced once, rechecked every cycle; **no bind by any path**; the lookup and the ping wait; a `self-login` cluster keeps its current session until `expires_at` and then stops with `gave_up=true` | fail closed |
 | **clock skew between pods** | the CAS is unaffected; the expiry judgement moves by the skew; a skew larger than `claim_seconds` lets a live claim be judged expired → the paused-winner case above. Stated, not solved: client-go's own doc recommends clock synchronisation and offers no fence either | B1's residual |
@@ -845,7 +882,8 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
    "is a per-target grant revocation something you want found within N days, or only at the next
    onboarding?". House rule applied meanwhile: easy to manage, best practice → rotation.
 2. **Whether a bound-and-failed (non-401) answer on one target should stand the ping down for the
-   whole account.** Decided conservatively (§3.4): yes, because the 500 may be a locked account.
+   whole account.** Decided conservatively (§3.4): yes, because the 500 may be a locked account — and
+   extended to every bind path at review (question 7).
    The cost: a flaky proxy in front of one target silences the daily check for every target until
    the password rotates or an operator clears the entry. *To settle:* a measurement this lab cannot
    take — what the estate's directory answers for a locked account through *its* OAuth server, and
@@ -866,6 +904,14 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
    `openshift-challenging-client` on the lab". A cluster that sets it there would idle the session out
    and every poll would be a 401 → one re-auth per episode (§3.6). *To settle:* set it on a
    disposable cluster and watch the cadence; the reactive rule needs no change, only confirmation.
+7. **The price of the account-wide gate.** Decided by the operator at review (2026-09-23; Orchestrator's
+   notes): every bound failure gates the account, reversing R2-1. A flaky proxy in front of ONE target
+   stops the lookup, the ping and `self-login` acquisition on EVERY target of that account until the
+   password rotates or an operator clears the entry — `oc annotate lease gsd-fleet-<…> -n <ns>
+   groupsync-dashboard.io/refused-`, which the runbook (#316) must carry. *To settle whether a narrower
+   rule is ever safe:* what the estate's directory answers for a locked account through its OAuth
+   server (question 2's measurement); if a locked account were distinguishable from a sick target, the
+   500 half could return to a per-target entry without walking a locked account.
 
 ## 6. Definition of Done — one-to-one with the issue's
 
