@@ -212,6 +212,11 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                    above: a 60s repaint must not reopen a section the reader folded or move their page.
                    `nsIndexOpen: null` means "decide by the size of the estate" (see INDEX_FOLD). */
                 nsIndexSearch: "", nsIndexOpen: null, nsIndexPage: 1,
+                /* The namespace page's cluster-wide subjects (#261 §3), closed on arrival: the count is a
+                   tile and the sentence says how it splits; the names are one click away. A preference
+                   like the fold above, so the 60 s repaint does not close a list the reader opened —
+                   and reset with the fold when the cluster changes (applyPosition). */
+                nsWideOpen: false,
                 lookupSearch: "",   // #174: the one box over all three kinds; carried across "see all matches"
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
                    other control on this page, so a 60s poll repaint does not collapse a list
@@ -355,6 +360,9 @@ function applyPosition(pos) {
       // The index's own controls are about THIS cluster's list (#264, Cursor C4): a search, a
       // page and a fold chosen on one estate mean nothing on the next.
       view.nsIndexSearch = ""; view.nsIndexOpen = null; view.nsIndexPage = 1;
+      // The namespace page's cluster-wide disclosure is about THIS cluster's bindings (#261 §3), by the
+      // same rule: opened on one estate, it says nothing about the next (review of #328, OB1-lite C9).
+      view.nsWideOpen = false;
     }
     if (pos.cluster) view.cluster = pos.cluster;
   }
@@ -5399,6 +5407,18 @@ function nsDetail() {
   const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
   const wideBindings = wide.length + wideGrants.length;
   const self = d.scope === "self";
+  // THE REACH IS A NUMBER, A SPLIT AND A LIST — NOT ONE SENTENCE (#261 §3). Measured on the lab: 975
+  // characters, 66 words and 16 links naming 53 bindings, the largest block of text on the page. The count
+  // is a tile beside the others (the wide tier's, like People who reach it: at the self tier the sentence
+  // carries it, under no borrowed label); the sentence says how the bindings split and links nothing; the
+  // subjects that name someone are behind a disclosure, drillable as before. The platform fold keeps its
+  // wording — it was already bounded to three names and a count.
+  const wideNamed = wideReal.length + wideGrants.length;
+  const wideSplit = [
+    wideReal.length ? `${wideReal.length} to ${wideReal.length === 1 ? "a group" : "groups"}` : "",
+    wideGrants.length ? `${wideGrants.length} naming a person directly` : "",
+  ].filter(Boolean).join(", ");
+  const wideOpen = !!view.nsWideOpen;
   const kpi = (label, value, cls) => `<div class="kpi"><div class="label">${label}</div><div class="value ${cls || ""}">${value}</div></div>`;
   const labelledNote = keys.length
     ? (keys.some((k) => labels[k])
@@ -5414,6 +5434,7 @@ function nsDetail() {
       ${self ? "" : kpi("People who reach it", d.people == null ? "—" : d.people)}
       ${kpi(self ? "Via your groups" : "Via groups", viaReal.length, viaReal.length ? "" : "muted")}
       ${kpi(self ? "Your direct grants" : "Direct grants", people.length, people.length ? "err" : "muted")}
+      ${self ? "" : kpi("Reached cluster-wide", wideBindings, wideBindings ? "" : "muted")}
     </div>
     <div class="filterbar-note mt-4">${labelledNote}${people.length ? "" : self
       // At the self tier `direct_grants` are the viewer's OWN, so an empty list says nothing about anyone
@@ -5442,11 +5463,18 @@ function nsDetail() {
           : `No group-based binding names this namespace. Access here is ${people.length
               ? "entirely by the direct grants below — which is what makes it a finding." : "not granted to anyone through the policy system."}`}</div>`}
     ${wideBindings ? `<div class="filterbar-note mt-4">Also reached cluster-wide, by ${wideBindings === 1 ? "one binding" : `${wideBindings} bindings`} that
-        grant${wideBindings === 1 ? "s" : ""} every namespace${wideReal.length + wideGrants.length ? `: ${[
-          ...wideReal.map((g) => `<button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button> (<code>${esc(g.role_name)}</code>)`),
-          ...wideGrants.map((x) => `<button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button> (<code>${esc(x.role_name)}</code>, named directly)`),
-        ].join(", ")}` : ""}${widePlatform.length ? `${wideReal.length + wideGrants.length ? "; and" : ":"} ${widePlatform.length} platform binding${widePlatform.length === 1 ? "" : "s"} to ${platformNames.length} virtual group${platformNames.length === 1 ? "" : "s"} (${
-          esc(platformNames.slice(0, 3).join(", "))}${platformNames.length > 3 ? `, … ${platformNames.length - 3} more` : ""}) that every namespace carries` : ""}.</div>` : ""}
+        grant${wideBindings === 1 ? "s" : ""} every namespace${wideNamed ? `: ${wideSplit}` : ""}${widePlatform.length ? `${wideNamed ? "; and" : ":"} ${widePlatform.length} platform binding${widePlatform.length === 1 ? "" : "s"} to ${platformNames.length} virtual group${platformNames.length === 1 ? "" : "s"} (${
+          esc(platformNames.slice(0, 3).join(", "))}${platformNames.length > 3 ? `, … ${platformNames.length - 3} more` : ""}) that every namespace carries` : ""}.${wideNamed
+        ? ` <button type="button" class="linkish" id="ns-wide-toggle" aria-expanded="${wideOpen}" aria-controls="ns-wide-list">${
+            wideOpen ? "▾ Hide" : "▸ Show"} the ${wideNamed} that name someone</button>` : ""}</div>
+      ${wideNamed ? `<div id="ns-wide-list" class="scroll-x mt-3"${wideOpen ? "" : " hidden"}><table>
+        <thead><tr><th>Subject</th><th>Role</th><th class="num">Members</th></tr></thead>
+        <tbody>${[
+          ...wideReal.map((g) => `<tr><td><button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button></td>
+            <td><code>${esc(g.role_name)}</code></td><td class="num">${g.member_count}</td></tr>`),
+          ...wideGrants.map((x) => `<tr><td><button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button>
+            <span class="muted">named directly</span></td><td><code>${esc(x.role_name)}</code></td><td class="num muted">—</td></tr>`),
+        ].join("")}</tbody></table></div>` : ""}` : ""}
   </section>
   ${direct.length ? `<section class="card">
     <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.length > people.length ? ` · ${direct.length - people.length} platform` : ""}</span></h2>
@@ -5490,6 +5518,15 @@ function wireNsPage() {
   });
   const back = $("back");
   if (back) back.onclick = () => { goBack(); };
+  // The cluster-wide subjects (#261 §3): a re-render of data already held, and focus goes back to the
+  // control the reader pressed — render() rebuilds the card under it.
+  const wideToggle = $("ns-wide-toggle");
+  if (wideToggle) wideToggle.onclick = () => {
+    view.nsWideOpen = !view.nsWideOpen;
+    render();
+    const again = $("ns-wide-toggle");
+    if (again) again.focus();
+  };
 }
 
 /* #174 — one lookup over the three kinds. At rest: three doors with their counts and one line of
