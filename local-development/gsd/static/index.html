@@ -214,7 +214,8 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 nsIndexSearch: "", nsIndexOpen: null, nsIndexPage: 1,
                 /* The namespace page's cluster-wide subjects (#261 §3), closed on arrival: the count is a
                    tile and the sentence says how it splits; the names are one click away. A preference
-                   like the fold above, so the 60 s repaint does not close a list the reader opened. */
+                   like the fold above, so the 60 s repaint does not close a list the reader opened —
+                   and reset with the fold when the cluster changes (applyPosition). */
                 nsWideOpen: false,
                 lookupSearch: "",   // #174: the one box over all three kinds; carried across "see all matches"
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
@@ -359,6 +360,9 @@ function applyPosition(pos) {
       // The index's own controls are about THIS cluster's list (#264, Cursor C4): a search, a
       // page and a fold chosen on one estate mean nothing on the next.
       view.nsIndexSearch = ""; view.nsIndexOpen = null; view.nsIndexPage = 1;
+      // The namespace page's cluster-wide disclosure is about THIS cluster's bindings (#261 §3), by the
+      // same rule: opened on one estate, it says nothing about the next (review of #328, OB1-lite C9).
+      view.nsWideOpen = false;
     }
     if (pos.cluster) view.cluster = pos.cluster;
   }

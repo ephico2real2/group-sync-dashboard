@@ -1669,6 +1669,20 @@ class TestNamespaces:
         assert "kubeadmin" not in listed and "kubeadmin" not in dash.locator("#main").inner_text()
         assert dash.locator("#main button.drill[data-user='carol']").count() == 1
 
+    def test_the_cluster_wide_disclosure_follows_the_index_controls_on_a_cluster_switch(self, dash):
+        """#261 §3's disclosure is "a preference like the fold above", and the fold, the search and the page
+        are reset when the cluster changes (applyPosition: "a search, a page and a fold chosen on one estate
+        mean nothing on the next"). Review of #328 (OB1-lite C9) measured `view.nsWideOpen` still true after
+        navigate({cluster: 'prod-east'}) while nsIndexOpen went back to null."""
+        dash.locator("button[data-nav='nsaudit']").click()
+        dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        dash.locator("#ns-wide-toggle").click()
+        dash.wait_for_function("() => view.nsWideOpen === true")
+        dash.evaluate("() => navigate({ cluster: 'prod-east' })")
+        assert dash.evaluate("() => [view.nsWideOpen, view.nsIndexOpen, view.nsSearch]") == [False, None, ""], \
+            "the disclosure kept a state the cluster switch resets for every other index control"
+
     def test_the_cluster_wide_reach_is_a_tile_and_a_disclosure_not_a_paragraph(self, dash):
         """#261 §3: on the lab this line was one sentence of 975 characters / 66 words with 16 links in it,
         naming 53 bindings — the largest block of text on the page, and the answer to "who else can get in
