@@ -1660,10 +1660,75 @@ class TestNamespaces:
         self._open(dash)
         dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
         dash.wait_for_selector("h2:text-is('quiet-corner')")
-        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
-        assert "carol" in line and "cluster-admin" in line and "named directly" in line, line
-        assert "kubeadmin" not in line
+        # Named behind the disclosure since #261 §3: the sentence counts, the list names.
+        assert dash.locator("#ns-wide-toggle").count() == 1, "no disclosure for the cluster-wide subjects"
+        dash.locator("#ns-wide-toggle").click()
+        dash.wait_for_function("() => !document.getElementById('ns-wide-list').hidden")
+        listed = dash.locator("#ns-wide-list").inner_text()
+        assert "carol" in listed and "cluster-admin" in listed and "named directly" in listed, listed
+        assert "kubeadmin" not in listed and "kubeadmin" not in dash.locator("#main").inner_text()
         assert dash.locator("#main button.drill[data-user='carol']").count() == 1
+
+    def test_the_cluster_wide_disclosure_follows_the_index_controls_on_a_cluster_switch(self, dash):
+        """#261 §3's disclosure is "a preference like the fold above", and the fold, the search and the page
+        are reset when the cluster changes (applyPosition: "a search, a page and a fold chosen on one estate
+        mean nothing on the next"). Review of #328 (OB1-lite C9) measured `view.nsWideOpen` still true after
+        navigate({cluster: 'prod-east'}) while nsIndexOpen went back to null."""
+        dash.locator("button[data-nav='nsaudit']").click()
+        dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        dash.locator("#ns-wide-toggle").click()
+        dash.wait_for_function("() => view.nsWideOpen === true")
+        dash.evaluate("() => navigate({ cluster: 'prod-east' })")
+        assert dash.evaluate("() => [view.nsWideOpen, view.nsIndexOpen, view.nsSearch]") == [False, None, ""], \
+            "the disclosure kept a state the cluster switch resets for every other index control"
+
+    def test_the_cluster_wide_reach_is_a_tile_and_a_disclosure_not_a_paragraph(self, dash):
+        """#261 §3: on the lab this line was one sentence of 975 characters / 66 words with 16 links in it,
+        naming 53 bindings — the largest block of text on the page, and the answer to "who else can get in
+        here" buried in it. The count is a KPI tile beside the others; the sentence says how the bindings
+        split and carries no links; the subjects are one click away behind a disclosure the 60 s repaint
+        keeps open. The lab's shape (13 groups, 3 people, 37 platform bindings to 12 virtual groups) is
+        rebuilt from the payload to hold the sentence to its size."""
+        self._open(dash)
+        dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        tile = dash.locator(".kpi", has=dash.locator(".label", has_text="Reached cluster-wide"))
+        assert tile.count() == 1, dash.locator(".kpi .label").all_inner_texts()
+        assert tile.locator(".value").inner_text().strip() == "2"
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide")
+        text = " ".join(line.inner_text().split())
+        assert text.startswith("Also reached cluster-wide, by 2 bindings that grant every namespace: 1 to a group, "
+                               "1 naming a person directly."), text
+        assert line.locator("button.drill").count() == 0
+        toggle = dash.locator("#ns-wide-toggle")
+        assert toggle.get_attribute("aria-expanded") == "false" and toggle.get_attribute("aria-controls") == "ns-wide-list"
+        assert "Show the 2 that name someone" in toggle.inner_text()
+        assert dash.locator("#ns-wide-list").is_hidden()
+        toggle.click()
+        dash.wait_for_function("() => !document.getElementById('ns-wide-list').hidden")
+        assert dash.locator("#ns-wide-toggle").get_attribute("aria-expanded") == "true"
+        assert dash.evaluate("() => document.activeElement.id") == "ns-wide-toggle"
+        listed = " ".join(dash.locator("#ns-wide-list").inner_text().split())
+        assert "app-ocp-rbac-alpha-ns-admin" in listed and "carol" in listed, listed
+        dash.evaluate("() => render()")   # exactly what the poll does
+        assert dash.locator("#ns-wide-list").is_visible(), "the repaint closed a list the reader opened"
+        dash.evaluate("""() => {
+          const g = (name, role, platform) => ({group_name: name, binding_kind: "ClusterRoleBinding", binding_name: name + "-crb",
+                                                role_kind: "ClusterRole", role_name: role, managed_source: platform ? null : "baseline",
+                                                member_count: platform ? 0 : 2, is_platform: platform ? 1 : 0});
+          const virtual = Array.from({length: 12}, (_, i) => "system:virtual-" + i);
+          data.ns.cluster_wide_groups = [...Array.from({length: 13}, (_, i) => g("app-ocp-rbac-team" + i + "-cluster-admin", "admin", false)),
+                                         ...Array.from({length: 37}, (_, i) => g(virtual[i % 12], "basic-user", true))];
+          data.ns.cluster_wide_grants = ["dana.lee", "jdoe", "ocp-oauth-bind-serviceid"].map((u) => ({user_name: u, binding_kind: "ClusterRoleBinding",
+                                         binding_name: u + "-crb", role_kind: "ClusterRole", role_name: "edit", is_platform: 0}));
+          render(); }""")
+        text = " ".join(dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text().split())
+        assert text.startswith("Also reached cluster-wide, by 53 bindings that grant every namespace: 13 to groups, "
+                               "3 naming a person directly; and 37 platform bindings to 12 virtual groups"), text
+        assert len(text) < 300 and line.locator("button.drill").count() == 0, (len(text), text)
+        assert tile.locator(".value").inner_text().strip() == "53"
+        assert dash.locator("#ns-wide-list button.drill").count() == 16
 
     def test_the_namespaces_card_at_the_self_tier_speaks_of_the_viewers_grants(self, page, scoped_server):
         """`nobody` holds no membership and no grant: the card lists nothing, and its copy must say that is
@@ -2617,7 +2682,12 @@ class TestLookup:
         dash.wait_for_timeout(150)
         assert dash.evaluate("() => [view.page, history.length]") == ["overview", before], "mid-composition is not a position change"
         cdp.send("Input.insertText", {"text": "かんり"})
-        dash.wait_for_function("() => view.page === 'lookup'", timeout=3_000)
+        # The position settles in TWO steps from the fleet Overview, which has no cluster: navigate() writes
+        # `#page=lookup` synchronously, then refresh()'s boot path fetches /api/clusters and amends the SAME
+        # entry with the default cluster (index.html, "The ONLY position mutation outside navigate()").
+        # Waiting on view.page alone read the hash between the two and failed on a slow CI runner with
+        # '#page=lookup' (run 35874897863); holding /api/clusters open reproduces it every time.
+        dash.wait_for_function("() => view.page === 'lookup' && location.hash.includes('cluster=')", timeout=3_000)
         assert dash.evaluate("() => [view.lookupSearch, location.hash, history.length]") == ["かんり", "#page=lookup&cluster=crc-local", before + 1]
 
     def test_a_query_of_only_spaces_is_not_a_position_change(self, dash):
@@ -3379,6 +3449,73 @@ class TestNamespaceAuditPage:
         self._open(dash)
         kpi = dash.locator(".kpi", has_text="Grants to migrate").first
         assert kpi.locator(".value").inner_text().strip() == "3"
+
+    def test_the_cluster_scope_is_its_own_card_not_a_row_among_the_namespaces(self, dash):
+        """#261 §3: CLUSTER-WIDE was ranked as a row of the namespace table. It is a scope, not a namespace,
+        and its blast radius is every row of the index below. carol's cluster-admin ClusterRoleBinding gets a
+        card of its own above the worklist; the table ranks namespaces only; the headline numbers do not move.
+        The card is built from the rollup — never paged, never filtered — so narrowing Every grant to one
+        namespace, which refetches `bindings` without carol's row, leaves it whole."""
+        self._open(dash)
+        headings = [" ".join(h.split()) for h in dash.locator("#main section.card h3").all_inner_texts()]
+        wide = [i for i, h in enumerate(headings) if h.startswith("Cluster-wide direct grants")]
+        assert wide and headings[wide[0] + 1] == "Exposure by namespace", headings
+        card = dash.locator("section.card", has=dash.locator("h3", has_text="Cluster-wide direct grants"))
+        text = " ".join(card.inner_text().split())
+        assert "carol" in text and "Critical" in text and "cluster-admin" in text, text
+        assert "every namespace on this cluster" in text and "counts it as one entry" in text, text
+        assert "choose cluster-wide in its Namespace selector" in text, "the card shows the rollup; the bindings are one step away"
+        assert dash.locator("#ns-pick option[value='(cluster-scoped)']").count() == 1, "and that step exists"
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        assert "CLUSTER-WIDE" not in worklist.inner_text()
+        assert worklist.locator("td.ns-cell").all_inner_texts() == ["prod-ns", "dev-ns"]
+        kpis = [v.strip() for v in dash.locator(".kpi.big .value").all_inner_texts()]
+        assert kpis == ["3", "2", "3", "1", "1"], kpis
+        dash.select_option("#ns-pick", "prod-ns")
+        dash.wait_for_function("() => data.userBindings && data.userBindings.namespace === 'prod-ns'")
+        assert "carol" in card.inner_text(), "the card followed the grant list's filter"
+
+    def test_each_half_of_the_split_says_so_when_it_is_empty(self, dash):
+        """With the cluster scope out of the table, a cluster whose only direct grant is cluster-wide would
+        paint an empty table under "Exposure by namespace", and one with none would paint an empty card —
+        each must say where the findings are instead. Driven from the payload: what is under test is the
+        choice of sentence."""
+        self._open(dash)
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        card = dash.locator("section.card", has=dash.locator("h3", has_text="Cluster-wide direct grants"))
+        dash.evaluate("""() => { window.__rollup = data.userBindings.by_namespace;
+            data.userBindings.by_namespace = window.__rollup.filter((r) => r.namespace === '(cluster-scoped)'); render(); }""")
+        assert worklist.locator("table").count() == 0
+        assert "No namespace holds a direct grant on this cluster" in worklist.inner_text()
+        assert "carol" in card.inner_text()
+        dash.evaluate("""() => { data.userBindings.by_namespace = window.__rollup.filter((r) => r.namespace !== '(cluster-scoped)'); render(); }""")
+        assert worklist.locator("td.ns-cell").all_inner_texts() == ["prod-ns", "dev-ns"]
+        assert "No binding names a person at the cluster scope" in card.inner_text(), card.inner_text()
+
+    def test_the_worklists_namespaces_open_their_pages(self, dash):
+        """#261 §3: the worklist's namespace cell was plain text — no `data-ns`, no button — so the view the
+        page tells you to work from was the one place a namespace did not drill. Each namespace is a real
+        button (Tab, Enter, Space); the cluster scope is not a namespace and has no page to open; the index's
+        own rows are untouched. dev-ns is named by a grant and not held by the store, so its page is the
+        `present: false` one, not an error."""
+        self._open(dash)
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        drills = worklist.locator("tbody button.drill[data-ns]")
+        assert drills.evaluate_all("els => els.map(e => e.dataset.ns)") == ["prod-ns", "dev-ns"]
+        assert worklist.locator("tbody [data-ns='(cluster-scoped)']").count() == 0
+        assert dash.locator("tr[data-ns]").count() == 9, "the index's rows are the index's"
+        drills.first.focus()
+        dash.evaluate("() => render()")   # exactly what the 60 s poll does; render() restores focus BY ID
+        assert dash.evaluate("() => document.activeElement.id") == "ns-drill-prod-ns", "the repaint dropped the reader's focus"
+        dash.keyboard.press("Enter")
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+        assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local&ns=prod-ns"
+        dash.go_back()
+        dash.wait_for_selector("h3:text-is('Exposure by namespace')")
+        worklist.locator("tbody button.drill[data-ns='dev-ns']").click()
+        dash.wait_for_selector("h2:has-text('dev-ns')")
+        main = dash.locator("#main").inner_text()
+        assert "no longer on the cluster" in main and "Dashboard API error" not in main, main[:300]
 
     def test_the_worklist_says_the_bars_box_does_not_narrow_it(self, dash):
         """#261: the bar's Find namespace keeps its shipped scope — the Namespaces list — by agreement (part 1;
@@ -8984,6 +9121,47 @@ class TestPlatformNamespacesAreHiddenByDefault:
         assert "2 platform namespaces hidden" in line and "1" in line and "has a direct grant" in line, line
         dash.evaluate("() => { data.namespaces.platform_with_findings = 0; render(); }")
 
+    def test_the_reconciling_sentence_speaks_for_the_tier_and_stays_bounded(self, dash):
+        """#261 §2, the two shapes the served estate cannot reach. At the self tier the list above is the
+        viewer's own grants, not the worklist, so the sentence must not send them to a card they do not
+        have. And it names at most three — the reach sentence became a 975-character block by naming
+        everything (#261 §3). Driven from the payload, like the sentence test above."""
+        self._open(dash)
+        dash.evaluate("""() => { const n = data.namespaces.namespaces.find((x) => x.name === 'openshift-monitoring');
+            n.direct_grants = 1; data.namespaces.platform_with_findings = 1; data.namespaces.scope = 'self'; render(); }""")
+        dash.wait_for_timeout(250)
+        line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        # "among", never "listed above": the self tier's grants are a served page (review of #326, Codex C3).
+        assert "This hides rows, never findings: openshift-monitoring is still among your direct grants." in line, line
+        assert "Exposure by namespace" not in line and "above" not in line.split("never findings")[1], line
+        # Both payloads carry the five, as one served state does: the clause names only what the rollup holds.
+        dash.evaluate("""() => { data.namespaces.scope = 'all';
+            const base = data.userBindings.by_namespace.find((r) => r.namespace !== '(cluster-scoped)');
+            for (const name of ['openshift-monitoring', 'openshift-a', 'openshift-b', 'openshift-c', 'openshift-d']) {
+              if (name !== 'openshift-monitoring') data.namespaces.namespaces.push(
+                {name, labels: {}, via_groups: 0, direct_grants: 2, platform: true});
+              data.userBindings.by_namespace.push({...base, namespace: name});
+            }
+            data.namespaces.platform_count = 6; data.namespaces.platform_with_findings = 5; render(); }""")
+        dash.wait_for_timeout(250)
+        line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert "— 5 of them have a direct grant." in line, line
+        assert ("never findings: openshift-monitoring, openshift-a, openshift-b and 2 more are still ranked in "
+                "Exposure by namespace above.") in line, line
+
+    def test_the_reconciling_sentence_names_only_what_the_worklist_holds(self, dash):
+        """Review of #326 (Codex C2): the index and the worklist are two requests under two snapshots, so a
+        poll between them can name a namespace the worklist does not hold yet. The clause claims "still
+        ranked … above" only for names the rollup carries; the count stays, it is the index's own."""
+        self._open(dash)
+        dash.evaluate("""() => { const n = data.namespaces.namespaces.find((x) => x.name === 'openshift-monitoring');
+            n.direct_grants = 1; data.namespaces.platform_with_findings = 1;
+            data.userBindings.by_namespace = data.userBindings.by_namespace.filter((r) => r.namespace !== 'openshift-monitoring');
+            render(); }""")
+        line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert "1 of them has a direct grant" in line, line
+        assert "never findings" not in line and "openshift-monitoring" not in line, line
+
     def test_the_control_shows_them_and_puts_them_back(self, dash):
         self._open(dash)
         dash.click("#ns-show-platform")
@@ -9317,6 +9495,23 @@ class TestTheIndexOnAnEstateBigEnoughToNeedIt:
         assert env[1] == 1 and set(env[2]) == {"company.net/mnemonic", "company.net/app-environment"}, env
         card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
         assert "1 of them has a direct grant" in card, card[:400]
+
+    def test_a_hidden_namespace_with_a_finding_is_named_where_it_is_still_ranked(self, page, estate_server):
+        """#261 §2: openshift-ns3 holds a direct grant, so it is ranked in the worklist AND hidden from this
+        index at the same time — two lists on one page disagreeing (the lab's openshift-console-user-settings).
+        "1 of them has a direct grant" counted it and left the reader to toggle to learn which one, and
+        where it had gone. The line names it and the list that still ranks it; shown, the lists agree and
+        the sentence has nothing to reconcile."""
+        self._open(page, estate_server)
+        line = " ".join(page.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert ("This hides rows, never findings: openshift-ns3 is still ranked in Exposure by namespace above."
+                in line), line
+        worklist = page.locator("section.card", has=page.locator("h3:text-is('Exposure by namespace')"))
+        assert worklist.locator("td.ns-cell", has_text="openshift-ns3").count() == 1, "the sentence names a row the worklist holds"
+        assert page.locator('tr[data-ns="openshift-ns3"]').count() == 0, "and the index hides it"
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => view.nsShowPlatform === true")
+        assert "never findings" not in page.locator("#ns-show-platform").locator("xpath=..").inner_text()
 
     def test_the_fold_hides_the_rows_and_keeps_the_reasons(self, page, estate_server):
         """Only the ROWS fold. Three caveats live in the notes above the table, and collapsing the

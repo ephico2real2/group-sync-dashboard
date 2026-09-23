@@ -1,0 +1,1706 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Namespace audit — OCP Access Tracking Dashboard</title>
+<!-- Appearance and colour palette applied BEFORE the first paint, as the shipped shell does
+     (index.html 6–22): the URL wins, then what the reader last chose, then the OS. -->
+<script>
+(function () {
+  var html = document.documentElement, query = new URLSearchParams(location.search);
+  function pick(param, key, allowed) {
+    var v = query.get(param) || "";
+    if (allowed.indexOf(v) < 0) {
+      try { v = localStorage.getItem(key) || ""; } catch (e) { v = ""; }
+    }
+    return allowed.indexOf(v) >= 0 ? v : "";
+  }
+  var mode = pick("mode", "gsd-mode", ["light", "dark"]);
+  var palette = pick("theme", "gsd-palette", ["deuter", "protan", "trit", "contrast"]);
+  if (mode) html.setAttribute("data-theme", mode);
+  if (palette) html.setAttribute("data-palette", palette);
+})();
+</script>
+<style>
+/* Tokens are the shipped ones, copied from local-development/gsd/static/app.css so this mock and the
+   app cannot drift. ONE token is deliberately different and it is a PROPOSAL, marked below. */
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+  /* PROPOSED CHANGE — the wash's top stop only. Shipped: #eef0f4. Here: #e3e6ef.
+     --page is NOT touched: every text token in app.css is solved against it and the ratio is
+     written beside each one, so darkening the base would lower the whole set at once. The top
+     stop carries no body text in this layout — the one 12px --text-muted line that used to sit
+     in it (the version line, measured at 4.57:1 on the live page) is --text-secondary here.
+     Measured on the painted pixels of this page, not on the token: see the provenance footer. */
+  --page-2: #e3e6ef;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #6a6863;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #2874d0;
+  --drill-text: #1a65bb;
+  --series-1-wash: color-mix(in srgb, var(--series-1) 10%, transparent);
+  --status-good: #097d09;
+  --status-warning: #c48704;
+  --status-warning-edge: #b45309;
+  --status-critical: #c43838;
+  --status-unknown: #74726d;
+  --zebra: rgba(11, 11, 11, 0.025);
+  --tab-home: #3d5a80;
+  --tab-overview: #2873cd;
+  --tab-groups: #108172;
+  --tab-bindings: #6d4bc7;
+  --tab-policy: #9333ea;
+  --tab-nsaudit: #b3306e;
+  --tab-users: #0e7490;
+  --tab-logins: #597b0a;
+  --tab-usage: #c2410c;
+  --tab-reports: #5b6470;
+  --tab-kpi: #4a55a3;
+  --tab-kyverno: #0b6e7a;
+  --tab-clusters: #6b3a12;
+  --tab-library: #7a2468;
+  --accent: var(--tab-nsaudit);
+  /* Text ON the accent, which is a different question from text beside it. White reads 5.89:1 on the
+     light accent #b3306e and 3.54:1 on the dark one #e0559a — under the bar — so the ink flips with
+     the theme rather than staying white. Measured, in the render check, on the painted button. */
+  --accent-ink: #ffffff;
+  --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-micro: 10px; --text-xs: 11px; --text-sm: 12px; --text-md: 13px;
+  --text-base: 14px; --text-lg: 15px; --text-xl: 18px;
+  --space-1: 2px; --space-2: 4px; --space-3: 6px; --space-4: 8px; --space-5: 10px;
+  --space-6: 12px; --space-7: 14px; --space-8: 16px; --space-9: 18px; --space-10: 20px;
+  --space-11: 24px;
+  --radius-xs: 2px; --radius-sm: 4px; --radius-md: 6px; --radius-lg: 10px;
+  --radius-pill: 999px; --radius-round: 50%;
+  --elev-1: 0 1px 2px rgba(11,11,11,0.05), 0 1px 8px rgba(11,11,11,0.04);
+  --warn: #ae5009;
+  /* Risk tiers get a token each so the tier's colour, its word and its shape are set in one
+     place. riskTier() ranks on PRIVILEGE and SCOPE, never on count — the reason is on the page. */
+  --risk-critical: var(--status-critical);
+  --risk-high: var(--status-warning);
+  --risk-medium: var(--series-1);
+  --risk-low: var(--status-unknown);
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    /* The dark wash runs the other way — its top stop is LIGHTER than the base — so deepening it
+       would flatten the gradient rather than darken the page, and every ratio here improves as it
+       goes down. Shipped value kept; the light stop is the one the eye reads as pale. */
+    --page-2: #14161c;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #918f89;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --drill-text: #4b97ed;
+    --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
+    --status-critical: #db6f6f;
+    --status-good: #14a614;
+    --status-warning: #c48704;
+    --status-warning-edge: #e08a2e;
+    --status-unknown: #898781;
+    --zebra: rgba(255, 255, 255, 0.035);
+    --warn: #c48704;
+    --tab-home: #8fb3dd;
+    --tab-overview: #2d7ad7;
+    --tab-groups: #12907f;
+    --tab-bindings: #8468d0;
+    --tab-policy: #a855f7;
+    --tab-nsaudit: #e0559a;
+    --tab-users: #22a5c9;
+    --tab-logins: #678e0b;
+    --tab-usage: #d9490d;
+    --tab-reports: #98a2b3;
+    --tab-kpi: #9aa3e6;
+    --tab-kyverno: #5cc4cf;
+    --tab-clusters: #e0a060;
+    --tab-library: #d489c0;
+    --accent-ink: #0b0b0b;   /* 5.56:1 on the dark accent #e0559a */
+    --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+  }
+}
+@media screen {
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+  --page-2: #14161c;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #918f89;
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --drill-text: #4b97ed;
+  --series-1-wash: color-mix(in srgb, var(--series-1) 14%, transparent);
+  --status-critical: #db6f6f;
+  --status-good: #14a614;
+  --status-warning: #c48704;
+  --status-warning-edge: #e08a2e;
+  --status-unknown: #898781;
+  --zebra: rgba(255, 255, 255, 0.035);
+  --warn: #c48704;
+  --tab-home: #8fb3dd;
+  --tab-overview: #2d7ad7;
+  --tab-groups: #12907f;
+  --tab-bindings: #8468d0;
+  --tab-policy: #a855f7;
+  --tab-nsaudit: #e0559a;
+  --tab-users: #22a5c9;
+  --tab-logins: #678e0b;
+  --tab-usage: #d9490d;
+  --tab-reports: #98a2b3;
+  --tab-kpi: #9aa3e6;
+  --tab-kyverno: #5cc4cf;
+  --tab-clusters: #e0a060;
+  --tab-library: #d489c0;
+  --accent-ink: #0b0b0b;
+  --elev-1: 0 1px 2px rgba(0,0,0,0.5), 0 1px 10px rgba(0,0,0,0.35);
+}
+}
+/* Okabe–Ito for colour vision, as app.css ships them. A palette repaints the STATUS hues only:
+   the tab identities are the page's own colour and are already separated on lightness. */
+:root[data-palette="deuter"], :root[data-palette="protan"] {
+  --status-good: #0071af; --status-warning: #c18600; --status-warning-edge: #a25c00; --status-critical: #b24e00; --warn: #906300;
+}
+:root[data-palette="trit"] {
+  --status-good: #007b5a; --status-warning: #cb76a5; --status-warning-edge: #a8527f; --status-critical: #b24e00; --warn: #94597a;
+}
+:root[data-palette="contrast"] {
+  --status-good: #076607; --status-warning: #9c6b03; --status-warning-edge: #7a4a00; --status-critical: #a42727; --text-muted: #575551; --warn: #7a4a00;
+}
+/* ── THE HEADING LADDER — shell state, not page state (proposed, issue #253) ────────────────
+   These are ELEMENT selectors on purpose. The ladder belongs in app.css's one global
+   `h1, h2, h3` rule; it is not a Namespace-audit choice and must not be ported into a page
+   scope. Shipped today (app.css:528, 540–542, 986–987):
+
+     h1, h2, h3 { font-weight: 600; margin: 0; }      — no tracking anywhere
+     h1 18px · h2 15px · h3 13px (--text-secondary)
+     .card > h2 { letter-spacing: -0.01em }            — tracking ONLY as a direct child of .card
+     .card > h3 { letter-spacing: -0.005em }
+
+   So a heading outside a card — the page's own h1 in the shell — gets no tracking at all, which
+   is the whole difference a reader sees between the live page and the agreed mocks. The treatment
+   below is not new to the product: `.home .answer h1` (app.css:1286) already carries w700/-0.02em.
+   This extends that one hero to the ladder. Sizes are unchanged from the shipped scale. */
+h1, h2, h3 { font-weight: 700; margin: 0; }
+h1 { font-size: var(--text-xl); letter-spacing: -0.02em; }
+h2 { font-size: var(--text-lg); letter-spacing: -0.015em; }
+h3 { font-size: var(--text-md); color: var(--text-secondary); letter-spacing: -0.01em; }
+h4 { font-size: var(--text-md); font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body {
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  background:
+    radial-gradient(1200px 520px at 50% -12%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--page-2), var(--page) 420px);
+  background-attachment: fixed;
+  background-color: var(--page);
+  min-height: 100dvh;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: var(--space-10) var(--space-10) 64px; min-width: 0; }
+@media (max-width: 520px) { .wrap { padding: var(--space-6) var(--space-8) 48px; } }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: var(--space-10); top: var(--space-10); z-index: 40; background: var(--surface-1); padding: var(--space-3) var(--space-5); }
+
+/* ── the shell, carried verbatim ───────────────────────────────────────────────────────────── */
+header.top {
+  display: flex; align-items: baseline; gap: var(--space-6); flex-wrap: wrap;
+  padding-bottom: var(--space-7); border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  margin-bottom: var(--space-6);
+}
+header.top h1 { margin: 0; }
+header.top .sub { color: var(--text-secondary); font-size: var(--text-sm); }
+header.top .spacer { flex: 1; }
+header.top .build { color: var(--text-secondary); font-size: var(--text-sm); font-family: var(--font-mono); }
+.shell-prefs { display: inline-flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.shell-prefs .pref { display: inline-flex; align-items: center; gap: var(--space-3); }
+.shell-prefs label { color: var(--text-secondary); font-size: var(--text-sm); }
+@media (max-width: 520px) { .shell-prefs .pref { flex-direction: column; align-items: flex-start; gap: 0; } }
+select, button, a.btn, input {
+  font: inherit; font-size: var(--text-md); color: var(--text-primary);
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 5px 9px; cursor: pointer; max-width: 100%;
+}
+input { cursor: text; width: 100%; }
+button:hover, select:hover, a.btn:hover { border-color: var(--baseline); }
+a.btn { text-decoration: none; display: inline-block; }
+.tabs { display: flex; gap: var(--space-2); flex-wrap: wrap; max-width: 100%; overflow-x: auto; }
+.tab {
+  position: relative; background: none; border: 0; border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: 7px var(--space-6) 9px; font-size: var(--text-md); font-weight: 500;
+  color: var(--text-secondary); cursor: default; white-space: nowrap;
+}
+.tab:hover { color: var(--text-primary); background: var(--zebra); }
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 3px;
+  background: var(--accent); border-radius: 3px 3px 0 0;
+}
+@media (forced-colors: active) { .tab[aria-current="page"]::after { background: Highlight; forced-color-adjust: none; } }
+.filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-7);
+  padding: var(--space-6) 0; border-bottom: 1px solid var(--border); margin-bottom: var(--space-7);
+}
+.filters label { font-size: var(--text-sm); color: var(--text-secondary); }
+.filters .grp { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.filters .grp.find { flex: 1 1 240px; }
+.filters .grp.find input { min-width: 0; }
+.scope-pill {
+  font-size: var(--text-sm); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 2px var(--space-5); background: var(--surface-1); color: var(--text-primary);
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ── cards and type ────────────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-8); margin-bottom: var(--space-7); box-shadow: var(--elev-1);
+  min-width: 0; max-width: 100%;
+}
+main > .card:first-child { border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.card > h2, .card > h3 { font-family: var(--font-ui); margin: 0 0 var(--space-4); }
+.card > h2::before, .card > h3::before {
+  content: ""; display: inline-block; vertical-align: middle; width: 3px; height: 0.95em;
+  margin-right: var(--space-4); border-radius: var(--radius-xs); background: var(--rk, var(--accent));
+}
+.card h2 .count, .card h3 .count { font-weight: 400; color: var(--text-muted); font-size: var(--text-sm); font-family: var(--font-mono); }
+.muted { color: var(--text-muted); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.err { color: var(--status-critical); overflow-wrap: anywhere; }
+.note {
+  font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.6;
+  overflow-wrap: anywhere; margin: 0 0 var(--space-5);
+}
+.note:last-child { margin-bottom: 0; }
+.note strong { color: var(--text-primary); }
+.note code, code { font-family: var(--font-mono); font-size: var(--text-sm); background: var(--zebra); padding: 1px 5px; border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.empty-note { color: var(--text-muted); font-size: var(--text-md); padding: var(--space-5) 0; }
+.linkish {
+  background: none; border: 0; padding: 0; cursor: pointer; font: inherit;
+  font-size: var(--text-sm); color: var(--drill-text); text-decoration: underline; text-underline-offset: 2px;
+}
+.linkish:hover { color: var(--text-primary); }
+.drill {
+  font-family: var(--font-mono); font-size: var(--text-md); border: 0; background: none;
+  color: var(--drill-text); cursor: pointer; padding: 0; text-decoration: underline;
+  text-underline-offset: 2px; overflow-wrap: anywhere; text-align: left;
+}
+.drill:hover { color: var(--text-primary); }
+.back { margin-bottom: var(--space-6); }
+:where(button, a, select, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; } }
+
+/* ── badges: a shape AND a word, never colour alone ────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  font-size: var(--text-sm); font-weight: 500; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 2px 9px 2px 7px; white-space: nowrap;
+}
+.badge .glyph { width: 9px; height: 9px; flex: none; display: inline-block; }
+.badge.ok .glyph { background: var(--status-good); border-radius: var(--radius-round); }
+.badge.warning .glyph { background: var(--status-warning); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.badge.critical .glyph { background: var(--status-critical); border-radius: 1px; }
+.badge.unknown .glyph { border: 1.5px solid var(--status-unknown); border-radius: var(--radius-round); background: none; }
+/* The four risk tiers: square / triangle / diamond / hollow circle, each beside its word. */
+.badge.risk-critical .glyph { background: var(--risk-critical); border-radius: 1px; }
+.badge.risk-high .glyph { background: var(--risk-high); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.badge.risk-medium .glyph { background: var(--risk-medium); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.badge.risk-low .glyph { border: 1.5px solid var(--risk-low); border-radius: var(--radius-round); background: none; }
+.badge.lg { font-size: var(--text-base); font-weight: 600; padding: var(--space-3) var(--space-6) var(--space-3) var(--space-5); }
+.badge.lg .glyph { width: 11px; height: 11px; }
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-3); min-width: 0; }
+.chip {
+  display: inline-block; font-family: var(--font-mono); font-size: var(--text-micro);
+  padding: var(--space-1) var(--space-4); border-radius: 5px; border: 1px solid var(--border);
+  color: var(--text-secondary); white-space: normal; overflow-wrap: anywhere; max-width: 100%;
+}
+.chip.person { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.chip.priv { font-size: var(--text-sm); color: var(--text-primary); }
+
+/* ── the verdict ───────────────────────────────────────────────────────────────────────────── */
+.verdict { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-6); margin-bottom: var(--space-6); }
+.verdict .lede { font-size: var(--text-base); color: var(--text-secondary); min-width: 0; }
+.verdict .lede strong { color: var(--text-primary); }
+/* The gridlines are drawn by each tile's own shadow and clipped at the container's edge, NOT by a
+   1px gap over a coloured background: at 375px five tiles land in a 2-column grid and the empty
+   sixth slot painted that background as a sixth, empty, grey tile (measured in the render check). */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.kpi { background: var(--surface-1); padding: var(--space-6) var(--space-7); min-width: 0;
+  box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border); }
+.kpi .label { font-size: var(--text-micro); letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+.kpi .value { font-family: var(--font-mono); font-size: 21px; font-weight: 600; margin-top: var(--space-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kpi .value.sm { font-size: var(--text-base); }
+.kpi.flag-critical { box-shadow: inset 3px 0 0 var(--status-critical), 1px 0 0 var(--border), 0 1px 0 var(--border); }
+.kpi.flag-warning { box-shadow: inset 3px 0 0 var(--status-warning), 1px 0 0 var(--border), 0 1px 0 var(--border); }
+/* The tier partition as one cell per namespace — a unit chart, not a proportional bar. At this size
+   a bar would be five slivers whose lengths a reader has to trust; the cells ARE the namespaces, and
+   each one carries its tier's shape. Above UNIT_MAX the counts render alone with a note. */
+.unit { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-6) 0 var(--space-4); }
+/* The shape is an INNER element. A clip-path clips everything the element paints, its outline
+   included, so a ring on the shape itself renders nothing — measured: the cluster-scope marker was
+   invisible until the shape moved inside an unclipped box. */
+.unit .cell { width: 24px; height: 24px; border-radius: var(--radius-sm); display: inline-flex;
+  align-items: center; justify-content: center; }
+.unit .cell .shape { width: 18px; height: 18px; display: block; }
+.unit .cell.risk-critical .shape { background: var(--risk-critical); border-radius: 1px; }
+.unit .cell.risk-high .shape { background: var(--risk-high); clip-path: polygon(50% 4%, 98% 96%, 2% 96%); }
+.unit .cell.risk-medium .shape { background: var(--risk-medium); clip-path: polygon(50% 2%, 98% 50%, 50% 98%, 2% 50%); }
+.unit .cell.risk-low .shape { background: none; border: 2px solid var(--risk-low); border-radius: var(--radius-round); }
+/* The cluster scope is in the rollup as one more entry, so it is one more cell — ringed, because it
+   is a scope rather than a namespace, and the legend says which one it is. */
+.unit .cell.scope { outline: 2px dashed var(--text-secondary); outline-offset: 1px; }
+.unit .scope-note { font-size: var(--text-sm); color: var(--text-secondary); align-self: center; margin-left: var(--space-3); }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-7); font-size: var(--text-sm); color: var(--text-secondary); }
+.legend .n { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); }
+
+/* ── tables ────────────────────────────────────────────────────────────────────────────────── */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+table { width: 100%; border-collapse: collapse; min-width: 0; }
+th {
+  font-size: var(--text-micro); letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted);
+  font-weight: 600; text-align: left; padding: var(--space-4) var(--space-6) var(--space-4) 0;
+  border-bottom: 1px solid var(--gridline); white-space: nowrap; vertical-align: bottom;
+}
+th.num, td.num { text-align: right; }
+td { padding: var(--space-5) var(--space-6) var(--space-5) 0; font-size: var(--text-md); vertical-align: top; border-bottom: 1px solid var(--gridline); overflow-wrap: anywhere; }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+th button.sorter {
+  background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer;
+  text-transform: inherit; letter-spacing: inherit; font-weight: inherit;
+}
+th button.sorter:hover { color: var(--text-primary); }
+th button.sorter .arrow { font-family: var(--font-mono); margin-left: var(--space-2); }
+.risk-row td:first-child { border-left: 4px solid var(--rk, transparent); padding-left: var(--space-5); }
+.risk-row.risk-critical { --rk: var(--risk-critical); }
+.risk-row.risk-high { --rk: var(--risk-high); }
+.risk-row.risk-medium { --rk: var(--risk-medium); }
+.risk-row.risk-low { --rk: var(--risk-low); }
+.risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
+.risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
+.ns-name { font-size: var(--text-base); font-weight: 600; }
+.who { min-width: 0; }
+.who .chips { gap: var(--space-2) var(--space-3); }
+.trunc {
+  font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-5);
+  padding: var(--space-5) var(--space-6); border-left: 3px solid var(--status-warning-edge);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0; overflow-wrap: anywhere;
+}
+.trunc strong { color: var(--text-primary); }
+/* Below 620px a five-column table either scrolls sideways or gets clipped. Each row becomes its own
+   block and every cell carries its column name — measured at 375 and 393, no horizontal scroll. */
+@media (max-width: 620px) {
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; }
+  table.stack thead { display: none; }
+  table.stack tr { border: 1px solid var(--gridline); border-radius: var(--radius-md); margin-bottom: var(--space-5); padding: var(--space-3) var(--space-5); }
+  table.stack td { border-bottom: 0; padding: var(--space-2) 0; text-align: left; }
+  table.stack td::before {
+    content: attr(data-l) ""; display: block; font-size: var(--text-micro); letter-spacing: .05em;
+    text-transform: uppercase; color: var(--text-muted); font-weight: 600;
+  }
+  table.stack td:empty { display: none; }
+  table.stack td.num { font-family: var(--font-mono); }
+  table.stack.compact td { display: inline-block; width: auto; margin-right: var(--space-6); }
+  table.stack.compact td::before { display: inline; margin-right: var(--space-2); }
+  table.stack.compact td[data-l="Namespace"] { display: block; width: 100%; }
+  table.stack.compact tr { padding: var(--space-4) var(--space-5); }
+  .risk-row.risk-critical td, .risk-row.risk-high td { background: none; }
+  table.stack tr.risk-row { border-left: 4px solid var(--rk, var(--border)); }
+  table.stack tr.risk-row td:first-child { border-left: 0; padding-left: 0; }
+}
+
+/* ── disclosures, runbook, the grid of reasons ─────────────────────────────────────────────── */
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-4); }
+.section-head h2, .section-head h3 { margin-bottom: 0; }
+.disclose { font-size: var(--text-sm); }
+.disclose .arrow { font-family: var(--font-mono); margin-right: var(--space-3); }
+.reasons { display: grid; gap: var(--space-7); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.reason { font-size: var(--text-md); color: var(--text-secondary); line-height: 1.6; min-width: 0; }
+.reason h4 { color: var(--text-primary); margin: 0 0 var(--space-3); }
+.runbook { margin: 0; padding-left: var(--space-11); font-size: var(--text-md); line-height: 1.7; color: var(--text-secondary); }
+.runbook li { margin-bottom: var(--space-3); }
+.runbook strong { color: var(--text-primary); }
+.cmd {
+  font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--zebra); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6); margin: var(--space-4) 0 0;
+}
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-bottom: var(--space-5); }
+/* The index's two controls get a row of their own under the heading — search left, fold right, on one
+   line and aligned with each other, in the shell's idiom (the same label, input and disclosure shapes
+   the rest of the page uses). Beside the heading they wrapped onto two lines at every width, measured:
+   the controls box was given 431 px where its content needs 585. Below 620 px they stack full width. */
+.index-controls {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--space-4); min-width: 0; margin: 0 0 var(--space-6);
+}
+.index-controls .find { display: flex; align-items: center; gap: var(--space-4); flex: 1 1 260px; min-width: 0; }
+.index-controls label { font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.index-controls input { width: auto; flex: 1 1 auto; min-width: 120px; max-width: 360px; }
+.index-controls .platform-toggle { flex: 0 0 auto; gap: var(--space-3); }
+.index-controls input[type="checkbox"] { width: auto; flex: 0 0 auto; min-width: 0; margin: 0; cursor: pointer; }
+.index-controls .platform-toggle label { cursor: pointer; }
+.note.counts { color: var(--text-secondary); }
+.note.counts strong { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* The pager: numbers a keyboard can reach, the current one marked, and the row range beside them. */
+.pager {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5);
+  margin-top: var(--space-7); padding-top: var(--space-6); border-top: 1px solid var(--gridline);
+}
+.page-nums { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.page-num { font-family: var(--font-mono); min-width: 34px; text-align: center; }
+.page-num[aria-current="page"] {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700;
+}
+.page-step:disabled { color: var(--text-muted); cursor: default; opacity: 0.6; }
+.page-gap { color: var(--text-muted); padding: 0 var(--space-2); }
+.page-note { font-size: var(--text-sm); color: var(--text-secondary); margin-left: auto; }
+.page-note strong { font-family: var(--font-mono); color: var(--text-primary); }
+@media (max-width: 620px) {
+  .pager { justify-content: space-between; }
+  .page-note { margin-left: 0; width: 100%; }
+}
+@media (forced-colors: active) {
+  .page-num[aria-current="page"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+}
+
+@media (max-width: 620px) {
+  /* The flex BASIS is a height once the direction is column, so `flex: 1 1 260px` on the search
+     group made a 260 px-tall empty box — measured, and invisible to an overflow check because
+     nothing overflowed or was clipped. Both children size to content here. */
+  .index-controls { flex-direction: column; align-items: stretch; }
+  .index-controls .find { flex: 0 0 auto; flex-wrap: wrap; }
+  .index-controls .platform-toggle { flex-direction: row; align-items: center; }
+  .index-controls input { flex: 0 0 auto; width: 100%; max-width: none; }
+  .index-controls #index-toggle { flex: 0 0 auto; width: 100%; text-align: left; }
+}
+.controls label { font-size: var(--text-sm); color: var(--text-secondary); }
+.kv { display: grid; grid-template-columns: minmax(96px, 30%) 1fr; gap: var(--space-3) var(--space-5); padding: var(--space-3) 0; border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); min-width: 0; }
+.kv:last-child { border-bottom: 0; }
+.kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; }
+.kv .v { overflow-wrap: anywhere; min-width: 0; }
+
+/* ── the withheld card, the scope banner, the shape examples ───────────────────────────────── */
+.scope-refusal, .scope-banner {
+  font-size: var(--text-md); color: var(--text-secondary); line-height: 1.6;
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  padding: var(--space-6) var(--space-7); border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  overflow-wrap: anywhere;
+}
+.scope-refusal strong, .scope-banner strong { color: var(--text-primary); }
+.shape-ex { margin-top: var(--space-7); padding: var(--space-5) var(--space-6); border: 1px dashed var(--border); border-radius: var(--radius-md); background: var(--zebra); }
+.shape-ex > .lbl { display: block; font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: var(--space-4); }
+.shape-ex .card { margin-bottom: 0; box-shadow: none; }
+/* Spacing utilities, so a one-off margin is a class rather than an inline style. */
+.mt-5 { margin-top: var(--space-5); }
+.mt-6 { margin-top: var(--space-6); }
+.mt-7 { margin-top: var(--space-7); }
+.sm { font-size: var(--text-sm); }
+
+.prov { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.7; border-top: 1px solid var(--border); padding-top: var(--space-7); margin-top: var(--space-10); overflow-wrap: anywhere; }
+.prov h2 { font-size: var(--text-md); margin: 0 0 var(--space-4); color: var(--text-primary); }
+.prov code { font-size: var(--text-xs); }
+.prov table { margin-top: var(--space-4); }
+.prov td, .prov th { font-size: var(--text-xs); }
+</style>
+</head>
+<body data-page="nsaudit">
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+  <header class="top">
+    <h1>OCP Access Tracking Dashboard</h1>
+    <span class="sub" id="head-cluster"></span>
+    <span class="scope-pill" id="scope-pill"></span>
+    <span class="spacer"></span>
+    <!-- Measured off the deployed pod: v0.30.0 · a90f1b277b. --text-secondary rather than the
+         live --text-muted, because this line sits in the wash's darkest band (see the token note). -->
+    <span class="build" id="build-info"></span>
+    <span class="shell-prefs">
+      <span class="pref"><label for="pref-mode">Appearance</label>
+        <select id="pref-mode">
+          <option value="">Auto</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </span>
+      <span class="pref"><label for="pref-palette">Colours</label>
+        <select id="pref-palette">
+          <option value="">Default</option>
+          <option value="deuter">Deuteranopia-safe</option>
+          <option value="protan">Protanopia-safe</option>
+          <option value="trit">Tritanopia-safe</option>
+          <option value="contrast">High contrast</option>
+        </select>
+      </span>
+    </span>
+    <button id="refresh">Refresh</button>
+    <a class="btn" id="logout" href="#">Sign out</a>
+  </header>
+  <nav class="tabs" aria-label="Dashboard sections" id="tabs"></nav>
+  <div class="filters" id="filters"></div>
+  <main id="main"></main>
+  <footer class="prov" id="prov"></footer>
+</div>
+<script type="application/json" id="lab-json">{"measured":{"at":"2026-09-21T05:06:29Z","app":{"version":"0.30.0","sha":"a90f1b277b","updated":"01:08:14 EDT"},"how":"oc --context=crc-admin -n group-sync-dashboard exec <pod> -c dashboard -- curl -s -H 'X-Forwarded-User: <who>' localhost:8080<path>"},"clusters":{"dashboard-rnd":{"audit":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","note":"direct user grants; migrate these to LDAP-managed groups","by_namespace":[{"namespace":"legacy-payments","bindings":3,"distinct_users":3,"worst_privilege":3,"cluster_scoped":0,"users":["asmith","bwilliams","jdoe"]},{"namespace":"(cluster-scoped)","bindings":3,"distinct_users":3,"worst_privilege":2,"cluster_scoped":1,"users":["dana.lee","jdoe","ocp-oauth-bind-serviceid"]},{"namespace":"legacy-reporting","bindings":2,"distinct_users":2,"worst_privilege":2,"cluster_scoped":0,"users":["jdoe","tmp-contractor-9931"]},{"namespace":"openshift-console-user-settings","bindings":2,"distinct_users":2,"worst_privilege":1,"cluster_scoped":0,"users":["developer","jane.smith"]},{"namespace":"group-sync-operator","bindings":1,"distinct_users":1,"worst_privilege":1,"cluster_scoped":0,"users":["ocp-oauth-bind-serviceid"]}],"excluded_platform":24,"namespace":null,"total":11,"limit":200,"offset":0,"truncated":false,"bindings":[{"binding_kind":"ClusterRoleBinding","binding_namespace":"","binding_name":"cluster-reader","role_kind":"ClusterRole","role_name":"cluster-reader","user_name":"dana.lee","is_platform":0},{"binding_kind":"ClusterRoleBinding","binding_namespace":"","binding_name":"jdoe-edit","role_kind":"ClusterRole","role_name":"edit","user_name":"jdoe","is_platform":0},{"binding_kind":"ClusterRoleBinding","binding_namespace":"","binding_name":"group-sync-dashboard-cluster-poller","role_kind":"ClusterRole","role_name":"group-sync-dashboard-cluster-poller","user_name":"ocp-oauth-bind-serviceid","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"group-sync-operator","binding_name":"group-sync-dashboard-cluster-poller-token-reader","role_kind":"Role","role_name":"group-sync-dashboard-cluster-poller-token-reader","user_name":"ocp-oauth-bind-serviceid","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"asmith-admin","role_kind":"ClusterRole","role_name":"admin","user_name":"asmith","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"bwilliams-admin","role_kind":"ClusterRole","role_name":"admin","user_name":"bwilliams","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"jdoe-admin","role_kind":"ClusterRole","role_name":"admin","user_name":"jdoe","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-reporting","binding_name":"jdoe-edit","role_kind":"ClusterRole","role_name":"edit","user_name":"jdoe","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-reporting","binding_name":"tmp-contractor-9931-edit","role_kind":"ClusterRole","role_name":"edit","user_name":"tmp-contractor-9931","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"openshift-console-user-settings","binding_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding","role_kind":"Role","role_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-role","user_name":"developer","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"openshift-console-user-settings","binding_name":"user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-rolebinding","role_kind":"Role","role_name":"user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-role","user_name":"jane.smith","is_platform":0}]},"namespaces":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","source":{"state":"ok","observed_at":"2026-09-21T05:12:29Z"},"label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"count":106,"cluster_wide_groups":13,"cluster_wide_grants":3,"cluster_wide_path":true,"namespaces":[{"name":"beta-prod","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"beta"},"via_groups":1,"direct_grants":0},{"name":"beta-rnd","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"rnd","company.net/mnemonic":"beta"},"via_groups":2,"direct_grants":0},{"name":"beta-uat","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"uat","company.net/mnemonic":"beta"},"via_groups":2,"direct_grants":0},{"name":"ca-tutorial","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"ca-tutorial-app","created_at":"2026-09-19T15:12:13Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"cert-manager","created_at":"2026-09-19T00:38:10Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"cert-manager-operator","created_at":"2026-09-19T00:38:10Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"default","created_at":"2026-07-29T11:44:37Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"demo-prod","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"demo"},"via_groups":1,"direct_grants":0},{"name":"demo-production","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"demo"},"via_groups":1,"direct_grants":0},{"name":"demo-qa","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"qa","company.net/mnemonic":"demo"},"via_groups":2,"direct_grants":0},{"name":"demo-rnd","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"rnd","company.net/mnemonic":"demo"},"via_groups":2,"direct_grants":0},{"name":"demo-uat","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"uat","company.net/mnemonic":"demo"},"via_groups":2,"direct_grants":0},{"name":"group-sync-dashboard","created_at":"2026-09-19T00:53:15Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"gsd"},"via_groups":0,"direct_grants":0},{"name":"group-sync-operator","created_at":"2026-09-19T00:49:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"gso"},"via_groups":0,"direct_grants":1},{"name":"gsd-preexist","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"gsd"},"via_groups":0,"direct_grants":0},{"name":"hostpath-provisioner","created_at":"2026-07-30T12:37:17Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"jeff-qa","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"qa","company.net/mnemonic":"jeff"},"via_groups":2,"direct_grants":0},{"name":"jeff-rnd","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"rnd","company.net/mnemonic":"jeff"},"via_groups":2,"direct_grants":0},{"name":"klt-fail-bad-env","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"production","company.net/mnemonic":"kltc"},"via_groups":0,"direct_grants":0},{"name":"klt-fail-mnemonic-toolong","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"uat","company.net/mnemonic":"toolongx"},"via_groups":2,"direct_grants":0},{"name":"klt-fail-no-labels","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"klt-fail-only-env","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"prod"},"via_groups":0,"direct_grants":0},{"name":"klt-fail-only-mnemonic","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"kltb"},"via_groups":0,"direct_grants":0},{"name":"klt-pass-both","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"qa","company.net/mnemonic":"klta"},"via_groups":2,"direct_grants":0},{"name":"klt-pass-mnemonic-3char","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"rnd","company.net/mnemonic":"klt"},"via_groups":2,"direct_grants":0},{"name":"kube-node-lease","created_at":"2026-07-29T11:44:37Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"kube-public","created_at":"2026-07-29T11:44:37Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"kube-system","created_at":"2026-07-29T11:44:37Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"kyverno","created_at":"2026-09-19T00:38:32Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"ldap-testing","created_at":"2026-09-19T00:40:56Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"legacy-payments","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":3},{"name":"legacy-reporting","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":2},{"name":"namespace-configuration-operator","created_at":"2026-09-19T00:50:57Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"ocp-klt-excluded-no-labels","created_at":"2026-09-19T00:51:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift","created_at":"2026-07-29T11:52:16Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-apiserver","created_at":"2026-07-29T11:51:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-apiserver-operator","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-authentication","created_at":"2026-07-29T11:51:58Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-authentication-operator","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-cloud-network-config-controller","created_at":"2026-07-29T11:45:41Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-cloud-platform-infra","created_at":"2026-07-29T11:45:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-cluster-machine-approver","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-cluster-samples-operator","created_at":"2026-07-29T11:45:46Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-cluster-storage-operator","created_at":"2026-07-29T11:45:41Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-cluster-version","created_at":"2026-07-29T11:44:38Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-config","created_at":"2026-07-29T11:46:08Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-config-managed","created_at":"2026-07-29T11:46:08Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-config-operator","created_at":"2026-07-29T11:45:41Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-console","created_at":"2026-07-29T11:46:02Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-console-operator","created_at":"2026-07-29T11:46:02Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-console-user-settings","created_at":"2026-07-29T11:46:03Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":2},{"name":"openshift-controller-manager","created_at":"2026-07-29T11:51:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-controller-manager-operator","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-dns","created_at":"2026-07-29T11:52:25Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-dns-operator","created_at":"2026-07-29T11:45:46Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-etcd","created_at":"2026-07-29T11:45:06Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-etcd-operator","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-gitops","created_at":"2026-09-19T01:11:58Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-gitops-operator","created_at":"2026-09-19T01:11:26Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-host-network","created_at":"2026-07-29T11:50:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-image-registry","created_at":"2026-07-29T11:45:46Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-infra","created_at":"2026-07-29T11:44:44Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-ingress","created_at":"2026-07-29T11:52:34Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-ingress-canary","created_at":"2026-07-29T11:54:24Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-ingress-operator","created_at":"2026-07-29T11:45:16Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kni-infra","created_at":"2026-07-29T11:45:49Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-apiserver","created_at":"2026-07-29T11:45:06Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-apiserver-operator","created_at":"2026-07-29T11:45:07Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-controller-manager","created_at":"2026-07-29T11:45:07Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-controller-manager-operator","created_at":"2026-07-29T11:45:07Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-scheduler","created_at":"2026-07-29T11:45:08Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-scheduler-operator","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-storage-version-migrator","created_at":"2026-07-29T11:51:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-kube-storage-version-migrator-operator","created_at":"2026-07-29T11:45:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-machine-api","created_at":"2026-07-29T11:45:44Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-machine-config-operator","created_at":"2026-07-29T11:45:45Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-marketplace","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-monitoring","created_at":"2026-07-29T11:45:57Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-multus","created_at":"2026-07-29T11:50:37Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-network-console","created_at":"2026-07-29T11:54:19Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-network-diagnostics","created_at":"2026-07-29T11:50:55Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-network-node-identity","created_at":"2026-07-29T11:50:59Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-network-operator","created_at":"2026-07-29T11:45:43Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-node","created_at":"2026-07-29T11:52:16Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-nutanix-infra","created_at":"2026-07-29T11:45:53Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-oauth-apiserver","created_at":"2026-07-29T11:51:55Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-openstack-infra","created_at":"2026-07-29T11:45:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-operator-lifecycle-manager","created_at":"2026-07-29T11:45:50Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-operators","created_at":"2026-07-29T11:45:51Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-ovirt-infra","created_at":"2026-07-29T11:45:51Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-ovn-kubernetes","created_at":"2026-07-29T11:50:45Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-route-controller-manager","created_at":"2026-07-29T11:51:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-service-ca","created_at":"2026-07-29T11:51:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-service-ca-operator","created_at":"2026-07-29T11:45:46Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-test-demo","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-user-workload-monitoring","created_at":"2026-07-29T11:45:58Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"openshift-vsphere-infra","created_at":"2026-07-29T11:45:52Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"oud-poc-crossfamily","created_at":"2026-09-19T15:11:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"beta","company.net/oud-group":"app-ocp-rbac-spar-ns-audit"},"via_groups":0,"direct_grants":0},{"name":"oud-poc-platform","created_at":"2026-09-19T15:11:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/oud-group":"app-ocp-rbac-platform-ns-admin"},"via_groups":0,"direct_grants":0},{"name":"oud-poc-spark","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/oud-group":"bda-rbac-spark-alpha-users"},"via_groups":1,"direct_grants":0},{"name":"oud-poc-trino","created_at":"2026-09-19T15:11:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"alpha","company.net/oud-group":"bda-rbac-trino-alpha-users"},"via_groups":1,"direct_grants":0},{"name":"spar-qa","created_at":"2026-09-19T15:11:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"qa","company.net/mnemonic":"spar"},"via_groups":2,"direct_grants":0},{"name":"spar-rnd","created_at":"2026-09-19T15:11:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"rnd","company.net/mnemonic":"spar"},"via_groups":2,"direct_grants":0},{"name":"test-your-email","created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":0,"direct_grants":0},{"name":"trno-uat","created_at":"2026-09-19T15:11:47Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"uat","company.net/mnemonic":"trno"},"via_groups":2,"direct_grants":0}]},"clusterWide":{"groups":[{"group_name":"app-ocp-rbac-alpha-cluster-admin","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-alpha-cluster-admin-crb","role_kind":"ClusterRole","role_name":"admin","managed_source":"baseline-cluster-rbac","member_count":1,"is_platform":0},{"group_name":"app-ocp-rbac-demo-cluster-admin","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-demo-cluster-admin-crb","role_kind":"ClusterRole","role_name":"admin","managed_source":"baseline-cluster-rbac","member_count":1,"is_platform":0},{"group_name":"app-ocp-rbac-newteam-cluster-admin","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-newteam-cluster-admin-crb","role_kind":"ClusterRole","role_name":"admin","managed_source":"baseline-cluster-rbac","member_count":2,"is_platform":0},{"group_name":"app-ocp-rbac-platform-cluster-admin","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-platform-cluster-admin-crb","role_kind":"ClusterRole","role_name":"admin","managed_source":"baseline-cluster-rbac","member_count":2,"is_platform":0},{"group_name":"app-ocp-rbac-test-cluster-admin","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-test-cluster-admin-crb","role_kind":"ClusterRole","role_name":"admin","managed_source":"baseline-cluster-rbac","member_count":1,"is_platform":0},{"group_name":"app-ocp-rbac-alpha-database-admin","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-alpha-database-admin-crb","role_kind":"ClusterRole","role_name":"database-admin","managed_source":"custom-cluster-rbac","member_count":2,"is_platform":0},{"group_name":"app-ocp-rbac-alpha-cluster-developer","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-alpha-cluster-developer-crb","role_kind":"ClusterRole","role_name":"edit","managed_source":"baseline-cluster-rbac","member_count":2,"is_platform":0},{"group_name":"app-ocp-rbac-demo-cluster-developer","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-demo-cluster-developer-crb","role_kind":"ClusterRole","role_name":"edit","managed_source":"baseline-cluster-rbac","member_count":1,"is_platform":0},{"group_name":"app-ocp-rbac-finance-cluster-developer","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-finance-cluster-developer-crb","role_kind":"ClusterRole","role_name":"edit","managed_source":"baseline-cluster-rbac","member_count":2,"is_platform":0},{"group_name":"app-ocp-rbac-platform-cluster-developer","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-platform-cluster-developer-crb","role_kind":"ClusterRole","role_name":"edit","managed_source":"baseline-cluster-rbac","member_count":2,"is_platform":0},{"group_name":"app-ocp-rbac-groupsync-ns-auditor","binding_kind":"ClusterRoleBinding","binding_name":"group-sync-dashboard-ra-b78c05817c9d","role_kind":"ClusterRole","role_name":"group-sync-dashboard-report-auditor","managed_source":null,"member_count":3,"is_platform":0},{"group_name":"app-ocp-rbac-alpha-cluster-audit","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-alpha-cluster-audit-crb","role_kind":"ClusterRole","role_name":"view","managed_source":"baseline-cluster-rbac","member_count":1,"is_platform":0},{"group_name":"app-ocp-rbac-demo-cluster-audit","binding_kind":"ClusterRoleBinding","binding_name":"app-ocp-rbac-demo-cluster-audit-crb","role_kind":"ClusterRole","role_name":"view","managed_source":"baseline-cluster-rbac","member_count":1,"is_platform":0},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"basic-users","role_kind":"ClusterRole","role_name":"basic-user","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:cluster-admins","binding_kind":"ClusterRoleBinding","binding_name":"cluster-admins","role_kind":"ClusterRole","role_name":"cluster-admin","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:masters","binding_kind":"ClusterRoleBinding","binding_name":"cluster-admin","role_kind":"ClusterRole","role_name":"cluster-admin","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:cluster-readers","binding_kind":"ClusterRoleBinding","binding_name":"cluster-readers","role_kind":"ClusterRole","role_name":"cluster-reader","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"cluster-status-binding","role_kind":"ClusterRole","role_name":"cluster-status","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"console-extensions-reader","role_kind":"ClusterRole","role_name":"console-extensions-reader","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"helm-chartrepos-view","role_kind":"ClusterRole","role_name":"helm-chartrepos-viewer","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:multus","binding_kind":"ClusterRoleBinding","binding_name":"multus-group","role_kind":"ClusterRole","role_name":"multus","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:cluster-readers","binding_kind":"ClusterRoleBinding","binding_name":"multus-cluster-readers","role_kind":"ClusterRole","role_name":"multus-ancillary-tools","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:nodes","binding_kind":"ClusterRoleBinding","binding_name":"node-credential-providers-binding","role_kind":"ClusterRole","role_name":"node-credential-providers","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:ovn-nodes","binding_kind":"ClusterRoleBinding","binding_name":"openshift-ovn-kubernetes-node-identity-limited","role_kind":"ClusterRole","role_name":"openshift-ovn-kubernetes-node-limited","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"self-access-reviewers","role_kind":"ClusterRole","role_name":"self-access-reviewer","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated:oauth","binding_kind":"ClusterRoleBinding","binding_name":"self-provisioners","role_kind":"ClusterRole","role_name":"self-provisioner","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:basic-user","role_kind":"ClusterRole","role_name":"system:basic-user","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:build-strategy-docker-binding","role_kind":"ClusterRole","role_name":"system:build-strategy-docker","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:build-strategy-jenkinspipeline-binding","role_kind":"ClusterRole","role_name":"system:build-strategy-jenkinspipeline","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:build-strategy-source-binding","role_kind":"ClusterRole","role_name":"system:build-strategy-source","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:nodes","binding_kind":"ClusterRoleBinding","binding_name":"system-bootstrap-node-renewal","role_kind":"ClusterRole","role_name":"system:certificates.k8s.io:certificatesigningrequests:selfnodeclient","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:discovery","role_kind":"ClusterRole","role_name":"system:discovery","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:masters","binding_kind":"ClusterRoleBinding","binding_name":"system:masters","role_kind":"ClusterRole","role_name":"system:master","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:monitoring","binding_kind":"ClusterRoleBinding","binding_name":"system:monitoring","role_kind":"ClusterRole","role_name":"system:monitoring","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:node-admins","binding_kind":"ClusterRoleBinding","binding_name":"system:node-admin","role_kind":"ClusterRole","role_name":"system:node-admin","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:node-admins","binding_kind":"ClusterRoleBinding","binding_name":"system:node-admins","role_kind":"ClusterRole","role_name":"system:node-admin","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:nodes","binding_kind":"ClusterRoleBinding","binding_name":"system:node-proxiers","role_kind":"ClusterRole","role_name":"system:node-proxier","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:oauth-token-deleters","role_kind":"ClusterRole","role_name":"system:oauth-token-deleter","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:discovery","role_kind":"ClusterRole","role_name":"system:openshift:discovery","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:public-info-viewer","role_kind":"ClusterRole","role_name":"system:openshift:public-info-viewer","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:unauthenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:public-info-viewer","role_kind":"ClusterRole","role_name":"system:openshift:public-info-viewer","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:scc:restricted-v2","role_kind":"ClusterRole","role_name":"system:openshift:scc:restricted-v2","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:scc:restricted-v3","role_kind":"ClusterRole","role_name":"system:openshift:scc:restricted-v3","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated:oauth","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:useroauthaccesstoken-manager","role_kind":"ClusterRole","role_name":"system:openshift:useroauthaccesstoken-manager","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:public-info-viewer","role_kind":"ClusterRole","role_name":"system:public-info-viewer","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:unauthenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:public-info-viewer","role_kind":"ClusterRole","role_name":"system:public-info-viewer","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:scope-impersonation","role_kind":"ClusterRole","role_name":"system:scope-impersonation","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:nodes","binding_kind":"ClusterRoleBinding","binding_name":"system:sdn-readers","role_kind":"ClusterRole","role_name":"system:sdn-reader","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:serviceaccounts","binding_kind":"ClusterRoleBinding","binding_name":"system:service-account-issuer-discovery","role_kind":"ClusterRole","role_name":"system:service-account-issuer-discovery","managed_source":null,"member_count":0,"is_platform":1},{"group_name":"system:authenticated","binding_kind":"ClusterRoleBinding","binding_name":"system:webhooks","role_kind":"ClusterRole","role_name":"system:webhook","managed_source":null,"member_count":0,"is_platform":1}],"grants":[{"user_name":"dana.lee","binding_kind":"ClusterRoleBinding","binding_name":"cluster-reader","role_kind":"ClusterRole","role_name":"cluster-reader","is_platform":0},{"user_name":"jdoe","binding_kind":"ClusterRoleBinding","binding_name":"jdoe-edit","role_kind":"ClusterRole","role_name":"edit","is_platform":0},{"user_name":"ocp-oauth-bind-serviceid","binding_kind":"ClusterRoleBinding","binding_name":"group-sync-dashboard-cluster-poller","role_kind":"ClusterRole","role_name":"group-sync-dashboard-cluster-poller","is_platform":0},{"user_name":"kubeadmin","binding_kind":"ClusterRoleBinding","binding_name":"kubeadmin","role_kind":"ClusterRole","role_name":"cluster-admin","is_platform":1},{"user_name":"system:admin","binding_kind":"ClusterRoleBinding","binding_name":"cluster-admins","role_kind":"ClusterRole","role_name":"cluster-admin","is_platform":1},{"user_name":"system:kube-apiserver","binding_kind":"ClusterRoleBinding","binding_name":"kube-apiserver","role_kind":"ClusterRole","role_name":"kube-apiserver","is_platform":1},{"user_name":"system:serviceaccount:openshift-kube-apiserver:check-endpoints","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:controller:kube-apiserver-check-endpoints-auth-delegator","role_kind":"ClusterRole","role_name":"system:auth-delegator","is_platform":1},{"user_name":"system:kube-controller-manager","binding_kind":"ClusterRoleBinding","binding_name":"system:kube-controller-manager","role_kind":"ClusterRole","role_name":"system:kube-controller-manager","is_platform":1},{"user_name":"system:kube-scheduler","binding_kind":"ClusterRoleBinding","binding_name":"system:kube-scheduler","role_kind":"ClusterRole","role_name":"system:kube-scheduler","is_platform":1},{"user_name":"system:kube-apiserver","binding_kind":"ClusterRoleBinding","binding_name":"system:node-admin","role_kind":"ClusterRole","role_name":"system:node-admin","is_platform":1},{"user_name":"system:master","binding_kind":"ClusterRoleBinding","binding_name":"system:node-admin","role_kind":"ClusterRole","role_name":"system:node-admin","is_platform":1},{"user_name":"system:master","binding_kind":"ClusterRoleBinding","binding_name":"system:node-admins","role_kind":"ClusterRole","role_name":"system:node-admin","is_platform":1},{"user_name":"system:kube-proxy","binding_kind":"ClusterRoleBinding","binding_name":"system:node-proxier","role_kind":"ClusterRole","role_name":"system:node-proxier","is_platform":1},{"user_name":"system:serviceaccount:openshift-kube-apiserver:check-endpoints","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:controller:kube-apiserver-check-endpoints-crd-reader","role_kind":"ClusterRole","role_name":"system:openshift:controller:check-endpoints-crd-reader","is_platform":1},{"user_name":"system:serviceaccount:openshift-kube-apiserver:check-endpoints","binding_kind":"ClusterRoleBinding","binding_name":"system:openshift:controller:kube-apiserver-check-endpoints-node-reader","role_kind":"ClusterRole","role_name":"system:openshift:controller:check-endpoints-node-reader","is_platform":1},{"user_name":"system:kube-scheduler","binding_kind":"ClusterRoleBinding","binding_name":"system:volume-scheduler","role_kind":"ClusterRole","role_name":"system:volume-scheduler","is_platform":1}]},"detail":{"legacy-payments":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"name":"legacy-payments","present":true,"created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":[{"group_name":"system:serviceaccounts:legacy-payments","binding_kind":"RoleBinding","binding_name":"system:image-pullers","role_kind":"ClusterRole","role_name":"system:image-puller","managed_source":null,"member_count":0,"is_platform":1}],"direct_grants":[{"user_name":"asmith","binding_kind":"RoleBinding","binding_name":"asmith-admin","role_kind":"ClusterRole","role_name":"admin","is_platform":0},{"user_name":"bwilliams","binding_kind":"RoleBinding","binding_name":"bwilliams-admin","role_kind":"ClusterRole","role_name":"admin","is_platform":0},{"user_name":"jdoe","binding_kind":"RoleBinding","binding_name":"jdoe-admin","role_kind":"ClusterRole","role_name":"admin","is_platform":0}],"people":11,"siblings":[],"sibling_key":null,"changes":[{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"jdoe-admin","subject_kind":"User","subject_name":"jdoe","role_kind":"ClusterRole","role_name":"admin","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"bwilliams-admin","subject_kind":"User","subject_name":"bwilliams","role_kind":"ClusterRole","role_name":"admin","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"asmith-admin","subject_kind":"User","subject_name":"asmith","role_kind":"ClusterRole","role_name":"admin","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"system:image-pullers","subject_kind":"Group","subject_name":"system:serviceaccounts:legacy-payments","role_kind":"ClusterRole","role_name":"system:image-puller","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"}],"retention":{"window_days":0,"retained_since":"2026-09-21T02:57:29Z"}},"legacy-reporting":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"name":"legacy-reporting","present":true,"created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":[{"group_name":"system:serviceaccounts:legacy-reporting","binding_kind":"RoleBinding","binding_name":"system:image-pullers","role_kind":"ClusterRole","role_name":"system:image-puller","managed_source":null,"member_count":0,"is_platform":1}],"direct_grants":[{"user_name":"jdoe","binding_kind":"RoleBinding","binding_name":"jdoe-edit","role_kind":"ClusterRole","role_name":"edit","is_platform":0},{"user_name":"tmp-contractor-9931","binding_kind":"RoleBinding","binding_name":"tmp-contractor-9931-edit","role_kind":"ClusterRole","role_name":"edit","is_platform":0}],"people":10,"siblings":[],"sibling_key":null,"changes":[{"binding_kind":"RoleBinding","binding_namespace":"legacy-reporting","binding_name":"tmp-contractor-9931-edit","subject_kind":"User","subject_name":"tmp-contractor-9931","role_kind":"ClusterRole","role_name":"edit","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"legacy-reporting","binding_name":"jdoe-edit","subject_kind":"User","subject_name":"jdoe","role_kind":"ClusterRole","role_name":"edit","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"legacy-reporting","binding_name":"system:image-pullers","subject_kind":"Group","subject_name":"system:serviceaccounts:legacy-reporting","role_kind":"ClusterRole","role_name":"system:image-puller","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"}],"retention":{"window_days":0,"retained_since":"2026-09-21T02:57:29Z"}},"openshift-console-user-settings":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"name":"openshift-console-user-settings","present":true,"created_at":"2026-07-29T11:46:03Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{},"via_groups":[{"group_name":"system:serviceaccounts:openshift-console-user-settings","binding_kind":"RoleBinding","binding_name":"system:image-pullers","role_kind":"ClusterRole","role_name":"system:image-puller","managed_source":null,"member_count":0,"is_platform":1}],"direct_grants":[{"user_name":"jane.smith","binding_kind":"RoleBinding","binding_name":"user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-rolebinding","role_kind":"Role","role_name":"user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-role","is_platform":0},{"user_name":"developer","binding_kind":"RoleBinding","binding_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding","role_kind":"Role","role_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-role","is_platform":0},{"user_name":"kubeadmin","binding_kind":"RoleBinding","binding_name":"user-settings-b96e6c40-117f-4e29-b99a-536921df19e6-rolebinding","role_kind":"Role","role_name":"user-settings-b96e6c40-117f-4e29-b99a-536921df19e6-role","is_platform":1}],"people":10,"siblings":[],"sibling_key":null,"changes":[{"binding_kind":"RoleBinding","binding_namespace":"openshift-console-user-settings","binding_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding","subject_kind":"User","subject_name":"developer","role_kind":"Role","role_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-role","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"openshift-console-user-settings","binding_name":"user-settings-b96e6c40-117f-4e29-b99a-536921df19e6-rolebinding","subject_kind":"User","subject_name":"kubeadmin","role_kind":"Role","role_name":"user-settings-b96e6c40-117f-4e29-b99a-536921df19e6-role","is_platform":1,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"openshift-console-user-settings","binding_name":"user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-rolebinding","subject_kind":"User","subject_name":"jane.smith","role_kind":"Role","role_name":"user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-role","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"openshift-console-user-settings","binding_name":"system:image-pullers","subject_kind":"Group","subject_name":"system:serviceaccounts:openshift-console-user-settings","role_kind":"ClusterRole","role_name":"system:image-puller","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"}],"retention":{"window_days":0,"retained_since":"2026-09-21T02:57:29Z"}},"group-sync-operator":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"name":"group-sync-operator","present":true,"created_at":"2026-09-19T00:49:54Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/mnemonic":"gso"},"via_groups":[{"group_name":"system:serviceaccounts:group-sync-operator","binding_kind":"RoleBinding","binding_name":"system:image-pullers","role_kind":"ClusterRole","role_name":"system:image-puller","managed_source":null,"member_count":0,"is_platform":1}],"direct_grants":[{"user_name":"ocp-oauth-bind-serviceid","binding_kind":"RoleBinding","binding_name":"group-sync-dashboard-cluster-poller-token-reader","role_kind":"Role","role_name":"group-sync-dashboard-cluster-poller-token-reader","is_platform":0}],"people":9,"siblings":[],"sibling_key":"company.net/mnemonic","changes":[{"binding_kind":"RoleBinding","binding_namespace":"group-sync-operator","binding_name":"group-sync-dashboard-cluster-poller-token-reader","subject_kind":"User","subject_name":"ocp-oauth-bind-serviceid","role_kind":"Role","role_name":"group-sync-dashboard-cluster-poller-token-reader","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"group-sync-operator","binding_name":"system:image-pullers","subject_kind":"Group","subject_name":"system:serviceaccounts:group-sync-operator","role_kind":"ClusterRole","role_name":"system:image-puller","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"}],"retention":{"window_days":0,"retained_since":"2026-09-21T02:57:29Z"}},"demo-prod":{"cluster":"dashboard-rnd","scope":"all","viewer":"kubeadmin","label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"name":"demo-prod","present":true,"created_at":"2026-09-19T15:12:12Z","phase":"Active","observed_at":"2026-09-21T05:12:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"demo"},"via_groups":[{"group_name":"app-ocp-rbac-demo-ns-audit","binding_kind":"RoleBinding","binding_name":"demo-audit-rb","role_kind":"ClusterRole","role_name":"view","managed_source":"baseline-prod-rbac","member_count":1,"is_platform":0},{"group_name":"system:serviceaccounts:demo-prod","binding_kind":"RoleBinding","binding_name":"system:image-pullers","role_kind":"ClusterRole","role_name":"system:image-puller","managed_source":null,"member_count":0,"is_platform":1}],"direct_grants":[],"people":9,"siblings":["demo-production","demo-qa","demo-rnd","demo-uat"],"sibling_key":"company.net/mnemonic","changes":[{"binding_kind":"RoleBinding","binding_namespace":"demo-prod","binding_name":"system:image-pullers","subject_kind":"Group","subject_name":"system:serviceaccounts:demo-prod","role_kind":"ClusterRole","role_name":"system:image-puller","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"},{"binding_kind":"RoleBinding","binding_namespace":"demo-prod","binding_name":"demo-audit-rb","subject_kind":"Group","subject_name":"app-ocp-rbac-demo-ns-audit","role_kind":"ClusterRole","role_name":"view","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-21T02:57:29Z"}],"retention":{"window_days":0,"retained_since":"2026-09-21T02:57:29Z"}}}},"mock-trusted":{"audit":{"cluster":"mock-trusted","scope":"all","viewer":"kubeadmin","note":"direct user grants; migrate these to LDAP-managed groups","by_namespace":[{"namespace":"acme-app","bindings":1,"distinct_users":1,"worst_privilege":1,"cluster_scoped":0,"users":["lateef.o"]}],"excluded_platform":0,"namespace":null,"total":1,"limit":200,"offset":0,"truncated":false,"bindings":[{"binding_kind":"RoleBinding","binding_namespace":"acme-app","binding_name":"viewer-rb","role_kind":"Role","role_name":"viewer","user_name":"lateef.o","is_platform":0}]},"namespaces":{"cluster":"mock-trusted","scope":"all","viewer":"kubeadmin","source":{"state":"ok","observed_at":"2026-09-21T05:17:29Z"},"label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"count":7,"cluster_wide_groups":4,"cluster_wide_grants":0,"cluster_wide_path":true,"namespaces":[{"name":"acme-app","created_at":"2026-01-02T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"acme"},"via_groups":0,"direct_grants":1},{"name":"beta-rnd","created_at":"2026-01-06T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"rnd","company.net/mnemonic":"beta"},"via_groups":0,"direct_grants":0},{"name":"demo-prod","created_at":"2026-01-04T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"demo"},"via_groups":0,"direct_grants":0},{"name":"demo-qa","created_at":"2026-01-05T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"qa","company.net/mnemonic":"demo"},"via_groups":0,"direct_grants":0},{"name":"group-sync-operator","created_at":"2026-01-01T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"gso"},"via_groups":0,"direct_grants":0},{"name":"gsd-shared","created_at":"2026-01-08T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/mnemonic":"gsd"},"via_groups":0,"direct_grants":0},{"name":"platform-prod","created_at":"2026-01-07T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"klta"},"via_groups":0,"direct_grants":0}]},"clusterWide":{"groups":[{"group_name":"app-ocp-rbac-demo-cluster-admin","binding_kind":"ClusterRoleBinding","binding_name":"cluster-admin-crb","role_kind":"ClusterRole","role_name":"cluster-admin","managed_source":"gitops","member_count":1,"is_platform":0},{"group_name":"cluster-readers","binding_kind":"ClusterRoleBinding","binding_name":"cluster-reader-crb","role_kind":"ClusterRole","role_name":"cluster-reader","managed_source":"gitops","member_count":1,"is_platform":0},{"group_name":"legacy-ops","binding_kind":"ClusterRoleBinding","binding_name":"handmade-reader-crb","role_kind":"ClusterRole","role_name":"cluster-reader","managed_source":null,"member_count":1,"is_platform":0},{"group_name":"app-ocp-rbac-demo-report-auditors","binding_kind":"ClusterRoleBinding","binding_name":"report-auditors-crb","role_kind":"ClusterRole","role_name":"group-sync-dashboard-report-auditor","managed_source":"gitops","member_count":1,"is_platform":0}],"grants":[]},"detail":{"acme-app":{"cluster":"mock-trusted","scope":"all","viewer":"kubeadmin","label_keys":["company.net/mnemonic","company.net/app-environment","company.net/oud-group"],"name":"acme-app","present":true,"created_at":"2026-01-02T00:00:00Z","phase":"Active","observed_at":"2026-09-21T05:17:29Z","labels":{"company.net/app-environment":"prod","company.net/mnemonic":"acme"},"via_groups":[],"direct_grants":[{"user_name":"lateef.o","binding_kind":"RoleBinding","binding_name":"viewer-rb","role_kind":"Role","role_name":"viewer","is_platform":0}],"people":5,"siblings":[],"sibling_key":"company.net/mnemonic","changes":[{"binding_kind":"RoleBinding","binding_namespace":"acme-app","binding_name":"viewer-rb","subject_kind":"User","subject_name":"lateef.o","role_kind":"Role","role_name":"viewer","is_platform":0,"change":"added","baseline":1,"observed_at":"2026-09-20T16:58:42Z"}],"retention":{"window_days":0,"retained_since":"2026-09-20T16:58:42Z"}}}}},"notEmbedded":["mock-privateca","mock-selfsigned","shared-rnd"],"self":{"jdoe":{"cluster":"dashboard-rnd","scope":"self","viewer":"jdoe","note":"direct user grants; migrate these to LDAP-managed groups","by_namespace":null,"excluded_platform":null,"namespace":null,"total":3,"limit":200,"offset":0,"truncated":false,"bindings":[{"binding_kind":"ClusterRoleBinding","binding_namespace":"","binding_name":"jdoe-edit","role_kind":"ClusterRole","role_name":"edit","user_name":"jdoe","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-payments","binding_name":"jdoe-admin","role_kind":"ClusterRole","role_name":"admin","user_name":"jdoe","is_platform":0},{"binding_kind":"RoleBinding","binding_namespace":"legacy-reporting","binding_name":"jdoe-edit","role_kind":"ClusterRole","role_name":"edit","user_name":"jdoe","is_platform":0}]},"alice.cooper":{"cluster":"dashboard-rnd","scope":"self","viewer":"alice.cooper","note":"direct user grants; migrate these to LDAP-managed groups","by_namespace":null,"excluded_platform":null,"namespace":null,"total":0,"limit":200,"offset":0,"truncated":false,"bindings":[]},"jeffNamespaces":{"count":2,"names":["jeff-qa","jeff-rnd"],"cluster_wide_path":false},"noneNamespaces":{"count":0,"cluster_wide_path":false},"detailRefusal":"this namespace is outside your view; namespace detail beyond your own grants needs the wide tier","noIdentity":"this data is scoped to the authenticated viewer, and there is no authenticated identity to scope it to"}}</script>
+<script>
+(function () {
+"use strict";
+/* ─────────────────────────────────────────────────────────────────────────────────────────────
+   Namespace audit — proposed redesign, #153's second reference page.
+
+   Every row, count, name and timestamp below was read from the lab on 2026-09-21 and is embedded
+   verbatim in #lab-json. Nothing is invented: where a shape exists in the code but not in the lab
+   (a truncated grant list, a roster past the preview bound, a cluster with zero findings) it is
+   drawn in a box marked SHAPE and labelled as one.
+
+   The page keeps every sentence the shipped page carries — see docs/design/nsaudit-feature-capture.md
+   for the inventory and docs/design/tab-feature-contract.md for what a redesign may not remove.
+   ───────────────────────────────────────────────────────────────────────────────────────────── */
+const LAB = JSON.parse(document.getElementById("lab-json").textContent);
+const TABS = [
+  ["home", "Home"], ["overview", "Overview"], ["kpi", "KPIs"], ["groups", "Groups"],
+  ["users", "Users"], ["bindings", "Access granted"], ["policy", "RBAC policy"],
+  ["kyverno", "Kyverno"], ["nsaudit", "Namespace audit"], ["logins", "Logins"],
+  ["usage", "Usage"], ["reports", "Reports"], ["library", "Library"], ["clusters", "Cluster Configurations"]
+];
+const CLUSTERS = ["dashboard-rnd", "mock-privateca", "mock-selfsigned", "mock-trusted", "shared-rnd"];
+const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
+const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
+/* The exposed-user list for one namespace, bounded. A namespace with forty direct grants would
+   otherwise put forty names in one cell and the column would decide the width of the whole table —
+   on the view that is supposed to be the scannable one. Small on purpose: the question this table
+   answers is "which namespaces are exposed and how badly"; the names are corroboration, and the
+   full roster is one section down in Every grant. */
+const WHO_PREVIEW = 4;
+/* One cell per namespace up to here; past it the partition renders as counts with a note, because
+   a hundred cells is a texture rather than a count. */
+const UNIT_MAX = 40;
+/* Above this many rows the namespace index starts folded. Measured on the shipped page: the index
+   is 3,619 px of a 5,153 px document — 106 rows under a 5-row worklist — so on this cluster the
+   audit the page is named after begins above the fold and ends 70 % of the way from the bottom.
+   A row is ~34 px at 1280, so 25 rows is about one screen: below that the fold costs a click and
+   buys nothing, above it the fold is the difference between reading the audit and scrolling past
+   the estate. `mock-trusted` has 7 namespaces and opens; `dashboard-rnd` has 106 and folds. */
+const INDEX_FOLD = 25;
+/* A page of the index is the same screenful the fold is measured in, so "folded" and "one page"
+   mean the same amount of list and the reader only has to learn one number. */
+const INDEX_PAGE = 25;
+
+/* Platform namespaces, by the PRODUCT'S OWN rule — `local-development/gsd/home.py`'s
+   `is_platform_namespace`, copied exactly rather than re-derived. The app already classifies
+   namespaces this way for the Home page and calls it in exactly one place, so the index does not
+   use it today; a mock that classified differently would be a divergence somebody implements.
+   Measured on this cluster: 67 of 106 are platform, which is 63 % of the list. */
+const PLATFORM_NAMESPACE_PREFIXES = ["openshift-", "kube-"];
+const PLATFORM_NAMESPACES = new Set(["default", "openshift", "kube-system", "kube-public", "kube-node-lease"]);
+const isPlatformNamespace = (name) =>
+  PLATFORM_NAMESPACES.has(name) || PLATFORM_NAMESPACE_PREFIXES.some((p) => String(name).startsWith(p));
+
+const view = {
+  cluster: "dashboard-rnd", tier: "admin", ns: null,
+  nsSort: "risk", nsDir: "desc", grantSort: "risk", grantDir: "desc",
+  grantsOpen: false, pick: "all", search: "", whoOpen: new Set(), shapeWhoOpen: false,
+  wideOpen: false, countsOpen: false, platformOpen: false,
+  // The namespace index's own controls. `indexOpen: null` means "not decided by the reader",
+  // which is what lets the default follow the size of the estate rather than being a constant.
+  indexSearch: "", indexOpen: null, showPlatform: false, indexPage: 1
+};
+
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const plural = (n, one, many) => (n === 1 ? one : (many || one + "s"));
+const badge = (shape, word) =>
+  `<span class="badge ${shape}"><span class="glyph" aria-hidden="true"></span>${esc(word)}</span>`;
+const lab = () => LAB.clusters[view.cluster] || null;
+
+/* Risk tier for one namespace's worst grant. Ranked on PRIVILEGE and SCOPE, never on count: one
+   forgotten cluster-admin outranks twenty view grants, and a page sorted by volume puts the twenty
+   first and buries the one. Ported unchanged from index.html riskTier(). */
+function riskTier(row) {
+  const p = row.worst_privilege || 1;
+  const clusterWide = !!row.cluster_scoped;
+  if (clusterWide && p >= 3) return { key: "critical", label: "Critical", rank: 4 };
+  if (p >= 4) return { key: "critical", label: "Critical", rank: 4 };
+  if (p >= 3 || clusterWide) return { key: "high", label: "High", rank: 3 };
+  if (p >= 2) return { key: "medium", label: "Medium", rank: 2 };
+  return { key: "low", label: "Low", rank: 1 };
+}
+
+/* Sort a COPY, never the array the renderer was handed: sorting in place would reorder the payload
+   itself, so the risk ranking would be lost after the first click. Numbers compare numerically —
+   "10" < "9" as strings is the classic way a count column sorts wrongly and nobody notices. */
+function sortBy(rows, keyFn, dir) {
+  const sign = dir === "asc" ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const x = keyFn(a), y = keyFn(b);
+    if (x === y) return 0;
+    return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * sign;
+  });
+}
+
+/* A <button> inside the <th>, not a click handler on the <th>: a bare th is not focusable and not
+   announced as actionable. The arrow is text so it survives forced-colors, and aria-sort tells a
+   screen reader which column orders the table and in which direction. */
+function sortableTh(label, key, group, cls) {
+  const active = group === "ns" ? view.nsSort === key : view.grantSort === key;
+  const dir = group === "ns" ? view.nsDir : view.grantDir;
+  const next = active && dir === "desc" ? "asc" : "desc";
+  const aria = active ? (dir === "asc" ? "ascending" : "descending") : "none";
+  const arrow = active ? (dir === "asc" ? "▲" : "▼") : "";
+  return `<th${cls ? ` class="${cls}"` : ""} aria-sort="${aria}">
+    <button type="button" class="sorter" data-sort="${key}" data-group="${group}" data-dir="${next}">
+      ${esc(label)}<span class="arrow" aria-hidden="true">${arrow}</span>
+      <span class="sr-only">${active ? `sorted ${dir === "asc" ? "ascending" : "descending"}; ` : ""}sort ${next === "asc" ? "ascending" : "descending"}</span>
+    </button></th>`;
+}
+
+const matches = (hay, q) => {
+  const words = String(q || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const s = hay.filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => s.indexOf(w) >= 0);
+};
+
+/* ── the shell ─────────────────────────────────────────────────────────────────────────────── */
+function renderShell() {
+  document.getElementById("tabs").innerHTML = TABS.map(([k, name]) =>
+    `<button type="button" class="tab"${k === "nsaudit" ? ' aria-current="page"' : ""}>${esc(name)}</button>`).join("");
+  document.getElementById("head-cluster").textContent = view.cluster;
+  document.getElementById("build-info").textContent =
+    `v${LAB.measured.app.version} · ${LAB.measured.app.sha} · updated ${LAB.measured.app.updated}`;
+  const pill = document.getElementById("scope-pill");
+  /* Three states, as the shipped shell has them. "Full view — restrictions are off for this
+     deployment" is the third and deliberately does not claim the reader holds a permission. */
+  pill.textContent = view.tier === "admin"
+    ? "Full view — you are seeing everything"
+    : "Narrowed view — you are seeing your own access";
+}
+
+function renderFilters() {
+  const d = lab();
+  const ub = d && d.audit;
+  const rows = ub && ub.by_namespace ? ub.by_namespace : [];
+  const served = view.tier === "admin" ? (ub ? (ub.bindings || []).length : 0) : selfRows().length;
+  const exportable = view.tier !== "withheld" && !view.ns;
+  document.getElementById("filters").innerHTML = `
+    <span class="grp"><label for="f-cluster">Cluster</label>
+      <select id="f-cluster">${CLUSTERS.map((c) =>
+        `<option value="${esc(c)}"${c === view.cluster ? " selected" : ""}>${esc(c)}${
+          LAB.clusters[c] ? "" : " — not captured"}</option>`).join("")}</select></span>
+    <span class="grp find"><label for="f-ns-search">Find namespace</label>
+      <input id="f-ns-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
+             placeholder="filter by name or label" value="${esc(view.search)}"
+             aria-describedby="f-ns-search-help"
+             title='Filters the namespace list by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.'>
+      <span id="f-ns-search-help" class="sr-only">Filters the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.</span></span>
+    ${exportable ? `<span class="grp">Export
+      <button type="button" id="export-csv" title="Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.">CSV</button>
+      <button type="button" id="export-json" title="Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.">JSON</button>
+      <span class="muted mono" id="export-rows">${served} ${plural(served, "row")}</span></span>`
+      : `<span class="grp muted">Export — this view holds no table to export${view.ns ? " (a namespace page is a drill-down)" : ""}</span>`}
+    <span class="grp"><label for="f-tier">View as</label>
+      <select id="f-tier">
+        <option value="admin"${view.tier === "admin" ? " selected" : ""}>administrator (scope: all)</option>
+        <option value="self-jdoe"${view.tier === "self-jdoe" ? " selected" : ""}>jdoe — own grants (scope: self)</option>
+        <option value="self-alice"${view.tier === "self-alice" ? " selected" : ""}>alice.cooper — no direct grant</option>
+        <option value="withheld"${view.tier === "withheld" ? " selected" : ""}>a reader the payload is withheld from</option>
+      </select></span>
+    <span class="grp muted">${rows.length ? "" : ""}</span>`;
+}
+
+/* ── the audit, administrator tier ─────────────────────────────────────────────────────────── */
+function nsRows() {
+  const ub = lab().audit;
+  return (ub.by_namespace || []).filter((r) => !r.cluster_scoped).map((r) => ({ ...r, risk: riskTier(r) }));
+}
+function wideRow() {
+  const ub = lab().audit;
+  return (ub.by_namespace || []).find((r) => r.cluster_scoped) || null;
+}
+
+function verdictCard() {
+  const ub = lab().audit;
+  const rows = (ub.by_namespace || []).map((r) => ({ ...r, risk: riskTier(r) }));
+  if (!rows.length) return zeroCard();
+  /* Cluster-wide, never bindings.length: the detail list below is paged and may be filtered to one
+     namespace, and a headline taken from it reports the page rather than the cluster — it would
+     shrink when the reader narrows the filter, which reads as the problem getting smaller because
+     they looked at it closely. */
+  const totalAllNamespaces = rows.reduce((n, r) => n + (r.bindings || 0), 0);
+  const nsOnly = rows.filter((r) => !r.cluster_scoped).length;
+  /* Distinct PEOPLE, unioned from the rollup. Counting `bindings` is right only while nothing is
+     paged; summing `distinct_users` double-counts anyone with grants in more than one namespace —
+     on this cluster jdoe holds grants in three, so the sum says 11 where the truth is 8. */
+  const people = new Set(rows.flatMap((r) => r.users || [])).size;
+  const tiers = ["critical", "high", "medium", "low"];
+  const byTier = {}; tiers.forEach((t) => { byTier[t] = rows.filter((r) => r.risk.key === t); });
+  const worst = sortBy(rows, (r) => r.risk.rank, "desc")[0].risk;
+  const unit = rows.length <= UNIT_MAX
+    ? `<div class="unit" role="img" aria-label="${tiers.map((t) => `${byTier[t].length} ${t}`).join(", ")}">${
+        tiers.flatMap((t) => byTier[t].map((r) =>
+          `<span class="cell risk-${t}${r.cluster_scoped ? " scope" : ""}" title="${
+            r.cluster_scoped ? "the cluster scope" : esc(r.namespace)} — ${t}"><span class="shape" aria-hidden="true"></span></span>`)).join("")
+        + (wideRow() ? `<span class="scope-note">the ringed one is the cluster scope, not a namespace</span>` : "")}</div>`
+    : `<p class="note">${rows.length} namespaces is past the ${UNIT_MAX} this partition draws one cell each for; the counts below are the whole set.</p>`;
+  return `<section class="card">
+    <h2>Namespace audit</h2>
+    <div class="verdict">
+      ${badge("risk-" + worst.key + " lg", worst.label + " exposure")}
+      <span class="lede">highest risk on this cluster — <strong>${totalAllNamespaces}</strong>
+        ${plural(totalAllNamespaces, "role is", "roles are")} granted to a named person rather than to a
+        group, across <strong>${nsOnly}</strong> ${plural(nsOnly, "namespace")}${
+        wideRow() ? " and the cluster scope" : ""}, reaching <strong>${people}</strong>
+        ${plural(people, "person", "people")}.</span>
+    </div>
+    ${unit}
+    <div class="legend">${tiers.map((t) => `<span>${badge("risk-" + t, t[0].toUpperCase() + t.slice(1))}
+      <span class="n">${byTier[t].length}</span> ${plural(byTier[t].length, "namespace")}</span>`).join("")}</div>
+    <div class="kpis mt-7">
+      <div class="kpi${byTier.critical.length ? " flag-critical" : ""}"><div class="label">Namespaces at risk</div>
+        <div class="value">${rows.length}</div></div>
+      <div class="kpi"><div class="label">People exposed</div><div class="value">${people}</div></div>
+      <div class="kpi"><div class="label">Grants to migrate</div><div class="value">${totalAllNamespaces}</div></div>
+      <div class="kpi${byTier.critical.length ? " flag-critical" : ""}"><div class="label">Critical</div>
+        <div class="value${byTier.critical.length ? " err" : " muted"}">${byTier.critical.length}</div></div>
+      <div class="kpi${byTier.high.length ? " flag-warning" : ""}"><div class="label">High</div>
+        <div class="value${byTier.high.length ? "" : " muted"}">${byTier.high.length}</div></div>
+    </div>
+    <div class="section-head mt-6">
+      <span class="muted sm">Where these five numbers come from</span>
+      <button type="button" class="linkish disclose" data-toggle="countsOpen"
+              aria-expanded="${view.countsOpen}" aria-controls="counts-note">
+        <span class="arrow" aria-hidden="true">${view.countsOpen ? "▾" : "▸"}</span> ${view.countsOpen ? "Hide" : "Show"} how they are counted</button>
+    </div>
+    <div id="counts-note"${view.countsOpen ? "" : " hidden"}>
+      <p class="note"><strong>Namespaces at risk</strong>, <strong>Critical</strong> and <strong>High</strong>
+        count namespaces; <strong>Grants to migrate</strong> counts bindings; <strong>People exposed</strong>
+        counts distinct people. All five are computed from the per-namespace rollup, which the server
+        never pages and never filters — not from the grant list below, which is both.</p>
+      <p class="note"><strong>${rows.length}</strong> and not ${nsOnly}: the rollup carries the cluster
+        scope as one more entry, so the tile counts ${nsOnly} ${plural(nsOnly, "namespace")}
+        <em>plus</em> the cluster scope, which has its own card above the table. Both numbers are the
+        shipped ones; the shipped table simply ranks the cluster scope as a row among the namespaces.</p>
+      <p class="note"><strong>People exposed</strong> is the <em>union</em> of the rollup's name lists, not the
+        sum of its <code>distinct_users</code>: jdoe holds grants in three namespaces here, so the sum
+        says 11 where the truth is 8.</p>
+      <p class="note">The platform identities are not in any of them: <strong>${ub.excluded_platform}</strong>
+        ${plural(ub.excluded_platform, "identity", "identities")} — system components and
+        <code>kubeadmin</code> — are break-glass and cluster-internal, with nowhere to migrate to.</p>
+    </div>
+  </section>`;
+}
+
+function zeroCard() {
+  return `<section class="card">
+    <h2>Namespace audit</h2>
+    <div class="verdict">${badge("ok lg", "Clean")}
+      <span class="lede"><strong>0</strong> namespaces grant access to a person.</span></div>
+    <p class="note">Every role on this cluster is granted to a group. That is what makes offboarding a
+      single action: removing someone from an LDAP group revokes their access everywhere at once.</p>
+  </section>`;
+}
+
+/* The cluster scope is not a namespace. The shipped table ranks it as a row called CLUSTER-WIDE
+   between the namespaces; here it is its own card, above them, because it is the only finding whose
+   blast radius is every row of the list below — and because a reader scanning a namespace column
+   should not have to notice that one of the entries is not one. */
+function clusterWideCard() {
+  const d = lab(), ub = d.audit, w = wideRow();
+  const grants = (ub.bindings || []).filter((b) => !b.binding_namespace);
+  const nsCount = d.namespaces.count;
+  if (!w) {
+    return `<section class="card"><h3>Cluster-wide direct grants <span class="count">· 0</span></h3>
+      <p class="note">No binding names a person at the cluster scope. Every finding below is confined to
+        one namespace, which is the smaller problem.</p></section>`;
+  }
+  return `<section class="card">
+    <h3>Cluster-wide direct grants <span class="count">· ${w.bindings} reaching all ${nsCount} namespaces</span></h3>
+    <p class="note">These name a person at the <strong>cluster</strong> scope, so they grant every namespace
+      on this cluster — including the ${nsCount - 1} below that have no finding of their own. The shipped
+      page ranks this as a row called <code>CLUSTER-WIDE</code> inside the namespace table; it is a scope,
+      not a namespace, and its consequence is the whole list.</p>
+    <div class="scroll-x"><table class="stack">
+      <thead><tr><th>Person</th><th>Grants</th><th>Binding</th><th>Risk</th></tr></thead>
+      <tbody>${grants.map((b) => {
+        const t = riskTier({ worst_privilege: PRIVILEGE_RANK[b.role_name] || 1, cluster_scoped: 1 });
+        return `<tr class="risk-row risk-${t.key}">
+          <td data-l="Person"><span class="mono">${esc(b.user_name)}</span></td>
+          <td data-l="Grants"><span class="chip priv">${esc(b.role_name)}</span> <span class="muted">${esc(b.role_kind)}</span></td>
+          <td data-l="Binding"><span class="mono muted">${esc(b.binding_kind)} ${esc(b.binding_name)}</span></td>
+          <td data-l="Risk">${badge("risk-" + t.key, t.label)}</td></tr>`;
+      }).join("")}</tbody></table></div>
+    <p class="note mt-6">Ranked <strong>High</strong> rather than Critical because
+      the worst privilege here is <code>${esc(PRIVILEGE_NAME[w.worst_privilege])}</code>: a cluster-wide
+      <code>admin</code> or <code>cluster-admin</code> is the Critical case.</p>
+  </section>`;
+}
+
+function worklistCard() {
+  /* Not filtered by the bar's box. That box is the shell's, inherited, and on the shipped page it
+     reaches the namespace list and nothing else — measured: typing `legacy` left this table at its
+     full row count and every KPI unchanged. The finding is recorded in the capture; the fix is a
+     search of its own beside the list it searches, not a change to a control this page borrows. */
+  const all = nsRows();
+  const rows = all;
+  const NS_SORT = {
+    risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
+    namespace: (r) => r.namespace,
+    priv: (r) => r.worst_privilege || 0,
+    people: (r) => r.distinct_users || 0,
+    grants: (r) => r.bindings || 0
+  };
+  const sorted = sortBy(rows, NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
+  const dflt = view.nsSort === "risk" && view.nsDir === "desc";
+  return `<section class="card">
+    <div class="section-head">
+      <h2>Exposure by namespace <span class="count">· ${all.length}</span></h2>
+      ${dflt ? "" : `<button type="button" class="linkish" id="ns-reset">Restore risk order</button>`}
+    </div>
+    <p class="note">Ranked by the <strong>worst privilege granted</strong>, not by count — one forgotten
+      <code>cluster-admin</code> matters more than twenty <code>view</code> grants. A page sorted by volume
+      puts the twenty first and buries the one.</p>
+    ${sorted.length ? `<div class="scroll-x"><table class="stack">
+      <thead><tr>
+        ${sortableTh("Risk", "risk", "ns")}
+        ${sortableTh("Namespace", "namespace", "ns")}
+        ${sortableTh("Highest privilege", "priv", "ns")}
+        ${sortableTh("People", "people", "ns", "num")}
+        ${sortableTh("Grants", "grants", "ns", "num")}
+        <th>Who is exposed</th>
+      </tr></thead>
+      <tbody>${sorted.map((r) => `<tr class="risk-row risk-${r.risk.key}">
+        <td data-l="Risk">${badge("risk-" + r.risk.key, r.risk.label)}</td>
+        <td data-l="Namespace"><button type="button" class="drill ns-name" data-ns="${esc(r.namespace)}">${esc(r.namespace)}</button></td>
+        <td data-l="Highest privilege"><span class="chip priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</span></td>
+        <td data-l="People" class="num">${r.distinct_users}</td>
+        <td data-l="Grants" class="num">${r.bindings}</td>
+        <td data-l="Who is exposed" class="who">${whoCell(r)}</td>
+      </tr>`).join("")}</tbody></table></div>`
+      : `<p class="empty-note">No namespace holds a direct grant on this cluster. Every finding here is at
+          the cluster scope, in the card above — which reaches all ${lab().namespaces.count} of them.</p>`}
+    <p class="note mt-6">A namespace here is a <strong>link</strong>: it opens the
+      namespace, where the group paths and the history are. On the shipped page this column is plain text, so
+      the worklist is a dead end — the only way through is the list of ${lab().namespaces.count} namespaces
+      further down, or the search box in the bar. That box does not reach this table, here or on the shipped
+      page: it is the shell's, and this table is not its subject.</p>
+    <p class="note">Cluster-wide grants are in their own card above, not in this table.
+      ${lab().audit.excluded_platform} platform ${plural(lab().audit.excluded_platform, "identity", "identities")}
+      excluded — system components and <code>kubeadmin</code> are break-glass and cluster-internal, with
+      nowhere to migrate to.</p>
+  </section>`;
+}
+
+function whoCell(row, forceOpen) {
+  const users = row.users || [];
+  if (!users.length) return '<span class="muted">—</span>';
+  const open = forceOpen === undefined ? view.whoOpen.has(row.namespace) : forceOpen;
+  const shown = open ? users : users.slice(0, WHO_PREVIEW);
+  const hidden = users.length - shown.length;
+  const names = `<span class="chips">${shown.map((u) => `<span class="chip person">${esc(u)}</span>`).join("")}</span>`;
+  if (!hidden && !open) return names;
+  return names + `<button type="button" class="linkish" data-who="${esc(row.namespace)}">${
+    open ? "show fewer" : `+${hidden} more`}</button>`;
+}
+
+function reasonsCard() {
+  return `<section class="card">
+    <h3>Why this is a risk</h3>
+    <div class="reasons">
+      <div class="reason"><h4>Offboarding does not revoke it</h4>
+        Removing someone from an LDAP group revokes their access everywhere at once. A binding that names
+        the <strong>person</strong> keeps granting after they leave the team, change role, or leave the
+        company — until somebody remembers it exists.</div>
+      <div class="reason"><h4>Invisible to access review</h4>
+        Every group-based review — including the rest of this dashboard — answers “who is in the group?”.
+        These grants are attached to no group, so a clean review can coexist with standing access nobody
+        approved.</div>
+      <div class="reason"><h4>No approval trail</h4>
+        Group membership is granted in the enterprise directory, with a request and an approver. A hand-made
+        binding records only who ran <code>oc</code>, and only for as long as the audit log is retained.</div>
+    </div>
+  </section>`;
+}
+
+function runbookCard() {
+  const rows = sortBy(nsRows(), (r) => r.risk.rank, "desc");
+  const top = rows[0];
+  const ub = lab().audit;
+  const firstBinding = top
+    ? (ub.bindings || []).find((b) => b.binding_namespace === top.namespace)
+    : null;
+  return `<section class="card">
+    <h3>How to close it</h3>
+    <p class="note">Work top-down: the table above is already in the order to do it in.</p>
+    <ol class="runbook">
+      <li><strong>Identify the role.</strong> Match the grant to the LDAP group the operator already syncs
+        for that privilege — the naming convention encodes it (<code>&lt;app&gt;-ns-admin</code>,
+        <code>-ns-developer</code>, <code>-ns-audit</code>).</li>
+      <li><strong>Add the person to that group</strong> in the enterprise directory, through the normal
+        request-and-approve path. Access now has an owner and an audit trail.</li>
+      <li><strong>Wait one sync</strong> and confirm on the Groups tab that they appear as a member. Do not
+        skip this — deleting first leaves them locked out.</li>
+      <li><strong>Delete the direct binding.</strong>${firstBinding
+        ? `<div class="cmd">oc delete rolebinding ${esc(firstBinding.binding_name)} -n ${esc(firstBinding.binding_namespace)}</div>`
+        : `<code>oc delete rolebinding &lt;name&gt; -n &lt;namespace&gt;</code>`}</li>
+      <li><strong>Confirm it is gone</strong> here on the next refresh.</li>
+    </ol>
+    ${firstBinding ? `<p class="note mt-5">The command is filled in from the
+      worst row of the table above (<code>${esc(firstBinding.binding_name)}</code> in
+      <code>${esc(firstBinding.binding_namespace)}</code>), so it can be copied rather than assembled.</p>` : ""}
+    <p class="note"><strong>Operational goal:</strong> zero rows on this page. At zero, one directory change
+      offboards a person from the entire cluster, and an access review that reads clean <em>is</em> clean.</p>
+  </section>`;
+}
+
+const GRANT_SORT = {
+  person: (b) => b.user_name,
+  /* Sort the ROLE by privilege, not alphabetically: "admin" < "edit" < "view" as text puts the
+     dangerous grants in the middle, which is the opposite of useful. */
+  risk: (b) => (PRIVILEGE_RANK[b.role_name] || 0) * 10 + (b.binding_namespace ? 0 : 1),
+  scope: (b) => b.binding_namespace || "",
+  binding: (b) => b.binding_name
+};
+
+function everyGrantCard() {
+  const ub = lab().audit;
+  const all = ub.bindings || [];
+  const bindings = view.pick === "all" ? all
+    : all.filter((b) => (b.binding_namespace || "(cluster-scoped)") === view.pick);
+  const total = ub.total != null ? ub.total : all.length;
+  const rows = sortBy(bindings, GRANT_SORT[view.grantSort] || GRANT_SORT.risk, view.grantDir);
+  const nsOptions = (ub.by_namespace || []);
+  return `<section class="card">
+    <div class="section-head">
+      <h3>Every grant</h3>
+      <button type="button" class="disclose linkish" data-toggle="grantsOpen"
+              aria-expanded="${view.grantsOpen}" aria-controls="every-grant">
+        <span class="arrow" aria-hidden="true">${view.grantsOpen ? "▾" : "▸"}</span> ${
+        view.grantsOpen ? "Hide" : "Show"} ${total} ${plural(total, "grant")}</button>
+    </div>
+    <p class="note">The per-namespace table above is the view to work from. This is the flat detail list —
+      collapsed by default on purpose, because on a cluster with thousands of direct grants rendering every
+      row costs time nobody gets value from.</p>
+    <div class="controls">
+      <label for="ns-pick">Namespace</label>
+      <select id="ns-pick">
+        <option value="all"${view.pick === "all" ? " selected" : ""}>All namespaces (${nsOptions.length})</option>
+        ${nsOptions.map((r) => `<option value="${esc(r.namespace)}"${r.namespace === view.pick ? " selected" : ""}>${
+          r.namespace === "(cluster-scoped)" ? "cluster-wide" : esc(r.namespace)} — ${r.bindings} ${
+          plural(r.bindings, "grant")}</option>`).join("")}
+      </select>
+      ${view.pick === "all" ? "" : `<button type="button" class="linkish" id="ns-pick-clear">Clear filter</button>`}
+    </div>
+    <div id="every-grant"${view.grantsOpen ? "" : " hidden"}>
+      ${rows.length ? `<div class="scroll-x"><table class="stack">
+        <thead><tr>
+          ${sortableTh("Person", "person", "grant")}
+          ${sortableTh("Grants", "risk", "grant")}
+          ${sortableTh("Scope", "scope", "grant")}
+          ${sortableTh("Binding", "binding", "grant")}
+        </tr></thead>
+        <tbody>${rows.map((b) => {
+          const crit = ["cluster-admin", "admin"].includes(b.role_name) || !b.binding_namespace;
+          return `<tr${crit ? ' class="risk-row risk-high"' : ""}>
+            <td data-l="Person"><span class="mono">${esc(b.user_name)}</span></td>
+            <td data-l="Grants"><span class="chip priv">${esc(b.role_name)}</span> <span class="muted">${esc(b.role_kind)}</span></td>
+            <td data-l="Scope">${b.binding_namespace
+              ? `<button type="button" class="drill" data-ns="${esc(b.binding_namespace)}">${esc(b.binding_namespace)}</button>`
+              : `<strong class="err">cluster-wide</strong>`}</td>
+            <td data-l="Binding"><span class="mono muted">${esc(b.binding_name)}</span></td></tr>`;
+        }).join("")}</tbody></table></div>`
+        : `<p class="empty-note">No direct grants${view.pick === "all" ? "" : ` in ${esc(view.pick)}`}.</p>`}
+      ${view.pick === "all" ? "" : `<p class="note mt-5">Filtered to
+        <code>${esc(view.pick)}</code>. On the shipped page this is a <em>server-side</em> filter — choosing a
+        namespace refetches, and <code>total</code> then describes that namespace rather than the cluster.
+        The five numbers at the top of the page do not move, and that is deliberate.</p>`}
+      ${ub.truncated ? "" : `<div class="shape-ex"><span class="lbl">Shape — not this cluster</span>
+        <div class="trunc">Showing the <strong>200</strong> highest-privilege of <strong>2,280</strong> grants.
+          The rest are not hidden findings — they are ranked below these. Narrow with the namespace selector to
+          see them.</div>
+        <p class="note mt-5">The server returns at most 200, worst-first, and
+          reports <code>total</code> before the limit, so a truncated page is the top of the list rather than a
+          slice of the middle. This cluster serves ${total} of ${total}, so the note does not render — it is
+          drawn here because a reader who never sees it cannot know the list is bounded.</p></div>`}
+    </div>
+  </section>`;
+}
+
+/* ── the namespace list: the audit's other half, and a different question ──────────────────── */
+function inventoryCard() {
+  const d = lab(), n = d.namespaces;
+  const keys = n.label_keys || [];
+  const all = n.namespaces || [];
+  const platformCount = all.filter((x) => isPlatformNamespace(x.name)).length;
+  // Order of narrowing, and every step keeps its denominator: the cluster's list, then the platform
+  // filter, then the two searches, then the page.
+  const listed = view.showPlatform ? all : all.filter((x) => !isPlatformNamespace(x.name));
+  const fields = (x) => [x.name, ...keys.map((k) => (x.labels || {})[k])];
+  const barQ = (view.search || "").trim(), ownQ = (view.indexSearch || "").trim();
+  const searching = !!(barQ || ownQ);
+  const shown = listed.filter((x) => matches(fields(x), view.search) && matches(fields(x), view.indexSearch));
+  const src = n.source || {};
+  /* THIS section's box reveals the section: filtering something the reader cannot see would make the
+     box look broken, and the "nothing matches" sentence is itself the answer to the query — it has to
+     be on screen to be read. The BAR's box does not, because it is the shell's and this page does not
+     get to change what it does; while the section is folded its control carries the matched count
+     instead, so a bar query is never silently swallowed. */
+  /* The default is decided by what the section HOLDS (after the platform filter), never by what a
+     search has narrowed it to: keying it on the filtered count let the bar's box open the section by
+     a side door, which is exactly the behaviour this page does not get to give an inherited control. */
+  const open = ownQ ? true : (view.indexOpen === null ? listed.length <= INDEX_FOLD : view.indexOpen);
+  // Pages are over the FILTERED set, so page 1 always exists; the clamp is belt and braces for a
+  // state the reset below should already have prevented.
+  const pages = Math.max(1, Math.ceil(shown.length / INDEX_PAGE));
+  const wanted = Number.isFinite(view.indexPage) ? Math.trunc(view.indexPage) : 1;
+  const page = Math.min(Math.max(1, wanted), pages);
+  const from = (page - 1) * INDEX_PAGE, to = Math.min(from + INDEX_PAGE, shown.length);
+  const rows = shown.slice(from, to);
+  const foldLabel = shown.length === all.length
+    ? `${all.length} ${plural(all.length, "namespace")}`
+    : `${shown.length} of ${all.length} namespaces`;
+  const queryWords = [barQ && `<strong>${esc(barQ)}</strong> (the bar)`, ownQ && `<strong>${esc(ownQ)}</strong> (this list)`]
+    .filter(Boolean).join(" and ");
+  // One line, every number beside the number it came out of. "39" alone says nothing; "39 of 106"
+  // says what the filter did.
+  const chain = [`<strong>${all.length}</strong> on this cluster`];
+  if (!view.showPlatform && platformCount) chain.push(`<strong>${platformCount}</strong> platform hidden`);
+  if (searching) chain.push(`<strong>${shown.length}</strong> of <strong>${listed.length}</strong> match the search`);
+  else if (!view.showPlatform && platformCount) chain.push(`<strong>${listed.length}</strong> listed`);
+  if (open && shown.length) chain.push(pages > 1
+    ? `showing <strong>${from + 1}–${to}</strong> on page <strong>${page}</strong> of <strong>${pages}</strong>`
+    : `showing all <strong>${shown.length}</strong>`);
+  return `<section class="card" id="ns-index">
+    <h2>Namespaces <span class="count">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length}`}</span></h2>
+    <div class="index-controls">
+      <span class="find">
+        <label for="f-index-search">Search this list</label>
+        <input id="f-index-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
+               placeholder="name or label, any words" value="${esc(view.indexSearch)}"
+               aria-describedby="f-index-search-help"
+               title='Searches the namespaces below as you type, over the name and every captured label. Several words are ANDed — every word must appear. Escape clears. Separate from the bar&apos;s Find namespace: neither box clears the other, and both survive the repaint.'>
+        <span id="f-index-search-help" class="sr-only">Searches the namespaces in this section by name or by the value of any captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear. This is separate from the Find namespace box in the filter bar; both apply.</span>
+      </span>
+      ${platformCount ? `<span class="find platform-toggle">
+        <input type="checkbox" id="f-show-platform"${view.showPlatform ? " checked" : ""}>
+        <label for="f-show-platform">Show ${platformCount} platform ${plural(platformCount, "namespace")}</label>
+      </span>` : ""}
+      <button type="button" id="index-toggle" class="disclose" aria-expanded="${open}" aria-controls="ns-index-body">
+        <span class="arrow" aria-hidden="true">${open ? "▾" : "▸"}</span> ${open ? "Hide" : "Show"} ${foldLabel}</button>
+    </div>
+    <p class="note counts">${chain.join(" · ")}.</p>
+    <p class="note">Every namespace the poller sees, not only those with a grant. Click a row — a namespace is
+      an entity here, the third drill-down beside groups and users.</p>
+    ${platformCount ? `<p class="note"><strong>${platformCount} of ${all.length}</strong> namespaces on this cluster
+      are the platform's own — ${Math.round((platformCount / all.length) * 100)} % of the list — so they are hidden
+      here by default and counted rather than dropped, the same way this page already excludes platform
+      <em>grants</em> and says so. Platform means <code>openshift-</code>, <code>kube-</code> and the five the
+      cluster fixes (<code>default</code>, <code>openshift</code>, <code>kube-system</code>,
+      <code>kube-public</code>, <code>kube-node-lease</code>): the product's own rule, from
+      <code>local-development/gsd/home.py</code>, not a second definition. That rule is prefix-based, so an
+      estate's own operators are not covered by it — <code>cert-manager</code>, <code>kyverno</code>,
+      <code>namespace-configuration-operator</code> and <code>hostpath-provisioner</code> are all still listed
+      here as workloads. That is the shipped definition behaving as written, not this control failing.</p>
+    <p class="note"><strong>This hides rows, never findings.</strong> The worklist above is not filtered by it:
+      ${(() => { const p = nsRows().filter((r) => isPlatformNamespace(r.namespace));
+        return p.length ? `<code>${p.map((r) => esc(r.namespace)).join("</code>, <code>")}</code>
+          ${plural(p.length, "is", "are")} a platform namespace with a direct grant, so ${p.length === 1 ? "it is" : "they are"}
+          ranked in the audit above and hidden from this list at the same time — which is why every count here
+          names what it counted.` : `no namespace with a direct grant on this cluster is a platform one, so the
+          two lists happen to agree today.`; })()}</p>` : ""}
+    <p class="note">Two boxes search this list and they combine — a namespace shows when it matches both.
+      <strong>Find namespace</strong> in the bar is the shell's, inherited by every page and unchanged here;
+      <strong>Search this list</strong> is this section's, and is the one the fold answers to. Both are free
+      form over the same fields — the namespace's <strong>name</strong> and <strong>every captured label</strong>
+      (${keys.map((k) => `<code>${esc(k.split("/").pop())}</code>`).join(", ")}) — and both keep the page's
+      multi-word contract: several words are ANDed, so every word must appear. Neither box clears the other.</p>
+    ${src.state === "forbidden" ? `<div class="trunc">The namespace read was refused, so this list cannot attest
+      absence — a namespace missing here may exist. Grant namespaces [get,list] (chart:
+      <code>rbac.namespaces</code>).</div>` : ""}
+    <p class="note">${n.cluster_wide_groups} ${plural(n.cluster_wide_groups, "group")} bound cluster-wide and
+      ${n.cluster_wide_grants} cluster-wide direct ${plural(n.cluster_wide_grants, "grant")} reach every namespace
+      below; the columns count what is bound <em>in</em> each one. A namespace with zero in both is a result an
+      access review wants to confirm.</p>
+    ${open ? "" : `<p class="note muted">${shown.length} ${plural(shown.length, "namespace")} folded away${
+      barQ ? `, matching <strong>${esc(barQ)}</strong> in the bar` : ""} — still
+      ${Math.round((shown.length / Math.max(nsRows().length, 1)) * 10) / 10}× the length of the worklist above,
+      and the audit is what the page is named after. Everything above this line stays put when it is folded.</p>`}
+    <div id="ns-index-body"${open ? "" : " hidden"}>
+    ${rows.length ? `<div class="scroll-x"><table class="stack compact">
+      <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(k.split("/").pop())}</th>`).join("")}
+        <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
+      <tbody>${rows.map((x) => `<tr>
+        <td data-l="Namespace"><button type="button" class="drill" data-ns="${esc(x.name)}">${esc(x.name)}</button>${
+          isPlatformNamespace(x.name) ? " " + badge("unknown", "platform") : ""}</td>
+        ${keys.map((k) => `<td data-l="${esc(k.split("/").pop())}" class="mono muted">${esc((x.labels || {})[k] || "—")}</td>`).join("")}
+        <td data-l="Via groups" class="num${x.via_groups ? "" : " muted"}">${x.via_groups}</td>
+        <td data-l="Direct grants" class="num${x.direct_grants ? " err" : " muted"}">${x.direct_grants}</td></tr>`).join("")}</tbody>
+    </table></div>
+    ${pages > 1 ? pager(page, pages, from, to, shown.length) : `<p class="note mt-5">All
+      ${shown.length} fit on one page.</p>`}`
+      // Two different empty states, never one: a search that hides everything is a fact about the
+      // query and quotes the denominator; an empty list is a fact about the cluster.
+      : !all.length
+        ? `<p class="empty-note">No namespaces recorded for this cluster yet.</p>`
+        : !listed.length
+          ? `<p class="empty-note">Every namespace on this cluster is a platform one. Tick
+              <strong>Show ${platformCount} platform ${plural(platformCount, "namespace")}</strong> to list them.</p>`
+          : `<p class="empty-note">Nothing matches ${queryWords}. All ${listed.length} in this list${
+              view.showPlatform ? "" : ` (and ${platformCount} more behind the platform filter)`} are still there —
+              the search is hiding them. Press Escape in a box to clear it.</p>`}
+    </div>
+  </section>`;
+}
+
+/* Numbered pages, because "1, 2, 3" is what a reader reaches for and a Next-only pager hides how much
+   is left. Every page is a button so the keyboard reaches it, the current one is aria-current, and the
+   row range is stated beside them — a page number with no denominator is the same failure as a count
+   with no denominator. Past nine pages the numbers window around the current one rather than wrapping
+   a hundred buttons onto the page. */
+function pager(page, pages, from, to, total) {
+  const nums = [];
+  if (pages <= 9) { for (let i = 1; i <= pages; i += 1) nums.push(i); }
+  else {
+    const near = [1, 2, page - 1, page, page + 1, pages - 1, pages]
+      .filter((i) => i >= 1 && i <= pages).sort((a, b) => a - b);
+    let last = 0;
+    near.forEach((i) => { if (i !== last) { if (i > last + 1) nums.push(null); nums.push(i); last = i; } });
+  }
+  return `<nav class="pager" aria-label="Namespace list pages">
+    <button type="button" class="page-step" data-index-page="${page - 1}"${page === 1 ? " disabled" : ""}>‹ Previous</button>
+    <span class="page-nums">${nums.map((i) => i === null
+      ? `<span class="page-gap" aria-hidden="true">…</span>`
+      : `<button type="button" class="page-num" data-index-page="${i}"${i === page ? ' aria-current="page"' : ""}>${i}</button>`).join("")}</span>
+    <button type="button" class="page-step" data-index-page="${page + 1}"${page === pages ? " disabled" : ""}>Next ›</button>
+    <span class="page-note">rows <strong>${from + 1}–${to}</strong> of <strong>${total}</strong>${
+      total > INDEX_PAGE ? `, ${INDEX_PAGE} to a page` : ""}</span>
+  </nav>`;
+}
+
+/* ── what the other tiers get ──────────────────────────────────────────────────────────────── */
+function selfRows() {
+  if (view.tier === "self-jdoe") return LAB.self["jdoe"].bindings || [];
+  if (view.tier === "self-alice") return LAB.self["alice.cooper"].bindings || [];
+  return [];
+}
+function selfView() {
+  const ub = view.tier === "self-jdoe" ? LAB.self["jdoe"] : LAB.self["alice.cooper"];
+  const rows = ub.bindings || [];
+  return `<section class="card">
+    <h2>Namespace audit</h2>
+    <div class="scope-banner"><strong>Your own grants.</strong> This is the narrowed view: bindings that name
+      <strong>${esc(ub.viewer)}</strong> and nothing about anybody else. None of the wide view's aggregates —
+      “People exposed”, “Namespaces at risk” — render here at all: recomputed over one person they would keep
+      their label and change their meaning.</div>
+    ${rows.length ? `<div class="scroll-x mt-7"><table class="stack">
+      <thead><tr><th>Grants</th><th>Scope</th><th>Binding</th></tr></thead>
+      <tbody>${rows.map((b) => `<tr>
+        <td data-l="Grants"><span class="chip priv">${esc(b.role_name)}</span> <span class="muted">${esc(b.role_kind)}</span></td>
+        <td data-l="Scope">${b.binding_namespace ? esc(b.binding_namespace) : `<strong class="err">cluster-wide</strong>`}</td>
+        <td data-l="Binding"><span class="mono muted">${esc(b.binding_name)}</span></td></tr>`).join("")}</tbody>
+      </table></div>
+      <p class="note mt-6">A direct grant survives offboarding. Consider asking for
+        the equivalent group membership and having the binding removed — the runbook on the administrator's view
+        of this tab is the same one that applies to yours.</p>`
+      : `<p class="empty-note">No role is granted directly to <strong>${esc(ub.viewer)}</strong> on this cluster.
+          Your access, if any, arrives through synced groups — the goal state this audit exists to reach. This says
+          nothing about whether OTHER accounts hold direct grants; that worklist is the administrator tier.</p>`}
+  </section>
+  ${selfInventoryCard()}`;
+}
+
+function selfInventoryCard() {
+  const j = LAB.self.jeffNamespaces;
+  return `<section class="card">
+    <h2>Namespaces <span class="count">· your own paths</span></h2>
+    <p class="note">The namespaces your own memberships and grants reach — grants affecting you, nothing about
+      other people. A cluster-wide grant of yours reaches every namespace, so this list is either short or the
+      whole cluster; the viewer above holds one, which is why all
+      ${lab().namespaces.count} are listed for them.</p>
+    <div class="shape-ex"><span class="lbl">Measured — a viewer with no cluster-wide path (jeff)</span>
+      <p class="note"><code>GET /api/clusters/dashboard-rnd/namespaces</code> as <code>jeff</code> returns
+        <strong>${j.count}</strong>: <code>${j.names.map(esc).join("</code>, <code>")}</code>, with
+        <code>cluster_wide_path: false</code>. With none at all the list is empty and says so: “None of your
+        memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace
+        missing here may exist.”</p></div>
+  </section>`;
+}
+
+function refusalCard(title, what, withBack) {
+  return `<section class="card">
+    ${withBack ? `<button type="button" class="back" id="back">← all namespaces</button>` : ""}
+    <h2>${esc(title)}</h2>
+    <div class="scope-refusal"><strong>Withheld, not empty.</strong> ${what}
+      <strong>For administrators only.</strong> Nothing on this page is broken and nothing is missing from the
+      cluster — this view is simply not part of yours.</div>
+  </section>`;
+}
+
+function withheldView() {
+  return refusalCard("Namespace audit",
+    "The per-namespace worklist of direct user grants names people and their access.")
+    + `<section class="card">
+      <h3>When this card is what a reader gets</h3>
+      <p class="note">The page never decides this: both narrowed shapes are the server's call, read off the wire.
+        A scoped payload renders the viewer's own grants; a designed 403 renders this card. On the five clusters
+        configured today every one is <code>visibility: inherit</code> with <code>identity: same-as-host</code>,
+        so a signed-in reader is always scoped rather than refused — this card needs a cluster whose policy is
+        <code>self-only</code> with <code>identity: none</code>, where there is no name to key the rows on.</p>
+      <p class="note">Measured: the endpoint answers
+        <code>${esc(LAB.self.noIdentity)}</code> when there is no viewer to scope to.</p>
+    </section>`;
+}
+
+/* ── the namespace itself ──────────────────────────────────────────────────────────────────── */
+function detailView() {
+  const d = lab(), det = (d.detail || {})[view.ns];
+  if (!det) {
+    return `<section class="card">
+      <button type="button" class="back" id="back">← all namespaces</button>
+      <h2>${esc(view.ns)}</h2>
+      <p class="note">This mock embeds the measured payload for
+        ${Object.keys(d.detail).map((n) => `<code>${esc(n)}</code>`).join(", ")} only. Rather than draw a plausible
+        page for <code>${esc(view.ns)}</code>, here is the request that would fill it:</p>
+      <div class="cmd">curl -s -H 'X-Forwarded-User: kubeadmin' \\
+  localhost:8080/api/clusters/${esc(view.cluster)}/namespaces/${esc(view.ns)}</div>
+      <p class="note mt-6">Every namespace in the list is a link on the shipped page
+        too — the drill is the feature, and nothing about it changes here.</p>
+    </section>`;
+  }
+  const keys = det.label_keys || [], labels = det.labels || {};
+  const via = det.via_groups || [], direct = det.direct_grants || [];
+  const viaReal = via.filter((g) => !g.is_platform), viaPlatform = via.filter((g) => g.is_platform);
+  const people = direct.filter((x) => !x.is_platform), directPlatform = direct.filter((x) => x.is_platform);
+  const wide = d.clusterWide.groups, wideGrants = d.clusterWide.grants;
+  const wideReal = wide.filter((g) => !g.is_platform), widePlatform = wide.filter((g) => g.is_platform);
+  const wideGrantsReal = wideGrants.filter((x) => !x.is_platform);
+  const wideBindings = wide.length + wideGrantsReal.length;
+  const platformNames = [...widePlatform.reduce((m, g) => m.set(g.group_name, (m.get(g.group_name) || 0) + 1), new Map())]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const labelledNote = keys.length
+    ? (keys.some((k) => labels[k])
+      ? `Labelled ${keys.filter((k) => labels[k]).map((k) => `<code>${esc(k)}=${esc(labels[k])}</code>`).join(" and ")}.`
+      : `Carries none of the captured labels (${keys.map((k) => `<code>${esc(k)}</code>`).join(", ")}) — outside the
+         naming convention, so no mnemonic-based report will ever pick it up.`)
+    : "";
+  return `<section class="card">
+    <button type="button" class="back" id="back">← all namespaces</button>
+    <h2>${esc(det.name)}${det.present ? "" : ` ${badge("unknown", "no longer on the cluster")}`}</h2>
+    <div class="kpis">
+      ${keys.map((k) => `<div class="kpi"><div class="label">${esc(k.split("/").pop())}</div>
+        <div class="value sm${labels[k] ? " mono" : " muted"}">${esc(labels[k] || "— none —")}</div></div>`).join("")}
+      <div class="kpi"><div class="label">People who reach it</div><div class="value">${det.people == null ? "—" : det.people}</div></div>
+      <div class="kpi"><div class="label">Via groups</div><div class="value${viaReal.length ? "" : " muted"}">${viaReal.length}</div></div>
+      <div class="kpi${people.length ? " flag-critical" : ""}"><div class="label">Direct grants</div>
+        <div class="value${people.length ? " err" : " muted"}">${people.length}</div></div>
+      <div class="kpi"><div class="label">Reached cluster-wide</div><div class="value">${wideBindings}</div></div>
+    </div>
+    <p class="note mt-6">${labelledNote}
+      ${people.length ? "" : " No RoleBinding names a person here directly, which is the state an access review wants to confirm."}
+      ${det.present ? "" : " The store no longer holds this namespace; what follows is what still names it."}</p>
+    <p class="note"><strong>Via groups ${viaReal.length}</strong> and <strong>People who reach it ${det.people}</strong>
+      are not the same denominator, and on the shipped page that reads as a contradiction: the people arrive through
+      the <strong>${wideBindings}</strong> cluster-wide bindings in the card below, which grant every namespace and
+      are therefore not <em>in</em> this one. The fourth tile above is that number, so the row adds up where a reader
+      looks.</p>
+  </section>
+
+  <section class="card">
+    <h3>Who reaches it, and through which group <span class="count">· ${viaReal.length}${
+      viaPlatform.length ? ` · ${viaPlatform.length} platform` : ""}</span></h3>
+    <p class="note">The answer the triangle exists for: a namespace, back to the groups that grant it, back to the
+      people in those groups.</p>
+    ${via.length ? `<div class="scroll-x"><table class="stack">
+      <thead><tr><th>Group</th><th>Role</th><th>Binding</th><th class="num">Members</th></tr></thead>
+      <tbody>${via.map((g) => `<tr>
+        <td data-l="Group"><button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button>${
+          g.is_platform ? " " + badge("unknown", "platform") : ""}</td>
+        <td data-l="Role"><span class="chip priv">${esc(g.role_name)}</span></td>
+        <td data-l="Binding"><span class="mono muted">${esc(g.binding_kind)} ${esc(g.binding_name)}</span>${
+          g.managed_source || g.is_platform ? "" : " " + badge("warning", "hand-made")}</td>
+        <td data-l="Members" class="num">${g.member_count}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="empty-note">No group-based binding names this namespace. Access here is ${people.length
+          ? "entirely by the direct grants below — which is what makes it a finding."
+          : "not granted to anyone through the policy system."}</p>`}
+    <p class="note mt-6">Virtual <code>system:</code> groups authorise access but hold
+      no person, so they are badged and counted separately: <code>system:image-pullers</code> is in every OpenShift
+      namespace, and a Via groups count that held it would read 1 on every row — “zero in both” could never happen.</p>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <h3>Also reached cluster-wide <span class="count">· ${wideBindings} ${plural(wideBindings, "binding")}</span></h3>
+      <button type="button" class="disclose linkish" data-toggle="wideOpen" aria-expanded="${view.wideOpen}"
+              aria-controls="wide-list"><span class="arrow" aria-hidden="true">${view.wideOpen ? "▾" : "▸"}</span> ${
+        view.wideOpen ? "Hide" : "Show"} the ${wideReal.length + wideGrantsReal.length} that name someone</button>
+    </div>
+    <p class="note">${wideBindings} ${plural(wideBindings, "binding")} grant every namespace on this cluster, so they
+      reach this one without naming it: <strong>${wideReal.length}</strong> to real groups,
+      <strong>${wideGrantsReal.length}</strong> naming a person directly, and <strong>${widePlatform.length}</strong>
+      platform bindings to ${platformNames.length} virtual groups that every namespace carries. The shipped page
+      renders all of that as one sentence with ${wideReal.length + wideGrantsReal.length} links in it; it is the
+      largest block of text on the page, and it is the answer to “who else can get in here”.</p>
+    <div id="wide-list"${view.wideOpen ? "" : " hidden"}>
+      <div class="scroll-x"><table class="stack">
+        <thead><tr><th>Subject</th><th>Kind</th><th>Role</th><th class="num">Members</th></tr></thead>
+        <tbody>${wideReal.map((g) => `<tr>
+          <td data-l="Subject"><button type="button" class="drill" data-group="${esc(g.group_name)}">${esc(g.group_name)}</button></td>
+          <td data-l="Kind">${badge("ok", "group")}</td>
+          <td data-l="Role"><span class="chip priv">${esc(g.role_name)}</span>${
+            g.managed_source ? "" : " " + badge("warning", "hand-made")}</td>
+          <td data-l="Members" class="num">${g.member_count}</td></tr>`).join("")
+        + wideGrantsReal.map((x) => `<tr class="risk-row risk-high">
+          <td data-l="Subject"><button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button></td>
+          <td data-l="Kind">${badge("warning", "named directly")}</td>
+          <td data-l="Role"><span class="chip priv">${esc(x.role_name)}</span></td>
+          <td data-l="Members" class="num">—</td></tr>`).join("")}</tbody></table></div>
+      <div class="section-head mt-7">
+        <span class="muted sm">${widePlatform.length} platform bindings to
+          ${platformNames.length} virtual groups</span>
+        <button type="button" class="disclose linkish" data-toggle="platformOpen" aria-expanded="${view.platformOpen}"
+                aria-controls="platform-list"><span class="arrow" aria-hidden="true">${view.platformOpen ? "▾" : "▸"}</span> ${
+          view.platformOpen ? "Hide" : "Show"} them</button>
+      </div>
+      <div id="platform-list"${view.platformOpen ? "" : " hidden"}>
+        <div class="chips">${platformNames.map(([name, n]) =>
+          `<span class="chip">${esc(name)} × ${n}</span>`).join("")}</div>
+        <p class="note mt-5">Folded most-bound first — <code>system:authenticated</code>
+          is every logged-in user and carries most of a cluster's platform bindings.</p>
+      </div>
+    </div>
+  </section>
+
+  ${direct.length ? `<section class="card">
+    <h3>Direct grants <span class="count">· ${people.length}${directPlatform.length ? ` · ${directPlatform.length} platform` : ""}</span></h3>
+    <p class="note">A person named by a binding rather than reached through a group — the rows a directory change
+      cannot offboard. The operational goal for this card is zero.</p>
+    <div class="scroll-x"><table class="stack">
+      <thead><tr><th>Person</th><th>Role</th><th>Binding</th></tr></thead>
+      <tbody>${direct.map((x) => `<tr${x.is_platform ? "" : ' class="risk-row risk-high"'}>
+        <td data-l="Person"><button type="button" class="drill" data-user="${esc(x.user_name)}">${esc(x.user_name)}</button>${
+          x.is_platform ? " " + badge("unknown", "platform") : ""}</td>
+        <td data-l="Role">${badge(/admin|edit/.test(x.role_name) ? "critical" : "warning", x.role_name)}</td>
+        <td data-l="Binding"><span class="mono muted">${esc(x.binding_kind)} ${esc(x.binding_name)}</span></td></tr>`).join("")}</tbody>
+    </table></div>
+  </section>` : ""}
+
+  ${(det.siblings || []).length ? `<section class="card">
+    <h3>Same ${esc((det.sibling_key || "").split("/").pop())} <span class="count">· ${esc(labels[det.sibling_key] || "")}</span></h3>
+    <p class="note">Sibling namespaces sharing <code>${esc(det.sibling_key)}=${esc(labels[det.sibling_key])}</code>.
+      Typing the value in the box finds all ${det.siblings.length + 1} at once.</p>
+    <div class="chips">${det.siblings.map((n) =>
+      `<button type="button" class="drill" data-ns="${esc(n)}">${esc(n)}</button>`).join("")}</div>
+  </section>` : ""}
+
+  <section class="card">
+    <h3>History <span class="count">· ${(det.changes || []).length}</span></h3>
+    ${det.retention && det.retention.window_days > 0
+      ? `<p class="note">History retained since <strong>${esc(det.retention.retained_since)}</strong>; rows older than
+          ${det.retention.window_days} days are removed by retention, so a timeline that begins there was cut there —
+          it does not mean nothing happened before.</p>`
+      : `<p class="note">Retention is off on this deployment (<code>window_days: 0</code>), so the shipped page prints
+          no retention line here. With a window set it says that a timeline beginning at the cut was cut there, and
+          does not mean nothing happened before.</p>`}
+    ${(det.changes || []).length ? `<div class="scroll-x"><table class="stack">
+      <thead><tr><th>Change</th><th>Subject</th><th>Role</th><th>Binding</th><th>Observed</th></tr></thead>
+      <tbody>${det.changes.map((c) => `<tr>
+        <td data-l="Change">${c.baseline ? badge("unknown", "first observed")
+          : c.change === "added" ? badge("critical", "+ granted") : badge("ok", "− revoked")}</td>
+        <td data-l="Subject"><span class="muted">${esc(c.subject_kind)}</span>
+          <button type="button" class="drill" data-${c.subject_kind === "Group" ? "group" : "user"}="${esc(c.subject_name)}">${esc(c.subject_name)}</button></td>
+        <td data-l="Role"><span class="chip priv">${esc(c.role_name)}</span></td>
+        <td data-l="Binding"><span class="mono muted">${esc(c.binding_kind)} ${esc(c.binding_name)}</span></td>
+        <td data-l="Observed"><span class="mono">${esc(c.observed_at)}</span></td></tr>`).join("")}</tbody>
+    </table></div>` : `<p class="empty-note">No binding change recorded here since this dashboard started watching.</p>`}
+    <p class="note mt-6">Every row on this cluster is <strong>first observed</strong>:
+      the store was seeded ${esc((det.retention || {}).retained_since || "when polling began")} and nothing has been
+      granted or revoked since. A first observation is not a grant — it is the day the dashboard started watching.</p>
+  </section>`;
+}
+
+/* ── the shapes this page can take, drawn where a reader can find them ─────────────────────── */
+function shapesCard() {
+  const preview = { namespace: "SHAPE", users: ["asmith", "bwilliams", "jdoe", "dana.lee", "jane.smith", "tmp-contractor-9931", "lateef.o", "john.doe", "sarah.jones"], distinct_users: 9, bindings: 12, worst_privilege: 3 };
+  return `<section class="card">
+    <h3>States this page has, that this cluster does not show</h3>
+    <p class="note">Each box is a shape from the code with no lab data behind it. They are drawn rather than
+      described because a caveat a reader never sees is a caveat that was deleted — and because the ones that
+      cannot happen on a healthy cluster are exactly the ones that matter when something is wrong.</p>
+
+    <div class="shape-ex"><span class="lbl">Shape — a roster past the preview bound (${WHO_PREVIEW})</span>
+      <div class="scroll-x"><table class="stack"><thead><tr><th>Namespace</th><th class="num">People</th><th>Who is exposed</th></tr></thead>
+        <tbody><tr class="risk-row risk-high">
+          <td data-l="Namespace"><span class="ns-name mono">a-busy-namespace</span></td>
+          <td data-l="People" class="num">${preview.distinct_users}</td>
+          <td data-l="Who is exposed" class="who">${whoCellShape(preview)}</td></tr></tbody></table></div>
+      <p class="note mt-5">The bound is <strong>${WHO_PREVIEW}</strong> on purpose: a
+        namespace with forty direct grants would otherwise put forty names in one cell and that column would decide
+        the width of the whole table — on the view that is supposed to be the scannable one. The names are
+        corroboration; the full roster is in <em>Every grant</em>. The widest roster on this cluster is 3, so the
+        control never appears on the live page.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — the goal state</span>
+      ${zeroCard()}
+      <p class="note mt-5">Zero rows is the operational goal, and it is a different
+        page rather than an empty table: at zero the sentence explains what has been achieved.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — a namespace outside a narrowed reader's view</span>
+      ${refusalCard("legacy-payments", `Only namespaces your own memberships or grants reach are visible at your
+        tier. This one is outside your view — or does not exist; the two are deliberately indistinguishable.`, false)}
+      <p class="note mt-5">Measured: <code>GET …/namespaces/legacy-payments</code> as
+        <code>jeff</code> answers <strong>403</strong> — <code>${esc(LAB.self.detailRefusal)}</code>.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — a cluster with no namespaces recorded</span>
+      <section class="card"><h3>Namespaces <span class="count">· 0</span></h3>
+        <p class="empty-note">No namespaces recorded for this cluster yet.</p></section>
+      <p class="note mt-5">The other empty state, and it must never be confused with the one above it: a search
+        that hides everything is a fact about the <em>query</em> and quotes the denominator
+        (&ldquo;all 106 are still there&rdquo;), while this one is a fact about the <em>cluster</em>. Every cluster
+        in the lab has namespaces, so only a search can empty this list here.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — the namespace read was refused</span>
+      <div class="trunc">The namespace read was refused (4m ago), so this list cannot attest absence — a
+        namespace missing here may exist. Grant namespaces [get,list] (chart:
+        <code>rbac.namespaces</code>).</div>
+      <p class="note mt-5">The poller can lose <code>namespaces [get,list]</code> without losing anything
+        else, and the list then goes quiet rather than empty. This cluster answers
+        <code>source.state: ok</code>, so the note never renders here — and a list that cannot attest
+        absence while looking complete is the worst thing this page could do.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — a namespace nothing has happened to</span>
+      <section class="card"><h3>History <span class="count">· 0</span></h3>
+        <p class="empty-note">No binding change recorded here since this dashboard started watching.</p>
+      </section>
+      <p class="note mt-5">Every namespace captured here has changes — all of them <em>first observed</em>,
+        because the store was seeded on 2026-09-20 and nothing has been granted or revoked since. The
+        sentence matters because it says <strong>since this dashboard started watching</strong>: an empty
+        history is not evidence that nothing ever happened.</p></div>
+
+    <div class="shape-ex"><span class="lbl">Shape — loading</span>
+      <section class="card"><p class="empty-note">Loading…</p></section>
+      <p class="note mt-5">Loading is a real state: the page fails closed rather than
+        rendering an empty truth. An audit that flashes “0 namespaces at risk” while its data is in flight has told
+        the reader the opposite of what it knows.</p></div>
+  </section>`;
+}
+function whoCellShape(row) {
+  const users = row.users || [];
+  const open = view.shapeWhoOpen;
+  const shown = open ? users : users.slice(0, WHO_PREVIEW);
+  const hidden = users.length - shown.length;
+  return `<span class="chips">${shown.map((u) => `<span class="chip person">${esc(u)}</span>`).join("")}</span>`
+    + `<button type="button" class="linkish" id="shape-who">${open ? "show fewer" : `+${hidden} more`}</button>`;
+}
+
+/* ── provenance ────────────────────────────────────────────────────────────────────────────── */
+function renderProv() {
+  const d = lab();
+  document.getElementById("prov").innerHTML = `
+    <h2>Where every number on this page came from</h2>
+    <p>Read from the lab on <strong>${esc(LAB.measured.at)}</strong> against the deployed dashboard
+      <code>v${LAB.measured.app.version} · ${LAB.measured.app.sha}</code>, and embedded verbatim in this file
+      (<code>#lab-json</code>). The request shape was
+      <code>${esc(LAB.measured.how)}</code>.</p>
+    <table><tbody>
+      <tr><td><code>/api/clusters/${esc(view.cluster)}/user-bindings</code></td>
+        <td>the verdict, the worklist, Every grant — <code>total ${d.audit.total}</code>,
+          <code>excluded_platform ${d.audit.excluded_platform}</code></td></tr>
+      <tr><td><code>/api/clusters/${esc(view.cluster)}/namespaces</code></td>
+        <td>the namespace list — ${d.namespaces.count} rows, label keys
+          <code>${(d.namespaces.label_keys || []).map(esc).join("</code>, <code>")}</code></td></tr>
+      <tr><td><code>/api/clusters/${esc(view.cluster)}/namespaces/&lt;name&gt;</code></td>
+        <td>each namespace page — ${Object.keys(d.detail).length} captured; the cluster-wide arrays are identical
+          across all of them (checked), so they are stored once</td></tr>
+      <tr><td><code>X-Forwarded-User: jdoe</code> / <code>alice.cooper</code> / <code>jeff</code></td>
+        <td>the narrowed views, taken through the pod's loopback because the self tier is cookie-only</td></tr>
+      <tr><td><code>/metrics</code></td>
+        <td>carries <strong>no</strong> count from this page. The only public trace of the finding is
+          <code>gsd_alerts_total{kind="direct_user_binding",severity="warning"} 1</code> per cluster — one alert,
+          never the names or the number</td></tr>
+    </tbody></table>
+    <p><strong>Proposed token change.</strong> <code>--page-2</code>, the top stop of the body wash, is
+      <code>#e3e6ef</code> here against the shipped <code>#eef0f4</code>; <code>--page</code> is untouched at
+      <code>#f9f9f7</code>. The version line in the header is <code>--text-secondary</code> rather than the
+      shipped <code>--text-muted</code>, because at 12px on the darkest band of the wash it measured 4.57:1 on the
+      live page — 0.07 above the bar, which is not headroom to spend. Contrast was measured from the painted
+      pixels, not from the tokens: <code>reports/2026-09-21_nsaudit-mock/render-check.py</code>.</p>`;
+}
+
+/* ── render and wire ───────────────────────────────────────────────────────────────────────── */
+function render() {
+  renderShell();
+  renderFilters();
+  const main = document.getElementById("main");
+  if (view.tier === "withheld") main.innerHTML = withheldView();
+  else if (view.ns) main.innerHTML = detailView();
+  else if (view.tier !== "admin") main.innerHTML = selfView();
+  else main.innerHTML = verdictCard() + clusterWideCard() + worklistCard() + reasonsCard()
+    + runbookCard() + everyGrantCard() + inventoryCard() + shapesCard();
+  renderProv();
+  wire();
+}
+
+function wire() {
+  const $ = (id) => document.getElementById(id);
+  const mode = $("pref-mode"), palette = $("pref-palette");
+  mode.value = document.documentElement.getAttribute("data-theme") || "";
+  palette.value = document.documentElement.getAttribute("data-palette") || "";
+  mode.onchange = () => {
+    const v = mode.value;
+    if (v) document.documentElement.setAttribute("data-theme", v);
+    else document.documentElement.removeAttribute("data-theme");
+    try { localStorage.setItem("gsd-mode", v); } catch (e) { /* private mode */ }
+  };
+  palette.onchange = () => {
+    const v = palette.value;
+    if (v) document.documentElement.setAttribute("data-palette", v);
+    else document.documentElement.removeAttribute("data-palette");
+    try { localStorage.setItem("gsd-palette", v); } catch (e) { /* private mode */ }
+  };
+  const cluster = $("f-cluster");
+  if (cluster) cluster.onchange = () => {
+    if (!LAB.clusters[cluster.value]) { cluster.value = view.cluster; return; }
+    view.cluster = cluster.value; view.ns = null; view.pick = "all"; view.whoOpen = new Set();
+    view.indexSearch = ""; view.indexOpen = null; view.showPlatform = false; view.indexPage = 1; render();
+  };
+  const tier = $("f-tier");
+  if (tier) tier.onchange = () => { view.tier = tier.value; view.ns = null; render(); };
+  const search = $("f-ns-search");
+  if (search) {
+    /* `input`, not `change`: it filters as the reader types, and every list it filters is already
+       in the browser, so filtering is a repaint and costs no round trip. The caret is restored
+       after the repaint — a fresh input opens with its caret at 0, so a reader typing into a box
+       that repaints types into the FRONT of their own text. */
+    search.oninput = (e) => {
+      const pos = e.target.selectionStart;
+      view.search = e.target.value;
+      view.indexPage = 1;   // it narrows the same list, so the page under it is no longer the page
+      render();
+      const el = $("f-ns-search");
+      if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } }
+    };
+    search.onkeydown = (e) => {
+      if (e.key === "Escape" && view.search) { e.preventDefault(); view.search = ""; view.indexPage = 1; render(); const el = $("f-ns-search"); if (el) el.focus(); }
+    };
+  }
+  const indexSearch = $("f-index-search");
+  if (indexSearch) {
+    // Same contract as the bar's box (renderFilters): filter as the reader types, and restore focus
+    // AND caret after the repaint — a fresh input opens with its caret at 0, so a reader typing into
+    // a box that repaints types into the front of their own text.
+    indexSearch.oninput = (e) => {
+      const pos = e.target.selectionStart;
+      view.indexSearch = e.target.value;
+      view.indexPage = 1;   // a page number means nothing once the set under it changes
+      render();
+      const el = $("f-index-search");
+      if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (err) { /* type=search */ } }
+    };
+    indexSearch.onkeydown = (e) => {
+      if (e.key === "Escape" && view.indexSearch) {
+        e.preventDefault(); view.indexSearch = ""; view.indexPage = 1; render();
+        const el = $("f-index-search"); if (el) el.focus();
+      }
+    };
+  }
+  const platform = $("f-show-platform");
+  if (platform) platform.onchange = () => {
+    view.showPlatform = platform.checked;
+    view.indexPage = 1;
+    render();
+    const el = $("f-show-platform"); if (el) el.focus();
+  };
+  // Scoped to the pager AND named for it: `[data-page]` alone also matched <body data-page="nsaudit">,
+  // so every click anywhere on the page ran this handler and set the page to Number("nsaudit") — NaN,
+  // which emptied the list and picked the wrong empty state to explain it.
+  document.querySelectorAll(".pager [data-index-page]").forEach((el) => {
+    el.onclick = () => {
+      view.indexPage = Number(el.dataset.indexPage);
+      render();
+      // Keep the reader where the pager was rather than at the top of a fresh page of rows.
+      const p = document.querySelector(".pager");
+      if (p) p.scrollIntoView({ block: "center" });
+    };
+  });
+
+  const indexToggle = $("index-toggle");
+  if (indexToggle) indexToggle.onclick = () => {
+    view.indexOpen = indexToggle.getAttribute("aria-expanded") !== "true";
+    render();
+    const el = $("index-toggle"); if (el) el.focus();
+  };
+
+  document.querySelectorAll("button.sorter").forEach((el) => {
+    el.onclick = () => {
+      if (el.dataset.group === "grant") { view.grantSort = el.dataset.sort; view.grantDir = el.dataset.dir; }
+      else { view.nsSort = el.dataset.sort; view.nsDir = el.dataset.dir; }
+      render();
+    };
+  });
+  const reset = $("ns-reset");
+  if (reset) reset.onclick = () => { view.nsSort = "risk"; view.nsDir = "desc"; render(); };
+  document.querySelectorAll("[data-toggle]").forEach((el) => {
+    el.onclick = () => { view[el.dataset.toggle] = !view[el.dataset.toggle]; render(); };
+  });
+  document.querySelectorAll("[data-who]").forEach((el) => {
+    el.onclick = () => {
+      const ns = el.dataset.who;
+      view.whoOpen.has(ns) ? view.whoOpen.delete(ns) : view.whoOpen.add(ns);
+      render();
+    };
+  });
+  const shapeWho = $("shape-who");
+  if (shapeWho) shapeWho.onclick = () => { view.shapeWhoOpen = !view.shapeWhoOpen; render(); };
+  const pick = $("ns-pick");
+  /* `onchange`, not `oninput`: a <select> fires input per keyboard arrow while the list is open,
+     and on the shipped page each one would be a refetch for a namespace the reader is passing over. */
+  if (pick) pick.onchange = () => {
+    view.pick = pick.value;
+    /* Choosing a namespace to inspect and then having to expand the list is a pointless second click;
+       the selection IS the request to see it. */
+    if (view.pick !== "all") view.grantsOpen = true;
+    render();
+  };
+  const clear = $("ns-pick-clear");
+  if (clear) clear.onclick = () => { view.pick = "all"; render(); };
+  document.querySelectorAll("[data-ns]").forEach((el) => {
+    el.onclick = () => { view.ns = el.dataset.ns; window.scrollTo(0, 0); render(); };
+  });
+  const back = $("back");
+  if (back) back.onclick = () => { view.ns = null; window.scrollTo(0, 0); render(); };
+  const refresh = $("refresh");
+  if (refresh) refresh.onclick = () => render();
+}
+
+render();
+window.MOCK = { view, LAB, render };
+})();
+</script>
+</body>
+</html>
