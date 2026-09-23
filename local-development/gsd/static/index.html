@@ -6265,9 +6265,15 @@ function whoCell(row) {
   const open = view.nsWhoOpen.has(row.namespace);
   const shown = open ? users : users.slice(0, WHO_PREVIEW);
   const hidden = users.length - shown.length;
-  const names = shown.map((u) => `<span class="who-name">${esc(u)}</span>`).join("");
+  // A SEPARATOR IN THE TEXT, not only in the layout (#261 §3). A 6 px margin and no character made the
+  // cell's text — what a reader copies — `asmithbwilliamsjdoe`. " · " and not a comma: a user name can be
+  // an LDAP DN, full of commas, and a list the reader cannot split again is the defect the store's `users`
+  // list exists to avoid. The dot sits inside the name's inline-block so a line never starts with one, and
+  // is aria-hidden: assistive technology gets the real space between names, not a spoken "dot".
+  const names = shown.map((u, i) => `<span class="who-name">${esc(u)}${
+    i < shown.length - 1 ? '<span aria-hidden="true"> ·</span>' : ""}</span>`).join(" ");
   if (!hidden && !open) return names;
-  return names + `<button type="button" class="linkish who-more" data-who="${esc(row.namespace)}">`
+  return names + ` <button type="button" class="linkish who-more" data-who="${esc(row.namespace)}">`
     + (open ? "show fewer" : `+${hidden} more`) + "</button>";
 }
 
@@ -6680,6 +6686,14 @@ function directUserGrants(ub) {
         ? `<button type="button" class="linkish" data-ns-reset>Restore risk order</button>`
         : ""}
     </div>
+    ${(view.nsSearch || "").trim()
+      // THE BAR'S BOX KEEPS ITS SHIPPED SCOPE (#261, part 1): it narrows the Namespaces list, and this
+      // worklist is not its subject. The capture measured the consequence — typing `legacy` left this
+      // table whole while the list below narrowed to its two legacy-* rows — with nothing on screen to say
+      // why. Said only while the box holds a query: the one moment a reader expects this table to move.
+      ? `<div class="filterbar-note mb-4"><strong>Find namespace</strong> in the bar narrows the Namespaces
+          list below, not this table: the worklist always ranks every namespace holding a direct grant.</div>`
+      : ""}
     <div class="scroll-x"><table class="audit-table">
       <thead><tr>
         ${sortableTh("Risk", "risk", view.nsSort, view.nsDir, "ns")}
