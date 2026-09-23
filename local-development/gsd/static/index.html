@@ -5213,12 +5213,20 @@ function namespacesCard() {
   // still holds them: the worklist at the wide tier, the viewer's own grants at the self tier. Names come
   // from the rows already held (a hidden row is filtered, never dropped): no request, and no second
   // definition of "has a finding". Three at most, as the reach line folds its virtual groups.
-  const hiddenWithFindings = hidingPlatform ? all.filter((n) => n.platform && n.direct_grants).map((n) => n.name) : [];
+  //
+  // WHERE A FINDING IS, CLAIMED ONLY WHERE IT IS HELD (review of #326: Codex C2/C3, Grok C3). The index
+  // and the worklist are two requests under two snapshots, so a poll landing between them can leave a
+  // name in one and not yet in the other: at the wide tier the clause names only what the rollup holds.
+  // At the self tier the grants above are a served page (NS_GRANT_PAGE), so "listed above" can be false
+  // past it; "among your direct grants" is what the payload itself proves.
+  const ranked = self ? null : new Set(((data.userBindings || {}).by_namespace || []).map((r) => r.namespace));
+  const hiddenWithFindings = hidingPlatform
+    ? all.filter((n) => n.platform && n.direct_grants && (!ranked || ranked.has(n.name))).map((n) => n.name) : [];
   const namedHidden = hiddenWithFindings.slice(0, 3);
   const neverFindings = !withFindings || !namedHidden.length ? "" : ` <strong>This hides rows, never findings:</strong>
     ${namedHidden.map((n) => `<code>${esc(n)}</code>`).join(", ")}${hiddenWithFindings.length > namedHidden.length
       ? ` and ${hiddenWithFindings.length - namedHidden.length} more` : ""}
-    ${hiddenWithFindings.length === 1 ? "is" : "are"} still ${self ? "listed in your grants above"
+    ${hiddenWithFindings.length === 1 ? "is" : "are"} still ${self ? "among your direct grants"
       : "ranked in <strong>Exposure by namespace</strong> above"}.`;
   // A configured pattern matching nothing on THIS cluster: a typo, or a convention that was
   // decommissioned. Said where the classification is said, because that is where a reader can act

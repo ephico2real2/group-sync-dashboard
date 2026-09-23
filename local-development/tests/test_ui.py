@@ -8923,17 +8923,36 @@ class TestPlatformNamespacesAreHiddenByDefault:
             n.direct_grants = 1; data.namespaces.platform_with_findings = 1; data.namespaces.scope = 'self'; render(); }""")
         dash.wait_for_timeout(250)
         line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
-        assert "This hides rows, never findings: openshift-monitoring is still listed in your grants above." in line, line
-        assert "Exposure by namespace" not in line, line
+        # "among", never "listed above": the self tier's grants are a served page (review of #326, Codex C3).
+        assert "This hides rows, never findings: openshift-monitoring is still among your direct grants." in line, line
+        assert "Exposure by namespace" not in line and "above" not in line.split("never findings")[1], line
+        # Both payloads carry the five, as one served state does: the clause names only what the rollup holds.
         dash.evaluate("""() => { data.namespaces.scope = 'all';
-            for (const name of ['openshift-a', 'openshift-b', 'openshift-c', 'openshift-d']) data.namespaces.namespaces.push(
-              {name, labels: {}, via_groups: 0, direct_grants: 2, platform: true});
+            const base = data.userBindings.by_namespace.find((r) => r.namespace !== '(cluster-scoped)');
+            for (const name of ['openshift-monitoring', 'openshift-a', 'openshift-b', 'openshift-c', 'openshift-d']) {
+              if (name !== 'openshift-monitoring') data.namespaces.namespaces.push(
+                {name, labels: {}, via_groups: 0, direct_grants: 2, platform: true});
+              data.userBindings.by_namespace.push({...base, namespace: name});
+            }
             data.namespaces.platform_count = 6; data.namespaces.platform_with_findings = 5; render(); }""")
         dash.wait_for_timeout(250)
         line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
         assert "— 5 of them have a direct grant." in line, line
         assert ("never findings: openshift-monitoring, openshift-a, openshift-b and 2 more are still ranked in "
                 "Exposure by namespace above.") in line, line
+
+    def test_the_reconciling_sentence_names_only_what_the_worklist_holds(self, dash):
+        """Review of #326 (Codex C2): the index and the worklist are two requests under two snapshots, so a
+        poll between them can name a namespace the worklist does not hold yet. The clause claims "still
+        ranked … above" only for names the rollup carries; the count stays, it is the index's own."""
+        self._open(dash)
+        dash.evaluate("""() => { const n = data.namespaces.namespaces.find((x) => x.name === 'openshift-monitoring');
+            n.direct_grants = 1; data.namespaces.platform_with_findings = 1;
+            data.userBindings.by_namespace = data.userBindings.by_namespace.filter((r) => r.namespace !== 'openshift-monitoring');
+            render(); }""")
+        line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert "1 of them has a direct grant" in line, line
+        assert "never findings" not in line and "openshift-monitoring" not in line, line
 
     def test_the_control_shows_them_and_puts_them_back(self, dash):
         self._open(dash)
