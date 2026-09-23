@@ -2617,7 +2617,12 @@ class TestLookup:
         dash.wait_for_timeout(150)
         assert dash.evaluate("() => [view.page, history.length]") == ["overview", before], "mid-composition is not a position change"
         cdp.send("Input.insertText", {"text": "かんり"})
-        dash.wait_for_function("() => view.page === 'lookup'", timeout=3_000)
+        # The position settles in TWO steps from the fleet Overview, which has no cluster: navigate() writes
+        # `#page=lookup` synchronously, then refresh()'s boot path fetches /api/clusters and amends the SAME
+        # entry with the default cluster (index.html, "The ONLY position mutation outside navigate()").
+        # Waiting on view.page alone read the hash between the two and failed on a slow CI runner with
+        # '#page=lookup' (run 35874897863); holding /api/clusters open reproduces it every time.
+        dash.wait_for_function("() => view.page === 'lookup' && location.hash.includes('cluster=')", timeout=3_000)
         assert dash.evaluate("() => [view.lookupSearch, location.hash, history.length]") == ["かんり", "#page=lookup&cluster=crc-local", before + 1]
 
     def test_a_query_of_only_spaces_is_not_a_position_change(self, dash):

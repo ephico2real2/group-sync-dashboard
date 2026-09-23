@@ -1,0 +1,267 @@
+{
+ "cards": [
+  "Namespace audit",
+  "Cluster-wide direct grants \u00b7 3 reaching all 106 namespaces",
+  "Exposure by namespace \u00b7 4",
+  "Why this is a risk",
+  "How to close it",
+  "Every grant",
+  "Namespaces \u00b7 39 of 106",
+  "States this page has, that this cluster does not show"
+ ],
+ "scope pill": "Full view \u2014 you are seeing everything",
+ "build info": "v0.30.0 \u00b7 a90f1b277b \u00b7 updated 01:08:14 EDT",
+ "worklist, risk order": [
+  "legacy-payments",
+  "legacy-reporting",
+  "openshift-console-user-settings",
+  "group-sync-operator"
+ ],
+ "worklist, namespace desc": [
+  "openshift-console-user-settings",
+  "legacy-reporting",
+  "legacy-payments",
+  "group-sync-operator"
+ ],
+ "flat list sorted by person": [
+  "tmp-contractor-9931",
+  "ocp-oauth-bind-serviceid",
+  "ocp-oauth-bind-serviceid",
+  "jdoe",
+  "jdoe",
+  "jdoe",
+  "jane.smith",
+  "developer",
+  "dana.lee",
+  "bwilliams",
+  "asmith"
+ ],
+ "detail cards": [
+  "legacy-payments",
+  "Who reaches it, and through which group \u00b7 0 \u00b7 1 platform",
+  "Also reached cluster-wide \u00b7 53 bindings",
+  "Direct grants \u00b7 3",
+  "History \u00b7 4"
+ ],
+ "dark page background": "rgb(13, 13, 13)",
+ "deuter critical/warning": [
+  "#b24e00",
+  "#c18600"
+ ],
+ "document height, folded vs open (a page of 25, not all 106)": [
+  5706,
+  6779,
+  1073
+ ],
+ "states swept for caveats": 10,
+ "paginated region holds only rows and the pager": [
+  "DIV.scroll-x",
+  "NAV.pager"
+ ],
+ "375px geometry": {
+  "scrollWidth": 375,
+  "innerWidth": 375,
+  "widest": 359
+ },
+ "393px geometry": {
+  "scrollWidth": 393,
+  "innerWidth": 393,
+  "widest": 377
+ },
+ "768px geometry": {
+  "scrollWidth": 768,
+  "innerWidth": 768,
+  "widest": 748
+ },
+ "1280px geometry": {
+  "scrollWidth": 1280,
+  "innerWidth": 1280,
+  "widest": 1210
+ },
+ "light ground at x=640, y=0\u2026700": [
+  "#dfd7e4",
+  "#e1dae6",
+  "#e6e3eb",
+  "#ececf0",
+  "#f2f3f4",
+  "#f9f9f7",
+  "#f9f9f7"
+ ],
+ "light tightest element": "active tab",
+ "contrast-light": [
+  {
+   "element": "h1",
+   "y": 34,
+   "colour": "rgb(11, 11, 11)",
+   "size": "18px/700",
+   "ground": "#e3e1eb",
+   "ratio": 15.22,
+   "bar": 4.5
+  },
+  {
+   "element": "cluster sub",
+   "y": 36,
+   "colour": "rgb(82, 81, 78)",
+   "size": "12px/400",
+   "ground": "#e2dee9",
+   "ratio": 5.99,
+   "bar": 4.5
+  },
+  {
+   "element": "scope pill",
+   "y": 36,
+   "colour": "rgb(11, 11, 11)",
+   "size": "12px/400",
+   "ground": "#e2dce8",
+   "ratio": 14.66,
+   "bar": 4.5
+  },
+  {
+   "element": "build info",
+   "y": 36,
+   "colour": "rgb(82, 81, 78)",
+   "size": "12px/400",
+   "ground": "#e3e1eb",
+   "ratio": 6.14,
+   "bar": 4.5
+  },
+  {
+   "element": "Appearance label",
+   "y": 76,
+   "colour": "rgb(82, 81, 78)",
+   "size": "12px/400",
+   "ground": "#e6e5ed",
+   "ratio": 6.35,
+   "bar": 4.5
+  },
+  {
+   "element": "active tab",
+   "y": 136,
+   "colour": "rgb(179, 48, 110)",
+   "size": "13px/700",
+   "ground": "#e8e6ee",
+   "ratio": 4.76,
+   "bar": 4.5
+  },
+  {
+   "element": "inactive tab",
+   "y": 136,
+   "colour": "rgb(82, 81, 78)",
+   "size": "13px/500",
+   "ground": "#e9ebf0",
+   "ratio": 6.65,
+   "bar": 4.5
+  },
+  {
+   "element": "filter label",
+   "y": 224,
+   "colour": "rgb(82, 81, 78)",
+   "size": "12px/400",
+   "ground": "#eef0f3",
+   "ratio": 6.95,
+   "bar": 4.5
+  },
+  {
+   "element": "filter muted",
+   "y": 224,
+   "colour": "rgb(106, 104, 99)",
+   "size": "14px/400",
+   "ground": "#edeff2",
+   "ratio": 4.83,
+   "bar": 4.5
+  }
+ ],
+ "dark ground at x=640, y=0\u2026700": [
+  "#241b26",
+  "#201922",
+  "#1a151c",
+  "#131215",
+  "#0f0f11",
+  "#0d0d0d",
+  "#0d0d0d"
+ ],
+ "dark tightest element": "active tab",
+ "contrast-dark": [
+  {
+   "element": "h1",
+   "y": 34,
+   "colour": "rgb(255, 255, 255)",
+   "size": "18px/700",
+   "ground": "#1d1920",
+   "ratio": 17.32,
+   "bar": 4.5
+  },
+  {
+   "element": "cluster sub",
+   "y": 36,
+   "colour": "rgb(195, 194, 183)",
+   "size": "12px/400",
+   "ground": "#201923",
+   "ratio": 9.57,
+   "bar": 4.5
+  },
+  {
+   "element": "scope pill",
+   "y": 36,
+   "colour": "rgb(255, 255, 255)",
+   "size": "12px/400",
+   "ground": "#221b24",
+   "ratio": 16.8,
+   "bar": 4.5
+  },
+  {
+   "element": "build info",
+   "y": 36,
+   "colour": "rgb(195, 194, 183)",
+   "size": "12px/400",
+   "ground": "#1d1921",
+   "ratio": 9.66,
+   "bar": 4.5
+  },
+  {
+   "element": "Appearance label",
+   "y": 76,
+   "colour": "rgb(195, 194, 183)",
+   "size": "12px/400",
+   "ground": "#16151b",
+   "ratio": 10.13,
+   "bar": 4.5
+  },
+  {
+   "element": "active tab",
+   "y": 136,
+   "colour": "rgb(224, 85, 154)",
+   "size": "13px/700",
+   "ground": "#19151c",
+   "ratio": 5.09,
+   "bar": 4.5
+  },
+  {
+   "element": "inactive tab",
+   "y": 136,
+   "colour": "rgb(195, 194, 183)",
+   "size": "13px/500",
+   "ground": "#121317",
+   "ratio": 10.36,
+   "bar": 4.5
+  },
+  {
+   "element": "filter label",
+   "y": 224,
+   "colour": "rgb(195, 194, 183)",
+   "size": "12px/400",
+   "ground": "#101114",
+   "ratio": 10.54,
+   "bar": 4.5
+  },
+  {
+   "element": "filter muted",
+   "y": 224,
+   "colour": "rgb(145, 143, 137)",
+   "size": "14px/400",
+   "ground": "#101114",
+   "ratio": 5.84,
+   "bar": 4.5
+  }
+ ]
+}

@@ -43,7 +43,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 21, f"expected twenty-one index rows (the programme's thirteen, E1, S1, S2, S3, S4, S4a, S4b and T1), matched {sorted(rows)}"
+    assert len(rows) == 22, f"expected twenty-two index rows (the programme's thirteen, E1, S1, S2, S3, S4, S4a, S4b, S4c and T1), matched {sorted(rows)}"
     return rows
 
 
@@ -97,10 +97,54 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # S1-S3 are three steps of one issue (#230). S4 is its own issue set (#283-#286): the credential
     # RETRIEVAL machinery is separable work with its own steps, not a fourth step of the Secret
     # contract, so the batch now spans two issues rather than one.
-    # S4's steps each carry their own issue (S4a #283, S4b #284): one design, one row per step.
+    # S4's steps each carry their own issue (S4a #283, S4b #284, S4c #285): one design, one row per step.
     s_issues = {int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}
-    assert s_issues == {230, 283, 284}, f"the S batch is #230 (S1-S3), #283 (S4, S4a) and #284 (S4b); got {sorted(s_issues)}"
+    assert s_issues == {230, 283, 284, 285}, f"the S batch is #230 (S1-S3), #283 (S4, S4a), #284 (S4b) and #285 (S4c); got {sorted(s_issues)}"
 
 
 def _ordered_ids() -> list[str]:
     return [m["id"] for m in INDEX_ROW.finditer(INDEX.read_text())]
+
+
+def test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached() -> None:
+    """A spec at `specified` that the CHANGELOG does not yet record by name (`SPEC_<id>`) has shipped
+    nothing, so the versions it names are the ones its release WILL carry — above Chart.yaml's and
+    pyproject.toml's current rungs. S4c said `chart 0.51.0` on a main at 0.52.1, and 0.51.0 had already
+    shipped (review of #325, all three seats; the test is OB1-lite's). S3 and S4b are recorded by name
+    (their steps shipped) and their `specified` status is the index's own drift, not this rule's."""
+    chart = re.search(r"^version: (\d+\.\d+\.\d+)$",
+                      (REPO / "charts/group-sync-dashboard/Chart.yaml").read_text(), re.M).group(1)
+    app = re.search(r'^version = "(\d+\.\d+\.\d+)"$', (REPO / "local-development/pyproject.toml").read_text(), re.M).group(1)
+    changelog = (REPO / "docs/CHANGELOG.md").read_text()
+    as_tuple = lambda v: tuple(int(x) for x in v.split("."))  # noqa: E731
+    checked = []
+    for fid, row in ROWS.items():
+        if row["status"] != "specified" or re.search(rf"SPEC_{fid}[_ §.:,)]", changelog):
+            continue
+        m_chart = re.search(r"chart (\d+\.\d+\.\d+)", row["version"])
+        m_app = re.search(r"app (\d+\.\d+\.\d+)", row["version"])
+        if m_chart:
+            checked.append(fid)
+            assert as_tuple(m_chart.group(1)) > as_tuple(chart), (fid, row["version"], f"Chart.yaml is already {chart}")
+        if m_app:
+            assert as_tuple(m_app.group(1)) > as_tuple(app), (fid, row["version"], f"pyproject.toml is already {app}")
+    assert "S4c" in checked, checked
+
+
+def test_s4c_gates_every_bound_failure_per_account() -> None:
+    """#315: a lockout is per DIRECTORY account, and a locked account's 500 cannot be told from a sick
+    target's. The review of #325 (the operator's ruling) made the gate one entry per account for every
+    bound failure; a per-target entry anywhere in the Lease's contract would let T clusters present one
+    wrong or locked password T times."""
+    text = (SPECS / "SPEC_S4c_credential_lifecycle.md").read_text()
+    budgets = text.split("### 3.2", 1)[1].split("### 3.3", 1)[0]
+    lease = text.split("### 3.3", 1)[1].split("### 3.4", 1)[0]
+    assert "per (account, password) until the password\n  changes, across every target, replica and restart" in budgets, \
+        "B2 is not the account's budget"
+    for shape in ("one target", "T targets sharing one account", "after a restart", "two replicas"):
+        assert f"| {shape} |" in budgets, f"the system table lacks the row `{shape}`"
+    assert "refused: dict | None" in lease and "def gated(self, digest: str)" in lease
+    body = text.split("## Orchestrator's notes", 1)[1].split("## 0.", 1)[1]   # the design, not the history
+    for stale in ("refused: dict[str, dict]", "gated(self, target", "gated_anywhere", "gated(target, digest)",
+                  "one entry per target", "(target, password)"):   # the last two: confirmation pass of #325 (Grok)
+        assert stale not in body, f"a per-target contract survives: {stale}"
