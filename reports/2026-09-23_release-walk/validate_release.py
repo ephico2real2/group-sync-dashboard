@@ -23,9 +23,31 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(os.environ["E2E_WALK_DIR"])))
 from e2e_capture import Walk, api_json, login, now  # noqa: E402
-from playwright.sync_api import sync_playwright  # noqa: E402
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright  # noqa: E402
 
-ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+EVERY_GRANT_TOGGLE = "button[data-ns-grants]"   # index.html#function nsAuditPage: the one control that opens Every grant
+
+
+def instant(stamp: str | None) -> dt.datetime | None:
+    """A store stamp (`%Y-%m-%dT%H:%M:%S.%fZ`, gsd/auditlog.py#STAMP) or the walk's own (`…SZ`) as a datetime."""
+    if not isinstance(stamp, str) or not ISO.match(stamp):
+        return None
+    return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+
+
+def form_login_row(row: dict, login_at: str) -> bool:
+    """Is this row THIS run's form login? An audit-log row of kind=credential (the POST /login the form makes;
+    the oauth-proxy's re-authorisation right after it is kind=session, which the first version of this check
+    accepted — measured 2026-09-23) whose own instant `at` — the oauth-server's stamp of the request — is at or
+    after the moment the walk started logging in. Only `at` is compared: the row also carries `observed_at`, the
+    poller's clock when it first read the line, and a backfill (a fresh store, a rotated file) observes OLD
+    logins after login_at, so a check that took any ISO-8601 field on the row accepted a login this run did not
+    make (review of #335, OB1-lite NA-1). Both clocks are UTC."""
+    if row.get("source") != "audit-log" or row.get("kind") != "credential":
+        return False
+    at, since = instant(row.get("at")), instant(login_at)
+    return at is not None and since is not None and at >= since
 
 
 def worklist(page):
@@ -50,17 +72,54 @@ def check_login_captured(w: Walk, login_at: str, user: str, timeout_s: int) -> N
             body = res.get("json") or {}
             last[cid] = {"status": res.get("status"), "attempts": (body.get("attempts") or [])[:3]}
             for row in body.get("attempts") or []:
-                stamps = [v for v in row.values() if isinstance(v, str) and ISO.match(v)]
-                if row.get("source") == "audit-log" and any(s >= login_at for s in stamps):
+                if form_login_row(row, login_at):
                     found = {"cluster": cid, "row": row}
                     break
             if found:
                 break
         if not found:
             w.page.wait_for_timeout(15_000)
-    w.record("#320 the route login is captured from the audit log", found is not None,
+    w.record("#320 the route's form login is captured from the audit log as a credential row", found is not None,
              json.dumps(found, default=str)[:600] if found else
-             f"no audit-log row for {user} at or after {login_at} within {timeout_s}s", api=found or last)
+             f"no audit-log credential row for {user} at or after {login_at} within {timeout_s}s", api=found or last)
+
+
+def expand_every_grant(page) -> bool:
+    """Open Every grant through its own control and say whether the section is open afterwards. Its rows are
+    in the DOM either way — the section is a `hidden` div — and a hidden row still has a computed background
+    (measured in Chromium, review of #335, OB1-lite NA-2), so a check that counted rows without this answer
+    could not tell an open section from one that never opened."""
+    toggle = page.locator(EVERY_GRANT_TOGGLE)
+    if toggle.count() != 1:
+        return False
+    if toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+    try:
+        page.wait_for_function("() => { const s = document.getElementById('every-grant'); return !!s && !s.hidden; }",
+                               timeout=5_000)
+    except PlaywrightTimeoutError:
+        return False
+    return True
+
+
+def check_even_row_tint(page) -> tuple[bool, str]:
+    """#330: a Critical or High row keeps its tint on an even row. "Even" is per tbody — the scope of the CSS's
+    nth-child (`[...tb.children]` indexes the same element siblings) — and only rendered rows count (the first
+    version of this check counted across every table on the page, hidden rows included; measured 2026-09-23)."""
+    expanded = expand_every_grant(page)
+    tints = page.evaluate("""() => [...document.querySelectorAll('.audit-table tbody')].flatMap((tb, t) =>
+        [...tb.children].map((tr, i) => ({ table: t, nth: i + 1, cls: tr.className,
+            rendered: tr.getClientRects().length > 0,
+            bg: tr.querySelector('td') ? getComputedStyle(tr.querySelector('td')).backgroundColor : null })))""")
+    rendered = [t for t in tints if t["rendered"]]
+    strong_even = [t for t in rendered if t["nth"] % 2 == 0 and re.search(r"risk-(critical|high)\b", t["cls"])]
+    if not expanded:
+        return False, f"Every grant did not open through its control ({len(tints)} rows, {len(rendered)} rendered)"
+    if strong_even:
+        ok = all(t["bg"] not in ("rgba(0, 0, 0, 0)", "transparent") for t in strong_even)
+        return ok, f"Every grant open; even Critical/High rows: {strong_even[:4]}"
+    return True, (f"Every grant open; no Critical/High row falls on an even row of its table here "
+                  f"({len(rendered)} rendered rows) — nothing to paint")
 
 
 def check_nsaudit(w: Walk) -> None:
@@ -126,15 +185,8 @@ def check_nsaudit(w: Walk) -> None:
         ok, detail = True, "no worklist row names two or more people on this cluster — nothing to separate"
     w.record("#329 exposed names are separated in the copied text", ok, detail)
 
-    # #330: a Critical or High row keeps its tint on an even row
-    tints = page.evaluate("""() => [...document.querySelectorAll('.audit-table tbody tr.risk-row')].map((tr, i) => ({
-        i: i + 1, cls: tr.className, bg: getComputedStyle(tr.querySelector('td')).backgroundColor }))""")
-    strong_even = [t for t in tints if t["i"] % 2 == 0 and re.search(r"risk-(critical|high)\b", t["cls"])]
-    if strong_even:
-        ok = all(t["bg"] not in ("rgba(0, 0, 0, 0)", "transparent") for t in strong_even)
-        detail = f"even Critical/High rows: {strong_even[:4]}"
-    else:
-        ok, detail = True, f"no Critical/High row falls on an even row here ({len(tints)} risk rows) — nothing to paint"
+    # #330: a Critical or High row keeps its tint on an even row (check_even_row_tint above)
+    ok, detail = check_even_row_tint(page)
     w.record("#330 the risk tint is painted on even rows", ok, detail)
 
     # #330: an index row's drill carries an id, so focus survives the 60 s repaint
@@ -164,7 +216,8 @@ def check_nsaudit(w: Walk) -> None:
         page.wait_for_timeout(600)
         tile = page.locator(".kpi", has_text="Reached cluster-wide")
         toggle = page.locator("#ns-wide-toggle")
-        detail = f"tile={tile.count()}, toggle={toggle.count()}"
+        value = tile.locator(".value").first.inner_text().strip() if tile.count() else None
+        detail = f"tile={tile.count()} reading {value!r}, toggle={toggle.count()}"
         ok = tile.count() == 1
         if toggle.count():
             before_state = toggle.get_attribute("aria-expanded")
@@ -211,7 +264,7 @@ def main() -> int:
     summary = {"started": started, "finished": now(), "base": args.base, "login_user": args.login_user,
                "login_at": login_at, "steps": w.steps,
                "passed": sum(1 for s in w.steps if s["ok"]), "failed": sum(1 for s in w.steps if not s["ok"])}
-    (out / "results_release.json").write_text(json.dumps(summary, indent=2, default=str))
+    (out / "results_release.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     print(f"\n{summary['passed']} checks passed, {summary['failed']} failed → {out}")
     return 0 if summary["failed"] == 0 else 1
 

@@ -214,6 +214,9 @@ REVIEW_ARTIFACTS = (
         # PR #180 (#172 Overview relayout) review record: quotes 759cd7d's line numbers and pre-fix copy;
         # point-in-time by construction.
         "REVIEW_overview_relayout.md",
+        # The 2026-09-23 release (#324-#334): the record quotes reviewed heads' line numbers and the
+        # reviewers' proposed snippets as they were; point-in-time by construction.
+        "REVIEW_2026-09-23_release.md",
 )
 
 
