@@ -192,12 +192,41 @@ a { color: var(--remote); }
           <dt>Remote RBAC</dt><dd>The joining SA needs <code>create subjectaccessreviews</code> and
             <code>list groups</code>. Measured on the lab: <span class="yes">both joining SAs have them</span>
             (ClusterRole <code>group-sync-dashboard-cluster-poller</code>).</dd>
-          <dt>True when</dt><dd>Clusters share one identity provider (LDAP): one <code>uid</code>, one person.</dd>
-          <dt>Risk</dt><dd>htpasswd users (and <code>kube:admin</code>) are per-cluster people. The same name on two
-            clusters is two accounts, so a name match is not proof.</dd>
+          <dt>True when</dt><dd>Your OpenShift username names you on the remote too: readers are matched by
+            <code>User</code> name (D3).</dd>
+          <dt>Risk</dt><dd>The match is by username alone (D3): the remote's RBAC for that name decides.</dd>
         </dl>
       </div>
     </div>
+    <figure>
+      <div class="fig-scroll">
+        <svg viewBox="0 0 980 400" role="img" aria-label="What each policy shows four people on a remote cluster. kubeadmin, admin on both clusters: inherit and remote-sar both show everything. A host-only admin: inherit shows everything, which is wrong because the remote never granted it; remote-sar shows own rows. A remote-only admin: inherit shows own rows, which is wrong because it narrows the remote's own admin; remote-sar shows everything. asmith, admin nowhere: both show own rows. inherit is right only where host admin equals remote admin; remote-sar is right in every row.">
+          <g font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600">
+            <rect x="20" y="14" width="190" height="44" rx="6" fill="var(--none-wash)" stroke="var(--rule)"/>
+            <text x="34" y="41" fill="currentColor">person</text>
+            <rect x="220" y="14" width="130" height="44" rx="6" fill="var(--host-wash)" stroke="var(--host)"/>
+            <text x="285" y="41" text-anchor="middle" fill="var(--host)">admin on host?</text>
+            <rect x="360" y="14" width="130" height="44" rx="6" fill="var(--remote-wash)" stroke="var(--remote)"/>
+            <text x="425" y="41" text-anchor="middle" fill="var(--remote)">admin on remote?</text>
+            <rect x="500" y="14" width="230" height="44" rx="6" fill="var(--host-wash)" stroke="var(--host)"/>
+            <text x="514" y="32" fill="var(--host)" font-family="IBM Plex Mono, monospace">inherit shows</text>
+            <text x="514" y="49" fill="var(--muted)" font-weight="400" font-size="12.5">copies the host's answer</text>
+            <rect x="740" y="14" width="220" height="44" rx="6" fill="var(--remote-wash)" stroke="var(--remote)"/>
+            <text x="754" y="32" fill="var(--remote)" font-family="IBM Plex Mono, monospace">remote-sar shows</text>
+            <text x="754" y="49" fill="var(--muted)" font-weight="400" font-size="12.5">asks the remote itself</text>
+          </g>
+          <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+            <text x="34" y="95" font-weight="600">kubeadmin</text><text x="34" y="113" fill="var(--muted)">admin on both · lab</text><rect x="257" y="87" width="56" height="24" rx="12" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="285" y="103" text-anchor="middle" font-weight="600" fill="var(--remote)">yes</text><rect x="397" y="87" width="56" height="24" rx="12" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="425" y="103" text-anchor="middle" font-weight="600" fill="var(--remote)">yes</text><rect x="500" y="74" width="230" height="50" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.3"/><text x="514" y="95" font-weight="600">everything</text><text x="514" y="113" fill="var(--remote)">right, because host = remote</text><rect x="740" y="74" width="220" height="50" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.3"/><text x="754" y="95" font-weight="600">everything</text><text x="754" y="113" fill="var(--remote)">right: the remote decided</text><line x1="20" y1="133" x2="960" y2="133" stroke="var(--rule)"/><text x="34" y="163" font-weight="600">a host-only admin</text><text x="34" y="181" fill="var(--muted)">a case, not a lab user</text><rect x="257" y="155" width="56" height="24" rx="12" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="285" y="171" text-anchor="middle" font-weight="600" fill="var(--remote)">yes</text><rect x="397" y="155" width="56" height="24" rx="12" fill="var(--none-wash)" stroke="var(--none)"/><text x="425" y="171" text-anchor="middle" font-weight="600" fill="var(--none)">no</text><rect x="500" y="142" width="230" height="50" rx="8" fill="var(--gap-wash)" stroke="var(--gap)" stroke-width="1.3"/><text x="514" y="163" font-weight="600">everything</text><text x="514" y="181" fill="var(--gap)">wrong: never granted there</text><rect x="740" y="142" width="220" height="50" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.3"/><text x="754" y="163" font-weight="600">own rows</text><text x="754" y="181" fill="var(--remote)">right: the remote decided</text><line x1="20" y1="201" x2="960" y2="201" stroke="var(--rule)"/><text x="34" y="231" font-weight="600">a remote-only admin</text><text x="34" y="249" fill="var(--muted)">a case, not a lab user</text><rect x="257" y="223" width="56" height="24" rx="12" fill="var(--none-wash)" stroke="var(--none)"/><text x="285" y="239" text-anchor="middle" font-weight="600" fill="var(--none)">no</text><rect x="397" y="223" width="56" height="24" rx="12" fill="var(--remote-wash)" stroke="var(--remote)"/><text x="425" y="239" text-anchor="middle" font-weight="600" fill="var(--remote)">yes</text><rect x="500" y="210" width="230" height="50" rx="8" fill="var(--gap-wash)" stroke="var(--gap)" stroke-width="1.3"/><text x="514" y="231" font-weight="600">own rows</text><text x="514" y="249" fill="var(--gap)">wrong: narrows its own admin</text><rect x="740" y="210" width="220" height="50" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.3"/><text x="754" y="231" font-weight="600">everything</text><text x="754" y="249" fill="var(--remote)">right: the remote decided</text><line x1="20" y1="269" x2="960" y2="269" stroke="var(--rule)"/><text x="34" y="299" font-weight="600">asmith</text><text x="34" y="317" fill="var(--muted)">no admin standing · lab</text><rect x="257" y="291" width="56" height="24" rx="12" fill="var(--none-wash)" stroke="var(--none)"/><text x="285" y="307" text-anchor="middle" font-weight="600" fill="var(--none)">no</text><rect x="397" y="291" width="56" height="24" rx="12" fill="var(--none-wash)" stroke="var(--none)"/><text x="425" y="307" text-anchor="middle" font-weight="600" fill="var(--none)">no</text><rect x="500" y="278" width="230" height="50" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.3"/><text x="514" y="299" font-weight="600">own rows</text><text x="514" y="317" fill="var(--remote)">right, because host = remote</text><rect x="740" y="278" width="220" height="50" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.3"/><text x="754" y="299" font-weight="600">own rows</text><text x="754" y="317" fill="var(--remote)">right: the remote decided</text>
+            <text x="20" y="362" fill="var(--muted)">inherit is right only where host admin = remote admin (rows 1 and 4); remote-sar is right in every row, because the remote answers.</text>
+            <text x="20" y="384" fill="var(--host)" font-weight="600">The mandate (D1, directed, not built): remote-sar for every way a cluster is joined. Today it works only for a values-declared cluster.</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>"Admin" means passing the wide-tier question, <code>list clusterrolebindings</code>, on that cluster.
+        kubeadmin and asmith are measured on the lab (§5); the two middle rows are cases that follow from the rule in
+        <code>viewer_scope</code>: <code>inherit</code> applies the host's decided tier, <code>remote-sar</code> the
+        remote's own review. The wrong rows are why <code>remote-sar</code> is the standard.</figcaption>
+    </figure>
   </section>
 
   <section>
@@ -303,8 +332,6 @@ a { color: var(--remote); }
           as a decision.</li>
         <li><code>shared-qa</code> is a hand-made Secret from #310's testing with no visibility key, so it has always
           been <code>self-only</code>.</li>
-        <li>Your lab <code>kubeadmin</code> is an <strong>htpasswd</strong> user (identity
-          <code>developer:kubeadmin</code>). On a real remote, that name would be a different person.</li>
       </ul>
     </div>
   </section>
@@ -427,7 +454,7 @@ a { color: var(--remote); }
             <rect x="30" y="732" width="920" height="74" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.5"/>
             <text x="46" y="754" font-weight="600" fill="var(--remote)">⑥ joined: the poller's token authenticates every later call to shared-rnd</text>
             <text x="46" y="772">its rights there are the ClusterRole <tspan font-family="IBM Plex Mono, monospace" font-size="12">group-sync-dashboard-cluster-poller</tspan></text>
-            <text x="46" y="790">once D1 lands, under remote-sar the same token asks shared-rnd about each reader (Figure 2)</text>
+            <text x="46" y="790">once D1 lands, under remote-sar the same token asks shared-rnd about each reader (Figure 3)</text>
             <text x="30" y="832" fill="var(--muted)">Every check is an OpenShift RBAC answer: the host's before a password exists, the remote's once the cluster is joined.</text>
             <text x="30" y="852" fill="var(--host)" font-weight="600">Dashed = proposed, not built: Rejoin (#316), clusterAdminSar (#322, D7), the remote's confirmation (D8).</text>
           </g>
@@ -455,7 +482,7 @@ a { color: var(--remote); }
   </section>
 
   <section>
-    <h2>Decisions to make</h2>
+    <h2>Decisions</h2>
     <div class="decisions">
       <div class="decision">
         <div class="id">D1 · the gap</div>
@@ -463,38 +490,34 @@ a { color: var(--remote); }
         <div class="opts">Build the remote resolver when discovery finds the cluster, rebuild it when the Secret's
           credential changes, drop it when the cluster is retired. Accept <code>remote-sar</code> from a Secret and from a
           <code>saTokenLookup</code> stanza.</div>
-        <div class="rec"><strong>Recommend: yes.</strong> Without it, the only choices for a looked-up remote are
-          "the host decides" or "nobody is wide".</div>
+        <div class="rec"><strong>Directed</strong> (2026-09-23): <em>"this is what I want: remote-sar for whatever method the cluster was joined."</em> Without it, the only choices
+          for a looked-up remote are "the host decides" or "nobody is wide".</div>
       </div>
       <div class="decision">
         <div class="id">D2 · the default for a newly joined remote</div>
         <div class="q"><code>self-only</code> (today), or <code>remote-sar</code>?</div>
         <div class="opts"><span><strong>self-only:</strong> safe and silent. Nobody is wide until someone configures it,
           which is what just surprised you.</span><span><strong>remote-sar:</strong> the remote's RBAC answers for each
-          reader. The joining SA already has the rights (measured). If it lacks them, every reader gets self and the
-          cluster shows a finding.</span></div>
+          reader. The joining SA already has the rights (measured). If it lacks them, every reader gets self; D4's
+          recommended finding would say why.</span></div>
         <div class="rec"><strong>Directed: <code>remote-sar</code> + <code>same-as-host</code> is the standard</strong> (the
           operator, 2026-09-23). D4's finding is still recommended, so that "narrowed" always has a reason.</div>
       </div>
       <div class="decision">
         <div class="id">D3 · what "same person" means (identity)</div>
-        <div class="q">Is your host username trusted as the same person on the remote?</div>
-        <div class="opts"><span><strong>(a) Every username:</strong> simple. On the lab, <code>kubeadmin</code> is wide on
-          <code>shared-rnd</code>. On a real estate, an htpasswd <code>developer</code> on the host would be read as
-          the remote's <code>developer</code>.</span><span><strong>(b) Directory identities only:</strong> accounts from the
-          break-glass providers (<code>loginCapture.htpasswdProviders</code>, e.g. <code>developer</code>) are never
-          mapped across clusters. LDAP users are.</span></div>
-        <div class="rec warn"><strong>Your call, still open.</strong> The standard (D2) fixes the pairing, not this.
-          (b) is the correct rule for real estates, but it narrows
-          <em>this</em> lab's htpasswd <code>kubeadmin</code> on <code>shared-rnd</code>. An LDAP admin would be wide.
-          (a) matches what you expected today.</div>
+        <div class="q">Is your host username the same person on the remote?</div>
+        <div class="opts">Yes, by name: every reader is matched by their OpenShift username, the <code>User</code>
+          object's name, with no identity-provider distinction. It is what <code>remote-sar</code> already does for a
+          values-declared cluster, so it needs no code.</div>
+        <div class="rec"><strong>Directed</strong> (2026-09-23): <em>"this is all OpenShift and everyone appears as a user … just focus on the users that you see in OpenShift users"</em>; the standard: <em>"a user uid in cluster A or B or C are all the same."</em></div>
       </div>
       <div class="decision">
         <div class="id">D4 · when the joining SA may not ask</div>
-        <div class="q">A 403 on the review: silent self, or a named finding?</div>
-        <div class="opts">Show it on the Cluster Configurations tab and in the cluster selector: <em>"this cluster cannot
-          check access: grant <code>create subjectaccessreviews</code> to &lt;SA&gt;"</em>.</div>
-        <div class="rec"><strong>Recommend: a finding.</strong> Self for everyone, with the reason and the fix named.</div>
+        <div class="q">When the remote cannot check access, what is served, and is the cause shown?</div>
+        <div class="opts">Always self for everyone. The finding would appear on the Cluster Configurations tab and in
+          the cluster selector, naming the check that failed and its grant: <code>list groups</code> or
+          <code>create subjectaccessreviews</code> for the joining ServiceAccount.</div>
+        <div class="rec"><strong>Directed: fall back to self.</strong> Recommend: add the named finding.</div>
       </div>
       <div class="decision">
         <div class="id">D5 · say why you are narrowed</div>
@@ -508,10 +531,10 @@ a { color: var(--remote); }
       <div class="decision">
         <div class="id">D6 · the lab, right now</div>
         <div class="q">Until D1 ships, what should <code>shared-rnd</code> and <code>shared-qa</code> be?</div>
-        <div class="opts"><code>inherit</code> + <code>same-as-host</code> restores what you had before #307, and is
-          literally true on this lab (same cluster, same identity provider). Switch to <code>remote-sar</code> once D1
-          lands. <code>shared-qa</code>: the same, or remove it if it was only #310's test cluster.</div>
-        <div class="rec"><strong>Recommend: inherit now, remote-sar after D1.</strong></div>
+        <div class="opts"><code>inherit</code> now would copy the host's answer to the remote rather than ask it: the
+          model the mandate replaces. Both remotes stay <code>self-only</code> until D1 ships, then take
+          <code>remote-sar</code> + <code>same-as-host</code>.</div>
+        <div class="rec"><strong>Directed: no inherit stopgap</strong> (2026-09-23): <em>"this is what I want: remote-sar for whatever method the cluster was joined."</em></div>
       </div>
       <div class="decision">
         <div class="id">D7 · who may join or rejoin a cluster</div>

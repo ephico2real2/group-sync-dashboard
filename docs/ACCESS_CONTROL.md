@@ -413,8 +413,9 @@ contains. If you want less in the wide view, change the view.
 
 ## 11. Several clusters in one instance
 
-The oauth-proxy authenticates a reader against the **hosting** cluster only — the first enabled
-entry of `clusters`, the cluster the pod runs on. Before application 0.19.0 the tier that cluster
+The oauth-proxy authenticates a reader against the **hosting** cluster only — the enabled entry that
+declares `dashboardController: true`, or the first enabled entry when none declares it
+(`gsd/config.py#Settings.host_cluster`). Before application 0.19.0 the tier that cluster
 decided gated every cluster's rows, so a host `cluster-admin` was served a remote cluster's
 membership, bindings and login failures with no standing there, and a reader who was nobody on the
 host but an administrator of the remote got the self view there, keyed by a username the remote had
@@ -423,12 +424,12 @@ never vouched for. Two keys per entry now say, per cluster, what a reader may se
 
 | key | values | default | meaning |
 |---|---|---|---|
-| `clusters[].visibility` | `inherit` | the first enabled entry | the host's DECIDED tier — the old behaviour, and the host's own default; on a remote an explicit choice that the host's RBAC governs that cluster's data too (a `self-only` host is self on every cluster it governs), with identity not consulted: a self reader is keyed by the host's username there, as before 0.19.0 |
+| `clusters[].visibility` | `inherit` | the hosting entry | the host's DECIDED tier — the old behaviour, and the host's own default; on a remote an explicit choice that the host's RBAC governs that cluster's data too (a `self-only` host is self on every cluster it governs), with identity not consulted: a self reader is keyed by the host's username there, as before 0.19.0 |
 | | `self-only` | every other entry | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
 | | `hidden` | | polled and alerted on (`/metrics`, the pod log) but never served through `/api`; refused on the host entry |
 | | `remote-sar` | | that cluster's own RBAC decides: the same SubjectAccessReview as `visibility.adminSar`, created on the remote API with that entry's token, naming the reader and the Group memberships read from the remote; refused on the host entry, and needs `identity: same-as-host` |
 | `clusters[].identity` | `none` | every other entry | the host's username is not treated as anyone on this cluster: person-scoped views answer 403 there, cluster-level health still shows |
-| | `same-as-host` | the first enabled entry, forced | the clusters share an identity provider and its username mapping, so the reader's self views apply to this cluster too |
+| | `same-as-host` | the hosting entry, forced | the reader is matched on this cluster by OpenShift username, the `User` object's name, so the reader's self views apply to this cluster too |
 
 **What each endpoint does.** Every `/api/clusters/{id}/…` handler calls `require_cluster` first: a
 `hidden` cluster answers the same 404, with the same sentence naming the id the caller sent, as an id
@@ -468,10 +469,11 @@ The remote RBAC is the operator's, by hand — this chart manages no remote RBAC
 ServiceAccount already holds the rights `remote-sar` needs) and the decisions that extend `remote-sar` to clusters
 declared through a Secret: `docs/DESIGN_remote_cluster_access.md`.
 
-**Identity equivalence is a claim, not a fact.** "Same username, same person" holds only when both
-clusters' identity providers and their `mappingMethod` agree; an htpasswd `developer` or `kubeadmin`
-on two clusters is two people. That is why `identity` is stated per entry, why `none` is the default
-and fails closed, and why `remote-sar` refuses to render or start without `same-as-host`.
+**Identity is the OpenShift username.** `same-as-host` matches a reader on another cluster by their OpenShift
+username, the `User` object's name, with no identity-provider distinction (D3 of
+`docs/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). `identity` is still stated per entry:
+today `none` is the default for a remote entry that states nothing and fails closed, and `remote-sar` refuses to render or
+start without `same-as-host`, because its review names that username on the remote.
 
 **On the wire.** `/api/whoami` carries `visibility.clusters[id] = {policy, identity, scope}` for every
 served cluster beside the headline `scope`, which is the host's decision (a `self-only` host makes it
