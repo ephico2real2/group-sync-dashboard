@@ -253,8 +253,9 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         # remote-sar needs a TierResolver built at app start for that cluster (api.py's remote
         # resolvers); a cluster that appears at runtime has none, so viewer_scope would answer self
         # for every reader — it fails CLOSED ("a remote cluster with no resolver is a remote cluster
-        # nobody may see wide"), which would make remote-sar silently mean self-only. S2 builds them
-        # at discovery; until then the Secret says inherit, self-only or hidden.
+        # nobody may see wide"), which would make remote-sar silently mean self-only. D1 of
+        # docs/DESIGN_remote_cluster_access.md builds them at discovery; until then the Secret says
+        # inherit, self-only or hidden.
         return finding("visibility-invalid", f"data.visibility must be one of {', '.join(allowed)}"
                        + (" (remote-sar for a Secret-sourced cluster is S2)" if visibility == VISIBILITY_REMOTE_SAR else ""))
     identity = (data.get("identity") or "").strip() or None
