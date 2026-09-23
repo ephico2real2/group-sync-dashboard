@@ -1,0 +1,174 @@
+{
+  "started": "2026-09-23T16:53:40Z",
+  "finished": "2026-09-23T16:54:48Z",
+  "base": "https://group-sync-dashboard.apps-crc.testing",
+  "login_user": "kubeadmin",
+  "login_at": "2026-09-23T16:53:40Z",
+  "steps": [
+    {
+      "t": "2026-09-23T16:53:40Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-23T16:53:41Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-23T16:53:42Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-23T16:53:43Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:53:43Z",
+      "step": "GET /api/version",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "leader": true,
+        "version": "0.31.0",
+        "commit": "7f1856a920",
+        "branch": "main",
+        "dirty": false,
+        "features": {
+          "export": true,
+          "reporting": true,
+          "reporting_prefix": "/report"
+        },
+        "timezone": {
+          "name": "America/New_York",
+          "abbrev": "EDT",
+          "utc_offset": "-0400"
+        }
+      }
+    },
+    {
+      "t": "2026-09-23T16:53:44Z",
+      "step": "#327 the cluster-wide card sits above the worklist, which ranks namespaces only",
+      "ok": true,
+      "detail": "card headings: ['Why this is a risk', 'Cluster-wide direct grants \u00b7 3', 'Exposure by namespace', 'How to close it', 'Every grant']",
+      "screenshot": "04-nsaudit-top.png"
+    },
+    {
+      "t": "2026-09-23T16:53:45Z",
+      "step": "#327 each worklist namespace opens its page",
+      "ok": true,
+      "detail": "4 drills for 4 rows: ['legacy-payments', 'legacy-reporting', 'openshift-console-user-settings', 'group-sync-operator']",
+      "screenshot": "05-nsaudit-worklist-drill.png"
+    },
+    {
+      "t": "2026-09-23T16:53:45Z",
+      "step": "#326 the platform line names a hidden namespace that still holds a finding",
+      "ok": true,
+      "detail": "platform_with_findings=1, hidden-with-findings held by the worklist=['openshift-console-user-settings']; line: 67 platform namespaces hidden \u2014 1 of them has a direct grant. This hides rows, never findings: openshift-console-user-settings is still ranked in Exposure by namespace above. Show them \u00b7 openshift-*, kube-*, and five named ones \u2014 the rule the Home page uses.",
+      "screenshot": "06-nsaudit-platform-line.png",
+      "api": {
+        "scope": "all",
+        "platformWithFindings": 1,
+        "rollup": [
+          "legacy-payments",
+          "(cluster-scoped)",
+          "legacy-reporting",
+          "openshift-console-user-settings",
+          "group-sync-operator"
+        ],
+        "hiddenWithFindings": [
+          "openshift-console-user-settings"
+        ]
+      }
+    },
+    {
+      "t": "2026-09-23T16:53:45Z",
+      "step": "#329 exposed names are separated in the copied text",
+      "ok": true,
+      "detail": "textContent: asmith \u00b7 bwilliams \u00b7 jdoe",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:53:45Z",
+      "step": "#330 the risk tint is painted on even rows",
+      "ok": true,
+      "detail": "even Critical/High rows: [{'i': 2, 'cls': 'risk-row risk-high', 'bg': 'color(srgb 0.768627 0.529412 0.0156863 / 0.07)'}, {'i': 6, 'cls': 'risk-row risk-high', 'bg': 'color(srgb 0.768627 0.529412 0.0156863 / 0.07)'}, {'i': 8, 'cls': 'risk-row risk-high', 'bg': 'color(srgb 0.768627 0.529412 0.0156863 / 0.07)'}, {'i': 10, 'cls': 'risk-row risk-high', 'bg': 'color(srgb 0.768627 0.529412 0.0156863 / 0.07)'}]",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:53:45Z",
+      "step": "#330 index-row drills carry ids for focus restore",
+      "ok": true,
+      "detail": "first ids: ['ns-row-beta-prod', 'ns-row-beta-rnd', 'ns-row-beta-uat', 'ns-row-ca-tutorial', 'ns-row-ca-tutorial-app']",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:53:47Z",
+      "step": "#329 the worklist states the bar's box does not narrow it",
+      "ok": true,
+      "detail": "note shown=True, worklist rows unchanged=True, cleared by Escape=True",
+      "screenshot": "07-nsaudit-scope-note.png"
+    },
+    {
+      "t": "2026-09-23T16:53:48Z",
+      "step": "#328 the namespace page shows the reach tile and its disclosure",
+      "ok": true,
+      "detail": "legacy-payments: tile=1, toggle=1, aria-expanded false\u2192true, subjects listed=16",
+      "screenshot": "08-nsaudit-namespace-reach.png"
+    },
+    {
+      "t": "2026-09-23T16:53:48Z",
+      "step": "no JavaScript error and no API error across the checks",
+      "ok": true,
+      "detail": "clean",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:54:48Z",
+      "step": "#320 the route login is captured from the audit log",
+      "ok": true,
+      "detail": "{\"cluster\": \"dashboard\", \"row\": {\"user_name\": \"kubeadmin\", \"outcome\": \"success\", \"at\": \"2026-09-23T16:53:42.480645Z\", \"provider\": \"developer\", \"ldap_result_code\": null, \"detail\": \"audit: session allow via system:serviceaccount:group-sync-dashboard:group-sync-dashboard\", \"pod_name\": \"crc\", \"observed_at\": \"2026-09-23T16:54:34Z\", \"source\": \"audit-log\", \"audit_id\": \"23ea168e-80c7-4303-b805-a4eb0f494703\", \"kind\": \"session\", \"client_id\": \"system:serviceaccount:group-sync-dashboard:group-sync-dashboard\", \"identity_match\": \"developer\", \"status_code\": 302, \"error_message\": null, \"user_agent\": \"Mozilla/",
+      "screenshot": null,
+      "api": {
+        "cluster": "dashboard",
+        "row": {
+          "user_name": "kubeadmin",
+          "outcome": "success",
+          "at": "2026-09-23T16:53:42.480645Z",
+          "provider": "developer",
+          "ldap_result_code": null,
+          "detail": "audit: session allow via system:serviceaccount:group-sync-dashboard:group-sync-dashboard",
+          "pod_name": "crc",
+          "observed_at": "2026-09-23T16:54:34Z",
+          "source": "audit-log",
+          "audit_id": "23ea168e-80c7-4303-b805-a4eb0f494703",
+          "kind": "session",
+          "client_id": "system:serviceaccount:group-sync-dashboard:group-sync-dashboard",
+          "identity_match": "developer",
+          "status_code": 302,
+          "error_message": null,
+          "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safa",
+          "full_name": null,
+          "known_user": false,
+          "has_history": false,
+          "break_glass": true,
+          "in_access_group": false,
+          "refusal_reason": null
+        }
+      }
+    }
+  ],
+  "passed": 15,
+  "failed": 0
+}

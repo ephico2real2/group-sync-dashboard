@@ -231,6 +231,35 @@ def walk_lookup(w: Walk) -> None:
     page.fill("#f-lookup-search", "")
 
 
+def fill_param(page, report: str, pname: str, value: str) -> bool:
+    """Set a required parameter the way a reader does, and say whether the form offered a control for it.
+
+    A text, date or number field (`report-param-<report>-<name>`) is filled; a lookup — #143's picker
+    (`report-lookup-<report>-<name>`), which is how the namespace-access report's `namespaces` renders since
+    2026-09-20 — takes each comma-separated value typed and Enter, and each must come back as a chip. The
+    parameter may sit in the form's collapsed Advanced section, which is opened first.
+
+    False when the form offers no control at all. The walk used to skip that case silently and submit the
+    form anyway: the picker replaced the text field, the walk filled nothing, and the service refused the run
+    with "select at least one namespace" — a walk defect reported as a product failure (2026-09-23)."""
+    advanced = page.locator("#report-advanced")
+    if advanced.count():
+        advanced.evaluate("d => { d.open = true; }")
+    field = page.locator(f"#report-param-{report}-{pname}")
+    if field.count():
+        field.fill(value)
+        field.dispatch_event("change")
+        return True
+    if not page.locator(f"#report-lookup-{report}-{pname}").count():
+        return False
+    for v in [x.strip() for x in value.split(",") if x.strip()]:
+        box = page.locator(f"#report-lookup-{report}-{pname}")   # re-located: each Enter repaints the form
+        box.fill(v)
+        box.press("Enter")
+        page.wait_for_selector(f"[data-lookup-tags='{pname}'] .rp-tag[data-name='{v}']", timeout=5_000)
+    return True
+
+
 def walk_reports(w: Walk, required: dict[str, dict[str, str]]):
     page = w.page
     w.errors.clear()
@@ -269,12 +298,12 @@ def walk_reports(w: Walk, required: dict[str, dict[str, str]]):
         page.click(f"#report-pick-{name}")
         page.wait_for_selector("#report-form", timeout=10_000)
         page.wait_for_timeout(300)
-        # Required parameters without a default.
-        for pname, val in required.get(name, {}).items():
-            sel = f"#report-param-{name}-{pname}"
-            if page.locator(sel).count():
-                page.fill(sel, val)
-                page.locator(sel).dispatch_event("change")
+        # Required parameters without a default — a control the form does not offer is a failure, never a skip.
+        missing = [pname for pname, val in required.get(name, {}).items() if not fill_param(page, name, pname, val)]
+        if missing:
+            w.record(f"report {name}: form", False, f"the form offers no control for {', '.join(missing)}",
+                     w.shot(f"report-{name}-no-control"))
+            continue
         if page.locator("#report-want-pdf").count() and not page.locator("#report-want-pdf").is_checked():
             page.check("#report-want-pdf")
         if not page.locator("#report-want-html").is_checked():

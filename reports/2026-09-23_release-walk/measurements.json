@@ -1,0 +1,25 @@
+{
+  "note": "Measurements taken beside the walk, each by the command named; values copied from its output on 2026-09-23.",
+  "320_login_capture_store_rows": {
+    "how": "oc exec deploy/group-sync-dashboard -c dashboard -- python3 (sqlite3, read-only) on /data/gsd.db, table login_event, user_name=kubeadmin, at >= 2026-09-23T16:50",
+    "deployed": "7f1856a920",
+    "rows_per_route_login": "one kind=credential (the OAuth form) then one kind=session (the oauth-proxy re-authorising, client system:serviceaccount:group-sync-dashboard:group-sync-dashboard, ~15 ms later); source=audit-log, outcome=success, status_code=302",
+    "credential_logins_at": ["2026-09-23T16:52:28.525701Z", "2026-09-23T16:53:21.907637Z", "2026-09-23T16:53:28.823583Z", "2026-09-23T16:53:42.465124Z"],
+    "per_cluster_entry": "each row is stored once under `dashboard` and once under `shared-rnd`: the same CRC, declared twice on purpose to exercise the remote-cluster path"
+  },
+  "330_risk_tint_per_tbody": {
+    "how": "the deployed Namespace audit page with Every grant expanded; per .audit-table tbody, rows whose nth-child is even and class is risk-critical/high; computed background of the first td",
+    "deployed": "7f1856a920",
+    "critical_or_high_rows": 8,
+    "on_even_rows": [
+      {"table": 2, "nth": 2, "bg": "color(srgb 0.768627 0.529412 0.0156863 / 0.07)"},
+      {"table": 2, "nth": 4, "bg": "color(srgb 0.768627 0.529412 0.0156863 / 0.07)"},
+      {"table": 2, "nth": 8, "bg": "color(srgb 0.768627 0.529412 0.0156863 / 0.07)"}
+    ]
+  },
+  "332_focus_not_obscured": {
+    "how": "Reports -> namespace-access -> Advanced -> focus the namespaces picker; Tab 40 times at 1440x900; at each focused option, document.elementFromPoint at its centre",
+    "before": {"deployed": "7f1856a920", "options_focused": 40, "obscured": 16, "example": "beta-uat at y 864-890 under a bar whose top is 857"},
+    "after": {"deployed": "e3b3731b78 (#333)", "options_focused": 40, "obscured": 0}
+  }
+}
