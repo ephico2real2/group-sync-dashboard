@@ -68,6 +68,26 @@ today it can take only the first or the third column, because a Secret-declared 
 | **Correct when** | one team administers the fleet, so host admin = remote admin by policy | the reader's OpenShift username names them on the remote too: readers are matched by `User` name (D3) |
 | **Risk** | a host admin sees a remote's bindings and people wide with no standing on that remote: a policy decision, made per cluster | the match is by username alone (D3): the remote's RBAC for that name decides |
 
+<!-- markdownlint-disable MD033 -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.light.png">
+  <img alt="What each policy shows four people on a remote cluster: inherit is right only where the person is admin on both clusters or on neither; for a host-only admin it shows everything and for a remote-only admin it shows own rows, both wrong; remote-sar is right in every row because the remote answers" src="diagrams/remote-cluster-access/inherit-vs-remote-sar-outcomes.light.png">
+</picture>
+<!-- markdownlint-enable MD033 -->
+
+*Figure 2. What each policy shows on a remote cluster. "Admin" means passing the wide-tier question, `list
+clusterrolebindings`, on that cluster. kubeadmin and asmith are measured on the lab (§5); the two middle rows are
+cases that follow from the rule in `viewer_scope`: `inherit` applies the host's decided tier, `remote-sar` the
+remote's own review. The wrong rows are why `remote-sar` is the standard (D1, D2).*
+
+| Person | Admin on host? | Admin on remote? | What `inherit` shows on the remote | What `remote-sar` shows |
+|---|---|---|---|---|
+| kubeadmin | yes | yes | everything | everything |
+| a host-only admin | yes | no | everything (**wrong**: never granted there) | own rows |
+| a remote-only admin | no | yes | own rows (**wrong**: narrows the remote's own admin) | everything |
+| asmith | no | no | own rows | own rows |
+
 `self-only` (nobody is wide) and `hidden` (polled, never served) are unchanged by this document.
 
 ## 4. How `remote-sar` decides
@@ -80,7 +100,7 @@ today it can take only the first or the third column, because a Secret-declared 
 </picture>
 <!-- markdownlint-enable MD033 -->
 
-*Figure 2. Today every path except "allowed" narrows, which is the fail-closed direction. Allowed and denied are
+*Figure 3. Today every path except "allowed" narrows, which is the fail-closed direction. Allowed and denied are
 cached; failures are not. A failure at either remote call reaches only the pod log and the tier-check metric, and
 the reader sees the same generic narrowed view for every one. Today this flow runs only for a values-declared
 `remote-sar` cluster (§6). Naming the failure (D4) and saying which rule decided (D5) are proposals (§8).*
@@ -226,7 +246,7 @@ and refuses a username and password with `oauth-exchange-not-built`
 </picture>
 <!-- markdownlint-enable MD033 -->
 
-*Figure 3. Both ways in converge on the same remote steps. Step 3 reads the token the Secret already holds (#284);
+*Figure 4. Both ways in converge on the same remote steps. Step 3 reads the token the Secret already holds (#284);
 minting a fresh one with the TokenRequest API, which the same Role allows, is #238. The fleet account is configuration, not a person, and is
 not cluster admin (§5). A person's Rejoin would be gated twice: on the host before the password exists (D7), and on
 the remote once it does (D8). Dashed boxes are proposed and not built.*
@@ -249,7 +269,7 @@ the remote once it does (D8). Dashed boxes are proposed and not built.*
  HOST    5 write gsd-cluster-<name> as the dashboard's ServiceAccount (the write switch was checked first)
  HOST    6 joined: the poller's token authenticates every later call, with the rights of the ClusterRole
              group-sync-dashboard-cluster-poller; once D1 lands, under remote-sar the same token asks
-             the remote about each reader (Figure 2)
+             the remote about each reader (Figure 3)
 ```
 
 **Why a person's gate starts on the host.** On a first join the dashboard holds no credential on that cluster, so
@@ -321,8 +341,8 @@ The name `clusterAdminSar` in this document is #322's: `update clusterrolebindin
 
 The figures are rendered from `docs/diagrams/remote-cluster-access/source.html`, one hand-authored page (inline
 SVG, light and dark palettes), at twice the pixel density: open it in a browser, set `data-theme` on the root element
-to `light` or `dark`, and screenshot each `.fig-scroll` element. The pictures depict the decision points in §2, §4
-and §7, and the text twins beside them carry the same points. If one of those sections changes, change the picture,
+to `light` or `dark`, and screenshot each `.fig-scroll` element. The pictures depict the decision points in §2, §3,
+§4 and §7, and the text twins beside them carry the same points. If one of those sections changes, change the picture,
 its twin and the page together. The images use `<picture>` with `prefers-color-scheme`, the form GitHub documents
 for theme-aware images
 ([GitHub's guide](https://github.blog/developer-skills/github/how-to-make-your-images-in-markdown-on-github-adjust-for-dark-mode-and-light-mode/));
