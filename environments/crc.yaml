@@ -47,8 +47,9 @@ logLevel: DEBUG
 #                 A cluster-scoped write, so it runs under its own ServiceAccount, never the dashboard's.
 #   loginCapture  lets the DASHBOARD read a log. `source: pod-log` is a Role on pods/log in
 #                 openshift-authentication; `source: audit-log` is a ClusterRole on `get nodes/proxy`
-#                 (+ `list nodes`) — read-only, cluster-wide, chosen here because the audit log names
-#                 the person at the DEFAULT verbosity and keeps history back to the rotated files.
+#                 (+ `list nodes`) — read-only, cluster-wide. The CHART DEFAULT since 0.52.0, because
+#                 the audit log names the person at the DEFAULT verbosity and keeps history back to
+#                 the rotated files. Restated below rather than inherited, per this directory's rule.
 #
 # ON A SHARED CLUSTER, READ THIS FIRST: toggling the level rolls oauth-openshift, which at one replica
 # is a login outage rather than a rolling update. CRC has one replica. See
