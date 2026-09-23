@@ -5206,6 +5206,28 @@ function namespacesCard() {
   // something — a hidden namespace that HAS a finding — gets its own clause rather than making them
   // toggle to find out (#257).
   const withFindings = d.platform_with_findings || 0;
+  // AND THE CLAUSE SAYS WHERE THE FINDING STILL IS (#261 §2). A platform namespace holding a direct grant
+  // is hidden from this list and ranked in the worklist above at the same time — the lab's
+  // openshift-console-user-settings was both, and the two lists disagreed with nothing on the page to say
+  // why. The filter hides rows, never findings, so the sentence names the namespaces and the list that
+  // still holds them: the worklist at the wide tier, the viewer's own grants at the self tier. Names come
+  // from the rows already held (a hidden row is filtered, never dropped): no request, and no second
+  // definition of "has a finding". Three at most, as the reach line folds its virtual groups.
+  //
+  // WHERE A FINDING IS, CLAIMED ONLY WHERE IT IS HELD (review of #326: Codex C2/C3, Grok C3). The index
+  // and the worklist are two requests under two snapshots, so a poll landing between them can leave a
+  // name in one and not yet in the other: at the wide tier the clause names only what the rollup holds.
+  // At the self tier the grants above are a served page (NS_GRANT_PAGE), so "listed above" can be false
+  // past it; "among your direct grants" is what the payload itself proves.
+  const ranked = self ? null : new Set(((data.userBindings || {}).by_namespace || []).map((r) => r.namespace));
+  const hiddenWithFindings = hidingPlatform
+    ? all.filter((n) => n.platform && n.direct_grants && (!ranked || ranked.has(n.name))).map((n) => n.name) : [];
+  const namedHidden = hiddenWithFindings.slice(0, 3);
+  const neverFindings = !withFindings || !namedHidden.length ? "" : ` <strong>This hides rows, never findings:</strong>
+    ${namedHidden.map((n) => `<code>${esc(n)}</code>`).join(", ")}${hiddenWithFindings.length > namedHidden.length
+      ? ` and ${hiddenWithFindings.length - namedHidden.length} more` : ""}
+    ${hiddenWithFindings.length === 1 ? "is" : "are"} still ${self ? "among your direct grants"
+      : "ranked in <strong>Exposure by namespace</strong> above"}.`;
   // A configured pattern matching nothing on THIS cluster: a typo, or a convention that was
   // decommissioned. Said where the classification is said, because that is where a reader can act
   // on it, and named rather than counted — "2 patterns match nothing" sends someone to read the
@@ -5219,7 +5241,7 @@ function namespacesCard() {
   const platformLine = !platformCount ? "" : `<div class="filterbar-note mb-4">${hidingPlatform
     ? `${platformCount} platform namespace${platformCount === 1 ? "" : "s"} hidden${withFindings
         ? ` — <strong>${withFindings}</strong> of them ${withFindings === 1 ? "has" : "have"} a direct grant`
-        : ""}. <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
+        : ""}.${neverFindings} <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
     : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
     <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span>${stalePatterns}</div>`;
   // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
