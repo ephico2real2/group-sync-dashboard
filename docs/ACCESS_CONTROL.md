@@ -464,6 +464,10 @@ The remote RBAC is the operator's, by hand — this chart manages no remote RBAC
 `ClusterRoleBinding` of `system:auth-delegator` to the remote ServiceAccount grants
 `create subjectaccessreviews`.
 
+**The two models side by side** — `inherit` against `remote-sar`, with pictures, the lab's measurements (the joining
+ServiceAccount already holds the rights `remote-sar` needs) and the decisions that extend `remote-sar` to clusters
+declared through a Secret: `docs/DESIGN_remote_cluster_access.md`.
+
 **Identity equivalence is a claim, not a fact.** "Same username, same person" holds only when both
 clusters' identity providers and their `mappingMethod` agree; an htpasswd `developer` or `kubeadmin`
 on two clusters is two people. That is why `identity` is stated per entry, why `none` is the default
