@@ -51,16 +51,19 @@ def check_login_captured(w: Walk, login_at: str, user: str, timeout_s: int) -> N
             last[cid] = {"status": res.get("status"), "attempts": (body.get("attempts") or [])[:3]}
             for row in body.get("attempts") or []:
                 stamps = [v for v in row.values() if isinstance(v, str) and ISO.match(v)]
-                if row.get("source") == "audit-log" and any(s >= login_at for s in stamps):
+                # The FORM login is kind=credential; the oauth-proxy's re-authorisation right after it is a
+                # kind=session row, which the first version of this check accepted (measured 2026-09-23).
+                if row.get("source") == "audit-log" and row.get("kind") == "credential" \
+                        and any(s >= login_at for s in stamps):
                     found = {"cluster": cid, "row": row}
                     break
             if found:
                 break
         if not found:
             w.page.wait_for_timeout(15_000)
-    w.record("#320 the route login is captured from the audit log", found is not None,
+    w.record("#320 the route's form login is captured from the audit log as a credential row", found is not None,
              json.dumps(found, default=str)[:600] if found else
-             f"no audit-log row for {user} at or after {login_at} within {timeout_s}s", api=found or last)
+             f"no audit-log credential row for {user} at or after {login_at} within {timeout_s}s", api=found or last)
 
 
 def check_nsaudit(w: Walk) -> None:
@@ -126,15 +129,22 @@ def check_nsaudit(w: Walk) -> None:
         ok, detail = True, "no worklist row names two or more people on this cluster — nothing to separate"
     w.record("#329 exposed names are separated in the copied text", ok, detail)
 
-    # #330: a Critical or High row keeps its tint on an even row
-    tints = page.evaluate("""() => [...document.querySelectorAll('.audit-table tbody tr.risk-row')].map((tr, i) => ({
-        i: i + 1, cls: tr.className, bg: getComputedStyle(tr.querySelector('td')).backgroundColor }))""")
-    strong_even = [t for t in tints if t["i"] % 2 == 0 and re.search(r"risk-(critical|high)\b", t["cls"])]
+    # #330: a Critical or High row keeps its tint on an even row. "Even" is per tbody — the scope of the CSS's
+    # nth-child — and Every grant's flagged rows render only once it is expanded (the first version of this check
+    # counted across every table on the page, measured 2026-09-23).
+    expand = page.locator("button", has_text=re.compile(r"^\W*Show \d+ grants?"))
+    if expand.count():
+        expand.first.click()
+        page.wait_for_timeout(600)
+    tints = page.evaluate("""() => [...document.querySelectorAll('.audit-table tbody')].flatMap((tb, t) =>
+        [...tb.children].map((tr, i) => ({ table: t, nth: i + 1, cls: tr.className,
+            bg: tr.querySelector('td') ? getComputedStyle(tr.querySelector('td')).backgroundColor : null })))""")
+    strong_even = [t for t in tints if t["nth"] % 2 == 0 and re.search(r"risk-(critical|high)\b", t["cls"])]
     if strong_even:
         ok = all(t["bg"] not in ("rgba(0, 0, 0, 0)", "transparent") for t in strong_even)
         detail = f"even Critical/High rows: {strong_even[:4]}"
     else:
-        ok, detail = True, f"no Critical/High row falls on an even row here ({len(tints)} risk rows) — nothing to paint"
+        ok, detail = True, f"no Critical/High row falls on an even row of its table here ({len(tints)} rows) — nothing to paint"
     w.record("#330 the risk tint is painted on even rows", ok, detail)
 
     # #330: an index row's drill carries an id, so focus survives the 60 s repaint
@@ -164,7 +174,8 @@ def check_nsaudit(w: Walk) -> None:
         page.wait_for_timeout(600)
         tile = page.locator(".kpi", has_text="Reached cluster-wide")
         toggle = page.locator("#ns-wide-toggle")
-        detail = f"tile={tile.count()}, toggle={toggle.count()}"
+        value = tile.locator(".value").first.inner_text().strip() if tile.count() else None
+        detail = f"tile={tile.count()} reading {value!r}, toggle={toggle.count()}"
         ok = tile.count() == 1
         if toggle.count():
             before_state = toggle.get_attribute("aria-expanded")

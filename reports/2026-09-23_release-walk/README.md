@@ -26,15 +26,17 @@ results are not in this folder — `findings.json` keeps the note.
 
 `validate_release.py` logs in through the route with the walk's own login and step recording
 (`local-development/e2e-walk/e2e_capture.py`) and records each check with its screenshot in
-`results_release.json`. Three of its measurements were then taken again more precisely, and those are in
-`measurements.json`:
+`results_release.json` (run against `7f1856a920`). Three of those checks proved less than they claimed — #320
+accepted the oauth-proxy's `session` row, #330 counted rows across every table, #328 recorded the tile's presence
+but not its value — so they were measured again precisely (`measurements.json`), the script was corrected, and the
+corrected script was re-run against `7e68a93565`: **15 / 15**, in `results_release_7e68a93.json`.
 
 | Change | On the lab's data |
 |---|---|
 | #320 — login capture from the oauth-server audit log, the default source | every route login is stored as a `credential` row (the OAuth form) then a `session` row (the oauth-proxy, ~15 ms later), `source=audit-log`, read from the store: four logins at 16:52:28, 16:53:21, 16:53:28 and 16:53:42Z. No Debug level anywhere. |
 | #326 — the platform line names a hidden namespace that still holds a finding | *"67 platform namespaces hidden — 1 of them has a direct grant. This hides rows, never findings: `openshift-console-user-settings` is still ranked in Exposure by namespace above."* |
 | #327 — the cluster scope is its own card; the worklist drills | "Cluster-wide direct grants · 3" above the worklist; 4 worklist namespaces, 4 drills, the first opens its page |
-| #328 — the reach becomes a tile and a disclosure | `legacy-payments`: the tile present (it reads 53 in `screenshots/release-08-nsaudit-namespace-reach.png`; the check records its presence, not its value), the toggle `aria-expanded` false → true, 16 subjects listed |
+| #328 — the reach becomes a tile and a disclosure | `legacy-payments`: the tile reads **53** (`results_release_7e68a93.json`), the toggle `aria-expanded` false → true, 16 subjects listed |
 | #329 — names separated; the scope note | the copied text reads `asmith · bwilliams · jdoe`; the note shows while Find namespace holds a query and goes with Escape |
 | #330 — the risk tint on even rows; index-row ids | 3 High rows on even rows of their table, all tinted (measured per `tbody`, the scope of the CSS's `nth-child`); index drills carry `ns-row-<name>` |
 
@@ -54,7 +56,7 @@ desktop, up to 160.5 px at 320 px wide) — and re-measured on the redeployed `e
 |---|---|
 | `e2e-walk.html` | the walk document, every screenshot embedded (the PDF build is not committed, for size) |
 | `results.json`, `results_extra.json`, `integrity.jsonl`, `env.json` | the walk's own results — every number in the document is read from these |
-| `results_release.json`, `measurements.json` | the release checks and the three precise re-measurements |
+| `results_release.json`, `measurements.json`, `results_release_7e68a93.json` | the release checks as first run, the three precise re-measurements, and the corrected checks re-run |
 | `findings.json` | the findings the document carries |
 | `screenshots/` | the release checks (`release-*.png`) and the namespace-access report after the walk's fix (`walk-23-*.png`). The walk's own 75 captures (44 main, 20 second pass, 11 PDF page 1) are not committed as PNGs: `e2e-walk.html` embeds them as downscaled JPEGs |
 | `artefacts/` | the 11 reports as HTML and JSON, downloaded through the page (the PDFs are not committed, for size) |
