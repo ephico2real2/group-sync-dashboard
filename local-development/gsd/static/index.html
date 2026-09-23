@@ -5320,12 +5320,15 @@ function namespacesCard() {
       : `Nothing matches both <strong>${esc(q)}</strong> (the bar's Find namespace box) and <strong>${esc(ownQ)}</strong>
          (this list's Search box), though each matches something on its own. ${still} Press Escape in either box to widen.`;
   };
+  // Each row's drill carries an id for the reason the pager's buttons do: render() restores focus BY ID, and
+  // without one the 60 s repaint dropped a keyboard reader on a namespace to <body> (measured). A namespace
+  // name is a DNS label, so it is id-safe as it stands.
   const body = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
           <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
         <tbody>${paged.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
-          <td><button type="button" class="drill">${esc(n.name)}</button></td>
+          <td><button type="button" class="drill" id="ns-row-${esc(n.name)}">${esc(n.name)}</button></td>
           ${keys.map((k) => `<td class="mono muted">${esc((n.labels || {})[k] || "—")}</td>`).join("")}
           <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
           <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>

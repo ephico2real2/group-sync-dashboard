@@ -1586,6 +1586,18 @@ class TestNamespaces:
         dash.wait_for_selector("h2:text-is('Namespaces')")
         assert dash.evaluate("() => location.hash") == "#page=nsaudit&cluster=crc-local"
 
+    def test_a_keyboard_reader_on_an_index_row_keeps_focus_across_the_poll(self, dash):
+        """render() restores focus BY ID, and the index's row drill carried none, so the 60 s repaint dropped a
+        keyboard reader on a namespace to <body> — the defect #264's review fixed for the pager (Cursor C5) and
+        left on the rows the pager pages. Measured on main: focus on prod-ns's drill, render(), activeElement
+        is BODY."""
+        self._open(dash)
+        dash.locator("tr[data-ns='prod-ns'] button.drill").focus()
+        dash.evaluate("() => render()")   # exactly what the poll does
+        assert dash.evaluate("() => document.activeElement.id") == "ns-row-prod-ns", "the repaint dropped the reader's focus"
+        dash.keyboard.press("Enter")
+        dash.wait_for_selector("h2:text-is('prod-ns')")
+
     def test_the_group_drill_from_the_page_leaves_the_namespace_behind(self, dash):
         self._open(dash)
         dash.locator("tr[data-ns='prod-ns'] button.drill").click()
@@ -3535,6 +3547,30 @@ class TestNamespaceAuditPage:
         box.press("Escape")
         dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
         assert "Find namespace" not in worklist.inner_text()
+
+    def test_the_risk_tint_is_painted_on_even_rows_too(self, dash):
+        """app.css drops zebra striping in the audit tables — "the risk tint IS the row signal" — with
+        `.audit-table tbody tr:nth-child(even) td { background: none }`, specificity (0,2,3). The tints are
+        `.risk-row.risk-critical td` and `.risk-row.risk-high td`, (0,2,1), so on every EVEN row the
+        suppression won and a Critical or High row painted no tint at all: measured on the lab replica,
+        legacy-payments (High, row 2) sat on the bare card beside a tinted High row 1. Rows placed by the
+        payload so each tier lands on an odd and an even row whatever else the page ranks."""
+        self._open(dash)
+        dash.evaluate("""() => {
+          const mk = (ns, p) => ({namespace: ns, bindings: 1, distinct_users: 1, worst_privilege: p, cluster_scoped: 0, users: ['u']});
+          data.userBindings.by_namespace = [mk('a-crit', 4), mk('b-crit', 4), mk('c-high', 3), mk('d-high', 3), mk('e-med', 2), mk('f-med', 2)];
+          view.nsSort = 'namespace'; view.nsDir = 'asc'; render(); }""")
+        painted = dash.evaluate("""() => [...[...document.querySelectorAll('#main section.card')].find((c) => {
+            const h = c.querySelector('h3'); return h && h.textContent.trim() === 'Exposure by namespace'; })
+          .querySelectorAll('tbody tr')].map((tr, i) => [i + 1, tr.className.split(' ').pop(), getComputedStyle(tr.querySelector('td.ns-cell')).backgroundColor])""")
+        bare = "rgba(0, 0, 0, 0)"
+        for pos, tier, bg in painted:
+            if tier in ("risk-critical", "risk-high"):
+                assert bg != bare, f"row {pos} ({tier}) paints no tint: {painted}"
+            else:
+                assert bg == bare, f"row {pos} ({tier}) is striped — the zebra the audit table drops: {painted}"
+        tints = {tier: {bg for _, t, bg in painted if t == tier} for tier in ("risk-critical", "risk-high")}
+        assert all(len(v) == 1 for v in tints.values()), f"a tier paints differently on odd and even rows: {tints}"
 
 
 class TestUsagePage:
