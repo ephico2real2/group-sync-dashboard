@@ -1,0 +1,2874 @@
+{
+ "version": {
+  "version": "0.30.0",
+  "sha": "a90f1b277b",
+  "features": {
+   "export": true,
+   "reporting": true,
+   "reporting_prefix": "/report"
+  }
+ },
+ "tabs": [
+  "Home",
+  "Overview",
+  "KPIs",
+  "Groups",
+  "Users",
+  "Access granted",
+  "RBAC policy",
+  "Kyverno",
+  "Namespace audit",
+  "Logins",
+  "Usage",
+  "Reports",
+  "Library",
+  "Cluster Configurations"
+ ],
+ "shell.controls": {
+  "refresh": true,
+  "logout": true,
+  "cluster_select": [
+   "dashboard-rnd",
+   "mock-privateca",
+   "mock-selfsigned",
+   "mock-trusted",
+   "shared-rnd"
+  ],
+  "cluster_value": "dashboard-rnd",
+  "appearance": [
+   "Auto",
+   "Light",
+   "Dark"
+  ],
+  "palette": [
+   "Default",
+   "Deuteranopia-safe",
+   "Protanopia-safe",
+   "Tritanopia-safe",
+   "High contrast"
+  ],
+  "search_box": {
+   "id": "f-ns-search",
+   "label": "Find namespace",
+   "placeholder": "filter by name or label",
+   "title": "Filters namespaces by name or by a label value as you type. Several words are ANDed — \"demo prod\" finds demo-prod and demo-production. Escape clears."
+  },
+  "export_buttons": [
+   "CSV",
+   "JSON",
+   "Home",
+   "Overview",
+   "KPIs",
+   "Groups",
+   "Users",
+   "Access granted",
+   "RBAC policy",
+   "Kyverno",
+   "Namespace audit",
+   "Logins",
+   "Usage",
+   "Reports",
+   "Library",
+   "Cluster Configurations"
+  ],
+  "scope_pill": "Full view — you are seeing everything",
+  "build_info": "v0.30.0 · a90f1b277b",
+  "last_refresh": "updated 01:43:35 EDT",
+  "filters_text": "Cluster\ndashboard-rnd\nmock-privateca\nmock-selfsigned\nmock-trusted\nshared-rnd\nFind namespace\nFilters the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.\nExport\nCSV\nJSON\n11 rows\nHome\nOverview\nKPIs\nGroups\nUsers\nAccess granted\nRBAC policy\nKyverno\nNamespace audit\nLogins\nUsage\nReports\nLibrary\nCluster Configurations"
+ },
+ "api.userBindings.envelope": {
+  "cluster": "dashboard-rnd",
+  "scope": "all",
+  "viewer": "kubeadmin",
+  "note": "direct user grants; migrate these to LDAP-managed groups",
+  "namespace": null,
+  "total": 11,
+  "limit": 200,
+  "offset": 0,
+  "truncated": false,
+  "excluded_platform": 24,
+  "by_namespace_len": 5,
+  "bindings_len": 11
+ },
+ "api.userBindings.by_namespace": [
+  {
+   "namespace": "legacy-payments",
+   "bindings": 3,
+   "distinct_users": 3,
+   "worst_privilege": 3,
+   "cluster_scoped": 0,
+   "users": [
+    "asmith",
+    "bwilliams",
+    "jdoe"
+   ]
+  },
+  {
+   "namespace": "(cluster-scoped)",
+   "bindings": 3,
+   "distinct_users": 3,
+   "worst_privilege": 2,
+   "cluster_scoped": 1,
+   "users": [
+    "dana.lee",
+    "jdoe",
+    "ocp-oauth-bind-serviceid"
+   ]
+  },
+  {
+   "namespace": "legacy-reporting",
+   "bindings": 2,
+   "distinct_users": 2,
+   "worst_privilege": 2,
+   "cluster_scoped": 0,
+   "users": [
+    "jdoe",
+    "tmp-contractor-9931"
+   ]
+  },
+  {
+   "namespace": "openshift-console-user-settings",
+   "bindings": 2,
+   "distinct_users": 2,
+   "worst_privilege": 1,
+   "cluster_scoped": 0,
+   "users": [
+    "developer",
+    "jane.smith"
+   ]
+  },
+  {
+   "namespace": "group-sync-operator",
+   "bindings": 1,
+   "distinct_users": 1,
+   "worst_privilege": 1,
+   "cluster_scoped": 0,
+   "users": [
+    "ocp-oauth-bind-serviceid"
+   ]
+  }
+ ],
+ "api.userBindings.bindings": [
+  {
+   "binding_kind": "ClusterRoleBinding",
+   "binding_namespace": "",
+   "binding_name": "cluster-reader",
+   "role_kind": "ClusterRole",
+   "role_name": "cluster-reader",
+   "user_name": "dana.lee",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "ClusterRoleBinding",
+   "binding_namespace": "",
+   "binding_name": "jdoe-edit",
+   "role_kind": "ClusterRole",
+   "role_name": "edit",
+   "user_name": "jdoe",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "ClusterRoleBinding",
+   "binding_namespace": "",
+   "binding_name": "group-sync-dashboard-cluster-poller",
+   "role_kind": "ClusterRole",
+   "role_name": "group-sync-dashboard-cluster-poller",
+   "user_name": "ocp-oauth-bind-serviceid",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "group-sync-operator",
+   "binding_name": "group-sync-dashboard-cluster-poller-token-reader",
+   "role_kind": "Role",
+   "role_name": "group-sync-dashboard-cluster-poller-token-reader",
+   "user_name": "ocp-oauth-bind-serviceid",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "legacy-payments",
+   "binding_name": "asmith-admin",
+   "role_kind": "ClusterRole",
+   "role_name": "admin",
+   "user_name": "asmith",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "legacy-payments",
+   "binding_name": "bwilliams-admin",
+   "role_kind": "ClusterRole",
+   "role_name": "admin",
+   "user_name": "bwilliams",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "legacy-payments",
+   "binding_name": "jdoe-admin",
+   "role_kind": "ClusterRole",
+   "role_name": "admin",
+   "user_name": "jdoe",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "legacy-reporting",
+   "binding_name": "jdoe-edit",
+   "role_kind": "ClusterRole",
+   "role_name": "edit",
+   "user_name": "jdoe",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "legacy-reporting",
+   "binding_name": "tmp-contractor-9931-edit",
+   "role_kind": "ClusterRole",
+   "role_name": "edit",
+   "user_name": "tmp-contractor-9931",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "openshift-console-user-settings",
+   "binding_name": "user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding",
+   "role_kind": "Role",
+   "role_name": "user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-role",
+   "user_name": "developer",
+   "is_platform": 0
+  },
+  {
+   "binding_kind": "RoleBinding",
+   "binding_namespace": "openshift-console-user-settings",
+   "binding_name": "user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-rolebinding",
+   "role_kind": "Role",
+   "role_name": "user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-role",
+   "user_name": "jane.smith",
+   "is_platform": 0
+  }
+ ],
+ "api.namespaces.envelope": {
+  "scope": "all",
+  "source": {
+   "state": "ok",
+   "observed_at": "2026-09-21T05:40:29Z"
+  },
+  "label_keys": [
+   "company.net/mnemonic",
+   "company.net/app-environment",
+   "company.net/oud-group"
+  ],
+  "count": 106,
+  "cluster_wide_groups": 13,
+  "cluster_wide_grants": 3,
+  "cluster_wide_path": true
+ },
+ "api.namespaces.rows": [
+  {
+   "name": "beta-prod",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "prod",
+    "company.net/mnemonic": "beta"
+   },
+   "via_groups": 1,
+   "direct_grants": 0
+  },
+  {
+   "name": "beta-rnd",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "rnd",
+    "company.net/mnemonic": "beta"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "beta-uat",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "uat",
+    "company.net/mnemonic": "beta"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "ca-tutorial",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "ca-tutorial-app",
+   "created_at": "2026-09-19T15:12:13Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "cert-manager",
+   "created_at": "2026-09-19T00:38:10Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "cert-manager-operator",
+   "created_at": "2026-09-19T00:38:10Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "default",
+   "created_at": "2026-07-29T11:44:37Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "demo-prod",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "prod",
+    "company.net/mnemonic": "demo"
+   },
+   "via_groups": 1,
+   "direct_grants": 0
+  },
+  {
+   "name": "demo-production",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "prod",
+    "company.net/mnemonic": "demo"
+   },
+   "via_groups": 1,
+   "direct_grants": 0
+  },
+  {
+   "name": "demo-qa",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "qa",
+    "company.net/mnemonic": "demo"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "demo-rnd",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "rnd",
+    "company.net/mnemonic": "demo"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "demo-uat",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "uat",
+    "company.net/mnemonic": "demo"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "group-sync-dashboard",
+   "created_at": "2026-09-19T00:53:15Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/mnemonic": "gsd"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "group-sync-operator",
+   "created_at": "2026-09-19T00:49:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/mnemonic": "gso"
+   },
+   "via_groups": 0,
+   "direct_grants": 1
+  },
+  {
+   "name": "gsd-preexist",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/mnemonic": "gsd"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "hostpath-provisioner",
+   "created_at": "2026-07-30T12:37:17Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "jeff-qa",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "qa",
+    "company.net/mnemonic": "jeff"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "jeff-rnd",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "rnd",
+    "company.net/mnemonic": "jeff"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-fail-bad-env",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "production",
+    "company.net/mnemonic": "kltc"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-fail-mnemonic-toolong",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "uat",
+    "company.net/mnemonic": "toolongx"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-fail-no-labels",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-fail-only-env",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "prod"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-fail-only-mnemonic",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/mnemonic": "kltb"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-pass-both",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "qa",
+    "company.net/mnemonic": "klta"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "klt-pass-mnemonic-3char",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "rnd",
+    "company.net/mnemonic": "klt"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "kube-node-lease",
+   "created_at": "2026-07-29T11:44:37Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "kube-public",
+   "created_at": "2026-07-29T11:44:37Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "kube-system",
+   "created_at": "2026-07-29T11:44:37Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "kyverno",
+   "created_at": "2026-09-19T00:38:32Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "ldap-testing",
+   "created_at": "2026-09-19T00:40:56Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "legacy-payments",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 3
+  },
+  {
+   "name": "legacy-reporting",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 2
+  },
+  {
+   "name": "namespace-configuration-operator",
+   "created_at": "2026-09-19T00:50:57Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "ocp-klt-excluded-no-labels",
+   "created_at": "2026-09-19T00:51:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift",
+   "created_at": "2026-07-29T11:52:16Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-apiserver",
+   "created_at": "2026-07-29T11:51:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-apiserver-operator",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-authentication",
+   "created_at": "2026-07-29T11:51:58Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-authentication-operator",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-cloud-network-config-controller",
+   "created_at": "2026-07-29T11:45:41Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-cloud-platform-infra",
+   "created_at": "2026-07-29T11:45:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-cluster-machine-approver",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-cluster-samples-operator",
+   "created_at": "2026-07-29T11:45:46Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-cluster-storage-operator",
+   "created_at": "2026-07-29T11:45:41Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-cluster-version",
+   "created_at": "2026-07-29T11:44:38Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-config",
+   "created_at": "2026-07-29T11:46:08Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-config-managed",
+   "created_at": "2026-07-29T11:46:08Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-config-operator",
+   "created_at": "2026-07-29T11:45:41Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-console",
+   "created_at": "2026-07-29T11:46:02Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-console-operator",
+   "created_at": "2026-07-29T11:46:02Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-console-user-settings",
+   "created_at": "2026-07-29T11:46:03Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 2
+  },
+  {
+   "name": "openshift-controller-manager",
+   "created_at": "2026-07-29T11:51:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-controller-manager-operator",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-dns",
+   "created_at": "2026-07-29T11:52:25Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-dns-operator",
+   "created_at": "2026-07-29T11:45:46Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-etcd",
+   "created_at": "2026-07-29T11:45:06Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-etcd-operator",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-gitops",
+   "created_at": "2026-09-19T01:11:58Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-gitops-operator",
+   "created_at": "2026-09-19T01:11:26Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-host-network",
+   "created_at": "2026-07-29T11:50:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-image-registry",
+   "created_at": "2026-07-29T11:45:46Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-infra",
+   "created_at": "2026-07-29T11:44:44Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-ingress",
+   "created_at": "2026-07-29T11:52:34Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-ingress-canary",
+   "created_at": "2026-07-29T11:54:24Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-ingress-operator",
+   "created_at": "2026-07-29T11:45:16Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kni-infra",
+   "created_at": "2026-07-29T11:45:49Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-apiserver",
+   "created_at": "2026-07-29T11:45:06Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-apiserver-operator",
+   "created_at": "2026-07-29T11:45:07Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-controller-manager",
+   "created_at": "2026-07-29T11:45:07Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-controller-manager-operator",
+   "created_at": "2026-07-29T11:45:07Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-scheduler",
+   "created_at": "2026-07-29T11:45:08Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-scheduler-operator",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-storage-version-migrator",
+   "created_at": "2026-07-29T11:51:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-kube-storage-version-migrator-operator",
+   "created_at": "2026-07-29T11:45:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-machine-api",
+   "created_at": "2026-07-29T11:45:44Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-machine-config-operator",
+   "created_at": "2026-07-29T11:45:45Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-marketplace",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-monitoring",
+   "created_at": "2026-07-29T11:45:57Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-multus",
+   "created_at": "2026-07-29T11:50:37Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-network-console",
+   "created_at": "2026-07-29T11:54:19Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-network-diagnostics",
+   "created_at": "2026-07-29T11:50:55Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-network-node-identity",
+   "created_at": "2026-07-29T11:50:59Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-network-operator",
+   "created_at": "2026-07-29T11:45:43Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-node",
+   "created_at": "2026-07-29T11:52:16Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-nutanix-infra",
+   "created_at": "2026-07-29T11:45:53Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-oauth-apiserver",
+   "created_at": "2026-07-29T11:51:55Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-openstack-infra",
+   "created_at": "2026-07-29T11:45:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-operator-lifecycle-manager",
+   "created_at": "2026-07-29T11:45:50Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-operators",
+   "created_at": "2026-07-29T11:45:51Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-ovirt-infra",
+   "created_at": "2026-07-29T11:45:51Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-ovn-kubernetes",
+   "created_at": "2026-07-29T11:50:45Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-route-controller-manager",
+   "created_at": "2026-07-29T11:51:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-service-ca",
+   "created_at": "2026-07-29T11:51:54Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-service-ca-operator",
+   "created_at": "2026-07-29T11:45:46Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-test-demo",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-user-workload-monitoring",
+   "created_at": "2026-07-29T11:45:58Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "openshift-vsphere-infra",
+   "created_at": "2026-07-29T11:45:52Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "oud-poc-crossfamily",
+   "created_at": "2026-09-19T15:11:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/mnemonic": "beta",
+    "company.net/oud-group": "app-ocp-rbac-spar-ns-audit"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "oud-poc-platform",
+   "created_at": "2026-09-19T15:11:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/oud-group": "app-ocp-rbac-platform-ns-admin"
+   },
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "oud-poc-spark",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/oud-group": "bda-rbac-spark-alpha-users"
+   },
+   "via_groups": 1,
+   "direct_grants": 0
+  },
+  {
+   "name": "oud-poc-trino",
+   "created_at": "2026-09-19T15:11:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/mnemonic": "alpha",
+    "company.net/oud-group": "bda-rbac-trino-alpha-users"
+   },
+   "via_groups": 1,
+   "direct_grants": 0
+  },
+  {
+   "name": "spar-qa",
+   "created_at": "2026-09-19T15:11:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "qa",
+    "company.net/mnemonic": "spar"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "spar-rnd",
+   "created_at": "2026-09-19T15:11:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "rnd",
+    "company.net/mnemonic": "spar"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  },
+  {
+   "name": "test-your-email",
+   "created_at": "2026-09-19T15:12:12Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {},
+   "via_groups": 0,
+   "direct_grants": 0
+  },
+  {
+   "name": "trno-uat",
+   "created_at": "2026-09-19T15:11:47Z",
+   "phase": "Active",
+   "observed_at": "2026-09-21T05:40:29Z",
+   "labels": {
+    "company.net/app-environment": "uat",
+    "company.net/mnemonic": "trno"
+   },
+   "via_groups": 2,
+   "direct_grants": 0
+  }
+ ],
+ "cards": [
+  "Namespace audit",
+  "Why this is a risk",
+  "Exposure by namespace",
+  "How to close it",
+  "Every grant",
+  "Namespaces · 106"
+ ],
+ "card.headings": [
+  "Namespace audit",
+  "Why this is a risk",
+  "Exposure by namespace",
+  "How to close it",
+  "Every grant",
+  "Namespaces · 106"
+ ],
+ "risk.headline": "High exposure highest risk on this cluster",
+ "kpis": [
+  {
+   "label": "Namespaces at risk",
+   "value": "5",
+   "cls": "kpi big ",
+   "value_cls": "value mono"
+  },
+  {
+   "label": "People exposed",
+   "value": "8",
+   "cls": "kpi big",
+   "value_cls": "value mono"
+  },
+  {
+   "label": "Grants to migrate",
+   "value": "11",
+   "cls": "kpi big",
+   "value_cls": "value mono"
+  },
+  {
+   "label": "Critical",
+   "value": "0",
+   "cls": "kpi big ",
+   "value_cls": "value mono muted"
+  },
+  {
+   "label": "High",
+   "value": "2",
+   "cls": "kpi big flag-warning",
+   "value_cls": "value mono "
+  }
+ ],
+ "why.items": [
+  {
+   "head": "Offboarding does not revoke it",
+   "body": "Removing someone from an LDAP group revokes their access everywhere at once. A binding that names the person keeps granting after they leave the team, change role, or leave the company — until somebody remembers it exists."
+  },
+  {
+   "head": "Invisible to access review",
+   "body": "Every group-based review — including the rest of this dashboard — answers “who is in the group?”. These grants are attached to no group, so a clean review can coexist with standing access nobody approved."
+  },
+  {
+   "head": "No approval trail",
+   "body": "Group membership is granted in the enterprise directory, with a request and an approver. A hand-made binding records only who ran oc, and only for as long as the audit log is retained."
+  }
+ ],
+ "exposure.note": "Ranked by the worst privilege granted, not by count — one forgotten cluster-admin matters more than twenty view grants.",
+ "exposure.columns": [
+  {
+   "text": "Risk ▼",
+   "sortable": true,
+   "aria_sort": "descending",
+   "cls": ""
+  },
+  {
+   "text": "Namespace",
+   "sortable": true,
+   "aria_sort": "none",
+   "cls": ""
+  },
+  {
+   "text": "Highest privilege",
+   "sortable": true,
+   "aria_sort": "none",
+   "cls": ""
+  },
+  {
+   "text": "People",
+   "sortable": true,
+   "aria_sort": "none",
+   "cls": "num"
+  },
+  {
+   "text": "Grants",
+   "sortable": true,
+   "aria_sort": "none",
+   "cls": "num"
+  },
+  {
+   "text": "Who is exposed",
+   "sortable": false,
+   "aria_sort": null,
+   "cls": ""
+  }
+ ],
+ "exposure.rows": [
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "High",
+    "CLUSTER-WIDE",
+    "edit",
+    "3",
+    "3",
+    "dana.leejdoeocp-oauth-bind-serviceid"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "High",
+    "legacy-payments",
+    "admin",
+    "3",
+    "3",
+    "asmithbwilliamsjdoe"
+   ]
+  },
+  {
+   "cls": "risk-row risk-medium",
+   "cells": [
+    "Medium",
+    "legacy-reporting",
+    "edit",
+    "2",
+    "2",
+    "jdoetmp-contractor-9931"
+   ]
+  },
+  {
+   "cls": "risk-row risk-low",
+   "cells": [
+    "Low",
+    "openshift-console-user-settings",
+    "view",
+    "2",
+    "2",
+    "developerjane.smith"
+   ]
+  },
+  {
+   "cls": "risk-row risk-low",
+   "cells": [
+    "Low",
+    "group-sync-operator",
+    "view",
+    "1",
+    "1",
+    "ocp-oauth-bind-serviceid"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "asmith",
+    "admin ClusterRole",
+    "legacy-payments",
+    "asmith-admin"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "bwilliams",
+    "admin ClusterRole",
+    "legacy-payments",
+    "bwilliams-admin"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "jdoe",
+    "admin ClusterRole",
+    "legacy-payments",
+    "jdoe-admin"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "jdoe",
+    "edit ClusterRole",
+    "cluster-wide",
+    "jdoe-edit"
+   ]
+  },
+  {
+   "cls": "",
+   "cells": [
+    "jdoe",
+    "edit ClusterRole",
+    "legacy-reporting",
+    "jdoe-edit"
+   ]
+  },
+  {
+   "cls": "",
+   "cells": [
+    "tmp-contractor-9931",
+    "edit ClusterRole",
+    "legacy-reporting",
+    "tmp-contractor-9931-edit"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "dana.lee",
+    "cluster-reader ClusterRole",
+    "cluster-wide",
+    "cluster-reader"
+   ]
+  },
+  {
+   "cls": "risk-row risk-high",
+   "cells": [
+    "ocp-oauth-bind-serviceid",
+    "group-sync-dashboard-cluster-poller ClusterRole",
+    "cluster-wide",
+    "group-sync-dashboard-cluster-poller"
+   ]
+  },
+  {
+   "cls": "",
+   "cells": [
+    "ocp-oauth-bind-serviceid",
+    "group-sync-dashboard-cluster-poller-token-reader Role",
+    "group-sync-operator",
+    "group-sync-dashboard-cluster-poller-token-reader"
+   ]
+  },
+  {
+   "cls": "",
+   "cells": [
+    "developer",
+    "user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-role Role",
+    "openshift-console-user-settings",
+    "user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding"
+   ]
+  },
+  {
+   "cls": "",
+   "cells": [
+    "jane.smith",
+    "user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-role Role",
+    "openshift-console-user-settings",
+    "user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-rolebinding"
+   ]
+  }
+ ],
+ "exposure.platform_note": "24 platform identities excluded — system components and kubeadmin are break-glass and cluster-internal, with nowhere to migrate to.",
+ "runbook": [
+  "Identify the role. Match the grant to the LDAP group the operator already syncs for that privilege — the naming convention encodes it (<app>-ns-admin, -ns-developer, -ns-audit).",
+  "Add the person to that group in the enterprise directory, through the normal request-and-approve path. Access now has an owner and an audit trail.",
+  "Wait one sync and confirm on the Groups tab that they appear as a member. Do not skip this — deleting first leaves them locked out.",
+  "Delete the direct binding. oc delete rolebinding <name> -n <namespace>",
+  "Confirm it is gone here on the next refresh."
+ ],
+ "runbook.goal": "Operational goal: zero rows on this page. At zero, one directory change offboards a person from the entire cluster, and an access review that reads clean is clean.",
+ "grants.disclosure": {
+  "text": "▸ Show 11 grants",
+  "expanded": "false",
+  "controls": "every-grant",
+  "hidden_now": true
+ },
+ "grants.note": "The per-namespace table above is the view to work from. This is the flat detail list — collapsed by default on purpose, because on a cluster with thousands of direct grants rendering every row costs time nobody gets value from.",
+ "grants.select": {
+  "label": "Namespace",
+  "value": "all",
+  "options": [
+   "All namespaces (5)",
+   "legacy-payments — 3 grants",
+   "cluster-wide — 3 grants",
+   "legacy-reporting — 2 grants",
+   "openshift-console-user-settings — 2 grants",
+   "group-sync-operator — 1 grant"
+  ]
+ },
+ "who.preview": [
+  {
+   "names": [
+    "dana.lee",
+    "jdoe",
+    "ocp-oauth-bind-serviceid"
+   ],
+   "more": null
+  },
+  {
+   "names": [
+    "asmith",
+    "bwilliams",
+    "jdoe"
+   ],
+   "more": null
+  },
+  {
+   "names": [
+    "jdoe",
+    "tmp-contractor-9931"
+   ],
+   "more": null
+  },
+  {
+   "names": [
+    "developer",
+    "jane.smith"
+   ],
+   "more": null
+  },
+  {
+   "names": [
+    "ocp-oauth-bind-serviceid"
+   ],
+   "more": null
+  }
+ ],
+ "sort.after_people_click": {
+  "view": {
+   "sort": "people",
+   "dir": "desc"
+  },
+  "aria": [
+   "none",
+   "none",
+   "none",
+   "descending",
+   "none",
+   null,
+   "none",
+   "descending",
+   "none",
+   "none"
+  ],
+  "first_rows": [
+   [
+    "High",
+    "legacy-payments",
+    "admin",
+    "3",
+    "3",
+    "asmithbwilliamsjdoe"
+   ],
+   [
+    "High",
+    "CLUSTER-WIDE",
+    "edit",
+    "3",
+    "3",
+    "dana.leejdoeocp-oauth-bind-serviceid"
+   ],
+   [
+    "Medium",
+    "legacy-reporting",
+    "edit",
+    "2",
+    "2",
+    "jdoetmp-contractor-9931"
+   ]
+  ],
+  "reset_button": "Restore risk order"
+ },
+ "sort.after_reset": {
+  "view": {
+   "sort": "risk",
+   "dir": "desc"
+  },
+  "reset_button": false
+ },
+ "grants.expanded": {
+  "hidden": false,
+  "button": "▾ Hide 11 grants",
+  "columns": [
+   "Person",
+   "Grants ▼",
+   "Scope",
+   "Binding"
+  ],
+  "rows": [
+   {
+    "cls": "risk-row risk-high",
+    "cells": [
+     "asmith",
+     "admin ClusterRole",
+     "legacy-payments",
+     "asmith-admin"
+    ]
+   },
+   {
+    "cls": "risk-row risk-high",
+    "cells": [
+     "bwilliams",
+     "admin ClusterRole",
+     "legacy-payments",
+     "bwilliams-admin"
+    ]
+   },
+   {
+    "cls": "risk-row risk-high",
+    "cells": [
+     "jdoe",
+     "admin ClusterRole",
+     "legacy-payments",
+     "jdoe-admin"
+    ]
+   },
+   {
+    "cls": "risk-row risk-high",
+    "cells": [
+     "jdoe",
+     "edit ClusterRole",
+     "cluster-wide",
+     "jdoe-edit"
+    ]
+   },
+   {
+    "cls": "",
+    "cells": [
+     "jdoe",
+     "edit ClusterRole",
+     "legacy-reporting",
+     "jdoe-edit"
+    ]
+   },
+   {
+    "cls": "",
+    "cells": [
+     "tmp-contractor-9931",
+     "edit ClusterRole",
+     "legacy-reporting",
+     "tmp-contractor-9931-edit"
+    ]
+   },
+   {
+    "cls": "risk-row risk-high",
+    "cells": [
+     "dana.lee",
+     "cluster-reader ClusterRole",
+     "cluster-wide",
+     "cluster-reader"
+    ]
+   },
+   {
+    "cls": "risk-row risk-high",
+    "cells": [
+     "ocp-oauth-bind-serviceid",
+     "group-sync-dashboard-cluster-poller ClusterRole",
+     "cluster-wide",
+     "group-sync-dashboard-cluster-poller"
+    ]
+   },
+   {
+    "cls": "",
+    "cells": [
+     "ocp-oauth-bind-serviceid",
+     "group-sync-dashboard-cluster-poller-token-reader Role",
+     "group-sync-operator",
+     "group-sync-dashboard-cluster-poller-token-reader"
+    ]
+   },
+   {
+    "cls": "",
+    "cells": [
+     "developer",
+     "user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-role Role",
+     "openshift-console-user-settings",
+     "user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding"
+    ]
+   },
+   {
+    "cls": "",
+    "cells": [
+     "jane.smith",
+     "user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-role Role",
+     "openshift-console-user-settings",
+     "user-settings-27fcd795-b69c-4f77-87a9-88ad0c46e66a-rolebinding"
+    ]
+   }
+  ],
+  "truncation": null
+ },
+ "export.controls": [
+  {
+   "text": "CSV",
+   "id": "export-csv",
+   "title": "Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.",
+   "cls": ""
+  },
+  {
+   "text": "JSON",
+   "id": "export-json",
+   "title": "Downloads exactly the rows this page holds, after the filter and sort — never more than the server served you.",
+   "cls": ""
+  }
+ ],
+ "export.note": null,
+ "export.descriptor": {
+  "tab": "namespace-audit",
+  "columns": [
+   "user_name",
+   "role_kind",
+   "role_name",
+   "binding_kind",
+   "binding_namespace",
+   "binding_name",
+   "is_platform"
+  ],
+  "served": 11,
+  "total": 11,
+  "scope": "all",
+  "filter": {
+   "namespace": "all"
+  },
+  "sort": {
+   "key": "risk",
+   "dir": "desc"
+  },
+  "rows": 11
+ },
+ "grants.filtered": {
+  "picked": "legacy-payments",
+  "view_ns": "legacy-payments",
+  "request_namespace": "legacy-payments",
+  "total": 3,
+  "served": 3,
+  "kpis": [
+   [
+    "Namespaces at risk",
+    "5"
+   ],
+   [
+    "People exposed",
+    "8"
+   ],
+   [
+    "Grants to migrate",
+    "11"
+   ],
+   [
+    "Critical",
+    "0"
+   ],
+   [
+    "High",
+    "2"
+   ]
+  ],
+  "clear": "Clear filter",
+  "rows": [
+   [
+    "asmith",
+    "admin ClusterRole",
+    "legacy-payments",
+    "asmith-admin"
+   ],
+   [
+    "bwilliams",
+    "admin ClusterRole",
+    "legacy-payments",
+    "bwilliams-admin"
+   ],
+   [
+    "jdoe",
+    "admin ClusterRole",
+    "legacy-payments",
+    "jdoe-admin"
+   ]
+  ],
+  "empty": null
+ },
+ "grants.cleared": {
+  "view_ns": "all",
+  "served": 11
+ },
+ "namespaces.card": {
+  "heading": "Namespaces · 106",
+  "notes": [
+   "Every namespace the poller sees, not only those with a grant. Click a row — a namespace is an entity here, the third drill-down beside groups and users. The box in the bar finds by name or by any captured label.",
+   "13 groups bound cluster-wide and 3 cluster-wide direct grants reach every namespace below; the columns count what is bound in each one. A namespace with zero in both is a result an access review wants to confirm."
+  ],
+  "columns": [
+   {
+    "text": "Namespace",
+    "cls": ""
+   },
+   {
+    "text": "mnemonic",
+    "cls": ""
+   },
+   {
+    "text": "app-environment",
+    "cls": ""
+   },
+   {
+    "text": "oud-group",
+    "cls": ""
+   },
+   {
+    "text": "Via groups",
+    "cls": "num"
+   },
+   {
+    "text": "Direct grants",
+    "cls": "num"
+   }
+  ],
+  "rows": [
+   [
+    "beta-prod",
+    "beta",
+    "prod",
+    "—",
+    "1",
+    "0"
+   ],
+   [
+    "beta-rnd",
+    "beta",
+    "rnd",
+    "—",
+    "2",
+    "0"
+   ],
+   [
+    "beta-uat",
+    "beta",
+    "uat",
+    "—",
+    "2",
+    "0"
+   ],
+   [
+    "ca-tutorial",
+    "—",
+    "—",
+    "—",
+    "0",
+    "0"
+   ],
+   [
+    "ca-tutorial-app",
+    "—",
+    "—",
+    "—",
+    "0",
+    "0"
+   ],
+   [
+    "cert-manager",
+    "—",
+    "—",
+    "—",
+    "0",
+    "0"
+   ]
+  ],
+  "row_count": 106,
+  "drillable": true,
+  "rowlink": true
+ },
+ "namespaces.empty_filtered": {
+  "heading": "Namespaces · 0 of 106 shown",
+  "empty": "Nothing matches zzzz-no-match. All 106 are still there — the filter is hiding them. Press Escape in the box to clear.",
+  "also": "13 groups bound cluster-wide and 3 cluster-wide direct grants reach every namespace below; the columns count what is bound in each one. A namespace with zero in both is a result an access review wants to confirm."
+ },
+ "namespaces.filtered": {
+  "heading": "Namespaces · 6 of 106 shown",
+  "also": "search everything for demo",
+  "rows": 6
+ },
+ "detail.target": "legacy-payments",
+ "detail.api": {
+  "name": "legacy-payments",
+  "present": true,
+  "scope": "all",
+  "labels": {},
+  "label_keys": [
+   "company.net/mnemonic",
+   "company.net/app-environment",
+   "company.net/oud-group"
+  ],
+  "sibling_key": null,
+  "siblings": [],
+  "people": 11,
+  "via_groups": [
+   {
+    "group_name": "system:serviceaccounts:legacy-payments",
+    "binding_kind": "RoleBinding",
+    "binding_name": "system:image-pullers",
+    "role_kind": "ClusterRole",
+    "role_name": "system:image-puller",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   }
+  ],
+  "cluster_wide_groups": [
+   {
+    "group_name": "app-ocp-rbac-alpha-cluster-admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-alpha-cluster-admin-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 1,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-demo-cluster-admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-demo-cluster-admin-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 1,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-newteam-cluster-admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-newteam-cluster-admin-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 2,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-platform-cluster-admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-platform-cluster-admin-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 2,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-test-cluster-admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-test-cluster-admin-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 1,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-alpha-database-admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-alpha-database-admin-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "database-admin",
+    "managed_source": "custom-cluster-rbac",
+    "member_count": 2,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-alpha-cluster-developer",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-alpha-cluster-developer-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "edit",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 2,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-demo-cluster-developer",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-demo-cluster-developer-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "edit",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 1,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-finance-cluster-developer",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-finance-cluster-developer-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "edit",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 2,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-platform-cluster-developer",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-platform-cluster-developer-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "edit",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 2,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-groupsync-ns-auditor",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "group-sync-dashboard-ra-b78c05817c9d",
+    "role_kind": "ClusterRole",
+    "role_name": "group-sync-dashboard-report-auditor",
+    "managed_source": null,
+    "member_count": 3,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-alpha-cluster-audit",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-alpha-cluster-audit-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "view",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 1,
+    "is_platform": 0
+   },
+   {
+    "group_name": "app-ocp-rbac-demo-cluster-audit",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "app-ocp-rbac-demo-cluster-audit-crb",
+    "role_kind": "ClusterRole",
+    "role_name": "view",
+    "managed_source": "baseline-cluster-rbac",
+    "member_count": 1,
+    "is_platform": 0
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "basic-users",
+    "role_kind": "ClusterRole",
+    "role_name": "basic-user",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:cluster-admins",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "cluster-admins",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-admin",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:masters",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "cluster-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-admin",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:cluster-readers",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "cluster-readers",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-reader",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "cluster-status-binding",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-status",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "console-extensions-reader",
+    "role_kind": "ClusterRole",
+    "role_name": "console-extensions-reader",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "helm-chartrepos-view",
+    "role_kind": "ClusterRole",
+    "role_name": "helm-chartrepos-viewer",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:multus",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "multus-group",
+    "role_kind": "ClusterRole",
+    "role_name": "multus",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:cluster-readers",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "multus-cluster-readers",
+    "role_kind": "ClusterRole",
+    "role_name": "multus-ancillary-tools",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:nodes",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "node-credential-providers-binding",
+    "role_kind": "ClusterRole",
+    "role_name": "node-credential-providers",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:ovn-nodes",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "openshift-ovn-kubernetes-node-identity-limited",
+    "role_kind": "ClusterRole",
+    "role_name": "openshift-ovn-kubernetes-node-limited",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "self-access-reviewers",
+    "role_kind": "ClusterRole",
+    "role_name": "self-access-reviewer",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated:oauth",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "self-provisioners",
+    "role_kind": "ClusterRole",
+    "role_name": "self-provisioner",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:basic-user",
+    "role_kind": "ClusterRole",
+    "role_name": "system:basic-user",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:build-strategy-docker-binding",
+    "role_kind": "ClusterRole",
+    "role_name": "system:build-strategy-docker",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:build-strategy-jenkinspipeline-binding",
+    "role_kind": "ClusterRole",
+    "role_name": "system:build-strategy-jenkinspipeline",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:build-strategy-source-binding",
+    "role_kind": "ClusterRole",
+    "role_name": "system:build-strategy-source",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:nodes",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system-bootstrap-node-renewal",
+    "role_kind": "ClusterRole",
+    "role_name": "system:certificates.k8s.io:certificatesigningrequests:selfnodeclient",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:discovery",
+    "role_kind": "ClusterRole",
+    "role_name": "system:discovery",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:masters",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:masters",
+    "role_kind": "ClusterRole",
+    "role_name": "system:master",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:monitoring",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:monitoring",
+    "role_kind": "ClusterRole",
+    "role_name": "system:monitoring",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:node-admins",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-admin",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:node-admins",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-admins",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-admin",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:nodes",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-proxiers",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-proxier",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:oauth-token-deleters",
+    "role_kind": "ClusterRole",
+    "role_name": "system:oauth-token-deleter",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:discovery",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:discovery",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:public-info-viewer",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:public-info-viewer",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:unauthenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:public-info-viewer",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:public-info-viewer",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:scc:restricted-v2",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:scc:restricted-v2",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:scc:restricted-v3",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:scc:restricted-v3",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated:oauth",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:useroauthaccesstoken-manager",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:useroauthaccesstoken-manager",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:public-info-viewer",
+    "role_kind": "ClusterRole",
+    "role_name": "system:public-info-viewer",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:unauthenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:public-info-viewer",
+    "role_kind": "ClusterRole",
+    "role_name": "system:public-info-viewer",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:scope-impersonation",
+    "role_kind": "ClusterRole",
+    "role_name": "system:scope-impersonation",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:nodes",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:sdn-readers",
+    "role_kind": "ClusterRole",
+    "role_name": "system:sdn-reader",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:serviceaccounts",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:service-account-issuer-discovery",
+    "role_kind": "ClusterRole",
+    "role_name": "system:service-account-issuer-discovery",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   },
+   {
+    "group_name": "system:authenticated",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:webhooks",
+    "role_kind": "ClusterRole",
+    "role_name": "system:webhook",
+    "managed_source": null,
+    "member_count": 0,
+    "is_platform": 1
+   }
+  ],
+  "cluster_wide_grants": [
+   {
+    "user_name": "dana.lee",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "cluster-reader",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-reader",
+    "is_platform": 0
+   },
+   {
+    "user_name": "jdoe",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "jdoe-edit",
+    "role_kind": "ClusterRole",
+    "role_name": "edit",
+    "is_platform": 0
+   },
+   {
+    "user_name": "ocp-oauth-bind-serviceid",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "group-sync-dashboard-cluster-poller",
+    "role_kind": "ClusterRole",
+    "role_name": "group-sync-dashboard-cluster-poller",
+    "is_platform": 0
+   },
+   {
+    "user_name": "kubeadmin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "kubeadmin",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-admin",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:admin",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "cluster-admins",
+    "role_kind": "ClusterRole",
+    "role_name": "cluster-admin",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:kube-apiserver",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "kube-apiserver",
+    "role_kind": "ClusterRole",
+    "role_name": "kube-apiserver",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:serviceaccount:openshift-kube-apiserver:check-endpoints",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:controller:kube-apiserver-check-endpoints-auth-delegator",
+    "role_kind": "ClusterRole",
+    "role_name": "system:auth-delegator",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:kube-controller-manager",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:kube-controller-manager",
+    "role_kind": "ClusterRole",
+    "role_name": "system:kube-controller-manager",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:kube-scheduler",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:kube-scheduler",
+    "role_kind": "ClusterRole",
+    "role_name": "system:kube-scheduler",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:kube-apiserver",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-admin",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:master",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-admin",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:master",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-admins",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-admin",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:kube-proxy",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:node-proxier",
+    "role_kind": "ClusterRole",
+    "role_name": "system:node-proxier",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:serviceaccount:openshift-kube-apiserver:check-endpoints",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:controller:kube-apiserver-check-endpoints-crd-reader",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:controller:check-endpoints-crd-reader",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:serviceaccount:openshift-kube-apiserver:check-endpoints",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:openshift:controller:kube-apiserver-check-endpoints-node-reader",
+    "role_kind": "ClusterRole",
+    "role_name": "system:openshift:controller:check-endpoints-node-reader",
+    "is_platform": 1
+   },
+   {
+    "user_name": "system:kube-scheduler",
+    "binding_kind": "ClusterRoleBinding",
+    "binding_name": "system:volume-scheduler",
+    "role_kind": "ClusterRole",
+    "role_name": "system:volume-scheduler",
+    "is_platform": 1
+   }
+  ],
+  "direct_grants": [
+   {
+    "user_name": "asmith",
+    "binding_kind": "RoleBinding",
+    "binding_name": "asmith-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "is_platform": 0
+   },
+   {
+    "user_name": "bwilliams",
+    "binding_kind": "RoleBinding",
+    "binding_name": "bwilliams-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "is_platform": 0
+   },
+   {
+    "user_name": "jdoe",
+    "binding_kind": "RoleBinding",
+    "binding_name": "jdoe-admin",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "is_platform": 0
+   }
+  ],
+  "changes": [
+   {
+    "binding_kind": "RoleBinding",
+    "binding_namespace": "legacy-payments",
+    "binding_name": "jdoe-admin",
+    "subject_kind": "User",
+    "subject_name": "jdoe",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "is_platform": 0,
+    "change": "added",
+    "baseline": 1,
+    "observed_at": "2026-09-21T02:57:29Z"
+   },
+   {
+    "binding_kind": "RoleBinding",
+    "binding_namespace": "legacy-payments",
+    "binding_name": "bwilliams-admin",
+    "subject_kind": "User",
+    "subject_name": "bwilliams",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "is_platform": 0,
+    "change": "added",
+    "baseline": 1,
+    "observed_at": "2026-09-21T02:57:29Z"
+   },
+   {
+    "binding_kind": "RoleBinding",
+    "binding_namespace": "legacy-payments",
+    "binding_name": "asmith-admin",
+    "subject_kind": "User",
+    "subject_name": "asmith",
+    "role_kind": "ClusterRole",
+    "role_name": "admin",
+    "is_platform": 0,
+    "change": "added",
+    "baseline": 1,
+    "observed_at": "2026-09-21T02:57:29Z"
+   },
+   {
+    "binding_kind": "RoleBinding",
+    "binding_namespace": "legacy-payments",
+    "binding_name": "system:image-pullers",
+    "subject_kind": "Group",
+    "subject_name": "system:serviceaccounts:legacy-payments",
+    "role_kind": "ClusterRole",
+    "role_name": "system:image-puller",
+    "is_platform": 0,
+    "change": "added",
+    "baseline": 1,
+    "observed_at": "2026-09-21T02:57:29Z"
+   }
+  ],
+  "retention": {
+   "window_days": 0,
+   "retained_since": "2026-09-21T02:57:29Z"
+  }
+ },
+ "detail.cards": [
+  "legacy-payments",
+  "Who reaches it, and through which group · 0 · 1 platform",
+  "Direct grants · 3",
+  "History · 4"
+ ],
+ "detail.kpis": [
+  {
+   "label": "mnemonic",
+   "value": "— none —",
+   "value_cls": "value sm muted"
+  },
+  {
+   "label": "app-environment",
+   "value": "— none —",
+   "value_cls": "value sm muted"
+  },
+  {
+   "label": "oud-group",
+   "value": "— none —",
+   "value_cls": "value sm muted"
+  },
+  {
+   "label": "People who reach it",
+   "value": "11",
+   "value_cls": "value "
+  },
+  {
+   "label": "Via groups",
+   "value": "0",
+   "value_cls": "value muted"
+  },
+  {
+   "label": "Direct grants",
+   "value": "3",
+   "value_cls": "value err"
+  }
+ ],
+ "detail.notes": [
+  "Carries none of the captured labels (company.net/mnemonic, company.net/app-environment, company.net/oud-group) — outside the naming convention, so no mnemonic-based report will ever pick it up.",
+  "The answer the triangle exists for: a namespace, back to the groups that grant it, back to the people in those groups.",
+  "Also reached cluster-wide, by 53 bindings that grant every namespace: app-ocp-rbac-alpha-cluster-admin (admin), app-ocp-rbac-demo-cluster-admin (admin), app-ocp-rbac-newteam-cluster-admin (admin), app-ocp-rbac-platform-cluster-admin (admin), app-ocp-rbac-test-cluster-admin (admin), app-ocp-rbac-alpha-database-admin (database-admin), app-ocp-rbac-alpha-cluster-developer (edit), app-ocp-rbac-demo-cluster-developer (edit), app-ocp-rbac-finance-cluster-developer (edit), app-ocp-rbac-platform-cluster-developer (edit), app-ocp-rbac-groupsync-ns-auditor (group-sync-dashboard-report-auditor), app-ocp-rbac-alpha-cluster-audit (view), app-ocp-rbac-demo-cluster-audit (view), dana.lee (cluster-reader, named directly), jdoe (edit, named directly), ocp-oauth-bind-serviceid (group-sync-dashboard-cluster-poller, named directly); and 37 platform bindings to 12 virtual groups (system:authenticated, system:nodes, system:authenticated:oauth, … 9 more) that every namespace carries.",
+  "A person named by a binding rather than reached through a group — the rows a directory change cannot offboard. The operational goal for this card is zero."
+ ],
+ "detail.tables": [
+  {
+   "columns": [
+    "Group",
+    "Role",
+    "Binding",
+    "Members"
+   ],
+   "rows": [
+    [
+     "system:serviceaccounts:legacy-payments platform",
+     "system:image-puller",
+     "RoleBinding system:image-pullers",
+     "0"
+    ]
+   ],
+   "count": 1
+  },
+  {
+   "columns": [
+    "Person",
+    "Role",
+    "Binding"
+   ],
+   "rows": [
+    [
+     "asmith",
+     "admin",
+     "RoleBinding asmith-admin"
+    ],
+    [
+     "bwilliams",
+     "admin",
+     "RoleBinding bwilliams-admin"
+    ],
+    [
+     "jdoe",
+     "admin",
+     "RoleBinding jdoe-admin"
+    ]
+   ],
+   "count": 3
+  },
+  {
+   "columns": [
+    "Change",
+    "Subject",
+    "Role",
+    "Binding",
+    "Observed"
+   ],
+   "rows": [
+    [
+     "first observed",
+     "User jdoe",
+     "admin",
+     "RoleBinding jdoe-admin",
+     "2026-09-20 22:57:29 EDT"
+    ],
+    [
+     "first observed",
+     "User bwilliams",
+     "admin",
+     "RoleBinding bwilliams-admin",
+     "2026-09-20 22:57:29 EDT"
+    ],
+    [
+     "first observed",
+     "User asmith",
+     "admin",
+     "RoleBinding asmith-admin",
+     "2026-09-20 22:57:29 EDT"
+    ],
+    [
+     "first observed",
+     "Group system:serviceaccounts:legacy-payments",
+     "system:image-puller",
+     "RoleBinding system:image-pullers",
+     "2026-09-20 22:57:29 EDT"
+    ]
+   ],
+   "count": 4
+  }
+ ],
+ "detail.badges": [
+  {
+   "cls": "badge unknown",
+   "text": "platform"
+  },
+  {
+   "cls": "badge critical",
+   "text": "admin"
+  },
+  {
+   "cls": "badge critical",
+   "text": "admin"
+  },
+  {
+   "cls": "badge critical",
+   "text": "admin"
+  }
+ ],
+ "detail.back": "← namespace audit",
+ "detail.export": null,
+ "live.375.detail": {
+  "scrollWidth": 375,
+  "innerWidth": 375,
+  "ok": true
+ },
+ "live.375.audit": {
+  "scrollWidth": 375,
+  "innerWidth": 375,
+  "ok": true
+ },
+ "errors": []
+}
