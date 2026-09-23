@@ -5214,6 +5214,28 @@ function namespacesCard() {
   // something — a hidden namespace that HAS a finding — gets its own clause rather than making them
   // toggle to find out (#257).
   const withFindings = d.platform_with_findings || 0;
+  // AND THE CLAUSE SAYS WHERE THE FINDING STILL IS (#261 §2). A platform namespace holding a direct grant
+  // is hidden from this list and ranked in the worklist above at the same time — the lab's
+  // openshift-console-user-settings was both, and the two lists disagreed with nothing on the page to say
+  // why. The filter hides rows, never findings, so the sentence names the namespaces and the list that
+  // still holds them: the worklist at the wide tier, the viewer's own grants at the self tier. Names come
+  // from the rows already held (a hidden row is filtered, never dropped): no request, and no second
+  // definition of "has a finding". Three at most, as the reach line folds its virtual groups.
+  //
+  // WHERE A FINDING IS, CLAIMED ONLY WHERE IT IS HELD (review of #326: Codex C2/C3, Grok C3). The index
+  // and the worklist are two requests under two snapshots, so a poll landing between them can leave a
+  // name in one and not yet in the other: at the wide tier the clause names only what the rollup holds.
+  // At the self tier the grants above are a served page (NS_GRANT_PAGE), so "listed above" can be false
+  // past it; "among your direct grants" is what the payload itself proves.
+  const ranked = self ? null : new Set(((data.userBindings || {}).by_namespace || []).map((r) => r.namespace));
+  const hiddenWithFindings = hidingPlatform
+    ? all.filter((n) => n.platform && n.direct_grants && (!ranked || ranked.has(n.name))).map((n) => n.name) : [];
+  const namedHidden = hiddenWithFindings.slice(0, 3);
+  const neverFindings = !withFindings || !namedHidden.length ? "" : ` <strong>This hides rows, never findings:</strong>
+    ${namedHidden.map((n) => `<code>${esc(n)}</code>`).join(", ")}${hiddenWithFindings.length > namedHidden.length
+      ? ` and ${hiddenWithFindings.length - namedHidden.length} more` : ""}
+    ${hiddenWithFindings.length === 1 ? "is" : "are"} still ${self ? "among your direct grants"
+      : "ranked in <strong>Exposure by namespace</strong> above"}.`;
   // A configured pattern matching nothing on THIS cluster: a typo, or a convention that was
   // decommissioned. Said where the classification is said, because that is where a reader can act
   // on it, and named rather than counted — "2 patterns match nothing" sends someone to read the
@@ -5227,7 +5249,7 @@ function namespacesCard() {
   const platformLine = !platformCount ? "" : `<div class="filterbar-note mb-4">${hidingPlatform
     ? `${platformCount} platform namespace${platformCount === 1 ? "" : "s"} hidden${withFindings
         ? ` — <strong>${withFindings}</strong> of them ${withFindings === 1 ? "has" : "have"} a direct grant`
-        : ""}. <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
+        : ""}.${neverFindings} <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
     : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
     <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span>${stalePatterns}</div>`;
   // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
@@ -6630,6 +6652,38 @@ function directUserGrants(ub) {
   // distinct.
   const people = new Set(rows.flatMap((r) => r.users || [])).size;
 
+  // THE CLUSTER SCOPE IS A SCOPE, NOT A NAMESPACE (#261 §3). The rollup carries it as one more entry,
+  // `(cluster-scoped)`, and the table below used to rank it as a row called CLUSTER-WIDE between the
+  // namespaces — the one entry whose blast radius is every row of the index further down. It gets its own
+  // card above the worklist, built from that rollup entry and nothing else: the rollup is never paged and
+  // never filtered, while the grant list below is both, so a card built from `bindings` would empty itself
+  // the moment the reader picked a namespace there. The KPIs keep counting it as one entry — the shipped
+  // numbers — and the card says so, so the tile and the table still add up where a reader checks them.
+  const wide = rows.find((r) => r.namespace === "(cluster-scoped)") || null;
+  const nsTotal = data.namespaces && !data.namespaces.forbidden && data.namespaces.count != null
+    ? data.namespaces.count : null;
+  const wideCard = `<section class="card">
+    <h3>Cluster-wide direct grants <span class="muted fw-normal">· ${wide ? wide.bindings : 0}</span></h3>
+    ${wide ? `<div class="filterbar-note mb-4">
+        These name a person at the <strong>cluster</strong> scope, so each one grants every namespace on this
+        cluster${nsTotal != null ? ` — all ${nsTotal} of them` : ""}. A scope, not a namespace: the table below
+        ranks namespaces only, and the <strong>Namespaces at risk</strong> tile above counts it as one entry.</div>
+      <div class="scroll-x"><table class="audit-table">
+        <thead><tr><th>Risk</th><th>Highest privilege</th><th class="num">People</th><th class="num">Grants</th>
+          <th>Who is exposed</th></tr></thead>
+        <tbody><tr class="risk-row risk-${wide.risk.key}">
+          <td><span class="risk-pill risk-${wide.risk.key}">${esc(wide.risk.label)}</span></td>
+          <td><code class="priv">${esc(PRIVILEGE_NAME[wide.worst_privilege] || "view")}</code></td>
+          <td class="num strong">${wide.distinct_users}</td>
+          <td class="num">${wide.bindings}</td>
+          <td class="muted who">${whoCell(wide)}</td>
+        </tr></tbody></table></div>
+      <div class="filterbar-note mt-4">Each binding, with the name to delete, is in <strong>Every grant</strong>
+        below: choose <em>cluster-wide</em> in its Namespace selector.</div>`
+      : `<div class="filterbar-note">No binding names a person at the cluster scope. Every finding below is
+          confined to one namespace, which is the smaller problem.</div>`}
+  </section>`;
+
   const NS_SORT = {
     risk: (r) => r.risk.rank * 10 + (r.cluster_scoped ? 1 : 0),
     namespace: (r) => r.namespace,
@@ -6637,7 +6691,7 @@ function directUserGrants(ub) {
     people: (r) => r.distinct_users || 0,
     grants: (r) => r.bindings || 0,
   };
-  const sorted = sortBy(rows, NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
+  const sorted = sortBy(rows.filter((r) => r !== wide), NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
   const sortedGrants = grantsSorted(ub);
 
   if (!rows.length) {
@@ -6708,6 +6762,8 @@ function directUserGrants(ub) {
     </div>
   </section>
 
+  ${wideCard}
+
   <section class="card">
     <h3>Exposure by namespace</h3>
     <div class="filterbar-note mb-4">
@@ -6717,7 +6773,7 @@ function directUserGrants(ub) {
         ? `<button type="button" class="linkish" data-ns-reset>Restore risk order</button>`
         : ""}
     </div>
-    <div class="scroll-x"><table class="audit-table">
+    ${sorted.length ? `<div class="scroll-x"><table class="audit-table">
       <thead><tr>
         ${sortableTh("Risk", "risk", view.nsSort, view.nsDir, "ns")}
         ${sortableTh("Namespace", "namespace", view.nsSort, view.nsDir, "ns")}
@@ -6728,14 +6784,25 @@ function directUserGrants(ub) {
       </tr></thead>
       <tbody>${sorted.map((r) => `<tr class="risk-row risk-${r.risk.key}">
         <td><span class="risk-pill risk-${r.risk.key}">${esc(r.risk.label)}</span></td>
-        <td class="ns-cell">${r.namespace === "(cluster-scoped)"
-            ? `<strong class="err">CLUSTER-WIDE</strong>` : `<strong>${esc(r.namespace)}</strong>`}</td>
+        <td class="ns-cell">${
+            // THE WORKLIST DRILLS (#261 §3). The view this page tells you to work from was the one place a
+            // namespace was plain text. A button carrying data-ns, which wireNsPage() already binds: the same
+            // drill as the index below, and keyboard-reachable. Not a tr.rowlink — the row keeps its risk
+            // tint and rail, and tr[data-ns] stays the index's rows alone. The cluster scope is not in this
+            // table: it has its own card above (#261 §3).
+            // The id is for render(), which restores focus BY ID: without one the 60 s repaint dropped a
+            // keyboard reader on this button to <body> (measured). A namespace name is a DNS label, id-safe.
+            `<button type="button" class="drill" id="ns-drill-${esc(r.namespace)}" data-ns="${esc(r.namespace)}"><strong>${esc(r.namespace)}</strong></button>`}</td>
         <td><code class="priv">${esc(PRIVILEGE_NAME[r.worst_privilege] || "view")}</code></td>
         <td class="num strong">${r.distinct_users}</td>
         <td class="num">${r.bindings}</td>
         <td class="muted who">${whoCell(r)}</td>
       </tr>`).join("")}</tbody>
-    </table></div>
+    </table></div>`
+      // Reachable only with the cluster scope as the sole finding: the table is empty, and the reader is
+      // told where the finding went rather than shown a header over nothing.
+      : `<div class="empty-note">No namespace holds a direct grant on this cluster. Every finding here is at
+          the cluster scope, in the card above.</div>`}
     ${ub.excluded_platform ? `<div class="filterbar-note mt-4">
       ${ub.excluded_platform} platform identit${ub.excluded_platform === 1 ? "y" : "ies"}
       excluded — system components and <code>kubeadmin</code> are break-glass and
