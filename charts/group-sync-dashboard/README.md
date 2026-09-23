@@ -55,6 +55,11 @@ render cleanly and are refused by the pod at startup** — an unknown key, a dup
 A worked production file using these combinations:
 [`example-production.yaml`](example-production.yaml).
 
+**What happens to the credential afterwards** — which account bootstraps and which token polls, what
+`auth_failed` / `forbidden` / `unreachable` mean, and how an administrator recovers a cluster whose
+credential has gone bad — is in
+[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file.
+
 ### Image
 
 | Key | Default | Notes |
