@@ -814,10 +814,13 @@ code { font-family: var(--font-mono); font-size: var(--text-sm); }
 .who-more { margin-left: var(--space-1); white-space: nowrap; }
 .priv { font-weight: 600; }
 
-/* A tint the width of the row, so severity is visible without reading the pill. */
+/* A tint the width of the row, so severity is visible without reading the pill. Qualified by
+   .audit-table, the only table risk rows live in, so the tint (0,3,1) outranks the zebra drop above,
+   `.audit-table tbody tr:nth-child(even) td` (0,2,3): unqualified at (0,2,1) it lost on every even row,
+   and a Critical or High row painted on the bare card whenever it ranked second, fourth, … */
 .risk-row td:first-child { border-left: 4px solid var(--risk-colour); padding-left: var(--space-5); }
-.risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
-.risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
+.audit-table .risk-row.risk-critical td { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
+.audit-table .risk-row.risk-high td { background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
 
 /* ---- Namespace-audit controls -------------------------------------------------------- */
 .section-head { display: flex; align-items: center; gap: var(--space-6); margin-bottom: var(--space-2); }
