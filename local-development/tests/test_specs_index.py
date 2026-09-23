@@ -24,7 +24,7 @@ INDEX = SPECS / "README.md"
 INDEX_ROW = re.compile(
     # ids A–D are the 2026-09 programme's batches on its R1–R7 ladder; a later batch (E, #229; S, #230) sits
     # after the ladder with `—` for its release, and its header's Release row starts with the same dash
-    r"^\| (?P<id>[A-Z]\d) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
+    r"^\| (?P<id>[A-Z]\d[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
     r"(?P<release>R\d|—) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
     re.M,
 )
@@ -42,7 +42,8 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
-    assert len(rows) == 17, f"expected seventeen index rows (the programme's thirteen, E1, S1, S2 and T1), matched {sorted(rows)}"
+    # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
+    assert len(rows) == 21, f"expected twenty-one index rows (the programme's thirteen, E1, S1, S2, S3, S4, S4a, S4b and T1), matched {sorted(rows)}"
     return rows
 
 
@@ -93,7 +94,12 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S")]
     assert len(set(programme)) == len(programme), programme
-    assert len({int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}) == 1, "the S batch is #230"
+    # S1-S3 are three steps of one issue (#230). S4 is its own issue set (#283-#286): the credential
+    # RETRIEVAL machinery is separable work with its own steps, not a fourth step of the Secret
+    # contract, so the batch now spans two issues rather than one.
+    # S4's steps each carry their own issue (S4a #283, S4b #284): one design, one row per step.
+    s_issues = {int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}
+    assert s_issues == {230, 283, 284}, f"the S batch is #230 (S1-S3), #283 (S4, S4a) and #284 (S4b); got {sorted(s_issues)}"
 
 
 def _ordered_ids() -> list[str]:

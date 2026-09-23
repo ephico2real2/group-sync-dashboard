@@ -1,0 +1,126 @@
+# A production values file for group-sync-dashboard, built around the cluster stanza.
+#
+#   helm install gsd charts/group-sync-dashboard -f example-production.yaml
+#
+# Every cluster combination used below is one of the twelve in docs/CLUSTER_STANZA.md §4, each of
+# which is rendered and loaded by tests/test_cluster_stanza_matrix.py — so this file is an example
+# that provably works, not an illustration.
+#
+# READ FIRST: docs/CLUSTER_STANZA.md. In particular §5, which says WHERE each refusal fires. Fourteen
+# bad stanzas fail `helm template` and never reach a cluster. FOUR render cleanly and are refused by
+# the pod at startup — an unknown key, a duplicate `name`, an `apiUrl` with no scheme, and
+# `insecureSkipVerify` together with `caBundleFile`. Those four fail AFTER a green upgrade, which
+# looks like an outage rather than a config error, so check them by eye before a rollout.
+
+# ---------------------------------------------------------------------------
+# clusters — see docs/CLUSTER_STANZA.md
+# ---------------------------------------------------------------------------
+# Most fleets should declare ONLY the host here and add every other cluster as a labelled Secret
+# (docs/specs/SPEC_S1_cluster_secrets.md), because a Secret needs no redeploy. A stanza is the right
+# answer when the credential must come from a file this chart mounts, or when the cluster list is
+# owned by the same GitOps repository as the release.
+clusters:
+  # ── 1. The host. Combination 1: the mounted ServiceAccount. ────────────────────────────────────
+  # `dashboardController: true` DECLARES this pod's own cluster rather than letting list order
+  # decide. It is the cluster the oauth-proxy authenticates readers against, whose in-cluster
+  # Services the Kyverno breaker URL names, that `same-as-host`/`inherit` resolve against, and on
+  # which every visibility tier asks its SubjectAccessReview. Before the flag existed, alphabetising
+  # this list moved all four at once and looked like nothing had changed.
+  #
+  # CHANGING `name` RETIRES THE CLUSTER: 33 observation tables key on it and nothing migrates.
+  - name: dashboard
+    dashboardController: true
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+
+  # ── 2. A peer cluster with a mounted token. Combination 4: tokenEnv + caBundleFile. ────────────
+  # `tokenEnv` names an environment variable; `tokenFile` names a path, and is re-read on every use,
+  # so rotating the token in place needs no restart. Pin the CA when the API server's issuer is not
+  # in the fleet bundle — otherwise omit `caBundleFile` and it verifies against `trustedCA` plus the
+  # system store (`trusted-bundle`), which is what most clusters want.
+  - name: prod-east
+    apiUrl: https://api.prod-east.example.com:6443
+    tokenEnv: PROD_EAST_TOKEN
+    caBundleFile: /etc/gsd/prod-east/ca.crt
+    # The viewer's username on the host is not assumed to mean the same person here. Say so, and the
+    # tier serves the self view rather than guessing. `identity: same-as-host` is a claim about two
+    # identity providers that this chart cannot verify — state it only when it is true.
+    visibility: self-only
+    identity: none
+    enabled: true
+
+  # ── 3. A cluster whose own RBAC decides. Combination 11. ───────────────────────────────────────
+  # `remote-sar` asks THAT cluster a SubjectAccessReview about the viewer, so it REQUIRES
+  # `identity: same-as-host` — the review names the host's username, which only means something when
+  # the two clusters share an identity provider. Without it the render refuses, by design.
+  - name: prod-west
+    apiUrl: https://api.prod-west.example.com:6443
+    tokenEnv: PROD_WEST_TOKEN
+    visibility: remote-sar
+    identity: same-as-host
+    enabled: true
+
+  # ── 4. Polled, never served. Combination 10. ───────────────────────────────────────────────────
+  # `hidden` keeps a cluster's history accumulating — trends, membership and binding events — while
+  # serving none of it through /api. Useful for a cluster under migration, or one whose data is not
+  # yet cleared for the dashboard's readers. Refused on the host, which is the cluster the reader
+  # logged in to.
+  - name: lab
+    apiUrl: https://api.lab.example.com:6443
+    tokenFile: /etc/gsd/lab/token
+    visibility: hidden
+    enabled: true
+
+  # ── 5. A connection MODE instead of a credential. Combination 6. ───────────────────────────────
+  # SPEC_S3: the stanza declares HOW the dashboard will obtain a credential rather than carrying one.
+  # `saTokenLookup` logs in as the fleet account and reads the poller ServiceAccount's token;
+  # `userSelfLogin` polls as the fleet account itself, leaving nothing at rest. Exactly one.
+  #
+  # A mode stanza OMITS tokenEnv/tokenFile — a mode beside a credential is two sources of truth and
+  # is refused at render. `ldapConnectionBootstrap` is OPTIONAL and overrides
+  # `clusterConfig.fleetAccount.username` for this cluster only; without a mode it configures a login
+  # that would never happen, and is refused.
+  #
+  # The lookup runs on the next discovery cycle (SPEC_S4b): a login as `svc.gsd.fleet`, one GET of
+  # the poller ServiceAccount's token Secret on the target, and `gsd-cluster-shared-rnd` written
+  # here — which needs `clusterConfig.secrets.writes.enabled` below, and a CA that verifies BOTH the
+  # API host and the OAuth route (the trusted bundle here; a `caBundleFile` where it does not).
+  - name: shared-rnd
+    apiUrl: https://api.shared-rnd.example.com:6443
+    saTokenLookup: true
+    ldapConnectionBootstrap: svc.gsd.fleet
+    enabled: true
+
+  # ── 6. Kept, not polled. Combination 12. ───────────────────────────────────────────────────────
+  # `enabled` is read as a WORD, never truthiness: a templated `enabled: "false"` once ENABLED a
+  # cluster, because `bool("false")` is true. A quoted "yes" is refused rather than guessed at.
+  - name: decommissioned-dc
+    apiUrl: https://api.old-dc.example.com:6443
+    tokenEnv: OLD_DC_TOKEN
+    enabled: false
+
+# The account the connection modes above log in as, unless a stanza overrides it.
+clusterConfig:
+  fleetAccount:
+    username: svc.gsd.fleet
+  secrets:
+    enabled: true        # discover clusters from labelled Secrets — no redeploy to add one
+    writes:
+      enabled: true      # off by default; ON here because the saTokenLookup stanza above WRITES its Secret
+
+# The bundle every cluster without its own `caBundleFile` verifies against.
+trustedCA:
+  enabled: true
+
+persistence:
+  enabled: true
+  size: 20Gi
+  accessMode: ReadWriteMany   # reporting requires it: two pods read the same volume
+
+reporting:
+  enabled: true
+
+oauthProxy:
+  enabled: true

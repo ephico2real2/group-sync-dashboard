@@ -2145,6 +2145,22 @@ def build_app(
         # explains the one case where they differ (review of #167, pass 2, Codex).
         cluster_wide_path = bool(wide["via_groups"] or wide["cluster_wide_grants"])
         rows = store.namespaces(cluster_id, user_name=me, groups=groups, every=cluster_wide_path)
+        # PLATFORM, decided here rather than in the store (#257): it is a judgement about a name, not
+        # a fact the poller read, and `home.py` already decides it the same way at this layer. The row
+        # carries the answer and the envelope carries the count, so the page can hide them by default
+        # AND say how many it hid — the rule this page already keeps for platform identities in the
+        # grant counts (`excluded_platform`). A hidden row stays in `namespaces`: it is filtered on the
+        # page, never dropped from the payload, so export, search and the drill still reach it.
+        for row in rows:
+            row["platform"] = settings.platform_namespaces.matches(row["name"])
+        platform = [r for r in rows if r["platform"]]
+        # A CONFIGURED PATTERN THAT MATCHES NOTHING IS REPORTABLE (#255), and it has to be reported
+        # somewhere a reader will see — an `unmatched()` nobody calls is a claim the release notes
+        # make and the product does not keep, which is the defect the review of #251 caught in
+        # `controller_is_declared`. Computed over the cluster's own namespace names, so it answers
+        # "your `-operator` matches nothing HERE" rather than "nowhere", which is the actionable
+        # version on a fleet where estates differ.
+        stale_patterns = settings.platform_namespaces.unmatched([r["name"] for r in rows])
         source = store.namespaces_source(cluster_id)
         return {
             "cluster": cluster_id,
@@ -2153,6 +2169,12 @@ def build_app(
             "source": {"state": source["state"], "observed_at": source["observed_at"]} if source else None,
             "label_keys": list(settings.namespace_metadata_labels),
             "count": len(rows),
+            "platform_count": len(platform),
+            # The one case where hiding a namespace costs the reader something: it had a finding.
+            # "67 hidden" is noise removed; "67 hidden, 1 of them with a finding" is a different
+            # sentence, and the page must be able to say it without the reader toggling to find out.
+            "platform_with_findings": len([r for r in platform if r.get("direct_grants")]),
+            "platform_patterns_unmatched": stale_patterns,
             "cluster_wide_groups": cluster_wide_groups,
             "cluster_wide_grants": cluster_wide_grants,
             "cluster_wide_path": cluster_wide_path,
@@ -2254,7 +2276,10 @@ def build_app(
             "scope": scope,
             "full_name": store.user_full_name(cluster_id, me),
             "providers": record["providers"] if record else [],
-            "answer": derive_answer(groups, via, direct),
+            # The SAME classifier the namespace index uses (#255). Home and the audit disagreeing
+            # about what "platform" means would be the divergence this stanza exists to end.
+            "answer": derive_answer(groups, via, direct,
+                                    platform=settings.platform_namespaces.matches),
             "direct": direct,
             "changes": dict(group_changes(events, since), capped_clusters=sorted(capped)),
             "retention": history_retention("membership_event", store.history_retained_since(cluster_id)),

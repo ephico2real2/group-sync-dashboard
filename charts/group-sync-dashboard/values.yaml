@@ -688,6 +688,12 @@ session:
 # API with a token from THAT cluster — needs none of this and is still the recommendation
 # where trust boundaries differ: docs/reference-architecture.md §8a.
 clusters:
+  # EVERY ACCEPTED COMBINATION, AND WHERE EACH REFUSAL FIRES: docs/CLUSTER_STANZA.md — measured, not
+  # described, and held by tests/test_cluster_stanza_matrix.py. Worth reading §5 before a rollout:
+  # fourteen bad stanzas fail `helm template`, but FOUR render cleanly and are refused by the pod at
+  # startup (an unknown key, a duplicate name, an apiUrl with no scheme, insecureSkipVerify together
+  # with caBundleFile) — those fail after a green upgrade. A worked file: example-production.yaml.
+  #
   # CHANGING `name` ON A RUNNING RELEASE RETIRES THE OLD CLUSTER. The name is the id every
   # observation table keys on (33 of them: sync events, KPI days, login events, report runs,
   # membership and binding history), so a rename is a NEW cluster to this dashboard: the old row is
@@ -716,6 +722,24 @@ clusters:
   # Every OTHER cluster is a labelled Secret discovered at runtime (#230), not a stanza here — so
   # adding one needs no redeploy. A second stanza is still honoured for a cluster whose credential
   # must come from a file the chart mounts.
+  #
+  # CONNECTION MODES (SPEC_S3, #248 — S3a ships the keys; S3b connects). A remote stanza may declare
+  # HOW the dashboard obtains its credential instead of carrying one:
+  #   - name: shared-rnd
+  #     apiUrl: https://api.shared-rnd.example.com:6443
+  #     saTokenLookup: true              # log in as the fleet account, read the poller SA's token (S3b)
+  #     # userSelfLogin: true            # or: poll as the fleet account itself; nothing at rest (S3b)
+  #     # ldapConnectionBootstrap: uid   # OPTIONAL — overrides clusterConfig.fleetAccount.username here
+  # Exactly one mode. A stanza declaring a mode OMITS tokenEnv/tokenFile (a mode beside a credential is
+  # two sources of truth and is refused); ldapConnectionBootstrap without a mode is refused; a mode on
+  # the hosting cluster is refused — this pod's own cluster authenticates with the mounted
+  # ServiceAccount. A saTokenLookup stanza is retrieved on the next discovery cycle (SPEC_S4b): the
+  # dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target
+  # (clusterConfig.saTokenLookup below) and writes gsd-cluster-<name> here, which discovery then
+  # polls like any other Secret. It needs clusterConfig.secrets.writes.enabled, and its CA must
+  # cover both the API host and the OAuth route. A userSelfLogin stanza is still pending (#285).
+  # The render refuses each of these exactly as the loader does, so a bad stanza fails
+  # `helm template`, not the pod after a green upgrade.
 
 # ---------------------------------------------------------------------------
 # ArgoCD / GitOps
@@ -1179,6 +1203,40 @@ reporting:
     maxUnavailable: 1
     minAvailable: ""
 
+  # Probes
+  # -------------------------------------------------------------------------
+  # THE SAME REASONING AS THE DASHBOARD'S `probes` BLOCK ABOVE, applied to this service — which it
+  # was not before: these periods were hard-coded, and liveness ran five times more often here than
+  # on the dashboard for the same cost profile.
+  #
+  # What each probe costs when it is WRONG decides its period. A failed readiness takes the pod out
+  # of the Service and puts it back — cheap. A failed liveness destroys in-flight state (a render in
+  # progress) and forces a container restart — expensive. So liveness is 300s with failureThreshold
+  # 2 (10 minutes of sustained failure before a wedged pod is restarted), matching the dashboard.
+  #
+  # Readiness is 30s here rather than the dashboard's 15s, for a cost the dashboard does not have:
+  # `/report/readyz` performs a SQLite READ, and every probe contends for the same lock the poller's
+  # writer holds — which is why `sqlite.readerBusyTimeoutMs` is deliberately shorter than the
+  # writer's. Halving the probe rate halves that contention.
+  #
+  # The 1s Kubernetes default timeout is deliberately not used: on a host that suspends and resumes,
+  # every in-flight probe fails with "context deadline exceeded" and liveness kills a healthy
+  # process (observed on the dashboard; it cascaded into a ~4h outage).
+  #
+  # These probes no longer write a log line apiece: the per-request record is at WARNING by default
+  # (`httpLogLevel`), which this service now honours as the dashboard already did.
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 300     # 5 min — see the threshold note before raising this
+      timeoutSeconds: 5
+      failureThreshold: 2    # 2 x 300s = 10 min to restart a wedged pod
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 30      # /report/readyz reads SQLite; each probe contends for the lock
+      timeoutSeconds: 5
+      failureThreshold: 3
+
   # Each report is a module. Nine need nothing but the snapshot and are on. loginActivity FOLLOWS
   # loginCapture.enabled by default ("" = follow); `true` with capture off is refused — a report
   # over a table nothing writes. dormantAccess works without capture (User objects) and gains a
@@ -1311,6 +1369,43 @@ kyverno:
   eventsRetentionDays: 90
 
 # ---------------------------------------------------------------------------
+# Which namespaces are the PLATFORM'S rather than a workload's  (#255)
+# ---------------------------------------------------------------------------
+# The Namespace audit hides these by default and says how many it hid; the Home page uses the same
+# answer. The shipped rule is OpenShift's and Kubernetes' own conventions — and it is not enough for
+# a real estate. MEASURED on the reference cluster: of 106 namespaces it classifies 67, and the 39 it
+# calls workloads include `cert-manager`, `cert-manager-operator`, `group-sync-operator`,
+# `group-sync-dashboard`, `hostpath-provisioner`, `kyverno` and `namespace-configuration-operator` —
+# seven pieces of platform listed as somebody's application.
+#
+# THREE AXES, because no two of them are enough. On that same cluster `-operator` catches three,
+# `-manager` one, `-provisioner` one, and `kyverno` and `group-sync-dashboard` match no pattern at
+# all and have to be named. Prefix matching alone misses all seven.
+#
+# Plain prefix / suffix / exact-name matching, deliberately — no globs and no regular expressions: a
+# regex in a values file is an injection surface and a diff nobody can review, and these three cover
+# every case measured.
+#
+# `prefixes`, `suffixes` and `names` REPLACE the shipped defaults. The `additional*` three APPEND to
+# them, which is what an estate actually wants: add the operators you install without restating a Red
+# Hat list that changes between releases. A key that is not one of the six is refused by name at
+# startup — a typo must not be a silent no-op.
+#
+# The classification is never silent: the page says "67 platform namespaces hidden" with a control to
+# show them, a hidden row stays counted, exportable and drillable, and where a hidden namespace holds
+# a direct grant the page says that too.
+platformNamespaces:
+  # Uncomment to replace the shipped defaults outright (rarely what you want):
+  # prefixes: ["openshift-", "kube-"]
+  # suffixes: []
+  # names: ["default", "openshift", "kube-system", "kube-public", "kube-node-lease"]
+
+  # What THIS estate adds for itself. The examples below are the reference cluster's answer.
+  additionalPrefixes: []
+  additionalSuffixes: []    # e.g. ["-operator", "-manager", "-provisioner"]
+  additionalNames: []       # e.g. ["kyverno", "group-sync-dashboard"]
+
+# ---------------------------------------------------------------------------
 # Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)
 # ---------------------------------------------------------------------------
 # Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
@@ -1335,8 +1430,11 @@ clusterConfig:
     # on-by-default rule (tests/test_values_defaults.py): a write path on Secrets widens the dashboard's
     # read-only posture (its only write anywhere is its own leader Lease), so it stays off until the
     # operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it
-    # and removes the exception. Turning it on is the decision to let the dashboard mint cluster
-    # access. On, the Role above
+    # and removes the exception. Turning it on is the decision to let the dashboard WRITE cluster
+    # Secrets — the one grant, with two consumers that each declare their own intent: a person on
+    # the tab (an identity and clusterconfig:manage), and the saTokenLookup lookup (a stanza that
+    # says so, per cluster; SPEC_S4b). It does not split, because a second switch would gate the
+    # same verbs twice and decide nothing the stanza does not. On, the Role above
     # gains create, update and delete on secrets in the release namespace and the four write routes
     # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
     # reader holding clusterconfig:manage — visibility.clusterConfigManageSar — with a proxy-verified
@@ -1345,38 +1443,101 @@ clusterConfig:
     # credential never reaches a response, a log line, the database or /metrics either way.
     writes:
       enabled: false
+  # The fleet account (SPEC_S3 §3.1, #248): the LDAP account the dashboard logs in AS when a cluster
+  # stanza — or a cluster Secret's config — declares a connection mode (saTokenLookup / userSelfLogin).
+  # One account for the fleet; a stanza overrides the username with ldapConnectionBootstrap. S3a
+  # records the setting; S3b reads it at connect time and nowhere else. Where neither names a username,
+  # or the password Secret is unreadable, the cluster is a finding on the tab, not a crashed pod.
+  fleetAccount:
+    # The username. Empty = every mode stanza must name its own ldapConnectionBootstrap.
+    username: ""
+    # Its password: never a literal in values — a Secret reference, read at connect time only. The
+    # chart does not CREATE it (it holds a credential this release does not own); it only grants the
+    # dashboard permission to RETRIEVE it. The value never reaches a log line, the database, a
+    # response or /metrics (the redaction pin covers it).
+    passwordSecret:
+      # Where the Secret lives. Empty = this release's own namespace. Set it to read a Secret that
+      # already exists elsewhere — `openshift-config` is the usual answer, because that is where a
+      # cluster's LDAP bind password already sits and an estate would rather not copy it.
+      #
+      # THE GRANT IS RENDERED FOR YOU, and it is the narrowest one that works: `get` on THIS ONE
+      # Secret by `resourceNames`, never `list` (which resourceNames cannot restrict — a list grant
+      # would return every Secret in the namespace) and never a ClusterRole. See
+      # templates/fleet-account-rbac.yaml.
+      #
+      # A namespace OTHER than this release's means the chart writes a Role and RoleBinding into a
+      # namespace it does not own. Whoever runs `helm install` must be allowed to do that — on a
+      # cluster that refuses it, set `rbac.create: false` below, have a cluster administrator apply
+      # the two objects once, and the release installs unchanged.
+      #
+      # REPLICATING THE SECRET INSTEAD is the better end state, and this field is how you migrate to
+      # it without a chart change. Have Kyverno (or any replicator) copy the Secret into this
+      # release's namespace, then clear `namespace` here: the grant re-renders against the local
+      # copy, the cross-namespace Role is pruned, and the chart stops writing anywhere it does not
+      # own. The dashboard reads the same key either way and needs no restart beyond the upgrade —
+      # it reads the password at connect time, not at boot.
+      namespace: ""
+      name: gsd-fleet-account
+      key: password
+      # Render the Role and RoleBinding. Off = you grant it yourself; the dashboard still reads the
+      # Secret at connect time, and reports `fleet-credential-missing` naming the namespace, the
+      # Secret and the key if the grant is absent — it does not crash.
+      rbac:
+        create: true
+  # WHAT `saTokenLookup` READS on every target (SPEC_S4b, #284): the poller ServiceAccount's permanent
+  # token, held in a `kubernetes.io/service-account-token` Secret the operator chart creates beside
+  # the ServiceAccount. One convention for the fleet — the operator chart provisions the same names
+  # on every cluster — so the defaults are its names and a default install needs nothing here.
+  #
+  # AN ONBOARDING PRECONDITION, NOT AN ASSUMPTION. Kubernetes stopped creating token Secrets in 1.24
+  # and OpenShift 4.16 stopped generating them for the registry, so on a modern target the Secret
+  # exists only because someone created it (type kubernetes.io/service-account-token, annotated
+  # kubernetes.io/service-account.name=<the ServiceAccount>; the control plane fills it). When it is
+  # absent the tab says so in those words: `sa-token-secret-missing` — create the token Secret on
+  # the target. The fleet account needs `get` on that ONE Secret there (resourceNames), never list.
+  #
+  # THE STANZA'S CA MUST COVER TWO HOSTS. The login touches the API host (the OAuth discovery
+  # document) AND the OAuth route (/oauth/authorize), and an estate whose ingress is re-signed by an
+  # enterprise PKI signs them differently. `caBundleFile` on a saTokenLookup stanza (or the trusted
+  # bundle, when the stanza names none) must verify BOTH, and the finding names which host failed.
+  # A green run on CRC proves nothing about this: its API bundle already carries the ingress CA.
+  # The Secret the lookup writes carries the DECLARED trust, so a later re-login has what worked.
+  #
+  # NEEDS clusterConfig.secrets.writes.enabled (above): the lookup writes gsd-cluster-<name>, and
+  # create/update on Secrets is the grant that switch renders. A stanza with it off fails
+  # `helm template`; a Secret-declared mode with it off is a `fleet-write-disabled` finding.
+  saTokenLookup:
+    sourceNamespace: group-sync-operator
+    sourceServiceAccount: group-sync-dashboard-cluster-poller
+    # The token Secret's name on the target. Empty = <sourceServiceAccount>-token.
+    tokenSecretName: ""
 
 # ---------------------------------------------------------------------------
-# Login capture  (reads the oauth-server's logs)
+# Login capture  (reads the oauth-server's audit log)
 # ---------------------------------------------------------------------------
-# Grants the DASHBOARD read access to the oauth-server's pod logs, which is where the "who logged in"
-# lines appear. Read-only, on the dashboard's own ServiceAccount — the write that ENABLES those lines
-# lives on a separate identity, see authLogLevel below.
+# Grants the DASHBOARD a read of the oauth-server's login records, which is where "who logged in"
+# comes from. Read-only, on the dashboard's own ServiceAccount. The grant follows `source` below:
 #
-# NEEDS authLogLevel.enabled=true TO SEE ANYTHING. At the default verbosity the lines do not exist —
-# measured: zero occurrences of "succeeded for login" until the level is Debug. So this grant on its
-# own is inert, which is deliberate: the read and the cluster-wide write are separate decisions.
+#   audit-log (the default since 0.52.0) — a ClusterRole on `get nodes/proxy`, plus `list
+#     nodes` unless auditLog.nodeNames pins the nodes. Names the person at the DEFAULT
+#     verbosity: nothing to enable, no OAuth roll. Its cost is stated at `source` below.
+#   pod-log (deprecated, removal tracked in #321) — a Role on `pods/log` in ONE namespace,
+#     never a ClusterRole: cluster-wide it would read EVERY pod's logs — tokens, connection
+#     strings, customer data. It NEEDS authLogLevel.enabled=true TO SEE ANYTHING — measured:
+#     zero occurrences of "succeeded for login" until the level is Debug — and that write
+#     lives on a separate identity. The Role and RoleBinding land in a namespace the chart
+#     does not own: an ArgoCD Application shows them outside its destination, and a policy
+#     forbidding writes to `openshift-*` rejects them.
 #
-# A Role in ONE namespace, not a ClusterRole, and that matters: `pods/log` cluster-wide would let the
-# dashboard read EVERY pod's logs on the cluster — tokens, connection strings, customer data. Scoped
-# here it can read the OAuth server's logs and nothing else.
-#
-# The cost, stated rather than hidden: this creates a Role and RoleBinding in a namespace the chart
-# does not own. An ArgoCD Application will show them outside its destination namespace, and a policy
-# forbidding writes to `openshift-*` namespaces will reject them.
-#
-# ON by default since chart 0.14.0: the read is scoped to one namespace, costs no credential, and is
-# what the Users tab's login columns need. It stays inert until the lines exist — the Debug level
-# (authLogLevel below) today; the oauth-server audit log (`loginCapture.source: audit-log`) once
-# that source ships, which is the intended pair: the Debug level is being retired in its favour.
-# Set false where a policy forbids the Role in `openshift-authentication`.
+# ON by default since chart 0.14.0, with audit-log as its source since 0.52.0: the Users tab's login
+# columns need it. Set false where the nodes/proxy grant is unacceptable.
 loginCapture:
   enabled: true
 
   # WHICH LOG TO READ. Two sources, and the whole point of the second is what it does not need:
   #
-  #   pod-log     (default) the oauth-server pods' logs, through a Role in openshift-authentication
-  #               on `pods` and `pods/log`. Names a person ONLY at spec.logLevel: Debug on the
+  #   pod-log     (deprecated, #321) the oauth-server pods' logs, through a Role in
+  #               openshift-authentication on `pods` and `pods/log`. Names a person ONLY at spec.logLevel: Debug on the
   #               authentication operator CR (authLogLevel below), which rolls the OAuth server —
   #               a login outage at one replica — and history dies with every pod. What it has that
   #               the audit log does not: the LDAP result code and AD sub-code behind a refusal.
@@ -1394,9 +1555,20 @@ loginCapture:
   # is READ ACCESS TO EVERYTHING THE KUBELET SERVES OVER GET on those nodes — every container's
   # logs on them (/containerLogs), the kube-apiserver and openshift-apiserver audit logs, the
   # journal — and `list nodes` to find the control-plane nodes. That is categorically wider than
-  # a namespaced pods/log Role and it is a standing capability, which is why this defaults to
-  # pod-log despite the audit log being the better source in every other respect. Narrow it with
-  # auditLog.nodeNames below (resourceNames on nodes/proxy, and no list at all).
+  # a namespaced pods/log Role, and it is a standing capability.
+  #
+  # IT IS NEVERTHELESS THE DEFAULT, by decision (2026-09-23). Capturing who logged in is what this
+  # feature is FOR, and the audit log is the only source that does it without raising the OAuth
+  # server's verbosity — which rolls it, a login outage at one replica. The previous default paired
+  # `enabled: true` with `source: pod-log` while `authLogLevel` stayed off, so a plain install
+  # captured no named login at all: the chart shipped a feature switched on and unable to work.
+  # Between a wide read-only grant an operator can see and narrow, and a feature that silently does
+  # nothing, the grant is the honest choice. TURN IT OFF with `enabled: false` if the grant is
+  # unacceptable — that is the override, not a source that cannot deliver.
+  #
+  # NARROW IT with auditLog.nodeNames below (resourceNames on nodes/proxy, and no list at all).
+  # That is the recommended production shape: name the control-plane nodes and the cluster-wide
+  # `list` disappears entirely.
   #
   # HOW IT MEETS authLogLevel: with source audit-log, Debug is unnecessary. The chart REFUSES
   # source=audit-log together with authLogLevel.enabled=true — it will not roll the OAuth server
@@ -1406,7 +1578,14 @@ loginCapture:
   #   2. authLogLevel.manage=false once the rollout has finished.
   # The audit log is the authoritative record from then on; pod-log rows already stored are kept,
   # and an audit event that corresponds to one is linked to it rather than recorded twice.
-  source: pod-log
+  #
+  # DEPRECATION: `pod-log` and the whole `authLogLevel` Job machinery are on their way out — the
+  # audit log is the supported path. Tracked in #321 so the removal is a decision, not a drift.
+  #
+  # HOW THE AUDIT PATH WORKS end to end — the node-proxy request, what it needs on a REMOTE cluster
+  # and which chart grants it, what counts as a login, and a worked example you can run against the
+  # lab's mock cluster: docs/AUDIT_LOG_CAPTURE.md
+  source: audit-log
 
   auditLog:
     # Which nodes hold the file: the control-plane nodes. A label selector, listed each cycle.
@@ -1504,10 +1683,16 @@ clusterAccess:
   discoverFromOAuth: true
 
 # ---------------------------------------------------------------------------
-# oauth-server log verbosity  (prerequisite for login capture)
+# DEPRECATED — oauth-server log verbosity  (OAuth Debug, pod-log source only)
 # ---------------------------------------------------------------------------
-# The oauth-openshift server only names the person logging in when the AUTHENTICATION OPERATOR
-# CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`.
+# Login capture reads the oauth-server AUDIT LOG by default (`loginCapture.source: audit-log`),
+# which names the person at the default verbosity: nothing here is needed for it. This stanza raises
+# the OAuth server to Debug for the deprecated pod-log source, and remains only to move a cluster
+# left at Debug back to Normal (the two-step below). Do not enable it on a new install.
+# Removal: #321.
+#
+# The oauth-openshift server's POD LOG only names the person logging in when the AUTHENTICATION
+# OPERATOR CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`.
 #
 # NOT the OAuth CR. `oauth.config.openshift.io/cluster` is the object that holds the identity
 # providers, and this feature never touches it; there is also a THIRD, one word apart:
@@ -1515,7 +1700,7 @@ clusterAccess:
 # And within the operator CR, `logLevel` (the operand's verbosity) is not `operatorLogLevel`
 # (the operator's own) — patching the latter would change nothing this needs. At `Normal` the line
 # is not emitted at all — measured: zero occurrences of "succeeded for login" until this is on. So
-# this section is the prerequisite for capturing login activity, and nothing more.
+# this section is the prerequisite for the pod-log source, and nothing more.
 #
 # TWO SWITCHES, ON PURPOSE:
 #
@@ -1532,7 +1717,9 @@ clusterAccess:
 #
 # Both stay false under the chart's on-by-default rule (0.14.0), on purpose: the Debug level is a
 # cluster-wide write that rolls the OAuth server, and the oauth-server audit log
-# (`loginCapture.source: audit-log`) is replacing it as the way login lines are obtained.
+# (`loginCapture.source: audit-log`, the default since 0.52.0) has replaced it as the way login
+# lines are obtained. This block serves only the deprecated pod-log source and the move of a cluster
+# left at Debug back to Normal; its removal is tracked in #321.
 authLogLevel:
   manage: false
   enabled: false

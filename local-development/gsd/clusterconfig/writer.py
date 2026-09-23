@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass, field
 
 from ..config import ClusterConfig
+from ..config import CONNECTION_KEYS, CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
 from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
 from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
 from .events import event
@@ -32,6 +33,38 @@ log = logging.getLogger(__name__)
 SECRET_NAME_PREFIX = "gsd-cluster-"
 MANAGED_BY_ANNOTATION = "groupsync-dashboard.io/managed-by"
 MANAGED_BY_UI = "ui"
+#: The saTokenLookup lookup (SPEC_S4b): the stanza key in kebab case, so `saTokenLookup: true` and
+#: `managed-by: sa-token-lookup` read as one thing. Says WHO wrote the Secret; `token-source` says how.
+MANAGED_BY_LOOKUP = "sa-token-lookup"
+#: PROVENANCE, NOT CONFIGURATION (SPEC_S3 §5.1). A bearer token is opaque: nothing in it says where it
+#: came from or what to rotate when it must change. These three answer that, on the tab and in a
+#: support ticket. They are ignored by the parser and by the poll — they exist for the human, and for
+#: S3d, which may only refresh or delete what this dashboard made (§8.1).
+TOKEN_SOURCE_ANNOTATION = "groupsync-dashboard.io/token-source"
+SOURCE_NAMESPACE_ANNOTATION = "groupsync-dashboard.io/source-namespace"
+SOURCE_SERVICE_ACCOUNT_ANNOTATION = "groupsync-dashboard.io/source-service-account"
+#: The account the lookup logged in AS (SPEC_S4b). A Secret that declared the mode is updated in
+#: place and its `ldapConnectionBootstrap` must leave `config` with the mode key, so this is where
+#: the per-cluster account survives for #285's re-login; written on the values path too.
+LOOKUP_ACCOUNT_ANNOTATION = "groupsync-dashboard.io/lookup-account"
+#: How the credential was obtained. `managed-by` says WHO created the Secret; this says HOW the
+#: credential in it was got — the two are orthogonal and a retriever sets both.
+#:
+#: NOT A SECOND VOCABULARY. The value IS the `credential_kind` the declaring mode resolves to, so the
+#: chain is one thing end to end: `saTokenLookup: true` -> `ClusterConfig.credential_kind` ->
+#: `"remote-lookup"` -> this annotation. Defining it again here would be two constants that happen to
+#: be equal today, and the tab would disagree with the Secret the first time one of them moved.
+#: The two differ in what they LEAVE BEHIND, which is why a reader of the Secret needs to be told
+#: which one made it:
+#:   lookup     — log in as the fleet account, read the target ServiceAccount's PERMANENT token and
+#:                store it. The credential outlives the login; the tab says `expires: current`,
+#:                because it is invalidated by deleting its Secret rather than by a clock (#248).
+#:   self-login — no retrieval at all: the dashboard polls AS the LDAP account, on its own session.
+#:                The credential IS the login, so it expires on the target's own terms (§3.2,
+#:                `accessTokenMaxAgeSeconds`, 24 h by default), the tab shows a real date, and
+#:                renewal is not optional. It is also the mode where nothing long-lived is at rest.
+TOKEN_SOURCE_LOOKUP = CREDENTIAL_LOOKUP          # saTokenLookup
+TOKEN_SOURCE_SELF_LOGIN = CREDENTIAL_SELF_LOGIN  # userSelfLogin
 LABEL_DOMAIN = "groupsync-dashboard.io/"
 TLS_MODES = ("caData", "trustedBundle", "insecure")
 # Kubernetes' label syntax (metav1 validation): a key is an optional DNS-subdomain prefix (≤ 253) and a
@@ -73,6 +106,19 @@ class CreateRequest:
     visibility: str = "self-only"
     identity: str = "none"
     labels: dict[str, str] = field(default_factory=dict)
+    #: Written as the WORD "true"/"false", which is how the parser reads it back
+    #: (`data.enabled` unset means true; anything but those two words is a finding). Default true:
+    #: a cluster is created because someone means to poll it.
+    enabled: bool = True
+    #: Who created the Secret. `ui` for the tab's form; a retriever names itself, so a machine-written
+    #: Secret does not claim a person made it.
+    managed_by: str = MANAGED_BY_UI
+    #: Provenance — the rotation address. Omitted entirely when unset, so a hand-made Secret and a
+    #: UI-written one carry no empty markers for S3d to misread as ownership.
+    token_source: str | None = None
+    source_namespace: str | None = None
+    source_service_account: str | None = None
+    lookup_account: str | None = None
 
 
 def secret_name_for(cluster: str) -> str:
@@ -90,16 +136,32 @@ def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -
         config["oauth"] = {"username": "<redacted>", "password": "<redacted>"}
     else:
         config["bearerToken"] = "<redacted>" if redact else (req.token or "").strip()   # as validate and rotate read it
-    labels = {SECRET_TYPE_LABEL: SECRET_TYPE_CLUSTER, **{str(k): str(v) for k, v in (req.labels or {}).items()}}
+    # THE TYPE LABEL IS STAMPED LAST, so no caller-supplied label can replace it (SPEC_S4b, the
+    # operator's requirement): `validate()` refuses the app's prefix, but this function has callers
+    # that do not validate — the lookup, and #293's ConfigMap feed whose labels someone else wrote —
+    # and a Secret without `secret-type: cluster` is one discovery cannot see. Byte-identical for
+    # every input `validate()` accepts.
+    labels = {**{str(k): str(v) for k, v in (req.labels or {}).items()}, SECRET_TYPE_LABEL: SECRET_TYPE_CLUSTER}
+    # Built the way `labels` is, rather than a fixed dict: a retriever records where it got the token
+    # (SPEC_S3 §5.1). An unset marker is OMITTED, never written empty — S3d reads these to decide what
+    # it owns, and an empty string is not an answer.
+    annotations = {MANAGED_BY_ANNOTATION: req.managed_by}
+    for key, value in ((TOKEN_SOURCE_ANNOTATION, req.token_source),
+                       (SOURCE_NAMESPACE_ANNOTATION, req.source_namespace),
+                       (SOURCE_SERVICE_ACCOUNT_ANNOTATION, req.source_service_account),
+                       (LOOKUP_ACCOUNT_ANNOTATION, req.lookup_account)):
+        if value:
+            annotations[key] = str(value)
     return {
         "apiVersion": "v1", "kind": "Secret",
         "metadata": {"name": secret_name_for(req.name), "namespace": namespace, "labels": labels,
-                     "annotations": {MANAGED_BY_ANNOTATION: MANAGED_BY_UI}},
+                     "annotations": annotations},
         "type": "Opaque",
         # Compact separators: the page's twin is JSON.stringify under a `|-` block, and the promise is that
         # the two Secrets are equal BYTE FOR BYTE, `config` included — not merely equal once parsed.
         "stringData": {"name": req.name, "server": req.server, "config": json.dumps(config, separators=(",", ":")),
-                       "visibility": req.visibility, "identity": req.identity, "enabled": "true"},
+                       "visibility": req.visibility, "identity": req.identity,
+                       "enabled": "true" if req.enabled else "false"},
     }
 
 
@@ -255,6 +317,52 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
           by=viewer, secrets=(token,))
 
 
+def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token: str, cluster: str,
+                 source_namespace: str, source_service_account: str, lookup_account: str) -> None:
+    """SPEC_S4b: a Secret that DECLARED `saTokenLookup` becomes the credential it asked for, in place.
+
+    Why in place and not a second Secret (SPEC_S4 §1): a Secret is named for its cluster and the
+    reader fails closed on two Secrets for one cluster, so a `create` beside the declaring Secret is
+    `secret-exists` and any other name is `duplicate-cluster-name` — neither loads. `config` becomes
+    `{bearerToken, tlsClientConfig}`: the mode and bootstrap keys leave (the parser refuses them
+    beside a credential) and the annotations keep the memory of the mode. `tlsClientConfig` is kept
+    as declared — it is the trust that just verified both hosts. Labels and `managed-by` are kept:
+    the lookup did not create this Secret. The decode refusal and the 409 are `rotate`'s, for the
+    reasons stated there.
+    """
+    with host_client._client() as client:
+        obj = _read_ours(host_client, client, namespace, name)
+        data = obj.get("data") or {}
+        try:
+            config = json.loads(base64.b64decode(data.get("config") or "", validate=True).decode("utf-8"))
+        except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+            raise WriteRefused("config-not-json", f"Secret {name}: data.config does not decode to JSON ({type(exc).__name__}); "
+                                                  "fix the Secret where it is written") from None
+        if not isinstance(config, dict):
+            raise WriteRefused("config-not-json", f"Secret {name}: data.config is not a JSON object; fix the Secret where it is written")
+        for key in (*CONNECTION_KEYS, "oauth"):
+            config.pop(key, None)
+        config["bearerToken"] = token.strip()
+        data["config"] = base64.b64encode(json.dumps(config, separators=(",", ":")).encode("utf-8")).decode("ascii")
+        obj["data"] = data
+        obj.pop("stringData", None)
+        meta = obj.setdefault("metadata", {})
+        meta["annotations"] = {**(meta.get("annotations") or {}),
+                               TOKEN_SOURCE_ANNOTATION: TOKEN_SOURCE_LOOKUP,
+                               SOURCE_NAMESPACE_ANNOTATION: source_namespace,
+                               SOURCE_SERVICE_ACCOUNT_ANNOTATION: source_service_account,
+                               LOOKUP_ACCOUNT_ANNOTATION: lookup_account}
+        try:
+            host_client._send(client, "PUT", _path(namespace, name), json=obj, secrets=(token, data["config"]))
+        except ClusterError as exc:
+            if exc.message.startswith("HTTP 409"):
+                raise WriteRefused("secret-changed", f"Secret {name} changed since it was read — GitOps or another "
+                                                     "writer got there first; the next attempt reads it again", conflict=True) from exc
+            raise _failed(exc, token, data["config"]) from exc
+    event(log, logging.INFO, "cluster-secret-rotated", secret=name, namespace=namespace, cluster=cluster,
+          by=MANAGED_BY_LOOKUP, secrets=(token,))
+
+
 def delete(host_client: ClusterClient, namespace: str, name: str, *, viewer: str, cluster: str) -> None:
     """C4: DELETE the Secret; the next discovery retires the cluster, its rows kept."""
     with host_client._client() as client:
@@ -300,5 +408,8 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
 
 
 __all__ = ["CreateRequest", "WriteRefused", "WriteFailed", "SECRET_NAME_PREFIX", "MANAGED_BY_ANNOTATION",
+           "MANAGED_BY_UI", "MANAGED_BY_LOOKUP",
+           "TOKEN_SOURCE_ANNOTATION", "SOURCE_NAMESPACE_ANNOTATION", "SOURCE_SERVICE_ACCOUNT_ANNOTATION",
+           "LOOKUP_ACCOUNT_ANNOTATION", "TOKEN_SOURCE_LOOKUP", "TOKEN_SOURCE_SELF_LOGIN",
            "TLS_MODES", "OAUTH_NOT_BUILT", "secret_object", "secret_name_for", "validate", "create", "rotate",
-           "delete", "test_connection", "AUTH_FAILED", "UNREACHABLE"]
+           "store_lookup", "delete", "test_connection", "AUTH_FAILED", "UNREACHABLE"]

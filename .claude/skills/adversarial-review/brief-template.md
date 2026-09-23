@@ -8,7 +8,12 @@ as nothing. For EVERY finding — a REFUTED verdict, a PLAUSIBLE verdict that na
 volunteer at the end — give the FULL code of the fix: the whole function, block or file section as it should
 read, with the file path and where it goes, never a fragment or a description; AND a test that fails before
 the fix and passes after, in full. A finding without its full snippet and its test is not a finding and will
-be discarded. Measure; do not reason from memory. The interpreter is <venv>/bin/python. Do not modify tracked
+be discarded. Measure; do not reason from memory. The interpreter is
+`local-development/.venv/bin/python` IN THE MAIN CHECKOUT — a detached review worktree has no `.venv`, so use
+that absolute path rather than the one beside your copy. **If you cannot import the project's dependencies
+(`httpx`, `fastapi`, `pytest`), SAY SO IN YOUR FIRST LINE and mark every claim you could not drive as
+PLAUSIBLE rather than CONFIRMED** — a source-only pass is materially weaker than a driven one, and the
+orchestrator must know which it received. Do not modify tracked
 files, do not commit, run the thing under review only in a COPY outside the repository, create NOTHING inside
 the repository tree, delete every temp file you create.
 
@@ -22,6 +27,10 @@ C5. <dependents, `needs:`, workflows that call this one>. CLAIM: …
 C6. <the next real use of this change on this repository>. Run it in a copy and read the result; refute
     anything an operator would have to fix by hand.
 C7. <what could go red with no code change>. CLAIM: … name every source and the worst one.
+C8. <the safety budget over the system, with its scope>. CLAIM: at most N <binds/writes/deletes> per (<key>)
+    per <process | replica | restart>. Drive the real schedule and give a TABLE: outcome by attempt-count
+    across two direct calls, the schedule, a state reset and an irrelevant config edit. Re-ask the previous
+    issue's guarantees against this head: can anything here make that module run twice?
 
 Finish with: the single most important finding, and anything you saw that was not asked — each with its full
 snippet and test, the same as a claim.

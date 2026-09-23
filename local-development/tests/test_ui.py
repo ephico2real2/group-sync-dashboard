@@ -14,6 +14,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
+import re
 import socket
 import threading
 import time
@@ -231,6 +232,14 @@ def _seed(db_path: str) -> None:
         {"name": "quiet-corner", "created_at": _iso(now - timedelta(days=10)), "phase": "Active",
          "metadata": {"company.net/mnemonic": "demo", "company.net/app-environment": "qa"}},
         *[{"name": f"ns{i}", "created_at": _iso(now - timedelta(days=5)), "phase": "Active", "metadata": {}} for i in range(6)],
+        # #257: two platform namespaces, HIDDEN by default — so every count asserted elsewhere in
+        # this file stays at nine, which is the property worth having: adding platform noise to the
+        # seed must not move a single existing number. `openshift-monitoring` carries a direct grant
+        # The "one of them has a finding" sentence is driven from the envelope field in the test
+        # rather than seeded here: a grant inside a platform namespace would also enter the
+        # worklist above and move counts asserted elsewhere in this file.
+        {"name": "openshift-monitoring", "created_at": _iso(now - timedelta(days=200)), "phase": "Active", "metadata": {}},
+        {"name": "kube-system", "created_at": _iso(now - timedelta(days=200)), "phase": "Active", "metadata": {}},
     ], _iso(now))
     store.replace_user_bindings(
         "crc-local",
@@ -2514,7 +2523,10 @@ class TestLookup:
         api = f"{server}/api/clusters/crc-local"
         assert doors["Groups"] == httpx.get(f"{api}/groups?state=all", timeout=5).json()["count"]
         assert doors["Users"] == httpx.get(f"{api}/users?limit=10000", timeout=5).json()["total"]
-        assert doors["Namespaces"] == httpx.get(f"{api}/namespaces", timeout=5).json()["count"] == 9
+        # 11, not 9, since #257 added two platform namespaces to the seed: the lookup counts every
+        # namespace the API returns, and the platform filter is the Namespace audit INDEX's, not
+        # the lookup's. The door and the API agreeing is what this asserts, whatever the number.
+        assert doors["Namespaces"] == httpx.get(f"{api}/namespaces", timeout=5).json()["count"] == 11
         page.locator(".door[data-page='groups'] button.drill").click()
         page.wait_for_selector("tr[data-group]")
         assert page.evaluate("() => location.hash") == "#page=groups&cluster=crc-local"
@@ -2931,7 +2943,7 @@ class TestTheWalksLookupStep:
         mod.walk_lookup(w)
         by = {s["step"]: s for s in w.steps}
         assert "lookup demo" in by, [s["step"] for s in w.steps]
-        assert by["lookup demo"]["ok"] and "Namespaces · 2 of 9" in by["lookup demo"]["detail"], by["lookup demo"]
+        assert by["lookup demo"]["ok"] and "Namespaces · 2 of 11" in by["lookup demo"]["detail"], by["lookup demo"]
         assert "lookup -> namespace page" in by and by["lookup -> namespace page"]["detail"] == "prod-ns", by
         assert by["lookup at 375 px"]["ok"], by["lookup at 375 px"]
         assert not w.errors and not errors, (w.errors, errors)
@@ -4547,21 +4559,110 @@ class TestHome:
 
 
 
+def _hold_server_clock(monkeypatch) -> None:
+    """Freeze `now` for the in-process API for one test (#271). Three payload fields are functions of
+    the clock over an unchanged store — `alerts[].detail` for an overdue CR (`last sync 6h00m ago`,
+    minute precision; measured moving at seed+60 s), `groupsyncs[].next_expected` (every cron fire)
+    and `groupsyncs[].state` (last_sync + interval + grace) — so a test about an unchanged STORE
+    must hold the clock, or it is a lottery on where its polls fall in the minute."""
+    at = datetime.now(UTC)
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return at if tz is None else at.astimezone(tz)
+
+    monkeypatch.setattr("gsd.api.datetime", _Frozen)
+
+
+def _json_diff(a, b, path=""):
+    if type(a) is not type(b):
+        return [(path, a, b)]
+    if isinstance(a, dict):
+        return [d for k in sorted(set(a) | set(b))
+                for d in _json_diff(a.get(k, "<absent>"), b.get(k, "<absent>"), f"{path}.{k}")]
+    if isinstance(a, list):
+        if len(a) != len(b):
+            return [(path + ".len", len(a), len(b))]
+        return [d for i, (x, y) in enumerate(zip(a, b)) for d in _json_diff(x, y, f"{path}[{i}]")]
+    return [] if a == b else [(path, a, b)]
+
+
+def _moved_slots(p, before: str) -> list[str]:
+    """Which fingerprint slots differ between `before` (a `lastFingerprint` read earlier) and the
+    page's current one, path by path, under the page's own slot names (fingerprintSlots()). The
+    assertion that uses this names the moving field; "something repainted" cost two red builds."""
+    after = p.evaluate("() => lastFingerprint")
+    names = p.evaluate("() => Object.keys(fingerprintSlots())")
+    return [f"{names[i]}{path}: {old!r} -> {new!r}"
+            for i, (x, y) in enumerate(zip(json.loads(before), json.loads(after)))
+            for path, old, new in _json_diff(x, y)] or ["(no slot differs — the repaint was not the fingerprint's)"]
+
+
 class TestHomeSkipsTheUnchangedPoll:
     """The shell fingerprints every payload so an automatic poll that changed nothing does not replace
     `#main` — the reader's scroll, selection and focus survive. `/home` echoed the request's clock
     (`changes.since`, second precision), so on Home the fingerprint never matched and every 60 s poll
-    repainted the page (OB3, integration review, C3: three polls, three repaints, one moving field)."""
+    repainted the page (OB3, integration review, C3: three polls, three repaints, one moving field).
 
-    def test_two_automatic_polls_of_an_unchanged_store_leave_the_dom_alone(self, page, scoped_server):
+    The server's clock is held for the test (#271): with it free, `alerts[0].detail` — the seeded
+    overdue CR's age at minute precision — moved whenever the polls straddled a minute since the seed,
+    which two CI runs did and this machine's phase did not."""
+
+    def test_two_automatic_polls_of_an_unchanged_store_leave_the_dom_alone(self, page, scoped_server, monkeypatch):
+        _hold_server_clock(monkeypatch)
         p = _home(page, scoped_server)
         p.wait_for_timeout(1500)   # the boot render has landed; nothing else is in flight
+        before = p.evaluate("() => lastFingerprint")
         p.evaluate("() => { document.querySelector('.home .answer h1').dataset.sentinel = 'kept'; }")
         for _ in range(2):
             p.evaluate("() => refresh({auto: true})")
             p.wait_for_timeout(1500)
         assert p.evaluate("() => document.querySelector('.home .answer h1').dataset.sentinel") == "kept", \
-            "an automatic poll of an unchanged store repainted Home"
+            "an automatic poll of an unchanged store repainted Home; the slots that moved:\n  " + "\n  ".join(_moved_slots(p, before))
+
+
+class TestAnAlertsInstantRendersInTheConfiguredZone:
+    """#271 put the absolute stamp into an alert's detail, because a live age recomputed per request
+    defeats the unchanged-poll repaint skip. The operator's requirement on top of that: it must match
+    the timezone the deployment is set to, as every other timestamp on this page does.
+
+    The division: the SERVER states the instant (stable, so the fingerprint still matches, and it is
+    the stamp a reader quotes), the PAGE presents it in the configured zone. It has to be the page —
+    the zone abbreviation depends on the instant (EST in January, EDT in July), so a zone stamped
+    once server-side mislabels everything across a DST boundary.
+    """
+
+    RAW = "last sync at 2026-09-21T12:00:00Z, schedule '0 * * * *' — stopped"
+
+    def test_the_helper_localises_an_instant_and_leaves_the_rest_alone(self, dash):
+        out = dash.evaluate("(t) => { setDisplayZone({name: 'America/Chicago', abbrev: 'CDT'}); "
+                            "return withLocalInstants(esc(t)); }", self.RAW)
+        assert "2026-09-21T12:00:00Z" not in out, out      # the raw UTC form is gone
+        assert "2026-09-21 07:00:00 CDT" in out, out        # noon UTC is 07:00 CDT
+        assert "schedule &#39;0 * * * *&#39; — stopped" in out, "the rest of the sentence is untouched, still escaped"
+
+    def test_utc_still_says_so_rather_than_dropping_the_marker(self, dash):
+        out = dash.evaluate("(t) => { setDisplayZone(null); return withLocalInstants(esc(t)); }", self.RAW)
+        assert "2026-09-21 12:00:00Z" in out, out
+        assert "T" not in out.split(",")[0], "the T separator is replaced, so it reads as a time not an id"
+
+    def test_a_run_id_is_not_mistaken_for_an_instant(self, dash):
+        # run ids carry a stamp with no dashes or colons; converting one would corrupt a filename
+        rid = "20260921T171114.745714Z-058e"
+        out = dash.evaluate("(t) => { setDisplayZone({name: 'America/Chicago', abbrev: 'CDT'}); "
+                            "return withLocalInstants(esc(t)); }", f"run {rid} failed")
+        assert rid in out, out
+
+    def test_the_rendered_alert_row_carries_no_raw_utc_stamp(self, dash):
+        # the seeded overdue CR reaches the Overview's alerts card; whatever zone the deployment is
+        # set to, the reader must not be shown the wire format
+        dash.wait_for_selector(".alert-row .what")
+        whats = dash.locator(".alert-row .what").all_inner_texts()
+        assert whats, "no alert rows to check"
+        import re as _re
+        raw = [w for w in whats if _re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", w)]
+        assert not raw, f"an alert row shows the raw wire stamp instead of the configured zone: {raw}"
 
 
 class TestVisibilityLabels:
@@ -6265,10 +6366,19 @@ def reporting_server(tmp_path_factory):
                                                 {"name": "paused-ns", "schedule": "0 6 1,16 * *", "report": "namespace-access", "enabled": False}),   # #149 R5
                                      font_regular=str(vendor / "DejaVuSans.ttf"), font_bold=str(vendor / "DejaVuSans-Bold.ttf"),
                                      enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
+                                     # The seeded namespaces carry both labels, so namespace-access renders its
+                                     # selector dimensions here. Without them that block returns "" and its help
+                                     # copy — which is where the deployed page's remaining 14px text lived — is
+                                     # unreachable by any browser test (measured 2026-09-21).
+                                     namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment"),
+                                     namespace_group_label="company.net/oud-group",
                                      login_capture_enabled=False)
     report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
-        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        # Two configured clusters, both in the snapshot the seed wrote (#267): the form's cluster control lists
+        # what the nav lists, and a several-cluster run needs a second target the service can render.
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
         reporting_url="http://127.0.0.1:1/unused", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
     )
@@ -6700,6 +6810,19 @@ class TestClusterConfigPage:
         twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
         assert twin["metadata"]["labels"]["note"] == "line1\nline2\ttab\r"
 
+    def test_the_twins_type_label_cannot_be_replaced_by_a_form_label(self, page, cc_rig):
+        """Review of #295, P1-2: the pane emitted the app's label first and the form's after, so a
+        label spelled `groupsync-dashboard.io/secret-type: onboard` parsed to a Secret discovery
+        cannot see — the merge-order defect secret_object() had just been fixed for."""
+        import yaml as _yaml
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.evaluate("() => { view.clusterForm.labels['groupsync-dashboard.io/secret-type'] = 'onboard'; render(); }")
+        twin = _yaml.safe_load(page.locator("#cc-yaml").inner_text())
+        assert twin["metadata"]["labels"]["groupsync-dashboard.io/secret-type"] == "cluster"
+
     def test_the_twin_is_the_object_the_api_writes_when_a_value_carries_whitespace(self, page, cc_rig):
         """Round 2 (OB3 C8): a pasted value arrives with its spaces; ccBody() trims, ccYaml() did not, so
         the pane described `gsd-cluster- west ` — a name the API server refuses — while the API wrote
@@ -6836,10 +6959,20 @@ class TestKyvernoPage:
         p = _open_as(page, scoped_server, "root")
         p.click("#tab-kyverno")
         p.wait_for_selector("#kyverno-controlled")
+        # The switch is OFF here and the lab table's Pod result is filtered out: two findings.
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
         p.focus("#kyverno-controlled")
         with p.expect_request(lambda r: "/kyverno?" in r.url and "controlled=true" in r.url):
             p.keyboard.press("Enter")
-        p.wait_for_function("() => document.body.innerText.includes('Findings · 2')")
+        # THE NEW PAINT, NOT THE OLD ONE (#246). This waited for `Findings · 2` AFTER the toggle —
+        # the count BEFORE it — so it was satisfied by the pre-toggle text and passed without ever
+        # observing the repaint it exists to prove. It won that race on a quiet machine and lost it
+        # under CI's `--tracing retain-on-failure`, where the response had already painted by the
+        # time the wait first evaluated: measured at 3 findings with aria-checked=true, and made to
+        # fail locally every time by inserting a 1.5s pause before the wait.
+        # Switching the control ON includes the Pod result, so the lab table's two findings become
+        # three; that transition is the thing under test.
+        p.wait_for_function("() => document.body.innerText.includes('Findings · 3')")
         assert p.evaluate("() => [document.activeElement.id, document.getElementById('kyverno-controlled').getAttribute('aria-checked')]") == ["kyverno-controlled", "true"]
         kyverno_store.replace_kyverno("crc-local", None, "2026-09-20T12:05:00Z")
         p.evaluate("() => refresh({ auto: true })")
@@ -7619,15 +7752,16 @@ class TestReportsTab:
     def test_the_paramspec_shell_renders_one_control_per_type_and_posts_the_form(self, browser, reporting_server):
         # #149 R7: bool → switch, enum → segmented, int → number with unit, csv with a source → a tag input
         # over the discovered lookup with type-ahead (Enter adds a value the set lacks), optional fields
-        # under Advanced, the Subject scope as one block with a count and Clear, no cluster field, the
-        # action bar naming the formats; the POST carries what the controls hold.
+        # under Advanced, the Subject scope as one block with a count and Clear, the cluster control naming
+        # the nav's cluster (#267), the action bar naming the formats; the POST carries what the controls hold.
         import json as _json
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
         try:
             page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
             page.wait_for_selector("#report-form.r-access")
-            assert page.locator("#report-cluster").count() == 0, "no cluster field: the nav chose it"
+            assert page.locator("#report-clusters").count() == 1, "#267: the form names its cluster"
+            assert page.locator("#report-cluster-crc-local[aria-checked='true'].primary").count() == 1, "defaulted from the nav"
             assert "JSON" in page.locator("#report-generate").inner_text() and "HTML" in page.locator("#report-generate").inner_text()
             # the Subject scope: two lookups over the discovered users and groups
             page.wait_for_function("() => document.querySelectorAll('#report-subject .rp-opt').length > 0")
@@ -7691,7 +7825,14 @@ class TestReportsTab:
             page.click("details.report-advanced summary")
             page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"namespaces\"]').length > 0")
             listed = page.locator('[data-lookup-opt="namespaces"]').evaluate_all("es => es.map(e => e.dataset.value)")
-            assert listed == ["(cluster-scoped)", "klt-pass-both", *[f"ns{i}" for i in range(6)], "prod-ns", "quiet-corner"], listed   # the seed's namespaces, in order, behind the one name the poll never lists
+            # The seed's namespaces in order, behind the one name the poll never lists. `kube-system`
+            # and `openshift-monitoring` are here because the REPORT PICKER lists every namespace:
+            # #257's platform filter is the Namespace audit index's default view, and deliberately
+            # not a global one — a reviewer generating a report about a platform namespace is a
+            # legitimate thing to do, and a picker that silently omitted them would be the defect.
+            assert listed == ["(cluster-scoped)", "klt-pass-both", "kube-system",
+                              *[f"ns{i}" for i in range(6)], "openshift-monitoring",
+                              "prod-ns", "quiet-corner"], listed
             # the preview runs for the form as it opened: this report needs a scope, so it says so — the
             # refusal beside Generate before the run is refused, with Generate untouched
             page.wait_for_function("() => document.getElementById('report-totals').textContent.startsWith('preview:')", timeout=15_000)
@@ -8164,6 +8305,129 @@ class TestReportFormsReview:
             ctx.close()
 
 
+
+
+class TestReportFormHintsAndType:
+    """Operator, 2026-09-21, on 0.30.0-97462a1824: "the text description in the report forms are all
+    truncated now", "some of the font are different sizes", and a group picked for a report "doesn't show
+    the number of users in that group". Measured on the deployed page: 20 hints clipped to one 264 px line
+    (the worst held 1548 px of text), and every hint at --text-base 14 px under its --text-sm 12 px label —
+    `.muted` sets only a colour and `.report-field .hint` set only the one-line clip, so the hint inherited
+    body copy. Every assertion here is the measurement (scrollWidth, fontSize, the option's text), never
+    an element's presence."""
+
+    REPORTS = ("namespace-access", "access-matrix", "privileged-access", "binding-findings", "groups", "users",
+               "dormant-access", "groupsync-health", "compliance-snapshot", "access-certification")   # the fixture's ten (login-activity is off)
+
+    @staticmethod
+    def _hints(page, base, report):
+        page.goto(base + f"#page=reports&cluster=crc-local&report={report}")
+        # THIS form's breadcrumb (view.report changes before the repaint, so a wait on it measured the previous form;
+        # binding-findings has no field at all, so no control id can be waited on)
+        page.wait_for_function(f"() => [...document.querySelectorAll('#report-form .panelbar .mono')].some((m) => m.textContent === '{report}')")
+        page.evaluate("() => { const d = document.querySelector('details.report-advanced'); if (d) d.open = true; }")   # a hint under Advanced is measured too
+        return page.evaluate("""() => [...document.querySelectorAll('#report-form .report-field')].map((f) => {
+            const h = f.querySelector('.hint'), l = f.querySelector('label');
+            if (!h) return null;
+            const hs = getComputedStyle(h);
+            return {text: h.textContent.slice(0, 40), sw: h.scrollWidth, cw: h.clientWidth, hint: hs.fontSize, label: l ? getComputedStyle(l).fontSize : null,
+                    lines: Math.round(h.getBoundingClientRect().height / parseFloat(hs.lineHeight)),
+                    fieldTop: Math.round(f.getBoundingClientRect().top), labelTop: l ? Math.round(l.getBoundingClientRect().top) : null, title: h.getAttribute('title')};
+        }).filter(Boolean)""")
+
+    @staticmethod
+    def _page_fits(page):
+        return page.evaluate("() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+
+    def test_every_hint_shows_all_of_its_text_at_desktop_and_phone_width(self, browser, reporting_server):
+        # D1 — measured on the deployed page: namespace-access 1548 > 264, groups 423 > 264 and 336 > 264 (short,
+        # ordinary sentences, still cut). The whole text, wrapped; the fields of a grid row keep their label on
+        # one line (alignment), and the page grows no horizontal scroll at 375 px.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            for width in (1440, 375):
+                page.set_viewport_size({"width": width, "height": 900})
+                for report in self.REPORTS:
+                    rows = self._hints(page, base, report)
+                    clipped = [(r["text"], r["sw"], r["cw"]) for r in rows if r["sw"] > r["cw"]]
+                    assert not clipped, (width, report, clipped)
+                    assert all(r["title"] is None for r in rows), (report, "a title duplicating visible text is read twice by a screen reader")
+                    # One grid row, one label line. Only the fields that HAVE a label take part: the
+                    # namespace-access preview field is a `.report-field` with no <label> at all, and a
+                    # label that does not exist cannot fall out of line with the ones that do.
+                    by_row: dict[int, set[int]] = {}
+                    for r in rows:
+                        if r["labelTop"] is not None:
+                            by_row.setdefault(r["fieldTop"], set()).add(r["labelTop"])
+                    assert all(len(tops) == 1 for tops in by_row.values()), (width, report, by_row)
+                    sw, cw = self._page_fits(page)
+                    assert sw <= cw, (width, report, sw, cw)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_hint_is_secondary_copy_never_larger_than_its_label(self, browser, reporting_server):
+        # D2 — measured on the deployed page: .report-field label 12 px (--text-sm), .muted.hint 14 px (nothing set
+        # it, so it inherited --text-base). The hint reads at --text-sm, the scale's size for secondary copy: at
+        # its label, never above it.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            sm = page.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--text-sm').trim()")
+            assert sm == "12px", sm
+            for report in self.REPORTS:
+                rows = self._hints(page, base, report)
+                assert rows or not page.evaluate("() => document.querySelectorAll('#report-form .report-field').length"), report   # binding-findings has no field
+                wrong = [(r["text"], r["hint"], r["label"]) for r in rows if r["hint"] != sm or (r["label"] and float(r["hint"][:-2]) > float(r["label"][:-2]))]
+                assert not wrong, (report, wrong)
+                # Not only the elements that carry `.hint`: on the deployed page namespace-access's selector
+                # block held four more at --text-base — two `<span class="muted">` of help copy and the two
+                # `.linkish` buttons beside the preview — because they sat in a `.report-field` and nothing
+                # pinned them. They are the form's own secondary copy and read at its one size.
+                stray = page.evaluate(r"""(sm) => [...document.querySelectorAll('#report-form .report-field .muted, #report-form .report-field .linkish')]
+                    .map((e) => [e.textContent.replace(/\s+/g, ' ').trim().slice(0, 40), getComputedStyle(e).fontSize])
+                    .filter(([, size]) => size !== sm)""", sm)
+                assert not stray, (report, stray)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_group_option_says_its_member_count_and_a_group_of_nobody_says_zero(self, browser, reporting_server):
+        # D3 — the lookup offered bare names although group_state carries member_count. The count, as of the
+        # snapshot, beside every group option (both source="groups" sites: the Subject block and the groups
+        # report's own field), kept through the in-place narrowing; the other lookups are untouched; a zero
+        # reads "0 members", never a blank; and the menu says whose number it is.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        opts = lambda name: page.evaluate(f"() => Object.fromEntries([...document.querySelectorAll('[data-lookup-opt=\"{name}\"]')].map(o => [o.dataset.value, o.textContent.replace(/\\s+/g, ' ').trim()]))")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix"); page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"groups\"]').length > 0")
+            g = opts("groups")
+            assert g["app-ocp-rbac-alpha-ns-admin"] == "app-ocp-rbac-alpha-ns-admin 2 members", g
+            assert g["app-ocp-rbac-abcd-ns-superuser"] == "app-ocp-rbac-abcd-ns-superuser 0 members", g
+            assert opts("users")["alice"] == "alice", opts("users")
+            assert "as of the snapshot" in page.locator("#report-lookup-access-matrix-groups-menu .rp-menu-head").inner_text().lower()   # uppercased by CSS
+            page.fill("#report-lookup-access-matrix-groups", "abcd")                    # the oninput rebuild, not the paint
+            assert opts("groups") == {"app-ocp-rbac-abcd-ns-superuser": "app-ocp-rbac-abcd-ns-superuser 0 members"}, opts("groups")
+            assert "1 member<" in page.evaluate("() => lookupMenuBody('groups', ['g'], [], '', {g: 1})")   # the singular
+            # the map is parsed JSON and inherits Object.prototype, so a group named for one of its members must
+            # take no count from the prototype chain — `constructor` would otherwise print a function's source
+            assert "rp-n" not in page.evaluate("() => lookupMenuBody('groups', ['constructor'], [], '', {})")
+            # the option still fits its menu at phone width — a count must not buy the menu a horizontal scrollbar
+            page.set_viewport_size({"width": 375, "height": 740}); page.fill("#report-lookup-access-matrix-groups", "")
+            menu = page.evaluate("() => { const m = document.getElementById('report-lookup-access-matrix-groups-menu'); return [m.scrollWidth, m.clientWidth]; }")
+            assert menu[0] <= menu[1], menu
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups"); page.wait_for_selector("#report-form.r-identity")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"groups\"]').length > 0")
+            assert opts("groups")["gsd-test-unattributed"] == "gsd-test-unattributed 0 members", opts("groups")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
 class TestRowlinkRailClearance:
     """#219, review of PR #226 (OB3): one selector, `:where(table:has(tr.rowlink))`, reaches fifteen tables across
     the tabs and drilldowns; every one keeps its first column's ink clear of the 3 px hover rail, header aligned.
@@ -8504,6 +8768,960 @@ class TestLibraryPage:
             page.wait_for_function("() => document.querySelector('#main').innerText.includes('Library')")
             text = page.locator("#main").inner_text()
             assert "lib1" not in text and "jane.smith" not in text
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+
+class TestTheTabBarFitsOneRowOnDesktop:
+    """#253, measured on the DEPLOYED dashboard 2026-09-21: fourteen tabs wanted 1234 px while the bar
+    had 1140 px inside `.wrap`'s 1180 px cap, so the row wrapped at every desktop width — 1440 included —
+    and left `Cluster Configurations` alone on a second line above the fold of every page.
+
+    THIS FIXTURE RENDERS ELEVEN TABS TOTALLING 827 px, which fits whatever the padding is: Reports,
+    Library and Cluster Configurations are gated off on the unrestricted app. A first version of this
+    guard asserted one row against those eleven and passed with the OLD padding too — a test that
+    proved nothing. So the missing three labels are injected before measuring, and what is asserted is
+    the CSS's capacity for the product's real label set rather than whatever this fixture happens to
+    show.
+
+    The wrap itself is deliberate and stays: it is what keeps every tab inside a 375 px viewport
+    (TestTheShellAtPhoneWidth). This asserts only that it does not fire where there is room."""
+
+    #: Every tab label the PRODUCT renders, read from the source rather than hard-coded (review of
+    #: #256, Cursor finding 3): a hard-coded list goes stale the moment a tab is added or renamed,
+    #: which is precisely the change this guard exists to catch.
+    @staticmethod
+    def _shipped_labels() -> list[str]:
+        page = (pathlib.Path(__file__).resolve().parents[1] / "gsd" / "static" / "index.html").read_text()
+        labels = re.findall(r'tab\("[a-z]+",\s*"([^"]+)"\)', page)
+        assert len(labels) >= 14, f"expected the product's full tab set, found {labels}"
+        return labels
+
+    @classmethod
+    def _with_every_shipped_tab(cls, dash):
+        """Clone a real tab for each absent label, so the measurement is of the bar's capacity."""
+        dash.evaluate(
+            """(labels) => {
+                 const bar = document.querySelector('.tabs');
+                 const model = document.querySelector('.tab');
+                 for (const text of labels) {
+                   if ([...bar.querySelectorAll('.tab')].some(t => t.textContent.trim() === text)) continue;
+                   const clone = model.cloneNode(true);
+                   clone.removeAttribute('aria-current');
+                   clone.removeAttribute('id');
+                   clone.dataset.injected = 'true';
+                   clone.textContent = text;
+                   bar.appendChild(clone);
+                 }
+               }""", cls._shipped_labels())
+
+    def test_every_shipped_tab_sits_on_one_row_at_desktop_widths(self, dash):
+        for width in (1280, 1440):
+            dash.set_viewport_size({"width": width, "height": 900})
+            dash.reload()
+            dash.wait_for_selector("button.tab")
+            self._with_every_shipped_tab(dash)
+            dash.wait_for_timeout(250)
+            shape = dash.evaluate(
+                """() => { const t = [...document.querySelectorAll('.tab')];
+                     const bar = document.querySelector('.tabs');
+                     const gap = parseFloat(getComputedStyle(bar).gap) || 0;
+                     return {n: t.length,
+                             rows: new Set(t.map(x => Math.round(x.getBoundingClientRect().top))).size,
+                             need: Math.round(t.reduce((a, x) => a + x.getBoundingClientRect().width, 0)
+                                              + gap * (t.length - 1)),
+                             // THE CONTAINING BLOCK'S CONTENT WIDTH, not the bar's own. `.tabs` is a
+                             // flex item that shrink-wraps, so `bar.getBoundingClientRect().width`
+                             // EQUALS the sum of its tabs whenever the row fits — which made the
+                             // headroom assertion below vacuous: spare was 0 in every configuration
+                             // that reached it, so `spare < average` was `0 < 80` forever and the
+                             // 18px it claimed to guard was a number the test never saw (audit of
+                             // #256, OB2 A5b). `have` now differs from `need` by the real slack.
+                             have: (() => { const box = bar.parentElement;
+                                            const cs = getComputedStyle(box);
+                                            return Math.round(box.clientWidth
+                                                              - parseFloat(cs.paddingLeft)
+                                                              - parseFloat(cs.paddingRight)); })()}; }""")
+            assert shape["n"] >= 14, f"the injection did not produce the shipped tab count: {shape}"
+            assert shape["rows"] == 1, (
+                f"{width}px: {shape['n']} tabs wrapped onto {shape['rows']} rows "
+                f"(needed {shape['need']}px, bar has {shape['have']}px)")
+            # THE HEADROOM, not just the pass (review of #256, Cursor finding 2). `rows == 1` is true
+            # with one pixel to spare and true with a hundred, and the difference is whether the next
+            # tab or a renamed label re-breaks the bar. 18px is what this fix left: the widest label
+            # in the product is 165px, so the canary is that ONE more average tab would not fit —
+            # which is the honest statement of where this sits, and the signal that the bar needs a
+            # different shape (a scroller or an overflow menu) rather than another four pixels.
+            spare = shape["have"] - shape["need"]
+            average = shape["need"] / shape["n"]
+            assert spare >= 0, shape
+            assert spare < average, (
+                f"{width}px: {spare}px spare is now more than one average tab ({average:.0f}px) — "
+                "if the bar gained room, this canary is stale and the comment on `.tab` should be "
+                "re-measured rather than the assertion loosened")
+
+    def test_the_bar_still_wraps_rather_than_overflowing_at_phone_width(self, dash):
+        """The other half of the trade — tightening the padding must not have turned the wrap into a
+        sideways scroll at 375 px, which is the failure #166 fixed."""
+        dash.set_viewport_size({"width": 375, "height": 740})
+        dash.reload()
+        dash.wait_for_selector("button.tab")
+        self._with_every_shipped_tab(dash)
+        dash.wait_for_timeout(250)
+        rows, scroll = dash.evaluate(
+            """() => [new Set([...document.querySelectorAll('.tab')]
+                 .map(t => Math.round(t.getBoundingClientRect().top))).size,
+               [document.documentElement.scrollWidth, innerWidth]]""")
+        assert rows > 1, "at 375 px the bar must wrap, not sit on one row"
+        assert scroll[0] <= scroll[1], f"the page scrolls sideways ({scroll[0]} > {scroll[1]})"
+class TestPlatformNamespacesAreHiddenByDefault:
+    """#257: the index listed every namespace the poller sees — 67 of 106 on the reference cluster
+    were `openshift-*`, `kube-*` or one of the five named, so two thirds of the largest section on
+    the page was platform noise under a five-row worklist.
+
+    The seed carries two platform namespaces (`openshift-monitoring`, `kube-system`) beside its
+    nine. Every count asserted elsewhere in this file is still nine, which is the property: adding
+    platform noise to a cluster must not move a number a reader was already reading."""
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespaces')")
+
+    def test_they_are_hidden_and_the_page_says_how_many(self, dash):
+        self._open(dash)
+        assert dash.locator("tr[data-ns]").count() == 9
+        for name in ("openshift-monitoring", "kube-system"):
+            assert dash.locator(f'tr[data-ns="{name}"]').count() == 0, f"{name} should be hidden"
+        line = dash.locator("#ns-show-platform").locator("xpath=..").inner_text()
+        assert "2 platform namespaces hidden" in line, line
+
+    def test_the_hidden_one_with_a_finding_is_called_out(self, dash):
+        """"2 hidden" is noise removed; "2 hidden, 1 of them has a direct grant" is a different
+        sentence — the reader must not have to toggle to learn which they are looking at.
+
+        Driven by setting the envelope field rather than by seeding a grant inside a platform
+        namespace: such a grant would also enter the worklist above and move counts this file
+        asserts elsewhere, and what is under test here is the SENTENCE. That the count itself is
+        right is tests/test_namespaces_api.py's job
+        (TestPlatformNamespacesAreClassifiedAndCounted)."""
+        self._open(dash)
+        assert "direct grant" not in dash.locator("#ns-show-platform").locator("xpath=..").inner_text()
+        dash.evaluate("() => { data.namespaces.platform_with_findings = 1; render(); }")
+        dash.wait_for_timeout(250)
+        line = dash.locator("#ns-show-platform").locator("xpath=..").inner_text()
+        assert "2 platform namespaces hidden" in line and "1" in line and "has a direct grant" in line, line
+        dash.evaluate("() => { data.namespaces.platform_with_findings = 0; render(); }")
+
+    def test_the_control_shows_them_and_puts_them_back(self, dash):
+        self._open(dash)
+        dash.click("#ns-show-platform")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 11")
+        assert dash.locator('tr[data-ns="openshift-monitoring"]').count() == 1
+        assert "Hide the 2" in dash.locator("#ns-show-platform").inner_text()
+        # Focus stays on the control the reader just pressed — render() rebuilds the card under it.
+        assert dash.evaluate("() => document.activeElement && document.activeElement.id") == "ns-show-platform"
+        dash.click("#ns-show-platform")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_the_heading_counts_the_set_in_view_not_the_raw_total(self, dash):
+        """The denominator a reader is offered must be the set they are looking at. Quoting the raw
+        total while the note quoted the visible set is a real defect this caught during the build:
+        the page said "0 of 11 shown" while the empty state said all 9 were still there."""
+        self._open(dash)
+        box = dash.locator("#f-ns-search")
+        box.fill("demo zzz")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 0")
+        assert "0 of 9 shown" in dash.locator("h2", has_text="Namespaces").first.inner_text()
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "All 9 are still there" in note and "2 platform namespaces are hidden besides" in note, note
+        box.press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+
+    def test_a_cluster_whose_every_namespace_is_platform_does_not_contradict_itself(self, dash):
+        """Codex C8 on #257: the empty state fell through a ladder, so a list emptied by the FILTER got
+        the sentence meant for a cluster with nothing recorded. The card said "1 platform namespace
+        hidden" and "No namespaces recorded for this cluster yet" at once — a true sentence about the
+        filter beside a false one about the cluster.
+
+        Driven by narrowing the payload rather than seeding a second cluster: what is under test is
+        which sentence the renderer chooses, and the choice is made from the data it holds."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "Every namespace on this cluster is a platform one" in note, note
+        assert "No namespaces recorded" not in note, note
+        assert "Nothing is missing from the cluster" in note, note
+        # and the reader can act on it from where they are
+        dash.click("#ns-show-platform-empty")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 2")
+        dash.evaluate("() => { view.nsShowPlatform = false; }")
+
+    def test_the_self_tier_empty_state_does_not_speak_for_the_cluster(self, dash):
+        """Cursor C8 trigger A on #258, against MY fix for Codex's C8 — a correct finding does not
+        make its fix correct. The payload at the self tier is self-scoped, so "every namespace on
+        this cluster is a platform one" and "nothing is missing from the cluster" are claims it
+        cannot support. Prefixing them with "That is your view:" does not cancel them; the zero-reach
+        branch has kept that rule since #167 and this branch must keep it too."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.scope = "self";
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "namespace your memberships and grants reach" in note, note
+        assert "on this cluster is a platform one" not in note, note
+        assert "Nothing is missing from the cluster" not in note, note
+        assert "a namespace missing here may exist" in note, note
+        dash.evaluate("() => { data.namespaces.scope = 'all'; }")
+
+    def test_the_filters_own_emptiness_is_said_before_the_search(self, dash):
+        """Cursor C8 trigger B: with every row hidden by the platform filter, the search branch won
+        the ladder and the card said "All 0 are still there" — arithmetically true, and it tells the
+        reader nothing about why the list is empty."""
+        self._open(dash)
+        dash.evaluate("""() => {
+            data.namespaces.namespaces = data.namespaces.namespaces.filter((n) => n.platform);
+            data.namespaces.count = data.namespaces.namespaces.length;
+            data.namespaces.platform_count = data.namespaces.namespaces.length;
+            view.nsSearch = "zzz";
+            render();
+        }""")
+        dash.wait_for_timeout(300)
+        note = dash.locator("h2:text-is('Namespaces') ~ div.empty-note").inner_text()
+        assert "All 0 are still there" not in note, note
+        assert "Every namespace on this cluster is a platform one" in note, note
+        dash.evaluate("() => { view.nsSearch = ''; render(); }")
+
+    def test_a_hidden_namespace_is_still_reachable_by_its_own_page(self, dash):
+        """Filtered on the page, never dropped from the payload — the drill still resolves."""
+        dash.evaluate("() => location.hash = '#page=nsaudit&cluster=crc-local&ns=openshift-monitoring'")
+        dash.wait_for_timeout(600)
+        assert "openshift-monitoring" in dash.locator("#main").inner_text()
+
+
+class TestTheNamespaceIndexFoldsSearchesAndPages:
+    """#261, the agreed mock's index controls. The index is the largest thing on the page — 106 rows
+    under a five-row worklist, 3,619 px of a 5,153 px document — so it folds, it carries a search of
+    its own beside the list it searches, and it pages.
+
+    The seed holds eleven namespaces, two of them platform, so nine are listed by default: under
+    INDEX_FOLD (25), which is the case that has NO fold. A section this small cannot fold — an explicit
+    fold used to follow a reader from a 106-namespace estate onto a four-row one (review of #264,
+    Cursor C4) — and a toggle that changes nothing when pressed does not render. The fold, the pager
+    and the cluster switch are driven on the estate server below, where the payload is the server's."""
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        # The loaded card, not the h2: the Loading card has the same heading, and a wait on it returned
+        # before the payload had arrived (review of #264, Cursor C7).
+        dash.wait_for_selector("#f-index-search")
+
+    def test_a_small_estate_is_open_and_has_no_fold_to_offer(self, dash):
+        """Before #264 this asserted a "▾ Hide 9 namespaces" toggle. Once a small section can no longer
+        fold, that button would have done nothing when pressed, so its absence is what is asserted."""
+        self._open(dash)
+        assert dash.locator("#ns-index-body").is_visible()
+        assert dash.locator("tr[data-ns]").count() == 9
+        assert dash.locator("tr[data-ns]").first.is_visible()
+        assert dash.locator("#ns-index-fold").count() == 0
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "11 on this cluster" in line and "2 platform hidden" in line and "9 listed" in line, line
+
+    def test_a_fold_carried_in_from_a_larger_estate_cannot_shut_a_small_section(self, dash):
+        """The state a large estate leaves behind — an explicit false — meets nine rows and is ignored.
+        On the head before #264's fix this folded the nine and offered "▸ Show 9 namespaces"."""
+        self._open(dash)
+        dash.evaluate("() => { view.nsIndexOpen = false; render(); }")
+        assert dash.locator("#ns-index-body").is_visible()
+        assert dash.locator("tr[data-ns]").first.is_visible()
+        assert dash.locator("#ns-index-fold").count() == 0
+
+    def test_the_sections_own_search_is_separate_from_the_bars_and_they_combine(self, dash):
+        """Two boxes, neither clearing the other: a namespace shows when it matches both."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.locator('tr[data-ns="prod-ns"]').count() == 1
+        dash.fill("#f-ns-search", "demo")   # the bar's box, ANDed with the section's
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert dash.evaluate("() => [document.getElementById('f-ns-search').value, document.getElementById('f-index-search').value]") == ["demo", "prod"]
+        dash.locator("#f-index-search").press("Escape")
+        dash.wait_for_function("() => document.getElementById('f-index-search').value === ''")
+        assert dash.evaluate("() => document.getElementById('f-ns-search').value") == "demo", "Escape in one box must not clear the other"
+        dash.locator("#f-ns-search").press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+        assert dash.evaluate("() => document.getElementById('f-index-search').value") == ""
+
+    def test_the_counts_line_quotes_every_denominator(self, dash):
+        """"39" alone says nothing; "39 of 106" says what the filter did."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        line = dash.locator("h2:text-is('Namespaces') ~ div.filterbar-note").last.inner_text()
+        assert "1 of 9 match the search" in line, line
+
+    def test_no_pager_until_there_is_a_second_page(self, dash):
+        """Nine rows against a page size of 25: a pager here would be furniture."""
+        self._open(dash)
+        assert dash.locator("[data-index-page]").count() == 0
+
+    def test_a_miss_in_the_sections_box_names_that_box_and_not_the_cluster(self, dash):
+        """On 53e5f20 a miss typed in the section's box alone fell through the empty ladder to "No
+        namespaces recorded for this cluster yet" — three lines under "0 of 9 match the search"."""
+        self._open(dash)
+        dash.fill("#f-index-search", "zzz-no-such")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 0")
+        card = dash.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "No namespaces recorded" not in card, card[-300:]
+        assert "Nothing matches zzz-no-such in this list's Search box" in card, card[-300:]
+        assert "All 9 are still there, and 2 platform namespaces are hidden besides" in card, card[-300:]
+        assert "Press Escape in that box" in card and "0 of 9 match the search" in card, card[-300:]
+
+    def test_a_mid_string_caret_in_the_sections_box_survives_a_keystroke(self, dash):
+        """Every keystroke used to jump the caret to the end, so a typo in the middle of a query could
+        not be corrected (review of #264, Cursor C3). Measured on 5e6039a: "prod-ns", caret at 2,
+        type "x" → value "prxod-ns" with the caret at 8, not 3."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod-ns")
+        dash.evaluate("() => { const el = document.getElementById('f-index-search'); el.focus(); el.setSelectionRange(2, 2); }")
+        dash.keyboard.type("x")
+        dash.wait_for_function("() => view.nsIndexSearch === 'prxod-ns'")
+        assert dash.evaluate(
+            "() => [document.activeElement.id, document.activeElement.selectionStart, document.activeElement.selectionEnd]"
+        ) == ["f-index-search", 3, 3]
+
+    def test_the_poll_repaint_keeps_focus_and_caret_in_the_sections_box(self, dash):
+        """The contract the filter bar keeps by id in renderFilters. This box lives in #main, which
+        render() replaces wholesale — and render() restores focus and caret by id the same way."""
+        self._open(dash)
+        dash.fill("#f-index-search", "prod")
+        dash.evaluate("() => { const el = document.getElementById('f-index-search'); el.focus(); el.setSelectionRange(2, 2); render(); }")
+        assert dash.evaluate("() => [document.activeElement.id, document.activeElement.selectionStart]") == ["f-index-search", 2]
+
+    def test_an_ime_composition_in_the_sections_box_survives_a_poll_mid_conversion(self, dash):
+        """The rule TestGroupSearchIme measures for the bar: a repaint mid-composition commits
+        half-composed kana and opens a second session on the new node. On 5e6039a the composition's
+        own input events repainted #main and the box read かかんかんり."""
+        self._open(dash)
+        dash.focus("#f-index-search")
+        cdp = dash.context.new_cdp_session(dash)
+        cdp.send("Input.imeSetComposition", {"text": "か", "selectionStart": 1, "selectionEnd": 1})
+        dash.wait_for_timeout(100)
+        dash.evaluate("() => render()")  # exactly what the poll does
+        dash.wait_for_timeout(100)
+        cdp.send("Input.imeSetComposition", {"text": "かん", "selectionStart": 2, "selectionEnd": 2})
+        dash.wait_for_timeout(100)
+        cdp.send("Input.insertText", {"text": "かんり"})
+        dash.wait_for_timeout(100)
+        got = dash.evaluate("() => document.getElementById('f-index-search').value")
+        assert got == "かんり", f"a repaint aborted the composition: {got!r}"
+        assert dash.evaluate("() => view.nsIndexSearch") == "かんり"
+        assert dash.evaluate("() => document.activeElement.id") == "f-index-search"
+
+
+def _seed_estates(db_path: str) -> None:
+    """The module seed plus four clusters whose SIZE is the point, each served by the API exactly as a
+    poller-fed cluster is — `label_keys`, real labels, the platform verdict on every row, the counts
+    and the envelope's clauses. Building 106 rows in the browser by assigning to `data.namespaces`
+    skipped everything the server sends around them, and raced the refresh the tab click had just
+    started (review of #264, Cursor C7).
+
+      big-estate  106 namespaces, 67 platform: the reference cluster's shape — 39 listed, two pages.
+      mixed-30     30, 10 platform: 20 listed, open; showing the platform rows crosses INDEX_FOLD.
+      edge-25      25, none platform: exactly the threshold — open, no fold, no pager.
+      edge-26      26, none platform: one over — folded; opened, it pages 25 + 1."""
+    _seed(db_path)
+    now = datetime.now(UTC)
+
+    def ns(name: str, i: int) -> dict:
+        return {"name": name, "created_at": _iso(now - timedelta(days=i)), "phase": "Active",
+                "metadata": {"company.net/mnemonic": f"mn{i % 7}",
+                             "company.net/app-environment": ("prod", "qa", "dev")[i % 3]}}
+
+    estates = {
+        "big-estate": [ns(f"openshift-ns{i}", i) for i in range(67)] + [ns(f"app-ns{i}", i) for i in range(39)],
+        "mixed-30": [ns(f"openshift-ns{i}", i) for i in range(10)] + [ns(f"app-ns{i}", i) for i in range(20)],
+        "edge-25": [ns(f"app-ns{i}", i) for i in range(25)],
+        "edge-26": [ns(f"app-ns{i}", i) for i in range(26)],
+    }
+    store = Store(db_path)
+    try:
+        for cid, rows in estates.items():
+            store.upsert_cluster(cid, f"https://api.{cid}.example.internal:6443", True)
+            store.record_poll(cid, "ok", None)
+            store.replace_namespaces(cid, rows, _iso(now))
+        # One grant inside a platform namespace and one outside, so "1 of them has a direct grant" and a
+        # non-zero Direct grants column are the server's sentences, not the test's.
+        store.replace_user_bindings("big-estate", [
+            {"binding_kind": "RoleBinding", "binding_namespace": "openshift-ns3", "binding_name": "erin-view",
+             "role_kind": "ClusterRole", "role_name": "view", "user_name": "erin", "is_platform": 0},
+            {"binding_kind": "RoleBinding", "binding_namespace": "app-ns5", "binding_name": "erin-edit",
+             "role_kind": "ClusterRole", "role_name": "edit", "user_name": "erin", "is_platform": 0},
+        ], _iso(now))
+    finally:
+        store.close()
+
+
+ESTATES = ("big-estate", "mixed-30", "edge-25", "edge-26")
+
+
+@pytest.fixture(scope="module")
+def estate_server(tmp_path_factory):
+    db = str(tmp_path_factory.mktemp("gsd") / "estates.db")
+    _seed_estates(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z") for cid in ESTATES],
+        db_path=db,
+        login_capture_enabled=True,
+        namespace_metadata_labels=("company.net/mnemonic", "company.net/app-environment"),
+        view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("estate server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestTheIndexOnAnEstateBigEnoughToNeedIt:
+    """The seed's nine namespaces are under INDEX_FOLD, so they exercise the small-estate half only.
+    The reference cluster has 106 — 67 of them platform — which is the case the fold and the pager
+    exist for. Every estate here is SERVED: the rows, their labels, the platform verdicts and the
+    envelope come over the wire from `_seed_estates`, and the page is opened at a named position."""
+
+    COUNTS = "h2:text-is('Namespaces') ~ div.filterbar-note"
+
+    def _open(self, page, base, cluster="big-estate"):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/#page=nsaudit&cluster={cluster}")
+        page.wait_for_selector("#f-index-search")   # the loaded card; the Loading card shares the h2
+        assert not errors, "uncaught JS error on load:\n  " + "\n  ".join(errors)
+        return page
+
+    def _line(self, page):
+        return page.locator(self.COUNTS).last.inner_text()
+
+    def _switch(self, page, cluster, listed):
+        page.select_option("#f-cluster", cluster)
+        page.wait_for_function(
+            "([c, n]) => view.cluster === c && data.namespaces && data.namespaces.cluster === c"
+            " && document.querySelectorAll('tr[data-ns]').length === n", arg=[cluster, listed])
+
+    def test_a_large_estate_starts_folded_and_the_payload_is_the_servers(self, page, estate_server):
+        self._open(page, estate_server)
+        assert page.locator("#ns-index-body").is_visible() is False
+        label = page.locator("#ns-index-fold").inner_text()
+        assert label.startswith("▸ Show") and "39 of 106" in label, label
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "false"
+        line = self._line(page)
+        assert "106 on this cluster" in line and "67 platform hidden" in line and "39 listed" in line, line
+        # What the browser-built payload never carried: the keys, the labels, the finding's clause.
+        env = page.evaluate("() => [data.namespaces.label_keys, data.namespaces.platform_with_findings, data.namespaces.namespaces[0].labels]")
+        assert env[0] == ["company.net/mnemonic", "company.net/app-environment"], env
+        assert env[1] == 1 and set(env[2]) == {"company.net/mnemonic", "company.net/app-environment"}, env
+        card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "1 of them has a direct grant" in card, card[:400]
+
+    def test_the_fold_hides_the_rows_and_keeps_the_reasons(self, page, estate_server):
+        """Only the ROWS fold. Three caveats live in the notes above the table, and collapsing the
+        card would have taken all three with it."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        assert page.locator("tr[data-ns]").first.is_visible()
+        assert page.evaluate("() => document.activeElement.id") == "ns-index-fold"
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => document.getElementById('ns-index-body').hidden")
+        # `hidden` takes them off the screen, not out of the DOM — count() still sees 25, which is
+        # why this asserts what a reader can SEE.
+        assert not page.locator("tr[data-ns]").first.is_visible(), "the rows are still on screen"
+        assert page.locator("#ns-index-body").is_visible() is False
+        card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "not only those with a grant" in card, "the heading's caveat went with the rows"
+        assert "third drill-down" in card and "finds by name or by any captured label" in card, card[:400]
+        assert "67 platform namespaces hidden" in card, card[:400]
+        assert page.evaluate("() => document.activeElement.id") == "ns-index-fold"
+
+    def test_it_pages_over_what_is_left_after_the_platform_filter(self, page, estate_server):
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        # 39 non-platform rows at 25 to a page: two pages, 25 then 14 — and exactly four buttons
+        # (Previous, 1, 2, Next); ">= 4" would have passed with a button per row.
+        assert page.locator("tr[data-ns]").count() == 25
+        assert page.locator("[data-index-page]").count() == 4
+        assert page.locator("#ns-index-prev").is_disabled() and not page.locator("#ns-index-next").is_disabled()
+        assert "showing 1–25 on page 1 of 2" in self._line(page), self._line(page)
+        page.click("#ns-index-page-2")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+        assert page.locator("#ns-index-next").is_disabled() and not page.locator("#ns-index-prev").is_disabled()
+        # The labels came over the wire: every row on page 2 shows its mnemonic, not "—".
+        cells = page.locator("tr[data-ns] td.mono").all_inner_texts()
+        assert cells and all(c.startswith("mn") or c in ("prod", "qa", "dev") for c in cells), cells[:6]
+
+    def test_a_row_on_page_two_still_drills_and_back_returns_to_page_two(self, page, estate_server):
+        """The pager is view state, not the URL: the drill leaves from page 2 and Back lands on it."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        name = page.locator("tr[data-ns]").first.get_attribute("data-ns")
+        page.locator("tr[data-ns]").first.locator("button.drill").click()
+        page.wait_for_function("(n) => view.ns === n && !document.getElementById('f-index-search')", arg=name)
+        assert name in page.locator("#main").inner_text()
+        page.go_back()
+        page.wait_for_selector("#f-index-search")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert page.evaluate("() => [view.ns, view.nsIndexPage]") == [None, 2]
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+
+    def test_showing_the_platform_namespaces_repages_from_one(self, page, estate_server):
+        """Every filter change resets the page: 106 rows is five pages, and a reader sitting on page 2
+        of the old set must not be left on a page that no longer means what it did."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => view.nsIndexPage === 1 && document.querySelectorAll('tr[data-ns]').length === 25")
+        assert "showing 1–25 on page 1 of 5" in self._line(page), self._line(page)
+        assert page.locator("[data-index-page]").count() == 7
+
+    def test_showing_platform_rows_never_folds_the_list_the_reader_asked_to_see(self, page, estate_server):
+        """mixed-30: 20 listed and open with no fold to offer. "Show them" takes the set to 30 — past
+        INDEX_FOLD — and "decide by size" used to fold the very rows the click asked for (review of
+        #264, Cursor C4). Hiding them again shrinks the set back under the threshold: open, no fold."""
+        self._open(page, estate_server, "mixed-30")
+        assert page.locator("tr[data-ns]").count() == 20 and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").count() == 0
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        assert page.locator("#ns-index-body").is_visible() and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "true"
+        assert "30 on this cluster" in self._line(page) and "page 1 of 2" in self._line(page), self._line(page)
+        assert page.evaluate("() => view.nsIndexOpen") is True
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 20")
+        assert page.locator("tr[data-ns]").first.is_visible() and page.locator("#ns-index-fold").count() == 0
+
+    def test_a_fold_chosen_here_does_not_follow_the_reader_onto_the_next_cluster(self, page, estate_server):
+        """Open big-estate by hand (an explicit true), search it, page it; switch to crc-local's nine:
+        open, no fold, no query, page 1. Switch back: folded again — the choice was re-armed, not
+        carried (review of #264, Cursor C4; the switch is the real one, through the bar's selector)."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => view.nsIndexOpen === true && !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => view.nsIndexPage === 2")
+        page.fill("#f-index-search", "app-ns3")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 10")
+        self._switch(page, "crc-local", 9)
+        assert page.locator("#ns-index-body").is_visible() and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").count() == 0
+        assert page.evaluate("() => [view.nsIndexOpen, view.nsIndexSearch, view.nsIndexPage, document.getElementById('f-index-search').value]") == [None, "", 1, ""]
+        self._switch(page, "big-estate", 25)
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.locator("#ns-index-fold").inner_text().startswith("▸ Show 39 of 106")
+
+    def test_the_bars_box_narrows_a_folded_section_but_does_not_reveal_it(self, page, estate_server):
+        """The bar's box is the shell's and this page does not get to open the section by its side
+        door; the fold's label carries the matched count so the query is never swallowed."""
+        self._open(page, estate_server)
+        page.fill("#f-ns-search", "app-ns3")
+        page.wait_for_function("() => view.nsSearch === 'app-ns3' && document.getElementById('ns-index-fold').textContent.includes('10 of 106')")
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.evaluate("() => document.getElementById('f-index-search').value") == ""
+        page.locator("#f-ns-search").press("Escape")
+        page.wait_for_function("() => document.getElementById('ns-index-fold').textContent.includes('39 of 106')")
+        assert page.locator("#ns-index-body").is_visible() is False
+
+    def test_the_sections_box_reveals_a_folded_section_and_escape_returns_the_readers_choice(self, page, estate_server):
+        """Typing in THIS box pins the section open — and while it is pinned there is no toggle, because
+        one that folded nothing would be a lie. Escape returns the section to what the reader chose:
+        never decided → folded; opened by hand → still open (on the head before #264 Escape reset the
+        choice and re-folded a section the reader had opened)."""
+        self._open(page, estate_server)
+        page.fill("#f-index-search", "mn3")   # a LABEL value: six of the 39 listed carry mnemonic mn3
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 6")
+        assert page.locator("#ns-index-body").is_visible() and page.locator("#ns-index-fold").count() == 0
+        assert page.locator("tr[data-ns] td.mono").all_inner_texts().count("mn3") == 6
+        assert "6 of 39 match the search" in self._line(page), self._line(page)
+        page.locator("#f-index-search").press("Escape")
+        page.wait_for_function("() => document.getElementById('f-index-search').value === '' && document.activeElement.id === 'f-index-search'")
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "false"
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => view.nsIndexOpen === true")
+        page.fill("#f-index-search", "mn3")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 6")
+        assert page.locator("#ns-index-fold").count() == 0
+        page.locator("#f-index-search").press("Escape")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        assert page.locator("#ns-index-body").is_visible(), "Escape folded a section the reader had opened"
+        assert page.locator("#ns-index-fold").get_attribute("aria-expanded") == "true"
+
+    def test_a_search_from_a_later_page_lands_on_page_one(self, page, estate_server):
+        """From page 5 of the 106 into the 39 that match "app-ns": TWO pages remain, so the clamp alone
+        would have parked the reader on page 2 — page 1 is the handler's reset, and only its. (The
+        earlier version searched into a single page, which the display clamp satisfied whatever the
+        handler did — review of #264, Cursor C7.)"""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
+        page.click('[data-index-page="5"]')
+        page.wait_for_function("() => view.nsIndexPage === 5 && document.querySelectorAll('tr[data-ns]').length === 6")
+        page.fill("#f-index-search", "app-ns")
+        page.wait_for_function("() => view.nsIndexPage === 1 && document.querySelectorAll('tr[data-ns]').length === 25")
+        assert "39 of 106 match the search" in self._line(page) and "page 1 of 2" in self._line(page), self._line(page)
+        assert page.locator("#ns-index-page-1").get_attribute("aria-current") == "page"
+
+    def test_exactly_the_threshold_is_open_without_a_fold_and_one_over_folds(self, page, estate_server):
+        self._open(page, estate_server, "edge-25")
+        assert page.locator("tr[data-ns]").count() == 25 and page.locator("tr[data-ns]").first.is_visible()
+        assert page.locator("#ns-index-fold").count() == 0 and page.locator("[data-index-page]").count() == 0
+        assert "showing all 25" in self._line(page), self._line(page)
+        self._switch(page, "edge-26", 25)
+        assert page.locator("#ns-index-body").is_visible() is False
+        assert page.locator("#ns-index-fold").inner_text() == "▸ Show 26 namespaces"
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        assert page.locator("tr[data-ns]").count() == 25 and page.locator("[data-index-page]").count() == 4
+        page.click("#ns-index-next")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert "showing 26–26 on page 2 of 2" in self._line(page), self._line(page)
+
+    def test_a_page_past_the_end_is_clamped_into_the_state_not_only_the_display(self, page, estate_server):
+        """A poll can shrink the set under a reader on page 5. The display always clamped; the state
+        kept the stale 5, so the moment the set grew again the reader jumped (review of #264, Cursor C5)."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.evaluate("() => { view.nsIndexPage = 99; render(); }")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+        page.evaluate("() => { view.nsIndexPage = NaN; render(); }")
+        assert page.evaluate("() => view.nsIndexPage") == 1
+        assert "showing 1–25 on page 1 of 2" in self._line(page), self._line(page)
+
+    def test_the_pager_keeps_a_keyboard_reader_on_the_pager(self, page, estate_server):
+        """Buttons with no id fell out of render()'s by-id focus restore: after a click, and after every
+        60 s repaint, focus was on <body> and a screen reader had nothing to announce (review of #264,
+        Cursor C5). A number keeps focus; an end that came back disabled hands it to the current page;
+        and the current page is the one styled as such, by the attribute that names it."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click("#ns-index-page-2")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert page.evaluate("() => [document.activeElement.id, document.activeElement.getAttribute('aria-current')]") == ["ns-index-page-2", "page"]
+        page.evaluate("() => render()")   # the poll
+        assert page.evaluate("() => document.activeElement.id") == "ns-index-page-2"
+        page.click("#ns-index-prev")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 25")
+        assert page.locator("#ns-index-prev").is_disabled()
+        assert page.evaluate("() => [document.activeElement.id, document.activeElement.getAttribute('aria-current')]") == ["ns-index-page-1", "page"]
+        current, other = page.evaluate(
+            "() => ['ns-index-page-1', 'ns-index-page-2'].map((id) => getComputedStyle(document.getElementById(id)).backgroundColor)")
+        assert current != other and current not in ("rgba(0, 0, 0, 0)", "transparent"), (current, other)
+
+    def test_the_empty_sentence_names_the_box_that_is_hiding_the_rows(self, page, estate_server):
+        """Two boxes AND together. The bar alone: its box is named. Both set with the bar matching
+        nothing by itself: the bar's box alone is named — clearing the section's would change nothing.
+        Both matching something alone and nothing together: said so, either box widens."""
+        self._open(page, estate_server)
+        empty = lambda: page.locator("h2:text-is('Namespaces')").locator("xpath=..").locator(".empty-note").inner_text()
+        page.fill("#f-ns-search", "zzz-no-such")
+        page.wait_for_function("() => document.querySelectorAll('.empty-note').length === 1")
+        assert empty().startswith("Nothing matches zzz-no-such in the bar's Find namespace box. All 39 are still there, and 67 platform namespaces are hidden besides"), empty()
+        assert "Press Escape in that box" in empty() and "this list's Search box" not in empty(), empty()
+        page.fill("#f-index-search", "app-ns3")   # matches 10 on its own; the bar still hides everything
+        page.wait_for_function("() => view.nsIndexSearch === 'app-ns3'")
+        assert "Nothing matches zzz-no-such in the bar's Find namespace box." in empty(), empty()
+        assert "app-ns3" not in empty() and "in that box" in empty(), empty()
+        page.fill("#f-ns-search", "app-ns1 qa")   # 5 alone: app-ns1, 10, 13, 16, 19
+        page.fill("#f-index-search", "mn0")       # 6 alone: app-ns0, 7, 14, 21, 28, 35 — none in common
+        page.wait_for_function("() => view.nsSearch === 'app-ns1 qa' && view.nsIndexSearch === 'mn0'")
+        assert page.locator("tr[data-ns]").count() == 0
+        assert empty().startswith("Nothing matches both app-ns1 qa (the bar's Find namespace box) and mn0 (this list's Search box), though each matches something on its own."), empty()
+        assert "Press Escape in either box" in empty(), empty()
+        page.locator("#f-index-search").press("Escape")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 5")
+
+    def test_a_query_on_a_cluster_with_nothing_recorded_still_says_so(self, page, estate_server):
+        """The cluster's sentence is reachable only when the cluster's own list is empty — and then it
+        is the sentence, whatever is typed. On 53e5f20 a query here read "Nothing matches x. All 0 are
+        still there", the arithmetically-true nothing #258 had already caught for the platform filter."""
+        self._open(page, estate_server, "prod-east")
+        assert page.evaluate("() => data.namespaces.namespaces.length") == 0
+        page.fill("#f-ns-search", "anything")
+        page.wait_for_function("() => view.nsSearch === 'anything'")
+        card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
+        assert "No namespaces recorded for this cluster yet." in card and "Nothing matches" not in card, card[-300:]
+
+    def test_typing_in_another_tabs_box_keeps_the_index_page(self, page, estate_server):
+        """The reset belongs to the box that pages, not to the bar's shared handler: on 53e5f20 typing in
+        the Groups tab's box wrote nsIndexPage = 1 and a reader came back to page 1 of the index."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click('[data-index-page="2"]')
+        page.wait_for_function("() => view.nsIndexPage === 2")
+        page.locator("button[data-nav='groups']").click()
+        page.wait_for_selector("#f-group-search")
+        page.fill("#f-group-search", "team")
+        page.wait_for_function("() => view.groupSearch === 'team'")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        page.locator("#f-group-search").press("Escape")
+        page.wait_for_function("() => view.groupSearch === ''")
+        assert page.evaluate("() => view.nsIndexPage") == 2
+        page.locator("button[data-nav='nsaudit']").click()
+        page.wait_for_selector("#f-index-search")
+        page.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 14")
+        assert "showing 26–39 on page 2 of 2" in self._line(page), self._line(page)
+
+    def test_the_bars_box_still_resets_the_page_from_a_later_page(self, page, estate_server):
+        """The declared reset, from page 5 of 106 into the 39 that match — two pages remain, so the
+        clamp alone would have left page 2."""
+        self._open(page, estate_server)
+        page.click("#ns-index-fold")
+        page.wait_for_function("() => !document.getElementById('ns-index-body').hidden")
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
+        page.click('[data-index-page="5"]')
+        page.wait_for_function("() => view.nsIndexPage === 5")
+        page.fill("#f-ns-search", "app-ns")
+        page.wait_for_function("() => view.nsIndexPage === 1 && document.querySelectorAll('tr[data-ns]').length === 25")
+        assert "39 of 106 match the search" in self._line(page) and "page 1 of 2" in self._line(page), self._line(page)
+        page.locator("#f-ns-search").press("Escape")
+        page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
+        assert page.evaluate("() => view.nsIndexPage") == 1
+class TestReportClusterControl:
+    """#267: the cluster control in every report form. It defaults from the nav's cluster and writes back to it,
+    so the two never disagree; the nav's cluster is the primary — the discovered lookups and the totals preview
+    are its, both keyed per cluster — so promoting another clears the cluster-bound fields and SAYS so; several
+    clusters run as one action, one run per cluster (`cluster` stays one string on the sealed model), each
+    outcome said separately, and a cluster the snapshot lacks fails its own run and no other."""
+
+    CHIPS = "() => [...document.querySelectorAll('[data-cluster-pick]')].map(b => [b.dataset.clusterPick, b.getAttribute('aria-checked'), b.classList.contains('primary')])"
+    COUNT = "() => document.getElementById('report-cluster-count').textContent === %r"
+
+    def test_the_control_defaults_from_the_nav_and_writes_back_to_it(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-clusters")
+            chips = lambda: page.evaluate(self.CHIPS)
+            assert chips() == [["crc-local", "true", True], ["prod-east", "false", False]], chips()   # the nav's list, the nav's cluster
+            assert page.locator("#report-cluster-count").inner_text() == "1 of 2 clusters"
+            assert page.locator("#report-cluster-crc-local").get_attribute("aria-disabled") == "true", "the last cluster cannot be unchecked"
+            assert page.locator("#report-clusters-one").is_hidden() and page.locator("#report-clusters-all").is_visible()
+            # the nav -> the form
+            page.select_option("#f-cluster", "prod-east"); page.locator("#f-cluster").dispatch_event("change")
+            page.wait_for_function("() => document.querySelector('#report-cluster-prod-east').getAttribute('aria-checked') === 'true'")
+            assert chips() == [["crc-local", "false", False], ["prod-east", "true", True]], chips()
+            # the form -> the nav: add crc-local, then drop prod-east — crc-local is the primary, the select and the URL say so
+            page.click("#report-cluster-crc-local")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            assert page.evaluate("() => reportTargets()") == ["crc-local", "prod-east"], "the configured order, whatever the click order"
+            assert page.locator("#report-cluster-crc-local").get_attribute("aria-disabled") is None
+            assert "2 clusters, one run each" in page.locator("#report-form .report-actions").inner_text()
+            page.click("#report-cluster-prod-east")
+            page.wait_for_function("() => view.cluster === 'crc-local'")
+            assert page.locator("#f-cluster").input_value() == "crc-local" and "cluster=crc-local" in page.evaluate("() => location.hash")
+            assert chips() == [["crc-local", "true", True], ["prod-east", "false", False]], chips()
+            assert "cluster crc-local" in " ".join(page.locator("#report-form .report-actions").inner_text().split())
+            # `all N` and `only <primary>`
+            page.click("#report-clusters-all")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            page.click("#report-clusters-one")
+            page.wait_for_function(self.COUNT % "1 of 2 clusters")
+            assert page.evaluate("() => view.reportClusters") is None, "back to following the nav"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_promoting_another_cluster_clears_the_lookups_says_so_and_refetches_the_totals(self, browser, reporting_server):
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.click("details.report-advanced summary")
+            page.fill("#report-param-access-matrix-namespace_prefix", "prod"); page.locator("#report-param-access-matrix-namespace_prefix").dispatch_event("change")
+            page.wait_for_function("() => view.reportTotals && view.reportTotals.cluster === 'crc-local'", timeout=15_000)
+            page.click("#report-cluster-prod-east")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            assert page.locator(".rp-tag[data-name='alice']").count() == 1, "adding a target touches nothing: the primary is still crc-local"
+            # dropping the primary promotes prod-east through navigate(): the lookups and the totals are re-requested for it
+            with page.expect_request(lambda r: r.url.endswith("/api/discovered?cluster=prod-east")) as looked:
+                with page.expect_request(lambda r: r.url.endswith("/api/preview") and r.method == "POST" and '"cluster":"prod-east"' in r.post_data) as previewed:
+                    page.click("#report-cluster-crc-local")
+            assert looked.value and previewed.value
+            page.wait_for_function("() => view.cluster === 'prod-east'")
+            assert page.evaluate("() => view.reportForm['access-matrix']") == {"namespace_prefix": "prod"}, "the lookup went, the typed text stayed"
+            assert page.locator(".rp-tag").count() == 0
+            note = " ".join(page.locator("#report-cluster-note").inner_text().split())
+            assert "Cluster changed from crc-local to prod-east" in note and "users picked on crc-local was cleared" in note, note
+            assert page.locator("#report-cluster-note[role='status']").count() == 1
+            page.wait_for_function("() => view.reportTotals && view.reportTotals.cluster === 'prod-east'", timeout=15_000)
+            assert page.locator("#report-form .report-actions").inner_text().count("cluster prod-east") == 1
+            page.click("#report-cluster-note-x")
+            page.wait_for_function("() => !document.getElementById('report-cluster-note')")
+            # the nav's own select is the same chokepoint: back to crc-local, the set follows and nothing else was held
+            page.select_option("#f-cluster", "crc-local"); page.locator("#f-cluster").dispatch_event("change")
+            page.wait_for_function("() => view.cluster === 'crc-local' && view.reportClusters === null")
+            assert page.locator("#report-cluster-note").count() == 0, "nothing cluster-bound was held, so nothing is said"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_several_clusters_run_as_one_action_and_one_missing_snapshot_fails_only_its_own(self, browser, reporting_server):
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-clusters")
+            # a third id the snapshot does not hold — what a configured-but-never-polled cluster looks like to the form
+            page.evaluate("() => { data.clusters.push({ id: 'ghost', status: null }); render(); }")
+            page.click("#report-clusters-all")
+            page.wait_for_function(self.COUNT % "3 of 3 clusters")
+            page.uncheck("#report-want-pdf")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            body = _json.loads(info.value.post_data)
+            assert body["clusters"] == ["crc-local", "prod-east", "ghost"] and "cluster" not in body, body
+            page.wait_for_selector("#report-batch")
+            page.wait_for_function("() => /3 clusters requested — 2 done · 1 failed/.test(document.getElementById('report-batch').textContent)", timeout=30_000)
+            ghost = " ".join(page.locator("#report-status-ghost").inner_text().split())
+            assert "ghost · Run" in ghost and "failed: unknown cluster 'ghost' in the snapshot" in ghost, ghost
+            assert page.locator("#report-status-crc-local [data-artifact][data-format='html']").count() == 1
+            assert page.locator("#report-status-prod-east [data-artifact][data-format='json']").count() == 1
+            runs = page.evaluate("() => view.reportBatch.runs.map(r => [r.cluster, r.status, r.id, r.requested_at])")
+            assert len({r[2] for r in runs}) == 3 and len({r[3] for r in runs}) == 1, "one action, one instant, one id per cluster"
+            assert page.locator("#report-batch[role='status']").count() == 1 and page.locator("#report-batch [role='status']").count() == 0, "one live region for the batch"
+            page.set_viewport_size({"width": 375, "height": 740})
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the chips and three statuses fit a phone"
+            page.set_viewport_size({"width": 1280, "height": 900})
+            # the Library groups the action's runs under the report, one block per cluster, the failed one with its reason
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector("#library-lead")
+            heads = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .cluster-head')].map(h => h.textContent)")
+            assert heads == ["crc-local", "ghost", "prod-east"], heads
+            reasons = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .run .reason')].map(r => r.textContent)")
+            assert "unknown cluster 'ghost' in the snapshot" in reasons, reasons
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_change_to_the_fleet_is_said_as_the_fleet_and_the_lookups_are_named_for_the_cluster_the_form_is_on(self, browser, reporting_server):
+        # The Overview is the fleet (#172), so a visit there records `to: null` — and the boot cycle then stamps
+        # the first cluster OUTSIDE navigate(), so no chokepoint pass rewrites the note. Before the fix the
+        # reader was shown "changed from crc-local to — ... the lookups now offered are 's." (OB1 on #269).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.click("#tab-overview")
+            page.wait_for_function("() => view.cluster === null")
+            page.click("#tab-reports")
+            page.click("[data-report='access-matrix']")
+            page.wait_for_function("() => view.cluster === 'crc-local' && !!document.getElementById('report-cluster-note')")
+            note = " ".join(page.locator("#report-cluster-note").inner_text().split())
+            assert note == ("Cluster changed from crc-local to the fleet view — users picked on crc-local was cleared; "
+                            "the lookups now offered are crc-local's. dismiss"), note
+            assert page.locator(".rp-tag").count() == 0, "the lookup really went, whatever the note says"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_poll_failure_after_the_runs_were_queued_is_not_said_as_a_refusal(self, browser, reporting_server):
+        # The service answered 202 and the runs are queued; only following them failed. Saying "the request was
+        # refused" tells the reader the opposite of what happened — the documents are in the Library (OB1 on #269).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-clusters")
+            page.click("#report-clusters-all")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            page.uncheck("#report-want-pdf")
+            page.route(re.compile(r"/report/api/runs/[^/?]+$"), lambda route: route.abort())   # the per-run polls, not the POST
+            page.click("#report-generate")
+            page.wait_for_function("() => view.reportBatch && view.reportBatch.error")
+            head = " ".join(page.locator("#report-batch .rp-batch-head").inner_text().split())
+            assert page.evaluate("() => view.reportBatch.runs.length") == 2, "the POST was answered: two runs are queued"
+            assert "the request was refused" not in head, head
+            assert "2 clusters requested — the runs were queued, but following them failed:" in head, head
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_dismissing_the_note_on_one_form_keeps_what_another_form_is_owed(self, browser, reporting_server):
+        # The note is rendered per form (`cleared[spec.name]`); dismissing it used to null it for every form, so a
+        # second form's cleared lookup was never said to the reader who opens it (OB1 on #269).
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=access-matrix")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=\"users\"]').length > 0")
+            page.click('[data-lookup-opt="users"][data-value="alice"]')
+            page.wait_for_selector('.rp-tag[data-name="alice"]')
+            page.click("[data-report='groups']")
+            page.wait_for_function("() => view.report === 'groups' && document.querySelectorAll('[data-lookup-opt=\"groups\"]').length > 0")
+            page.click('[data-lookup-opt="groups"] >> nth=0')
+            page.wait_for_selector(".rp-tag")
+            page.click("#report-cluster-prod-east")
+            page.wait_for_function(self.COUNT % "2 of 2 clusters")
+            page.click("#report-cluster-crc-local")                     # promotes prod-east: both forms' lookups go
+            page.wait_for_function("() => view.cluster === 'prod-east' && !!document.getElementById('report-cluster-note')")
+            assert "groups picked on crc-local was cleared" in " ".join(page.locator("#report-cluster-note").inner_text().split())
+            page.click("#report-cluster-note-x")
+            page.wait_for_function("() => !document.getElementById('report-cluster-note')")
+            page.click("[data-report='access-matrix']")
+            page.wait_for_selector("#report-form.r-access")
+            assert page.locator("#report-cluster-note").count() == 1, "access-matrix lost `users` too, and has not been told"
+            assert "users picked on crc-local was cleared" in " ".join(page.locator("#report-cluster-note").inner_text().split())
             assert not errors, errors
         finally:
             ctx.close()

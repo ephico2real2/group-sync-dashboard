@@ -53,6 +53,29 @@ _MIN_SECRET = 4
 
 _NEEDS_QUOTING = re.compile(r"[\s\"=]")
 
+#: The phrases OpenSSL and CPython actually produce for a certificate the trust store refused.
+#: Matched only against a TRANSPORT message — `<ExceptionType>: <text>`, the one shape this process
+#: gives a transport failure — and never against a remote's answer, which is remote-controlled: a
+#: proxy's 502 body mentioning certificates is not a TLS problem this cluster has (review of #247,
+#: Codex C3). Declared once, here, for the poller's classifier and the fleet login's alike.
+VERIFY_FAILURE_PHRASES = (
+    "certificate_verify_failed", "certificate verify failed", "sslcertverificationerror",
+    "self-signed certificate", "self signed certificate", "unable to get local issuer",
+)
+
+
+def is_transport_message(message: str) -> bool:
+    """Whether a failure message is one THIS process wrote for a transport failure — a Python
+    identifier before the first colon — rather than a remote's answer (`HTTP 502 on …`)."""
+    return message.split(":", 1)[0].strip().isidentifier()
+
+
+def is_verify_failure(message: str) -> bool:
+    """A certificate the trust store refused: a transport message carrying one of the phrases.
+    Provenance first, words second."""
+    lowered = message.lower()
+    return is_transport_message(message) and any(phrase in lowered for phrase in VERIFY_FAILURE_PHRASES)
+
 
 def _text(value: object) -> str:
     """`str(value)`, and never the reason a poll fails.

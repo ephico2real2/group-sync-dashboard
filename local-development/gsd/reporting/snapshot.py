@@ -298,13 +298,17 @@ class Snapshot:
         for table in ("rbac_group_binding", "user_binding"):
             if self.has_table(table):
                 roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?", (cluster_id,)))
-        groups = [g["name"] for g in self._rows("SELECT name FROM group_state WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit))] \
+        # The member count beside each group name (operator, 2026-09-21): group_state's count as of THIS snapshot, a
+        # sibling `members` map so `values` stays the list of strings every consumer reads; cut where the names are.
+        group_rows = self._rows("SELECT name, member_count FROM group_state WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit)) \
             if self.has_table("group_state") else []
+        groups = [g["name"] for g in group_rows]
         # #143 phase 2: the namespaces the poll listed (rbac.namespaces) — the advanced field's picker; empty
         # without the grant, and the form falls back to a text field.
         namespaces = [r["name"] for r in self._rows("SELECT name FROM cluster_namespace WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit))] \
             if self.has_table("cluster_namespace") else []
-        return {"providers": cut(sorted(providers)), "roles": cut(sorted(roles)), "users": cut(users), "groups": cut(groups),
+        return {"providers": cut(sorted(providers)), "roles": cut(sorted(roles)), "users": cut(users),
+                "groups": {**cut(groups), "members": {g["name"]: g["member_count"] for g in group_rows[:self.DISCOVERED_CAP]}},
                 "mnemonics": cut(self.namespace_metadata_values(cluster_id, mnemonic_key)),
                 "oud-groups": cut(self.namespace_metadata_values(cluster_id, group_key)),
                 "namespaces": cut(namespaces)}

@@ -1,8 +1,10 @@
 __pycache__/
 *.py[cod]
 .venv/
+# WITHOUT the trailing slash as well: `.venv/` matches a DIRECTORY and not a symlink of that name,
+# which is how a self-referential `local-development/.venv` symlink was staged and reached main
+# (#254). The explicit path below covers the one place it happened.
 .venv
-local-development/.venv
 venv/
 *.db
 *.db-wal

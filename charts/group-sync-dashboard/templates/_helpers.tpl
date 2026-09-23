@@ -841,6 +841,42 @@ false
 # The same closed vocabulary the app enforces (gsd/config.py CLUSTER_VISIBILITIES), refused at
 # render so a typo'd policy fails `helm template` rather than the pod's startup. Nil-safe on
 # every hop for the usual reason. Called from configmap.yaml, which always renders.
+{{- /*
+Which namespaces are the platform's (#255). REFUSED AT RENDER because the loader refuses the same
+things at startup, and a green `helm upgrade` that CrashLoops the pod is the failure class this chart
+has already shipped three of (#251). Measured in the review of #259, Codex C6: before this, a typo'd
+`additionalSufixes` and a numeric entry both rendered happily into the ConfigMap and the pod refused
+them on the next start.
+*/ -}}
+{{- define "gsd.validatePlatformNamespaces" -}}
+{{- with .Values.platformNamespaces -}}
+{{- if not (kindIs "map" .) -}}
+{{- fail (printf "platformNamespaces must be a mapping, got %s." (kindOf .)) -}}
+{{- end -}}
+{{- $known := list "prefixes" "suffixes" "names" "additionalPrefixes" "additionalSuffixes" "additionalNames" -}}
+{{- range $key, $value := . -}}
+{{- if not (has $key $known) -}}
+{{- fail (printf "platformNamespaces.%s is not a key this chart defines; expected any of %s. A typo here is a pattern that never takes effect." $key (join ", " $known)) -}}
+{{- end -}}
+{{- if not (kindIs "invalid" $value) -}}
+{{- if not (kindIs "slice" $value) -}}
+{{- fail (printf "platformNamespaces.%s must be a list, got %s." $key (kindOf $value)) -}}
+{{- end -}}
+{{- range $entry := $value -}}
+{{- if not (kindIs "string" $entry) -}}
+{{- fail (printf "platformNamespaces.%s: every entry must be a string; %v is %s." $key $entry (kindOf $entry)) -}}
+{{- end -}}
+{{- $bad := "" -}}
+{{- range $c := list "*" "?" "[" "]" -}}{{- if contains $c $entry -}}{{- $bad = printf "%s%s" $bad $c -}}{{- end -}}{{- end -}}
+{{- if $bad -}}
+{{- fail (printf "platformNamespaces.%s: %q contains %s — matching is literal, not a glob. A prefix, a suffix or a full name; `team-*` is a prefix `team-` on additionalPrefixes." $key $entry $bad) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "gsd.validateClusters" -}}
 {{- /* TWO PASSES, and that is the point (review of #251, C1c/C4): the host is whichever entry
        declares `dashboardController: true`, which cannot be known until every entry has been read.
@@ -850,6 +886,7 @@ false
 {{- $host := "" -}}
 {{- $declared := list -}}
 {{- $firstEnabled := "" -}}
+{{- $modeOf := dict -}}
 {{- range $i, $c := (.Values.clusters | default list) -}}
 {{- if or (kindIs "invalid" $c) (not (kindIs "map" $c)) -}}
 {{- fail (printf "clusters[%d] is not a cluster entry (it is %s). Helm pads a list index set beyond the list's length with null and never merges lists, so `--set clusters[1].name=…` on a values file that does not define clusters[0] yields [null, {…}]: pass every entry, clusters[0] included, or put the whole list in a values file." $i (kindOf $c)) -}}
@@ -892,6 +929,41 @@ false
 {{- if and $enabled (eq $firstEnabled "") -}}
 {{- $firstEnabled = $name -}}
 {{- end -}}
+{{- /* SPEC_S3 §4 (S3a): the connection mode, read as a WORD like the controller flag, and refused
+       here exactly as gsd/config.py refuses it — both modes, a mode beside a credential, a
+       bootstrap account without a mode, a malformed one, and (second pass) a mode on the host. A
+       stanza that renders green and CrashLoops the pod is the class this guard exists to prevent. */ -}}
+{{- $modes := list -}}
+{{- range $key := (list "saTokenLookup" "userSelfLogin") -}}
+{{- if and (hasKey $c $key) (not (kindIs "invalid" (index $c $key))) -}}
+{{- $word := trim (toString (index $c $key)) -}}
+{{- if not (has $word (list "true" "false")) -}}
+{{- fail (printf "clusters[%d] (%s): %s must be true or false, not %q." $i $name $key $word) -}}
+{{- end -}}
+{{- if eq $word "true" -}}{{- $modes = append $modes $key -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $modes) 1 -}}
+{{- fail (printf "clusters[%d] (%s) declares both %s — the two connection modes are mutually exclusive; declare one." $i $name (join " and " $modes)) -}}
+{{- end -}}
+{{- $hasToken := false -}}
+{{- if and (hasKey $c "tokenEnv") (not (empty $c.tokenEnv)) -}}{{- $hasToken = true -}}{{- end -}}
+{{- if and (hasKey $c "tokenFile") (not (empty $c.tokenFile)) -}}{{- $hasToken = true -}}{{- end -}}
+{{- if and $modes $hasToken -}}
+{{- fail (printf "clusters[%d] (%s) declares %s and also tokenEnv/tokenFile — two sources of truth for one credential; remove one." $i $name (first $modes)) -}}
+{{- end -}}
+{{- if and (not $modes) (not $hasToken) -}}
+{{- fail (printf "clusters[%d] (%s): one of tokenEnv or tokenFile is required — or a connection mode (saTokenLookup / userSelfLogin, SPEC_S3), which obtains the credential instead." $i $name) -}}
+{{- end -}}
+{{- if and (hasKey $c "ldapConnectionBootstrap") (not (kindIs "invalid" $c.ldapConnectionBootstrap)) -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._@-]{0,254}$" (toString $c.ldapConnectionBootstrap)) -}}
+{{- fail (printf "clusters[%d] (%s): ldapConnectionBootstrap must be a username (letters, digits, '.', '_', '@', '-'; no spaces, colons or slashes). The value is not repeated here, in case something other than a username was written into it." $i $name) -}}
+{{- end -}}
+{{- if not $modes -}}
+{{- fail (printf "clusters[%d] (%s): ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen — declare the mode, or remove the key." $i $name) -}}
+{{- end -}}
+{{- end -}}
+{{- if $modes -}}{{- $_ := set $modeOf $name (first $modes) -}}{{- end -}}
 {{- end -}}
 {{- if gt (len $declared) 1 -}}
 {{- fail (printf "%d clusters declare dashboardController (%s) — exactly one entry is this pod's own cluster." (len $declared) (join ", " $declared)) -}}
@@ -908,12 +980,36 @@ false
 {{- $vis := "" -}}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) -}}{{- $vis = trim (toString $c.visibility) -}}{{- end -}}
 {{- $id := "" -}}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) -}}{{- $id = trim (toString $c.identity) -}}{{- end -}}
 {{- if eq $name $host -}}
+{{- if hasKey $modeOf $name -}}
+{{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s — and declares %s: the controller is this pod's own cluster and authenticates with the mounted ServiceAccount; there is nothing to connect." $i $name $how (index $modeOf $name)) -}}
+{{- end -}}
 {{- if has $vis (list "hidden" "remote-sar") -}}
 {{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $how $vis) -}}
 {{- end -}}
+{{- else if and (eq $vis "remote-sar") (eq (index $modeOf $name | default "") "saTokenLookup") -}}
+{{- fail (printf "clusters[%d] (%s): visibility remote-sar with saTokenLookup — the lookup writes this cluster as a Secret, and remote-sar is not yet accepted from a Secret (SPEC_S1). Use inherit, self-only or hidden until it is." $i $name) -}}
 {{- else if and (eq $vis "remote-sar") (ne $id "same-as-host") -}}
 {{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host. The review names the host's username on that cluster, which only means something if both clusters share an identity provider — say so explicitly." $i $name) -}}
 {{- end -}}
+{{- end -}}
+{{- /* SPEC_S4b (#284): a saTokenLookup stanza WRITES gsd-cluster-<name> into the release namespace
+       and discovery reads it back, so it depends on two switches this render can see — refused
+       here, not by a finding after a green upgrade. */ -}}
+{{- range $name, $mode := $modeOf -}}
+{{- if eq $mode "saTokenLookup" -}}
+{{- if not $.Values.clusterConfig.secrets.enabled -}}
+{{- fail (printf "cluster %s declares saTokenLookup but clusterConfig.secrets.enabled is false: the lookup writes gsd-cluster-%s as a labelled Secret and discovery is what reads it back. Turn discovery on, or remove the mode." $name $name) -}}
+{{- end -}}
+{{- if not $.Values.clusterConfig.secrets.writes.enabled -}}
+{{- fail (printf "cluster %s declares saTokenLookup but clusterConfig.secrets.writes.enabled is false: the lookup writes gsd-cluster-%s into the release namespace, and create/update on Secrets is the grant that switch renders (templates/cluster-secrets-rbac.yaml). Set clusterConfig.secrets.writes.enabled: true, or remove the mode." $name $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* One retriever per estate (SPEC_S4 §6), held wherever a lookup is POSSIBLE and not only where a
+       values stanza declares one (review of #295, P0-2): a Secret may declare the mode at any time,
+       and above one replica election is off, so every replica would log in as the fleet account. */ -}}
+{{- if and $.Values.clusterConfig.secrets.writes.enabled (gt (int $.Values.replicaCount) 1) -}}
+{{- fail (printf "clusterConfig.secrets.writes.enabled with replicaCount %d: a cluster Secret may declare saTokenLookup at any time, and above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that writes cluster Secrets, or turn writes off." (int $.Values.replicaCount)) -}}
 {{- end -}}
 {{- end -}}
 

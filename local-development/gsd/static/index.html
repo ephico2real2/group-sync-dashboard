@@ -168,6 +168,11 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
+                /* #267: the form's cluster control. `reportClusters` is the set to run on — null means the nav's
+                   cluster alone; an array always holds it (the primary: its lookups, its totals). View state, not
+                   a position: the URL carries the nav's cluster, the extra targets are the form's, like a draft.
+                   `reportBatch` is a several-cluster submission's runs; `reportClusterNote` what a cluster change cleared. */
+                reportClusters: null, reportBatch: null, reportClusterNote: null,
                 reportPreviewNames: [], reportPreviewCount: null,   // #143: the names behind the count
                 /* Free-text group search. A FILTER, so it lives here rather than in POSITION_KEYS —
                    same reasoning as groupFilter: it narrows what a page shows, it is not a place, and
@@ -196,6 +201,17 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 nsNamespace: "all", nsSort: "risk", nsDir: "desc",
                 nsGrantSort: "risk", nsGrantDir: "desc",
                 nsSearch: "",   // #167: the namespace list's pattern box; a preference, never a position
+                /* #257: platform namespaces (openshift-*, kube-*, and the five named ones) are
+                   HIDDEN by default — 67 of 106 on the reference cluster, so two thirds of the
+                   index was platform noise under a five-row worklist. A preference like the box
+                   above: the poll repaint must not restore them under a reader who hid them. */
+                nsShowPlatform: false,
+                /* #261, from the agreed mock. The index is the largest thing on this page — 106 rows
+                   under a five-row worklist, 3,619 px of a 5,153 px document — so it folds, it has a
+                   search of its own beside it, and it pages. All three are preferences like the box
+                   above: a 60s repaint must not reopen a section the reader folded or move their page.
+                   `nsIndexOpen: null` means "decide by the size of the estate" (see INDEX_FOLD). */
+                nsIndexSearch: "", nsIndexOpen: null, nsIndexPage: 1,
                 lookupSearch: "",   // #174: the one box over all three kinds; carried across "see all matches"
                 /* Namespaces whose full exposed-user list is expanded. In `view` like every
                    other control on this page, so a 60s poll repaint does not collapse a list
@@ -281,7 +297,7 @@ function applyPosition(pos) {
   // belongs to the form it ran from — and closes the names dialog, which describes a selection no
   // longer on screen: the #144 C6-D rule, whose guard below fires on a page change only.
   const nextReport = view.page === "reports" ? (pos.report || null) : null;
-  if (nextReport !== view.report) { view.reportRun = null; closeNsPreview(); }
+  if (nextReport !== view.report) { view.reportRun = null; view.reportBatch = null; closeNsPreview(); }
   view.report = nextReport;
   // #229: an open run belongs to the Library page the same way — no other page's position carries one
   view.run = view.page === "library" ? (pos.run || null) : null;
@@ -326,15 +342,19 @@ function applyPosition(pos) {
       // The selector choices are THIS cluster's captured label values (B3, review #117 C4; P2 selectors):
       // carried across, a cluster-A value would be posted against cluster B — a failed run, or a hidden
       // XOR 422 if the reader then typed explicit names. Drop them; the explicit names are the reader's text.
-      if (view.reportForm["namespace-access"]) {
-        delete view.reportForm["namespace-access"].mnemonics;
-        delete view.reportForm["namespace-access"].selectors;
-      }
+      // #267 widens the rule to every lookup-sourced field of every form (the lookups are keyed per cluster:
+      // a role picked on A may not exist on B) and RECORDS what went, so the form says it rather than
+      // carrying a stale value silently. The form's multi-select follows the nav again.
+      dropClusterBoundFields(view.cluster, nextCluster);
+      view.reportClusters = null;
       clearReportPreview();   // and invalidate any in-flight #107 GET for the cluster we just left
       // Same reasoning for the Access granted search: it names this cluster's groups and
       // namespaces. The sort is a preference, not a cluster fact, and stays.
       view.bindingSearch = "";
       view.nsSearch = "";
+      // The index's own controls are about THIS cluster's list (#264, Cursor C4): a search, a
+      // page and a fold chosen on one estate mean nothing on the next.
+      view.nsIndexSearch = ""; view.nsIndexOpen = null; view.nsIndexPage = 1;
     }
     if (pos.cluster) view.cluster = pos.cluster;
   }
@@ -585,6 +605,27 @@ function fmtTime(iso) {
   return `${parts.year}-${parts.month}-${parts.day} ` +
          `${parts.hour}:${parts.minute}:${parts.second} ` +
          `${parts.timeZoneName || displayAbbrev}`;
+}
+
+/* THE SERVER STATES AN INSTANT; THE PAGE PRESENTS IT (#271, and the operator's ruling of
+   2026-09-21 that an absolute stamp is the right thing for a server to emit).
+
+   A server-authored sentence — an alert's `detail` — carries the absolute UTC stamp, because a
+   relative age recomputed per request is a different string every time and defeats the
+   unchanged-poll repaint skip. But an absolute stamp in raw UTC ignores the deployment's configured
+   zone, which every other timestamp on this page honours, so the page localises it at RENDER time.
+   The payload keeps the raw stamp, so the fingerprint is unaffected and the skip still works.
+
+   The browser has to do it rather than the server: the zone ABBREVIATION depends on the instant
+   (EST in January, EDT in July), so a zone stamped once server-side mislabels every timestamp on
+   the other side of a DST boundary — the same reason `fmtTime` asks the formatter per timestamp.
+
+   Applied AFTER esc(): the pattern is digits, '-', ':', 'T' and 'Z', none of which escaping alters,
+   so escaping stays intact and no unescaped server text is ever substituted back in. A run id
+   (`20260921T171114.745714Z-058e`) carries no dashes or colons in its stamp and cannot match. */
+const ISO_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/g;
+function withLocalInstants(escaped) {
+  return String(escaped).replace(ISO_INSTANT, (m) => esc(fmtTime(m)));
 }
 
 /* Just the clock, in the display zone. For tables where the date is already a column.
@@ -918,6 +959,11 @@ const SEARCH_BOXES = {
     id: "f-ns-search", label: "Find namespace", placeholder: "filter by name or label",
     title: 'Filters namespaces by name or by a label value as you type. Several words are ANDed — "demo prod" finds demo-prod and demo-production. Escape clears.',
     help: "Filters the namespace list by name or by the value of a captured label as you type. Several words are combined with AND, so every word must appear. Press Escape to clear.",
+    // The list this box narrows is PAGED (#261): the view key that holds its page, reset to 1 on every
+    // change here, because a reader on page 3 of 5 would otherwise be shown an empty page 3 of 1.
+    // Declared by the box rather than written by the shared handler, so typing in the Groups tab's box
+    // cannot drop the page a reader left the namespace index on (review of #264, Cursor C1).
+    page: "nsIndexPage",
   },
   memberSearch: {
     id: "f-member-search", label: "Find member", placeholder: "filter by id or name",
@@ -965,8 +1011,12 @@ function wireSearchBox(key) {
   // Except mid-IME-composition: those input events describe an unfinished conversion, and a repaint
   // here replaces the node the IME is composing into (see the guard above the innerHTML swap in
   // renderFilters). The state still updates, so the compositionend render loses nothing.
+  // A box that narrows a paged list names the page it resets (SEARCH_BOXES[key].page); every other
+  // box touches nothing beyond its own value.
+  const resetPage = () => { if (b.page) view[b.page] = 1; };
   el.oninput = (e) => {
     view[key] = e.target.value;
+    resetPage();
     if (e.isComposing) return;   // an unfinished conversion: the state is kept, compositionend paints
     if (!openLookupFor(key)) render();
   };
@@ -977,6 +1027,7 @@ function wireSearchBox(key) {
   el.addEventListener("compositionend", (e) => {
     searchComposingIn = null;
     view[key] = e.target.value;
+    resetPage();
     if (!openLookupFor(key)) render();
   });
   // compositionend fires before blur in every engine, but a missed one would freeze this bar
@@ -989,6 +1040,7 @@ function wireSearchBox(key) {
     if (e.key === "Escape" && !e.isComposing && view[key]) {
       e.preventDefault();
       view[key] = "";
+      resetPage();
       render();
     }
   };
@@ -1249,7 +1301,7 @@ function alertsCard(all, clusterCount) {
       + slice.map((x) => `<div class="alert-row sev-${x.severity === "critical" ? "critical" : "warning"}${x.silenced ? " silenced" : ""}">
         ${sevBadge(x.severity)}
         <div class="who">${esc(x.subject)}<div class="muted fw-normal text-xs">${esc(x.cluster)} · ${esc(x.kind)}</div></div>
-        <div class="what">${x.silenced ? `<span class="silence-tag">silenced by ${esc(x.silenced_by)}</span> ` : ""}${esc(x.detail)}</div>
+        <div class="what">${x.silenced ? `<span class="silence-tag">silenced by ${esc(x.silenced_by)}</span> ` : ""}${withLocalInstants(esc(x.detail))}</div>
       </div>`).join("")
       + alertPager(rows.length, page, pages);
   return `<section class="card">
@@ -2673,19 +2725,21 @@ function reportFormCard(spec, cat) {
         <select id="report-selector-${i}" data-param="selectors" data-selector-label="${esc(d.label)}" multiple size="6">
           ${d.values.map((v) => `<option value="${esc(v)}"${selectedFor(form.selectors, d.label).includes(v) ? " selected" : ""}>${esc(v)}</option>`).join("")}
         </select>
-        <span class="muted">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
-        + `<div class="report-field"><span class="muted" id="report-preview">${esc(view.reportPreview || "")}</span>
+        <span class="muted hint">Select one or more.${i === 0 ? " Dimensions combine with AND; values within a dimension with OR." : ""}</span></div>`).join("")
+        + `<div class="report-field"><span class="muted hint" id="report-preview">${esc(view.reportPreview || "")}</span>
            <button type="button" class="linkish" id="report-preview-clear"${hasSelectors ? "" : " hidden"}>Clear</button>
            <button type="button" class="linkish" id="report-preview-view"${(view.reportPreviewNames || []).length ? "" : " hidden"}>view namespaces</button></div>`;
     }
     return paramField(spec, p, form);
   };
   const run = view.reportRun;
-  const status = run ? reportRunStatus(run) : "";
+  const status = run ? reportRunStatus(run) : (view.reportBatch ? reportBatchStatus(view.reportBatch) : "");
+  const targets = reportTargets();
   const [kcat] = REPORT_KIND[spec.name] || ["access"];
   // #149 R7: one ParamSpec-driven shell for all eleven reports — the main grid, the Subject scope as one
-  // framed block, optional fields under Advanced (open when one of them is set), no cluster field (the
-  // nav chose it), a pinned action bar. The selector-map Scope keeps its own block above.
+  // framed block, optional fields under Advanced (open when one of them is set), a pinned action bar. The
+  // selector-map Scope keeps its own block above. #267 adds the cluster control at the top: the nav chose the
+  // primary, the form names it and may add others.
   const subject = spec.params.filter((p) => p.group === "subject");
   const main = spec.params.filter((p) => !p.group && !p.advanced);   // `mnemonics`/`selectors` render through field()'s own cases
   const advanced = spec.params.filter((p) => !p.group && p.advanced);
@@ -2697,15 +2751,16 @@ function reportFormCard(spec, cat) {
       <span class="muted">${esc(spec.title)} · <span class="mono">${esc(spec.name)}</span></span></div>
     <h3>${esc(spec.title)}</h3>
     <div class="filterbar-note">${esc(spec.summary)}</div>
+    ${reportClustersBlock(spec)}
     ${subject.length ? subjectBlock(spec, subject, form) : ""}
     <div class="report-fields">${main.map(field).join("")}</div>
     ${advanced.length ? `<details class="report-advanced" id="report-advanced"${advancedSet ? " open" : ""}><summary>Advanced</summary>
       <div class="report-fields">${advanced.map(field).join("")}</div></details>` : ""}
     <div class="ns-controls mt-4 report-actions">
-      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !view.cluster ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
+      <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !targets.length ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
-      <span class="filterbar-note">json is always written · cluster <span class="mono">${esc(view.cluster || "")}</span></span>
+      <span class="filterbar-note">json is always written · ${targets.length > 1 ? `${targets.length} clusters, one run each` : `cluster <span class="mono">${esc(view.cluster || "")}</span>`}</span>
       <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name && view.reportTotals.cluster === view.cluster ? view.reportTotals.text : "")}</span>
     </div>
     ${status}
@@ -2719,7 +2774,7 @@ function paramField(spec, p, form) {
   const id = `report-param-${spec.name}-${p.name}`;
   const raw = form[p.name];
   const label = `<label for="${id}">${esc(p.name)}${p.required ? ' <span class="req" title="required">*</span>' : ""}</label>`;
-  const hint = `<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span>`;
+  const hint = `<span class="muted hint">${esc(p.help)}</span>`;
   if (p.type === "bool") {
     const on = raw !== undefined ? (raw === true || raw === "true") : p.default === true;
     return `<div class="report-field">${label}
@@ -2752,18 +2807,102 @@ function paramField(spec, p, form) {
   return `<div class="report-field">${label}<input id="${id}" type="text" data-param="${esc(p.name)}" value="${esc(val)}" autocomplete="off" spellcheck="false">${hint}</div>`;
 }
 
+/* #267: the cluster control. The nav's cluster is the PRIMARY — the discovered lookups and the totals preview
+   are its (both keyed per cluster) — and the form may add others: one run per cluster, the same parameters on
+   each, one queue slot on the service. The list is the nav's list (`data.clusters`, the page's own tier);
+   the nav's id when it is not configured is offered as the nav offers it, named for what it is. */
+function reportTargets() {
+  if (!view.cluster) return [];
+  if (!Array.isArray(view.reportClusters)) return [view.cluster];
+  const chosen = view.reportClusters;
+  const ordered = (data.clusters || []).map((c) => c.id).filter((c) => chosen.includes(c));   // the configured order: chips and runs line up
+  return ordered.includes(view.cluster) ? ordered : [view.cluster].concat(ordered);
+}
+
+// A chip's click. Adding never touches the primary; removing the primary promotes the next chosen cluster
+// through navigate() — the same chokepoint the nav's select uses, so the lookups, the totals preview and the
+// cluster-bound fields follow it — and re-applies the set navigate() just reset. The set is never empty.
+function toggleReportCluster(id) {
+  const targets = reportTargets();
+  if (!targets.includes(id)) { view.reportClusters = targets.concat([id]); render(); return; }
+  if (targets.length === 1) return;                      // the last chip is aria-disabled and says so
+  const rest = targets.filter((c) => c !== id);
+  if (id === view.cluster) {
+    navigate({ cluster: rest[0], groupsync: null, group: null, user: null, ns: null });
+    view.reportClusters = rest;
+    render(); refresh();
+    return;
+  }
+  view.reportClusters = rest;
+  render();
+}
+
+/* #267: the report fields that are one cluster's — the lookups (`source` on the ParamSpec: users, groups, roles,
+   providers, mnemonics, oud-groups, namespaces) and the namespace-access selector map, whose values are the
+   catalogue's captured label values per cluster. Dropped from every form that holds one, and recorded when
+   something was actually held, so the form can say what went. Typed text (a prefix, a window) is the reader's
+   and stays. Runs at navigate()'s cluster-change chokepoint, before `view.cluster` moves. */
+function dropClusterBoundFields(from, to) {
+  const specs = (data.reportCatalog && data.reportCatalog.reports) || [];
+  const cleared = {};
+  for (const [name, form] of Object.entries(view.reportForm)) {
+    const spec = specs.find((r) => r.name === name);
+    const bound = new Set(["mnemonics", "selectors"].concat(spec ? spec.params.filter((p) => p.source).map((p) => p.name) : []));
+    for (const key of Object.keys(form)) {
+      if (!bound.has(key)) continue;
+      const v = form[key];
+      const held = Array.isArray(v) ? v.length > 0 : (v && typeof v === "object" ? Object.keys(v).length > 0 : !!v);
+      delete form[key];
+      if (held) (cleared[name] = cleared[name] || []).push(key);
+    }
+  }
+  view.reportClusterNote = Object.keys(cleared).length ? { from, to, cleared } : null;
+}
+
+function reportClustersBlock(spec) {
+  const clusters = data.clusters || [];
+  const targets = reportTargets();
+  const gone = view.cluster && !clusters.some((c) => c.id === view.cluster);
+  const rows = (gone ? [{ id: view.cluster, gone: true }] : []).concat(clusters);
+  const chip = (c) => {
+    const on = targets.includes(c.id), primary = c.id === view.cluster, last = on && targets.length === 1;
+    return `<button type="button" role="checkbox" aria-checked="${on}" class="rp-clu${on ? " sel" : ""}${primary ? " primary" : ""}"
+        data-cluster-pick="${esc(c.id)}" id="report-cluster-${esc(c.id)}"${last ? ' aria-disabled="true" title="at least one cluster runs"' : ""}>
+      <span class="rp-clu-tick" aria-hidden="true">${on ? "✓" : ""}</span>${esc(c.id)}${c.gone ? '<span class="rp-clu-tag">not configured</span>' : ""}${primary ? '<span class="rp-clu-tag nav">lookups · totals</span>' : ""}</button>`;
+  };
+  const note = view.reportClusterNote, cleared = note && note.cleared[spec.name];
+  // A change TO the fleet (#172) records `to: null`, and the boot cycle then stamps the first cluster OUTSIDE
+  // navigate() (the one sanctioned bypass), so no later chokepoint pass rewrites that note: it is the one the
+  // form shows when the reader comes back. Name the fleet for what it is, and quote the cluster the form is on
+  // NOW for the lookups — those are whose they are, whatever the note recorded.
+  const toName = note ? (note.to ? `<span class="mono">${esc(note.to)}</span>` : "the fleet view") : "";
+  const offered = view.cluster ? `<span class="mono">${esc(view.cluster)}</span>'s` : "the selected cluster's";
+  const noteHtml = cleared ? `<div class="rp-clu-note" role="status" id="report-cluster-note">Cluster changed ${note.from ? `from <span class="mono">${esc(note.from)}</span> ` : ""}to ${toName} —
+      <span class="mono">${esc(cleared.join(", "))}</span> picked on ${esc(note.from || "the previous cluster")} ${cleared.length === 1 ? "was" : "were"} cleared; the lookups now offered are ${offered}.
+      <button type="button" class="linkish" id="report-cluster-note-x">dismiss</button></div>` : "";
+  return `<div class="rp-scope clu" id="report-clusters">
+    <div class="rp-scope-top"><span class="t">Clusters <span class="rp-auto">discovered · ${clusters.length} configured</span></span><span class="and muted">one run per cluster · the same parameters on each</span></div>
+    <div class="rp-clusters" role="group" aria-label="Clusters to run on">${rows.map(chip).join("")}</div>
+    <div class="rp-scope-foot"><span class="rp-count-live" id="report-cluster-count">${targets.length} of ${rows.length} cluster${rows.length === 1 ? "" : "s"}</span>
+      <button type="button" class="linkish" id="report-clusters-all"${targets.length < rows.length ? "" : " hidden"}>all ${rows.length}</button>
+      <button type="button" class="linkish" id="report-clusters-one"${targets.length > 1 ? "" : " hidden"}>only ${esc(view.cluster || "")}</button>
+      <span class="muted">lookups and the totals preview are <span class="mono">${esc(view.cluster || "")}</span>'s</span></div>
+    ${noteHtml}
+  </div>`;
+}
+
 // The Subject scope: users and/or groups as one framed block, a live count, Clear (empty = all).
 function subjectBlock(spec, params, form) {
   const chosen = params.reduce((n, p) => n + (Array.isArray(form[p.name]) ? form[p.name].length : 0), 0);
   return `<div class="rp-scope subj" id="report-subject">
     <div class="rp-scope-top"><span class="t">Subjects <span class="rp-auto">lookup · discovered</span></span><span class="and muted">empty = all · pick users and/or groups, one or more</span></div>
-    <div class="report-fields">${params.map((p) => `<div class="report-field"><label>${esc(p.name)}</label>${lookupControl(spec, p, form)}<span class="muted hint" title="${esc(p.help)}">${esc(p.help)}</span></div>`).join("")}</div>
+    <div class="report-fields">${params.map((p) => `<div class="report-field"><label>${esc(p.name)}</label>${lookupControl(spec, p, form)}<span class="muted hint">${esc(p.help)}</span></div>`).join("")}</div>
     <div class="rp-scope-foot"><span class="rp-count-live" id="report-subject-count">${chosen ? `${chosen} selected` : "all subjects"}</span>
       <button type="button" class="linkish" id="report-subject-clear"${chosen ? "" : " hidden"}>Clear</button></div>
   </div>`;
 }
 
-const LOOKUP_HEAD = { users: "User objects", groups: "synced groups", providers: "identity providers", roles: "roles bound on the cluster",
+const LOOKUP_HEAD = { users: "User objects", groups: "synced groups · members as of the snapshot", providers: "identity providers", roles: "roles bound on the cluster",
                       mnemonics: "namespace mnemonics", "oud-groups": "exact groups pinned by namespaces", namespaces: "namespaces on the cluster" };
 
 // A tag input over a discovered lookup: click a value to add, its × (or clicking it again) to remove,
@@ -2780,7 +2919,7 @@ function lookupControl(spec, p, form) {
       <input id="${id}" type="text" data-lookup-input="${esc(p.name)}" data-lookup-source="${esc(p.source || "")}" value="${esc(typed)}" placeholder="${p.source ? `pick ${esc(p.source)}…` : "type a value, Enter to add"}" autocomplete="off" spellcheck="false" aria-label="${esc(p.name)}"></div>
     ${p.source ? `<div class="rp-menu" id="${id}-menu" role="listbox" aria-label="${esc(LOOKUP_HEAD[p.source] || p.source)}">
       <div class="rp-menu-head">${esc(LOOKUP_HEAD[p.source] || p.source)} · ${found ? `${found.values.length} discovered${found.truncated ? " (first 5000)" : ""}` : (settled ? "none discovered" : "loading…")}</div>
-      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed)}</div>
+      <div data-menu-body>${lookupMenuBody(p.name, values, chosen, typed, found && found.members)}</div>
     </div>` : ""}
   </div>`;
 }
@@ -2796,10 +2935,15 @@ function lookupValues(source, found) {
 // paint and for typing: the first cut painted only the matches of the text typed so far, and a repaint
 // under a query that matched nothing left a menu with no option nodes for later typing to reveal
 // (review of #222, OB3 — measured: "zzz", a repaint, "kube" → no match, though kubeadmin was discovered).
-function lookupMenuBody(name, values, chosen, typed) {
+function lookupMenuBody(name, values, chosen, typed, members) {
   const q = typed.toLowerCase();
   const shown = values.filter((v) => !q || v.toLowerCase().includes(q));
-  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}</div>`).join("")}
+  // `members` (the groups lookup only): the group's member count as of the snapshot, beside its name — a group of
+  // nobody says "0 members", never a blank (operator, 2026-09-21).
+  // `typeof === "number"`, never `v in members`: the map is parsed JSON, so it inherits Object.prototype and a
+  // group named `constructor` or `toString` would satisfy `in` and render a function's source as its count.
+  const count = (v) => members && typeof members[v] === "number" ? ` <span class="rp-n">${esc(String(members[v]))} member${members[v] === 1 ? "" : "s"}</span>` : "";
+  return `${shown.slice(0, 200).map((v) => `<div class="rp-opt${chosen.includes(v) ? " sel" : ""}" role="option" aria-selected="${chosen.includes(v)}" tabindex="0" data-lookup-opt="${esc(name)}" data-value="${esc(v)}">${esc(v)}${count(v)}</div>`).join("")}
       ${q && !shown.length ? `<div class="rp-nomatch">No match — press Enter to add “${esc(typed)}”</div>` : ""}
       ${shown.length > 200 ? `<div class="rp-nomatch">${shown.length - 200} more — keep typing to narrow</div>` : ""}`;
 }
@@ -2825,16 +2969,31 @@ function ensureDiscovered() {
     });
 }
 
-function reportRunStatus(run) {
+// One run's status. In a batch (#267) the block is named for its cluster and is not its own live region —
+// the batch's wrapper announces, so a screen reader hears one change, not one per cluster.
+function reportRunStatus(run, inBatch = false) {
   const done = run.status === "done";
   const failed = run.status === "failed";
   const links = done ? (run.formats || []).concat(["json"]).map((f) =>
     `<button type="button" class="btn" data-artifact="${esc(run.id)}" data-format="${esc(f)}">Download .${esc(f)}</button>`).join(" ") : "";
-  return `<div class="report-status" id="report-status" role="status">
-    <strong>Run ${esc(run.id)}</strong> — ${esc(run.status)}${failed ? `: ${esc(run.error || "")}` : ""}
+  return `<div class="report-status" id="${inBatch ? `report-status-${esc(run.cluster)}` : "report-status"}"${inBatch ? "" : ' role="status"'}>
+    ${inBatch ? `<span class="mono">${esc(run.cluster)}</span> · ` : ""}<strong>Run ${esc(run.id)}</strong> — ${esc(run.status)}${failed ? `: ${esc(run.error || "")}` : ""}
     ${done ? ` · sha256 <code>${esc((run.sha256 || "").slice(0, 16))}…</code> · data as of ${esc(run.snapshot_stamp || "")}` : ""}
     <div class="ns-controls mt-3">${links}</div>
   </div>`;
+}
+
+// #267: a several-cluster submission — each cluster's outcome said separately under one count that quotes
+// its denominator. Partial failure is not failure: two done and one failed is two documents and one reason.
+function reportBatchStatus(b) {
+  const n = b.requested.length;
+  const tally = ["done", "failed", "running", "queued"].map((st) => [st, b.runs.filter((r) => r.status === st).length]).filter(([, k]) => k);
+  // An error with runs already answered is the FOLLOWING-UP's, not the request's: the service said 202, the
+  // runs are queued and the Library will hold them. Calling that "refused" tells the reader the opposite.
+  const head = b.error ? `${n} clusters requested — ${b.runs.length ? "the runs were queued, but following them failed" : "the request was refused"}: ${esc(b.error)}`
+    : `${n} clusters requested — ${tally.length ? tally.map(([st, k]) => `${k} ${st}`).join(" · ") : "submitting…"}`;
+  return `<div class="report-batch" id="report-batch" role="status"><div class="rp-batch-head">${head}</div>
+    ${b.runs.map((r) => reportRunStatus(r, true)).join("")}</div>`;
 }
 
 /* ─── #149 R5: the Reporting status page — three cards, docs/design/reporting-status-mock.html ──────
@@ -3543,7 +3702,7 @@ function wireReports() {
       view.reportLookupText[el.id] = el.value;
       const body = document.querySelector(`#${CSS.escape(el.id)}-menu [data-menu-body]`); if (!body) return;
       const found = data.reportDiscovered && (view.cluster in data.reportDiscovered) && data.reportDiscovered[view.cluster][el.dataset.lookupSource];
-      body.innerHTML = lookupMenuBody(name, lookupValues(el.dataset.lookupSource, found), listOf(name), el.value.trim());
+      body.innerHTML = lookupMenuBody(name, lookupValues(el.dataset.lookupSource, found), listOf(name), el.value.trim(), found && found.members);
       wireLookupOptions(body);
     };
     el.onkeydown = (e) => {
@@ -3583,6 +3742,22 @@ function wireReports() {
   }
   const clearSubject = $("report-subject-clear");
   if (clearSubject) clearSubject.onclick = () => { const f = formOf(); delete f.users; delete f.groups; scheduleTotals(view.report); render(); refocusLookup("users"); };
+  // #267: the cluster chips (ids, so render()'s by-id restore keeps a keyboard reader on the one they pressed)
+  document.querySelectorAll("[data-cluster-pick]").forEach((el) => {
+    el.onclick = () => { if (el.getAttribute("aria-disabled") === "true") return; toggleReportCluster(el.dataset.clusterPick); };
+  });
+  const allClusters = $("report-clusters-all");
+  if (allClusters) allClusters.onclick = () => { view.reportClusters = (data.clusters || []).map((c) => c.id); render(); };
+  const oneCluster = $("report-clusters-one");
+  if (oneCluster) oneCluster.onclick = () => { view.reportClusters = null; render(); };
+  const noteX = $("report-cluster-note-x");
+  // Dismissed for THIS form only: the note renders per form (`cleared[spec.name]`), so another form's cleared
+  // lookup is still owed to its reader when they open it. The form card only renders for `view.report`.
+  if (noteX) noteX.onclick = () => {
+    const note = view.reportClusterNote;
+    if (note) { delete note.cleared[view.report]; if (!Object.keys(note.cleared).length) view.reportClusterNote = null; }
+    render();
+  };
   const back = $("report-back");
   // The catalogue that Back repaints has no #report-back, so render()'s by-id restore would drop the
   // keyboard reader's focus on <body>; the row this form belongs to is where it goes (review of #173).
@@ -3621,28 +3796,54 @@ function wireReports() {
 async function generateReport(refocus = false) {
   const cat = data.reportCatalog;
   const spec = cat.reports.find((r) => r.name === view.report) || cat.reports.find((r) => r.enabled);
-  if (!spec || !view.cluster) return;
+  const targets = reportTargets();
+  if (!spec || !targets.length) return;
   const params = Object.assign({}, view.reportForm[spec.name] || {});
   const formats = [];
   if ($("report-want-html") && $("report-want-html").checked) formats.push("html");
   if ($("report-want-pdf") && $("report-want-pdf").checked) formats.push("pdf");
-  view.reportSubmitting = true; view.reportRun = null; render();
+  view.reportSubmitting = true; view.reportRun = null; view.reportBatch = null; render();
+  const pending = (r) => r.status === "queued" || r.status === "running";
+  const tick = () => new Promise((r) => setTimeout(r, 1500));
   try {
-    const res = await reportFetch("/api/runs", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ report: spec.name, cluster: view.cluster, params, formats }),
-    });
-    view.reportRun = await res.json();
-    render();
-    // Poll the run, not the page: a render is seconds, and the 60 s repaint is the wrong clock.
-    while (view.reportRun && (view.reportRun.status === "queued" || view.reportRun.status === "running")) {
-      await new Promise((r) => setTimeout(r, 1500));
-      view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
+    if (targets.length === 1) {
+      const res = await reportFetch("/api/runs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: spec.name, cluster: targets[0], params, formats }),
+      });
+      view.reportRun = await res.json();
       render();
+      // Poll the run, not the page: a render is seconds, and the 60 s repaint is the wrong clock.
+      while (view.reportRun && pending(view.reportRun)) {
+        await tick();
+        view.reportRun = await reportGet(`/api/runs/${encodeURIComponent(view.reportRun.id)}`);
+        render();
+      }
+    } else {
+      // #267: several clusters, one action — the service queues one run per cluster as one slot and answers
+      // with all of them; each is polled to its own end, so one cluster's failure leaves the others' documents.
+      // The loop holds its own batch and stops when the form no longer shows it (another report opened).
+      const batch = { requested: targets, runs: [], error: null };
+      view.reportBatch = batch;
+      const res = await reportFetch("/api/runs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: spec.name, clusters: targets, params, formats }),
+      });
+      batch.runs = (await res.json()).runs || [];
+      render();
+      while (view.reportBatch === batch && batch.runs.some(pending)) {
+        await tick();
+        for (let i = 0; i < batch.runs.length; i++) {
+          if (pending(batch.runs[i])) batch.runs[i] = await reportGet(`/api/runs/${encodeURIComponent(batch.runs[i].id)}`);
+        }
+        render();
+      }
     }
     data.reportRuns = await guard403(reportGet("/api/runs?limit=1"));
   } catch (e) {
-    view.reportRun = { id: "—", status: "failed", error: e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message };
+    const error = e.status === 422 ? `the parameters were refused: ${e.detail || e.message}` : e.message;
+    if (view.reportBatch) view.reportBatch.error = error;
+    else view.reportRun = { id: "—", status: "failed", error };
   } finally {
     view.reportSubmitting = false; render();
     if (refocus) { const g = $("report-generate"); if (g) g.focus({ preventScroll: true }); }
@@ -4926,6 +5127,13 @@ function policyPage() {
    by a label value with the same AND contract as the other boxes, and each one a page. */
 const labelShort = (key) => String(key).split("/").pop();
 
+/* THE FOLD'S THRESHOLD AND THE PAGE SIZE ARE THE SAME NUMBER, and that is deliberate (#261): a row is
+   about 34 px at 1280, so 25 rows is roughly one screen. A reader learns one number instead of two, and
+   the fold's promise ("about a screenful") is the page's promise too. Below the threshold a fold costs a
+   click and buys nothing, which is why the default is decided by the estate rather than fixed. */
+const INDEX_FOLD = 25;
+const INDEX_PAGE = 25;
+
 function namespacesCard() {
   const d = data.namespaces;
   if (!d) return `<section class="card"><h2>Namespaces</h2><div class="empty-note">Loading…</div></section>`;
@@ -4934,7 +5142,46 @@ function namespacesCard() {
   const keys = d.label_keys || [];
   const all = d.namespaces || [];
   const q = (view.nsSearch || "").trim();
-  const shown = all.filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], view.nsSearch));
+  // #257: the SAME rule the Home page uses (gsd/home.py is_platform_namespace), decided server-side
+  // and carried on the row, so the page and the app cannot drift into two definitions of "platform".
+  // Filtered here, never dropped from the payload: export, the search and the drill all still reach a
+  // hidden namespace, and the line below says how many are hidden rather than leaving a reader to
+  // wonder why their count moved.
+  const platformCount = d.platform_count != null ? d.platform_count : all.filter((n) => n.platform).length;
+  const hidingPlatform = platformCount > 0 && !view.nsShowPlatform;
+  const inScope = hidingPlatform ? all.filter((n) => !n.platform) : all;
+  // TWO BOXES, AND THEY COMBINE (#261). The bar's `Find namespace` is the shell's and keeps the scope
+  // it ships with; this section gets one of its own, beside the list it searches, because the bar is
+  // ~1,900 px away from the rows once the page is scrolled. A namespace shows when it matches BOTH,
+  // and neither box clears the other.
+  const ownQ = (view.nsIndexSearch || "").trim();
+  const fieldsOf = (n) => [n.name, ...keys.map((k) => (n.labels || {})[k])];
+  const matches = (n) => matchesSearch(fieldsOf(n), q) && matchesSearch(fieldsOf(n), ownQ);
+  const shown = inScope.filter(matches);
+  // THE DEFAULT IS DECIDED BY WHAT THE SECTION HOLDS, never by what a search narrowed it to: keying it
+  // on the filtered count let the bar's inherited box open the section by a side door, which is the one
+  // thing this page does not get to do to a control it does not own (the mock's own render check found
+  // that). Typing in THIS box reveals the section — filtering something the reader cannot see makes the
+  // box look broken, and "nothing matches" is itself the answer to their query.
+  // A FOLD ONLY HOLDS WHILE THE SECTION IS BIG ENOUGH TO NEED ONE (review of #264, Cursor C4). An
+  // explicit `false` used to follow the reader: fold a 106-namespace estate, switch to a cluster with
+  // four, and they got a folded four-row list with no empty branch to explain it — the same if
+  // hiding platform namespaces took the set below the threshold. A section at or under INDEX_FOLD is
+  // simply open; above it, the reader's choice stands and `null` means "decide by size" — folded.
+  // Typing in THIS box pins the section open for as long as the query lasts, without touching the
+  // reader's choice: Escape returns the section to whatever they had chosen.
+  const foldable = inScope.length > INDEX_FOLD && !ownQ;
+  const indexOpen = !foldable || (view.nsIndexOpen === null ? false : view.nsIndexOpen);
+  const pages = Math.max(1, Math.ceil(shown.length / INDEX_PAGE));
+  const wanted = Number.isFinite(view.nsIndexPage) ? Math.trunc(view.nsIndexPage) : 1;
+  const page = Math.min(Math.max(1, wanted), pages);
+  // WRITTEN BACK, so the state is the page on screen (review of #264, Cursor C5). Every control
+  // resets the page itself; this catches the one path none of them owns — a poll that shrank the set
+  // under a reader on page 5 — where a clamped display over a stale 5 would jump them the moment the
+  // set grew again.
+  if (view.nsIndexPage !== page) view.nsIndexPage = page;
+  const from = (page - 1) * INDEX_PAGE, to = Math.min(from + INDEX_PAGE, shown.length);
+  const paged = shown.slice(from, to);
   const source = d.source || {};
   const note = source.state === "forbidden"
     ? `<div class="filterbar-note truncation-note mb-4">The namespace read was refused (${esc(ago(source.observed_at))}), so this list cannot
@@ -4954,31 +5201,150 @@ function namespacesCard() {
       : `<div class="filterbar-note mb-4">${d.cluster_wide_groups} group${d.cluster_wide_groups === 1 ? "" : "s"} bound cluster-wide and
         ${d.cluster_wide_grants} cluster-wide direct grant${d.cluster_wide_grants === 1 ? "" : "s"}${self ? " of yours" : ""} reach every namespace below; the columns count
         what is bound <em>in</em> each one. A namespace with zero in both is a result an access review wants to confirm.</div>`;
+  // THE COUNT IS PART OF THE FILTER, not a footnote. A hidden row a reader cannot see and is not told
+  // about is a row that was deleted as far as they know; and the one case where hiding costs them
+  // something — a hidden namespace that HAS a finding — gets its own clause rather than making them
+  // toggle to find out (#257).
+  const withFindings = d.platform_with_findings || 0;
+  // A configured pattern matching nothing on THIS cluster: a typo, or a convention that was
+  // decommissioned. Said where the classification is said, because that is where a reader can act
+  // on it, and named rather than counted — "2 patterns match nothing" sends someone to read the
+  // values file, the names send them to the line (#255).
+  const stale = d.platform_patterns_unmatched || {};
+  const staleAxes = Object.keys(stale).filter((k) => (stale[k] || []).length);
+  const stalePatterns = !staleAxes.length ? "" : `<div class="mt-2">⚠ ${staleAxes
+    .map((axis) => `<code>${esc(axis)}</code>: ${stale[axis].map((v) => `<code>${esc(v)}</code>`).join(", ")}`)
+    .join("; ")} ${staleAxes.length === 1 && stale[staleAxes[0]].length === 1 ? "matches" : "match"}
+    no namespace on this cluster — a typo, or a convention that has gone.</div>`;
+  const platformLine = !platformCount ? "" : `<div class="filterbar-note mb-4">${hidingPlatform
+    ? `${platformCount} platform namespace${platformCount === 1 ? "" : "s"} hidden${withFindings
+        ? ` — <strong>${withFindings}</strong> of them ${withFindings === 1 ? "has" : "have"} a direct grant`
+        : ""}. <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
+    : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
+    <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span>${stalePatterns}</div>`;
+  // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
+  // caught `[data-page]` also matching `<body data-page="nsaudit">`, so every click on the page ran the
+  // pager's handler and emptied the list. `aria-current="page"` carries the position to a screen reader,
+  // and the ends are disabled rather than absent so the control does not move under a reader. Every
+  // button has an id because render() restores focus BY ID: without one, the 60 s repaint dropped a
+  // keyboard reader from the pager to <body> (review of #264, Cursor C5).
+  const pager = !indexOpen || pages < 2 ? "" : `<nav class="pager" id="ns-index-pager" aria-label="Namespace pages">
+    <button type="button" class="linkish" id="ns-index-prev" data-index-page="${page - 1}"${page === 1 ? " disabled" : ""}>‹ Previous</button>
+    ${Array.from({ length: pages }, (_, i) => i + 1).map((i) => i === page
+      ? `<button type="button" class="linkish" id="ns-index-page-${i}" data-index-page="${i}" aria-current="page"><strong>${i}</strong></button>`
+      : `<button type="button" class="linkish" id="ns-index-page-${i}" data-index-page="${i}">${i}</button>`).join(" ")}
+    <button type="button" class="linkish" id="ns-index-next" data-index-page="${page + 1}"${page === pages ? " disabled" : ""}>Next ›</button>
+  </nav>`;
+  // ONE LINE, EVERY NUMBER BESIDE THE NUMBER IT CAME OUT OF. "39" alone says nothing; "39 of 106" says
+  // what the filter did. The chain only names the steps that actually happened, so a small cluster with
+  // no platform namespaces and no search reads as one clause rather than four zeroes.
+  const chain = [`<strong>${all.length}</strong> on this cluster`];
+  if (hidingPlatform && platformCount) chain.push(`<strong>${platformCount}</strong> platform hidden`);
+  if (q || ownQ) chain.push(`<strong>${shown.length}</strong> of <strong>${inScope.length}</strong> match the search`);
+  else if (hidingPlatform && platformCount) chain.push(`<strong>${inScope.length}</strong> listed`);
+  if (indexOpen && shown.length) chain.push(pages > 1
+    ? `showing <strong>${from + 1}–${to}</strong> on page <strong>${page}</strong> of <strong>${pages}</strong>`
+    : `showing all <strong>${shown.length}</strong>`);
+  const countsLine = `<div class="filterbar-note mb-2">${chain.join(" · ")}.</div>`;
+  // The fold's label says what you would SEE if you opened it, out of what exists on the cluster — of
+  // the three counts it could carry, that is the one a reader is deciding on.
+  const foldLabel = shown.length === all.length
+    ? `${all.length} namespace${all.length === 1 ? "" : "s"}`
+    : `${shown.length} of ${all.length} namespaces`;
+  // THE TOGGLE RENDERS ONLY WHERE IT CAN ACT (review of #264, Cursor C4). A section at or under
+  // INDEX_FOLD cannot fold and one pinned open by its own query cannot either, so on both a button
+  // reading "Hide 9 namespaces" would change nothing when pressed — the furniture the pager rule
+  // already refuses ("no pager until there is a second page"). The numbers it carried are on the
+  // counts line, which every reader gets.
+  const toggle = !foldable ? "" : `<button type="button" class="linkish" id="ns-index-fold" aria-expanded="${indexOpen ? "true" : "false"}"
+            aria-controls="ns-index-body">${indexOpen ? "▾ Hide" : "▸ Show"} ${foldLabel}</button>`;
+  const controls = `<div class="row-wrap mb-3">
+    <span class="filterbar-note"><label for="f-index-search">Search this list</label>
+      <input id="f-index-search" type="search" inputmode="search" autocomplete="off" spellcheck="false"
+             placeholder="name or label, any words" value="${esc(view.nsIndexSearch || "")}"
+             aria-describedby="f-index-search-help">
+      <span id="f-index-search-help" class="sr-only">Searches the namespaces in this section by name or by
+        the value of any captured label as you type. Several words are combined with AND, so every word
+        must appear. Press Escape to clear. This is separate from the Find namespace box in the filter
+        bar; both apply.</span></span>
+    ${toggle}
+  </div>`;
+  // WHICH BOX EMPTIED THE LIST. Two boxes AND together, so "press Escape in the box" no longer says
+  // which one; and with both set, clearing the wrong one changes nothing. Each query is tried ALONE
+  // against the same set: a box that matches nothing by itself is the one hiding the rows, and is
+  // named; when each matches something alone and nothing together, the reader is told that instead.
+  // Only computed when the list is empty, so it costs nothing on a normal paint.
+  const searchEmpty = () => {
+    const hiders = [
+      q && !inScope.some((n) => matchesSearch(fieldsOf(n), q))
+        ? `<strong>${esc(q)}</strong> in the bar's Find namespace box` : "",
+      ownQ && !inScope.some((n) => matchesSearch(fieldsOf(n), ownQ))
+        ? `<strong>${esc(ownQ)}</strong> in this list's Search box` : "",
+    ].filter(Boolean);
+    const still = `All ${inScope.length} are still there${hidingPlatform
+      ? `, and ${platformCount} platform namespace${platformCount === 1 ? " is" : "s are"} hidden besides`
+      : ""} — the filter is hiding them.`;
+    // Reachable only with a query set: with both boxes empty every row matches and the list is not empty.
+    return hiders.length
+      ? `Nothing matches ${hiders.join(", nor ")}. ${still} Press Escape in ${hiders.length === 1 ? "that box" : "each box"} to clear it.`
+      : `Nothing matches both <strong>${esc(q)}</strong> (the bar's Find namespace box) and <strong>${esc(ownQ)}</strong>
+         (this list's Search box), though each matches something on its own. ${still} Press Escape in either box to widen.`;
+  };
   const body = shown.length
     ? `<div class="scroll-x"><table>
         <thead><tr><th>Namespace</th>${keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}
           <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
-        <tbody>${shown.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
+        <tbody>${paged.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
           <td><button type="button" class="drill">${esc(n.name)}</button></td>
           ${keys.map((k) => `<td class="mono muted">${esc((n.labels || {})[k] || "—")}</td>`).join("")}
           <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
           <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>
         </tr>`).join("")}</tbody></table></div>`
-    : `<div class="empty-note">${q
-        ? `Nothing matches <strong>${esc(q)}</strong>. All ${all.length} are still there — the filter is hiding them. Press Escape in the box to clear.`
-        // At the self tier the rows are the viewer's own in-namespace paths, so an empty list is a
-        // fact about their view, not about the cluster (review of #167, Grok F3).
-        : (self
+    // THE EMPTY STATE IS DECIDED BY THE STAGE THAT EMPTIED THE LIST, never by which inputs happen to
+    // be set. The rows pass through one pipeline — `all` → `inScope` (the platform filter) → `shown`
+    // (the searches) — and the counts line is computed from those same three numbers, so the sentence
+    // here and the counts above it cannot disagree. This ladder used to test INPUTS (`hidingPlatform`,
+    // then `q`) and fall through to "No namespaces recorded" for anything it did not know about, and
+    // it told that lie three times: for the platform filter (review of #257, Codex C8: "1 platform
+    // namespace hidden" beside "No namespaces recorded"), for the self tier (#258, Cursor C8), and for
+    // the section's own box (#264, Cursor C2: "0 of 39 match the search" beside "No namespaces
+    // recorded"). Keyed on the stage, a filter added later cannot reach the cluster's sentence: that
+    // one is reachable only when the cluster's own list is empty, and every stage in between owns its
+    // own sentence.
+    //
+    // THE SELF TIER DOES NOT SPEAK FOR THE CLUSTER (#258, trigger A; #167, Grok F3). The payload is
+    // self-scoped, so "every namespace on this cluster" and "nothing is missing from the cluster" are
+    // claims it cannot support; prefixing them with "That is your view:" does not cancel them.
+    : `<div class="empty-note">${!all.length
+        ? (self
             ? "None of your memberships or grants reaches a namespace on this cluster. That is your view, not the cluster: a namespace missing here may exist."
-            : "No namespaces recorded for this cluster yet.")}</div>`;
+            : "No namespaces recorded for this cluster yet.")
+        : !inScope.length
+        ? (self
+            ? `Every namespace your memberships and grants reach is a platform one — all
+               ${platformCount} of them are hidden. That is your view: a namespace missing here may exist.
+               <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`
+            : `Every namespace on this cluster is a platform one — all ${platformCount} of them are hidden.
+               Nothing is missing from the cluster.
+               <button type="button" class="linkish" id="ns-show-platform-empty">Show them</button>`)
+        : searchEmpty()}</div>`;
   return `<section class="card">
-    <h2>Namespaces <span class="muted fw-normal">· ${shown.length === all.length ? all.length : `${shown.length} of ${all.length} shown`}</span></h2>
+    <h2>Namespaces <span class="muted fw-normal">· ${shown.length === inScope.length ? inScope.length : `${shown.length} of ${inScope.length} shown`}</span></h2>
+    ${platformLine}
     <div class="filterbar-note mb-4">${self
       ? "The namespaces your own memberships and grants reach — grants affecting you, nothing about other people."
       : "Every namespace the poller sees, not only those with a grant."} Click a row — a namespace is an entity here,
       the third drill-down beside groups and users. The box in the bar finds by name or by any captured label.</div>
     ${alsoLine("namespaces", view.nsSearch)}
-    ${note}${cw}${body}
+    ${note}${cw}${controls}${countsLine}
+    ${shown.length
+      // ONLY THE ROWS FOLD. An empty state inside the fold is a sentence the reader cannot read: with
+      // nothing matching and the section shut they would see a control and no reason for it, and
+      // "nothing matches — all 39 are still there" is itself the answer to their query. The heading,
+      // the notes, the counts line and every empty branch stay outside, which is also why this folds
+      // the ROWS and not the card — three caveats live in the notes above.
+      ? `<div id="ns-index-body"${indexOpen ? "" : " hidden"}>${body}${pager}</div>`
+      : body}
   </section>`;
 }
 
@@ -5264,7 +5630,7 @@ function wireLookup() {
       if (carried) {
         if (el.dataset.page === "groups") view.groupSearch = carried;
         else if (el.dataset.page === "users") view.userSearch = carried;
-        else if (el.dataset.page === "nsaudit") view.nsSearch = carried;
+        else if (el.dataset.page === "nsaudit") { view.nsSearch = carried; view.nsIndexPage = 1; }
       }
       refresh();
     };
@@ -5634,7 +6000,9 @@ function ccYaml(d) {
   const y = (v) => JSON.stringify(String(v));
   // The KEY too: a label key of `on`, `yes` or `true` is a valid Kubernetes key and a YAML 1.1 boolean
   // unquoted, so `{True: …}` came back where the API writes `{"true": …}` — the same drift as the value.
-  const labels = [`    ${y(CC_LABEL)}: ${y("cluster")}`].concat(Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`));
+  // THE APP'S LABEL LAST, exactly as secret_object() stamps it (SPEC_S4b; review of #295, P1-2): YAML keeps the
+  // later duplicate, so a form label spelled `groupsync-dashboard.io/secret-type` must not win here either.
+  const labels = Object.keys(f.labels).map((k) => `    ${y(k)}: ${y(f.labels[k])}`).concat([`    ${y(CC_LABEL)}: ${y("cluster")}`]);
   return ["apiVersion: v1", "kind: Secret", "metadata:", `  name: ${y(`gsd-cluster-${name}`)}`,
     `  namespace: ${y((d.secrets && d.secrets.namespace) || "<namespace>")}`, "  labels:", labels.join("\n"),
     "  annotations:", `    groupsync-dashboard.io/managed-by: ${y("ui")}`, "type: Opaque", "stringData:",
@@ -6444,6 +6812,12 @@ function render() {
   // empty menu — review of #224, OB3).
   const caret = focusedId && typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
   renderFilters();
+  // THE SAME IME RULE, FOR THE INDEX'S OWN BOX (#264, Cursor C3). renderFilters returns early while a
+  // conversion is unfinished because replacing the node commits half-kana and opens a second session
+  // on the new one; `#f-index-search` lives in `#main`, which this function replaces wholesale, so it
+  // needs the same guard. compositionend paints the catch-up.
+  if (searchComposingIn === "f-index-search"
+      && document.activeElement && document.activeElement.id === "f-index-search") return;
   const main = $("main");
   if (view.page === "home") {
     main.innerHTML = homePage();
@@ -6613,6 +6987,94 @@ function render() {
    Re-bound after every render because render() replaces main's innerHTML wholesale, which
    discards the previous elements and their handlers along with them. */
 function wireNsAudit() {
+  // #257: the platform toggle. A pure re-render of data already held — the hidden rows are in the
+  // payload, so showing them is a filter change and never a refetch. Focus is restored to the
+  // control afterwards: it is the one thing the reader just pressed, and `render()` rebuilds the
+  // card under them, which would otherwise drop focus to the document.
+  // Two ids, one behaviour: the control beside the count, and the one inside the empty state a
+  // fully-hidden cluster renders instead of that count (#257, Codex C8).
+  ["ns-show-platform", "ns-show-platform-empty"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.onclick = () => {
+      view.nsShowPlatform = !view.nsShowPlatform;
+      view.nsIndexPage = 1;   // the set changed size; page 4 of the old set may not exist
+      // "SHOW THEM" MEANS SHOW (review of #264, Cursor C4). With the fold still "decide by size", the
+      // platform rows can carry a 20-row open list past INDEX_FOLD, and the reader who asked to see
+      // more would watch the rows vanish behind a fold. Asking for rows opens the list; a fold the
+      // reader chose themselves (an explicit false) stands, and hiding rows never folds a list.
+      if (view.nsShowPlatform && view.nsIndexOpen === null) view.nsIndexOpen = true;
+      render();
+      const again = document.getElementById("ns-show-platform") || document.getElementById(id);
+      if (again) again.focus();
+    };
+  });
+
+  // #261: the fold, the section's own search and the pager.
+  const fold = document.getElementById("ns-index-fold");
+  if (fold) fold.onclick = () => {
+    // The button is only rendered where it can act, so its aria-expanded IS the section's state.
+    view.nsIndexOpen = fold.getAttribute("aria-expanded") !== "true";
+    render();
+    const again = document.getElementById("ns-index-fold");
+    if (again) again.focus();
+  };
+
+  const indexBox = document.getElementById("f-index-search");
+  if (indexBox) {
+    indexBox.oninput = (e) => {
+      view.nsIndexSearch = indexBox.value;
+      view.nsIndexPage = 1;   // EVERY filter change resets the page (#261): narrowing to six matches
+                              // while the reader sits on page 3 would otherwise show them nothing.
+      // MID-COMPOSITION BELONGS TO THE IME (#264, Cursor C3). Repainting here replaces the node the
+      // IME is composing into — the same rule renderFilters keeps for the bar's boxes. The state is
+      // kept, and compositionend paints.
+      if (e.isComposing) return;
+      // AND THE CARET STAYS WHERE IT WAS, not at the end. This handler used to force it to the end
+      // after the repaint, which made editing mid-string impossible: every keystroke jumped the
+      // cursor, so a typo in the middle of a query could not be corrected. render() already puts
+      // focus AND the caret back by id — the same restore the 60 s poll relies on — so nothing here
+      // may move it (review of #264, Cursor C3).
+      render();
+    };
+    indexBox.addEventListener("compositionstart", () => { searchComposingIn = "f-index-search"; });
+    indexBox.addEventListener("compositionend", (e) => {
+      searchComposingIn = null;
+      view.nsIndexSearch = e.target.value;
+      view.nsIndexPage = 1;
+      render();
+    });
+    indexBox.addEventListener("blur", () => {
+      if (searchComposingIn === "f-index-search") searchComposingIn = null;
+    });
+    indexBox.onkeydown = (e) => {
+      if (e.key !== "Escape" || e.isComposing || !indexBox.value) return;
+      e.stopPropagation();   // the shell clears its own box on Escape; this one is not the shell's
+      // The query's pin on the fold goes with the query; the reader's own choice — opened, folded or
+      // never decided — is not this key's to change.
+      view.nsIndexSearch = ""; view.nsIndexPage = 1;
+      render();
+    };
+  }
+
+  // `data-index-page`, not `data-page`: the mock's render check caught `[data-page]` also matching
+  // `<body data-page="nsaudit">`, so every click anywhere ran the pager and emptied the list.
+  document.querySelectorAll("#ns-index-pager [data-index-page]").forEach((el) => {
+    el.onclick = () => {
+      const to = Number(el.dataset.indexPage);
+      if (!Number.isFinite(to)) return;
+      view.nsIndexPage = to;
+      render();
+      // render() keeps focus on the button pressed, by id. Previous and Next at an end come back
+      // disabled, which is not focusable, so focus would fall to <body> and a keyboard reader would
+      // hear nothing about where they landed: the current page's number is where they are.
+      const nav = document.getElementById("ns-index-pager");
+      if (nav && !nav.contains(document.activeElement)) {
+        const cur = nav.querySelector('[aria-current="page"]');
+        if (cur) cur.focus();
+      }
+    };
+  });
   document.querySelectorAll("[data-sort-key]").forEach((el) => {
     el.onclick = () => {
       const grant = el.dataset.sortGroup === "grant";
@@ -6759,6 +7221,27 @@ function myAccessFetch(get, base, viewer, { allowStaleViewer = false } = {}) {
     if (e.status !== 404) throw e;
     return { scope: "self", viewer, user: viewer, bindings: [], unseen: true };
   });
+}
+
+function fingerprintSlots() {
+  return {
+    clusters: data.clusters, alerts: data.alerts, alertsScope: data.alertsScope, groupsyncs: data.groupsyncs, groups: data.groups,
+    groupsMeta: data.groupsMeta, group: data.group, user: data.user, users: data.users, events: data.events, logins: data.logins, access: data.access,
+    usage: data.usage, findings: data.findings, operatorConfigs: data.operatorConfigs, userBindings: data.userBindings, whoami: data.whoami, myAccess: data.myAccess, home: data.home,
+    reportCatalog: data.reportCatalog, reportRuns: data.reportRuns, fleet: data.fleet,   // #172: the fleet tables render from it
+    // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
+    // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
+    // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
+    reportStatus: data.reportStatus && { ...data.reportStatus, as_of: null }, reportHistory: data.reportHistory,
+    library: data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
+    libraryRun: data.libraryRun,
+    kpi: data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
+    kyverno: data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
+    clusterconfigs: data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
+    // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
+    // only change was a label or a grant skipped the repaint the comment above forbids skipping).
+    namespaces: data.namespaces, ns: data.ns,
+  };
 }
 
 async function refresh(opts = {}) {
@@ -7160,24 +7643,11 @@ async function refresh(opts = {}) {
     // alertsScope rides along even though nothing renders it yet: it arrives on the same
     // wire as fields that DO, and a fingerprint that omits a payload field is a repaint
     // silently suppressed the day someone renders it.
-    const fingerprint = JSON.stringify([
-      data.clusters, data.alerts, data.alertsScope, data.groupsyncs, data.groups,
-      data.groupsMeta, data.group, data.user, data.users, data.events, data.logins, data.access,
-      data.usage, data.findings, data.operatorConfigs, data.userBindings, data.whoami, data.myAccess, data.home,
-      data.reportCatalog, data.reportRuns, data.fleet,   // #172: the fleet tables render from it
-      // #149 R5: the status page's two payloads — a finished run must repaint it. Without `as_of`, the
-      // service's clock stamp that nothing renders: with it, no two polls ever matched and the page
-      // repainted every minute, dropping the reader's selection (review of #221, OB3 — measured).
-      data.reportStatus && { ...data.reportStatus, as_of: null }, data.reportHistory,
-      data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
-      data.libraryRun,
-      data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
-      data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
-      data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
-      // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
-      // only change was a label or a grant skipped the repaint the comment above forbids skipping).
-      data.namespaces, data.ns,
-    ]);
+    // Named so a reader of `lastFingerprint` — the UI test guarding this skip — can say WHICH slot
+    // moved. Still compared as the positional array (Object.values keeps insertion order), so an
+    // `undefined` slot serialises as null exactly as before — an object would drop the key (#271).
+    const slots = fingerprintSlots();
+    const fingerprint = JSON.stringify(Object.values(slots));
     if (opts.auto && fingerprint === lastFingerprint) {
       // Still say so. Leaving the clock frozen would read as "the dashboard has stopped",
       // which is the opposite of the truth and the exact confusion `sync_stopped` exists for.

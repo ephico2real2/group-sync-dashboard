@@ -71,6 +71,11 @@ spec:
           env:
             - name: GSD_LOG_LEVEL
               value: {{ include "gsd.logLevel" . | quote }}
+            # The per-request record, the dashboard's setting applied to this pod too (#245 reached
+            # the dashboard only). At the default WARNING a routine probe writes nothing and a
+            # failing request still does; INFO restores the full per-request lines.
+            - name: GSD_HTTP_LOG_LEVEL
+              value: {{ include "gsd.httpLogLevel" . | quote }}
             - name: GSD_REPORT_SNAPSHOT_DIR
               value: /data/report
             - name: GSD_REPORT_ARTIFACT_DIR
@@ -161,24 +166,27 @@ spec:
               mountPath: /etc/gsd/report-tls
               readOnly: true
             {{- end }}
+          {{- $probes := .Values.reporting.probes | default dict }}
+          {{- $live := $probes.liveness | default dict }}
+          {{- $ready := $probes.readiness | default dict }}
           livenessProbe:
             httpGet:
               path: /report/healthz
               port: https
               scheme: {{ ternary "HTTPS" "HTTP" .Values.reporting.tls.enabled }}
-            initialDelaySeconds: 10
-            periodSeconds: 60
-            timeoutSeconds: 5
-            failureThreshold: 3
+            initialDelaySeconds: {{ $live.initialDelaySeconds | default 10 }}
+            periodSeconds: {{ $live.periodSeconds | default 300 }}
+            timeoutSeconds: {{ $live.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $live.failureThreshold | default 2 }}
           readinessProbe:
             httpGet:
               path: /report/readyz
               port: https
               scheme: {{ ternary "HTTPS" "HTTP" .Values.reporting.tls.enabled }}
-            initialDelaySeconds: 5
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
+            initialDelaySeconds: {{ $ready.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ $ready.periodSeconds | default 30 }}
+            timeoutSeconds: {{ $ready.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $ready.failureThreshold | default 3 }}
           resources: {{- toYaml .Values.reporting.resources | nindent 12 }}
       volumes:
         - name: data

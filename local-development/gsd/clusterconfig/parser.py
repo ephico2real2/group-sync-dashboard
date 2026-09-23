@@ -11,7 +11,8 @@ import ssl
 from dataclasses import dataclass
 
 from ..config import (
-    CLUSTER_IDENTITIES, CLUSTER_VISIBILITIES, VISIBILITY_REMOTE_SAR, ClusterConfig,
+    BOOTSTRAP_KEY, CLUSTER_IDENTITIES, CLUSTER_VISIBILITIES, CONNECTION_KEYS, CONNECTION_MODE_KEYS,
+    VISIBILITY_REMOTE_SAR, ClusterConfig, valid_bootstrap_username,
 )
 
 from . import FINDING_CODES
@@ -38,6 +39,10 @@ _REFUSED_CONFIG_KEYS = {
 }
 _REFUSED_TLS_KEYS = {"certData": "the pod holds no client certificate", "keyData": "the pod holds no client certificate",
                      "serverName": "not supported"}
+#: The `config` keys this contract accepts. The three connection-mode keys are the values loader's
+#: (SPEC_S3 §2: one declaration, two readers); the guard in tests/test_connection_modes.py holds the
+#: two sets together.
+ACCEPTED_CONFIG_KEYS = ("bearerToken", "oauth", "tlsClientConfig", *CONNECTION_KEYS)
 
 #: Every key name a finding will repeat back. A finding's detail is LOGGED (the poller's
 #: `secret-refused` line) and SERVED (`/api/clusterconfigs`), and the parse-phase announcement is
@@ -53,6 +58,7 @@ _ECHOABLE_KEYS = {k.lower() for k in (
     "bearerToken", "oauth", "tlsClientConfig", "caData", "insecure", "username", "password",
     "name", "server", "config", "visibility", "identity", "enabled",
     "namespaces", "clusterResources", "project", "shard", "dashboardController",
+    *CONNECTION_KEYS,   # SPEC_S3 §4: a new key joins here too, or a typo is reported by its length
 )}
 
 
@@ -166,14 +172,37 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
     for key in config:
         if key in _REFUSED_CONFIG_KEYS:
             return finding("unsupported-config-key", f"{key}: {_REFUSED_CONFIG_KEYS[key]}")
-        if key not in ("bearerToken", "oauth", "tlsClientConfig"):
+        if key not in ACCEPTED_CONFIG_KEYS:
             return finding("unsupported-config-key", _unknown_key(key, prefix="", where="config"))
 
     token = config.get("bearerToken")
     oauth = config.get("oauth")
+    # SPEC_S3 §4 (S3a): a connection mode in `config` — the same three keys the values loader knows —
+    # with the Secret's own rule: two sources of truth is a FINDING on the tab, never a crash.
+    modes: list[str] = []
+    for key in CONNECTION_MODE_KEYS:
+        if key in config:
+            if not isinstance(config[key], bool):
+                return finding("unsupported-config-key", f"config.{key}: must be a boolean")
+            if config[key]:
+                modes.append(key)
+    if len(modes) > 1:
+        return finding("credential-ambiguous", "config declares both saTokenLookup and userSelfLogin; declare one")
+    mode = modes[0] if modes else None
+    if mode is not None and (token is not None or oauth is not None):
+        return finding("credential-ambiguous",
+                       f"config carries a credential and {mode}: two sources of truth for one credential; declare one")
+    bootstrap = config.get(BOOTSTRAP_KEY)
+    if bootstrap is not None:
+        if not valid_bootstrap_username(bootstrap):
+            return finding("unsupported-config-key",
+                           f"config.{BOOTSTRAP_KEY}: must be a username (letters, digits, '.', '_', '@', '-')")
+        if mode is None:
+            return finding("unsupported-config-key",
+                           f"config.{BOOTSTRAP_KEY} without saTokenLookup or userSelfLogin configures a login that would never happen")
     if token is not None and oauth is not None:
         return finding("credential-ambiguous", "config carries both bearerToken and oauth; declare one")
-    if token is None and oauth is None:
+    if token is None and oauth is None and mode is None:
         return finding("credential-missing", "config needs bearerToken or oauth {username, password}")
     if token is not None and (not isinstance(token, str) or not token.strip()):
         return finding("credential-missing", "config.bearerToken is empty")
@@ -241,4 +270,6 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         token_value=token.strip() if isinstance(token, str) else None, ca_data=ca_data,
         oauth_username=oauth_user, oauth_password=oauth_pass,
         source=f"secret:{secret_name}", labels=labels,
+        sa_token_lookup=mode == "saTokenLookup", user_self_login=mode == "userSelfLogin",
+        ldap_connection_bootstrap=str(bootstrap) if bootstrap is not None else None,
     )

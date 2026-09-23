@@ -202,7 +202,25 @@ type: application
 # is retired (#96) and its history — sync events, KPI days, login events, report runs — stays under
 # it while the new name starts empty. Taking this chart's new default name on an existing release
 # does that. The flag itself needs no rename.
-version: 0.45.0
+# CHART 0.46.0 (2026-09-21), MINOR: `platformNamespaces` makes the platform/workload judgement an
+# estate's own (#255). Three axes — prefixes, suffixes and full names — because no two are enough:
+# measured on the reference cluster the shipped rule leaves seven pieces of platform among the
+# workloads, `-operator` catches three of them, `-manager` and `-provisioner` one each, and two match
+# no pattern at all. `prefixes`/`suffixes`/`names` replace the defaults; the `additional*` three
+# append, so an estate never restates a Red Hat list that changes between releases. Setting nothing
+# keeps today's behaviour exactly, and the chart renders the key only when it is set.
+# CHART 0.47.0 (2026-09-21), MINOR: a cluster may declare HOW its credential is obtained instead of
+# carrying one — `saTokenLookup` / `userSelfLogin`, with `ldapConnectionBootstrap` naming the account
+# and `clusterConfig.fleetAccount` as the estate-wide default (#248, SPEC_S3 S3a). The render refuses
+# what the loader refuses — both modes at once, a mode beside a credential, a mode on the declared
+# controller or the inferred host, and a non-boolean — so a green `helm upgrade` cannot CrashLoop the
+# pod. A stanza that declares nothing behaves exactly as before.
+# CHART 0.50.0 (2026-09-22), MINOR: `saTokenLookup` retrieves (#284, SPEC_S4b). The pod learns the
+# fleet account's address and `clusterConfig.saTokenLookup` (what it reads on every target) through
+# the ConfigMap; a saTokenLookup stanza is refused at render without `clusterConfig.secrets.writes.enabled`
+# and `secrets.enabled`, with `replicaCount > 1`, or with `visibility: remote-sar`. appVersion moves to
+# application 0.31.0 (below). A release declaring no mode renders exactly as before.
+version: 0.52.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -278,7 +296,10 @@ version: 0.45.0
 # poller writes a VACUUM INTO copy for the report pod and pulls its usage. Additive on the wire. MINOR.
 # 0.19.0 (2026-09-13). Per-cluster authorization for the multi-cluster case: clusters[].visibility
 # and clusters[].identity (D2). MINOR.
-appVersion: "0.30.0"
+# 0.31.0 (2026-09-22). A `saTokenLookup` cluster is retrieved: the dashboard logs in as the fleet
+# account, reads the poller ServiceAccount's token on the target and writes the cluster Secret
+# (#284, SPEC_S4b). Eight finding codes join the closed set; additive on the wire. MINOR.
+appVersion: "0.31.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

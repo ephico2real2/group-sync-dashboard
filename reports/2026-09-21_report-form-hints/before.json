@@ -1,0 +1,219 @@
+{
+ "namespace-access": {
+  "rows": [
+   {
+    "text": "Select one or more. Dimensions combine with AN",
+    "sw": 264,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Select one or more.",
+    "sw": 264,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "",
+    "sw": 264,
+    "cw": 264,
+    "hint": "14px",
+    "label": null
+   },
+   {
+    "text": "Expand group rosters. Off by default \u2014 a file ",
+    "sw": 843,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Explicit namespace names, at most 50; `(cluste",
+    "sw": 910,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Sort and group the namespaces by a metadata la",
+    "sw": 1548,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   }
+  ],
+  "stray": [
+   [
+    "Select one or more. Dimensions com",
+    "14px"
+   ],
+   [
+    "Select one or more.",
+    "14px"
+   ],
+   [
+    "",
+    "14px"
+   ],
+   [
+    "Clear",
+    "14px"
+   ],
+   [
+    "view namespaces",
+    "14px"
+   ],
+   [
+    "Expand group rosters. Off by defau",
+    "14px"
+   ],
+   [
+    "Explicit namespace names, at most ",
+    "14px"
+   ],
+   [
+    "Sort and group the namespaces by a",
+    "14px"
+   ]
+  ],
+  "page": [
+   1440,
+   1440
+  ]
+ },
+ "groups": {
+  "rows": [
+   {
+    "text": "Only these groups (empty = every synced group)",
+    "sw": 336,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Membership changes observed in the last N days",
+    "sw": 336,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Rosters for every group. Recorded in the prove",
+    "sw": 423,
+    "cw": 264,
+    "hint": "14px",
+    "label": "12px"
+   }
+  ],
+  "stray": [
+   [
+    "Only these groups (empty = every s",
+    "14px"
+   ],
+   [
+    "Membership changes observed in the",
+    "14px"
+   ],
+   [
+    "Rosters for every group. Recorded ",
+    "14px"
+   ]
+  ],
+  "page": [
+   1440,
+   1440
+  ]
+ },
+ "group_options": [
+  "app-ocp-rbac-abcd-ns-superuser",
+  "app-ocp-rbac-alpha-cluster-admin",
+  "app-ocp-rbac-alpha-cluster-audit",
+  "app-ocp-rbac-alpha-cluster-developer"
+ ],
+ "namespace-access@375": {
+  "rows": [
+   {
+    "text": "Select one or more. Dimensions combine with AN",
+    "sw": 298,
+    "cw": 298,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Select one or more.",
+    "sw": 298,
+    "cw": 298,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "",
+    "sw": 298,
+    "cw": 298,
+    "hint": "14px",
+    "label": null
+   },
+   {
+    "text": "Expand group rosters. Off by default \u2014 a file ",
+    "sw": 843,
+    "cw": 298,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Explicit namespace names, at most 50; `(cluste",
+    "sw": 910,
+    "cw": 298,
+    "hint": "14px",
+    "label": "12px"
+   },
+   {
+    "text": "Sort and group the namespaces by a metadata la",
+    "sw": 1548,
+    "cw": 298,
+    "hint": "14px",
+    "label": "12px"
+   }
+  ],
+  "stray": [
+   [
+    "Select one or more. Dimensions com",
+    "14px"
+   ],
+   [
+    "Select one or more.",
+    "14px"
+   ],
+   [
+    "",
+    "14px"
+   ],
+   [
+    "Clear",
+    "14px"
+   ],
+   [
+    "view namespaces",
+    "14px"
+   ],
+   [
+    "Expand group rosters. Off by defau",
+    "14px"
+   ],
+   [
+    "Explicit namespace names, at most ",
+    "14px"
+   ],
+   [
+    "Sort and group the namespaces by a",
+    "14px"
+   ]
+  ],
+  "page": [
+   375,
+   375
+  ]
+ }
+}
