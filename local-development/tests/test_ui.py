@@ -8913,6 +8913,28 @@ class TestPlatformNamespacesAreHiddenByDefault:
         assert "2 platform namespaces hidden" in line and "1" in line and "has a direct grant" in line, line
         dash.evaluate("() => { data.namespaces.platform_with_findings = 0; render(); }")
 
+    def test_the_reconciling_sentence_speaks_for_the_tier_and_stays_bounded(self, dash):
+        """#261 §2, the two shapes the served estate cannot reach. At the self tier the list above is the
+        viewer's own grants, not the worklist, so the sentence must not send them to a card they do not
+        have. And it names at most three — the reach sentence became a 975-character block by naming
+        everything (#261 §3). Driven from the payload, like the sentence test above."""
+        self._open(dash)
+        dash.evaluate("""() => { const n = data.namespaces.namespaces.find((x) => x.name === 'openshift-monitoring');
+            n.direct_grants = 1; data.namespaces.platform_with_findings = 1; data.namespaces.scope = 'self'; render(); }""")
+        dash.wait_for_timeout(250)
+        line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert "This hides rows, never findings: openshift-monitoring is still listed in your grants above." in line, line
+        assert "Exposure by namespace" not in line, line
+        dash.evaluate("""() => { data.namespaces.scope = 'all';
+            for (const name of ['openshift-a', 'openshift-b', 'openshift-c', 'openshift-d']) data.namespaces.namespaces.push(
+              {name, labels: {}, via_groups: 0, direct_grants: 2, platform: true});
+            data.namespaces.platform_count = 6; data.namespaces.platform_with_findings = 5; render(); }""")
+        dash.wait_for_timeout(250)
+        line = " ".join(dash.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert "— 5 of them have a direct grant." in line, line
+        assert ("never findings: openshift-monitoring, openshift-a, openshift-b and 2 more are still ranked in "
+                "Exposure by namespace above.") in line, line
+
     def test_the_control_shows_them_and_puts_them_back(self, dash):
         self._open(dash)
         dash.click("#ns-show-platform")
@@ -9246,6 +9268,23 @@ class TestTheIndexOnAnEstateBigEnoughToNeedIt:
         assert env[1] == 1 and set(env[2]) == {"company.net/mnemonic", "company.net/app-environment"}, env
         card = page.locator("h2:text-is('Namespaces')").locator("xpath=..").inner_text()
         assert "1 of them has a direct grant" in card, card[:400]
+
+    def test_a_hidden_namespace_with_a_finding_is_named_where_it_is_still_ranked(self, page, estate_server):
+        """#261 §2: openshift-ns3 holds a direct grant, so it is ranked in the worklist AND hidden from this
+        index at the same time — two lists on one page disagreeing (the lab's openshift-console-user-settings).
+        "1 of them has a direct grant" counted it and left the reader to toggle to learn which one, and
+        where it had gone. The line names it and the list that still ranks it; shown, the lists agree and
+        the sentence has nothing to reconcile."""
+        self._open(page, estate_server)
+        line = " ".join(page.locator("#ns-show-platform").locator("xpath=..").inner_text().split())
+        assert ("This hides rows, never findings: openshift-ns3 is still ranked in Exposure by namespace above."
+                in line), line
+        worklist = page.locator("section.card", has=page.locator("h3:text-is('Exposure by namespace')"))
+        assert worklist.locator("td.ns-cell", has_text="openshift-ns3").count() == 1, "the sentence names a row the worklist holds"
+        assert page.locator('tr[data-ns="openshift-ns3"]').count() == 0, "and the index hides it"
+        page.click("#ns-show-platform")
+        page.wait_for_function("() => view.nsShowPlatform === true")
+        assert "never findings" not in page.locator("#ns-show-platform").locator("xpath=..").inner_text()
 
     def test_the_fold_hides_the_rows_and_keeps_the_reasons(self, page, estate_server):
         """Only the ROWS fold. Three caveats live in the notes above the table, and collapsing the
