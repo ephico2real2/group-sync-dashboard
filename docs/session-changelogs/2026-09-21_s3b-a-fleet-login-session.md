@@ -229,7 +229,7 @@ label had been read as a countdown. Retracted on both issues with the citation.
 
 ### Issues opened
 
-- **#291** — five rounds grew `fleetlogin.py` **443 → 729 lines (+61%)**, against the repo's rule that a
+- **#291** — five rounds grew `fleetlogin.py` **443 → 729 lines (+65%)**, against the repo's rule that a
   review must not grow the code's complexity. Behaviour-preserving consolidation, tracked separately
   so it is not mixed into a fix PR.
 - **#293** — a labelled ConfigMap of cluster stanzas that **generates** the Secrets, so nobody
@@ -251,5 +251,117 @@ label had been read as a countdown. Retracted on both issues with the citation.
 
 ### #284 in flight at the time of writing
 
-PR #295, three review rounds: **7 → 5 → 2** findings, with the code getting *simpler* each round —
-the last round **deleted** `final` rather than adding a guard. Not logged here until merged.
+PR #295, three review rounds: **7 → 5 → 2** findings. Not logged here until merged.
+
+**Corrected 2026-09-22.** An earlier revision of this paragraph said the code "got *simpler* each
+round" and that "the last round deleted `final`". Both are false, and were measured only when
+adversarial review challenged them:
+
+```
+fleetlookup.py   cd00f2f 346 lines / 13 defs -> d94887a 388/14 -> 9e1abb2 395/15 -> 188930c 410/15
+'final' count    d94887a 4 | 9e1abb2 1 | 188930c 1          -> deleted in round TWO
+```
+
+The module grew **+18.5%** and gained two functions. The defensible claim is that it grew a quarter as
+fast as #283's `fleetlogin.py` (+65%) — not that it shrank. The same wording was in the review skill
+and in a memory note; all three are corrected. The lesson is the one this session kept re-learning:
+a claim that flatters the process is exactly the one to measure before writing it down.
+
+---
+
+## Part 3 — the review pass that found the claims were wrong (2026-09-22)
+
+Two PRs were open and **neither had had its adversarial pass**: #307 (the fleet-account stanza, the
+validation record and a new cluster-wide CA script) and #299 (a skill addition). Both were reviewed
+this part, and both came back *not mergeable*. The theme of the part is that the defects were in the
+claims, not only in the code — three separate documents asserted things no one had measured.
+
+### #307 CI, and a guard doing its job (11:05) — commit `b2c9fe5`, PR #307
+
+- CI was red on both Python versions: `test_the_table_covers_every_key_crc_overrides` failed because
+  `crc.yaml` declared four `clusterConfig.fleetAccount.*` keys the `environments/README.md` table did
+  not list. **Found by the suite.** The table's stated remit is the security question, and a fleet
+  account whose password mints cluster access is squarely inside it, so no `EXEMPT_FROM_TABLE` entry.
+- The privileged fact was **measured, not read off the template's comments**:
+  `oc get role group-sync-dashboard-fleet-account -n openshift-config -o jsonpath='{.rules}'` →
+  `[{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]`.
+- Suite **4710 passed, 16 skipped**, 236 s.
+
+### #299 — OB1-lite refuted four statements of fact (11:28) — commit `10bf81c`, PR #299
+
+- **Found by OB1-lite** (Fable 5.1, default effort), all four **accepted** after re-measurement here;
+  **three were the orchestrator's own claims**, two of them repeated to the operator in a summary.
+
+  | claim as written | measured |
+  |---|---|
+  | `443 → 729` is `+61%` | `+64.6%`; `+61%` belongs to 712, round four |
+  | #284's code "got simpler each round" | `fleetlookup.py` 346 → 410 lines, 13 → 15 `def`s (**+18.5%**) |
+  | "the last round deleted a mechanism" | `final` went 4 → 1 occurrences at `9e1abb2` — round **two** |
+  | "a reviewer's `CONFIRMED`" missed it | `3 C1: REFUTED`, **zero** CONFIRMED — the reviewers caught it |
+
+- The fifth finding is the one that mattered: the section taught a budget of *"at most one bind per
+  (target, credential), **ever**"*, while `CredentialGate`'s own docstring reads *"Best-effort and per
+  process; the durable, replica-shared gate is #285's"*. A section about measuring budgets stated one
+  the code cannot honour. Scope is now part of the claim, and the rule was wired into Step 1, the
+  checklist and `brief-template.md`'s new C8 — **a rule stated only in its own section never fires**.
+- **Snippets rejected**: the proposed blocks imported round-by-round attributions and line deltas over
+  `gsd/` that had not been measured here. Facts taken, text rewritten shorter.
+- Proof: the reviewer's prose checker **fails 9 on `0123a39`, passes 0 on `10bf81c`**. Nothing in
+  `local-development/tests` or `.github/workflows` reads `.claude/skills`; docs citations
+  **952 passed, 12 skipped**.
+
+### #307 — three seats, one verdict (11:45) — commit `620e01d`, PR #307
+
+**Found by Codex (`gpt-5.6-sol` xhigh), Cursor (`cursor-grok-4.6-high-fast`) and OB3 (Opus 5)**, run
+in three separate detached worktrees. All three returned DO NOT MERGE; all three refuted C1–C4
+independently. Codex and Cursor were given **no cluster credentials** (their claims are answerable
+with `openssl` and `helm template`); only OB3 had live read-only access.
+
+- **The defect.** `oc get cm X -o jsonpath='{.data.ca-bundle\.crt}'` exits **0 with empty output**
+  when the ConfigMap exists under a different data key, and `|| die` catches only a nonzero exit.
+  Measured against `openshift-config/ca-config-map`, whose key is `ca.crt`:
+
+  ```
+  head    ENTERPRISE_CM=ca-config-map -> enterprise: 0 of 0 kept / combined: 5 certs, 5985 bytes, exit 0
+  fixed   ENTERPRISE_CM=ca-config-map -> ERROR: ... has no 'ca-bundle.crt' key
+  ```
+
+  A typo in the variable the script's own header tells you to set wrote a cluster-wide trust bundle
+  without the enterprise root — into the object feeding **20** injected bundles on this lab.
+- **Found by Codex alone**: `/BEGIN CERT/` does not match `-----BEGIN TRUSTED CERTIFICATE-----`, so
+  such a block was invisible to the splitter.
+- **Accepted**: source `[ -s ]` guards, a splitter matching any CERTIFICATE banner, `is_anchor()`
+  replacing the text grep, an unreadable block that names itself, a failed proxy read that no longer
+  looks like "no trustedCA", `revert_hint()` correct in all three branches and printed in the dry run,
+  and **a guard on the result** — refuse if any anchor the proxy names today would be missing
+  (`ALLOW_DROP=1` overrides). Input guards close enumerated paths; a result guard closes the rest.
+- **Rejected**: Cursor's request to give `shared-rnd` `mock`'s `visibility: inherit`. `self-only` is
+  the chart default for every entry but the first and can only narrow; copying `mock` would widen that
+  cluster's membership to every host cluster-admin. Left narrow, reason written into `crc.yaml`.
+- **Reviewer disagreement resolved without a fourth seat**: OB3 wanted an anchored-only match, Cursor a
+  whitespace-tolerant one. Took both, on blast-radius asymmetry — dropping a real anchor breaks the
+  cluster, keeping a non-anchor is inert.
+- **Corrections to the orchestrator's own doc**: the Step F2 `Result:` block was a **hand-edited
+  transcript the code cannot produce** (a 66-character subject from a line ending `| cut -c1-54`,
+  under a heading no version emits) — replaced with a verbatim re-run, stating that the pre-apply run
+  was never captured. It concealed a real bug: the script printed `from the proxy's current bundle`
+  even when `ENTERPRISE_CM` named another source. Also corrected "dedup … so any input is safe
+  regardless" and "the count staying at 152 … is the proof the filtering was right", and qualified a
+  stale `147` that Case E moved to `152`.
+- `docs/examples/cluster-secret-shared-rnd.redacted.yaml` **did not parse** (`ScannerError`, block
+  scalar at column 0). Fixed; it leaks nothing — no `data`, no annotations, both credential-shaped
+  values are placeholders.
+- **Behaviour preserved**, verified against the live bundles: `1 of 1`, `5 of 6`,
+  `combined: 6 CA certificate(s), 7949 bytes`, same `*.apps-crc.testing` leaf dropped.
+- New `tests/test_refresh_cluster_wide_ca.py`: **5 of 6 fail on `b2c9fe5`, all 6 pass on `620e01d`**;
+  the sixth passes on both as the behaviour-preservation check. Suite **4716 passed, 16 skipped**.
+
+### Two process defects, both the orchestrator's
+
+- **A stale local branch ref pushed instead of the commit.** Three worktrees existed for one PR; the
+  branch was checked out in one at the pre-merge commit while the commit was made in a *detached*
+  second. `git push origin <branch>` pushed the stale ref. Recovered by pushing the sha explicitly (a
+  true fast-forward), fast-forwarding the real worktree and removing the two redundant ones.
+- **`pgrep -fc` reported every reviewer dead.** The `-c` flag is Linux-only; on BSD it errors into the
+  `|| echo 0` fallback. All four processes were alive throughout. This is already a recorded scar and
+  it was written again.

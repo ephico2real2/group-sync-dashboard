@@ -55,6 +55,11 @@ render cleanly and are refused by the pod at startup** — an unknown key, a dup
 A worked production file using these combinations:
 [`example-production.yaml`](example-production.yaml).
 
+**What happens to the credential afterwards** — which account bootstraps and which token polls, what
+`auth_failed` / `forbidden` / `unreachable` mean, and how an administrator recovers a cluster whose
+credential has gone bad — is in
+[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file.
+
 ### Image
 
 | Key | Default | Notes |
@@ -441,7 +446,7 @@ once, never rendered — the same for every renderer (Helm, Flux, Argo CD, Kusto
 | `rbac.create` | `true` | ClusterRole + binding, read-only, no `watch` |
 | `rbac.bindings` | `true` | adds `get`/`list` on rolebindings/clusterrolebindings, powering the Access-granted, RBAC-policy and Namespace-audit views. Disable and the dashboard degrades to group data only |
 | `loginCapture.enabled` | `true` | lets the dashboard read the oauth-server's log so the Logins tab has a source. Which log is `source` |
-| `loginCapture.source` | `pod-log` | `pod-log` — a Role on `pods`/`pods/log` in `loginCapture.namespace`; names a person only at Debug (`authLogLevel`), keeps the LDAP cause, loses history with every pod. `audit-log` — `/var/log/oauth-server/audit.log` on the control-plane nodes through the node proxy: no Debug, no OAuth roll, history back to the rotated files; a **ClusterRole on `get nodes/proxy`**, which reads everything the kubelet serves on those nodes, plus `list nodes` unless `auditLog.nodeNames` is set — read-only, cluster-wide, hence not the default. Refused together with `authLogLevel.enabled=true` (while `loginCapture.enabled`); the audit log is authoritative from the switch on and corresponding pod-log rows are linked, not doubled |
+| `loginCapture.source` | `audit-log` | **`audit-log` (the default since chart 0.52.0)** — `/var/log/oauth-server/audit.log` on the control-plane nodes, read through the API server's node proxy: names the person at the DEFAULT audit verbosity, so no Debug, no OAuth roll, no login outage, and history back through the rotated files. Its cost is a **ClusterRole on `get nodes/proxy`**, which is read access to everything the kubelet serves over GET on those nodes, plus `list nodes` unless `auditLog.nodeNames` pins them — read-only but cluster-wide. It is nevertheless the default because the alternative shipped a feature switched on and unable to name anyone: turn it off with `loginCapture.enabled: false` if the grant is unacceptable. `pod-log` — the opt-in: a Role on `pods`/`pods/log` in `loginCapture.namespace`, narrower, but it names a person only at Debug (`authLogLevel`), which rolls the OAuth server, and its history dies with every pod. It does keep the LDAP cause, which the audit log has not. Refused together with `authLogLevel.enabled=true` (while `loginCapture.enabled`); the audit log is authoritative from the switch on and corresponding pod-log rows are linked, not doubled. How the whole path works, with a worked example: [`docs/AUDIT_LOG_CAPTURE.md`](../../docs/AUDIT_LOG_CAPTURE.md) |
 | `loginCapture.namespace` | `openshift-authentication` | pod-log source only: where the oauth-server pods run |
 | `loginCapture.htpasswdProviders` | `[developer]` | identity-provider **names** whose successes are break-glass accounts, excluded from "accounts in no synced group". With the audit-log source the provider is the `/login/<idp>` path when present and otherwise the User's Identity provider, so a CLI `kubeadmin` login is labelled break-glass too |
 | `loginCapture.retentionDays` | `400` | how long an attempt is kept; also the bound on the audit-log backfill. `0` disables pruning |
@@ -515,6 +520,11 @@ some other way — it then runs at `INFO` and logs a warning rather than failing
 
 ### oauth-server log verbosity
 
+**Deprecated — the pod-log source only.** Since chart 0.52.0 login capture reads the oauth-server
+audit log, which names the person at the default verbosity; nothing in this section is needed for
+it. This machinery remains for the opt-in `pod-log` source and to move a cluster left at `Debug`
+back to `Normal` (the two steps below). Its removal is tracked in #321.
+
 The oauth-openshift server only names the person logging in when the authentication **operator**
 CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`. Three
 cluster-scoped objects have confusingly similar names, and this feature touches only the first:
@@ -528,7 +538,8 @@ cluster-scoped objects have confusingly similar names, and this feature touches 
 `logLevel` is the **operand's** verbosity (the `oauth-server` process, which emits the login
 lines); `operatorLogLevel` is the operator's own and would change nothing here. At `Normal` that line is
 not emitted at all — measured: **zero** occurrences of `succeeded for login` until it is on. So
-`authLogLevel.*` is the prerequisite for capturing login activity, and nothing more.
+`authLogLevel.*` is the prerequisite for the pod-log source, and nothing more; the audit-log default
+needs none of it.
 
 **The write does not go on the dashboard.** Patching that object is a write to a core platform
 object, and `rbac.yaml` states *"NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON"* — a line
@@ -569,7 +580,9 @@ helm upgrade ... -f my-values.yaml --set authLogLevel.manage=false
 `helm uninstall` needs no such care — the pre-delete Job reverts first. But `helm rollback` does not
 run hooks at all, so rolling back past an enable does **not** put the level back; do step 1 by hand.
 
-**To verify it end to end**, follow `docs/LOGIN_CAPTURE_QUICKCHECK.md` — five commands that turn the
+The default audit-log path has its own worked example in
+[`docs/AUDIT_LOG_CAPTURE.md`](../../docs/AUDIT_LOG_CAPTURE.md). **To verify the pod-log path end to
+end**, follow `docs/LOGIN_CAPTURE_QUICKCHECK.md` — five commands that turn the
 verbosity up, cause a login, and read that login back using the dashboard's own ServiceAccount token,
 with the real output of each recorded. It is also the place to start when the dashboard shows no login
 activity and you need to find which link is missing.
