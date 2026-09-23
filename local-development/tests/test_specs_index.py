@@ -146,5 +146,5 @@ def test_s4c_gates_every_bound_failure_per_account() -> None:
     assert "refused: dict | None" in lease and "def gated(self, digest: str)" in lease
     body = text.split("## Orchestrator's notes", 1)[1].split("## 0.", 1)[1]   # the design, not the history
     for stale in ("refused: dict[str, dict]", "gated(self, target", "gated_anywhere", "gated(target, digest)",
-                  "one entry per target"):
+                  "one entry per target", "(target, password)"):   # the last two: confirmation pass of #325 (Grok)
         assert stale not in body, f"a per-target contract survives: {stale}"

@@ -314,7 +314,7 @@ read: absence means never, not zero"* — and `gsd_backup_last_success_timestamp
 
 | | |
 |---|---|
-| the durable, replica-shared object | **one Lease per fleet account** in the release namespace: `gsd-fleet-<sha256(username)[:16]>`, labelled `groupsync-dashboard.io/lease-type: fleet-account`, annotated with the account. Its `spec` is the **claim** (who may bind as this account right now); its annotations are the **gate** (which (target, password) this account must not be sent to again) and the **ping's bookkeeping** (last attempt, last ok, last outcome, last target, the password digest last confirmed) |
+| the durable, replica-shared object | **one Lease per fleet account** in the release namespace: `gsd-fleet-<sha256(username)[:16]>`, labelled `groupsync-dashboard.io/lease-type: fleet-account`, annotated with the account. Its `spec` is the **claim** (who may bind as this account right now); its annotations are the **gate** (which (account, password) must not be presented again, from whichever target answered; the target is evidence, not the key) and the **ping's bookkeeping** (last attempt, last ok, last outcome, last target, the password digest last confirmed) |
 | who takes the claim | every code path that can put the password on the wire: #284's lookup, this spec's ping, a `self-login` acquisition or renewal. **No claim, no bind** — fail closed |
 | the daily ping | `fleetlookup.lookup(cluster, settings, host_client, own_namespace=…, gate=…, write=False)` against **one** target per account per cadence, on the discovery thread, leader only; the result is read for `sa_token.last_used` and dropped; the login's token is revoked by the session |
 | once per credential per day | the ping's due-ness is read from the account Lease (`ping-last-attempt`), not from memory: a restart, a second replica and twenty clusters on one account all see the same instant |
@@ -621,7 +621,7 @@ the mode raises unless a token was injected — reachable only by a direct calle
 
 **Renewal** when `now ≥ renew_at`, at the top of the cycle, before the poll. A retryable failure
 (unreachable) leaves the current session in place and is tried again next cycle until
-`expires_at`; a bound failure gates the (target, password) and **suspends** (below). At
+`expires_at`; a bound failure gates the (account, password) and **suspends** (below). At
 `expires_at` with no replacement the session is exited and the cluster stops with
 `self-login-failed … gave_up=true`.
 
