@@ -1,0 +1,12 @@
+[
+  {
+    "title": "A keyboard-focused picker option is hidden under the sticky Generate bar (#332)",
+    "severity": "defect",
+    "text": "Seen in this walk's capture of the namespace-access form (the Generate row drawn over the namespace list), then measured on the deployed page at 1440x900: tabbing through the namespaces picker, 16 of 40 focused options had the bar on top of their centre (document.elementFromPoint), e.g. beta-uat at y 864-890 under a bar whose top is 857. That fails WCAG 2.2 SC 2.4.11 Focus Not Obscured. The bar is .report-actions, position: sticky; bottom: 0; its height varies with what it holds, 44 px on a desktop and up to 160.5 px at 320 px wide with the totals preview and a second cluster. Fixed in #333 (technique C43: scroll-padding sized by a ResizeObserver to the bar's real height)."
+  },
+  {
+    "title": "The walk script skipped the namespace-access report's picker (fixed in the walk)",
+    "severity": "note",
+    "text": "The first run of this walk failed one step: the namespace-access report was refused with 'select at least one namespace, by selector, mnemonic or explicit name'. Not the product: since #143/#149 (2026-09-20) the report's namespaces parameter is a lookup picker inside the form's Advanced section, and e2e_capture.py skipped a parameter whose text field it could not find, submitting the form empty. The walk now drives the picker and fails on a missing control; this document is the re-run: 84/84."
+  }
+]

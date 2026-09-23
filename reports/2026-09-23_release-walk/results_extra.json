@@ -1,0 +1,241 @@
+{
+  "finished": "2026-09-23T16:59:12Z",
+  "steps": [
+    {
+      "t": "2026-09-23T16:58:55Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-23T16:58:56Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-23T16:58:56Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-23T16:58:58Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:58:58Z",
+      "step": "cluster selector options",
+      "ok": true,
+      "detail": "all clusters, dashboard, mock-privateca, mock-selfsigned, mock-trusted, shared-qa \u2014 your view, shared-rnd \u2014 your view",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:58:59Z",
+      "step": "switch cluster to mock-privateca",
+      "ok": true,
+      "detail": "heading: mock-privateca; url https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=mock-privateca",
+      "screenshot": "04-overview-cluster-mock-privateca.png"
+    },
+    {
+      "t": "2026-09-23T16:59:01Z",
+      "step": "Reports tab on mock-privateca",
+      "ok": true,
+      "detail": "no report form; the card says: Skip to main content OCP Access Tracking Dashboard - mock-privateca Full view \u2014 you are seeing everything v0.31.0 \u00b7 7f1856a920 updated 12:58:59 EDT Appearance Auto Light Dark Colours Default Deuteranopia-safe Protanopia-safe Tritanopia-safe High contrast Refresh Sign out Cluster dashboard mock-priva",
+      "screenshot": "05-reports-cluster-mock-privateca.png"
+    },
+    {
+      "t": "2026-09-23T16:59:01Z",
+      "step": "scope pill",
+      "ok": true,
+      "detail": "Full view \u2014 you are seeing everything",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:59:02Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "06-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-23T16:59:03Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "07-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-23T16:59:03Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "08-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-23T16:59:05Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-23T16:59:05Z",
+      "step": "light theme Overview",
+      "ok": true,
+      "detail": "prefers-color-scheme: light",
+      "screenshot": "09-overview-light-theme.png"
+    },
+    {
+      "t": "2026-09-23T16:59:06Z",
+      "step": "HTML report access-certification opens",
+      "ok": true,
+      "detail": "title: Access certification pack \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 36785 bytes",
+      "screenshot": "10-html-report-access-certification.png"
+    },
+    {
+      "t": "2026-09-23T16:59:07Z",
+      "step": "HTML report access-matrix opens",
+      "ok": true,
+      "detail": "title: Access matrix \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 19948 bytes",
+      "screenshot": "11-html-report-access-matrix.png"
+    },
+    {
+      "t": "2026-09-23T16:59:07Z",
+      "step": "HTML report binding-findings opens",
+      "ok": true,
+      "detail": "title: RBAC binding findings \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 11547 bytes",
+      "screenshot": "12-html-report-binding-findings.png"
+    },
+    {
+      "t": "2026-09-23T16:59:08Z",
+      "step": "HTML report compliance-snapshot opens",
+      "ok": true,
+      "detail": "title: Compliance snapshot \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 10337 bytes",
+      "screenshot": "13-html-report-compliance-snapshot.png"
+    },
+    {
+      "t": "2026-09-23T16:59:08Z",
+      "step": "HTML report dormant-access opens",
+      "ok": true,
+      "detail": "title: Dormant and unusable access \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 9492 bytes",
+      "screenshot": "14-html-report-dormant-access.png"
+    },
+    {
+      "t": "2026-09-23T16:59:09Z",
+      "step": "HTML report groups opens",
+      "ok": true,
+      "detail": "title: Groups and membership changes \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 28605 bytes",
+      "screenshot": "15-html-report-groups.png"
+    },
+    {
+      "t": "2026-09-23T16:59:09Z",
+      "step": "HTML report groupsync-health opens",
+      "ok": true,
+      "detail": "title: GroupSync and policy-operator health \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 8768 bytes",
+      "screenshot": "16-html-report-groupsync-health.png"
+    },
+    {
+      "t": "2026-09-23T16:59:10Z",
+      "step": "HTML report login-activity opens",
+      "ok": true,
+      "detail": "title: Login activity \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 9219 bytes",
+      "screenshot": "17-html-report-login-activity.png"
+    },
+    {
+      "t": "2026-09-23T16:59:10Z",
+      "step": "HTML report namespace-access opens",
+      "ok": true,
+      "detail": "title: Namespace access report \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 7779 bytes",
+      "screenshot": "18-html-report-namespace-access.png"
+    },
+    {
+      "t": "2026-09-23T16:59:11Z",
+      "step": "HTML report privileged-access opens",
+      "ok": true,
+      "detail": "title: Privileged access review \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 12076 bytes",
+      "screenshot": "19-html-report-privileged-access.png"
+    },
+    {
+      "t": "2026-09-23T16:59:12Z",
+      "step": "HTML report users opens",
+      "ok": true,
+      "detail": "title: Users \u2014 dashboard \u2014 OCP Access Tracking Dashboard; 14927 bytes",
+      "screenshot": "20-html-report-users.png"
+    }
+  ],
+  "pdf_page1": [
+    {
+      "report": "access-certification",
+      "ok": true,
+      "png": "pdf-page1-access-certification.png",
+      "err": ""
+    },
+    {
+      "report": "access-matrix",
+      "ok": true,
+      "png": "pdf-page1-access-matrix.png",
+      "err": ""
+    },
+    {
+      "report": "binding-findings",
+      "ok": true,
+      "png": "pdf-page1-binding-findings.png",
+      "err": ""
+    },
+    {
+      "report": "compliance-snapshot",
+      "ok": true,
+      "png": "pdf-page1-compliance-snapshot.png",
+      "err": ""
+    },
+    {
+      "report": "dormant-access",
+      "ok": true,
+      "png": "pdf-page1-dormant-access.png",
+      "err": ""
+    },
+    {
+      "report": "groups",
+      "ok": true,
+      "png": "pdf-page1-groups.png",
+      "err": ""
+    },
+    {
+      "report": "groupsync-health",
+      "ok": true,
+      "png": "pdf-page1-groupsync-health.png",
+      "err": ""
+    },
+    {
+      "report": "login-activity",
+      "ok": true,
+      "png": "pdf-page1-login-activity.png",
+      "err": ""
+    },
+    {
+      "report": "namespace-access",
+      "ok": true,
+      "png": "pdf-page1-namespace-access.png",
+      "err": ""
+    },
+    {
+      "report": "privileged-access",
+      "ok": true,
+      "png": "pdf-page1-privileged-access.png",
+      "err": ""
+    },
+    {
+      "report": "users",
+      "ok": true,
+      "png": "pdf-page1-users.png",
+      "err": ""
+    }
+  ]
+}
