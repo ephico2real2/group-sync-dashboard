@@ -1683,10 +1683,16 @@ clusterAccess:
   discoverFromOAuth: true
 
 # ---------------------------------------------------------------------------
-# oauth-server log verbosity  (prerequisite for login capture)
+# DEPRECATED — oauth-server log verbosity  (OAuth Debug, pod-log source only)
 # ---------------------------------------------------------------------------
-# The oauth-openshift server only names the person logging in when the AUTHENTICATION OPERATOR
-# CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`.
+# Login capture reads the oauth-server AUDIT LOG by default (`loginCapture.source: audit-log`),
+# which names the person at the default verbosity: nothing here is needed for it. This stanza raises
+# the OAuth server to Debug for the deprecated pod-log source, and remains only to move a cluster
+# left at Debug back to Normal (the two-step below). Do not enable it on a new install.
+# Removal: #321.
+#
+# The oauth-openshift server's POD LOG only names the person logging in when the AUTHENTICATION
+# OPERATOR CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`.
 #
 # NOT the OAuth CR. `oauth.config.openshift.io/cluster` is the object that holds the identity
 # providers, and this feature never touches it; there is also a THIRD, one word apart:
@@ -1694,7 +1700,7 @@ clusterAccess:
 # And within the operator CR, `logLevel` (the operand's verbosity) is not `operatorLogLevel`
 # (the operator's own) — patching the latter would change nothing this needs. At `Normal` the line
 # is not emitted at all — measured: zero occurrences of "succeeded for login" until this is on. So
-# this section is the prerequisite for capturing login activity, and nothing more.
+# this section is the prerequisite for the pod-log source, and nothing more.
 #
 # TWO SWITCHES, ON PURPOSE:
 #
