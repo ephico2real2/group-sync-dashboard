@@ -482,7 +482,7 @@ a { color: var(--remote); }
   </section>
 
   <section>
-    <h2>Decisions to make</h2>
+    <h2>Decisions</h2>
     <div class="decisions">
       <div class="decision">
         <div class="id">D1 · the gap</div>
@@ -490,16 +490,16 @@ a { color: var(--remote); }
         <div class="opts">Build the remote resolver when discovery finds the cluster, rebuild it when the Secret's
           credential changes, drop it when the cluster is retired. Accept <code>remote-sar</code> from a Secret and from a
           <code>saTokenLookup</code> stanza.</div>
-        <div class="rec"><strong>Recommend: yes.</strong> Without it, the only choices for a looked-up remote are
-          "the host decides" or "nobody is wide".</div>
+        <div class="rec"><strong>Directed</strong> (2026-09-23): <em>"this is what I want: remote-sar for whatever method the cluster was joined."</em> Without it, the only choices
+          for a looked-up remote are "the host decides" or "nobody is wide".</div>
       </div>
       <div class="decision">
         <div class="id">D2 · the default for a newly joined remote</div>
         <div class="q"><code>self-only</code> (today), or <code>remote-sar</code>?</div>
         <div class="opts"><span><strong>self-only:</strong> safe and silent. Nobody is wide until someone configures it,
           which is what just surprised you.</span><span><strong>remote-sar:</strong> the remote's RBAC answers for each
-          reader. The joining SA already has the rights (measured). If it lacks them, every reader gets self and the
-          cluster shows a finding.</span></div>
+          reader. The joining SA already has the rights (measured). If it lacks them, every reader gets self; D4's
+          recommended finding would say why.</span></div>
         <div class="rec"><strong>Directed: <code>remote-sar</code> + <code>same-as-host</code> is the standard</strong> (the
           operator, 2026-09-23). D4's finding is still recommended, so that "narrowed" always has a reason.</div>
       </div>
@@ -509,14 +509,15 @@ a { color: var(--remote); }
         <div class="opts">Yes, by name: every reader is matched by their OpenShift username, the <code>User</code>
           object's name, with no identity-provider distinction. It is what <code>remote-sar</code> already does for a
           values-declared cluster, so it needs no code.</div>
-        <div class="rec"><strong>Directed</strong> (2026-09-23): <em>"this is all OpenShift and everyone appears as a user … just focus on the users that you see in OpenShift users."</em></div>
+        <div class="rec"><strong>Directed</strong> (2026-09-23): <em>"this is all OpenShift and everyone appears as a user … just focus on the users that you see in OpenShift users"</em>; the standard: <em>"a user uid in cluster A or B or C are all the same."</em></div>
       </div>
       <div class="decision">
         <div class="id">D4 · when the joining SA may not ask</div>
-        <div class="q">A 403 on the review: silent self, or a named finding?</div>
-        <div class="opts">Show it on the Cluster Configurations tab and in the cluster selector: <em>"this cluster cannot
-          check access: grant <code>create subjectaccessreviews</code> to &lt;SA&gt;"</em>.</div>
-        <div class="rec"><strong>Recommend: a finding.</strong> Self for everyone, with the reason and the fix named.</div>
+        <div class="q">When the remote cannot check access, what is served, and is the cause shown?</div>
+        <div class="opts">Always self for everyone. The finding would appear on the Cluster Configurations tab and in
+          the cluster selector, naming the check that failed and its grant: <code>list groups</code> or
+          <code>create subjectaccessreviews</code> for the joining ServiceAccount.</div>
+        <div class="rec"><strong>Directed: fall back to self.</strong> Recommend: add the named finding.</div>
       </div>
       <div class="decision">
         <div class="id">D5 · say why you are narrowed</div>
