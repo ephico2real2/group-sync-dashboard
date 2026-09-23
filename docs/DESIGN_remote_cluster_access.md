@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard) and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D3, D5, D6 and D8 open (§8) |
+| Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard), D3 and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D5, D6 and D8 open (§8) |
 | Date | 2026-09-23 |
 | Scope | the per-cluster visibility policy (`clusters[].visibility`, `clusters[].identity`) for every cluster the dashboard polls that is not its host, and who may join or rejoin such a cluster |
 | Relates to | `docs/ACCESS_CONTROL.md` §11 (per-cluster authorisation, D2 of the 2026-09 programme), #307, #322 (the cluster-admin tier), #316 (Rejoin) |
@@ -65,8 +65,8 @@ today it can take only the first or the third column, because a Secret-declared 
 | **The reader's groups** | read from the host's Group objects | read from the remote's Group objects (`local-development/gsd/kube.py#ClusterClient.fetch_groups_of_user`) |
 | **identity** | **no effect on the tier.** Under `inherit` identity is not consulted: the host's decision applies, and self rows are keyed by the host username. `same-as-host` only documents intent. | **load-bearing.** The host username is sent to the remote, so it must name the same person there. The chart refuses `remote-sar` without `same-as-host`. |
 | **Remote RBAC needed** | none; a read-only token is enough | the joining ServiceAccount needs `create subjectaccessreviews` and `list groups` on the remote |
-| **Correct when** | one team administers the fleet, so host admin = remote admin by policy | clusters share one identity provider (a directory), so one `uid` is one person |
-| **Risk** | a host admin sees a remote's bindings and people wide with no standing on that remote: a policy decision, made per cluster | htpasswd users and `kube:admin` are per-cluster people, so the same name on two clusters is two accounts (`docs/ACCESS_CONTROL.md` §11) |
+| **Correct when** | one team administers the fleet, so host admin = remote admin by policy | the reader's OpenShift username names them on the remote too: readers are matched by `User` name (D3) |
+| **Risk** | a host admin sees a remote's bindings and people wide with no standing on that remote: a policy decision, made per cluster | the match is by username alone (D3): the remote's RBAC for that name decides |
 
 `self-only` (nobody is wide) and `hidden` (polled, never served) are unchanged by this document.
 
@@ -164,8 +164,7 @@ nothing on `clusterrolebindings`, so a namespace admin of `group-sync-operator` 
 and `identity: same-as-host` (`docs/examples/cluster-secret-shared-rnd.redacted.yaml`). #307 replaced it with a
 `saTokenLookup` stanza in `environments/crc.yaml` that deliberately declares no visibility, so it took the default,
 `self-only`, and the host's cluster-admin stopped being wide there. `shared-qa` is a hand-made Secret from #310's
-testing with no visibility key, so it has always been `self-only`. The lab's `kubeadmin` is an **htpasswd** user
-(identity `developer:kubeadmin`), not the built-in `kube:admin`.
+testing with no visibility key, so it has always been `self-only`.
 
 The commands, re-runnable against the lab with a kubeadmin session:
 
@@ -277,10 +276,10 @@ Row by row:
 |---|---|---|---|
 | **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"* |
 | **D2** | The default for a newly joined remote | `self-only` (today) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
-| **D3** | What "the same person" means under `remote-sar` | (a) every username; (b) directory identities only, with the break-glass providers (`loginCapture.htpasswdProviders`) never mapped across clusters | **Open.** The standard (D2) fixes the pairing; this decides which usernames it maps. (b) is correct for real estates, but it narrows the lab's htpasswd `kubeadmin` on `shared-rnd`; an LDAP admin would be wide. (a) matches the lab's expectation. |
+| **D3** | What "the same person" means under `remote-sar` | the reader's OpenShift username, the `User` object's name | **Directed**: every reader is matched by that name, with no identity-provider distinction. The operator: *"this is all OpenShift and everyone appears as a user … just focus on the users that you see in OpenShift users."* It is what `remote-sar` already does for a values-declared cluster (the review names the host username, and the groups are read from the remote's Group objects), so it needs no code. |
 | **D4** | When the joining ServiceAccount may not ask | silent self, or self with a named finding | **Directed**: fall back to self (fail closed). Its named finding is recommended, not built: on the Cluster Configurations tab and under the cluster selector, with the grant that fixes it (`list groups` or `create subjectaccessreviews`) |
 | **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Open**, recommended. The missing reason is why the lab's narrowing looked like a defect. |
-| **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` restores the behaviour before #307 and is literally true there (same cluster, same identity provider); `remote-sar` once D1 lands. `shared-qa`: the same, or remove it if it was only #310's test cluster | **Open** |
+| **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` restores the behaviour before #307 and is literally true there (same cluster); `remote-sar` once D1 lands. `shared-qa`: the same, or remove it if it was only #310's test cluster | **Open** |
 | **D7** | Who may join or rejoin a cluster with a username and password | the host's `clusterAdminSar` (`update clusterrolebindings`, #322), or today's `create secrets` in the dashboard's namespace | **Directed**: cluster admin on the host. The operator: *"This is a strictly cluster admin role. We can only check for who has cluster admin on dashboard … because we cannot determine or infer if a user is a cluster admin on a remote cluster if the cluster is not joined."* |
 | **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Open**, recommended for Rejoin only. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
 
@@ -291,8 +290,8 @@ Row by row:
   chart stop refusing `remote-sar` for Secret-declared clusters. The parser, once it accepts `remote-sar`, must
   refuse it without `identity: same-as-host`, as `local-development/gsd/config.py#load_settings` already does for
   values: `viewer_scope` keys self rows by the host username. A finding code for D4's two 403s.
-- **Default:** a new remote with no `visibility` resolves to `remote-sar` with `identity: same-as-host`. Which
-  usernames that maps follows D3.
+- **Default:** a new remote with no `visibility` resolves to `remote-sar` with `identity: same-as-host`, matching
+  every reader by OpenShift username (D3).
 - **Join and Rejoin (D7, D8):** the tab's writes move from `clusterConfigManageSar` to `clusterAdminSar` (#322).
   Rejoin (#316) is gated the same way, and with D8 it asks one `SelfSubjectAccessReview` on the remote with the
   login's token before reading the token Secret, revoking the login on a refusal.

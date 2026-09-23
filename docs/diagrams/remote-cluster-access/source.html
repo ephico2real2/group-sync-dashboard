@@ -192,9 +192,9 @@ a { color: var(--remote); }
           <dt>Remote RBAC</dt><dd>The joining SA needs <code>create subjectaccessreviews</code> and
             <code>list groups</code>. Measured on the lab: <span class="yes">both joining SAs have them</span>
             (ClusterRole <code>group-sync-dashboard-cluster-poller</code>).</dd>
-          <dt>True when</dt><dd>Clusters share one identity provider (LDAP): one <code>uid</code>, one person.</dd>
-          <dt>Risk</dt><dd>htpasswd users (and <code>kube:admin</code>) are per-cluster people. The same name on two
-            clusters is two accounts, so a name match is not proof.</dd>
+          <dt>True when</dt><dd>Your OpenShift username names you on the remote too: readers are matched by
+            <code>User</code> name (D3).</dd>
+          <dt>Risk</dt><dd>The match is by username alone (D3): the remote's RBAC for that name decides.</dd>
         </dl>
       </div>
     </div>
@@ -303,8 +303,6 @@ a { color: var(--remote); }
           as a decision.</li>
         <li><code>shared-qa</code> is a hand-made Secret from #310's testing with no visibility key, so it has always
           been <code>self-only</code>.</li>
-        <li>Your lab <code>kubeadmin</code> is an <strong>htpasswd</strong> user (identity
-          <code>developer:kubeadmin</code>). On a real remote, that name would be a different person.</li>
       </ul>
     </div>
   </section>
@@ -478,16 +476,11 @@ a { color: var(--remote); }
       </div>
       <div class="decision">
         <div class="id">D3 · what "same person" means (identity)</div>
-        <div class="q">Is your host username trusted as the same person on the remote?</div>
-        <div class="opts"><span><strong>(a) Every username:</strong> simple. On the lab, <code>kubeadmin</code> is wide on
-          <code>shared-rnd</code>. On a real estate, an htpasswd <code>developer</code> on the host would be read as
-          the remote's <code>developer</code>.</span><span><strong>(b) Directory identities only:</strong> accounts from the
-          break-glass providers (<code>loginCapture.htpasswdProviders</code>, e.g. <code>developer</code>) are never
-          mapped across clusters. LDAP users are.</span></div>
-        <div class="rec warn"><strong>Your call, still open.</strong> The standard (D2) fixes the pairing, not this.
-          (b) is the correct rule for real estates, but it narrows
-          <em>this</em> lab's htpasswd <code>kubeadmin</code> on <code>shared-rnd</code>. An LDAP admin would be wide.
-          (a) matches what you expected today.</div>
+        <div class="q">Is your host username the same person on the remote?</div>
+        <div class="opts">Yes, by name: every reader is matched by their OpenShift username, the <code>User</code>
+          object's name, with no identity-provider distinction. It is what <code>remote-sar</code> already does for a
+          values-declared cluster, so it needs no code.</div>
+        <div class="rec"><strong>Directed</strong> (2026-09-23): <em>"this is all OpenShift and everyone appears as a user … just focus on the users that you see in OpenShift users."</em></div>
       </div>
       <div class="decision">
         <div class="id">D4 · when the joining SA may not ask</div>
@@ -509,7 +502,7 @@ a { color: var(--remote); }
         <div class="id">D6 · the lab, right now</div>
         <div class="q">Until D1 ships, what should <code>shared-rnd</code> and <code>shared-qa</code> be?</div>
         <div class="opts"><code>inherit</code> + <code>same-as-host</code> restores what you had before #307, and is
-          literally true on this lab (same cluster, same identity provider). Switch to <code>remote-sar</code> once D1
+          literally true on this lab (same cluster). Switch to <code>remote-sar</code> once D1
           lands. <code>shared-qa</code>: the same, or remove it if it was only #310's test cluster.</div>
         <div class="rec"><strong>Recommend: inherit now, remote-sar after D1.</strong></div>
       </div>
