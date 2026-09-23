@@ -76,7 +76,7 @@ today it can take only the first or the third column, because a Secret-declared 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="diagrams/remote-cluster-access/remote-sar-decision-flow.dark.png">
   <source media="(prefers-color-scheme: light)" srcset="diagrams/remote-cluster-access/remote-sar-decision-flow.light.png">
-  <img alt="remote-sar today: a cached verdict, or list the reader's groups on the remote and create a SubjectAccessReview there with the joining token; allowed gives the wide view and denied gives self, both cached; a failure at either remote call gives self, not cached, with a pod-log warning and the tier-check metric" src="diagrams/remote-cluster-access/remote-sar-decision-flow.light.png">
+  <img alt="remote-sar today: a cached verdict, or list the reader's groups on the remote and create a SubjectAccessReview there with the joining token; allowed gives the wide view and denied gives self, both cached; a 401, 403 or unreachable answer at either remote call gives self, not cached, with a pod-log warning and the tier-check metric; any other exception gives self, not cached, with an ERROR and the metric outcome error" src="diagrams/remote-cluster-access/remote-sar-decision-flow.light.png">
 </picture>
 <!-- markdownlint-enable MD033 -->
 

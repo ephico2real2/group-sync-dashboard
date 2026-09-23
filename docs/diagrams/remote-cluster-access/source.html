@@ -204,7 +204,7 @@ a { color: var(--remote); }
     <h2>How <code>remote-sar</code> decides today, including when it cannot</h2>
     <figure>
       <div class="fig-scroll">
-        <svg viewBox="0 0 980 470" role="img" aria-label="remote-sar today: a cached verdict, or list the reader's groups on the remote and create a SubjectAccessReview there with the joining token. Allowed gives the wide view and denied gives self, both cached. A failure at either remote call gives self, not cached, with a pod-log warning and the tier-check metric. The named finding and the per-outcome sentence are proposals D4 and D5.">
+        <svg viewBox="0 0 980 490" role="img" aria-label="remote-sar today: a cached verdict, or list the reader's groups on the remote and create a SubjectAccessReview there with the joining token. Allowed gives the wide view and denied gives self, both cached. A 401, 403 or unreachable answer at either remote call gives self, not cached, with a pod-log warning and the tier-check metric; any other exception gives self, not cached, with an ERROR and the metric outcome error. The named finding and the per-outcome sentence are proposals D4 and D5.">
           <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
           <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
             <g stroke="currentColor" fill="none" stroke-width="1.2">
@@ -256,7 +256,8 @@ a { color: var(--remote); }
             <text x="852" y="370" text-anchor="middle">self, not cached</text>
             <text x="852" y="388" text-anchor="middle" fill="var(--muted)">warning + metric</text>
             <text x="40" y="432" fill="var(--muted)">Today every narrowed outcome shows the reader the same generic "Your view" text; only the pod log and the tier-check metric name the failure.</text>
-            <text x="40" y="452" fill="var(--host)" font-weight="600">Proposed: D4 names the two 403s as a finding with their fix · D5 gives the reader one sentence per outcome.</text>
+            <text x="40" y="452" fill="var(--muted)">Any other exception in the check: self, not cached, logged as an ERROR with a traceback and counted as outcome "error".</text>
+            <text x="40" y="472" fill="var(--host)" font-weight="600">Proposed: D4 names the two 403s as a finding with their fix · D5 gives the reader one sentence per outcome.</text>
           </g>
         </svg>
       </div>
@@ -334,7 +335,7 @@ a { color: var(--remote); }
       fleet account does it, automatically. Rejoin (#316) is the same exchange started by a person.</p>
     <figure>
       <div class="fig-scroll">
-        <svg viewBox="0 0 980 870" role="img" aria-label="How a cluster is joined. On the host, saTokenLookup starts automatically: it stops first if cluster-Secret writes are off, then the leader or sole replica reads the fleet account's password from one host Secret, and a password the target already refused is not sent again. Rejoin, proposed, starts with a person who must pass clusterAdminSar on the host, update clusterrolebindings, and types their own username and password. On the remote, the dashboard logs in as that account, a proposed SelfSubjectAccessReview confirms a Rejoin credential is cluster admin there, it reads the poller's token Secret by name in group-sync-operator, and tries once to revoke the login's own token. Back on the host it writes gsd-cluster-shared-rnd. Once joined, the poller's token authenticates every later call; its rights on the remote are the ClusterRole group-sync-dashboard-cluster-poller, and once D1 lands, under remote-sar the same token asks the remote about each reader.">
+        <svg viewBox="0 0 980 870" role="img" aria-label="How a cluster is joined. On the host, saTokenLookup starts automatically: it stops first if cluster-Secret writes are off, then the leader or sole replica reads the fleet account's password from one host Secret, and a password the target already refused is not sent again. Rejoin, proposed, starts with a person who must pass clusterAdminSar on the host, update clusterrolebindings, and types their own username and password. On the remote, the dashboard logs in as that account, a proposed SelfSubjectAccessReview asks #322's cluster-admin question of a Rejoin credential there, it reads the poller's token Secret by name in group-sync-operator, and tries once to revoke the login's own token. Back on the host it writes gsd-cluster-shared-rnd. Once joined, the poller's token authenticates every later call; its rights on the remote are the ClusterRole group-sync-dashboard-cluster-poller, and once D1 lands, under remote-sar the same token asks the remote about each reader.">
           <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
           <!-- lanes -->
           <g font-family="IBM Plex Mono, monospace" font-size="13" font-weight="600">
