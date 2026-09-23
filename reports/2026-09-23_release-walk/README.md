@@ -1,4 +1,4 @@
-# The 2026-09-23 release, walked — main @ `7f1856a920`, then `e3b3731b78`
+# The 2026-09-23 release, walked — main @ `7f1856a920`, then `e3b3731b78`; the corrected checks on `7e68a93565`
 
 Walked 2026-09-23 against the CRC lab (OpenShift 4.22.7), deployed through `local-development/release-crc.sh
 --argocd`: Argo CD Application `group-sync-dashboard` at `targetRevision=7f1856a920`, Synced/Healthy, image
@@ -58,9 +58,9 @@ desktop, up to 160.5 px at 320 px wide) — and re-measured on the redeployed `e
 | `results.json`, `results_extra.json`, `integrity.jsonl`, `env.json` | the walk's own results — every number in the document is read from these |
 | `results_release.json`, `measurements.json`, `results_release_7e68a93.json` | the release checks as first run, the three precise re-measurements, and the corrected checks re-run |
 | `findings.json` | the findings the document carries |
-| `screenshots/` | the release checks (`release-*.png`) and the namespace-access report after the walk's fix (`walk-23-*.png`). The walk's own 75 captures (44 main, 20 second pass, 11 PDF page 1) are not committed as PNGs: `e2e-walk.html` embeds them as downscaled JPEGs |
+| `screenshots/` | the release checks' own captures (`release-01…08-*.png`), one capture taken beside them for the #330 re-measurement (`release-09-nsaudit-every-grant-tint.png`: Every grant expanded, the page `measurements.json` describes; the checks record no screenshot for that step), and the namespace-access report after the walk's fix (`walk-23-*.png`). The walk's own 75 captures (44 main, 20 second pass, 11 PDF page 1) are not committed as PNGs: `e2e-walk.html` embeds them as downscaled JPEGs |
 | `artefacts/` | the 11 reports as HTML and JSON, downloaded through the page (the PDFs are not committed, for size) |
-| `validate_release.py` | the release checks |
+| `validate_release.py`, `test_validate_release.py` | the release checks, and the tests of the two checks whose verdict must not depend on what the page or the store holds (a backfilled older login; a section that never opened) |
 
 ## How to repeat
 
