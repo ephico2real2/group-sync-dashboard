@@ -8192,7 +8192,12 @@ class TestReportsTab:
                                    timeout=15_000)
             page.locator("#report-clusters .rp-clusters button").nth(1).click()
             page.wait_for_function("() => /clusters, one run each/.test(document.querySelector('.report-actions').textContent)")
-            page.wait_for_timeout(200)   # the observer's callback runs after layout
+            # The observer has run for THIS bar when the property equals its height (confirmation pass of #333, Grok
+            # C5): a fixed sleep proved nothing, and the 10rem fallback could satisfy `pad >= bar` on its own.
+            page.wait_for_function("""() => { const bar = document.querySelector('.report-actions');
+                const raw = getComputedStyle(document.documentElement).getPropertyValue('--report-actions-h').trim();
+                return !!bar && raw !== '' && parseFloat(raw) === Math.ceil(bar.getBoundingClientRect().height); }""",
+                timeout=5_000)
             measured = page.evaluate("""() => ({
                 bar: document.querySelector('.report-actions').getBoundingClientRect().height,
                 pad: parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) })""")
