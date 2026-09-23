@@ -250,7 +250,8 @@ class TestLoginCaptureReadsOneNamespaceOnly:
     read is a Role in the single namespace whose logs it parses.
     """
 
-    ON = {"loginCapture__enabled": "true"}
+    # pod-log is opt-in since chart 0.52.0 (audit-log is the default), so this path says so.
+    ON = {"loginCapture__enabled": "true", "loginCapture__source": "pod-log"}
 
     def _docs(self, out):
         import yaml
@@ -323,7 +324,9 @@ class TestTheOauthLogLevelJobKeepsTheWriteOffTheDashboard:
     NOTE ON PLACEMENT: `.github/workflows/ci.yml` points the `chart` job at THIS FILE by name.
     """
 
-    ON = {"authLogLevel__manage": "true"}
+    # authLogLevel raises the OAuth server verbosity, which only the pod-log source needs — and
+    # the chart REFUSES it together with source=audit-log, now the default. Select pod-log.
+    ON = {"authLogLevel__manage": "true", "loginCapture__source": "pod-log"}
 
     def _docs(self, out):
         import yaml
@@ -1558,8 +1561,19 @@ class TestAuditLogSource:
                          tuple(r.get("resourceNames") or [])) for r in d["rules"]]
         return None
 
-    def test_the_default_renders_no_audit_grant_and_the_pod_log_role(self):
+    def test_the_default_renders_the_audit_grant_and_no_pod_log_role(self):
+        """Chart 0.52.0 moved the default to audit-log. The previous default shipped the feature
+        ENABLED while its source needed a verbosity the same install left off, so a plain install
+        captured no named login at all."""
         ok, out = render()
+        assert ok, out
+        assert self._rules(out, "ClusterRole", "login-capture-audit") is not None
+        assert self._rules(out, "Role", "login-capture") is None, "the pod-log Role must not render by default"
+        assert 'loginCaptureSource: "audit-log"' in out
+
+    def test_pod_log_remains_selectable_and_then_renders_no_audit_grant(self):
+        """The old default is now the opt-in: it still works, it is just not chosen for you."""
+        ok, out = render(loginCapture__source="pod-log")
         assert ok, out
         assert "login-capture-audit" not in out
         assert self._rules(out, "Role", "login-capture") is not None
