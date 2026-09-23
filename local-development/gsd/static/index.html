@@ -3641,7 +3641,27 @@ function landReportForm() {
   window.scrollTo({ top: form.getBoundingClientRect().top + window.scrollY - shell - 12 });
 }
 
+/* #332, WCAG 2.2 SC 2.4.11 (technique C43): the page's bottom scroll-padding is the sticky Generate bar's height
+   (app.css, html:has(.report-actions)), so focus scrolling keeps a focused control clear of the bar. The bar wraps
+   with its content — the totals preview is painted after render, a second cluster adds a note — so the height is
+   observed, not assumed. One observer, re-pointed at each render's new bar; without ResizeObserver the CSS's 10rem
+   stands. */
+const reportActionsObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => {
+      const bar = entries[entries.length - 1].target;
+      document.documentElement.style.setProperty("--report-actions-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+    })
+  : null;
+
+function observeReportActions() {
+  if (!reportActionsObserver) return;
+  reportActionsObserver.disconnect();
+  const bar = document.querySelector(".report-actions");
+  if (bar) reportActionsObserver.observe(bar);
+}
+
 function wireReports() {
+  observeReportActions();
   document.querySelectorAll(".report-pick").forEach((el) => {
     const choose = () => {
       if (el.getAttribute("aria-disabled") === "true") return;   // a <tr> is not natively disableable

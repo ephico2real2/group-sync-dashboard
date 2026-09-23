@@ -8177,6 +8177,30 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    @pytest.mark.parametrize("width", [320, 375, 1440])
+    def test_the_scroll_padding_follows_the_generate_bars_real_height(self, browser, reporting_server, width):
+        """Review of #333 (Grok, C4): a fixed padding was sized to the bar before the totals preview painted. Measured:
+        the bar is 44 px on a desktop and 160 px at 320 px wide with the totals line and a second cluster, so 7rem
+        (112 px) and 10rem (160 px) each fall short somewhere. The page's padding must cover the bar as it stands."""
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": width, "height": 700})
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => (document.getElementById('report-totals') || {}).textContent.trim().length > 0",
+                                   timeout=15_000)
+            page.locator("#report-clusters .rp-clusters button").nth(1).click()
+            page.wait_for_function("() => /clusters, one run each/.test(document.querySelector('.report-actions').textContent)")
+            page.wait_for_timeout(200)   # the observer's callback runs after layout
+            measured = page.evaluate("""() => ({
+                bar: document.querySelector('.report-actions').getBoundingClientRect().height,
+                pad: parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) })""")
+            assert measured["pad"] >= measured["bar"], f"{width}px: {measured}"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_the_picker_menu_names_its_source_and_counts_what_the_poll_listed(self, browser, reporting_server):
         # Review of #224 (OB3): LOOKUP_HEAD had no entry for the new source, so the menu head read the raw
         # key ("namespaces · 9 discovered"); and with `(cluster-scoped)` offered first the count said 10 for
