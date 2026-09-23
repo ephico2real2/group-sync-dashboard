@@ -321,7 +321,8 @@ Row by row:
   them degrades to D4's self, never to a wider view. D8 needs nothing: `system:basic-user` already grants
   `create selfsubjectaccessreviews`.
 - **Tests:** a Secret-declared `remote-sar` cluster asks the remote; a credential change rebuilds its resolver; each
-  403 yields self and the finding; an `inherit` cluster never contacts the remote about the reader; the parser
+  403 yields self, and the finding if D4's recommendation is accepted; an `inherit` cluster never contacts the remote
+  about the reader; the parser
   refuses `remote-sar` without `same-as-host`; a namespace admin (`create secrets` in the dashboard's namespace, no
   `update clusterrolebindings`) is refused the tab's writes; with D8, a Rejoin credential that may not `update
   clusterrolebindings` on the remote is refused and its login revoked before any Secret is read.
