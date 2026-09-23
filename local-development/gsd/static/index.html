@@ -6324,9 +6324,26 @@ function whoCell(row) {
   const open = view.nsWhoOpen.has(row.namespace);
   const shown = open ? users : users.slice(0, WHO_PREVIEW);
   const hidden = users.length - shown.length;
-  const names = shown.map((u) => `<span class="who-name">${esc(u)}</span>`).join("");
+  // A SEPARATOR IN THE TEXT, not only in the layout (#261 §3). A 6 px margin and no character made the
+  // cell's text — what a reader copies — `asmithbwilliamsjdoe`. " · " and not a comma: a user name can be
+  // an LDAP DN, full of commas, and a list the reader cannot split again is the defect the store's `users`
+  // list exists to avoid. The dot is aria-hidden: assistive technology gets the real space between names,
+  // not a spoken "dot".
+  //
+  // THE DOT TRAVELS WITH THE NAME'S LAST CHARACTER (review of #329: Grok, Codex and OB1-lite, C11). The cell
+  // breaks long names anywhere (`overflow-wrap: anywhere` on .who, for LDAP DNs), and the space before the
+  // dot was a break opportunity: whenever a name's last line was nearly full the dot started a line of its
+  // own — measured at 375, 393, 768 and 1280. The last code point and the separator share a nowrap tail,
+  // so the rest of the name still wraps (a whole-name nowrap overflowed the cell: 522 px in 230) and the
+  // dot never leads a line. Array.from splits by code point, so an astral character stays whole.
+  const names = shown.map((u, i) => {
+    const chars = Array.from(String(u));
+    const last = chars.pop() || "";
+    return `<span class="who-name">${esc(chars.join(""))}<span class="who-tail">${esc(last)}${
+      i < shown.length - 1 ? '<span aria-hidden="true"> ·</span>' : ""}</span></span>`;
+  }).join(" ");
   if (!hidden && !open) return names;
-  return names + `<button type="button" class="linkish who-more" data-who="${esc(row.namespace)}">`
+  return names + ` <button type="button" class="linkish who-more" data-who="${esc(row.namespace)}">`
     + (open ? "show fewer" : `+${hidden} more`) + "</button>";
 }
 
@@ -6773,6 +6790,14 @@ function directUserGrants(ub) {
         ? `<button type="button" class="linkish" data-ns-reset>Restore risk order</button>`
         : ""}
     </div>
+    ${(view.nsSearch || "").trim()
+      // THE BAR'S BOX KEEPS ITS SHIPPED SCOPE (#261, part 1): it narrows the Namespaces list, and this
+      // worklist is not its subject. The capture measured the consequence — typing `legacy` left this
+      // table whole while the list below narrowed to its two legacy-* rows — with nothing on screen to say
+      // why. Said only while the box holds a query: the one moment a reader expects this table to move.
+      ? `<div class="filterbar-note mb-4"><strong>Find namespace</strong> in the bar narrows the Namespaces
+          list below, not this table: the worklist always ranks every namespace holding a direct grant.</div>`
+      : ""}
     ${sorted.length ? `<div class="scroll-x"><table class="audit-table">
       <thead><tr>
         ${sortableTh("Risk", "risk", view.nsSort, view.nsDir, "ns")}

@@ -3392,6 +3392,58 @@ class TestNamespaceAuditPage:
         who = dash.locator("td.who").all_inner_texts()
         assert any("cn=jdoe,ou=people,dc=ephico2real,dc=com" in w for w in who), who
 
+    @pytest.mark.parametrize("width", [375, 1280])
+    def test_a_names_separator_never_starts_a_line_and_the_cell_never_overflows(self, dash, width):
+        """Review of #329 (Grok, Codex, OB1-lite, C11): the space before " ·" was a break opportunity inside
+        a cell that breaks names anywhere, so the dot led a line whenever a name's last line was nearly full
+        (measured: 17 of 240 name lengths at 375, 2 at 1280). A sweep of lengths crosses those boundaries on
+        any font: no dot may sit below its name's last character, and no cell may overflow — the fix must
+        not trade the wrap for a whole-name nowrap."""
+        self._open(dash)
+        dash.set_viewport_size({"width": width, "height": 900})
+        result = dash.evaluate("""() => {
+          const row = data.userBindings.by_namespace.find((r) => r.namespace === 'prod-ns');
+          const separated = [], overflowing = [];
+          for (const ch of ['m', 'i', 'w']) for (let k = 1; k <= 80; k++) {
+            const name = ch.repeat(k);
+            row.users = [name, 'z']; view.nsWhoOpen.add('prod-ns'); render();
+            const cell = [...document.querySelectorAll('td.who')].find((td) => td.textContent.includes(name));
+            const chip = cell.querySelector('.who-name');
+            const dot = chip.querySelector('[aria-hidden]');
+            const walker = document.createTreeWalker(chip, NodeFilter.SHOW_TEXT);
+            let lastText = null, node;
+            while ((node = walker.nextNode())) if (!dot.contains(node) && node.data.length) lastText = node;
+            const range = document.createRange();
+            range.setStart(lastText, lastText.data.length - 1); range.setEnd(lastText, lastText.data.length);
+            if (dot.getClientRects()[0].top > range.getClientRects()[0].bottom - 2) separated.push(ch + k);
+            if (cell.scrollWidth > cell.clientWidth + 1) overflowing.push(ch + k);
+          }
+          return {separated, overflowing};
+        }""")
+        assert result == {"separated": [], "overflowing": []}, result
+
+    def test_who_is_exposed_separates_the_names_a_reader_copies(self, dash):
+        """#261 §3: the names were inline-blocks 6 px apart with no character between them, so the cell's text —
+        what a reader copies — read `asmithbwilliamsjdoe`. The separator is " · ", not a comma: a user name can
+        be an LDAP DN, full of commas (the seed's jdoe), and a list the reader cannot split again is the defect
+        the store's `users` LIST exists to avoid. The dot is hidden from assistive technology, which is given
+        real spaces instead of an engine's guess at inline-block boundaries. Driven from the payload: no
+        namespace in the seed has more than one person."""
+        self._open(dash)
+        dash.evaluate("""() => { const r = data.userBindings.by_namespace.find((x) => x.namespace === 'prod-ns');
+            r.users = ['asmith', 'bwilliams', 'cn=jdoe,ou=people,dc=ephico2real,dc=com', 'dlee', 'erin']; render(); }""")
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        cell = worklist.locator("tbody tr", has=dash.locator("td.ns-cell", has_text="prod-ns")).locator("td.who")
+        copy = """(td) => { const r = document.createRange(); r.selectNodeContents(td); const s = getSelection();
+            s.removeAllRanges(); s.addRange(r); const t = s.toString(); s.removeAllRanges(); return t.replace(/\\s+/g, ' ').trim(); }"""
+        expected = "asmith · bwilliams · cn=jdoe,ou=people,dc=ephico2real,dc=com · dlee +1 more"
+        assert " ".join(cell.evaluate("(td) => td.textContent").split()) == expected
+        assert cell.evaluate(copy) == expected
+        assert cell.locator(".who-name [aria-hidden='true']").count() == 3, "the dots are the page's, not the reader's"
+        cell.locator("button.who-more").click()
+        cell = worklist.locator("tbody tr", has=dash.locator("td.ns-cell", has_text="prod-ns")).locator("td.who")
+        assert cell.evaluate(copy) == "asmith · bwilliams · cn=jdoe,ou=people,dc=ephico2real,dc=com · dlee · erin show fewer"
+
     def test_grants_to_migrate_is_the_cluster_not_the_page(self, dash):
         """Three non-platform grants seeded; kubeadmin is excluded and counted separately."""
         self._open(dash)
@@ -3464,6 +3516,25 @@ class TestNamespaceAuditPage:
         dash.wait_for_selector("h2:has-text('dev-ns')")
         main = dash.locator("#main").inner_text()
         assert "no longer on the cluster" in main and "Dashboard API error" not in main, main[:300]
+
+    def test_the_worklist_says_the_bars_box_does_not_narrow_it(self, dash):
+        """#261: the bar's Find namespace keeps its shipped scope — the Namespaces list — by agreement (part 1;
+        the mock's worklist says so in a note). The capture measured the consequence: typing `legacy` left
+        the worklist whole while the list below narrowed to its two legacy-* rows, with nothing on screen to
+        say why. The scope stays; the worklist says it while the box holds a query, and not otherwise."""
+        self._open(dash)
+        worklist = dash.locator("section.card", has=dash.locator("h3:text-is('Exposure by namespace')"))
+        rows = worklist.locator("tbody tr").count()
+        assert "Find namespace" not in worklist.inner_text()
+        box = dash.locator("#f-ns-search")
+        box.fill("prod")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 1")
+        assert worklist.locator("tbody tr").count() == rows, "the worklist is not the box's subject"
+        text = " ".join(worklist.inner_text().split())
+        assert "Find namespace in the bar narrows the Namespaces list below, not this table" in text, text
+        box.press("Escape")
+        dash.wait_for_function("() => document.querySelectorAll('tr[data-ns]').length === 9")
+        assert "Find namespace" not in worklist.inner_text()
 
 
 class TestUsagePage:
