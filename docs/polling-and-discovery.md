@@ -138,9 +138,19 @@ Three things worth knowing about that line:
 
 ### A token outlives its own `exp`
 
-Measured at **+36s** and **+42s** past the `exp` claim on two separate runs — both accepted, with the
-following poll refused. This is a JWT validation leeway (go-jose's `DefaultLeeway` is one minute),
-not a cache.
+Measured directly against the API with a token allowed to lapse, probing by offset from `exp`:
+
+```
+exp -10s  ACCEPTED      exp +56s  ACCEPTED
+exp  +5s  ACCEPTED      exp +62s  rejected     <- the boundary
+exp +20s  ACCEPTED      exp +70s  rejected
+exp +35s  ACCEPTED      exp +85s  rejected
+exp +50s  ACCEPTED      exp+130s  rejected
+```
+
+**The flip is between +56s and +62s** — a one-minute JWT validation leeway (go-jose's
+`DefaultLeeway`), not a cache. The poller corroborates it independently: across three runs it
+accepted polls at `exp+8s`, `exp+36s` and `exp+42s`, and refused the next poll each time.
 
 **Treat it as free slack, never as budget.** It is a server-side validation detail, not a contract.
 Anything that schedules a renewal should compute it from `exp` alone.
