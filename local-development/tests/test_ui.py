@@ -8144,6 +8144,39 @@ class TestReportsTab:
             _Snapshot.discovered = orig
             ctx.close()
 
+    @pytest.mark.parametrize("width,height", [(1440, 700), (375, 640)])
+    def test_a_focused_picker_option_is_never_under_the_generate_bar(self, browser, reporting_server, width, height):
+        """#332, WCAG 2.2 SC 2.4.11: the Generate bar is sticky at the viewport's bottom, and Tab scrolls a focused
+        option only just into view — under the bar (measured on the lab: 16 of 40 options hidden). At the
+        point each option takes focus, the element on top of its centre must be the option itself."""
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=namespaces]').length > 0")
+            page.focus("#report-lookup-namespace-access-namespaces")
+            focused, hidden = [], []
+            for _ in range(15):
+                page.keyboard.press("Tab")
+                seen = page.evaluate("""() => { const el = document.activeElement;
+                    if (!el || !el.matches('[data-lookup-opt=namespaces]')) return null;
+                    const r = el.getBoundingClientRect();
+                    const top = document.elementFromPoint(r.left + r.width / 2, Math.min(r.top + r.height / 2, innerHeight - 1));
+                    return {value: el.dataset.value, covered: !el.contains(top)}; }""")
+                if seen is None:
+                    break
+                focused.append(seen["value"])
+                if seen["covered"]:
+                    hidden.append(seen["value"])
+            assert len(focused) >= 8, focused
+            assert hidden == [], f"focused under the Generate bar at {width}x{height}: {hidden}"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_the_picker_menu_names_its_source_and_counts_what_the_poll_listed(self, browser, reporting_server):
         # Review of #224 (OB3): LOOKUP_HEAD had no entry for the new source, so the menu head read the raw
         # key ("namespaces · 9 discovered"); and with `(cluster-scoped)` offered first the count said 10 for
