@@ -104,11 +104,18 @@ outside the API, the only thing to do is wait for the cadence.
 
 A per-cluster refresh endpoint is proposed in **issue #311** —
 `POST /api/clusters/{name}/refresh` — and a control in the UI that calls it. **Neither exists
-today.** When it is built, the constraint that governs it is not performance but safety: for a
-`userSelfLogin` cluster a refresh *is a bind*, so it must honour `gsd/fleetlookup.py#CredentialGate`
-and return a gated credential's standing refusal **without binding**. An on-demand re-bind that
-ignores the gate is the most convenient way to lock out the account the whole estate authenticates
-with.
+today.** When it is built, the constraint that governs it is not performance but safety.
+
+**Which modes bind, precisely.** `userSelfLogin` does **not** bind today — it sits in
+`gsd/config.py#CREDENTIAL_PENDING_REASONS` ("the self-login mode is S3b's #285, not built"), and a
+kind in that table is never handed to `ClusterClient`. The mode that binds today is
+**`saTokenLookup`**, whose fleet login puts the password on the wire; `userSelfLogin` joins it when
+#285 lands.
+
+So a refresh on a `saTokenLookup` cluster *is a bind*, and it must honour
+`gsd/fleetlookup.py#CredentialGate` — returning a gated credential's standing refusal **without
+binding**. An on-demand re-bind that ignores the gate is the most convenient way to lock out the
+account the whole estate authenticates with.
 
 ## 5. What a poll does when the credential has expired
 
