@@ -1513,36 +1513,31 @@ clusterConfig:
     tokenSecretName: ""
 
 # ---------------------------------------------------------------------------
-# Login capture  (reads the oauth-server's logs)
+# Login capture  (reads the oauth-server's audit log)
 # ---------------------------------------------------------------------------
-# Grants the DASHBOARD read access to the oauth-server's pod logs, which is where the "who logged in"
-# lines appear. Read-only, on the dashboard's own ServiceAccount — the write that ENABLES those lines
-# lives on a separate identity, see authLogLevel below.
+# Grants the DASHBOARD a read of the oauth-server's login records, which is where "who logged in"
+# comes from. Read-only, on the dashboard's own ServiceAccount. The grant follows `source` below:
 #
-# NEEDS authLogLevel.enabled=true TO SEE ANYTHING. At the default verbosity the lines do not exist —
-# measured: zero occurrences of "succeeded for login" until the level is Debug. So this grant on its
-# own is inert, which is deliberate: the read and the cluster-wide write are separate decisions.
+#   audit-log (the default since 0.52.0) — a ClusterRole on `get nodes/proxy`, plus `list
+#     nodes` unless auditLog.nodeNames pins the nodes. Names the person at the DEFAULT
+#     verbosity: nothing to enable, no OAuth roll. Its cost is stated at `source` below.
+#   pod-log (deprecated, removal tracked in #321) — a Role on `pods/log` in ONE namespace,
+#     never a ClusterRole: cluster-wide it would read EVERY pod's logs — tokens, connection
+#     strings, customer data. It NEEDS authLogLevel.enabled=true TO SEE ANYTHING — measured:
+#     zero occurrences of "succeeded for login" until the level is Debug — and that write
+#     lives on a separate identity. The Role and RoleBinding land in a namespace the chart
+#     does not own: an ArgoCD Application shows them outside its destination, and a policy
+#     forbidding writes to `openshift-*` rejects them.
 #
-# A Role in ONE namespace, not a ClusterRole, and that matters: `pods/log` cluster-wide would let the
-# dashboard read EVERY pod's logs on the cluster — tokens, connection strings, customer data. Scoped
-# here it can read the OAuth server's logs and nothing else.
-#
-# The cost, stated rather than hidden: this creates a Role and RoleBinding in a namespace the chart
-# does not own. An ArgoCD Application will show them outside its destination namespace, and a policy
-# forbidding writes to `openshift-*` namespaces will reject them.
-#
-# ON by default since chart 0.14.0: the read is scoped to one namespace, costs no credential, and is
-# what the Users tab's login columns need. It stays inert until the lines exist — the Debug level
-# (authLogLevel below) today; the oauth-server audit log (`loginCapture.source: audit-log`) once
-# that source ships, which is the intended pair: the Debug level is being retired in its favour.
-# Set false where a policy forbids the Role in `openshift-authentication`.
+# ON by default since chart 0.14.0, with audit-log as its source since 0.52.0: the Users tab's login
+# columns need it. Set false where the nodes/proxy grant is unacceptable.
 loginCapture:
   enabled: true
 
   # WHICH LOG TO READ. Two sources, and the whole point of the second is what it does not need:
   #
-  #   pod-log     (default) the oauth-server pods' logs, through a Role in openshift-authentication
-  #               on `pods` and `pods/log`. Names a person ONLY at spec.logLevel: Debug on the
+  #   pod-log     (deprecated, #321) the oauth-server pods' logs, through a Role in
+  #               openshift-authentication on `pods` and `pods/log`. Names a person ONLY at spec.logLevel: Debug on the
   #               authentication operator CR (authLogLevel below), which rolls the OAuth server —
   #               a login outage at one replica — and history dies with every pod. What it has that
   #               the audit log does not: the LDAP result code and AD sub-code behind a refusal.
@@ -1585,7 +1580,7 @@ loginCapture:
   # and an audit event that corresponds to one is linked to it rather than recorded twice.
   #
   # DEPRECATION: `pod-log` and the whole `authLogLevel` Job machinery are on their way out — the
-  # audit log is the supported path. Tracked so the removal is a decision and not a drift.
+  # audit log is the supported path. Tracked in #321 so the removal is a decision, not a drift.
   #
   # HOW THE AUDIT PATH WORKS end to end — the node-proxy request, what it needs on a REMOTE cluster
   # and which chart grants it, what counts as a login, and a worked example you can run against the
@@ -1716,7 +1711,9 @@ clusterAccess:
 #
 # Both stay false under the chart's on-by-default rule (0.14.0), on purpose: the Debug level is a
 # cluster-wide write that rolls the OAuth server, and the oauth-server audit log
-# (`loginCapture.source: audit-log`) is replacing it as the way login lines are obtained.
+# (`loginCapture.source: audit-log`, the default since 0.52.0) has replaced it as the way login
+# lines are obtained. This block serves only the deprecated pod-log source and the move of a cluster
+# left at Debug back to Normal; its removal is tracked in #321.
 authLogLevel:
   manage: false
   enabled: false

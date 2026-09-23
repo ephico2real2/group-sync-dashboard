@@ -515,6 +515,11 @@ some other way — it then runs at `INFO` and logs a warning rather than failing
 
 ### oauth-server log verbosity
 
+**Deprecated — the pod-log source only.** Since chart 0.52.0 login capture reads the oauth-server
+audit log, which names the person at the default verbosity; nothing in this section is needed for
+it. This machinery remains for the opt-in `pod-log` source and to move a cluster left at `Debug`
+back to `Normal` (the two steps below). Its removal is tracked in #321.
+
 The oauth-openshift server only names the person logging in when the authentication **operator**
 CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`. Three
 cluster-scoped objects have confusingly similar names, and this feature touches only the first:
@@ -528,7 +533,8 @@ cluster-scoped objects have confusingly similar names, and this feature touches 
 `logLevel` is the **operand's** verbosity (the `oauth-server` process, which emits the login
 lines); `operatorLogLevel` is the operator's own and would change nothing here. At `Normal` that line is
 not emitted at all — measured: **zero** occurrences of `succeeded for login` until it is on. So
-`authLogLevel.*` is the prerequisite for capturing login activity, and nothing more.
+`authLogLevel.*` is the prerequisite for the pod-log source, and nothing more; the audit-log default
+needs none of it.
 
 **The write does not go on the dashboard.** Patching that object is a write to a core platform
 object, and `rbac.yaml` states *"NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON"* — a line
@@ -569,7 +575,9 @@ helm upgrade ... -f my-values.yaml --set authLogLevel.manage=false
 `helm uninstall` needs no such care — the pre-delete Job reverts first. But `helm rollback` does not
 run hooks at all, so rolling back past an enable does **not** put the level back; do step 1 by hand.
 
-**To verify it end to end**, follow `docs/LOGIN_CAPTURE_QUICKCHECK.md` — five commands that turn the
+The default audit-log path has its own worked example in
+[`docs/AUDIT_LOG_CAPTURE.md`](../../docs/AUDIT_LOG_CAPTURE.md). **To verify the pod-log path end to
+end**, follow `docs/LOGIN_CAPTURE_QUICKCHECK.md` — five commands that turn the
 verbosity up, cause a login, and read that login back using the dashboard's own ServiceAccount token,
 with the real output of each recorded. It is also the place to start when the dashboard shows no login
 activity and you need to find which link is missing.
