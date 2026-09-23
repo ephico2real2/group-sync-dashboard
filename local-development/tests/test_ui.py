@@ -1660,10 +1660,61 @@ class TestNamespaces:
         self._open(dash)
         dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
         dash.wait_for_selector("h2:text-is('quiet-corner')")
-        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text()
-        assert "carol" in line and "cluster-admin" in line and "named directly" in line, line
-        assert "kubeadmin" not in line
+        # Named behind the disclosure since #261 §3: the sentence counts, the list names.
+        assert dash.locator("#ns-wide-toggle").count() == 1, "no disclosure for the cluster-wide subjects"
+        dash.locator("#ns-wide-toggle").click()
+        dash.wait_for_function("() => !document.getElementById('ns-wide-list').hidden")
+        listed = dash.locator("#ns-wide-list").inner_text()
+        assert "carol" in listed and "cluster-admin" in listed and "named directly" in listed, listed
+        assert "kubeadmin" not in listed and "kubeadmin" not in dash.locator("#main").inner_text()
         assert dash.locator("#main button.drill[data-user='carol']").count() == 1
+
+    def test_the_cluster_wide_reach_is_a_tile_and_a_disclosure_not_a_paragraph(self, dash):
+        """#261 §3: on the lab this line was one sentence of 975 characters / 66 words with 16 links in it,
+        naming 53 bindings — the largest block of text on the page, and the answer to "who else can get in
+        here" buried in it. The count is a KPI tile beside the others; the sentence says how the bindings
+        split and carries no links; the subjects are one click away behind a disclosure the 60 s repaint
+        keeps open. The lab's shape (13 groups, 3 people, 37 platform bindings to 12 virtual groups) is
+        rebuilt from the payload to hold the sentence to its size."""
+        self._open(dash)
+        dash.locator("tr[data-ns='quiet-corner'] button.drill").click()
+        dash.wait_for_selector("h2:text-is('quiet-corner')")
+        tile = dash.locator(".kpi", has=dash.locator(".label", has_text="Reached cluster-wide"))
+        assert tile.count() == 1, dash.locator(".kpi .label").all_inner_texts()
+        assert tile.locator(".value").inner_text().strip() == "2"
+        line = dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide")
+        text = " ".join(line.inner_text().split())
+        assert text.startswith("Also reached cluster-wide, by 2 bindings that grant every namespace: 1 to a group, "
+                               "1 naming a person directly."), text
+        assert line.locator("button.drill").count() == 0
+        toggle = dash.locator("#ns-wide-toggle")
+        assert toggle.get_attribute("aria-expanded") == "false" and toggle.get_attribute("aria-controls") == "ns-wide-list"
+        assert "Show the 2 that name someone" in toggle.inner_text()
+        assert dash.locator("#ns-wide-list").is_hidden()
+        toggle.click()
+        dash.wait_for_function("() => !document.getElementById('ns-wide-list').hidden")
+        assert dash.locator("#ns-wide-toggle").get_attribute("aria-expanded") == "true"
+        assert dash.evaluate("() => document.activeElement.id") == "ns-wide-toggle"
+        listed = " ".join(dash.locator("#ns-wide-list").inner_text().split())
+        assert "app-ocp-rbac-alpha-ns-admin" in listed and "carol" in listed, listed
+        dash.evaluate("() => render()")   # exactly what the poll does
+        assert dash.locator("#ns-wide-list").is_visible(), "the repaint closed a list the reader opened"
+        dash.evaluate("""() => {
+          const g = (name, role, platform) => ({group_name: name, binding_kind: "ClusterRoleBinding", binding_name: name + "-crb",
+                                                role_kind: "ClusterRole", role_name: role, managed_source: platform ? null : "baseline",
+                                                member_count: platform ? 0 : 2, is_platform: platform ? 1 : 0});
+          const virtual = Array.from({length: 12}, (_, i) => "system:virtual-" + i);
+          data.ns.cluster_wide_groups = [...Array.from({length: 13}, (_, i) => g("app-ocp-rbac-team" + i + "-cluster-admin", "admin", false)),
+                                         ...Array.from({length: 37}, (_, i) => g(virtual[i % 12], "basic-user", true))];
+          data.ns.cluster_wide_grants = ["dana.lee", "jdoe", "ocp-oauth-bind-serviceid"].map((u) => ({user_name: u, binding_kind: "ClusterRoleBinding",
+                                         binding_name: u + "-crb", role_kind: "ClusterRole", role_name: "edit", is_platform: 0}));
+          render(); }""")
+        text = " ".join(dash.locator("#main .filterbar-note", has_text="Also reached cluster-wide").inner_text().split())
+        assert text.startswith("Also reached cluster-wide, by 53 bindings that grant every namespace: 13 to groups, "
+                               "3 naming a person directly; and 37 platform bindings to 12 virtual groups"), text
+        assert len(text) < 300 and line.locator("button.drill").count() == 0, (len(text), text)
+        assert tile.locator(".value").inner_text().strip() == "53"
+        assert dash.locator("#ns-wide-list button.drill").count() == 16
 
     def test_the_namespaces_card_at_the_self_tier_speaks_of_the_viewers_grants(self, page, scoped_server):
         """`nobody` holds no membership and no grant: the card lists nothing, and its copy must say that is
