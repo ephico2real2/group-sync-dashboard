@@ -10,8 +10,8 @@ review found). After #333 (#332, below) the same path redeployed `e3b3731b78`, a
 
 | What | Result |
 |---|---|
-| main walk — login through the route, 16 tabs, the lookup, 11 reports × generate + `.pdf`/`.html`/`.json` | **84 / 84** steps |
-| second pass — the other cluster, the light theme, every HTML report opened, page 1 of every PDF | **24 / 24** steps |
+| main walk — login through the route, the 14-tab strip (13 opened; Reports is exercised by the report steps), the lookup, 11 reports × generate + `.pdf`/`.html`/`.json` | **84 / 84** steps |
+| second pass — the other cluster, the light theme, every HTML report opened | **24 / 24** steps, plus page 1 of each PDF rendered: **11 / 11** |
 | integrity — per report, the recomputed sha256 = the JSON's field = the run record = the PDF metadata; the HTML prefix; the PDF/A marker | **11 / 11** reports |
 | the release's own changes — `validate_release.py` | **15 / 15** checks |
 
@@ -19,7 +19,8 @@ The first run of the walk failed one step (80/81): the namespace-access report w
 one namespace, by selector, mnemonic or explicit name"*. That was the walk, not the product: since #143/#149 the
 report's `namespaces` parameter is a picker inside the form's Advanced section, and `e2e_capture.py` skipped a
 parameter whose text field it could not find and submitted the form empty. The walk now drives the picker and fails
-on a missing control (this PR); the numbers above are the re-run against the same deployment.
+on a missing control (this PR); the numbers above are the re-run against the same deployment. The first run's
+results are not in this folder — `findings.json` keeps the note.
 
 ## What the release changed, checked on the deployed page
 
@@ -33,7 +34,7 @@ on a missing control (this PR); the numbers above are the re-run against the sam
 | #320 — login capture from the oauth-server audit log, the default source | every route login is stored as a `credential` row (the OAuth form) then a `session` row (the oauth-proxy, ~15 ms later), `source=audit-log`, read from the store: four logins at 16:52:28, 16:53:21, 16:53:28 and 16:53:42Z. No Debug level anywhere. |
 | #326 — the platform line names a hidden namespace that still holds a finding | *"67 platform namespaces hidden — 1 of them has a direct grant. This hides rows, never findings: `openshift-console-user-settings` is still ranked in Exposure by namespace above."* |
 | #327 — the cluster scope is its own card; the worklist drills | "Cluster-wide direct grants · 3" above the worklist; 4 worklist namespaces, 4 drills, the first opens its page |
-| #328 — the reach becomes a tile and a disclosure | `legacy-payments`: "Reached cluster-wide 53", the toggle `aria-expanded` false → true, 16 subjects listed |
+| #328 — the reach becomes a tile and a disclosure | `legacy-payments`: the tile present (it reads 53 in `screenshots/release-08-nsaudit-namespace-reach.png`; the check records its presence, not its value), the toggle `aria-expanded` false → true, 16 subjects listed |
 | #329 — names separated; the scope note | the copied text reads `asmith · bwilliams · jdoe`; the note shows while Find namespace holds a query and goes with Escape |
 | #330 — the risk tint on even rows; index-row ids | 3 High rows on even rows of their table, all tinted (measured per `tbody`, the scope of the CSS's `nth-child`); index drills carry `ns-row-<name>` |
 
@@ -55,7 +56,7 @@ desktop, up to 160.5 px at 320 px wide) — and re-measured on the redeployed `e
 | `results.json`, `results_extra.json`, `integrity.jsonl`, `env.json` | the walk's own results — every number in the document is read from these |
 | `results_release.json`, `measurements.json` | the release checks and the three precise re-measurements |
 | `findings.json` | the findings the document carries |
-| `screenshots/` | the release checks (`release-*.png`) and the namespace-access report after the walk's fix (`walk-23-*.png`); the walk's own 76 captures are inside the HTML |
+| `screenshots/` | the release checks (`release-*.png`) and the namespace-access report after the walk's fix (`walk-23-*.png`). The walk's own 75 captures (44 main, 20 second pass, 11 PDF page 1) are not committed as PNGs: `e2e-walk.html` embeds them as downscaled JPEGs |
 | `artefacts/` | the 11 reports as HTML and JSON, downloaded through the page (the PDFs are not committed, for size) |
 | `validate_release.py` | the release checks |
 
