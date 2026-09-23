@@ -8144,6 +8144,68 @@ class TestReportsTab:
             _Snapshot.discovered = orig
             ctx.close()
 
+    @pytest.mark.parametrize("width,height", [(1440, 700), (375, 640)])
+    def test_a_focused_picker_option_is_never_under_the_generate_bar(self, browser, reporting_server, width, height):
+        """#332, WCAG 2.2 SC 2.4.11: the Generate bar is sticky at the viewport's bottom, and Tab scrolls a focused
+        option only just into view — under the bar (measured on the lab: 16 of 40 options hidden). At the
+        point each option takes focus, the element on top of its centre must be the option itself."""
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.click("details.report-advanced summary")
+            page.wait_for_function("() => document.querySelectorAll('[data-lookup-opt=namespaces]').length > 0")
+            page.focus("#report-lookup-namespace-access-namespaces")
+            focused, hidden = [], []
+            for _ in range(15):
+                page.keyboard.press("Tab")
+                seen = page.evaluate("""() => { const el = document.activeElement;
+                    if (!el || !el.matches('[data-lookup-opt=namespaces]')) return null;
+                    const r = el.getBoundingClientRect();
+                    const top = document.elementFromPoint(r.left + r.width / 2, Math.min(r.top + r.height / 2, innerHeight - 1));
+                    return {value: el.dataset.value, covered: !el.contains(top)}; }""")
+                if seen is None:
+                    break
+                focused.append(seen["value"])
+                if seen["covered"]:
+                    hidden.append(seen["value"])
+            assert len(focused) >= 8, focused
+            assert hidden == [], f"focused under the Generate bar at {width}x{height}: {hidden}"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    @pytest.mark.parametrize("width", [320, 375, 1440])
+    def test_the_scroll_padding_follows_the_generate_bars_real_height(self, browser, reporting_server, width):
+        """Review of #333 (Grok, C4): a fixed padding was sized to the bar before the totals preview painted. Measured:
+        the bar is 44 px on a desktop and 160 px at 320 px wide with the totals line and a second cluster, so 7rem
+        (112 px) and 10rem (160 px) each fall short somewhere. The page's padding must cover the bar as it stands."""
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": width, "height": 700})
+            page.goto(base + "#page=reports&cluster=crc-local&report=namespace-access")
+            page.wait_for_selector("#report-form.r-access")
+            page.wait_for_function("() => (document.getElementById('report-totals') || {}).textContent.trim().length > 0",
+                                   timeout=15_000)
+            page.locator("#report-clusters .rp-clusters button").nth(1).click()
+            page.wait_for_function("() => /clusters, one run each/.test(document.querySelector('.report-actions').textContent)")
+            # The observer has run for THIS bar when the property equals its height (confirmation pass of #333, Grok
+            # C5): a fixed sleep proved nothing, and the 10rem fallback could satisfy `pad >= bar` on its own.
+            page.wait_for_function("""() => { const bar = document.querySelector('.report-actions');
+                const raw = getComputedStyle(document.documentElement).getPropertyValue('--report-actions-h').trim();
+                return !!bar && raw !== '' && parseFloat(raw) === Math.ceil(bar.getBoundingClientRect().height); }""",
+                timeout=5_000)
+            measured = page.evaluate("""() => ({
+                bar: document.querySelector('.report-actions').getBoundingClientRect().height,
+                pad: parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom) })""")
+            assert measured["pad"] >= measured["bar"], f"{width}px: {measured}"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_the_picker_menu_names_its_source_and_counts_what_the_poll_listed(self, browser, reporting_server):
         # Review of #224 (OB3): LOOKUP_HEAD had no entry for the new source, so the menu head read the raw
         # key ("namespaces · 9 discovered"); and with `(cluster-scoped)` offered first the count said 10 for

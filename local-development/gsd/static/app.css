@@ -1505,6 +1505,13 @@ td.state-cell { min-width: 210px; }
 .report-advanced { margin-top: var(--space-5); }
 .report-advanced summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-secondary); }
 .report-actions { position: sticky; bottom: 0; background: var(--surface-1); padding-top: var(--space-4); padding-bottom: var(--space-2); }
+/* WCAG 2.2 SC 2.4.11 Focus Not Obscured, technique C43 (#332). The bar above sticks to the viewport's bottom, and
+   the browser scrolls a focused element only just into view — under the bar: tabbing a picker's options hid 16 of
+   40 behind it on the lab. scroll-padding reserves the bar's height whenever anything is scrolled into view, focus
+   included, and only while the form is on the page. The height is the bar's own, written by a ResizeObserver
+   (index.html#function observeReportActions): measured 44 px on a desktop and up to 160 px at 320 px wide once the
+   totals preview and a second cluster wrap it, so no fixed value fits both (review of #333). 10rem until measured. */
+html:has(.report-actions) { scroll-padding-bottom: calc(var(--report-actions-h, 10rem) + var(--space-3)); }
 .rp-switch { display: inline-flex; align-items: center; gap: var(--space-3); background: none; border: 0; padding: 0; font: inherit; color: var(--text-primary); cursor: pointer; }
 .rp-switch .rp-track { width: 34px; height: 20px; border-radius: var(--radius-pill); background: var(--border); position: relative; transition: background .15s ease; flex: none; }
 .rp-switch .rp-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: var(--radius-round); background: var(--surface-1); transition: left .15s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
