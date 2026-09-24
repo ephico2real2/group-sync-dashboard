@@ -765,7 +765,8 @@ suite included (measured 2026-09-23; OB3's validation record of this revision).
 Built, deployed and walked on CRC; the evidence goes on #338. The walk proves #338's Definition of Done: `remote-sar`
 on every join path; a rotated token, CA or URL used without a restart; a retired or disabled cluster never asked; the
 default and its two exceptions; the hold and the redaction; `shared-rnd` and `shared-qa` on `remote-sar` under Argo
-CD, kubeadmin wide on both and a non-admin self; and D5's line for each persona.
+CD, kubeadmin wide on both once Step 11 rejoins `shared-qa` (it is `self` there until then: its token is expired on
+purpose) and a non-admin self on both; and D5's line for each persona.
 
 Facts that shape it (measured 2026-09-23, read-only):
 
@@ -1023,10 +1024,12 @@ Then, one change at a time, waiting for the `resolved shared-qa` line after each
 | a URL nothing answers | `set_trust "$ROOT_CA" https://api.crc.testing:6444` | `self`; a WARNING, `unreachable` |
 
 `kube-root-ca.crt` verifies `api.crc.testing:6443` (measured: `openssl s_client … -CAfile` returns 0; the mock's CA
-returns 19). No row points `shared-qa` at the in-cluster API: `https://kubernetes.default.svc` is the host's own URL,
-and a Secret naming it is refused (`host-cluster-not-from-secret`, measured by the first walk: the cluster was retired
-until the next change), and every in-cluster name is the dashboard controller's endpoint, verified with the CA mounted
-into its pod — never a remote's (the operator). The dead-URL row shows a URL change taking effect with no restart.
+returns 19). No row points `shared-qa` at the in-cluster API. By the operator's rule every in-cluster name is the
+dashboard controller's own endpoint, used with the CA mounted into its pod, never a remote's; the parser enforces only
+part of that rule: it refuses a Secret whose `server` is exactly `https://kubernetes.default.svc` or whose `name` is the
+host's (`host-cluster-not-from-secret`, measured by the first walk: the cluster was retired until the next change), and
+other spellings are not refused (the open finding in the notes). The dead-URL row shows a URL change taking effect with
+no restart.
 Restore — the saved
 `resourceVersion` is stale by then and is stripped; `oc replace` of an object without one reads the live one and sends
 it (measured with `oc` 4.22.13 against a recording API stand-in):
