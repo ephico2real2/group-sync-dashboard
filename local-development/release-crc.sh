@@ -374,8 +374,15 @@ else
     # the hook identity Argo's cascade leaves behind would refuse Helm's adoption
     oc delete sa,role,rolebinding "${IMAGE}-secrets-mint" -n "${NAMESPACE}" --ignore-not-found >/dev/null
   fi
+# --force-conflicts: the objects that survive the handover (the two PVCs) keep the fields Argo CD's
+# server-side apply wrote, owned by argocd-controller. Helm 4 applies server-side too, so once the
+# chart version moves their helm.sh/chart and app.kubernetes.io/version labels conflict and the
+# install is refused (measured on CRC with Helm 4.3.0, chart 0.52.1 -> 0.53.0: "Apply failed with 3
+# conflicts: conflicts with argocd-controller"). The chart is the desired state in this mode, so
+# Helm takes those fields. The flag is server-side apply's only (`helm upgrade --help`), and Helm
+# accepts it beside --server-side true, false and auto alike (measured, --dry-run=client).
 helm upgrade --install "${IMAGE}" ../charts/group-sync-dashboard \
-  --namespace "${NAMESPACE}" --create-namespace \
+  --namespace "${NAMESPACE}" --create-namespace --force-conflicts \
   -f "$RELEASE_VALUES" \
   --set image.repository="${INTERNAL%:*}" \
   --set image.tag="${TAG}" \
