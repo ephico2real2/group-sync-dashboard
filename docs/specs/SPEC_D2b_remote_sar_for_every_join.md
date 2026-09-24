@@ -773,6 +773,12 @@ Facts that shape it (measured 2026-09-23, read-only):
   `remote-sar` resolving and deciding, not a review on another server. The mock (`https://mock-openshift:6443`,
   `local-development/mock-app`) is a separate API server whose RBAC is its fixture,
   `local-development/mock-app/fixtures/reference.yaml`, and whose `/_mock/state` keeps a request log.
+- `shared-qa`'s Secret holds a 10-minute token for `group-sync-operator:shared-qa-poller` that is **expired on purpose**
+  (the operator: set to expire, to demonstrate the path rather than use a long-term token). It is the lab's
+  expired-credential case: the poller logs `auth_failed … rotate it in this cluster's Secret`, and under `remote-sar`
+  every reader's check on it fails closed to `self` with an `auth_failed` warning. Its wide view is shown only in
+  Step 7's working-token rows, and Step 7 restores it expired; Step 11 then rejoins it with a long-lived token, as the
+  operator directed once the expired case was shown.
 - Under Argo CD the Application's `valuesObject.clusters` is `dashboard` alone
   (`gitops/argocd-application-dashboard.yaml`): `shared-rnd` has no stanza there and is served from its Secret
   wholesale, and there is no `mock` values entry. Its Secret states `self-only` / `none` (§2.9). The Helm rounds use
@@ -924,13 +930,19 @@ for c in ("dashboard", "shared-rnd", "shared-qa", "mock", "mock-sar"):
 done
 ```
 
-Expect `dashboard` `inherit` for everyone; kubeadmin `all` on every remote; jane.smith `all` on `shared-rnd` and
-`shared-qa` and `self` on `mock` and `mock-sar`; developer the reverse; test-user-002 `self` everywhere. Where a
-reader is `self` on a remote, `groups` and `home` answer 200 with that reader's own rows — not the 403 of before —
-and `bindings/findings` answers 403; where `all`, all three answer 200.
+Expect `dashboard` `inherit` for everyone; kubeadmin `all` on `shared-rnd`, `mock` and `mock-sar`; jane.smith `all` on
+`shared-rnd` and `self` on `mock` and `mock-sar`; developer `self` on `shared-rnd` and `all` on `mock` and `mock-sar`;
+test-user-002 `self` everywhere; and **every reader `self` on `shared-qa`**, whose token is expired on purpose (the
+facts above): the first reader's check logs `shared-qa: visibility tier for '<reader>' is indeterminate (auth_failed:
+401 …)` and arms the 30 s hold, so the readers after it are answered `self` without a call. Where a reader is `self`
+on a remote, `groups` and `home` answer 200 with that reader's own rows — not the 403 of before — and
+`bindings/findings` answers 403; where `all`, all three answer 200.
 
 Then D5's line, in the page, for each persona: the pod's loopback forwarded to the workstation, and the page opened
-with the identity header the proxy would set.
+with the identity header the proxy would set — **one fresh page for each reader and cluster**. On one page, moving
+between clusters changes only the URL's fragment, and the check can match the previous cluster's line before the app
+repaints for the new one: the first walk (2026-09-24) passed kubeadmin and jane.smith on `shared-qa` that way, on
+`shared-rnd`'s text, while a fresh page showed them narrowed. Each check therefore starts from an empty line.
 
 ```bash
 oc port-forward -n "$NS" "$(pod)" 18080:8080 >/dev/null & PF=$!; sleep 2
@@ -938,20 +950,23 @@ oc port-forward -n "$NS" "$(pod)" 18080:8080 >/dev/null & PF=$!; sleep 2
 from playwright.sync_api import sync_playwright
 HOST, FULL = "The host decides your view of this cluster.", "This cluster's own RBAC gives you the full view."
 OWN = "This cluster's own RBAC shows your own rows, or could not be asked."
-wide = {"kubeadmin": {"shared-rnd", "shared-qa", "mock", "mock-sar"}, "jane.smith": {"shared-rnd", "shared-qa"},
+# shared-qa is in no reader's set: its token is expired on purpose, so it is OWN for everyone.
+wide = {"kubeadmin": {"shared-rnd", "mock", "mock-sar"}, "jane.smith": {"shared-rnd"},
         "developer": {"mock", "mock-sar"}, "test-user-002": set()}
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for user, full in wide.items():
-        page = browser.new_context(extra_http_headers={"X-Forwarded-User": user}).new_page()
         for cluster in ("dashboard", "shared-rnd", "shared-qa", "mock", "mock-sar"):
             want = HOST if cluster == "dashboard" else FULL if cluster in full else OWN
+            context = browser.new_context(extra_http_headers={"X-Forwarded-User": user})
+            page = context.new_page()
             page.goto(f"http://127.0.0.1:18080/#page=home&cluster={cluster}")
             try:
                 page.wait_for_function("(t) => (document.getElementById('scope-why') || {}).textContent === t", arg=want, timeout=15000)
                 print("ok ", user, cluster, want)
             except Exception:
                 print("BAD", user, cluster, page.evaluate("() => (document.getElementById('scope-why') || {}).textContent"))
+            context.close()
     browser.close()
 PY
 kill "$PF"
@@ -1006,14 +1021,18 @@ Then, one change at a time, waiting for the `resolved shared-qa` line after each
 | a CA that does not sign `api.crc.testing` | `set_trust "$CA"` (the mock's) | `self`; a WARNING, `unreachable` (certificate verification) |
 | the cluster's own CA bundle | `set_trust "$ROOT_CA"` | `all`, at once |
 | a URL nothing answers | `set_trust "$ROOT_CA" https://api.crc.testing:6444` | `self`; a WARNING, `unreachable` |
-| the in-cluster URL | `set_trust "$ROOT_CA" https://kubernetes.default.svc` | `all`, at once |
 
 `kube-root-ca.crt` verifies `api.crc.testing:6443` (measured: `openssl s_client … -CAfile` returns 0; the mock's CA
-returns 19) and `kubernetes.default.svc`, which the `dashboard` entry uses with the same bundle. Restore — the saved
+returns 19). No row points `shared-qa` at the in-cluster API: `https://kubernetes.default.svc` is the host's own URL,
+and a Secret naming it is refused (`host-cluster-not-from-secret`, measured by the first walk: the cluster was retired
+until the next change), and every in-cluster name is the dashboard controller's endpoint, verified with the CA mounted
+into its pod — never a remote's (the operator). The dead-URL row shows a URL change taking effect with no restart.
+Restore — the saved
 `resourceVersion` is stale by then and is stripped; `oc replace` of an object without one reads the live one and sends
 it (measured with `oc` 4.22.13 against a recording API stand-in):
 `python3 -c "import json,sys; s=json.load(open(sys.argv[1])); m=s['metadata']; [m.pop(k, None) for k in ('resourceVersion','uid','creationTimestamp','managedFields')]; print(json.dumps(s))" "$WALK/shared-qa.json" | oc replace -f -`,
-then `oc delete secret shared-qa-poller-d2b-walk -n group-sync-operator`.
+then `oc delete secret shared-qa-poller-d2b-walk -n group-sync-operator`. The restore puts back the intentionally
+expired token: expect `self` again, with an `auth_failed` warning.
 
 **Step 8 — failure paths and the hold.** Two scratch joining ServiceAccounts, one without `create
 subjectaccessreviews` and one without `list groups`, joined through the tab's route, then three personas at once for
@@ -1097,11 +1116,39 @@ PY
 Expect Synced and Healthy, the pod running the head (release-crc.sh verifies it in-pod), and #338's final item:
 `resolved shared-rnd` and `resolved shared-qa` both `visibility=remote-sar identity=same-as-host` — `shared-rnd` from
 the Secret Step 4 had the lookup write again, `shared-qa` from the default; `api_as kubeadmin /api/whoami` `all` on
-both, `api_as developer /api/whoami` and `api_as test-user-002 /api/whoami` `self` on both. Then the e2e walk as
+`shared-rnd` and `self` on `shared-qa` (its token is expired on purpose; its wide view is Step 7's), `api_as developer
+/api/whoami` and `api_as test-user-002 /api/whoami` `self` on both. Then the e2e walk as
 kubeadmin — `local-development/e2e-walk/run_walk.sh --base https://group-sync-dashboard.apps-crc.testing --login-user
 kubeadmin --out <dir>`, as `reports/2026-09-23_release-walk/` ran it — with the selector and D5's line on each
 cluster, committed under `reports/<date>_<slug>/` with the HTML walk document (no PDF) and embedded in #338 against
 its Definition of Done.
+
+**Step 11 — rejoin `shared-qa` with a long-lived token** (the operator, 2026-09-24: show the expired case, then fix it).
+A ServiceAccount token Secret for the same `shared-qa-poller` carries no `exp`; it is written into `shared-qa`'s Secret
+through the tab's own route, so the rejoin needs no restart:
+
+```bash
+oc apply -n group-sync-operator -f - <<'YAML'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shared-qa-poller-token
+  annotations:
+    kubernetes.io/service-account.name: shared-qa-poller
+type: kubernetes.io/service-account-token
+YAML
+until [ -n "$(oc get secret shared-qa-poller-token -n group-sync-operator -o jsonpath='{.data.token}')" ]; do sleep 2; done
+printf '{"token": "%s"}' "$(oc get secret shared-qa-poller-token -n group-sync-operator -o jsonpath='{.data.token}' | base64 -d)" \
+  | oc exec -i -n "$NS" "$(pod)" -c dashboard -- curl -s -X PUT -H 'X-Forwarded-User: kubeadmin' \
+      -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8080/api/clusterconfigs/shared-qa/credential; echo
+```
+
+Expect the token to carry no `exp`; within one discovery `resolved shared-qa` `visibility=remote-sar
+identity=same-as-host`, and the poller polling it with no `auth_failed`; `api_as kubeadmin /api/whoami` and
+`api_as jane.smith /api/whoami` `all` on `shared-qa`, developer and test-user-002 `self`; and Step 6's page check, for
+`shared-qa` alone, with kubeadmin and jane.smith in its `full` sets. Run Step 10's e2e walk after this step. The one
+lifetime such a token has is Kubernetes' legacy-token cleaner, which invalidates a token Secret unused for a year; the
+poller uses this one every cycle.
 
 ## 6. What changes, for whom, and what it costs
 
@@ -1274,6 +1321,14 @@ its Definition of Done.
   arrival under 50 viewers' traffic kept one call per 30 s hold, the held arrival being that hold's probe, which
   confirms the `began_held` rejection. Two wording corrections applied: the D5 line quoted on the page and in the
   design document is a `remote-sar` cluster's, not every remote's, and each reviewer's hold timings are its own.
+- **The lab walk of #342** (2026-09-24, head `8e50ff8`; its record is on #338). Three corrections to §5 from it: Step 6's
+  page check could pass on the previous cluster's text, so it opens a fresh page per reader and cluster; `shared-qa`'s
+  token is expired on purpose (the operator), so Steps 6 and 10 expect `self` there for every reader; and Step 7's
+  in-cluster row asked for a URL the reader refuses by design, so it is removed — an in-cluster name is the
+  controller's endpoint, never a remote's (the operator). Step 3 also found that `release-crc.sh`'s Helm handover was
+  refused once the chart version moved; #343 fixed it. Step 11 is added: once the expired case is shown, `shared-qa`
+  is rejoined with a long-lived token (the operator). Open for the operator: the host guard refuses only the exact
+  string `https://kubernetes.default.svc`, so other spellings of the in-cluster endpoint pass it.
 
 ## 7. Implementation blocks
 
