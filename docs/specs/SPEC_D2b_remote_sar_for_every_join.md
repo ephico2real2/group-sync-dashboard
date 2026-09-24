@@ -8,7 +8,7 @@
 | Version on release | app and chart minor bumps at the PR |
 | Version note | §7's blocks write application 0.32.0 and chart 0.53.0 — the next minors after main's 0.31.0 and 0.52.1 on 2026-09-23 — and move S4c, specified on those two rungs and not begun, to 0.33.0 and 0.54.0 (§3.9). A release that lands first makes the version blocks fail their check, because each one's Old text is the version it replaces; the implementing pull request then corrects them here before applying (`docs/specs/README.md`) |
 | Issue | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) |
-| Status | specified |
+| Status | merged |
 | Source | written by the orchestrator on 2026-09-23 from a read-only map of main `b21f80b` and measurements on the lab — not a design agent's output; reviewed before any code is written (review of PR #339: Codex, Grok, OB1-lite; the decisions are under "Orchestrator's notes"). Revised the same day by OB3 from the accepted findings of its third pass and of OB1-lite's confirmation pass, with D5 added at the operator's go-ahead. §7's blocks were generated from a copy of `b8e75b0` with this design implemented, and applied back to a clean copy for the proof |
 
 ## How to read this spec

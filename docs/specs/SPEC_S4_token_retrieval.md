@@ -7,7 +7,7 @@
 | Release | — (post-programme) |
 | Version on release | app and chart bumps per step, assigned at each step's PR |
 | Issue | [#283](https://github.com/ephico2real2/group-sync-dashboard/issues/283) |
-| Status | specified |
+| Status | in progress |
 | Source | the operator's design of 2026-09-21, with the challenging-client flow and the session lifetime measured on the reference cluster |
 
 **Steps:** #283 (the login), #284 (retrieve and write), #285 (the lifecycle), #286 (token litter).
