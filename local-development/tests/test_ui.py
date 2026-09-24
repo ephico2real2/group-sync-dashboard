@@ -2141,10 +2141,13 @@ def _review_server(tmp_path_factory, n: int, *, retired=(), badcron=False, restr
     finally:
         store.close()
     kw = {"oauth_proxy_enabled": True} if restricted else {"view_restrictions_enabled": False}
+    # The remotes state `identity: none` — self-only/none, the pair these tests were written against. Left
+    # unstated they are remote-sar (SPEC_D2b), and a restricted server would ask their made-up APIs.
     settings = Settings(
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
-                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y")]
-                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z") for cid in extra],
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y", identity="none")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example.internal:6443", token_env="Z", identity="none")
+                    for cid in extra],
         db_path=db, login_capture_enabled=True, **kw,
     )
     port = _free_port()
@@ -4452,7 +4455,9 @@ def scoped_server(tmp_path_factory):
     settings = Settings(
         clusters=[
             ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
-            ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y"),
+            # `identity: none`: self-only/none, the pair these tests were written against (Home's refusal on
+            # prod-east among them). Left unstated it is remote-sar (SPEC_D2b), and its made-up API is asked.
+            ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="Y", identity="none"),
         ],
         db_path=db,
         login_capture_enabled=True,
@@ -4648,7 +4653,7 @@ class TestHome:
 
     def test_the_cluster_selector_rescopes_and_a_cluster_that_vouches_for_nobody_says_so(self, page, scoped_server):
         """The cluster is a position; switching re-scopes the answer without leaving Home. `prod-east` is
-        not the host cluster and its identity policy is the default `none` — it does not treat the host's
+        not the host cluster and the fixture states its identity policy `none` — it does not treat the host's
         username as its own — so Home there is a refusal in its own words, never an API error and never a
         page that quietly answers for a name nobody vouched for (docs/ACCESS_CONTROL.md §11)."""
         p = _home(page, scoped_server)
@@ -6621,8 +6626,10 @@ def reporting_server(tmp_path_factory):
     settings = Settings(
         # Two configured clusters, both in the snapshot the seed wrote (#267): the form's cluster control lists
         # what the nav lists, and a several-cluster run needs a second target the service can render.
+        # prod-east states `identity: none` (self-only/none, the pair these tests were written against): left
+        # unstated it is remote-sar (SPEC_D2b), and whoami would ask its made-up API on every page load.
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
-                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X")],
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X", identity="none")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
         reporting_url="http://127.0.0.1:1/unused", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
     )
@@ -6858,6 +6865,9 @@ class TestClusterConfigPage:
         settings.cluster_registry.replace([east], [], at="2026-09-20T16:05:12Z")
         monkeypatch.setattr("gsd.api.ClusterClient", lambda cfg, timeout=15.0: host)
         monkeypatch.setattr("gsd.api.own_namespace", lambda: "gsd-ns")
+        # The discovered Secrets state no policy, so they are remote-sar (SPEC_D2b): no resolver here, so no
+        # made-up remote is asked and each is the self tier for every reader, fail closed.
+        monkeypatch.setattr(app.state, "remote_tier_resolvers", {})
         yield scoped_server, host, settings
         settings.cluster_registry.replace([], [], at="2026-09-20T23:59:59Z")
 
@@ -6878,11 +6888,25 @@ class TestClusterConfigPage:
         assert page.locator("#cc-cluster-crc-local [data-cc-rotate], #cc-cluster-prod-east [data-cc-rotate]").count() == 0
         assert page.locator("#cc-cluster-crc-local [data-cc-delete], #cc-cluster-prod-east [data-cc-delete]").count() == 0
         east = page.locator("#cc-cluster-east").inner_text()
-        assert "bearerToken" in east and "trusted-bundle" in east and "environment=prod" in east and "self-only" in east
+        assert "bearerToken" in east and "trusted-bundle" in east and "environment=prod" in east and "remote-sar" in east
         assert "never polled" in east
         assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
         assert page.locator("#cc-cred-oauth").is_disabled() and "#119 P2, not built yet" in page.locator("#cc-oauth-reason").inner_text()
         assert not errors
+
+    def test_the_form_offers_remote_sar_and_starts_on_the_default_pair(self, page, cc_rig):
+        """SPEC_D2b §3.3: the form starts on the pair a remote that states nothing resolves to, and offers
+        remote-sar with its meaning; same-as-host says how a reader is matched (design D3)."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        assert page.eval_on_selector("#cc-visibility", "s => s.value") == "remote-sar"
+        assert page.eval_on_selector("#cc-identity", "s => s.value") == "same-as-host"
+        assert page.eval_on_selector_all("#cc-visibility option", "os => os.map(o => o.value)") == \
+               ["inherit", "self-only", "hidden", "remote-sar"]
+        assert "this cluster's own RBAC decides, for the reader's OpenShift username" in \
+               page.locator("#cc-visibility option[value='remote-sar']").inner_text()
+        assert "matched by OpenShift username" in page.locator("#cc-identity option[value='same-as-host']").inner_text()
 
     def test_the_yaml_twin_follows_the_form_and_the_ca_mode(self, page, cc_rig):
         base, host, settings = cc_rig
@@ -6938,6 +6962,9 @@ class TestClusterConfigPage:
         written = host.secrets["gsd-cluster-west"]
         assert written["metadata"]["labels"] == {"groupsync-dashboard.io/secret-type": "cluster", "environment": "test"}
         assert written["metadata"]["annotations"] == {"groupsync-dashboard.io/managed-by": "ui"}
+        import base64 as _b64, json as _json
+        assert [_b64.b64decode(written["data"][k]).decode() for k in ("visibility", "identity")] == \
+               ["remote-sar", "same-as-host"], "the form's defaults are the default pair (SPEC_D2b §3.3)"
         assert "tok-west-1234" not in page.locator("#main").inner_text()
         assert page.evaluate("() => document.getElementById('cc-name').value") == "", "the form is cleared after the write"
         # the discovery the write requested: the poller would replace the registry from the namespace's Secrets
@@ -6951,7 +6978,6 @@ class TestClusterConfigPage:
         page.click("#cc-rotate-west"); page.wait_for_selector("#cc-rotate-token-west")
         page.fill("#cc-rotate-token-west", "tok-west-5678"); page.click("#cc-rotate-go-west")
         page.wait_for_function("() => (document.getElementById('cc-rotate-msg-west') || {innerText: ''}).innerText.includes('overwritten')")
-        import base64 as _b64, json as _json
         assert _json.loads(_b64.b64decode(host.secrets["gsd-cluster-west"]["data"]["config"]))["bearerToken"] == "tok-west-5678"
         page.click("#cc-delete-west")
         assert page.locator("#cc-delete-west").inner_text() == "Confirm delete"
@@ -10089,3 +10115,150 @@ class TestReportClusterControl:
             assert not errors, errors
         finally:
             ctx.close()
+
+
+# ── D5 (SPEC_D2b §3.11): the rule that decided the selected cluster's view, beside the selector ───────────────
+WHY_REMOTES = {
+    "far-sar": {},                                                     # states nothing: remote-sar + same-as-host
+    "far-self": {"visibility": "self-only", "identity": "same-as-host"},
+    "far-none": {"identity": "none"},                                  # identity none alone: self-only + none
+    "far-inherit": {"visibility": "inherit"},
+}
+
+
+@pytest.fixture(scope="module")
+def why_server(tmp_path_factory):
+    """The scoped shape (proxy on, restrictions on) with one remote per rule. No remote is asked: far-sar's
+    decision is a `_TierByName` on the published seam, `app.state.remote_tier_resolvers` — wide for `root`,
+    self for everyone else, which is also what an unreachable remote serves."""
+    db = str(tmp_path_factory.mktemp("gsd-why") / "ui.db")
+    _seed(db)
+    store = Store(db)
+    try:
+        for cid in WHY_REMOTES:
+            store.upsert_cluster(cid, f"https://api.{cid}.example:6443", True)
+            store.record_poll(cid, "ok", None)
+    finally:
+        store.close()
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")]
+                 + [ClusterConfig(cid, f"https://api.{cid}.example:6443", token_env="Y", **kw)
+                    for cid, kw in WHY_REMOTES.items()],
+        db_path=db, oauth_proxy_enabled=True,
+    )
+    app = build_app(settings, run_poller=False)
+    app.state.tier_resolver = _TierByName()
+    app.state.remote_tier_resolvers = {"far-sar": _TierByName()}
+    # The other seams answer by name too, so nothing here builds a resolver on a cluster the test does not have.
+    app.state.usage_tier_resolver = _TierByName()
+    app.state.clusterconfig_view_resolver = _TierByName()
+    app.state.clusterconfig_manage_resolver = _TierByName()
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+def _why(p) -> str | None:
+    el = p.locator("#scope-why")
+    return el.inner_text() if el.count() else None
+
+
+def _select_and_read(p, cluster: str, expected: str) -> None:
+    p.select_option("#f-cluster", cluster)
+    p.wait_for_function("(c) => view.cluster === c", arg=cluster)
+    p.wait_for_function("(t) => { const e = document.getElementById('scope-why'); return !!e && e.textContent === t; }",
+                        arg=expected, timeout=10_000)
+
+
+class TestTheRuleBesideTheSelector:
+    """D5, directed 2026-09-23 and built in SPEC_D2b (§3.11): one muted line beside the cluster selector names
+    the rule that decided this reader's view of the SELECTED cluster, read off whoami's
+    `visibility.clusters[id]` = {policy, identity, scope} and never derived. It follows the selector, it never
+    tells a denial from a remote that could not be asked (the wire does not), and it is absent wherever there is
+    no rule to state."""
+
+    LINES = {
+        ("root", "crc-local"): "The host decides your view of this cluster.",
+        ("alice", "crc-local"): "The host decides your view of this cluster.",
+        ("root", "far-sar"): "This cluster's own RBAC gives you the full view.",
+        ("alice", "far-sar"): "This cluster's own RBAC shows your own rows, or could not be asked.",
+        ("alice", "far-self"): "This cluster is self-only: everyone sees their own rows.",
+        ("alice", "far-none"): "This cluster is self-only and does not treat your identity as its own.",
+        ("alice", "far-inherit"): "The host decides your view of this cluster.",
+    }
+
+    def test_every_line_is_one_short_sentence(self):
+        """One muted line, not a paragraph: each sentence fits about seventy characters (the design's D5)."""
+        assert all(len(line) <= 70 and line.endswith(".") and line.count(". ") == 0 for line in self.LINES.values())
+
+    @pytest.mark.parametrize("user,cluster", list(LINES), ids=[f"{u}-{c}" for u, c in LINES])
+    def test_each_rule_is_stated_for_the_selected_cluster_on_home(self, page, why_server, user, cluster):
+        p = _home(page, why_server, user)
+        _select_and_read(p, cluster, self.LINES[(user, cluster)])
+        assert p.evaluate("() => view.page") == "home"
+        line = p.locator("#filters #scope-why")
+        assert line.count() == 1 and "filterbar-note" in (line.get_attribute("class") or ""), "muted, in the bar"
+        assert p.evaluate("(c) => data.whoami.visibility.clusters[c].policy", cluster) == \
+               {"crc-local": "inherit", "far-sar": "remote-sar", "far-self": "self-only",
+                "far-none": "self-only", "far-inherit": "inherit"}[cluster]
+
+    def test_the_line_follows_the_selector_across_every_rule_and_back(self, page, why_server):
+        p = _home(page, why_server, "alice")
+        p.wait_for_function("() => (document.getElementById('scope-why') || {}).textContent === "
+                            "'The host decides your view of this cluster.'")
+        for cluster in ("far-sar", "far-self", "far-none", "far-inherit", "crc-local"):
+            _select_and_read(p, cluster, self.LINES[("alice", cluster)])
+        p.locator("button[data-nav='groups']").click()
+        p.wait_for_function("() => view.page === 'groups'")
+        _select_and_read(p, "far-sar", self.LINES[("alice", "far-sar")])
+
+    def test_the_line_is_the_wires_decision_not_a_derived_one(self, page, why_server):
+        """Flip the payload's scope and the line follows it: nothing on the page recomputes a tier."""
+        p = _home(page, why_server, "alice")
+        _select_and_read(p, "far-sar", self.LINES[("alice", "far-sar")])
+        p.evaluate("() => { data.whoami.visibility.clusters['far-sar'].scope = 'all'; render(); }")
+        assert _why(p) == self.LINES[("root", "far-sar")]
+
+    def test_no_line_on_the_fleet_view_or_a_fleet_wide_page(self, page, why_server):
+        p = _open_as(page, why_server, "root")
+        p.goto(f"{why_server}/#page=overview")
+        # The bar is repainted for the fleet position when its selector reads "all clusters" (value "").
+        p.wait_for_function("() => { const s = document.getElementById('f-cluster'); "
+                            "return view.page === 'overview' && view.cluster === null && !!s && s.value === ''; }")
+        assert _why(p) is None, "all clusters is not a cluster: no rule decided it"
+        _select_and_read(p, "far-sar", self.LINES[("root", "far-sar")])
+        p.goto(f"{why_server}/#page=usage")
+        p.wait_for_function("() => view.page === 'usage' && !document.getElementById('f-cluster')")
+        assert _why(p) is None
+
+    def test_no_line_without_an_identity_or_with_restrictions_off(self, page, why_server, server, idle_server):
+        page.goto(f"{why_server}/#page=overview&cluster=far-sar")          # no X-Forwarded-User: not authenticated
+        page.wait_for_selector("#f-cluster")
+        page.wait_for_function("() => data.whoami !== null")
+        assert _why(page) is None
+        for base in (server, idle_server):                                  # restrictions off: proxy off, then on
+            page.set_extra_http_headers({"X-Forwarded-User": "alice"})
+            page.goto(f"{base}/#page=overview&cluster=crc-local")
+            page.wait_for_selector("#f-cluster")
+            page.wait_for_function("() => data.whoami !== null")
+            assert _why(page) is None, base
+
+    def test_the_line_wraps_inside_a_phone_width(self, page, why_server):
+        p = _home(page, why_server, "alice")
+        p.set_viewport_size({"width": 375, "height": 740})
+        _select_and_read(p, "far-sar", self.LINES[("alice", "far-sar")])
+        assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+        assert p.evaluate("() => document.getElementById('scope-why').getBoundingClientRect().right <= innerWidth")

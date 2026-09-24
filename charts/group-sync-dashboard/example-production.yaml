@@ -44,17 +44,18 @@ clusters:
     apiUrl: https://api.prod-east.example.com:6443
     tokenEnv: PROD_EAST_TOKEN
     caBundleFile: /etc/gsd/prod-east/ca.crt
-    # The viewer's username on the host is not assumed to mean the same person here. Say so, and the
-    # tier serves the self view rather than guessing. `identity: same-as-host` is a claim about two
-    # identity providers that this chart cannot verify — state it only when it is true.
+    # The reader's OpenShift username is not treated as anyone here: `identity: none` with `self-only`
+    # serves this cluster's health and no person-scoped rows. Left out, the two keys would make this
+    # cluster's own RBAC decide instead — `remote-sar` + `same-as-host`, the default for a remote.
     visibility: self-only
     identity: none
     enabled: true
 
   # ── 3. A cluster whose own RBAC decides. Combination 11. ───────────────────────────────────────
-  # `remote-sar` asks THAT cluster a SubjectAccessReview about the viewer, so it REQUIRES
-  # `identity: same-as-host` — the review names the host's username, which only means something when
-  # the two clusters share an identity provider. Without it the render refuses, by design.
+  # `remote-sar` asks THAT cluster a SubjectAccessReview about the reader's OpenShift username, the
+  # `User` object's name — the default for a remote that states neither key, written out here.
+  # `identity: same-as-host` is what it resolves to; `identity: none` beside it is refused at render,
+  # because the review would name a username the entry says is nobody.
   - name: prod-west
     apiUrl: https://api.prod-west.example.com:6443
     tokenEnv: PROD_WEST_TOKEN
@@ -82,6 +83,9 @@ clusters:
   # is refused at render. `ldapConnectionBootstrap` is OPTIONAL and overrides
   # `clusterConfig.fleetAccount.username` for this cluster only; without a mode it configures a login
   # that would never happen, and is refused.
+  #
+  # No visibility or identity: the cluster's own RBAC decides (`remote-sar` + `same-as-host`), and the
+  # Secret the lookup writes follows this stanza's policy for as long as it is the lookup's own.
   #
   # The lookup runs on the next discovery cycle (SPEC_S4b): a login as `svc.gsd.fleet`, one GET of
   # the poller ServiceAccount's token Secret on the target, and `gsd-cluster-shared-rnd` written

@@ -220,7 +220,12 @@ type: application
 # the ConfigMap; a saTokenLookup stanza is refused at render without `clusterConfig.secrets.writes.enabled`
 # and `secrets.enabled`, with `replicaCount > 1`, or with `visibility: remote-sar`. appVersion moves to
 # application 0.31.0 (below). A release declaring no mode renders exactly as before.
-version: 0.52.1
+# CHART 0.53.0 (2026-09-23), MINOR: a remote that states no policy is asked about the reader itself —
+# `remote-sar` + `same-as-host` is the default (#338, SPEC_D2b) — and `remote-sar` is accepted beside
+# `saTokenLookup`; the render refuses only an explicit `identity: none` beside `remote-sar`, and NOTES
+# prints each remote's resolved pair. appVersion moves to application 0.32.0 (below). A remote keeps the
+# old view with `visibility: self-only` and `identity: none`.
+version: 0.53.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -299,7 +304,12 @@ version: 0.52.1
 # 0.31.0 (2026-09-22). A `saTokenLookup` cluster is retrieved: the dashboard logs in as the fleet
 # account, reads the poller ServiceAccount's token on the target and writes the cluster Secret
 # (#284, SPEC_S4b). Eight finding codes join the closed set; additive on the wire. MINOR.
-appVersion: "0.31.0"
+# 0.32.0 (2026-09-23). `remote-sar` for every way a cluster is joined (#338, SPEC_D2b): a resolver per
+# remote cluster from its current configuration, values or Secret, rebuilt when its connection changes; a
+# remote that states no policy defaults to `remote-sar` + `same-as-host`; a failing remote is held for 30 s;
+# a lookup-owned Secret serves its stanza's policy and switch; a line beside the selector names the rule
+# that decided. MINOR: behaviour changes on upgrade for a remote that states nothing (docs/CHANGELOG.md).
+appVersion: "0.32.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

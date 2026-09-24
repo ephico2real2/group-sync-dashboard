@@ -135,7 +135,11 @@ they see about each of the others is that entry's own policy (docs/ACCESS_CONTRO
 {{- if or (and (eq $pass 0) $isHost) (and (eq $pass 1) (not $isHost)) }}
 {{- $vis := "" }}{{- if and (hasKey $c "visibility") (not (kindIs "invalid" $c.visibility)) }}{{- $vis = trim (toString $c.visibility) }}{{- end }}
 {{- $id := "" }}{{- if and (hasKey $c "identity") (not (kindIs "invalid" $c.identity)) }}{{- $id = trim (toString $c.identity) }}{{- end }}
-  {{ $c.name }}: visibility {{ if $vis }}{{ $vis }}{{ else if $isHost }}inherit (host){{ else }}self-only (default){{ end }}, identity {{ if $isHost }}same-as-host (host){{ else if $id }}{{ $id }}{{ else }}none (default){{ end }}
+{{- /* A remote's defaults, by the rule the application serves (SPEC_D2b §3.2, config.py#remote_policy): nothing
+       stated is remote-sar + same-as-host; `identity: none` alone keeps self-only. */}}
+{{- $defVis := ternary "self-only" "remote-sar" (eq $id "none") }}
+{{- $defId := ternary "same-as-host" "none" (eq (default $defVis $vis) "remote-sar") }}
+  {{ $c.name }}: visibility {{ if $vis }}{{ $vis }}{{ else if $isHost }}inherit (host){{ else }}{{ $defVis }} (default){{ end }}, identity {{ if $isHost }}same-as-host (host){{ else if $id }}{{ $id }}{{ else }}{{ $defId }} (default){{ end }}
 {{- end }}
 {{- end }}
 {{- end }}

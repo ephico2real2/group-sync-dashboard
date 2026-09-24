@@ -20,7 +20,10 @@ from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
-from .config import VISIBILITY_TIER_TTL_DEFAULT, ClusterConfig, ConfigError
+from .config import (
+    IDENTITY_SAME_AS_HOST, VISIBILITY_REMOTE_SAR, VISIBILITY_TIER_TTL_DEFAULT, ClusterConfig, ConfigError, Settings,
+    remote_policy,
+)
 
 log = logging.getLogger(__name__)
 
@@ -182,7 +185,21 @@ The decision sits on the REQUEST path — a viewer's first page load blocks on i
 user-facing bound, not a bulk-list one. Five seconds is two orders of magnitude above the
 measured answer time and small enough that an API-server outage degrades to a slow dashboard
 failing closed to the self view rather than a hung one. Failures are never cached (see
-TierResolver.tier_for), so recovery costs nothing beyond the next request.
+TierResolver.tier_for), so recovery costs nothing beyond the next request — for the host's resolvers;
+a remote's holds a failing remote instead (REMOTE_FAILURE_HOLD_SECONDS).
+"""
+
+REMOTE_FAILURE_HOLD_SECONDS = 30.0
+"""How long a remote-sar cluster's resolver stops asking after a failed resolution (SPEC_D2b §3.5).
+
+A remote that fails — unreachable, a 401, a 403 because its joining ServiceAccount may not list groups
+or create reviews — would otherwise be asked again by every viewer's first request, each paying up to
+TIER_CHECK_TIMEOUT_SECONDS per call, one remote after another. Held, it is asked at most once per this
+many seconds whatever the later traffic: the first request that would call after the hold expires is the
+one probe; distinct viewers already in flight when the first failure lands may each pay that first attempt.
+Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote that keeps failing under
+traffic still records a failed check every thirty seconds and GroupSyncDashboardVisibilityChecksFailing
+stays true. A constant, like the timeout, until an operator needs to tune it.
 """
 
 SYSTEM_GROUP_PREFIX = "system:"
@@ -1554,7 +1571,8 @@ class ClusterClient:
             try:
                 response = client.post(SAR_API, json=body)
             except httpx.HTTPError as exc:
-                raise ClusterError(UNREACHABLE, f"{type(exc).__name__}: {exc}") from exc
+                # Redacted as _get does (SPEC_D2b §3.6): an httpx error can carry the request URL.
+                raise ClusterError(UNREACHABLE, self._redact(f"{type(exc).__name__}: {exc}")) from exc
         if response.status_code == 401:
             raise ClusterError(AUTH_FAILED, "401 Unauthorized creating a SubjectAccessReview")
         if response.status_code == 403:
@@ -1565,7 +1583,9 @@ class ClusterClient:
             )
         if response.status_code >= 400:
             raise ClusterError(
-                UNREACHABLE, f"HTTP {response.status_code} on {SAR_API}: {response.text[:200]}"
+                # REDACT BEFORE TRUNCATING, as _get does (SPEC_D2b §3.6): a ServiceAccount JWT is longer
+                # than the window, and redact_text replaces only whole spellings.
+                UNREACHABLE, f"HTTP {response.status_code} on {SAR_API}: {self._redact(response.text)[:200]}"
             )
         try:
             payload = response.json()
@@ -1611,6 +1631,14 @@ class TierResolver:
     group-reads plus reviews per viewer, every TTL. Followers of a FAILED leader fail closed
     to the self view for that request, uncached — the same "a failure is not a decision"
     contract as the resolver's own error path.
+
+    A FAILING REMOTE IS HELD (SPEC_D2b §3.5). A resolver built with failure_hold_seconds > 0 — one
+    per remote-sar cluster, from RemoteTierResolvers — stops asking after a failed resolution: until
+    the hold expires every request that would CALL answers self without calling, and the first one
+    after it expires is the single probe, re-arming the hold before it calls. The gate is `_may_call`,
+    passed by a leader and by a follower that steals a stuck slot alike; a request for a viewer already
+    being resolved rides that resolution, the probe included, so one page's burst gets one answer.
+    The host's resolvers pass no hold and behave exactly as before.
     """
 
     def __init__(
@@ -1624,6 +1652,7 @@ class TierResolver:
         subresource: str,
         ttl_seconds: float,
         observe: Callable[[str], None] | None = None,
+        failure_hold_seconds: float = 0.0,
     ):
         # ttl_seconds is REQUIRED and deliberately has no default. It used to default to
         # TIER_TTL_SECONDS, and that default is precisely what hid the wiring bug: nothing
@@ -1650,6 +1679,12 @@ class TierResolver:
         if subresource:
             self._attributes["subresource"] = subresource
         self._ttl = ttl_seconds
+        # SPEC_D2b §3.5: a remote's resolver holds a failing remote for this many seconds
+        # (REMOTE_FAILURE_HOLD_SECONDS); zero — the host's resolvers, which do not pass it — asks again on
+        # every request, as before. `_held_until` is 0.0 when no hold runs; both are read and written
+        # under _lock.
+        self._hold = failure_hold_seconds
+        self._held_until = 0.0
         # The metrics seam (docs/DESIGN_metrics_refresh.md §3.1): called with one enum
         # outcome per FRESH resolution. A callback and not a metrics import, so this module
         # stays cluster I/O, buildable and testable without the metrics module — the app
@@ -1693,6 +1728,8 @@ class TierResolver:
             mine = self._inflight.get(viewer)
             leading = mine is None
             if leading:
+                if not self._may_call(now):
+                    return TIER_SELF
                 mine = self._inflight[viewer] = threading.Event()
         if not leading:
             # A resolution for this viewer is already out; ride it instead of duplicating
@@ -1708,6 +1745,10 @@ class TierResolver:
                     # The leader finished and failed (failures are deliberately not cached),
                     # or a newer attempt already owns the slot. Fail closed for THIS request,
                     # cache nothing — a failure is not a decision.
+                    return TIER_SELF
+                if not self._may_call(time.monotonic()):
+                    # A stealer calls the remote as a leader does, so a held remote is not asked by it
+                    # either: a failure elsewhere armed the hold while this request waited (SPEC_D2b §3.5).
                     return TIER_SELF
                 # STEAL THE SLOT, and this is the fix for a real wedge rather than caution.
                 #
@@ -1743,6 +1784,26 @@ class TierResolver:
                     del self._inflight[viewer]
             mine.set()
 
+    def _may_call(self, now: float) -> bool:
+        """Whether a request about to CALL the remote may (SPEC_D2b §3.5). Called under _lock, and only by
+        a request that would call — a leader, or a follower stealing a stuck slot — so a request for a
+        viewer already being resolved rides that resolution, the probe included. False while a hold runs;
+        the first caller after it expires is the one probe and re-arms the hold BEFORE it calls, so every
+        other caller answers self until the probe's outcome ends the hold or restarts it. Always True for
+        a resolver built without a hold."""
+        if not (self._hold and self._held_until):
+            return True
+        if now < self._held_until:
+            return False
+        self._held_until = now + self._hold
+        return True
+
+    def _start_hold(self) -> None:
+        """A failed resolution holds a remote's resolver (SPEC_D2b §3.5): no call until the hold expires."""
+        if self._hold:
+            with self._lock:
+                self._held_until = time.monotonic() + self._hold
+
     def _note(self, outcome: str) -> None:
         """Report one fresh check's outcome to the observe seam. Best-effort by contract:
         the tier is already decided by the time this runs, and a metrics bug must never
@@ -1777,7 +1838,10 @@ class TierResolver:
                 self._kube.cluster.name, viewer, exc.outcome, exc.message,
             )
             # exc.outcome is the bounded kube vocabulary (unreachable/auth_failed/
-            # forbidden), which is exactly the metric's failure enum.
+            # forbidden), which is exactly the metric's failure enum. The hold is armed FIRST
+            # (SPEC_D2b §3.5), for the reason the success path caches first: the observe callback is
+            # not bounded, and a stalled one must not leave a failing remote open to every viewer.
+            self._start_hold()
             self._note(exc.outcome)
             return TIER_SELF
         except Exception:
@@ -1789,10 +1853,13 @@ class TierResolver:
                 "view for this request",
                 self._kube.cluster.name, viewer,
             )
+            self._start_hold()
             self._note("error")
             return TIER_SELF
         tier = TIER_ALL if allowed else TIER_SELF
         with self._lock:
+            if self._hold:
+                self._held_until = 0.0      # the remote answered: the hold is over for every viewer
             # CACHE FIRST, REPORT SECOND. `_note` calls out to the observe seam, and while it
             # is best-effort by contract it is not bounded — a callback that blocks used to
             # stop the answer being cached at all, on top of holding the in-flight slot, so a
@@ -1816,6 +1883,53 @@ class TierResolver:
     # the visibility tests substitute); `tier_for` is this class's own vocabulary. One
     # implementation under both names, so neither caller can drift from the other.
     resolve = tier_for
+
+
+class RemoteTierResolvers:
+    """One TierResolver per remote-sar cluster, from that cluster's CURRENT configuration (SPEC_D2b §3.1).
+
+    Looked up per request rather than built once at start-up: a cluster declared through a Secret appears at
+    runtime, and a rotated token or CA reaches it only as a new ClusterConfig whose credential fields are
+    compare=False — so the connection fingerprint, not equality, decides when a resolver is rebuilt (and its
+    per-viewer cache and failure hold with it). One snapshot per lookup: the policy is resolved from the object
+    already read, so a discovery landing mid-lookup cannot pair one configuration with another's policy. A cluster
+    that is gone, disabled, still pending its credential, the host, or not remote-sar + same-as-host gets None, which
+    viewer_scope answers as self: fail closed. A lookup that begins after such a configuration is published makes no
+    request; a request already in flight may finish. Thread-safe; a build does no I/O and happens under the lock.
+    Only `.get` is offered — the one question viewer_scope asks; the map is built lazily, so its keys are not the
+    set of remote-sar clusters and a membership test on it would mislead.
+    """
+
+    def __init__(self, settings: Settings, make: Callable[[ClusterConfig], TierResolver]):
+        self._settings = settings
+        self._make = make
+        self._lock = threading.Lock()
+        self._built: dict[str, tuple[str, TierResolver]] = {}
+
+    def get(self, cluster_id: str) -> TierResolver | None:
+        host = self._settings.host_cluster()
+        askable = {c.name: c for c in self._settings.effective_clusters()
+                   if c.enabled and c.credential_pending is None
+                   and (host is None or c.name != host.name)
+                   and remote_policy(c.visibility, c.identity) == (VISIBILITY_REMOTE_SAR, IDENTITY_SAME_AS_HOST)}
+        cluster = askable.get(cluster_id)
+        with self._lock:
+            # Every resolver whose cluster is no longer askable is dropped, not only the one asked about: a
+            # retired or disabled cluster is never served, so nobody asks for it again, and its resolver holds
+            # the configuration it was built on — the Secret's credential included — for the life of the
+            # process (the rule the poller's _LAST_TOKEN states: a credential does not outlive its configuration).
+            for name in [n for n in self._built if n not in askable]:
+                del self._built[name]
+        if cluster is None:
+            return None
+        key = cluster.connection_fingerprint()
+        with self._lock:
+            held = self._built.get(cluster_id)
+            if held is not None and held[0] == key:
+                return held[1]
+            resolver = self._make(cluster)
+            self._built[cluster_id] = (key, resolver)
+            return resolver
 
 
 def _condition(obj: dict, wanted: str) -> dict | None:

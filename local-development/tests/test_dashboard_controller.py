@@ -52,9 +52,11 @@ class TestLoadSettingsHostChecksFollowTheDeclaredController:
         s = _load(tmp_path, east="    visibility: remote-sar\n    identity: same-as-host")
         assert s.cluster_policy("ocp-east") == ("remote-sar", "same-as-host")
 
-    def test_remote_sar_without_same_as_host_is_still_refused_on_a_first_entry_that_is_not_the_host(self, tmp_path):
+    def test_remote_sar_with_identity_none_is_still_refused_on_a_first_entry_that_is_not_the_host(self, tmp_path):
         with pytest.raises(ConfigError, match="clusters\\[0\\]: visibility remote-sar needs identity: same-as-host"):
-            _load(tmp_path, east="    visibility: remote-sar")
+            _load(tmp_path, east="    visibility: remote-sar\n    identity: none")
+        s = _load(tmp_path, east="    visibility: remote-sar")
+        assert s.cluster_policy("ocp-east") == ("remote-sar", "same-as-host"), "an omitted identity is same-as-host"
 
     def test_without_the_flag_the_refusals_stay_exactly_positional(self, tmp_path):
         # Behaviour-preservation: no flag → the first enabled entry is the host, as before #249.
@@ -79,7 +81,9 @@ class TestBuildAppUsesTheDeclaredController:
                    for name in ("tier_resolver", "usage_tier_resolver",
                                 "clusterconfig_view_resolver", "clusterconfig_manage_resolver")}
         assert targets == {k: "home" for k in targets}, targets
-        assert "home" not in app.state.remote_tier_resolvers
+        remotes = app.state.remote_tier_resolvers
+        assert remotes.get("home") is None, "the controller is never asked as a remote"
+        assert remotes.get("ocp-east")._kube.cluster.name == "ocp-east", "a remote is reviewed on its own API"
 
     def test_startup_names_the_controller_and_whether_it_was_declared(self, tmp_path, caplog):
         with caplog.at_level(logging.INFO, logger="gsd.api"):

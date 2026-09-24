@@ -65,7 +65,8 @@ def _settings(db: str, **kw) -> Settings:
                       visibility="self-only", identity="same-as-host"),
         ClusterConfig("west", "https://api.west.example:6443", token_env="X",
                       visibility="remote-sar", identity="same-as-host"),
-        ClusterConfig("far", "https://api.far.example:6443", token_env="X"),   # the defaults
+        # `identity: none` alone: self-only/none, the default before SPEC_D2b — what the identity-none tests need
+        ClusterConfig("far", "https://api.far.example:6443", token_env="X", identity="none"),
         ClusterConfig("dark", "https://api.dark.example:6443", token_env="X",
                       visibility="hidden"),
     ], db_path=db, **kw)
@@ -89,11 +90,14 @@ def client(db):
 
 
 class TestTheDefaultsResolve:
-    def test_host_is_inherit_same_as_host_and_a_remote_is_self_only_none(self, db):
+    def test_host_is_inherit_same_as_host_and_a_remote_that_states_nothing_is_remote_sar_same_as_host(self, db):
         s = _settings(db)
         assert s.cluster_policy("host") == ("inherit", "same-as-host")
-        assert s.cluster_policy("far") == ("self-only", "none")
+        assert s.cluster_policy("far") == ("self-only", "none"), "identity: none alone keeps self-only"
         assert s.cluster_policy("east") == ("self-only", "same-as-host")
+        bare = Settings(clusters=[s.clusters[0], ClusterConfig("near", "https://api.near.example:6443", token_env="X")],
+                        db_path=db)
+        assert bare.cluster_policy("near") == ("remote-sar", "same-as-host"), "SPEC_D2b: the remote's own RBAC decides"
 
     def test_a_cluster_no_longer_configured_is_not_widened_beyond_today(self, db):
         assert _settings(db).cluster_policy("ghost") == ("inherit", "same-as-host")
@@ -408,7 +412,7 @@ clusters:
 
     def test_defaults_resolve_from_a_file_too(self, tmp_path):
         s = self._load(tmp_path, self.BASE)
-        assert s.cluster_policy("east") == ("self-only", "none")
+        assert s.cluster_policy("east") == ("remote-sar", "same-as-host")
 
     def test_an_unknown_policy_is_refused(self, tmp_path):
         with pytest.raises(ConfigError, match="visibility 'Hidden'"):
@@ -416,7 +420,9 @@ clusters:
 
     def test_remote_sar_needs_same_as_host(self, tmp_path):
         with pytest.raises(ConfigError, match="needs identity: same-as-host"):
-            self._load(tmp_path, self.BASE + "    visibility: remote-sar\n")
+            self._load(tmp_path, self.BASE + "    visibility: remote-sar\n    identity: none\n")
+        s = self._load(tmp_path, self.BASE + "    visibility: remote-sar\n")
+        assert s.cluster_policy("east") == ("remote-sar", "same-as-host"), "an omitted identity resolves to same-as-host"
         s = self._load(tmp_path, self.BASE + "    visibility: remote-sar\n    identity: same-as-host\n")
         assert s.cluster_policy("east") == ("remote-sar", "same-as-host")
 
@@ -434,7 +440,7 @@ clusters:
         whitespace value as unset and renders it through, and load_settings refused it — a pod
         that crashed at startup after a green `helm upgrade`. Measured: `visibility: ""` → ConfigError."""
         settings = self._load(tmp_path, self.BASE + f"    {key}: {yaml_value}\n")
-        assert settings.cluster_policy("east") == ("self-only", "none")
+        assert settings.cluster_policy("east") == ("remote-sar", "same-as-host")
         assert getattr(settings.cluster("east"), key) is None
 
     @pytest.mark.parametrize("spelling", ("false", '"false"', "'false'", " false "))

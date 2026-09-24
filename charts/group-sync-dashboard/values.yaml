@@ -641,48 +641,53 @@ session:
 # there is no long-lived credential to mint or expire.
 #
 # ── SEVERAL CLUSTERS IN ONE INSTANCE: who may see what, PER CLUSTER ─────────────────────────
-# The oauth-proxy authenticates a reader against THIS cluster only — the first enabled entry,
-# the hosting cluster. What that reader may see ABOUT ANOTHER cluster is therefore a decision
-# this file has to make, per entry, and it used to make it silently: the host's tier gated
-# every cluster's rows, so a host cluster-admin saw a remote cluster's membership, bindings and
-# login failures whether or not they held anything there. Two keys per entry now model it
-# (docs/ACCESS_CONTROL.md §11):
+# The oauth-proxy authenticates a reader against THIS cluster only — the hosting entry
+# (`dashboardController: true`, else the first enabled one). What that reader may see ABOUT
+# ANOTHER cluster is therefore a decision this file has to make, per entry, and it used to make
+# it silently: the host's tier gated every cluster's rows, so a host cluster-admin saw a remote
+# cluster's membership, bindings and login failures whether or not they held anything there.
+# Two keys per entry now model it (docs/ACCESS_CONTROL.md §11):
 #
 #   visibility:   inherit     the host's tier decides — the old behaviour, and the host's own
-#                             default (the host is the FIRST ENABLED entry). On a remote it is
+#                             default (the host is the HOSTING entry). On a remote it is
 #                             an explicit choice: "the host's RBAC governs this cluster's data
 #                             too" — a self-only host is self on every cluster it governs, and
 #                             identity is not consulted: a self reader is keyed by the host's
 #                             username there, as before 0.19.0.
-#                 self-only   nobody is ever wide on this cluster. THE DEFAULT FOR EVERY ENTRY
-#                             BUT THE FIRST ENABLED ONE, because it costs no RBAC, no credential
-#                             and no cluster call, and can only narrow. On upgrade from chart
-#                             0.20.x a multi-cluster install's remotes become self-only; set
-#                             inherit to restore what you had.
+#                 self-only   nobody is ever wide on this cluster. It costs no RBAC, no credential
+#                             and no cluster call, and can only narrow. The default only for a
+#                             remote that states `identity: none` and no visibility. On upgrade to
+#                             chart 0.53.0 a remote that states NEITHER key becomes remote-sar
+#                             (below); set `visibility: self-only` and `identity: none` to keep
+#                             the old view.
 #                 hidden      polled and alerted on (/metrics, the pod log) but never served
 #                             through /api: 404, identical to an unknown cluster id, absent from
 #                             the selector. For watching sync health across a fleet without
 #                             exposing membership.
-#                 remote-sar  that cluster's OWN RBAC decides: the same SubjectAccessReview as
+#                 remote-sar  that cluster's OWN RBAC decides — THE DEFAULT FOR A REMOTE THAT
+#                             STATES NEITHER KEY (SPEC_D2b): the same SubjectAccessReview as
 #                             visibility.adminSar, created on the remote API with this entry's
 #                             token, naming the reader and the reader's Group memberships READ
 #                             FROM THE REMOTE. Cached per (reader, cluster) for tierTtlSeconds;
-#                             every failure is the self tier. Needs `create subjectaccessreviews`
-#                             on the remote (bind system:auth-delegator to the remote
-#                             ServiceAccount by hand — this chart manages no remote RBAC) and
-#                             identity: same-as-host below. Not allowed on the first enabled
-#                             entry.
+#                             every failure is the self tier. Distinct viewers already in flight
+#                             may each pay that first attempt; after the first failure lands, the
+#                             remote is held for 30 s and probed at most once per hold, whatever
+#                             later traffic. Needs
+#                             `create subjectaccessreviews` and `list groups` on the remote; the
+#                             joining ServiceAccount's ClusterRole carries both
+#                             (group-sync-dashboard-cluster-poller, installed on each remote by
+#                             group-sync-operator-helm). With `identity: none` beside it the
+#                             render refuses. Not allowed on the hosting entry.
 #
-#   identity:     none          THE DEFAULT for a remote. The host's username is not treated as
-#                               anyone on this cluster: under self-only, person-scoped views
-#                               (groups, users, logins, grants) answer 403 there; cluster-level
-#                               health still shows. Fail-closed, because "same username, same person" is a
-#                               claim about the two clusters' identity providers that this
-#                               chart cannot check — an htpasswd `developer` on two clusters is
-#                               two people.
-#                 same-as-host  the clusters share an identity provider and its username
-#                               mapping, so the reader's self views apply to this cluster too.
-#                               Required by remote-sar; forced on the first enabled entry.
+#   identity:     none          the reader's username is not treated as anyone on this cluster:
+#                               under self-only, person-scoped views (groups, users, logins,
+#                               grants) answer 403 there; cluster-level health still shows. The
+#                               default beside an explicit inherit, self-only or hidden; stated
+#                               alone, it keeps self-only.
+#                 same-as-host  the reader is matched on this cluster by OpenShift username — the
+#                               User object's name — so their self views apply here too. The
+#                               default beside remote-sar and for a remote that states neither
+#                               key; required by remote-sar; forced on the hosting entry.
 #
 # The alternative posture — one dashboard per cluster and a fleet report reading each one's
 # API with a token from THAT cluster — needs none of this and is still the recommendation

@@ -648,7 +648,7 @@ class TestLoginCaptureSource:
         s = load_settings(str(config_file))
         assert s.cluster("first").enabled is False
         assert s.host_cluster().name == "host"
-        assert s.cluster_policy("first") == ("self-only", "none")
+        assert s.cluster_policy("first") == ("remote-sar", "same-as-host")   # a remote that states nothing (SPEC_D2b)
 
     def test_audit_lists_preserve_commas_through_the_rendered_chart(self, tmp_path):
         """Codex, review D1: the ConfigMap the chart renders, loaded by the application itself.

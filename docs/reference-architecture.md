@@ -909,9 +909,9 @@ clusterrolebindings` told it *no*. Treat UI access as equivalent to cluster-wide
 **The multi-cluster caveat is modelled, not assumed away.** A viewer is authenticated by the hosting
 cluster only, so what they may see about another cluster is that entry's own policy
 (`clusters[].visibility`, `clusters[].identity`; `gsd/config.py#Settings.cluster_policy`,
-`gsd/api.py#viewer_scope`): a second cluster is `self-only` with no identity by default, may be
-hidden from the API entirely, may inherit the host's tier as an explicit choice, or may be decided
-by its own RBAC through the same review on its own API (`remote-sar`). `docs/ACCESS_CONTROL.md` §11
+`gsd/api.py#viewer_scope`): a second cluster that states nothing is decided by its own RBAC through
+the same review on its own API (`remote-sar`, SPEC_D2b), and may instead be `self-only`, be hidden
+from the API entirely, or inherit the host's tier as an explicit choice. `docs/ACCESS_CONTROL.md` §11
 tabulates it. What is still not solved — and cannot be from one instance — is identity equivalence
 across identity providers, which is why `identity` is a stated assumption and why §8a remains the
 recommendation where trust boundaries differ.

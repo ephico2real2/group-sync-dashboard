@@ -91,9 +91,12 @@ class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
                                                             "reporting": {"enabled": False}})
         assert ok, out[-600:]     # writes off: two replicas render as before
 
-    def test_remote_sar_with_the_lookup_is_refused_by_name(self, tmp_path):
-        ok, out = _render_values(tmp_path, [HOME, {**RND, "visibility": "remote-sar", "identity": "same-as-host"}], values=WRITES)
-        assert not ok and "clusters[1] (shared-rnd): visibility remote-sar with saTokenLookup" in out
+    def test_remote_sar_with_the_lookup_renders_and_only_identity_none_beside_it_is_refused(self, tmp_path):
+        """SPEC_D2b: the lookup's Secret is asked like any other remote, so `remote-sar` is accepted beside it."""
+        ok, out = _render_values(tmp_path, [HOME, {**RND, "visibility": "remote-sar"}], values=WRITES)
+        assert ok, out[-600:]
+        ok, out = _render_values(tmp_path, [HOME, {**RND, "visibility": "remote-sar", "identity": "none"}], values=WRITES)
+        assert not ok and "clusters[1] (shared-rnd): visibility remote-sar needs identity: same-as-host" in out
 
     def test_self_login_needs_no_write_grant(self, tmp_path):
         ok, out = _render_values(tmp_path, [HOME, {"name": "shared-rnd", "apiUrl": "https://api.crc.testing:6443", "userSelfLogin": True}])

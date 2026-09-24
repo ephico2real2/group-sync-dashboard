@@ -64,4 +64,4 @@ class TestNotesPrintTheDeclaredControllerFirst:
         assert ok, out
         lines = [l.strip() for l in out.splitlines() if l.strip().startswith(("ocp-east:", "home:"))]
         assert lines == ["home: visibility inherit (host), identity same-as-host (host)",
-                         "ocp-east: visibility self-only (default), identity none (default)"], lines
+                         "ocp-east: visibility remote-sar (default), identity same-as-host (default)"], lines

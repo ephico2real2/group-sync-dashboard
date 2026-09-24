@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from ..config import (
     BOOTSTRAP_KEY, CLUSTER_IDENTITIES, CLUSTER_VISIBILITIES, CONNECTION_KEYS, CONNECTION_MODE_KEYS,
-    VISIBILITY_REMOTE_SAR, ClusterConfig, valid_bootstrap_username,
+    IDENTITY_NONE, VISIBILITY_REMOTE_SAR, ClusterConfig, valid_bootstrap_username,
 )
 
 from . import FINDING_CODES
@@ -247,20 +247,18 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         except (binascii.Error, UnicodeDecodeError, ValueError, ssl.SSLError) as exc:
             return finding("ca-data-invalid", f"tlsClientConfig.caData does not decode to a PEM bundle that loads: {type(exc).__name__}")
 
+    # Every visibility, remote-sar included (SPEC_D2b §3.3): the resolver is found per request from the
+    # cluster's current configuration, so a Secret-declared cluster is asked like a values one.
     visibility = (data.get("visibility") or "").strip() or None
-    allowed = tuple(v for v in CLUSTER_VISIBILITIES if v != VISIBILITY_REMOTE_SAR)
-    if visibility is not None and visibility not in allowed:
-        # remote-sar needs a TierResolver built at app start for that cluster (api.py's remote
-        # resolvers); a cluster that appears at runtime has none, so viewer_scope would answer self
-        # for every reader — it fails CLOSED ("a remote cluster with no resolver is a remote cluster
-        # nobody may see wide"), which would make remote-sar silently mean self-only. D1 of
-        # docs/DESIGN_remote_cluster_access.md builds them at discovery; until then the Secret says
-        # inherit, self-only or hidden.
-        return finding("visibility-invalid", f"data.visibility must be one of {', '.join(allowed)}"
-                       + (" (remote-sar for a Secret-sourced cluster is S2)" if visibility == VISIBILITY_REMOTE_SAR else ""))
+    if visibility is not None and visibility not in CLUSTER_VISIBILITIES:
+        return finding("visibility-invalid", f"data.visibility must be one of {', '.join(CLUSTER_VISIBILITIES)}")
     identity = (data.get("identity") or "").strip() or None
     if identity is not None and identity not in CLUSTER_IDENTITIES:
         return finding("identity-invalid", f"data.identity must be one of {', '.join(CLUSTER_IDENTITIES)}")
+    if visibility == VISIBILITY_REMOTE_SAR and identity == IDENTITY_NONE:
+        return finding("identity-invalid", "data.identity none cannot pair with visibility remote-sar: the review "
+                                           "names the reader's OpenShift username on this cluster; set same-as-host "
+                                           "or leave identity out")
     enabled_raw = (data.get("enabled") or "true").strip().lower()
     if enabled_raw not in ("true", "false"):
         return finding("enabled-invalid", 'data.enabled must be "true" or "false"')
