@@ -7,7 +7,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: {{ include "gsd.fullname" . }}-reader
-  labels: {{- include "gsd.labels" . | nindent 4 }}
+  labels: {{- include "gsd.rbacLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["redhatcop.redhat.io"]
     resources: ["groupsyncs"]
@@ -139,7 +139,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ include "gsd.fullname" . }}-reader
-  labels: {{- include "gsd.labels" . | nindent 4 }}
+  labels: {{- include "gsd.rbacLabels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -192,7 +192,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ include "gsd.fullname" . }}-auth-delegator
-  labels: {{- include "gsd.labels" . | nindent 4 }}
+  labels: {{- include "gsd.rbacLabels" . | nindent 4 }}
   {{- if .Values.argocd.enabled }}
   annotations:
     argocd.argoproj.io/sync-options: ServerSideApply=true
@@ -218,7 +218,7 @@ kind: Role
 metadata:
   name: {{ include "gsd.fullname" . }}-grafana-discovery
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "gsd.labels" . | nindent 4 }}
+  labels: {{- include "gsd.rbacLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["route.openshift.io"]
     resources: ["routes"]
@@ -229,7 +229,7 @@ kind: RoleBinding
 metadata:
   name: {{ include "gsd.fullname" . }}-grafana-discovery
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "gsd.labels" . | nindent 4 }}
+  labels: {{- include "gsd.rbacLabels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
