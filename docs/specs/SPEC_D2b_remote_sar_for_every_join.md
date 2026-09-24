@@ -195,9 +195,11 @@ CA is used from the first request after discovery publishes it, with no restart;
 verdict cache and the hold, so each of `R` connection changes in a TTL costs at most one fresh attempt per viewer. A
 lookup beginning after a cluster is published as retired, disabled or pending makes no request. A resolver is never
 built for the host. Every lookup also drops the resolver of any cluster that is no longer askable — retired, disabled, pending,
-the host, or no longer `remote-sar` + `same-as-host` — from the same single snapshot, so a resolver keeps no
-credential its configuration no longer carries past the next lookup of any `remote-sar` cluster (review of the
-blocks, OB1-lite N3; §7's corrections). With no discovery hook, that lookup is the only drop: a fleet whose last
+the host, or no longer `remote-sar` + `same-as-host` — from the same single snapshot, so the resolver of a cluster
+that is no longer askable, and the credential it was built on, go at the next lookup of any `remote-sar` cluster
+(review of the blocks, OB1-lite N3; §7's corrections). A cluster still askable whose credential changed keeps its old
+resolver until the next lookup of that cluster, which builds the new one — at the latest the next `/api/clusters`,
+which looks up every served cluster. With no discovery hook, that lookup is the only drop: a fleet whose last
 `remote-sar` cluster is retired or disabled makes no lookup until one is served again, and keeps that cluster's
 resolver, its token included, until then or until the pod restarts; nothing calls with it (measured through the routes
 by OB3's confirmation pass).
@@ -401,9 +403,10 @@ without deleting the Secret, wherever that stanza is declared. Under Argo CD the
 
 `TierResolver` gains `failure_hold_seconds: float = 0.0`. Zero — the host's resolvers, which do not pass it — keeps
 today's observable behaviour: every indeterminate check is uncached and the next request asks again. Above zero, a
-failed resolution holds the resolver: no request that begins during the hold calls the remote (one already in
-flight when the failure lands may finish its attempt); the first request that would call after it expires is the
-single probe and re-arms the hold BEFORE it calls; a success ends the hold for every viewer. The hold
+failed resolution holds the resolver: no attempt on the remote starts while the hold runs (one already in flight
+when the failure lands may finish its attempt); the first request that would call after it expires is the single
+probe — a request that arrived during the hold and outwaited a stuck resolution for its viewer included — and
+re-arms the hold BEFORE it calls; a success ends the hold for every viewer. The hold
 gates every request that would call the remote — a leader, and a follower that steals a stuck leader's slot —
 through one helper, `_may_call`; a request for a viewer already being resolved rides that resolution as today, the
 probe included, so one page's burst gets one answer.
@@ -1248,10 +1251,27 @@ its Definition of Done.
   and §3.5 said no request calls a held remote, while one already in flight may finish its attempt; §3.1's quote and
   §3.5's no longer matched §7, and `kube.py`'s docstring had a 206-character line; §3.1 said a resolver never keeps a
   retired cluster's credential; `docs/diagrams/render.py` exited 0 with its web fonts unreachable.
+- **Review of the confirmation pass** (`12d9d8d`; Codex on `gpt-6-astra` at high effort, and OB1-lite). Accepted:
+  OB1-lite's three — §3.5's and `docs/ACCESS_CONTROL.md`'s hold sentence said no request that begins during the hold
+  calls, while a request that arrived during it and outwaited a stuck resolution for its viewer may be the one probe
+  after it expires (measured by both reviewers: the follower begun at t=1010 called at t=1032); §3.1's retention
+  sentence, since a cluster still askable whose credential changed keeps its old resolver until that cluster is next
+  looked up (measured: `east` kept `token-one` across a lookup of `west`); and `shared-qa` "has always been
+  `self-only`". Codex's C6: the renderer watched only the two theme pages, so a failure on the 375 px page, where
+  the sideways-scroll check is measured, exited 0 (measured with a Playwright stand-in; its test is the new
+  `test_diagram_render.py`). Codex's C7 on the facts: the design document's status line, D2's "(today)", D6's "until
+  D1 ships" and "right now", and the page's D5 card, which called D5 built without saying that the narrowed line
+  cannot tell a denial from a remote that could not be asked — each corrected in the fewest words, the options column
+  kept as the record of what was proposed. Rejected: Codex's C3 code change, a `began_held` flag so that a request
+  that arrived held never probes. The budget the hold exists for — at most one call per hold per resolver, whatever
+  the traffic — holds without it (Codex's own measurement: 11 calls in 60 s, one probe at 35.5 s), so the flag would
+  add state to make an over-stated sentence true; the sentence is corrected instead. Codex's five documentation
+  contract tests: they assert phrases in the documents, which is a prose test. Codex's placement of the renderer
+  test in `test_remote_sar_default.py`: it tests the renderer, so it gets its own file.
 
 ## 7. Implementation blocks
 
-209 blocks in 46 files — 41 edited, 5 created. The first 154 are the implementation as written; the last 55, under
+221 blocks in 47 files — 41 edited, 6 created. The first 154 are the implementation as written; the last 67, under
 "Corrections from the review of the blocks", apply on top of them. In application order: the Python (`kube.py`, `config.py`, `api.py`,
 `poller.py`, then `clusterconfig/registry.py`, `reader.py`, `parser.py` and `writer.py`; `fleetlookup.py` needs none,
 §3.9), the version (`gsd/__init__.py`, `pyproject.toml`), the page, the chart, `environments/crc.yaml`, the docs, and
@@ -4534,7 +4554,7 @@ class TestTheRuleBesideTheSelector:
 
 #### Corrections from the review of the blocks
 
-Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's twenty (the per-cluster routes, the alerts' predicate, the unaskable resolvers and their tests), Codex's three wording and three design-document blocks, and the orchestrator's twenty (`kube.py`'s hold docstring, the design document, the diagram page and `docs/diagrams/render.py`), then OB3's nine from the confirmation pass (`docs/ACCESS_CONTROL.md`'s hold, the design document's and the diagram page's remaining D1/D5 and lab statements). Each applies to the files as the earlier blocks leave them.
+Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's twenty (the per-cluster routes, the alerts' predicate, the unaskable resolvers and their tests), Codex's three wording and three design-document blocks, and the orchestrator's twenty (`kube.py`'s hold docstring, the design document, the diagram page and `docs/diagrams/render.py`), then OB3's nine from the confirmation pass (`docs/ACCESS_CONTROL.md`'s hold, the design document's and the diagram page's remaining D1/D5 and lab statements), then OB1-lite's two from the review of that pass (`shared-qa` "has always been `self-only`", in the design document and on the diagram page), then the orchestrator's ten from Codex's review of it (the renderer's 375 px page and its test, and the design document's and the diagram page's status, D2, D5 and D6 statements). Each applies to the files as the earlier blocks leave them.
 
 <!-- block: local-development/gsd/api.py | edit -->
 
@@ -5199,9 +5219,9 @@ first one after it is the one probe. Failures count under the same signal
 
 ```markdown
 review, unreachable, junk) is the self tier and is not cached — and it holds that cluster's resolver for
-`gsd/kube.py#REMOTE_FAILURE_HOLD_SECONDS` (30 s): no request that begins during the hold calls that remote, and
-the first one after it expires is the one probe; distinct viewers already in flight when the first failure lands
-may each finish their attempt. Failures count under the same signal
+`gsd/kube.py#REMOTE_FAILURE_HOLD_SECONDS` (30 s): no attempt on that remote starts while the hold runs, and the
+first request that would call after it expires is the one probe; distinct viewers already in flight when the first
+failure lands may each finish their attempt. Failures count under the same signal
 ```
 
 <!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
@@ -5306,6 +5326,264 @@ pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether 
 
 ```html
           <tr><td>See a joined remote wide</td><td>the policy: <code>remote-sar</code> + <code>same-as-host</code>, the standard (D2), on both lab remotes since SPEC_D2b (<code>self-only</code> before it)</td><td>unchanged</td><td>remote, with the poller's token</td><td>none: the token is already held</td></tr>
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+`self-only`, and the host's cluster-admin stopped being wide there. `shared-qa` is a hand-made Secret from #310's
+testing with no visibility key, so it has always been `self-only`.
+```
+
+```markdown
+`self-only`, and the host's cluster-admin stopped being wide there. `shared-qa` is a hand-made Secret from #310's
+testing with no visibility key, so it was `self-only` until SPEC_D2b; since then both remotes take the default for a
+remote that states no policy, `remote-sar` + `same-as-host`.
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+        <li><code>shared-qa</code> is a hand-made Secret from #310's testing with no visibility key, so it has always
+          been <code>self-only</code>.</li>
+```
+
+```html
+        <li><code>shared-qa</code> is a hand-made Secret from #310's testing with no visibility key, so it was
+          <code>self-only</code> until SPEC_D2b; since then both remotes take the default for a remote that states no
+          policy, <code>remote-sar</code> + <code>same-as-host</code>.</li>
+```
+
+<!-- block: docs/diagrams/render.py | edit -->
+
+```python
+    failures: list[str] = []
+```
+
+```python
+    failures: list[str] = []
+
+    def watch(page, label: str) -> None:
+        # Every page reports for its whole life, the 375 px one included: its load is where the sideways-scroll
+        # check is measured. A failed request, not a fixed sleep, is what says the fonts are missing: Chromium keeps
+        # an empty sheet for a stylesheet that failed and document.fonts.check() answers true for a face never declared.
+        page.on("pageerror", lambda e: failures.append(f"{label}: page error: {e}"))
+        page.on("requestfailed", lambda r: failures.append(f"{label}: did not load: {r.url}"))
+        page.on("response", lambda r: failures.append(f"{label}: did not load: {r.url} ({r.status})")
+                if r.status >= 400 else None)
+```
+
+<!-- block: docs/diagrams/render.py | edit -->
+
+```python
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            # A failed request, not a fixed sleep, is what says the fonts are missing: Chromium keeps an empty
+            # sheet for a stylesheet that failed and document.fonts.check() answers true for a face never declared.
+            unloaded: list[str] = []
+            page.on("requestfailed", lambda r: unloaded.append(r.url))
+            page.on("response", lambda r: unloaded.append(f"{r.url} ({r.status})") if r.status >= 400 else None)
+            page.goto(doc.as_uri(), wait_until="networkidle")
+            page.evaluate(f"() => document.documentElement.setAttribute('data-theme', '{theme}')")
+            page.evaluate("document.fonts.ready.then(() => true)")
+            if unloaded:
+                failures.append(f"{theme}: did not load: {', '.join(sorted(set(unloaded)))}")
+                break
+```
+
+```python
+            watch(page, theme)
+            page.goto(doc.as_uri(), wait_until="networkidle")
+            page.evaluate(f"() => document.documentElement.setAttribute('data-theme', '{theme}')")
+            page.evaluate("document.fonts.ready.then(() => true)")
+            if failures:
+                break
+```
+
+<!-- block: docs/diagrams/render.py | edit -->
+
+```python
+            failures += [f"{theme}: page error: {e}" for e in errors]
+            page.close()
+        phone = browser.new_page(viewport={"width": 375, "height": 800})
+        phone.goto(doc.as_uri(), wait_until="networkidle")
+```
+
+```python
+            page.close()
+        phone = browser.new_page(viewport={"width": 375, "height": 800})
+        watch(phone, "375 px")
+        phone.goto(doc.as_uri(), wait_until="networkidle")
+```
+
+<!-- block: local-development/tests/test_diagram_render.py | create -->
+
+```python
+"""docs/diagrams/render.py's exit status, on every path its docstring promises (SPEC_D2b §7).
+
+The renderer's value is its refusals: a figure drawn in a fallback face, or a page that scrolls sideways at
+375 px, looks like a design choice once it is a PNG. So every page it opens, the 375 px one included, must turn a
+page error, a failed request or an HTTP error into a non-zero exit. Playwright is replaced by a stand-in that fires
+those events on demand, so this needs no browser and no network; the real render is SPEC_D2b §7's "After the
+blocks" step.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import pathlib
+from types import SimpleNamespace
+
+import pytest
+
+RENDER = pathlib.Path(__file__).resolve().parents[2] / "docs" / "diagrams" / "render.py"
+
+# case -> (fired on the 375 px page?, event, payload); "ok", "mismatch" and "scroll" fire nothing.
+EVENTS = {
+    "offline": (False, "requestfailed", SimpleNamespace(url="https://fonts.invalid/face.woff2")),
+    "404": (False, "response", SimpleNamespace(url="https://fonts.invalid/face.woff2", status=404)),
+    "pageerror": (False, "pageerror", RuntimeError("broken page")),
+    "phone-requestfailed": (True, "requestfailed", SimpleNamespace(url="https://fonts.invalid/face.woff2")),
+    "phone-404": (True, "response", SimpleNamespace(url="https://fonts.invalid/face.woff2", status=404)),
+    "phone-pageerror": (True, "pageerror", RuntimeError("broken page")),
+}
+
+
+def _render():
+    spec = importlib.util.spec_from_file_location("diagram_render", RENDER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("case", ["ok", "mismatch", "scroll", *EVENTS])
+def test_every_page_turns_a_failure_into_a_non_zero_exit(monkeypatch, tmp_path, case):
+    render = _render()
+
+    class Page:
+        def __init__(self, phone: bool):
+            self.phone, self.handlers = phone, {}
+
+        def on(self, name, callback):
+            self.handlers.setdefault(name, []).append(callback)
+
+        def goto(self, url, **kwargs):
+            assert url.startswith("file:")
+            on_phone, event, payload = EVENTS.get(case, (None, None, None))
+            if on_phone is self.phone:
+                for callback in self.handlers.get(event, []):
+                    callback(payload)
+
+        def evaluate(self, expression):
+            return (500 if case == "scroll" else 375) if "scrollWidth" in expression else True
+
+        def locator(self, selector):
+            assert selector == ".fig-scroll"
+            return self
+
+        def count(self):
+            return 3 if case == "mismatch" else 4
+
+        def nth(self, index):
+            return self
+
+        def screenshot(self, path):
+            pathlib.Path(path).write_bytes(b"png")
+
+        def close(self):
+            pass
+
+    class Browser:
+        def new_page(self, *, viewport, **kwargs):
+            return Page(viewport["width"] == 375)
+
+        def close(self):
+            pass
+
+    class Playwright:
+        chromium = SimpleNamespace(launch=Browser)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(render, "sync_playwright", Playwright)
+    page = tmp_path / "page.html"
+    page.write_text("<html><body>four figures</body></html>")
+    out = tmp_path / "png"
+    monkeypatch.setattr(render.sys, "argv", ["render.py", str(page), str(out), "a,b,c,d"])
+    assert render.main() == (0 if case == "ok" else 1), case
+    if case == "ok":
+        assert len(list(out.glob("*.png"))) == 8
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+| Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard for every way a cluster is joined), D3, D5, D6 and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D8 open (§8) |
+```
+
+```markdown
+| Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 directed, not built (#322); D8 open (§8) |
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+| **D2** | The default for a newly joined remote | `self-only` (today) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
+```
+
+```markdown
+| **D2** | The default for a newly joined remote | `self-only` (the default until SPEC_D2b) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+| **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
+```
+
+```markdown
+| **D6** | The lab until D1 shipped | `inherit` + `same-as-host` on `shared-rnd` then, or `self-only` until D1 landed and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+        <div class="q"><code>self-only</code> (today), or <code>remote-sar</code>?</div>
+```
+
+```html
+        <div class="q"><code>self-only</code> (the default until SPEC_D2b), or <code>remote-sar</code>?</div>
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+        <div class="rec"><strong>Directed</strong> (2026-09-23), built in SPEC_D2b: one line beside the selector, read
+          from <code>/api/whoami</code> alone. Before it, the page narrowed you and gave no reason, which is how this
+          looked like a bug.</div>
+```
+
+```html
+        <div class="rec"><strong>Directed</strong> (2026-09-23), built in SPEC_D2b: one line beside the selector, read
+          from <code>/api/whoami</code> alone. <em>cannot check access</em> needs D4's field and is not built, so a
+          remote's narrowed line reads <em>This cluster's own RBAC shows your own rows, or could not be asked.</em>
+          Before D5, the page narrowed you and gave no reason, which is how this looked like a bug.</div>
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+        <div class="id">D6 · the lab, right now</div>
+        <div class="q">Until D1 ships, what should <code>shared-rnd</code> and <code>shared-qa</code> be?</div>
+```
+
+```html
+        <div class="id">D6 · the lab until D1 shipped</div>
+        <div class="q">Until D1 shipped, what were <code>shared-rnd</code> and <code>shared-qa</code> to be?</div>
 ```
 
 #### After the blocks
