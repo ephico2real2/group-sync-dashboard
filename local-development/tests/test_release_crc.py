@@ -174,6 +174,15 @@ def test_helm_mode_probe_accepts_only_notfound_as_absent(lab):
     assert "oc delete application" in calls(lab) and "helm upgrade" in calls(lab)
 
 
+def test_helm_mode_takes_the_fields_argo_left_on_the_surviving_objects(lab):
+    # The PVCs outlive the handover with argocd-controller owning their labels; a chart bump makes
+    # Helm 4's server-side apply refuse them unless the install forces its own values (CRC, 0.53.0).
+    r = run(lab, STUB_APP_EXISTS="present")
+    assert r.returncode == 0, r.stderr
+    upgrade = [line for line in calls(lab).splitlines() if line.startswith("helm upgrade --install")]
+    assert len(upgrade) == 1 and "--force-conflicts" in upgrade[0].split(), upgrade
+
+
 # --- the Argo values checks --------------------------------------------------------------------
 
 def test_argocd_branch_fetch_failure_is_fatal(lab):
