@@ -114,14 +114,20 @@ class RemoteTierResolvers:
         self._built: dict[str, tuple[str, TierResolver]] = {}
 
     def get(self, cluster_id: str) -> TierResolver | None:
-        cluster = self._settings.cluster(cluster_id)
         host = self._settings.host_cluster()
-        policy = remote_policy(cluster.visibility, cluster.identity) if cluster is not None else None
-        if (cluster is None or not cluster.enabled or cluster.credential_pending is not None
-                or (host is not None and cluster.name == host.name)
-                or policy != (VISIBILITY_REMOTE_SAR, IDENTITY_SAME_AS_HOST)):
-            with self._lock:
-                self._built.pop(cluster_id, None)
+        askable = {c.name: c for c in self._settings.effective_clusters()
+                   if c.enabled and c.credential_pending is None
+                   and (host is None or c.name != host.name)
+                   and remote_policy(c.visibility, c.identity) == (VISIBILITY_REMOTE_SAR, IDENTITY_SAME_AS_HOST)}
+        cluster = askable.get(cluster_id)
+        with self._lock:
+            # Every resolver whose cluster is no longer askable is dropped, not only the one asked about: a
+            # retired or disabled cluster is never served, so nobody asks for it again, and its resolver holds
+            # the configuration it was built on — the Secret's credential included — for the life of the
+            # process (the rule the poller's _LAST_TOKEN states: a credential does not outlive its configuration).
+            for name in [n for n in self._built if n not in askable]:
+                del self._built[name]
+        if cluster is None:
             return None
         key = cluster.connection_fingerprint()
         with self._lock:
@@ -189,8 +195,13 @@ CA is used from the first request after discovery publishes it, with no restart;
 verdict cache and the hold, so each of `R` connection changes in a TTL costs at most one fresh attempt per viewer. A
 lookup beginning after a cluster is published as retired, disabled or pending makes no request. A resolver is never
 built for the host. Every lookup also drops the resolver of any cluster that is no longer askable — retired, disabled, pending,
-the host, or no longer `remote-sar` + `same-as-host` — from the same single snapshot, so a resolver never keeps a
-credential its configuration no longer carries (review of the blocks, OB1-lite N3; §7's corrections). Measured on the implemented copy with a fake clock bound to `gsd.kube` (ten viewers in flight at
+the host, or no longer `remote-sar` + `same-as-host` — from the same single snapshot, so a resolver keeps no
+credential its configuration no longer carries past the next lookup of any `remote-sar` cluster (review of the
+blocks, OB1-lite N3; §7's corrections). With no discovery hook, that lookup is the only drop: a fleet whose last
+`remote-sar` cluster is retired or disabled makes no lookup until one is served again, and keeps that cluster's
+resolver, its token included, until then or until the pod restarts; nothing calls with it (measured through the routes
+by OB3's confirmation pass).
+Measured on the implemented copy with a fake clock bound to `gsd.kube` (ten viewers in flight at
 the first failure, then 55 s of ten requests a second from fifty viewers): 10 attempts in the first burst, one probe
 at 35.5 s, 11 attempts in 60 s — and 560 with the hold at zero, the host's behaviour.
 
@@ -390,8 +401,9 @@ without deleting the Secret, wherever that stanza is declared. Under Argo CD the
 
 `TierResolver` gains `failure_hold_seconds: float = 0.0`. Zero — the host's resolvers, which do not pass it — keeps
 today's observable behaviour: every indeterminate check is uncached and the next request asks again. Above zero, a
-failed resolution holds the resolver: no call until the hold expires; the first request that would call after it
-expires is the single probe and re-arms the hold BEFORE it calls; a success ends the hold for every viewer. The hold
+failed resolution holds the resolver: no request that begins during the hold calls the remote (one already in
+flight when the failure lands may finish its attempt); the first request that would call after it expires is the
+single probe and re-arms the hold BEFORE it calls; a success ends the hold for every viewer. The hold
 gates every request that would call the remote — a leader, and a follower that steals a stuck leader's slot —
 through one helper, `_may_call`; a request for a viewer already being resolved rides that resolution as today, the
 probe included, so one page's burst gets one answer.
@@ -405,8 +417,9 @@ REMOTE_FAILURE_HOLD_SECONDS = 30.0
 A remote that fails — unreachable, a 401, a 403 because its joining ServiceAccount may not list groups
 or create reviews — would otherwise be asked again by every viewer's first request, each paying up to
 TIER_CHECK_TIMEOUT_SECONDS per call, one remote after another. Held, it is asked at most once per this
-many seconds whatever the traffic: the first request that would call after the hold expires is the one
-probe. Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote that keeps failing under
+many seconds whatever the later traffic: the first request that would call after the hold expires is the
+one probe; distinct viewers already in flight when the first failure lands may each pay that first attempt.
+Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote that keeps failing under
 traffic still records a failed check every thirty seconds and GroupSyncDashboardVisibilityChecksFailing
 stays true. A constant, like the timeout, until an operator needs to tune it.
 """
@@ -593,9 +606,10 @@ below, `(0, 0, 0)`. In `local-development/gsd/api.py`, beside `is_served`:
 ```
 
 `list_clusters(request: Request, scopes: dict[str, str] = Depends(served_scopes))` takes its row's scope as
-`scopes[row["id"]] if row["id"] in scopes else viewer_scope(request, row["id"])[1]`, and `list_alerts` takes the same
-parameter and `cscope` the same way. Each decision is still made, and counted, once per request; the request still
-waits for it (§6) — only the snapshot no longer spans it. Behaviour-preserving, measured: every persona × route answer
+`scopes[row["id"]] if row["id"] in scopes else viewer_scope(request, row["id"])[1]`, and `list_alerts` takes its
+`cscope` the same way from its own dependency, `alert_scopes` (below). Each decision is still made, and counted, once
+per request; the request still waits for it (§6) — only the snapshot no longer spans it. Behaviour-preserving,
+measured: every persona × route answer
 is identical with and without the dependency, and the resolver is called the same number of times (36 = 36).
 
 **The per-cluster routes too** (review of the blocks, OB1-lite F1). Thirteen per-cluster routes are `@consistent`
@@ -606,10 +620,13 @@ every decision). A `@tier_first` decorator above `@consistent` asks the named cl
 answer on the request; `viewer_scope` serves it from there, so the remote is asked once and the decision counted once.
 **`/api/alerts` decides on its own walk's predicate** (`alert_scopes`: a stored row that is enabled and not hidden),
 not `served_scopes`', so it asks no remote its loop skips (review of the blocks, OB1-lite F2 and Codex B4). **One
-window is left, deliberately:** a cluster row published between the dependency's read and the handler's snapshot is
-decided inline, inside the snapshot, as before. That needs a new cluster to be written within one request's window,
-and costs one bounded call (the hold then applies); Codex's retry-the-snapshot correction was rejected as more control
-flow than that window is worth (Orchestrator's notes).
+window is left, deliberately:** a cluster that becomes decidable between the dependency's (or `@tier_first`'s) read
+and the handler's snapshot — a new row, a row the leader writes back to `enabled=1`, or a configuration that starts
+serving it as `remote-sar` — is decided inline, inside the snapshot, as before. That needs such a write within one
+request's window, and costs one decision: a group list and a review on that remote, up to
+`TIER_CHECK_TIMEOUT_SECONDS` each (measured: two calls at read depth 1 for a row re-enabled mid-request), after which
+a failure's hold applies. Codex's retry-the-snapshot correction was rejected as more control flow than that window is
+worth (Orchestrator's notes).
 
 ### 3.11 D5 — the reader is told which rule decided
 
@@ -989,9 +1006,10 @@ Then, one change at a time, waiting for the `resolved shared-qa` line after each
 | the in-cluster URL | `set_trust "$ROOT_CA" https://kubernetes.default.svc` | `all`, at once |
 
 `kube-root-ca.crt` verifies `api.crc.testing:6443` (measured: `openssl s_client … -CAfile` returns 0; the mock's CA
-returns 19) and `kubernetes.default.svc`, which the `dashboard` entry uses with the same bundle. Restore the saved
-data while keeping the live object's update precondition (`oc replace` needs the live `resourceVersion`):
-`python3 -c 'import json,subprocess,sys; s=json.load(open(sys.argv[1])); live=json.loads(subprocess.run(["oc","get","secret","gsd-cluster-shared-qa","-n","group-sync-dashboard","-o","json"],check=True,capture_output=True,text=True).stdout); m=s["metadata"]; m["resourceVersion"]=live["metadata"]["resourceVersion"]; [m.pop(k,None) for k in ("uid","creationTimestamp","managedFields")]; print(json.dumps(s))' "$WALK/shared-qa.json" | oc replace -f -`,
+returns 19) and `kubernetes.default.svc`, which the `dashboard` entry uses with the same bundle. Restore — the saved
+`resourceVersion` is stale by then and is stripped; `oc replace` of an object without one reads the live one and sends
+it (measured with `oc` 4.22.13 against a recording API stand-in):
+`python3 -c "import json,sys; s=json.load(open(sys.argv[1])); m=s['metadata']; [m.pop(k, None) for k in ('resourceVersion','uid','creationTimestamp','managedFields')]; print(json.dumps(s))" "$WALK/shared-qa.json" | oc replace -f -`,
 then `oc delete secret shared-qa-poller-d2b-walk -n group-sync-operator`.
 
 **Step 8 — failure paths and the hold.** Two scratch joining ServiceAccounts, one without `create
@@ -1215,16 +1233,25 @@ its Definition of Done.
   - the design document and its figures still called D1 and D5 unbuilt — Codex's three caption and table blocks, and
     the orchestrator's for the summary, the two "once D1 lands" lines, the page's cards, lede, captions and drawn
     footers; `docs/diagrams/render.py` is added so the figures are re-rendered from written instructions (§7);
-  - §5's step 4 read `shared-rnd`'s Secret before the lookup wrote it again (OB1-lite F4), and step 7's restore
-    stripped the `resourceVersion` `oc replace` needs (Codex B11).
-  Rejected: Codex's retry-the-snapshot loop for a row published mid-request (§3.10: a rare window, one bounded call,
-  exception-driven control flow in two handlers); Codex's regression file (its tests match prose and execute the
-  spec's own text — prose tests are refused on every PR here); Codex's B10 request for per-test red/green proof,
-  which OB1-lite's mutation run already gives.
+  - §5's step 4 read `shared-rnd`'s Secret before the lookup wrote it again (OB1-lite F4).
+  Rejected: Codex's retry-the-snapshot loop for a row published mid-request (§3.10: a rare window, one decision of
+  two bounded calls, exception-driven control flow in two handlers); Codex's regression file (five of its seven tests
+  match prose or execute the spec's own text — prose tests are refused on every PR here — and of its two behavioural
+  tests one is OB1-lite's alerts test again and one tests the rejected loop); Codex's B10 request for per-test
+  red/green proof, which OB1-lite's mutation run answers per mechanism (each of its 19 mutations caught by a new
+  test), not per test; Codex's B11 on step 7's restore — measured by OB3's confirmation pass with `oc` 4.22.13 against
+  a recording API stand-in, `oc replace` of an object with no `resourceVersion` reads the live one and sends it (the
+  PUT carried the live 4242: `replaced`), so the restore that strips the saved, stale one stands as first written.
+- **Confirmation pass on the corrections** (OB3 on `890f04c`): R1–R4 hold as measured; its findings, written as nine
+  more blocks and text edits: the design document and the diagram page still called D5 a proposal in Figure 3's page
+  caption and said both lab remotes are `self-only`, and §8/§9 did not say D1 is built; `docs/ACCESS_CONTROL.md` §11
+  and §3.5 said no request calls a held remote, while one already in flight may finish its attempt; §3.1's quote and
+  §3.5's no longer matched §7, and `kube.py`'s docstring had a 206-character line; §3.1 said a resolver never keeps a
+  retired cluster's credential; `docs/diagrams/render.py` exited 0 with its web fonts unreachable.
 
 ## 7. Implementation blocks
 
-200 blocks in 46 files — 41 edited, 5 created. The first 154 are the implementation as written; the last 46, under
+209 blocks in 46 files — 41 edited, 5 created. The first 154 are the implementation as written; the last 55, under
 "Corrections from the review of the blocks", apply on top of them. In application order: the Python (`kube.py`, `config.py`, `api.py`,
 `poller.py`, then `clusterconfig/registry.py`, `reader.py`, `parser.py` and `writer.py`; `fleetlookup.py` needs none,
 §3.9), the version (`gsd/__init__.py`, `pyproject.toml`), the page, the chart, `environments/crc.yaml`, the docs, and
@@ -4507,7 +4534,7 @@ class TestTheRuleBesideTheSelector:
 
 #### Corrections from the review of the blocks
 
-Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's twenty (the per-cluster routes, the alerts' predicate, the unaskable resolvers and their tests), Codex's three wording and three design-document blocks, and the orchestrator's twenty (`kube.py`'s hold docstring, the design document, the diagram page and `docs/diagrams/render.py`). Each applies to the files as the earlier blocks leave them.
+Written after the review of the 154 blocks (Orchestrator's notes): OB1-lite's twenty (the per-cluster routes, the alerts' predicate, the unaskable resolvers and their tests), Codex's three wording and three design-document blocks, and the orchestrator's twenty (`kube.py`'s hold docstring, the design document, the diagram page and `docs/diagrams/render.py`), then OB3's nine from the confirmation pass (`docs/ACCESS_CONTROL.md`'s hold, the design document's and the diagram page's remaining D1/D5 and lab statements). Each applies to the files as the earlier blocks leave them.
 
 <!-- block: local-development/gsd/api.py | edit -->
 
@@ -4859,7 +4886,8 @@ probe. Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote
 
 ```python
 many seconds whatever the later traffic: the first request that would call after the hold expires is the
-one probe; distinct viewers already in flight when the first failure lands may each pay that first attempt. Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote that keeps failing under
+one probe; distinct viewers already in flight when the first failure lands may each pay that first attempt.
+Under the 60 s tier TTL and far under the alert's 15 minutes, so a remote that keeps failing under
 ```
 
 <!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
@@ -5085,8 +5113,9 @@ docs/diagrams/remote-cluster-access policies-who-decides,inherit-vs-remote-sar-o
 One name per .fig-scroll, in document order; each becomes <out-dir>/<name>.light.png and
 <name>.dark.png at 2x pixel density. The page may be a fragment (an Artifact page starts at
 <title>): it is wrapped in a document for rendering, never modified. Exit status is non-zero on a
-page error, a name/figure count mismatch, or horizontal page scroll at 375 px — the three defects a
-code review of the SVG text does not see.
+page error, a request that did not load (a web font that fails leaves the figures in a fallback
+face), a name/figure count mismatch, or horizontal page scroll at 375 px — the defects a code review
+of the SVG text does not see.
 """
 
 from __future__ import annotations
@@ -5123,9 +5152,17 @@ def main() -> int:
             page = browser.new_page(viewport={"width": 1180, "height": 900}, device_scale_factor=2)
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
-            page.goto(doc.as_uri())
+            # A failed request, not a fixed sleep, is what says the fonts are missing: Chromium keeps an empty
+            # sheet for a stylesheet that failed and document.fonts.check() answers true for a face never declared.
+            unloaded: list[str] = []
+            page.on("requestfailed", lambda r: unloaded.append(r.url))
+            page.on("response", lambda r: unloaded.append(f"{r.url} ({r.status})") if r.status >= 400 else None)
+            page.goto(doc.as_uri(), wait_until="networkidle")
             page.evaluate(f"() => document.documentElement.setAttribute('data-theme', '{theme}')")
-            page.wait_for_timeout(1200)   # the web fonts; a render before they load measures the fallback
+            page.evaluate("document.fonts.ready.then(() => true)")
+            if unloaded:
+                failures.append(f"{theme}: did not load: {', '.join(sorted(set(unloaded)))}")
+                break
             figures = page.locator(".fig-scroll")
             if figures.count() != len(names):
                 failures.append(f"{figures.count()} .fig-scroll figures but {len(names)} names given")
@@ -5137,9 +5174,8 @@ def main() -> int:
             failures += [f"{theme}: page error: {e}" for e in errors]
             page.close()
         phone = browser.new_page(viewport={"width": 375, "height": 800})
-        phone.goto(doc.as_uri())
-        phone.wait_for_timeout(600)
-        width = phone.evaluate("document.documentElement.scrollWidth")
+        phone.goto(doc.as_uri(), wait_until="networkidle")
+        width = phone.evaluate("document.fonts.ready.then(() => document.documentElement.scrollWidth)")
         print(f"375 px viewport: scrollWidth {width}")
         if width > 375:
             failures.append(f"the page scrolls sideways at 375 px (scrollWidth {width})")
@@ -5153,6 +5189,125 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
+<!-- block: docs/ACCESS_CONTROL.md | edit -->
+
+```markdown
+review, unreachable, junk) is the self tier and is not cached — and it holds that cluster's resolver for
+`gsd/kube.py#REMOTE_FAILURE_HOLD_SECONDS` (30 s): no request calls that remote until the hold expires, and the
+first one after it is the one probe. Failures count under the same signal
+```
+
+```markdown
+review, unreachable, junk) is the self tier and is not cached — and it holds that cluster's resolver for
+`gsd/kube.py#REMOTE_FAILURE_HOLD_SECONDS` (30 s): no request that begins during the hold calls that remote, and
+the first one after it expires is the one probe; distinct viewers already in flight when the first failure lands
+may each finish their attempt. Failures count under the same signal
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+On the lab, `kubeadmin` is `cluster-admin` and sees everything on the host cluster, `dashboard`. On `shared-rnd` and
+`shared-qa` it sees only its own rows. Both remotes resolve to `visibility=self-only identity=none` (the pod's
+`cluster-resolved` log line), so **nobody is asked** whether a reader may see them wide.
+```
+
+```markdown
+On the lab, `kubeadmin` is `cluster-admin` and sees everything on the host cluster, `dashboard`. Before SPEC_D2b it saw
+only its own rows on `shared-rnd` and `shared-qa`: both remotes resolved to `visibility=self-only identity=none` (the
+pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether a reader may see them wide.
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+| See a joined remote wide | the cluster's policy (`self-only` on both lab remotes) | `remote-sar` + `same-as-host`, the standard (D2) | the remote, with the poller's token | none: the token is already held |
+```
+
+```markdown
+| See a joined remote wide | the cluster's policy: `remote-sar` + `same-as-host`, the standard (D2), on both lab remotes since SPEC_D2b (`self-only` before it) | unchanged | the remote, with the poller's token | none: the token is already held |
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+| **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"*, and the mandate of 2026-09-23: *"this is what I want: remote-sar for whatever method the cluster was joined"* |
+```
+
+```markdown
+| **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"*, and the mandate of 2026-09-23: *"this is what I want: remote-sar for whatever method the cluster was joined"*. Built in SPEC_D2b (#338): the resolver is found or built on each request from the cluster's current configuration, with no discovery hook, and dropped at the next lookup once its cluster is no longer askable |
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+| **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stay `self-only` until D1 ships, then take `remote-sar` + `same-as-host`. |
+```
+
+```markdown
+| **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
+```
+
+<!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
+
+```markdown
+- **Code (D1, D2):** a `TierResolver` per `remote-sar` cluster owned by the discovery registry instead of built once
+  in `create_app`; keyed by cluster and rebuilt when the cluster's credential or trust changes; the parser and the
+  chart stop refusing `remote-sar` for Secret-declared clusters. The parser, once it accepts `remote-sar`, must
+```
+
+```markdown
+- **Code (D1, D2), built in SPEC_D2b (#338):** a `TierResolver` per `remote-sar` cluster, found or built on each
+  request from the cluster's current configuration (`local-development/gsd/kube.py#RemoteTierResolvers`) instead
+  of built once in `create_app`; rebuilt when the cluster's URL, credential or trust changes; the parser and the
+  chart stop refusing `remote-sar` for Secret-declared clusters. The parser, once it accepts `remote-sar`, must
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+    <p class="lede">You are <code>cluster-admin</code> on the lab. On <code>dashboard</code> you see everything; on
+      <code>shared-rnd</code> and <code>shared-qa</code> you see only your own rows. Both remotes are configured
+      <code>self-only</code>, so nobody is asked. The remote could answer this itself; since SPEC_D2b it does, for every
+      way a cluster is joined.</p>
+```
+
+```html
+    <p class="lede">You are <code>cluster-admin</code> on the lab, and on <code>dashboard</code> you see everything.
+      Before SPEC_D2b, on <code>shared-rnd</code> and <code>shared-qa</code> you saw only your own rows: both remotes
+      were <code>self-only</code>, so nobody was asked. The remote could answer this itself; since SPEC_D2b it does, for
+      every way a cluster is joined.</p>
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+      <figcaption>Today, every path except "allowed" narrows, which is the fail-closed direction; allowed and
+        denied are cached, failures are not. A failure at either remote call is visible only in the pod log and the
+        tier-check metric. The reader sees the same generic text for every narrowed outcome. Naming the failure (D4)
+        and saying which rule decided (D5) are proposals, in the decisions below. Both behaviours are in
+        <code>docs/ACCESS_CONTROL.md</code> §11.</figcaption>
+```
+
+```html
+      <figcaption>Every path except "allowed" narrows, which is the fail-closed direction; allowed and denied are
+        cached, failures are not, and a failure holds that cluster's resolver for 30 s. The cause of a failure is
+        visible only in the pod log and the tier-check metric. Since SPEC_D2b the line beside the selector (D5) names
+        the rule that decided; naming the failure (D4) is still a proposal, in the decisions below, so a denied reader
+        and one the remote could not be asked about read the same narrowed line. Both behaviours are in
+        <code>docs/ACCESS_CONTROL.md</code> §11.</figcaption>
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+
+```html
+          <tr><td>See a joined remote wide</td><td>the policy: <code>self-only</code> on both lab remotes</td><td><code>remote-sar</code> + <code>same-as-host</code>, the standard (D2)</td><td>remote, with the poller's token</td><td>none: the token is already held</td></tr>
+```
+
+```html
+          <tr><td>See a joined remote wide</td><td>the policy: <code>remote-sar</code> + <code>same-as-host</code>, the standard (D2), on both lab remotes since SPEC_D2b (<code>self-only</code> before it)</td><td>unchanged</td><td>remote, with the poller's token</td><td>none: the token is already held</td></tr>
+```
+
 #### After the blocks
 
 The figures of `docs/DESIGN_remote_cluster_access.md` are PNGs, which a block cannot carry. With the blocks applied,
@@ -5164,4 +5319,5 @@ local-development/.venv/bin/python docs/diagrams/render.py docs/diagrams/remote-
   docs/diagrams/remote-cluster-access policies-who-decides,inherit-vs-remote-sar-outcomes,remote-sar-decision-flow,joining-a-cluster
 ```
 
-It exits non-zero on a page error, a name/figure mismatch, or sideways scroll at 375 px; read the PNGs before committing.
+It exits non-zero on a page error, a request that did not load (the web fonts among them: offline, the figures would be
+drawn in a fallback face), a name/figure mismatch, or sideways scroll at 375 px; read the PNGs before committing.
