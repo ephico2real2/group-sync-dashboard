@@ -23,6 +23,19 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
+Labels for the Roles, ClusterRoles and their bindings this chart ships: the standard ones plus
+`rbac.ocp.io/config-source`, the policy system's provenance label. The dashboard's own check
+(`local-development/gsd/kube.py` CONFIG_SOURCE_LABEL) reports a Group-subject binding without it
+as a hand-made grant, so without this label it flagged the chart's own auditor binding (#312).
+The chart renders these objects from values on every install, so the chart is their config source
+— a provenance, not an acknowledged exception (`rbac.ocp.io/unmanaged-exception` is a person's).
+*/}}
+{{- define "gsd.rbacLabels" -}}
+{{ include "gsd.labels" . }}
+rbac.ocp.io/config-source: {{ .Chart.Name }}
+{{- end -}}
+
+{{/*
 `app` is kept alongside the standard labels because the ServiceMonitor selects the Service
 by its metadata labels. Dropping it silently breaks scraping while every object still looks
 correct — that exact bug was found on this deployment.

@@ -71,7 +71,7 @@ metadata:
   name: {{ include "gsd.fullname" . }}-fleet-account
   namespace: {{ $target }}
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
     app.kubernetes.io/component: fleet-account
   annotations:
     # Says what this grant is for, in the namespace where someone will find it and wonder.
@@ -92,7 +92,7 @@ metadata:
   name: {{ include "gsd.fullname" . }}-fleet-account
   namespace: {{ $target }}
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
     app.kubernetes.io/component: fleet-account
 roleRef:
   apiGroup: rbac.authorization.k8s.io

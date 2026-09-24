@@ -20,7 +20,7 @@ kind: ClusterRole
 metadata:
   name: {{ include "gsd.fullname" . }}-login-capture-audit
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
     app.kubernetes.io/component: login-capture
 rules:
   - apiGroups: [""]
@@ -43,7 +43,7 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ include "gsd.fullname" . }}-login-capture-audit
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
     app.kubernetes.io/component: login-capture
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -87,7 +87,7 @@ metadata:
   name: {{ include "gsd.fullname" . }}-login-capture
   namespace: {{ .Values.loginCapture.namespace }}
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
     app.kubernetes.io/component: login-capture
 rules:
   # Discovery. `list` only — no watch, and no get on a named pod, because pod names are generated and
@@ -107,7 +107,7 @@ metadata:
   name: {{ include "gsd.fullname" . }}-login-capture
   namespace: {{ .Values.loginCapture.namespace }}
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
     app.kubernetes.io/component: login-capture
 roleRef:
   apiGroup: rbac.authorization.k8s.io

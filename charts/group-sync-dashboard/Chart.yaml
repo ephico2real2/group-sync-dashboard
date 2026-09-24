@@ -225,7 +225,11 @@ type: application
 # `saTokenLookup`; the render refuses only an explicit `identity: none` beside `remote-sar`, and NOTES
 # prints each remote's resolved pair. appVersion moves to application 0.32.0 (below). A remote keeps the
 # old view with `visibility: self-only` and `identity: none`.
-version: 0.53.0
+# CHART 0.53.1 (2026-09-24), PATCH: every Role, ClusterRole and binding the chart ships carries
+# `rbac.ocp.io/config-source: group-sync-dashboard`, the policy system's provenance label, so the
+# dashboard no longer reports the chart's own auditor binding as a grant made by hand (#312).
+# Metadata only: no rule, subject or role changes.
+version: 0.53.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

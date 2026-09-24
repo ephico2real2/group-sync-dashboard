@@ -26,7 +26,7 @@ kind: ClusterRole
 metadata:
   name: {{ include "gsd.fullname" . }}-auth-loglevel
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
 rules:
   # `get` and `patch` on ONE named object. resourceNames is honoured for both — unlike `create` and
   # `list`, where a request carries its name in the body or not at all, so a name-pinned rule never
@@ -57,7 +57,7 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ include "gsd.fullname" . }}-auth-loglevel
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
   # No `keep` here either — same reason as the ServiceAccount above.
 roleRef:
   apiGroup: rbac.authorization.k8s.io
