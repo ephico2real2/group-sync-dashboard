@@ -58,9 +58,9 @@ orchestrator's notes, in the same pull request, before it is applied again.
 - **Nothing from memory.** The spec is the source; the reviewers' proposed snippets are accepted
   or rejected in writing; the adversarial pass is Codex and Cursor with a per-claim brief.
 - **Main is branch-protected.** Every change is a pull request the operator merges; a merge to
-  main is the release trigger for the image and the chart. An application release — the
-  CHANGELOG heading `local-development/prepare-release.py` cuts — is what a spec's `released`
-  status names (below).
+  main is the release trigger for the image and the chart. A CHANGELOG release heading — the
+  one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
+  (below).
 
 ## The thirteen modules
 
@@ -91,11 +91,11 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | D2b | [`SPEC_D2b_remote_sar_for_every_join.md`](SPEC_D2b_remote_sar_for_every_join.md) — `remote-sar` for every way a cluster is joined, and `remote-sar` + `same-as-host` the default for a remote (design D1, D2) | D — architecture | — | app and chart minor bumps at the PR | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) | merged |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
-`specified → in progress → merged → released`: `in progress` while some of its issue's work is
-merged or open and some is not; `merged` once all of it is on main, under the CHANGELOG's
-Unreleased heading; `released` once an application release heading carries it —
+`specified → in progress → merged → released`: `in progress` while some of the spec is on
+main or still open and some is not; `merged` once all of the spec is on main, under the
+CHANGELOG's Unreleased heading; `released` once a CHANGELOG release heading carries it —
 `local-development/prepare-release.py` moves every `merged` row, and its spec's header, to
-`released` when it cuts that release. A spec's own header carries the same status;
+`released` when it cuts that release (application or chart). A spec's own header carries the same status;
 `local-development/tests/test_specs_index.py` holds the two equal and the word to these four.
 
 ## Milestones
@@ -150,7 +150,7 @@ on was verified before the default went back). `tests/test_values_defaults.py` h
    applied; the suite, deploy and live checks run again.
 5. CI green; the operator merges, which publishes the image (scanned) and the chart (installable)
    and moves the spec to `merged`; the review record closes the audit; the issue is closed with a
-   comment naming the merge. The spec reaches `released` when an application release carries it.
+   comment naming the merge. The spec reaches `released` when a CHANGELOG release heading carries it.
 6. Only then the next issue.
 
 ## Reconciliations across the specs
