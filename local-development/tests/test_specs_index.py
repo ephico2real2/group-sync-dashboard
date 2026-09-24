@@ -113,7 +113,8 @@ def test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reac
     nothing, so the versions it names are the ones its release WILL carry — above Chart.yaml's and
     pyproject.toml's current rungs. S4c said `chart 0.51.0` on a main at 0.52.1, and 0.51.0 had already
     shipped (review of #325, all three seats; the test is OB1-lite's). S3 and S4b are recorded by name
-    (their steps shipped) and their `specified` status is the index's own drift, not this rule's."""
+    and, since the index took the four-word lifecycle, are `in progress` and `merged` — this rule reads
+    `specified` rows only."""
     chart = re.search(r"^version: (\d+\.\d+\.\d+)$",
                       (REPO / "charts/group-sync-dashboard/Chart.yaml").read_text(), re.M).group(1)
     app = re.search(r'^version = "(\d+\.\d+\.\d+)"$', (REPO / "local-development/pyproject.toml").read_text(), re.M).group(1)
@@ -150,3 +151,14 @@ def test_s4c_gates_every_bound_failure_per_account() -> None:
     for stale in ("refused: dict[str, dict]", "gated(self, target", "gated_anywhere", "gated(target, digest)",
                   "one entry per target", "(target, password)"):   # the last two: confirmation pass of #325 (Grok)
         assert stale not in body, f"a per-target contract survives: {stale}"
+
+
+STATUSES = ("specified", "in progress", "merged", "released")
+
+
+def test_every_index_status_is_in_the_lifecycle() -> None:
+    """The index's status vocabulary is the four words its lifecycle names. `in implementation`, on S1, S2
+    and S4a, was none of them while the lifecycle named only specified / in progress / released (review of
+    the index, 2026-09-24, Grok)."""
+    bad = {fid: row["status"] for fid, row in ROWS.items() if row["status"] not in STATUSES}
+    assert not bad, f"status is not one of {STATUSES}: {bad}"

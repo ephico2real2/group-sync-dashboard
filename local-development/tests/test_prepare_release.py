@@ -319,3 +319,40 @@ def test_missing_gh_leaves_the_branch_and_says_so(sandbox: pathlib.Path) -> None
     assert git(sandbox, "rev-parse", "--abbrev-ref", "HEAD").strip() == "release/app-9.0.0"
     assert git(sandbox, "rev-list", "--count", "main..HEAD").strip() == "1"
     assert git(sandbox, "status", "--porcelain").strip() == ""
+
+
+def test_a_release_promotes_merged_status_cells(sandbox: pathlib.Path) -> None:
+    """Unreleased becoming a release heading is the moment `merged` becomes `released` (docs/specs/README.md).
+    Status cells only: a spec body may say `merged` as history and must keep that word; a row at another
+    status is left alone; and the edits are in the release commit."""
+    specs = sandbox / "docs" / "specs"
+    specs.mkdir(parents=True)
+    (specs / "README.md").write_text(
+        "| Id | Specification | Batch | Milestone | Version on release | Issue | Status |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| Z1 | [`SPEC_Z1_example.md`](SPEC_Z1_example.md) — example | Z | — | chart 9.0.0 |"
+        " [#1](https://github.com/ephico2real2/group-sync-dashboard/issues/1) | merged |\n"
+        "| Z2 | [`SPEC_Z2_example.md`](SPEC_Z2_example.md) — example | Z | — | chart 9.0.0 |"
+        " [#2](https://github.com/ephico2real2/group-sync-dashboard/issues/2) | in progress |\n"
+    )
+    for name, status in (("SPEC_Z1_example.md", "merged"), ("SPEC_Z2_example.md", "in progress")):
+        (specs / name).write_text(
+            "# SPEC\n\n| | |\n|---|---|\n| Release | — after |\n"
+            "| Version on release | chart 9.0.0 |\n"
+            "| Issue | [#1](https://github.com/ephico2real2/group-sync-dashboard/issues/1) |\n"
+            f"| Status | {status} |\n\n"
+            "## How to read this spec\n\nS1 (the Secret contract, merged) stays merged.\n"
+        )
+    git(sandbox, "add", "-A")
+    git(sandbox, "commit", "-qm", "seed a merged spec")
+    done = run(sandbox, "--app", "9.0.0", "Promote")
+    assert done.returncode == 0, done.stdout + done.stderr
+    index = (specs / "README.md").read_text()
+    assert re.search(r"\| Z1 \|.*\| released \|$", index, re.M)
+    assert re.search(r"\| Z2 \|.*\| in progress \|$", index, re.M)
+    z1 = (specs / "SPEC_Z1_example.md").read_text()
+    assert "| Status | released |" in z1
+    assert "S1 (the Secret contract, merged) stays merged." in z1
+    assert "| Status | in progress |" in (specs / "SPEC_Z2_example.md").read_text()
+    assert git(sandbox, "status", "--porcelain").strip() == "", "the spec edits must be in the release commit"
+

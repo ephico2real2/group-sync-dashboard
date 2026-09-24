@@ -7,7 +7,7 @@
 | Release | — (post-programme) |
 | Version on release | chart 0.45.0 |
 | Issue | [#230](https://github.com/ephico2real2/group-sync-dashboard/issues/230) |
-| Status | specified |
+| Status | in progress |
 | Source | the operator's design of 2026-09-20 (#248), with the OAuth-trust trap measured on the reference cluster |
 
 Issue #248. Depends on S1 (the Secret contract, merged), S2 (the tab and the write path, merged),
