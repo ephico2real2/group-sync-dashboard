@@ -1254,12 +1254,14 @@ its Definition of Done.
 - **Review of the confirmation pass** (`12d9d8d`; Codex on `gpt-6-astra` at high effort, and OB1-lite). Accepted:
   OB1-lite's three — §3.5's and `docs/ACCESS_CONTROL.md`'s hold sentence said no request that begins during the hold
   calls, while a request that arrived during it and outwaited a stuck resolution for its viewer may be the one probe
-  after it expires (measured by both reviewers: the follower begun at t=1010 called at t=1032); §3.1's retention
+  after it expires (measured by both reviewers: a follower begun during the hold called once it expired, at t=1032
+  from t=1010 in OB1-lite's run and at t=1031 from t=1029 in Codex's); §3.1's retention
   sentence, since a cluster still askable whose credential changed keeps its old resolver until that cluster is next
   looked up (measured: `east` kept `token-one` across a lookup of `west`); and `shared-qa` "has always been
   `self-only`". Codex's C6: the renderer watched only the two theme pages, so a failure on the 375 px page, where
   the sideways-scroll check is measured, exited 0 (measured with a Playwright stand-in; its test is the new
-  `test_diagram_render.py`). Codex's C7 on the facts: the design document's status line, D2's "(today)", D6's "until
+  `test_diagram_render.py`); one shared list also fails a theme-page request that dies after the load check, which
+  the per-page list dropped (OB1-lite, a lazily loaded image: exit 0 before, 1 after). Codex's C7 on the facts: the design document's status line, D2's "(today)", D6's "until
   D1 ships" and "right now", and the page's D5 card, which called D5 built without saying that the narrowed line
   cannot tell a denial from a remote that could not be asked — each corrected in the fewest words, the options column
   kept as the record of what was proposed. Rejected: Codex's C3 code change, a `began_held` flag so that a request
@@ -1268,6 +1270,10 @@ its Definition of Done.
   add state to make an over-stated sentence true; the sentence is corrected instead. Codex's five documentation
   contract tests: they assert phrases in the documents, which is a prose test. Codex's placement of the renderer
   test in `test_remote_sar_default.py`: it tests the renderer, so it gets its own file.
+- **Confirmation of `8460257`** (OB1-lite): the renderer, its test and the counts hold, and its run of a held
+  arrival under 50 viewers' traffic kept one call per 30 s hold, the held arrival being that hold's probe, which
+  confirms the `began_held` rejection. Two wording corrections applied: the D5 line quoted on the page and in the
+  design document is a `remote-sar` cluster's, not every remote's, and each reviewer's hold timings are its own.
 
 ## 7. Implementation blocks
 
@@ -2715,7 +2721,7 @@ each resolver per request from the cluster's current configuration, and both ref
 ```
 
 ```markdown
-| **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Directed** (2026-09-23), built in D2b (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.11): one line beside the selector, read from `/api/whoami` alone. *this cluster cannot check access* needs D4's field and is not built, so a remote's self line says the cluster either answered "your own rows" or could not be asked. |
+| **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Directed** (2026-09-23), built in D2b (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.11): one line beside the selector, read from `/api/whoami` alone. *this cluster cannot check access* needs D4's field and is not built, so a `remote-sar` cluster's self line says the cluster either answered "your own rows" or could not be asked. |
 ```
 
 #### `docs/reference-architecture.md`
@@ -5570,7 +5576,8 @@ def test_every_page_turns_a_failure_into_a_non_zero_exit(monkeypatch, tmp_path, 
 ```html
         <div class="rec"><strong>Directed</strong> (2026-09-23), built in SPEC_D2b: one line beside the selector, read
           from <code>/api/whoami</code> alone. <em>cannot check access</em> needs D4's field and is not built, so a
-          remote's narrowed line reads <em>This cluster's own RBAC shows your own rows, or could not be asked.</em>
+          <code>remote-sar</code> cluster's narrowed line reads <em>This cluster's own RBAC shows your own rows, or
+          could not be asked.</em>
           Before D5, the page narrowed you and gave no reason, which is how this looked like a bug.</div>
 ```
 
