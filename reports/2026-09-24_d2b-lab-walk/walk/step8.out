@@ -1,0 +1,45 @@
+namespace/d2b-walk created
+serviceaccount/no-sar created
+serviceaccount/no-groups created
+clusterrole.rbac.authorization.k8s.io/d2b-walk-no-sar created
+clusterrole.rbac.authorization.k8s.io/d2b-walk-no-groups created
+clusterrolebinding.rbac.authorization.k8s.io/d2b-walk-no-sar created
+clusterrolebinding.rbac.authorization.k8s.io/d2b-walk-no-groups created
+{"secret":"gsd-cluster-d2b-no-sar","cluster":"d2b-no-sar","discovery":"requested"}
+{"secret":"gsd-cluster-d2b-no-groups","cluster":"d2b-no-groups","discovery":"requested"}
+== waiting for discovery (resolved d2b-no-sar, resolved d2b-no-groups)
+2026-09-24 04:09:09,943-0400 INFO    gsd.clusterconfig cluster-resolved cycle=22 cluster=d2b-no-sar source=secret:gsd-cluster-d2b-no-sar credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-24 04:09:10,076-0400 INFO    gsd.clusterconfig cluster-resolved cycle=23 cluster=d2b-no-groups source=secret:gsd-cluster-d2b-no-groups credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+== metric before
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="admin"} 0.0
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="usage"} 0.0
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="clusterconfig_view"} 0.0
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="clusterconfig_manage"} 0.0
+== warnings in the two minutes, per cluster
+d2b-no-sar: 4
+d2b-no-groups: 4
+pair total: 8
+== the warnings, time and reader
+  04:09:10,973 d2b-no-groups kubeadmin forbidden
+  04:09:10,985 d2b-no-sar kubeadmin the
+  04:09:41,002 d2b-no-groups kubeadmin forbidden
+  04:09:41,016 d2b-no-sar kubeadmin the
+  04:10:11,078 d2b-no-groups kubeadmin forbidden
+  04:10:11,089 d2b-no-sar kubeadmin the
+  04:10:41,211 d2b-no-groups jane.smith forbidden
+  04:10:41,222 d2b-no-sar developer the
+== metric after
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="admin"} 8.0
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="usage"} 0.0
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="clusterconfig_view"} 0.0
+gsd_visibility_tier_checks_total{outcome="forbidden",threshold="clusterconfig_manage"} 0.0
+== the alert (user-workload monitoring)
+   not present
+== cleanup
+DELETE d2b-no-sar: 200
+DELETE d2b-no-groups: 200
+namespace "d2b-walk" deleted
+clusterrolebinding.rbac.authorization.k8s.io "d2b-walk-no-sar" deleted
+clusterrolebinding.rbac.authorization.k8s.io "d2b-walk-no-groups" deleted
+clusterrole.rbac.authorization.k8s.io "d2b-walk-no-sar" deleted
+clusterrole.rbac.authorization.k8s.io "d2b-walk-no-groups" deleted

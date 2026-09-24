@@ -1,0 +1,14 @@
+== the in-cluster URL by another name (the refused kubernetes.default.svc is the host's convention)
+  resolved cycle=20 tls=caData
+  kubeadmin scope: all
+  last tier warning: 
+  served server: https://kubernetes.default.svc.cluster.local
+== restore exactly as the spec writes it (the intentionally expired token included)
+secret/gsd-cluster-shared-qa replaced
+secret "shared-qa-poller-token" deleted from group-sync-operator namespace
+  resolved cycle=21 tls=trusted-bundle
+  kubeadmin scope: self
+  last tier warning: auth_failed: 401 Unauthorized — token invalid or expired
+
+  restored token exp: 2026-09-23T01:57:12+00:00 | server: https://api.crc.testing:6443
+Error from server (NotFound): secrets "shared-qa-poller-token" not found

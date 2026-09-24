@@ -1,0 +1,68 @@
+== kubeadmin
+  dashboard inherit all
+  shared-rnd remote-sar all
+  shared-qa remote-sar self
+  mock remote-sar all
+  mock-sar remote-sar all
+  shared-qa groups: 200
+  shared-qa bindings/findings: 403
+  shared-qa home: 200
+  mock groups: 200
+  mock bindings/findings: 200
+  mock home: 200
+== jane.smith
+  dashboard inherit all
+  shared-rnd remote-sar all
+  shared-qa remote-sar self
+  mock remote-sar self
+  mock-sar remote-sar self
+  shared-qa groups: 200
+  shared-qa bindings/findings: 403
+  shared-qa home: 200
+  mock groups: 200
+  mock bindings/findings: 403
+  mock home: 200
+== developer
+  dashboard inherit self
+  shared-rnd remote-sar self
+  shared-qa remote-sar self
+  mock remote-sar all
+  mock-sar remote-sar all
+  shared-qa groups: 200
+  shared-qa bindings/findings: 403
+  shared-qa home: 200
+  mock groups: 200
+  mock bindings/findings: 200
+  mock home: 200
+== test-user-002
+  dashboard inherit self
+  shared-rnd remote-sar self
+  shared-qa remote-sar self
+  mock remote-sar self
+  mock-sar remote-sar self
+  shared-qa groups: 200
+  shared-qa bindings/findings: 403
+  shared-qa home: 200
+  mock groups: 200
+  mock bindings/findings: 403
+  mock home: 200
+ok  kubeadmin dashboard The host decides your view of this cluster.
+ok  kubeadmin shared-rnd This cluster's own RBAC gives you the full view.
+ok  kubeadmin shared-qa This cluster's own RBAC gives you the full view.
+ok  kubeadmin mock This cluster's own RBAC gives you the full view.
+ok  kubeadmin mock-sar This cluster's own RBAC gives you the full view.
+ok  jane.smith dashboard The host decides your view of this cluster.
+ok  jane.smith shared-rnd This cluster's own RBAC gives you the full view.
+ok  jane.smith shared-qa This cluster's own RBAC gives you the full view.
+ok  jane.smith mock This cluster's own RBAC shows your own rows, or could not be asked.
+ok  jane.smith mock-sar This cluster's own RBAC shows your own rows, or could not be asked.
+ok  developer dashboard The host decides your view of this cluster.
+ok  developer shared-rnd This cluster's own RBAC shows your own rows, or could not be asked.
+ok  developer shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+ok  developer mock This cluster's own RBAC gives you the full view.
+ok  developer mock-sar This cluster's own RBAC gives you the full view.
+ok  test-user-002 dashboard The host decides your view of this cluster.
+ok  test-user-002 shared-rnd This cluster's own RBAC shows your own rows, or could not be asked.
+ok  test-user-002 shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+ok  test-user-002 mock This cluster's own RBAC shows your own rows, or could not be asked.
+ok  test-user-002 mock-sar This cluster's own RBAC shows your own rows, or could not be asked.

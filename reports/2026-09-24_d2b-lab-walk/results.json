@@ -1,0 +1,1387 @@
+{
+  "started": "2026-09-24T13:09:21Z",
+  "finished": "2026-09-24T13:10:16Z",
+  "base": "https://group-sync-dashboard.apps-crc.testing",
+  "login_user": "kubeadmin",
+  "theme": "dark",
+  "steps": [
+    {
+      "t": "2026-09-24T13:09:21Z",
+      "step": "open the route",
+      "ok": true,
+      "detail": "https://group-sync-dashboard.apps-crc.testing \u2192 https://group-sync-dashboard.apps-crc.testing/",
+      "screenshot": "01-oauth-proxy-interstitial.png"
+    },
+    {
+      "t": "2026-09-24T13:09:22Z",
+      "step": "identity-provider chooser",
+      "ok": true,
+      "detail": "offered: developer, ldap-local; picked developer",
+      "screenshot": "02-openshift-idp-chooser.png"
+    },
+    {
+      "t": "2026-09-24T13:09:23Z",
+      "step": "OpenShift login form",
+      "ok": true,
+      "detail": "username filled: kubeadmin",
+      "screenshot": "03-openshift-login-form.png"
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "login",
+      "ok": true,
+      "detail": "dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "GET /api/whoami",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "user": "kubeadmin",
+        "email": "kubeadmin@cluster.local",
+        "authenticated": true,
+        "logout_url": "/oauth/sign_out",
+        "session": {
+          "cookie_expire_seconds": 14400,
+          "cookie_refresh_seconds": 0,
+          "idle_timeout": {
+            "enabled": false
+          }
+        },
+        "visibility": {
+          "scope": "all",
+          "enabled": true,
+          "clusters": {
+            "dashboard": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "mock-privateca": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "mock-selfsigned": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "mock-trusted": {
+              "policy": "inherit",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "shared-qa": {
+              "policy": "remote-sar",
+              "identity": "same-as-host",
+              "scope": "all"
+            },
+            "shared-rnd": {
+              "policy": "remote-sar",
+              "identity": "same-as-host",
+              "scope": "all"
+            }
+          }
+        },
+        "clusterconfig": {
+          "view": true,
+          "manage": true
+        }
+      }
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "GET /api/version",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "leader": true,
+        "version": "0.32.0",
+        "commit": "8e50ff8eec",
+        "branch": "feat/338-remote-sar-every-join",
+        "dirty": false,
+        "features": {
+          "export": true,
+          "reporting": true,
+          "reporting_prefix": "/report"
+        },
+        "timezone": {
+          "name": "America/New_York",
+          "abbrev": "EDT",
+          "utc_offset": "-0400"
+        }
+      }
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "GET /api/clusters",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": [
+        {
+          "id": "dashboard",
+          "api_url": "https://kubernetes.default.svc",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-24T13:08:46Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 62,
+          "empty_groups": 0,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-24T12:00:00Z",
+          "operator_configs": {
+            "total": 6,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 158
+        },
+        {
+          "id": "mock-privateca",
+          "api_url": "https://mock-privateca:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-24T13:08:46Z",
+          "error": null,
+          "groupsync_count": 1,
+          "groupsync_operator_present": true,
+          "group_count": 7,
+          "empty_groups": 1,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-14T08:00:00Z",
+          "operator_configs": {
+            "total": 1,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 0,
+          "builtin_bindings": 0
+        },
+        {
+          "id": "mock-selfsigned",
+          "api_url": "https://mock-selfsigned:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-24T13:08:46Z",
+          "error": null,
+          "groupsync_count": 1,
+          "groupsync_operator_present": true,
+          "group_count": 7,
+          "empty_groups": 1,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-14T08:00:00Z",
+          "operator_configs": {
+            "total": 1,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 0,
+          "builtin_bindings": 0
+        },
+        {
+          "id": "mock-trusted",
+          "api_url": "https://mock-trusted:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-24T13:08:46Z",
+          "error": null,
+          "groupsync_count": 1,
+          "groupsync_operator_present": true,
+          "group_count": 7,
+          "empty_groups": 1,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-14T08:00:00Z",
+          "operator_configs": {
+            "total": 1,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "inherit",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 0,
+          "builtin_bindings": 0
+        },
+        {
+          "id": "shared-qa",
+          "api_url": "https://api.crc.testing:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-24T13:08:46Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 62,
+          "empty_groups": 0,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-24T12:00:00Z",
+          "operator_configs": {
+            "total": 6,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "remote-sar",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 158
+        },
+        {
+          "id": "shared-rnd",
+          "api_url": "https://api.crc.testing:6443",
+          "enabled": true,
+          "reachable": true,
+          "status": "ok",
+          "last_poll": "2026-09-24T13:08:46Z",
+          "error": null,
+          "groupsync_count": 3,
+          "groupsync_operator_present": true,
+          "group_count": 62,
+          "empty_groups": 0,
+          "unattributed_groups": 0,
+          "oldest_last_sync": "2026-09-24T12:00:00Z",
+          "operator_configs": {
+            "total": 6,
+            "failing": 0
+          },
+          "visibility": {
+            "policy": "remote-sar",
+            "scope": "all"
+          },
+          "dangling_bindings": 0,
+          "unresolved_bindings": 6,
+          "builtin_bindings": 158
+        }
+      ]
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "GET /report/healthz",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "status": "ok"
+      }
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "GET /report/readyz",
+      "ok": true,
+      "detail": "HTTP 200",
+      "screenshot": null,
+      "api": {
+        "status": "ready",
+        "snapshot": "2026-09-24T13:06:46.410880Z",
+        "schema": 19
+      }
+    },
+    {
+      "t": "2026-09-24T13:09:25Z",
+      "step": "tab strip",
+      "ok": true,
+      "detail": "14 tabs: Home, Overview, KPIs, Groups, Users, Access granted, RBAC policy, Kyverno, Namespace audit, Logins, Usage, Reports, Library, Cluster Configurations",
+      "screenshot": null
+    },
+    {
+      "t": "2026-09-24T13:09:26Z",
+      "step": "tab Home",
+      "ok": true,
+      "detail": "heading: What changed last 30 days",
+      "screenshot": "04-tab-home.png"
+    },
+    {
+      "t": "2026-09-24T13:09:27Z",
+      "step": "tab Overview",
+      "ok": true,
+      "detail": "heading: dashboard",
+      "screenshot": "05-tab-overview.png"
+    },
+    {
+      "t": "2026-09-24T13:09:28Z",
+      "step": "tab KPIs",
+      "ok": true,
+      "detail": "heading: System status\nupdated\n0s ago\n\u00b7 refresh 60s",
+      "screenshot": "06-tab-kpis.png"
+    },
+    {
+      "t": "2026-09-24T13:09:29Z",
+      "step": "tab Groups",
+      "ok": true,
+      "detail": "heading: Groups \u00b7 62 shown",
+      "screenshot": "07-tab-groups.png"
+    },
+    {
+      "t": "2026-09-24T13:09:30Z",
+      "step": "tab Users",
+      "ok": true,
+      "detail": "heading: Users \u00b7 61 shown",
+      "screenshot": "08-tab-users.png"
+    },
+    {
+      "t": "2026-09-24T13:09:31Z",
+      "step": "tab Access granted",
+      "ok": true,
+      "detail": "heading: dangling Dangling \u00b7 0",
+      "screenshot": "09-tab-access-granted.png"
+    },
+    {
+      "t": "2026-09-24T13:09:32Z",
+      "step": "tab RBAC policy",
+      "ok": true,
+      "detail": "heading: RBAC policy",
+      "screenshot": "10-tab-rbac-policy.png"
+    },
+    {
+      "t": "2026-09-24T13:09:33Z",
+      "step": "tab Kyverno",
+      "ok": true,
+      "detail": "heading: Kyverno \u00b7 the CEL policy family",
+      "screenshot": "11-tab-kyverno.png"
+    },
+    {
+      "t": "2026-09-24T13:09:34Z",
+      "step": "tab Namespace audit",
+      "ok": true,
+      "detail": "heading: Namespace audit",
+      "screenshot": "12-tab-namespace-audit.png"
+    },
+    {
+      "t": "2026-09-24T13:09:35Z",
+      "step": "tab Logins",
+      "ok": true,
+      "detail": "heading: Login attempts",
+      "screenshot": "13-tab-logins.png"
+    },
+    {
+      "t": "2026-09-24T13:09:36Z",
+      "step": "tab Usage",
+      "ok": true,
+      "detail": "heading: Dashboard usage",
+      "screenshot": "14-tab-usage.png"
+    },
+    {
+      "t": "2026-09-24T13:09:38Z",
+      "step": "tab Library",
+      "ok": true,
+      "detail": "heading: Library 76 runs \u00b7 3 schedules \u00b7 1 paused",
+      "screenshot": "15-tab-library.png"
+    },
+    {
+      "t": "2026-09-24T13:09:39Z",
+      "step": "tab Cluster Configurations",
+      "ok": true,
+      "detail": "heading: Cluster Configurations 19 clusters",
+      "screenshot": "16-tab-cluster-configurations.png"
+    },
+    {
+      "t": "2026-09-24T13:09:39Z",
+      "step": "lookup demo",
+      "ok": true,
+      "detail": "Groups \u00b7 6 of 62 / Namespaces \u00b7 6 of 109",
+      "screenshot": "17-lookup-demo.png"
+    },
+    {
+      "t": "2026-09-24T13:09:40Z",
+      "step": "lookup -> namespace page",
+      "ok": true,
+      "detail": "demo-prod",
+      "screenshot": "18-lookup-namespace.png"
+    },
+    {
+      "t": "2026-09-24T13:09:40Z",
+      "step": "also-line on Groups",
+      "ok": true,
+      "detail": "also matching demo: 6 namespaces \u2014 see all matches",
+      "screenshot": "19-lookup-also-line.png"
+    },
+    {
+      "t": "2026-09-24T13:09:40Z",
+      "step": "lookup at 375 px",
+      "ok": true,
+      "detail": "scrollWidth fits=True",
+      "screenshot": "20-lookup-375.png"
+    },
+    {
+      "t": "2026-09-24T13:09:41Z",
+      "step": "Reports tab",
+      "ok": true,
+      "detail": "11 reports in the catalogue, 11 enabled; PDF on, variant pdf/a-2b",
+      "screenshot": "21-reports-catalogue.png",
+      "catalogue": [
+        {
+          "name": "namespace-access",
+          "title": "Namespace access report",
+          "enabled": true
+        },
+        {
+          "name": "access-matrix",
+          "title": "Access matrix",
+          "enabled": true
+        },
+        {
+          "name": "privileged-access",
+          "title": "Privileged access review",
+          "enabled": true
+        },
+        {
+          "name": "binding-findings",
+          "title": "RBAC binding findings",
+          "enabled": true
+        },
+        {
+          "name": "groups",
+          "title": "Groups and membership changes",
+          "enabled": true
+        },
+        {
+          "name": "users",
+          "title": "Users",
+          "enabled": true
+        },
+        {
+          "name": "login-activity",
+          "title": "Login activity",
+          "enabled": true
+        },
+        {
+          "name": "dormant-access",
+          "title": "Dormant and unusable access",
+          "enabled": true
+        },
+        {
+          "name": "groupsync-health",
+          "title": "GroupSync and policy-operator health",
+          "enabled": true
+        },
+        {
+          "name": "compliance-snapshot",
+          "title": "Compliance snapshot",
+          "enabled": true
+        },
+        {
+          "name": "access-certification",
+          "title": "Access certification pack",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "t": "2026-09-24T13:09:42Z",
+      "step": "report namespace-access: form",
+      "ok": true,
+      "detail": "Namespace access report \u2014 params selectors, mnemonics, namespaces, include_members, group_by",
+      "screenshot": "22-report-namespace-access-form.png"
+    },
+    {
+      "t": "2026-09-24T13:09:44Z",
+      "step": "report namespace-access: generate",
+      "ok": true,
+      "detail": "run 20260924T130942.665239Z-d3c8 done in 1.6s; formats ['html', 'pdf']; sha256 1561ee05da33d470\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "23-report-namespace-access-status.png",
+      "run": {
+        "id": "20260924T130942.665239Z-d3c8",
+        "report": "namespace-access",
+        "cluster": "dashboard",
+        "params": {
+          "selectors": null,
+          "mnemonics": null,
+          "namespaces": [
+            "group-sync-dashboard",
+            "openshift-monitoring"
+          ],
+          "include_members": false,
+          "group_by": "mnemonic"
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:09:42Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:09:42Z",
+        "finished_at": "2026-09-24T13:09:42Z",
+        "error": null,
+        "sha256": "1561ee05da33d470ebd0de33ccb224298c064ea3ee9e15ab5fbfd43198bce8f9",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 8179,
+          "html": 7779,
+          "pdf": 31785
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.139,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:09:43Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T130942.665239Z-d3c8 \u2014 done \u00b7 sha256 1561ee05da33d470\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:09:44Z",
+      "step": "report namespace-access: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_namespace-access_20260924T130942Z.html (7779 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_namespace-access_20260924T130942Z.html",
+      "bytes": 7779
+    },
+    {
+      "t": "2026-09-24T13:09:44Z",
+      "step": "report namespace-access: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_namespace-access_20260924T130942Z.pdf (31785 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_namespace-access_20260924T130942Z.pdf",
+      "bytes": 31785,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:09:44Z",
+      "step": "report namespace-access: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_namespace-access_20260924T130942Z.json (8179 bytes); sha256 of the file 83a39c3149f417ed\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_namespace-access_20260924T130942Z.json",
+      "bytes": 8179,
+      "sha256_of_file": "83a39c3149f417edd71ce5e787635f34e0fc6a67b552292ce83a1a315d146557"
+    },
+    {
+      "t": "2026-09-24T13:09:45Z",
+      "step": "report access-matrix: form",
+      "ok": true,
+      "detail": "Access matrix \u2014 params users, groups, namespace_prefix",
+      "screenshot": "24-report-access-matrix-form.png"
+    },
+    {
+      "t": "2026-09-24T13:09:47Z",
+      "step": "report access-matrix: generate",
+      "ok": true,
+      "detail": "run 20260924T130945.698215Z-75c0 done in 1.6s; formats ['html', 'pdf']; sha256 96eb31e0cd98874f\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "25-report-access-matrix-status.png",
+      "run": {
+        "id": "20260924T130945.698215Z-75c0",
+        "report": "access-matrix",
+        "cluster": "dashboard",
+        "params": {
+          "users": [],
+          "groups": [],
+          "namespace_prefix": ""
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:09:45Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:09:45Z",
+        "finished_at": "2026-09-24T13:09:45Z",
+        "error": null,
+        "sha256": "96eb31e0cd98874fc87522fbbacd60443c78573ecd398b48914060e31ffb3578",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 25943,
+          "html": 19948,
+          "pdf": 43446
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.21,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:09:46Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T130945.698215Z-75c0 \u2014 done \u00b7 sha256 96eb31e0cd98874f\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:09:47Z",
+      "step": "report access-matrix: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_access-matrix_20260924T130945Z.html (19948 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_access-matrix_20260924T130945Z.html",
+      "bytes": 19948
+    },
+    {
+      "t": "2026-09-24T13:09:47Z",
+      "step": "report access-matrix: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_access-matrix_20260924T130945Z.pdf (43446 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_access-matrix_20260924T130945Z.pdf",
+      "bytes": 43446,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:09:48Z",
+      "step": "report access-matrix: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_access-matrix_20260924T130945Z.json (25943 bytes); sha256 of the file b7085ec45c54bba8\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_access-matrix_20260924T130945Z.json",
+      "bytes": 25943,
+      "sha256_of_file": "b7085ec45c54bba87d5ee3f722cafd44ddff03083ad5df3e23c2f310d8f57681"
+    },
+    {
+      "t": "2026-09-24T13:09:48Z",
+      "step": "report privileged-access: form",
+      "ok": true,
+      "detail": "Privileged access review \u2014 params include_members, roles",
+      "screenshot": "26-report-privileged-access-form.png"
+    },
+    {
+      "t": "2026-09-24T13:09:50Z",
+      "step": "report privileged-access: generate",
+      "ok": true,
+      "detail": "run 20260924T130948.730593Z-f17a done in 1.6s; formats ['html', 'pdf']; sha256 4c6983c251543546\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "27-report-privileged-access-status.png",
+      "run": {
+        "id": "20260924T130948.730593Z-f17a",
+        "report": "privileged-access",
+        "cluster": "dashboard",
+        "params": {
+          "include_members": true,
+          "roles": [
+            "cluster-admin",
+            "admin",
+            "edit"
+          ]
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:09:48Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:09:48Z",
+        "finished_at": "2026-09-24T13:09:48Z",
+        "error": null,
+        "sha256": "4c6983c25154354621713cde7497ef759c3d6772facda5c8c0f14acf6d347ee5",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 14231,
+          "html": 12076,
+          "pdf": 34526
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.087,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:09:49Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T130948.730593Z-f17a \u2014 done \u00b7 sha256 4c6983c251543546\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:09:50Z",
+      "step": "report privileged-access: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_privileged-access_20260924T130948Z.html (12076 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_privileged-access_20260924T130948Z.html",
+      "bytes": 12076
+    },
+    {
+      "t": "2026-09-24T13:09:51Z",
+      "step": "report privileged-access: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_privileged-access_20260924T130948Z.pdf (34526 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_privileged-access_20260924T130948Z.pdf",
+      "bytes": 34526,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:09:51Z",
+      "step": "report privileged-access: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_privileged-access_20260924T130948Z.json (14231 bytes); sha256 of the file 71f4ace03cbe3c97\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_privileged-access_20260924T130948Z.json",
+      "bytes": 14231,
+      "sha256_of_file": "71f4ace03cbe3c971c0c8cd34f19446670b1e5602b653a63bc012b1c5c1764f8"
+    },
+    {
+      "t": "2026-09-24T13:09:51Z",
+      "step": "report binding-findings: form",
+      "ok": true,
+      "detail": "RBAC binding findings \u2014 params (none)",
+      "screenshot": "28-report-binding-findings-form.png"
+    },
+    {
+      "t": "2026-09-24T13:09:53Z",
+      "step": "report binding-findings: generate",
+      "ok": true,
+      "detail": "run 20260924T130951.766576Z-77b7 done in 1.6s; formats ['html', 'pdf']; sha256 4803c4570dcbfdf6\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "29-report-binding-findings-status.png",
+      "run": {
+        "id": "20260924T130951.766576Z-77b7",
+        "report": "binding-findings",
+        "cluster": "dashboard",
+        "params": {},
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:09:51Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:09:51Z",
+        "finished_at": "2026-09-24T13:09:52Z",
+        "error": null,
+        "sha256": "4803c4570dcbfdf6c50bb0f33904c6efb3d00a902c7c3db10388e34c47084cb2",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 13382,
+          "html": 11547,
+          "pdf": 39193
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.539,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:09:53Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T130951.766576Z-77b7 \u2014 done \u00b7 sha256 4803c4570dcbfdf6\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:09:53Z",
+      "step": "report binding-findings: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_binding-findings_20260924T130952Z.html (11547 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_binding-findings_20260924T130952Z.html",
+      "bytes": 11547
+    },
+    {
+      "t": "2026-09-24T13:09:54Z",
+      "step": "report binding-findings: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_binding-findings_20260924T130952Z.pdf (39193 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_binding-findings_20260924T130952Z.pdf",
+      "bytes": 39193,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:09:54Z",
+      "step": "report binding-findings: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_binding-findings_20260924T130952Z.json (13382 bytes); sha256 of the file bd1bdb572c949a4c\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_binding-findings_20260924T130952Z.json",
+      "bytes": 13382,
+      "sha256_of_file": "bd1bdb572c949a4c3c9b93d7652ab30af32b06a9081b532ca826e9a07a8f4866"
+    },
+    {
+      "t": "2026-09-24T13:09:54Z",
+      "step": "report groups: form",
+      "ok": true,
+      "detail": "Groups and membership changes \u2014 params groups, window_days, include_members",
+      "screenshot": "30-report-groups-form.png"
+    },
+    {
+      "t": "2026-09-24T13:09:56Z",
+      "step": "report groups: generate",
+      "ok": true,
+      "detail": "run 20260924T130954.813645Z-40f5 done in 1.6s; formats ['html', 'pdf']; sha256 d2af34c9903082c0\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "31-report-groups-status.png",
+      "run": {
+        "id": "20260924T130954.813645Z-40f5",
+        "report": "groups",
+        "cluster": "dashboard",
+        "params": {
+          "groups": [],
+          "window_days": 30,
+          "include_members": false
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:09:54Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:09:54Z",
+        "finished_at": "2026-09-24T13:09:55Z",
+        "error": null,
+        "sha256": "d2af34c9903082c006611834f58489ceda63ec6d3a0cfa46c8096ddfe7fd1448",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 38212,
+          "html": 28605,
+          "pdf": 48751
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.29,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:09:56Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T130954.813645Z-40f5 \u2014 done \u00b7 sha256 d2af34c9903082c0\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:09:57Z",
+      "step": "report groups: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_groups_20260924T130955Z.html (28605 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_groups_20260924T130955Z.html",
+      "bytes": 28605
+    },
+    {
+      "t": "2026-09-24T13:09:57Z",
+      "step": "report groups: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_groups_20260924T130955Z.pdf (48751 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_groups_20260924T130955Z.pdf",
+      "bytes": 48751,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:09:57Z",
+      "step": "report groups: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_groups_20260924T130955Z.json (38212 bytes); sha256 of the file 353df7eadda7048a\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_groups_20260924T130955Z.json",
+      "bytes": 38212,
+      "sha256_of_file": "353df7eadda7048ae462338dfdb45b1423af53f4d5e9c0937904ebc9303e1f4d"
+    },
+    {
+      "t": "2026-09-24T13:09:57Z",
+      "step": "report users: form",
+      "ok": true,
+      "detail": "Users \u2014 params users, providers",
+      "screenshot": "32-report-users-form.png"
+    },
+    {
+      "t": "2026-09-24T13:10:00Z",
+      "step": "report users: generate",
+      "ok": true,
+      "detail": "run 20260924T130957.861645Z-d367 done in 1.6s; formats ['html', 'pdf']; sha256 ca55af103792bffb\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "33-report-users-status.png",
+      "run": {
+        "id": "20260924T130957.861645Z-d367",
+        "report": "users",
+        "cluster": "dashboard",
+        "params": {
+          "users": [],
+          "providers": []
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:09:57Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:09:57Z",
+        "finished_at": "2026-09-24T13:09:58Z",
+        "error": null,
+        "sha256": "ca55af103792bffb70d3b5077465b8be5e266177964bbc3a4b911c138b8d443e",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 19468,
+          "html": 14927,
+          "pdf": 39248
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.142,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:09:59Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T130957.861645Z-d367 \u2014 done \u00b7 sha256 ca55af103792bffb\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:10:00Z",
+      "step": "report users: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_users_20260924T130958Z.html (14927 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_users_20260924T130958Z.html",
+      "bytes": 14927
+    },
+    {
+      "t": "2026-09-24T13:10:00Z",
+      "step": "report users: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_users_20260924T130958Z.pdf (39248 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_users_20260924T130958Z.pdf",
+      "bytes": 39248,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:10:00Z",
+      "step": "report users: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_users_20260924T130958Z.json (19468 bytes); sha256 of the file de9f592202575775\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_users_20260924T130958Z.json",
+      "bytes": 19468,
+      "sha256_of_file": "de9f59220257577555b7e72e2c75b6439591677c2a772b734461554253fa00d4"
+    },
+    {
+      "t": "2026-09-24T13:10:00Z",
+      "step": "report login-activity: form",
+      "ok": true,
+      "detail": "Login activity \u2014 params window_days, users, groups",
+      "screenshot": "34-report-login-activity-form.png"
+    },
+    {
+      "t": "2026-09-24T13:10:03Z",
+      "step": "report login-activity: generate",
+      "ok": true,
+      "detail": "run 20260924T131000.914181Z-6fed done in 1.6s; formats ['html', 'pdf']; sha256 78783fa1c63c461b\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "35-report-login-activity-status.png",
+      "run": {
+        "id": "20260924T131000.914181Z-6fed",
+        "report": "login-activity",
+        "cluster": "dashboard",
+        "params": {
+          "window_days": 30,
+          "users": [],
+          "groups": []
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:10:00Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:10:00Z",
+        "finished_at": "2026-09-24T13:10:00Z",
+        "error": null,
+        "sha256": "78783fa1c63c461beff97879287d8891449a637b9110c52fc7de769142cb72ef",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 9957,
+          "html": 9219,
+          "pdf": 34826
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.081,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:10:01Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T131000.914181Z-6fed \u2014 done \u00b7 sha256 78783fa1c63c461b\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:10:03Z",
+      "step": "report login-activity: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_login-activity_20260924T131000Z.html (9219 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_login-activity_20260924T131000Z.html",
+      "bytes": 9219
+    },
+    {
+      "t": "2026-09-24T13:10:03Z",
+      "step": "report login-activity: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_login-activity_20260924T131000Z.pdf (34826 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_login-activity_20260924T131000Z.pdf",
+      "bytes": 34826,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:10:03Z",
+      "step": "report login-activity: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_login-activity_20260924T131000Z.json (9957 bytes); sha256 of the file a3c52e05865a26a1\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_login-activity_20260924T131000Z.json",
+      "bytes": 9957,
+      "sha256_of_file": "a3c52e05865a26a1b66b13503056d0ba280af36d9ae81b476dde4907b92e0454"
+    },
+    {
+      "t": "2026-09-24T13:10:03Z",
+      "step": "report dormant-access: form",
+      "ok": true,
+      "detail": "Dormant and unusable access \u2014 params users, groups, dormant_days",
+      "screenshot": "36-report-dormant-access-form.png"
+    },
+    {
+      "t": "2026-09-24T13:10:06Z",
+      "step": "report dormant-access: generate",
+      "ok": true,
+      "detail": "run 20260924T131003.962409Z-dc7e done in 1.6s; formats ['html', 'pdf']; sha256 b06dbbf434650afe\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "37-report-dormant-access-status.png",
+      "run": {
+        "id": "20260924T131003.962409Z-dc7e",
+        "report": "dormant-access",
+        "cluster": "dashboard",
+        "params": {
+          "users": [],
+          "groups": [],
+          "dormant_days": 90
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:10:03Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:10:03Z",
+        "finished_at": "2026-09-24T13:10:04Z",
+        "error": null,
+        "sha256": "b06dbbf434650afedd6058173b7e9bb3c1f6161987ebad94252c7ebebd86e1d1",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 9569,
+          "html": 9492,
+          "pdf": 35127
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.06,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:10:05Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T131003.962409Z-dc7e \u2014 done \u00b7 sha256 b06dbbf434650afe\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:10:06Z",
+      "step": "report dormant-access: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_dormant-access_20260924T131004Z.html (9492 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_dormant-access_20260924T131004Z.html",
+      "bytes": 9492
+    },
+    {
+      "t": "2026-09-24T13:10:06Z",
+      "step": "report dormant-access: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_dormant-access_20260924T131004Z.pdf (35127 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_dormant-access_20260924T131004Z.pdf",
+      "bytes": 35127,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:10:06Z",
+      "step": "report dormant-access: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_dormant-access_20260924T131004Z.json (9569 bytes); sha256 of the file 176a933305a9e417\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_dormant-access_20260924T131004Z.json",
+      "bytes": 9569,
+      "sha256_of_file": "176a933305a9e4170a970a1f71d2b24be198d9169bee06072c9158d2eb85568b"
+    },
+    {
+      "t": "2026-09-24T13:10:06Z",
+      "step": "report groupsync-health: form",
+      "ok": true,
+      "detail": "GroupSync and policy-operator health \u2014 params window_days",
+      "screenshot": "38-report-groupsync-health-form.png"
+    },
+    {
+      "t": "2026-09-24T13:10:09Z",
+      "step": "report groupsync-health: generate",
+      "ok": true,
+      "detail": "run 20260924T131006.961224Z-3b2f done in 1.6s; formats ['html', 'pdf']; sha256 e6c4be426e88a500\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "39-report-groupsync-health-status.png",
+      "run": {
+        "id": "20260924T131006.961224Z-3b2f",
+        "report": "groupsync-health",
+        "cluster": "dashboard",
+        "params": {
+          "window_days": 30
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:10:06Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:10:06Z",
+        "finished_at": "2026-09-24T13:10:07Z",
+        "error": null,
+        "sha256": "e6c4be426e88a5002f01262db81f6f8df5771f83fe4a4c6e358a28ec515d431c",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 9007,
+          "html": 8768,
+          "pdf": 33643
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.06,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:10:08Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T131006.961224Z-3b2f \u2014 done \u00b7 sha256 e6c4be426e88a500\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:10:09Z",
+      "step": "report groupsync-health: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_groupsync-health_20260924T131007Z.html (8768 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_groupsync-health_20260924T131007Z.html",
+      "bytes": 8768
+    },
+    {
+      "t": "2026-09-24T13:10:09Z",
+      "step": "report groupsync-health: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_groupsync-health_20260924T131007Z.pdf (33643 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_groupsync-health_20260924T131007Z.pdf",
+      "bytes": 33643,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:10:09Z",
+      "step": "report groupsync-health: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_groupsync-health_20260924T131007Z.json (9007 bytes); sha256 of the file 0ecbd9c7cd7eee94\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_groupsync-health_20260924T131007Z.json",
+      "bytes": 9007,
+      "sha256_of_file": "0ecbd9c7cd7eee94fbd5f316c7074534548b9de046511430f30bdb89d4fa16e8"
+    },
+    {
+      "t": "2026-09-24T13:10:09Z",
+      "step": "report compliance-snapshot: form",
+      "ok": true,
+      "detail": "Compliance snapshot \u2014 params (none)",
+      "screenshot": "40-report-compliance-snapshot-form.png"
+    },
+    {
+      "t": "2026-09-24T13:10:12Z",
+      "step": "report compliance-snapshot: generate",
+      "ok": true,
+      "detail": "run 20260924T131009.943921Z-5023 done in 1.6s; formats ['html', 'pdf']; sha256 d4d5fd9b28ba1949\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "41-report-compliance-snapshot-status.png",
+      "run": {
+        "id": "20260924T131009.943921Z-5023",
+        "report": "compliance-snapshot",
+        "cluster": "dashboard",
+        "params": {},
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:10:09Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:10:09Z",
+        "finished_at": "2026-09-24T13:10:10Z",
+        "error": null,
+        "sha256": "d4d5fd9b28ba194926895ac9cb49bb1abcd8a29de87b3e95eeb778680c4f977b",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 11720,
+          "html": 10337,
+          "pdf": 36364
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.071,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:10:11Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T131009.943921Z-5023 \u2014 done \u00b7 sha256 d4d5fd9b28ba1949\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:10:12Z",
+      "step": "report compliance-snapshot: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_compliance-snapshot_20260924T131010Z.html (10337 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_compliance-snapshot_20260924T131010Z.html",
+      "bytes": 10337
+    },
+    {
+      "t": "2026-09-24T13:10:12Z",
+      "step": "report compliance-snapshot: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_compliance-snapshot_20260924T131010Z.pdf (36364 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_compliance-snapshot_20260924T131010Z.pdf",
+      "bytes": 36364,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:10:12Z",
+      "step": "report compliance-snapshot: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_compliance-snapshot_20260924T131010Z.json (11720 bytes); sha256 of the file 9e4d6763fc7033e9\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_compliance-snapshot_20260924T131010Z.json",
+      "bytes": 11720,
+      "sha256_of_file": "9e4d6763fc7033e96e89ab142af26656204aebcb66415c54bee243e1517721d4"
+    },
+    {
+      "t": "2026-09-24T13:10:12Z",
+      "step": "report access-certification: form",
+      "ok": true,
+      "detail": "Access certification pack \u2014 params campaign, due, reviewer, users, groups, group_mnemonic, include_members",
+      "screenshot": "42-report-access-certification-form.png"
+    },
+    {
+      "t": "2026-09-24T13:10:15Z",
+      "step": "report access-certification: generate",
+      "ok": true,
+      "detail": "run 20260924T131013.012820Z-8097 done in 1.6s; formats ['html', 'pdf']; sha256 09bbbd40a805972e\u2026; snapshot 2026-09-24T13:06:46.410880Z",
+      "screenshot": "43-report-access-certification-status.png",
+      "run": {
+        "id": "20260924T131013.012820Z-8097",
+        "report": "access-certification",
+        "cluster": "dashboard",
+        "params": {
+          "campaign": "E2E walk 2026-09-24",
+          "due": "2026-10-24",
+          "reviewer": "kubeadmin",
+          "users": [],
+          "groups": [],
+          "group_mnemonic": [],
+          "include_members": true
+        },
+        "formats": [
+          "html",
+          "pdf"
+        ],
+        "generated_by": "kubeadmin",
+        "generated_by_note": "proxy-verified, ticket from the dashboard",
+        "schedule": null,
+        "requested_at": "2026-09-24T13:10:13Z",
+        "status": "done",
+        "started_at": "2026-09-24T13:10:13Z",
+        "finished_at": "2026-09-24T13:10:13Z",
+        "error": null,
+        "sha256": "09bbbd40a805972e790b9ad8ae0a4ec6a07d01d8fb425db20ecbd67aa4049bb6",
+        "snapshot_stamp": "2026-09-24T13:06:46.410880Z",
+        "bytes": {
+          "json": 55958,
+          "html": 36785,
+          "pdf": 82775
+        },
+        "pdf_variant": "pdf/a-2b",
+        "render_seconds": 0.369,
+        "origin": "viewer",
+        "expires_at": "2026-09-27T13:10:14Z",
+        "retained_by": "manual:3d"
+      },
+      "elapsed_s": 1.6,
+      "status_line": "Run 20260924T131013.012820Z-8097 \u2014 done \u00b7 sha256 09bbbd40a805972e\u2026 \u00b7 data as of 2026-09-24T13:06:46.410880Z Download .html Download .pdf Download .json"
+    },
+    {
+      "t": "2026-09-24T13:10:15Z",
+      "step": "report access-certification: download .html",
+      "ok": true,
+      "detail": "gsd_dashboard_access-certification_20260924T131013Z.html (36785 bytes)",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_access-certification_20260924T131013Z.html",
+      "bytes": 36785
+    },
+    {
+      "t": "2026-09-24T13:10:15Z",
+      "step": "report access-certification: download .pdf",
+      "ok": true,
+      "detail": "gsd_dashboard_access-certification_20260924T131013Z.pdf (82775 bytes); starts with b'%PDF-'",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_access-certification_20260924T131013Z.pdf",
+      "bytes": 82775,
+      "magic": "%PDF-1.7"
+    },
+    {
+      "t": "2026-09-24T13:10:15Z",
+      "step": "report access-certification: download .json",
+      "ok": true,
+      "detail": "gsd_dashboard_access-certification_20260924T131013Z.json (55958 bytes); sha256 of the file b3b10d95fcda47ce\u2026",
+      "screenshot": null,
+      "file": "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/reports/gsd_dashboard_access-certification_20260924T131013Z.json",
+      "bytes": 55958,
+      "sha256_of_file": "b3b10d95fcda47ce2b52098967eaf82827074b6bf8693bd28d72870b7541c32c"
+    },
+    {
+      "t": "2026-09-24T13:10:16Z",
+      "step": "Recent runs table",
+      "ok": true,
+      "detail": "1 runs listed of 87",
+      "screenshot": "44-reports-recent-runs.png",
+      "runs": [
+        {
+          "id": "20260924T131013.012820Z-8097",
+          "report": "access-certification",
+          "cluster": "dashboard",
+          "generated_by": "kubeadmin",
+          "status": "done",
+          "requested_at": "2026-09-24T13:10:13Z"
+        }
+      ]
+    }
+  ],
+  "passed": 84,
+  "failed": 0
+}

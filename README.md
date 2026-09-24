@@ -28,14 +28,25 @@ groups that have never existed** — access reaching nobody, in three namespaces
 Captured from a running deployment, not a mockup — every number below is what the dashboard
 read off the cluster. [`## What it shows`](#what-it-shows) describes each tab in full.
 
-**Overview** — cluster health, the CRs, and the computed alerts. Here, three: 10 RoleBindings
-naming a person rather than a group, and two hand-made groups that no GroupSync CR manages.
+**Home** — where every reader lands: who you are on the selected cluster, what changed for you,
+and the rule that decided your view, on the line beside the cluster selector (*The host decides
+your view of this cluster.*). Here kubeadmin, with cluster-wide `cluster-admin` on the host and
+2 grants made to them directly rather than through a group.
+
+![Home tab](docs/screenshots/00-home.png)
+
+**Overview** — every joined cluster's health, the GroupSync and policy CRs, and the computed
+alerts across the fleet. Here six clusters and 12 alerts: three GroupSync schedules that have
+stopped firing, six for grants bound to a person rather than an enterprise-managed group — on the
+host, 11 such grants across 5 namespaces, 3 granting `admin` or `cluster-admin` — and three for
+groups synced with zero members.
 
 ![Overview tab](docs/screenshots/01-overview.png)
 
-**Access granted** — every group-subject binding, classified. 195 of them: 6 name a group that
-has never existed and therefore grant nobody, 4 are hand-made on an operator-synced group, and
-151 are Kubernetes' own virtual groups, which are expected and filtered out by default.
+**Access granted** — every group-subject binding, classified. 202 of them: 37 grant a real group,
+6 name a group that has never existed and therefore grant nobody, 1 grants a synced group from
+outside the policy system (the one the RBAC policy tab lists), and 158 are built-in groups, which
+are expected and filtered out by default.
 
 ![Access granted tab](docs/screenshots/04-access-granted.png)
 
@@ -46,14 +57,16 @@ grants.
 ![Namespace audit tab](docs/screenshots/06-namespace-audit.png)
 
 **RBAC policy** — the policy operator's CRs beside the provenance of the bindings they template,
-and the grants that have none. The `cluster-admin` ClusterRoleBinding on the first row is
-hand-made: nothing in the policy system produced it.
+and the grants that have none. Here 6 policy CRs, all reconciling, and 1 grant outside the
+policy system: the ClusterRoleBinding this chart renders for its default auditor group
+(`rbacAuditors`), giving `app-ocp-rbac-groupsync-ns-auditor` the dashboard's report-auditor
+role — no policy CR templates it, so the tab lists it.
 
 ![RBAC policy tab](docs/screenshots/05-rbac-policy.png)
 
-**Groups** — all 66, with the CR that owns each one, member count, refresh age and source DN.
-The two without an owner are hand-made, and the `empty` and `unattributed` filters both find
-them. The Find box narrows the list as you type.
+**Groups** — all 62, with the CR that owns each one, member count, grants, refresh age and
+source DN. None is empty and none is unattributed on this cluster; the Group state filter finds
+them when there are. The Find box narrows the list as you type.
 
 ![Groups tab](docs/screenshots/02-groups.png)
 
@@ -67,10 +80,9 @@ of an id or a name to filter; chips narrow by membership and by provider.
 ![Users tab](docs/screenshots/03-users.png)
 
 **Logins** — every login attempt against the cluster's own OAuth server: who, when, and why a
-failure failed. Read from the oauth-server pod log (which names the person only at Debug
-verbosity) or, with `loginCapture.source: audit-log`, from the oauth-server audit log on the
-control-plane nodes — no Debug, and history back to the rotated files; either way the tab says what
-period it can account for rather than implying it saw everything.
+failure failed. Read by default from the oauth-server audit log on the control-plane nodes
+(`loginCapture.source: audit-log`) — no Debug verbosity, and history back to the rotated files;
+the tab says what period it can account for rather than implying it saw everything.
 
 ![Logins tab](docs/screenshots/07-logins.png)
 
@@ -89,8 +101,9 @@ reads as a healthy cluster.
 ![Access granted, an ordinary reader's own access](docs/screenshots/self/04-access-granted.png)
 
 The header pill says which view you are in, so "nothing looks different" and "you are seeing
-everything" are distinguishable from the screen. Same deployment, same tab, same moment — the
-Groups tab shows this reader 2 groups where an administrator sees 65.
+everything" are distinguishable from the screen. Same deployment, same tab — the Groups tab
+shows `developer`, who is in no synced group here, 0 groups and says the view is scoped to them,
+not that the cluster has none, where an administrator sees 62.
 
 ![Groups, narrowed to one reader's own memberships](docs/screenshots/self/02-groups.png)
 

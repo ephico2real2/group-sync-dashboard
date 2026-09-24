@@ -1,0 +1,28 @@
+  logged in as kubeadmin
+  00-home.png                Home             272 KB
+  01-overview.png            Overview         659 KB
+  01b-kpis.png               KPIs             341 KB
+  02-groups.png              Groups           928 KB
+  03-users.png               Users            924 KB
+  04-access-granted.png      Access granted   675 KB
+  05-rbac-policy.png         RBAC policy      251 KB
+  06-namespace-audit.png     Namespace audit  417 KB
+  07-logins.png              Logins           2818 KB
+  08-usage.png               Usage            283 KB
+
+10 screenshots written to /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/shots2/admin (dark theme)
+admin capture exit 0
+  logged in as developer
+  00-home.png                Home             258 KB
+  01-overview.png            Overview         150 KB
+  01b-kpis.png               KPIs             151 KB
+  02-groups.png              Groups           136 KB
+  03-users.png               Users            173 KB
+  04-access-granted.png      Access granted   168 KB
+  05-rbac-policy.png         RBAC policy      158 KB
+  06-namespace-audit.png     Namespace audit  221 KB
+  07-logins.png              Logins           619 KB
+  08-usage.png               Usage            211 KB
+
+10 screenshots written to /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/shots2/self (dark theme)
+self capture exit 0

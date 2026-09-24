@@ -1,0 +1,5 @@
+  kubeadmin     dashboard=all  shared-rnd=all  shared-qa=all
+  jane.smith    dashboard=all  shared-rnd=all  shared-qa=all
+  developer     dashboard=self  shared-rnd=self  shared-qa=self
+  test-user-002 dashboard=self  shared-rnd=self  shared-qa=self
+  tier warnings for shared-qa in the last 5 min: 0

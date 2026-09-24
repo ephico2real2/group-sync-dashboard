@@ -1,0 +1,13 @@
+{"secret":"gsd-cluster-mock-sar","cluster":"mock-sar","discovery":"requested"}
+{"secret":"gsd-cluster-mock-none","cluster":"mock-none","discovery":"requested"}
+mock-sar visibility=remote-sar
+mock-sar identity=same-as-host
+mock-none visibility=self-only
+mock-none identity=none
+== waiting for discovery to resolve mock-sar
+2026-09-24 03:20:26,691-0400 INFO    gsd.clusterconfig cluster-resolved cycle=9 cluster=mock-sar source=secret:gsd-cluster-mock-sar credential=bearer tls=caData visibility=remote-sar identity=same-as-host enabled=true
+2026-09-24 03:20:26,846-0400 INFO    gsd.clusterconfig cluster-resolved cycle=10 cluster=mock-none source=secret:gsd-cluster-mock-none credential=bearer tls=caData visibility=self-only identity=none enabled=true
+== developer whoami (mock-sar, mock-none)
+  mock-sar remote-sar same-as-host all
+  mock-none self-only none self
+developer /api/clusters/mock-none/groups: 403

@@ -1,0 +1,105 @@
+DELETE mock-sar: 200
+DELETE mock-none: 200
+184c184
+<     enabled: true
+---
+>     enabled: false
+189c189
+<     enabled: true
+---
+>     enabled: false
+194,195d193
+<     visibility: inherit
+<     identity: same-as-host
+version : 0.32.0
+commit  : 8e50ff8eec  (branch feat/338-remote-sar-every-join)
+tag     : 0.32.0-8e50ff8eec
+reused  : 0.32.0-8e50ff8eec is already in the registry, both images (the same commit); not building
+release : /Users/olasumbo/gitRepos/group-sync-dashboard/environments/crc-d2b-walk.yaml
+Release "group-sync-dashboard" has been upgraded. Happy Helming!
+NAME: group-sync-dashboard
+LAST DEPLOYED: Thu Sep 24 03:12:28 2026
+NAMESPACE: group-sync-dashboard
+STATUS: deployed
+REVISION: 3
+DESCRIPTION: Upgrade complete
+TEST SUITE: None
+NOTES:
+group-sync-dashboard deployed to namespace group-sync-dashboard.
+
+Image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.32.0-8e50ff8eec
+
+Route (the router names the host and reports it in status; spec.host is empty unless you set it):
+  oc get route group-sync-dashboard -n group-sync-dashboard -o jsonpath='{.status.ingress[0].host}'
+
+Confirm what is actually running — the pod reports the commit it was built from:
+  curl -sk https://<the host above>/api/version
+
+The KPI page's doors and the Grafana board (chart README, "Prerequisites — the Grafana and Observe
+integration"): user-workload monitoring on (the OpenShift engineers, once per cluster; the
+openshift-grafana chart's post-install Job reports it); a Grafana in this namespace —
+  discovered by the Route labelled app.kubernetes.io/name=openshift-grafana in group-sync-dashboard (the openshift-grafana
+  chart's: helm install grafana <repo>/openshift-grafana -n group-sync-dashboard --timeout 15m);
+  until one exists the page says so instead of drawing a dead button
+and `view` on group-sync-dashboard for every reader group (the console's namespace dashboard and
+Grafana's login both check `get pods` here):
+  oc adm policy add-role-to-group view <group> -n group-sync-dashboard
+
+Authentication: OpenShift OAuth. Anyone who can log into this cluster can view the
+dashboard.
+Sessions: the proxy cookie lives 4h from login, and it is ABSOLUTE — there is
+no cookie refresh and no mid-session revalidation, so an active reader is signed out at
+that mark too, and a revoked user keeps access until it. Change it with
+oauthProxy.cookie.expire. Signing out ends the proxy session; it does NOT revoke the OAuth
+token, because this chart authenticates as a ServiceAccount whose tokens carry only
+user:info and user:check-access — the DELETE was built, measured returning 403, and dropped.
+
+Visibility: RESTRICTED (visibility.enabled=true, the default). Each reader sees only their
+own profile, groups, grants and login attempts. A reader sees everything only if a
+SubjectAccessReview allows:
+
+  list clusterrolebindings.rbac.authorization.k8s.io
+
+This is a custom check (visibility.adminSar): whoever holds a role granting it gets the
+wide view. Stock cluster-reader passes every threshold measured for this feature.
+Grant the wide view through normal RBAC, never a chart value:
+
+  oc adm policy add-cluster-role-to-user cluster-reader <username>
+
+  (prefer the group form — a grant naming a person survives their departure:
+   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group>)
+
+An indeterminate review (API error, timeout) yields the narrow view, never the wide one.
+Restore the old everyone-sees-everything behaviour only as a deliberate choice:
+  --set visibility.enabled=false
+
+Several clusters are configured. The reader was authenticated by this pod's OWN cluster; what
+they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
+  dashboard: visibility inherit (host), identity same-as-host (host)
+  shared-rnd: visibility remote-sar (default), identity same-as-host (default)
+  mock: visibility remote-sar (default), identity same-as-host (default)
+
+Login capture: AUDIT LOG. The dashboard reads /var/log/oauth-server/audit.log on the
+control-plane nodes through the API server's node proxy — a ClusterRole with `get nodes/proxy`,
+which is read access to everything the kubelet serves on those nodes. No Debug verbosity is
+needed; if authLogLevel.manage is still true with enabled=false, the Job is converging the
+cluster back to Normal and you can set manage=false once the rollout has finished.
+First read backfills as far as the rotated audit files reach, 400 days at most.
+
+Reporting is ON: the report service runs as deploy/group-sync-dashboard-report on
+image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard-report:0.32.0-8e50ff8eec, reached through the dashboard's proxy under /report/. Administrators
+(the wide tier) generate reports from the Reports tab; the Usage tab records who generated what.
+Pre-flight for TLS between the pods (reporting.tls.enabled):
+  oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c oauth-proxy -- /usr/bin/oauth-proxy --help 2>&1 | grep upstream-ca
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 of 1 updated replicas are available...
+deployment "group-sync-dashboard" successfully rolled out
+deployment "group-sync-dashboard-report" successfully rolled out
+running : 8e50ff8eec — verified in-pod
+== after the forced Helm apply, before mock-creds is patched again (review C2):
+config data tmp curlrc trusted-ca-injected report-token service-ca oauth-tls oauth-cookie mock-creds 
+deployment "group-sync-dashboard" successfully rolled out
+PVCs: identical to the baseline
+== waiting for the first discovery
+2026-09-24 04:12:35,288-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=false
+whoami clusters: ['dashboard', 'mock-privateca', 'mock-selfsigned', 'mock-trusted', 'shared-qa']
+absent as expected: True

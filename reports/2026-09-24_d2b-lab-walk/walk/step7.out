@@ -1,0 +1,37 @@
+secret/shared-qa-poller-token created
+== a token that is not one
+{"secret":"gsd-cluster-shared-qa","cluster":"shared-qa","discovery":"requested"}
+  resolved cycle=11 tls=trusted-bundle
+  kubeadmin scope: self
+  last warning: auth_failed: 401 Unauthorized — token invalid or expired
+
+== a new token of the same ServiceAccount
+{"secret":"gsd-cluster-shared-qa","cluster":"shared-qa","discovery":"requested"}
+  resolved cycle=12 tls=trusted-bundle
+  kubeadmin scope: all
+  last warning: auth_failed: 401 Unauthorized — token invalid or expired
+
+== a CA that does not sign api.crc.testing
+  resolved cycle=13 tls=caData
+  kubeadmin scope: self
+  last warning: unreachable: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1082
+
+== the cluster's own CA bundle
+  resolved cycle=14 tls=caData
+  kubeadmin scope: all
+  last warning: 
+== a URL nothing answers
+  resolved cycle=15 tls=caData
+  kubeadmin scope: self
+  last warning: unreachable: ConnectError: [Errno 111] Connection refused
+
+== the in-cluster URL
+  resolved cycle=15 tls=caData
+  kubeadmin scope: None
+  last warning: 
+secret/gsd-cluster-shared-qa replaced
+== restored: saved server and trust, working token
+  resolved cycle=19 tls=trusted-bundle
+  kubeadmin scope: all
+  last warning: 2026-09-24 03:58:29,504-0400 DEBUG   gsd.kube shared-qa: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+
