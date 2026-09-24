@@ -103,8 +103,8 @@ class CreateRequest:
     token: str | None = field(default=None, repr=False)
     tls_mode: str = "trustedBundle"
     ca_data: str | None = field(default=None, repr=False)   # base64 PEM, as the Secret carries it
-    visibility: str = "self-only"
-    identity: str = "none"
+    visibility: str = "remote-sar"     # the default pair for a remote that states nothing (SPEC_D2b §3.2)
+    identity: str = "same-as-host"
     labels: dict[str, str] = field(default_factory=dict)
     #: Written as the WORD "true"/"false", which is how the parser reads it back
     #: (`data.enabled` unset means true; anything but those two words is a finding). Default true:

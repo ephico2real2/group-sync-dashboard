@@ -2,21 +2,22 @@
 
 | | |
 |---|---|
-| Status | **Proposed.** D1, D2 (`remote-sar` + `same-as-host` is the standard for every way a cluster is joined), D3, D6 and D7 directed by the operator; D4's fail-closed fallback directed, its named finding recommended; D5 and D8 open (§8) |
+| Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 directed, not built (#322); D8 open (§8) |
 | Date | 2026-09-23 |
 | Scope | the per-cluster visibility policy (`clusters[].visibility`, `clusters[].identity`) for every cluster the dashboard polls that is not its host, and who may join or rejoin such a cluster |
 | Relates to | `docs/ACCESS_CONTROL.md` §11 (per-cluster authorisation, D2 of the 2026-09 programme), #307, #322 (the cluster-admin tier), #316 (Rejoin) |
 
 ## 1. Summary
 
-On the lab, `kubeadmin` is `cluster-admin` and sees everything on the host cluster, `dashboard`. On `shared-rnd` and
-`shared-qa` it sees only its own rows. Both remotes resolve to `visibility=self-only identity=none` (the pod's
-`cluster-resolved` log line), so **nobody is asked** whether a reader may see them wide.
+On the lab, `kubeadmin` is `cluster-admin` and sees everything on the host cluster, `dashboard`. Before SPEC_D2b it saw
+only its own rows on `shared-rnd` and `shared-qa`: both remotes resolved to `visibility=self-only identity=none` (the
+pod's `cluster-resolved` log line, 2026-09-23), so **nobody was asked** whether a reader may see them wide.
 
 The remote could answer that question itself. The token the dashboard already holds for `shared-rnd` can ask
-`shared-rnd`'s own RBAC, and it answers correctly for every reader measured (§5). The dashboard cannot use that
-answer for these two clusters because `remote-sar`, the policy that asks the remote, is refused for any cluster
-declared through a Secret, and both are (§6).
+`shared-rnd`'s own RBAC, and it answers correctly for every reader measured (§5). Until SPEC_D2b the dashboard could
+not use that answer for these two clusters, because `remote-sar`, the policy that asks the remote, was refused for
+any cluster declared through a Secret, and both are (§6). Since SPEC_D2b (#338) every join path takes it, and a
+remote that states no policy defaults to it.
 
 This document defines the two policies that grant a wide view on a remote, `inherit` and `remote-sar`, shows how
 each decides, and records the decisions that make `remote-sar` + `same-as-host` the standard for every way a cluster
@@ -39,8 +40,8 @@ reader may see a cluster's data wide. The question is the one `visibility.adminS
 <!-- markdownlint-enable MD033 -->
 
 *Figure 1. Only the middle row differs. `inherit` never contacts the remote about the reader; `remote-sar` asks the
-remote with the credential the dashboard already holds for it; `self-only` asks nobody. The example is `shared-rnd`;
-today it can take only the first or the third column, because a Secret-declared cluster is refused `remote-sar` (§6).*
+remote with the credential the dashboard already holds for it; `self-only` asks nobody. Since SPEC_D2b, every join
+path can take all three columns, and an unstated remote defaults to `remote-sar`.*
 
 ```text
             inherit                     remote-sar                    self-only
@@ -100,10 +101,10 @@ remote's own review. The wrong rows are why `remote-sar` is the standard (D1, D2
 </picture>
 <!-- markdownlint-enable MD033 -->
 
-*Figure 3. Today every path except "allowed" narrows, which is the fail-closed direction. Allowed and denied are
-cached; failures are not. A failure at either remote call reaches only the pod log and the tier-check metric, and
-the reader sees the same generic narrowed view for every one. Today this flow runs only for a values-declared
-`remote-sar` cluster (§6). Naming the failure (D4) and saying which rule decided (D5) are proposals (§8).*
+*Figure 3. Every path except "allowed" narrows, which is the fail-closed direction. Allowed and denied are cached;
+failures are not. Since SPEC_D2b this flow runs for `remote-sar` on every join path, a failure holds the remote
+resolver for 30 s, and D5 names the deciding rule beside the selector. D4's separate named failure remains a
+proposal, so denied and could-not-ask deliberately share D5's narrowed sentence.*
 
 ```text
  reader opens a remote-sar cluster
@@ -127,14 +128,14 @@ self the same way, logged as an ERROR with its traceback and counted as `error`.
 (`charts/group-sync-dashboard/templates/monitoring.yaml#GroupSyncDashboardVisibilityChecksFailing`). Nothing on the
 page names the cause.
 
-| Outcome | Reader sees | Cached | What the page says today | Proposed |
+| Outcome | Reader sees | Cached | Line beside the selector now (D5) | Named failure not built (D4) |
 |---|---|---|---|---|
-| allowed | the wide view on this cluster | yes, per (reader, cluster) | the scope pill reads *Full view — you are seeing everything*; the selector adds no suffix and no self banner shows | D5: *this cluster says you may see everything* |
-| denied | own rows | yes: a real answer | the scope pill reads *Your view — &lt;user&gt;*, the cluster selector appends " — your view", and the five views that carry a self banner (groups, users, access, logins, grants: `SCOPE_BANNER` in `local-development/gsd/static/index.html`) show their generic one | D5: *this cluster says: your own rows* |
-| 403 listing the reader's groups | own rows, for every reader | no | the same generic text as denied | D4: a finding naming the fix, grant `list groups`; D5: *this cluster cannot check access* |
-| 403 creating the review | own rows, for every reader | no | the same generic text | D4: a finding naming the fix, grant `create subjectaccessreviews`; D5: the same sentence |
-| 401 at either call: the joining token is invalid or expired | own rows, for every reader | no | the same generic text | D5: *this cluster cannot check access* |
-| unreachable, unparseable, or any other error | own rows | no | the same generic text | D5: *this cluster could not be asked just now* |
+| allowed | the wide view on this cluster | yes, per (reader, cluster) | *This cluster's own RBAC gives you the full view.* | — |
+| denied | own rows | yes: a real answer | *This cluster's own RBAC shows your own rows, or could not be asked.* | — |
+| 403 listing the reader's groups | own rows, for every reader | no | the same deliberately indistinguishable narrowed line | a finding naming the fix: grant `list groups` |
+| 403 creating the review | own rows, for every reader | no | the same deliberately indistinguishable narrowed line | a finding naming the fix: grant `create subjectaccessreviews` |
+| 401 at either call: the joining token is invalid or expired | own rows, for every reader | no | the same deliberately indistinguishable narrowed line | a finding naming the invalid credential |
+| unreachable, unparseable, or any other error | own rows | no | the same deliberately indistinguishable narrowed line | a finding naming that the cluster could not be asked |
 
 ## 5. Measured on the lab, 2026-09-23
 
@@ -184,7 +185,8 @@ nothing on `clusterrolebindings`, so a namespace admin of `group-sync-operator` 
 and `identity: same-as-host` (`docs/examples/cluster-secret-shared-rnd.redacted.yaml`). #307 replaced it with a
 `saTokenLookup` stanza in `environments/crc.yaml` that deliberately declares no visibility, so it took the default,
 `self-only`, and the host's cluster-admin stopped being wide there. `shared-qa` is a hand-made Secret from #310's
-testing with no visibility key, so it has always been `self-only`.
+testing with no visibility key, so it was `self-only` until SPEC_D2b; since then both remotes take the default for a
+remote that states no policy, `remote-sar` + `same-as-host`.
 
 The commands, re-runnable against the lab with a kubeadmin session:
 
@@ -214,16 +216,17 @@ curl -sk -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -
 | How the cluster was joined | `inherit` | `remote-sar` | `self-only` | `hidden` |
 |---|---|---|---|---|
 | a `clusters:` stanza in values, with a bearer token | yes | yes | yes | yes |
-| a Secret created on the Cluster Configurations tab | yes | **refused** | yes | yes |
-| `saTokenLookup` (the lookup writes a Secret) | yes | **refused** | yes | yes |
+| a Secret created on the Cluster Configurations tab | yes | yes | yes | yes |
+| `saTokenLookup` (the lookup writes a Secret) | yes | yes | yes | yes |
 
-**Why refused.** The per-cluster `TierResolver` that asks a remote (`local-development/gsd/kube.py#TierResolver`) is
+**Why they were refused until SPEC_D2b.** The per-cluster `TierResolver` that asks a remote (`local-development/gsd/kube.py#TierResolver`) was
 built **once, at start-up**, from the values list (`local-development/gsd/api.py#remote_resolvers`). A cluster
 declared through a Secret appears **at runtime**, from discovery, and never gets one. The Secret parser refuses
 `remote-sar` for that reason (`local-development/gsd/clusterconfig/parser.py`: *"remote-sar for a Secret-sourced
 cluster is S2"*), and the chart refuses it beside `saTokenLookup`
 (`charts/group-sync-dashboard/templates/_helpers.tpl`: *"remote-sar is not yet accepted from a Secret (SPEC_S1)"*).
-The way clusters are now joined is exactly the way that cannot ask the remote.
+The way clusters are now joined was exactly the way that could not ask the remote. SPEC_D2b (#338) finds or builds
+each resolver per request from the cluster's current configuration, and both refusals are gone.
 
 ## 7. How a cluster is joined, and who may join it
 
@@ -268,13 +271,13 @@ the remote once it does (D8). Dashed boxes are proposed and not built.*
  REMOTE  4 revoke the login's own token: tried once on every path; a failed revoke is logged, not fatal
  HOST    5 write gsd-cluster-<name> as the dashboard's ServiceAccount (the write switch was checked first)
  HOST    6 joined: the poller's token authenticates every later call, with the rights of the ClusterRole
-             group-sync-dashboard-cluster-poller; once D1 lands, under remote-sar the same token asks
-             the remote about each reader (Figure 3)
+             group-sync-dashboard-cluster-poller; under remote-sar the same token asks the remote
+             about each reader (Figure 3)
 ```
 
 **Why a person's gate starts on the host.** On a first join the dashboard holds no credential on that cluster, so
 before a password is presented the only RBAC it can ask about the person is the host's: `clusterAdminSar`, `update
-clusterrolebindings` (D7, #322). A Rejoin may still hold a working poller token, and once D1 lands that token could
+clusterrolebindings` (D7, #322). A Rejoin may still hold a working poller token, and that token can
 ask the remote about the person's host username (§4). It would still say nothing about the credential just typed; that
 is D8's check, made with the new login's own token. Rejoin exists for a token that has stopped working (#316), so the
 host's answer is the one that is always available.
@@ -288,25 +291,26 @@ Row by row:
 | Add a cluster on the tab | `clusterConfigManageSar`: `create secrets` in the dashboard's namespace, which a namespace admin passes | `clusterAdminSar`: `update clusterrolebindings` on the host | the host | a pasted bearer token |
 | Rotate, delete, test | the same namespace-level check | `clusterAdminSar` | the host | a pasted token, or none |
 | Rejoin (#316) | not built | `clusterAdminSar`, then D8 on the remote | the host, then the remote | the person's own username and password, once, never stored |
-| See a joined remote wide | the cluster's policy (`self-only` on both lab remotes) | `remote-sar` + `same-as-host`, the standard (D2) | the remote, with the poller's token | none: the token is already held |
+| See a joined remote wide | the cluster's policy: `remote-sar` + `same-as-host`, the standard (D2), on both lab remotes since SPEC_D2b (`self-only` before it) | unchanged | the remote, with the poller's token | none: the token is already held |
 
 ## 8. Decisions
 
 | | Decision | Options | Status |
 |---|---|---|---|
-| **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"*, and the mandate of 2026-09-23: *"this is what I want: remote-sar for whatever method the cluster was joined"* |
-| **D2** | The default for a newly joined remote | `self-only` (today) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
+| **D1** | Support `remote-sar` for every way a cluster is joined | build the remote resolver when discovery finds the cluster, rebuild it when the Secret's credential changes, drop it when the cluster is retired; accept `remote-sar` from a Secret and from a `saTokenLookup` stanza | **Directed** by the operator: *"we need to have both supported and clearly defined"*, and the mandate of 2026-09-23: *"this is what I want: remote-sar for whatever method the cluster was joined"*. Built in SPEC_D2b (#338): the resolver is found or built on each request from the cluster's current configuration, with no discovery hook, and dropped at the next lookup once its cluster is no longer askable |
+| **D2** | The default for a newly joined remote | `self-only` (the default until SPEC_D2b) or `remote-sar` | **Directed**: `remote-sar` + `same-as-host` is the standard. The operator: *"we should be looking up user's permission on the remote host to determine their access … unless the service account that joined the remote cluster doesn't have the right permissions"*, and *"I agree with your recommendation to build out remote-sar + same-as-host as our standard"* |
 | **D3** | What "the same person" means under `remote-sar` | the reader's OpenShift username, the `User` object's name | **Directed**: every reader is matched by that name, with no identity-provider distinction. The operator: *"this is all OpenShift and everyone appears as a user … just focus on the users that you see in OpenShift users"*, and the standard: *"a user uid in cluster A or B or C are all the same."* It is what `remote-sar` already does for a values-declared cluster (the review names the host username, and the groups are read from the remote's Group objects), so it needs no code. |
 | **D4** | When the joining ServiceAccount may not ask | silent self, or self with a named finding | **Directed**: fall back to self (fail closed). Its named finding is recommended, not built: on the Cluster Configurations tab and under the cluster selector, with the grant that fixes it (`list groups` or `create subjectaccessreviews`) |
-| **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Open**, recommended. The missing reason is why the lab's narrowing looked like a defect. |
-| **D6** | The lab until D1 ships | `inherit` + `same-as-host` on `shared-rnd` now, or `self-only` until D1 lands and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stay `self-only` until D1 ships, then take `remote-sar` + `same-as-host`. |
+| **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Directed** (2026-09-23), built in D2b (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.11): one line beside the selector, read from `/api/whoami` alone. *this cluster cannot check access* needs D4's field and is not built, so a `remote-sar` cluster's self line says the cluster either answered "your own rows" or could not be asked. |
+| **D6** | The lab until D1 shipped | `inherit` + `same-as-host` on `shared-rnd` then, or `self-only` until D1 landed and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
 | **D7** | Who may join or rejoin a cluster with a username and password | the host's `clusterAdminSar` (`update clusterrolebindings`, #322), or today's `create secrets` in the dashboard's namespace | **Directed**: cluster admin on the host. The operator: *"This is a strictly cluster admin role. We can only check for who has cluster admin on dashboard … because we cannot determine or infer if a user is a cluster admin on a remote cluster if the cluster is not joined."* |
 | **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Open**, recommended for Rejoin only. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
 
 ## 9. Consequences of the directed decisions
 
-- **Code (D1, D2):** a `TierResolver` per `remote-sar` cluster owned by the discovery registry instead of built once
-  in `create_app`; keyed by cluster and rebuilt when the cluster's credential or trust changes; the parser and the
+- **Code (D1, D2), built in SPEC_D2b (#338):** a `TierResolver` per `remote-sar` cluster, found or built on each
+  request from the cluster's current configuration (`local-development/gsd/kube.py#RemoteTierResolvers`) instead
+  of built once in `create_app`; rebuilt when the cluster's URL, credential or trust changes; the parser and the
   chart stop refusing `remote-sar` for Secret-declared clusters. The parser, once it accepts `remote-sar`, must
   refuse it without `identity: same-as-host`, as `local-development/gsd/config.py#load_settings` already does for
   values: `viewer_scope` keys self rows by the host username. If D4's recommendation is accepted, a finding code
@@ -342,8 +346,10 @@ The name `clusterAdminSar` in this document is #322's: `update clusterrolebindin
 ## Diagram sources
 
 The figures are rendered from `docs/diagrams/remote-cluster-access/source.html`, one hand-authored page (inline
-SVG, light and dark palettes), at twice the pixel density: open it in a browser, set `data-theme` on the root element
-to `light` or `dark`, and screenshot each `.fig-scroll` element. The pictures depict the decision points in §2, §3,
+SVG, light and dark palettes), at twice the pixel density, by `docs/diagrams/render.py`, which screenshots each
+`.fig-scroll` element in both themes and checks the page at phone width — from the repository root:
+`local-development/.venv/bin/python docs/diagrams/render.py docs/diagrams/remote-cluster-access/source.html
+docs/diagrams/remote-cluster-access policies-who-decides,inherit-vs-remote-sar-outcomes,remote-sar-decision-flow,joining-a-cluster`. The pictures depict the decision points in §2, §3,
 §4 and §7, and the text twins beside them carry the same points. If one of those sections changes, change the picture,
 its twin and the page together. The images use `<picture>` with `prefers-color-scheme`, the form GitHub documents
 for theme-aware images

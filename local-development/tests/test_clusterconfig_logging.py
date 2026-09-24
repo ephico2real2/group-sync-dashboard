@@ -469,12 +469,12 @@ class TestTheCycleIsQuietWhenNothingChanged:
 
     def test_the_resolved_line_says_the_visibility_the_tier_actually_serves(self, tmp_path, caplog):
         """The same lie on the line a reader greps: `visibility=inherit` for a Secret the tier
-        serves as `self-only`."""
+        serves otherwise. A Secret that states nothing is served `remote-sar` + `same-as-host` (SPEC_D2b)."""
         self.host.secrets = {"items": [_secret("gsd-cluster-east", cluster="east")]}
         with caplog.at_level(logging.INFO, logger="gsd"):
             self._poller(tmp_path)._discover_once()
         line = next(m for m in caplog.messages if m.startswith("cluster-resolved "))
-        assert "visibility=self-only" in line and "identity=none" in line, line
+        assert "visibility=remote-sar" in line and "identity=same-as-host" in line, line
 
     def test_a_label_edited_on_the_secret_is_reported_as_changed(self, tmp_path, caplog):
         """OB2 C1 and Codex C1: the Secret's other labels are the tab's fleet metadata, and an edit
@@ -633,12 +633,13 @@ class TestTheHolesTheSeatsFound:
         """Grok C2 (first pass): a Secret that spelled out the value it was already defaulting to
         read as a change. Grok C1 (second pass): the first fix normalised to `inherit`, the HOST's
         default — every cluster here is Secret-sourced and `Settings.cluster_policy` serves
-        `self-only` for an omitted visibility, so `visibility: inherit` is a WIDENING, and the
-        shape read it as nothing while the log claimed `inherit` all along."""
+        `remote-sar` + `same-as-host` for an omitted pair (SPEC_D2b), so `visibility: inherit` is a
+        CHANGE, and the shape read it as nothing while the log claimed `inherit` all along."""
         from gsd.poller import _cluster_shape
         base = dict(name="c", api_url="https://h:6443", token_value="t" * 20, source="secret:s")
         omitted = _cluster_shape(ClusterConfig(visibility=None, identity=None, **base))
-        assert omitted == _cluster_shape(ClusterConfig(visibility="self-only", identity="none", **base))
+        assert omitted == _cluster_shape(ClusterConfig(visibility="remote-sar", identity="same-as-host", **base))
+        assert omitted != _cluster_shape(ClusterConfig(visibility="self-only", identity="none", **base))
         assert omitted != _cluster_shape(ClusterConfig(visibility="inherit", identity="none", **base)), (
             "omitted → inherit widens this cluster to the host's tier; the shape must see it")
 

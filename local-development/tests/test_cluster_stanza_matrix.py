@@ -38,6 +38,8 @@ ACCEPTED = [
     ("visibility hidden", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "hidden"}]),
     ("remote-sar + same-as-host", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "remote-sar", "identity": "same-as-host"}]),
     ("enabled false", [HOST, {**REMOTE, "tokenEnv": "R", "enabled": False}]),
+    ("remote-sar alone", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "remote-sar"}]),
+    ("saTokenLookup + remote-sar", [HOST, {**REMOTE, "saTokenLookup": True, "visibility": "remote-sar"}]),
 ]
 
 #: (label, stanza, refused_by_render) — the third column is the document's "WHERE it fires" column.
@@ -52,7 +54,7 @@ REFUSED = [
     ("controller disabled", [{**HOST, "enabled": False}], True),
     ("hidden on the host", [{**HOST, "visibility": "hidden"}], True),
     ("remote-sar on the host", [{**HOST, "visibility": "remote-sar", "identity": "same-as-host"}], True),
-    ("remote-sar without same-as-host", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "remote-sar"}], True),
+    ("remote-sar with identity none", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "remote-sar", "identity": "none"}], True),
     ("visibility typo", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "self_only"}], True),
     ("identity typo", [HOST, {**REMOTE, "tokenEnv": "R", "identity": "Same-As-Host"}], True),
     ("enabled as a quoted word", [HOST, {**REMOTE, "tokenEnv": "R", "enabled": "yes"}], True),

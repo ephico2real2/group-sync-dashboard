@@ -5,7 +5,7 @@
 | Programme | Cluster configuration as labelled Secrets (#230), continued — S4 designed the retrieval; S4a shipped the login; S4b shipped the lookup; this is step C, the only part that runs on a clock |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; S4 step C, the issue's own label S3b-C) |
-| Version on release | app 0.32.0, chart 0.53.0 |
+| Version on release | app 0.33.0, chart 0.54.0 |
 | Issue | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) |
 | Status | specified |
 | Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22 |
@@ -44,7 +44,8 @@ Decisions taken at review, recorded first and then applied:
   rotates or the entry is cleared (§5, question 7). §3.4's ping already stood down on either kind for the
   same reason; every other path now does too.
 - **The release versions** are app 0.32.0, chart 0.53.0 (all three reviewers): the draft's chart 0.51.0
-  had already shipped (#307), and main is at 0.52.1 (#317).
+  had already shipped (#307), and main is at 0.52.1 (#317). SPEC_D2b's implementation (#338) took those two
+  rungs first, so this spec now carries app 0.33.0, chart 0.54.0.
 
 ## 0. The requirement, in business terms
 
@@ -673,7 +674,7 @@ cluster carries `self-login-lifetime-too-short` naming both numbers and the fix 
 | `gsd/static/index.html` | the two rows (§3.10) |
 | `charts/…/values.yaml`, `templates/configmap.yaml` | `clusterConfig.fleetAccount.ping.{enabled, intervalSeconds}` → `fleetPingEnabled`, `fleetPingIntervalSeconds` |
 | `charts/…/templates/rbac.yaml`, `templates/_helpers.tpl` | the Lease grant's condition; `gsd.fleetAccountInUse` shared with `fleet-account-rbac.yaml`; `userSelfLogin` with `replicaCount > 1` refused |
-| `charts/…/Chart.yaml`, `pyproject.toml`, `gsd/__init__.py` | chart 0.53.0, app 0.32.0 — the next minor rungs after 0.52.1 and 0.31.0 on 2026-09-23; re-assigned at the implementing PR if the ladder has moved |
+| `charts/…/Chart.yaml`, `pyproject.toml`, `gsd/__init__.py` | chart 0.54.0, app 0.33.0 — the next minor rungs after SPEC_D2b's chart 0.53.0 and app 0.32.0; re-assigned at the implementing PR if the ladder has moved |
 | docs | §3.13 |
 
 ### 3.8 The chart
@@ -843,7 +844,7 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
 ### 3.13 Documents
 
 - `docs/CHANGELOG.md` — one Unreleased bullet in the house style (what changed, why, the numbers).
-- `charts/group-sync-dashboard/Chart.yaml` — `# CHART 0.53.0 (…), MINOR:` history line; `version`,
+- `charts/group-sync-dashboard/Chart.yaml` — `# CHART 0.54.0 (…), MINOR:` history line; `version`,
   `appVersion`.
 - `charts/group-sync-dashboard/README.md` — the two values rows; the conditional-rules paragraph
   (§3.8); the log-level ladder's ERROR row gains "the fleet-account Lease unwritable".

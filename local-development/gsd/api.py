@@ -19,7 +19,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.responses import Response
@@ -31,9 +31,9 @@ from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRec
 from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
     IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
-    VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings,
+    VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings, remote_policy,
 )
-from .kube import TIER_ALL, TIER_SELF, ClusterClient, TierResolver
+from .kube import REMOTE_FAILURE_HOLD_SECONDS, TIER_ALL, TIER_SELF, ClusterClient, RemoteTierResolvers, TierResolver
 from .kyverno import CONTROLLED_KINDS
 from .leader import LeaderElector, own_namespace
 from .metrics import RuntimeSignals, build_registry
@@ -484,23 +484,22 @@ def build_app(
     # chose one threshold), same TTL, its own cache: per (viewer, cluster) by construction.
     # Reported under the "admin" threshold label: a failing remote review is the same
     # everyone-silently-narrowed signature the alert already watches for.
-    remote_resolvers: dict[str, TierResolver] = {}
-    if settings.view_restrictions_enabled:
-        for c in settings.clusters:
-            if not c.enabled or c is local_cluster:
-                continue
-            if settings.cluster_policy(c.name)[0] != VISIBILITY_REMOTE_SAR:
-                continue
-            remote_resolvers[c.name] = TierResolver(
-                c,
-                verb=settings.visibility_admin_sar_verb,
-                resource=settings.visibility_admin_sar_resource,
-                api_group=settings.visibility_admin_sar_api_group,
-                namespace=settings.visibility_admin_sar_namespace,
-                subresource=settings.visibility_admin_sar_subresource,
-                ttl_seconds=float(settings.visibility_tier_ttl_seconds),
-                observe=functools.partial(signals.note_tier_check, "admin"),
-            )
+    #
+    # Found or built PER REQUEST (SPEC_D2b §3.1), from the cluster's CURRENT configuration — values entry or
+    # Secret — rather than once here: a Secret-declared cluster appears at runtime, and a rotated token, CA or
+    # URL reaches a resolver only as a new configuration. Each resolver holds a failing remote for
+    # REMOTE_FAILURE_HOLD_SECONDS; the host's resolvers above hold nothing.
+    remote_resolvers = RemoteTierResolvers(settings, lambda c: TierResolver(
+        c,
+        verb=settings.visibility_admin_sar_verb,
+        resource=settings.visibility_admin_sar_resource,
+        api_group=settings.visibility_admin_sar_api_group,
+        namespace=settings.visibility_admin_sar_namespace,
+        subresource=settings.visibility_admin_sar_subresource,
+        ttl_seconds=float(settings.visibility_tier_ttl_seconds),
+        observe=functools.partial(signals.note_tier_check, "admin"),
+        failure_hold_seconds=REMOTE_FAILURE_HOLD_SECONDS,
+    )) if settings.view_restrictions_enabled else {}
     # WHICH cluster is the host, and whether anyone SAID so (#249; the review of #251 found this
     # claimed in the chart's notes while nothing shipped it). Four things resolve against this
     # entry — the tier SubjectAccessReview, the Kyverno breaker URL, `identity: same-as-host` and
@@ -649,6 +648,11 @@ def build_app(
             keep = own_policy == VISIBILITY_INHERIT or identity == IDENTITY_SAME_AS_HOST
             return (viewer if keep else None), TIER_SELF
         if policy == VISIBILITY_REMOTE_SAR:
+            # Decided before this handler's read snapshot opened (@tier_first, SPEC_D2b §3.10): served
+            # from the request, so the remote is asked once and the decision is still counted once, here.
+            decided = getattr(request.state, "remote_tiers", {})
+            if cluster_id in decided:
+                return _decide(viewer, None, lambda _viewer: decided[cluster_id])
             # Read off app.state PER REQUEST, the published seam, so a test can substitute one
             # remote's decision without a cluster. No build-time fallback: a remote cluster
             # with no resolver is a remote cluster nobody may see wide.
@@ -988,6 +992,30 @@ def build_app(
                 return fn(*args, **kwargs)
         return wrapper
 
+    def tier_first(fn):
+        """Decide the named cluster's remote-sar tier BEFORE the @consistent snapshot below opens
+        (SPEC_D2b §3.10, the per-cluster routes). Under remote-sar a decision is a group list and a
+        SubjectAccessReview on that cluster, up to TIER_CHECK_TIMEOUT_SECONDS each, and the default makes
+        every remote that states nothing one; a snapshot held across that call pins the WAL read-mark
+        (store.read_snapshot). Applied ABOVE @consistent, and only to a handler that decides the named
+        cluster's tier right after require_cluster, so it asks nothing the handler would not have asked.
+        The answer is kept on the request and viewer_scope serves it from there; any other policy, an
+        unserved cluster or no viewer asks nothing here, and viewer_scope decides as before."""
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            request, cluster_id = kwargs.get("request"), kwargs.get("cluster_id")
+            viewer = trusted_viewer(request) if isinstance(request, Request) else None
+            if (restrict and viewer and isinstance(cluster_id, str) and is_served(cluster_id)
+                    and settings.cluster_policy(cluster_id)[0] == VISIBILITY_REMOTE_SAR):
+                resolver = (getattr(app.state, "remote_tier_resolvers", None) or {}).get(cluster_id)
+                if resolver is not None:
+                    try:
+                        request.state.remote_tiers = {cluster_id: resolver.resolve(viewer)}
+                    except Exception:  # noqa: BLE001 — viewer_scope asks again and fails closed, as before
+                        pass
+            return fn(*args, **kwargs)
+        return wrapper
+
     def is_served(cluster_id: str) -> bool:
         """Whether this instance serves the cluster at all — configured, enabled, and not `hidden`.
 
@@ -1000,6 +1028,25 @@ def build_app(
         cluster = settings.cluster(cluster_id)
         return (cluster is not None and cluster.enabled
                 and settings.cluster_policy(cluster_id)[0] != VISIBILITY_HIDDEN)
+
+    def served_scopes(request: Request) -> dict[str, str]:
+        """This reader's decision for every served cluster, made BEFORE a handler's read snapshot opens
+        (SPEC_D2b §3.10). FastAPI resolves a dependency before it calls the endpoint, and the snapshot is
+        opened by the endpoint's @consistent wrapper. Under remote-sar a decision is a group list and a
+        SubjectAccessReview on that cluster, up to TIER_CHECK_TIMEOUT_SECONDS each, and a snapshot held
+        across a network call pins the WAL read-mark (store.read_snapshot). The rows are the ones the
+        fleet handlers walk; a row that appears between this read and the handler's snapshot is decided
+        inline, as before, so nothing is widened, dropped or decided twice."""
+        return {row["id"]: viewer_scope(request, row["id"])[1] for row in store.clusters() if is_served(row["id"])}
+
+    def alert_scopes(request: Request) -> dict[str, str]:
+        """served_scopes for /api/alerts, whose walk is its own (SPEC_D2b §3.10): it skips a row the store holds
+        at enabled=0 even while the configuration serves that cluster — a re-joined cluster before the leader's
+        next cycle writes its row, or any cycle on a replica that is not the leader — and it decides a row still
+        enabled=1 whose configuration has gone. Decided on list_alerts' own predicate, so the feed asks no remote
+        its loop would not have asked, and leaves none to decide inside its snapshot."""
+        return {row["id"]: viewer_scope(request, row["id"])[1] for row in store.clusters()
+                if row["enabled"] and settings.cluster_policy(row["id"])[0] != VISIBILITY_HIDDEN}
 
     def vouches_for_host_identity(cluster_id: str) -> bool:
         """Whether this cluster treats the host's authenticated username as one of its own.
@@ -1207,11 +1254,16 @@ def build_app(
         _reject_unknown("body", body, _BODY_KEYS)
         _reject_unknown("credential", cred, _CRED_KEYS)
         _reject_unknown("tls", tls, _TLS_KEYS)
+        # One rule for an omitted field, the one discovery applies to the Secret this request writes
+        # (SPEC_D2b §3.2): nothing is remote-sar + same-as-host, and `identity: none` alone is
+        # self-only — never the refused remote-sar + none.
+        visibility, identity = remote_policy(str(body.get("visibility") or "").strip() or None,
+                                             str(body.get("identity") or "").strip() or None)
         return CreateRequest(
             name=str(body.get("name") or "").strip(), server=str(body.get("server") or "").strip(),
             credential_kind=str(cred.get("kind") or "bearerToken"), token=cred.get("token"),
             tls_mode=str(tls.get("mode") or "trustedBundle"), ca_data=tls.get("caData"),
-            visibility=str(body.get("visibility") or "self-only"), identity=str(body.get("identity") or "none"),
+            visibility=visibility, identity=identity,
             labels={str(k): str(v) for k, v in labels.items()},
         )
 
@@ -1298,7 +1350,7 @@ def build_app(
 
     @app.get("/api/clusters")
     @consistent
-    def list_clusters(request: Request) -> list[dict]:
+    def list_clusters(request: Request, scopes: dict[str, str] = Depends(served_scopes)) -> list[dict]:
         """Every observed cluster with its poll status and headline counts.
 
         The overview reads this. An unreachable cluster still appears, carrying its error —
@@ -1337,7 +1389,7 @@ def build_app(
             policy, _ = settings.cluster_policy(row["id"])
             # Decided PER CLUSTER (docs/ACCESS_CONTROL.md §11): a host administrator is not an
             # administrator of a self-only remote, and the card must not say otherwise.
-            _, scope = viewer_scope(request, row["id"])
+            scope = scopes[row["id"]] if row["id"] in scopes else viewer_scope(request, row["id"])[1]
             counts = store.group_counts(row["id"])
             crs = store.groupsyncs(row["id"])
             out.append(
@@ -1512,6 +1564,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/groups/{name}")
+    @tier_first
     @consistent
     def group_detail(request: Request, cluster_id: str, name: str) -> dict:
         """One group: its members, the CR that syncs it, and what it grants.
@@ -1585,6 +1638,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/users")
+    @tier_first
     @consistent
     def list_users(
         request: Request,
@@ -1667,6 +1721,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/users/{name}")
+    @tier_first
     @consistent
     def user_detail(request: Request, cluster_id: str, name: str) -> dict:
         """Reverse lookup: every group this user is in.
@@ -1724,6 +1779,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/logins")
+    @tier_first
     @consistent
     def list_logins(
         request: Request,
@@ -1912,6 +1968,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/cluster-access")
+    @tier_first
     @consistent
     def cluster_access(
         request: Request,
@@ -2034,6 +2091,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/bindings/findings")
+    @tier_first
     @consistent
     def binding_findings(
         request: Request,
@@ -2111,6 +2169,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/namespaces")
+    @tier_first
     @consistent
     def list_namespaces(request: Request, cluster_id: str) -> dict:
         """Every namespace the poller sees on one cluster, with its configured labels and two
@@ -2182,6 +2241,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/namespaces/{name}")
+    @tier_first
     @consistent
     def namespace_detail(request: Request, cluster_id: str, name: str) -> dict:
         """One namespace: its labels, who reaches it and through which group, the grants naming
@@ -2227,6 +2287,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/home")
+    @tier_first
     @consistent
     def home(request: Request, cluster_id: str) -> dict:
         """Home — the viewer's own access on one cluster, the page every reader lands on (#158).
@@ -2288,6 +2349,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/user-bindings")
+    @tier_first
     @consistent
     def direct_user_bindings(
         request: Request,
@@ -2392,6 +2454,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/kyverno")
+    @tier_first
     @consistent
     def kyverno(
         request: Request,
@@ -2434,6 +2497,7 @@ def build_app(
         return out
 
     @app.get("/api/clusters/{cluster_id}/membership-changes")
+    @tier_first
     @consistent
     def membership_changes(
         request: Request,
@@ -2478,6 +2542,7 @@ def build_app(
         }
 
     @app.get("/api/clusters/{cluster_id}/binding-changes")
+    @tier_first
     @consistent
     def binding_changes(
         request: Request,
@@ -2529,7 +2594,7 @@ def build_app(
 
     @app.get("/api/alerts")
     @consistent
-    def list_alerts(request: Request) -> dict:
+    def list_alerts(request: Request, scopes: dict[str, str] = Depends(alert_scopes)) -> dict:
         """Everything currently worth a human's attention, across all clusters.
 
         Ordered by severity. Derived per request from the same stored observations the rest
@@ -2569,7 +2634,7 @@ def build_app(
             if policy == VISIBILITY_HIDDEN:
                 continue
             served = True
-            _, cscope = viewer_scope(request, cluster_id)
+            cscope = scopes[cluster_id] if cluster_id in scopes else viewer_scope(request, cluster_id)[1]
             if cscope != TIER_ALL:
                 scope = TIER_SELF
             found: list[dict] = []

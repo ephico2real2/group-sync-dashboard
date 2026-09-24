@@ -168,8 +168,9 @@ def _settings(db: str, **kw) -> Settings:
     kw.setdefault("oauth_proxy_enabled", True)
     kw.setdefault("login_capture_enabled", True)
     return Settings(
-        # c2 inherits explicitly: since D2 a second cluster is self-only by default, and these
-        # tests pin the HOST tier's behaviour on every cluster (SPEC_D2 §D2.6 names this fixture).
+        # c2 inherits explicitly: a second cluster that states nothing is decided by its own RBAC
+        # (remote-sar, SPEC_D2b), and these tests pin the HOST tier's behaviour on every cluster
+        # (SPEC_D2 §D2.6 names this fixture).
         clusters=[ClusterConfig("c1", "https://api.c1.example.com:6443", token_env="X"),
                   ClusterConfig("c2", "https://api.c2.example.com:6443", token_env="Y", visibility="inherit")],
         db_path=db, **kw)

@@ -76,7 +76,7 @@ class TestParser:
         ({"config": {"bearerToken": "t", "tlsClientConfig": {"caData": "bm90IGEgcGVt"}}}, "ca-data-invalid"),
         ({"config": {"bearerToken": "t", "tlsClientConfig": {"caData": "bm90IGEgcGVt", "insecure": True}}}, "insecure-with-ca"),
         ({"visibility": "everyone"}, "visibility-invalid"),
-        ({"visibility": "remote-sar"}, "visibility-invalid"),
+        ({"visibility": "remote-sar", "identity": "none"}, "identity-invalid"),
         ({"identity": "same"}, "identity-invalid"),
         ({"enabled": "yes"}, "enabled-invalid"),
     ])
@@ -376,6 +376,9 @@ class TestApi:
         settings.cluster_registry.replace([east], [Finding("gsd-cluster-broken", "config-not-json", "Expecting value")], at="2026-09-20T16:05:12Z")
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        # `east` states no policy, so it is remote-sar (SPEC_D2b); no resolver here, so no made-up remote is asked
+        # and east is self for every reader, fail closed.
+        app.state.remote_tier_resolvers = {}
         # The read route is gated on clusterconfig:view, NOT the wide tier (#230, the operator's
         # ruling of 2026-09-20): the wide tier admits the auditor persona by design.
         app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
@@ -393,7 +396,7 @@ class TestApi:
         assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
         assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,
                               "api_url": "https://api.east.example:6443", "enabled": True, "credential": "bearer",
-                              "labels": {"environment": "prod"}, "visibility": "self-only", "identity": "none",
+                              "labels": {"environment": "prod"}, "visibility": "remote-sar", "identity": "same-as-host",
                               "tls": {"insecure": False, "ca": "trusted-bundle"},
                               "status": None, "last_poll": None, "error": None, "retired": False}
         assert by["c1"]["tls"] == {"insecure": False, "ca": "trusted-bundle"}
@@ -404,8 +407,8 @@ class TestApi:
         assert gone["retired"] is True and gone["enabled"] is False and gone["source"] == "secret:gsd-cluster-gone"
         # the discovered cluster is served by the routes and counted by readiness
         assert c.get("/readyz").json()["clusters"] == 3
-        # served, and narrowed: a Secret-sourced cluster is self-only by default (D2), so the administrator view
-        # refuses (403) rather than not knowing the cluster (404)
+        # served, and narrowed: a Secret-sourced cluster that states nothing is remote-sar (SPEC_D2b) and no resolver
+        # answers here, so the administrator view refuses (403) rather than not knowing the cluster (404)
         r = c.get("/api/clusters/east/kyverno", headers=H("root"))
         assert r.status_code == 403 and "unknown cluster" not in r.text
 
@@ -589,12 +592,13 @@ class TestVanishedSecretIsNotServed:
             [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.remote_tier_resolvers = {}   # east is remote-sar (SPEC_D2b): self, with no remote asked
         store = app.state.store
         store.upsert_cluster("east", "https://api.east.example:6443", True,
                              source="secret:gsd-cluster-east", credential="bearer")
         with TestClient(app) as c:
             before = {x["id"]: x for x in c.get("/api/clusters", headers=H("root")).json()}
-            assert before["east"]["visibility"] == {"policy": "self-only", "scope": "self"}
+            assert before["east"]["visibility"] == {"policy": "remote-sar", "scope": "self"}
             # the Secret vanishes; the row is NOT retired yet (the leader has not got there, or this
             # replica never will)
             settings.cluster_registry.replace([], [], at="2026-09-20T16:10:12Z")
@@ -636,6 +640,7 @@ class TestClusterConfigTier:
             # Everyone passes the WIDE tier here, auditor included — exactly the live situation
             # this gate exists for, so a passing test cannot be passing for the wrong reason.
             app.state.tier_resolver = _MapResolver({"root": "all", "auditor": "all", "viewer": "all"})
+            app.state.remote_tier_resolvers = {}   # the discovered east is remote-sar (SPEC_D2b); no remote is asked
             app.state.clusterconfig_view_resolver = view
             app.state.clusterconfig_manage_resolver = manage
             return app

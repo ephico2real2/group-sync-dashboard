@@ -425,11 +425,11 @@ never vouched for. Two keys per entry now say, per cluster, what a reader may se
 | key | values | default | meaning |
 |---|---|---|---|
 | `clusters[].visibility` | `inherit` | the hosting entry | the host's DECIDED tier — the old behaviour, and the host's own default; on a remote an explicit choice that the host's RBAC governs that cluster's data too (a `self-only` host is self on every cluster it governs), with identity not consulted: a self reader is keyed by the host's username there, as before 0.19.0 |
-| | `self-only` | every other entry | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
+| | `self-only` | a remote that states only `identity: none` | nobody is ever wide on this cluster; it costs no RBAC, no credential and no cluster call, and can only narrow |
 | | `hidden` | | polled and alerted on (`/metrics`, the pod log) but never served through `/api`; refused on the host entry |
-| | `remote-sar` | | that cluster's own RBAC decides: the same SubjectAccessReview as `visibility.adminSar`, created on the remote API with that entry's token, naming the reader and the Group memberships read from the remote; refused on the host entry, and needs `identity: same-as-host` |
-| `clusters[].identity` | `none` | every other entry | the host's username is not treated as anyone on this cluster: person-scoped views answer 403 there, cluster-level health still shows |
-| | `same-as-host` | the hosting entry, forced | the reader is matched on this cluster by OpenShift username, the `User` object's name, so the reader's self views apply to this cluster too |
+| | `remote-sar` | a remote that states neither key | that cluster's own RBAC decides: the same SubjectAccessReview as `visibility.adminSar`, created on the remote API with that entry's token, naming the reader and the Group memberships read from the remote; refused on the host entry, and refused beside an explicit `identity: none` |
+| `clusters[].identity` | `none` | beside an explicit `inherit`, `self-only` or `hidden` | the host's username is not treated as anyone on this cluster: person-scoped views answer 403 there, cluster-level health still shows |
+| | `same-as-host` | the hosting entry, forced; beside `remote-sar`; a remote that states neither key | the reader is matched on this cluster by OpenShift username, the `User` object's name, so the reader's self views apply to this cluster too |
 
 **What each endpoint does.** Every `/api/clusters/{id}/…` handler calls `require_cluster` first: a
 `hidden` cluster answers the same 404, with the same sentence naming the id the caller sent, as an id
@@ -453,17 +453,25 @@ as an unknown id) skips it. With no served cluster at all, `/api/alerts` fails c
 readable, but it no longer appears as `ok` with frozen data or raises stale "overdue" alerts. This
 supersedes the earlier behaviour where a removed cluster resolved to `inherit` and lingered in the list.
 
-**How `remote-sar` decides.** One `gsd/kube.py#TierResolver` per remote-sar cluster, constructed on
-that cluster's `ClusterConfig`, so the review is created on the remote API with the remote token and
+**How `remote-sar` decides.** `gsd/kube.py#RemoteTierResolvers` finds or builds one `gsd/kube.py#TierResolver`
+per remote-sar cluster on each request, from that cluster's current configuration — a values entry or a
+Secret, written by hand, by the tab or by the lookup — and rebuilds it when the connection changes (its URL,
+token or CA), so the review is created on the remote API with the remote token and
 `gsd/kube.py#ClusterClient.fetch_groups_of_user` reads the **remote's** Group objects — the
 group-resolution trap handled by construction. Cached per (reader, cluster) for
 `visibility.tierTtlSeconds`; every failure (a 403 because the remote ServiceAccount lacks the
-review, unreachable, junk) is the self tier and is not cached. Failures count under the same signal
+review, unreachable, junk) is the self tier and is not cached — and it holds that cluster's resolver for
+`gsd/kube.py#REMOTE_FAILURE_HOLD_SECONDS` (30 s): no attempt on that remote starts while the hold runs, and the
+first request that would call after it expires is the one probe; distinct viewers already in flight when the first
+failure lands may each finish their attempt. Failures count under the same signal
 as the host's (`gsd_visibility_tier_checks_total`), so
 `templates/monitoring.yaml#GroupSyncDashboardVisibilityChecksFailing` fires exactly as for the host.
-The remote RBAC is the operator's, by hand — this chart manages no remote RBAC: a
-`ClusterRoleBinding` of `system:auth-delegator` to the remote ServiceAccount grants
-`create subjectaccessreviews`.
+This chart manages no remote RBAC. On each remote, `group-sync-operator-helm` installs the joining
+ServiceAccount's ClusterRole `group-sync-dashboard-cluster-poller`, which carries `create subjectaccessreviews`
+and `list groups` (a ServiceAccount joined by hand needs the same two; a `ClusterRoleBinding` of
+`system:auth-delegator` grants the first), and — so that an auditor is wide there too — the auditor ClusterRole,
+one ClusterRoleBinding per auditor Group, and each auditor Group the host creates locally
+(`rbacAuditors.groups[].createLocal`) with its members (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.7).
 
 **The two models side by side** — `inherit` against `remote-sar`, with pictures, the lab's measurements (the joining
 ServiceAccount already holds the rights `remote-sar` needs) and the decisions that extend `remote-sar` to clusters
@@ -471,15 +479,16 @@ declared through a Secret: `docs/DESIGN_remote_cluster_access.md`.
 
 **Identity is the OpenShift username.** `same-as-host` matches a reader on another cluster by their OpenShift
 username, the `User` object's name, with no identity-provider distinction (D3 of
-`docs/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). `identity` is still stated per entry:
-today `none` is the default for a remote entry that states nothing and fails closed, and `remote-sar` refuses to render or
-start without `same-as-host`, because its review names that username on the remote.
+`docs/DESIGN_remote_cluster_access.md`, the operator's decision of 2026-09-23). A remote entry that states nothing
+is `same-as-host` with `remote-sar` (SPEC_D2b); `none` fails closed and, stated alone, keeps `self-only`; and
+`remote-sar` refuses to render or start beside `identity: none`, because its review names that username on the remote.
 
 **On the wire.** `/api/whoami` carries `visibility.clusters[id] = {policy, identity, scope}` for every
 served cluster beside the headline `scope`, which is the host's decision (a `self-only` host makes it
 `self` for everyone, and with it the report ticket); each `/api/clusters` row carries
 `visibility = {policy, scope}` for this reader; `/api/alerts` reports the narrowest `scope` served.
-The UI renders these — the selector marks a narrowed cluster, the header pill and the cluster-scoped
+The UI renders these — the selector marks a narrowed cluster, one line beside it says which rule decided the
+selected cluster's view (the host, the cluster's own RBAC, or self-only), the header pill and the cluster-scoped
 tabs follow the selected one, the Reports tab follows the host's headline — and never derives them (§7).
 
 **The other posture.** One dashboard per cluster and a fleet report reading each one's API with a

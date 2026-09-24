@@ -64,7 +64,7 @@ Resolved in this order, first match wins:
 
 ## 4. Accepted combinations — measured
 
-Each rendered and loaded. All twelve are accepted by both readers.
+Each rendered and loaded. All fourteen are accepted by both readers.
 
 | # | stanza | effect |
 |---|---|---|
@@ -80,6 +80,12 @@ Each rendered and loaded. All twelve are accepted by both readers.
 | 10 | remote + `visibility: hidden` | polled, never served through `/api` |
 | 11 | remote + `visibility: remote-sar` + `identity: same-as-host` | that cluster's own RBAC decides |
 | 12 | remote + `enabled: false` | kept in the config, not polled |
+| 13 | remote + `visibility: remote-sar` alone | as 11: `identity` resolves to `same-as-host` |
+| 14 | remote + `saTokenLookup` + `visibility: remote-sar` | as 6, and the cluster's own RBAC decides through its written Secret |
+
+A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 — resolves to `remote-sar` +
+`same-as-host`: once it is polled, its own RBAC decides (SPEC_D2b). One that states only `identity: none` keeps
+`self-only`.
 
 ## 5. Refusals — measured, and WHERE each one fires
 
@@ -99,7 +105,7 @@ after a green upgrade looks like an outage rather than a config error.
 | `dashboardController` with `enabled: false` | **refused** | refused |
 | `visibility: hidden` on the host | **refused** | refused |
 | `visibility: remote-sar` on the host | **refused** | refused |
-| `remote-sar` without `identity: same-as-host` | **refused** | refused |
+| `remote-sar` with `identity: none` | **refused** | refused |
 | a `visibility` typo (`self_only`) | **refused** | refused |
 | an `identity` typo (`Same-As-Host`) | **refused** | refused |
 | `enabled: "yes"` | **refused** | refused |
@@ -110,7 +116,6 @@ after a green upgrade looks like an outage rather than a config error.
 | `saTokenLookup` without `clusterConfig.secrets.writes.enabled` | **refused** | starts; the tab reports `fleet-write-disabled` (a Secret-declared mode reaches this half) |
 | `saTokenLookup` without `clusterConfig.secrets.enabled` | **refused** | starts; the cluster stays pending |
 | `clusterConfig.secrets.writes.enabled` with `replicaCount > 1` — a lookup is possible, stanza or not | **refused** | starts; a lookup reports `fleet-write-disabled` (one retriever per estate, SPEC_S4 §6) |
-| `saTokenLookup` with `visibility: remote-sar` | **refused** | starts; the write would be refused `visibility-invalid` |
 
 The chart's guard covers the connection-mode and host rules; the remaining four are the loader's
 alone, because `templates/configmap.yaml` passes `clusters` through with `toYaml` and the pod is

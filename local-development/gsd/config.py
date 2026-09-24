@@ -12,6 +12,8 @@ same thing; the plan's ``tokenSecretRef`` is the Kubernetes-side name of the fil
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -47,11 +49,26 @@ VISIBILITY_REMOTE_SAR = "remote-sar"  # this cluster's own RBAC decides, by Subj
 CLUSTER_VISIBILITIES = (
     VISIBILITY_INHERIT, VISIBILITY_SELF_ONLY, VISIBILITY_HIDDEN, VISIBILITY_REMOTE_SAR,
 )
-# Whether the host's username means the same person on this cluster. A claim about the two
-# clusters' identity providers, which this chart cannot check — so it is stated, never assumed.
+# Whether the reader's OpenShift username — the `User` object's name, which the host authenticated — names
+# the same person on this cluster. Readers are matched by that name on every cluster (design D3); `none` says
+# the name is nobody here, so nothing on this cluster is keyed by it.
 IDENTITY_SAME_AS_HOST = "same-as-host"
 IDENTITY_NONE = "none"
 CLUSTER_IDENTITIES = (IDENTITY_SAME_AS_HOST, IDENTITY_NONE)
+
+
+def remote_policy(visibility: str | None, identity: str | None) -> tuple[str, str]:
+    """A non-host cluster's (visibility, identity) with the defaults resolved (SPEC_D2b §3.2, design D2).
+
+    A remote that states nothing is asked about the reader itself: remote-sar + same-as-host. `identity: none`
+    says the host's username is nobody on that cluster, so it cannot be asked about them: with no visibility
+    stated it keeps self-only, as before. Resolution only — the explicit pair remote-sar + none is refused
+    where it is READ (the loader, the Secret parser, the chart), not here."""
+    if visibility is None:
+        visibility = VISIBILITY_SELF_ONLY if identity == IDENTITY_NONE else VISIBILITY_REMOTE_SAR
+    if identity is None:
+        identity = IDENTITY_SAME_AS_HOST if visibility == VISIBILITY_REMOTE_SAR else IDENTITY_NONE
+    return visibility, identity
 
 
 class ConfigError(Exception):
@@ -230,9 +247,10 @@ class ClusterConfig:
     insecure_skip_verify: bool = False
     enabled: bool = True
     # None means "not set", resolved by Settings.cluster_policy: the host is inherit/same-as-host
-    # (its viewer IS a host identity), every other cluster is self-only/none. Resolved there and
-    # not here so a hand-built Settings and a chart-rendered one agree on what a second cluster
-    # serves by default — the direction that matters is that it never widens.
+    # (its viewer IS a host identity), every other cluster by remote_policy — remote-sar/same-as-host
+    # when it states nothing, self-only/none when it states only `identity: none` (SPEC_D2b §3.2).
+    # Resolved there and not here so a hand-built Settings and a chart-rendered one agree on what a
+    # second cluster serves by default: its own RBAC decides, and every failure is the self tier.
     visibility: str | None = None
     identity: str | None = None
     # THE CONTROLLER (#249): this pod's own cluster — the one the oauth-proxy authenticates readers
@@ -257,6 +275,11 @@ class ClusterConfig:
     sa_token_lookup: bool = False
     user_self_login: bool = False
     ldap_connection_bootstrap: str | None = None
+    # A Secret-sourced cluster's `groupsync-dashboard.io/token-source` annotation, recorded by the reader
+    # (SPEC_D2b §3.4). When it names the credential kind of the values stanza of the same name, the Secret
+    # is the lookup's own write for that stanza: ClusterRegistry.merge keeps its credential and serves the
+    # stanza's policy and `enabled`. None for a values entry and for a Secret that carries no annotation.
+    token_source: str | None = field(default=None, repr=False)
 
     @property
     def tls_mode(self) -> dict:
@@ -395,6 +418,16 @@ class ClusterConfig:
                 ) from exc
 
         return _trusted_ca_context() or True
+
+    def connection_fingerprint(self) -> str:
+        """A digest of everything a ClusterClient connects with that is fixed on this object. Equality cannot see a
+        rotated Secret credential (those fields are compare=False by design), so a resolver keyed on this is rebuilt
+        when — and only when — the connection changes. A tokenFile's content, a tokenEnv's value and an explicit
+        caBundleFile are re-read by every ClusterClient._client call and need no rebuild; their names are here."""
+        material = json.dumps([self.api_url, self.credential_kind, self.token_value or "", self.token_file or "",
+                               self.token_env or "", self.oauth_username or "", self.oauth_password or "",
+                               self.ca_data or "", self.ca_bundle_file or "", bool(self.insecure_skip_verify)])
+        return hashlib.sha256(material.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -841,8 +874,7 @@ class Settings:
             # construction, and a values file saying otherwise would be describing a control
             # that cannot mean anything.
             return cluster.visibility or VISIBILITY_INHERIT, IDENTITY_SAME_AS_HOST
-        return (cluster.visibility or VISIBILITY_SELF_ONLY,
-                cluster.identity or IDENTITY_NONE)
+        return remote_policy(cluster.visibility, cluster.identity)
 
 
 def _num_setting(raw: dict, env_name: str, yaml_key: str, default, cast):
@@ -1548,11 +1580,12 @@ def load_settings(path: str | Path) -> Settings:
                     f"{where}: visibility {cluster.visibility!r} is not allowed on the hosting cluster "
                     f"({how}) — it is the cluster the viewer logged in to"
                 )
-        elif cluster.visibility == VISIBILITY_REMOTE_SAR and (cluster.identity or IDENTITY_NONE) != IDENTITY_SAME_AS_HOST:
+        elif cluster.visibility == VISIBILITY_REMOTE_SAR and cluster.identity == IDENTITY_NONE:
+            # Only the EXPLICIT pair (SPEC_D2b §3.2): an omitted identity resolves to same-as-host beside
+            # remote-sar, and `identity: none` stated alone resolves to self-only.
             raise ConfigError(
-                f"{where}: visibility remote-sar needs identity: same-as-host — the review names "
-                f"the host's username on this cluster, which only means something if the two "
-                f"clusters share an identity provider"
+                f"{where}: visibility remote-sar needs identity: same-as-host — the review names the "
+                f"reader's OpenShift username on this cluster; set same-as-host or leave identity out"
             )
 
     admin_sar = _visibility_sar_setting(raw)
