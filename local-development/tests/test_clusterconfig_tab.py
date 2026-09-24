@@ -176,7 +176,7 @@ class TestWriter:
             "annotations": {MANAGED_BY_ANNOTATION: "ui"}}
         assert {k: v for k, v in live["stringData"].items() if k != "config"} == \
                {k: v for k, v in twin["stringData"].items() if k != "config"} == \
-               {"name": "west", "server": "https://api.west.example:6443", "visibility": "self-only", "identity": "none", "enabled": "true"}
+               {"name": "west", "server": "https://api.west.example:6443", "visibility": "remote-sar", "identity": "same-as-host", "enabled": "true"}
         # the exact bytes the page's JSON.stringify produces: compact, tlsClientConfig first
         assert live["stringData"]["config"] == '{"tlsClientConfig":{"insecure":false},"bearerToken":"%s"}' % TOKEN
         assert twin["stringData"]["config"] == '{"tlsClientConfig":{"insecure":false},"bearerToken":"<redacted>"}'
@@ -196,7 +196,7 @@ class TestWriter:
         (dict(name="c1"), "host-cluster-not-from-secret"),
         (dict(server="https://kubernetes.default.svc"), "host-cluster-not-from-secret"),
         (dict(labels={"groupsync-dashboard.io/secret-type": "cluster"}), "unsupported-config-key"),
-        (dict(visibility="remote-sar"), "visibility-invalid"),
+        (dict(visibility="remote-sar", identity="none"), "identity-invalid"),
     ])
     def test_each_refusal_names_its_code_before_any_write(self, kw, code):
         with pytest.raises(WriteRefused) as exc:
@@ -462,6 +462,7 @@ class TestApi:
         monkeypatch.setattr("gsd.api.own_namespace", lambda: NS)
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.remote_tier_resolvers = {}   # the discovered east is remote-sar (SPEC_D2b); no remote is asked
         # The Cluster Configurations tier's own two seams (#230): root holds both levels here, and
         # the tier's tests below drive every other combination.
         app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
@@ -708,6 +709,7 @@ class TestClusterConfigTier:
         app = build_app(settings, run_poller=False)
         # EVERY persona passes the wide tier, exactly as cluster-reader does on a real cluster.
         app.state.tier_resolver = _MapResolver({"root": "all", "viewer": "all", "auditor": "all"})
+        app.state.remote_tier_resolvers = {}   # the discovered east is remote-sar (SPEC_D2b); no remote is asked
         app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "viewer": "all"})
         app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:

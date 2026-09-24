@@ -111,8 +111,9 @@ def _seed(db: str) -> datetime:
 
 
 def _app(db: str, tiers: dict, *, west_identity: str = IDENTITY_SAME_AS_HOST):
-    """The host and two remotes that treat the host's username as their own (`identity: same-as-host`);
-    a remote left at the default (`none`) vouches for nobody and must not appear in `elsewhere`."""
+    """The host and two remotes that treat the host's username as their own (`identity: same-as-host`, so
+    `remote-sar` since SPEC_D2b; Home asks no resolver either way); a remote that states `identity: none`
+    vouches for nobody and must not appear in `elsewhere`."""
     app = build_app(Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X"),
                                        ClusterConfig("east", "https://api.east.example.com:6443", token_env="Y",
                                                      identity=IDENTITY_SAME_AS_HOST),
@@ -325,8 +326,8 @@ class TestDerivation:
 
 
 def test_a_cluster_that_vouches_for_nobody_is_not_elsewhere(tmp_path):
-    """A remote at the default identity policy (`none`) does not treat the host's username as its own, so
-    nothing there is this person's: it is left out of `elsewhere`, its memberships out of the total."""
+    """A remote that states `identity: none` does not treat the host's username as its own, so nothing there
+    is this person's: it is left out of `elsewhere`, its memberships out of the total."""
     db = str(tmp_path / "identity.db")
     _seed(db)
     with TestClient(_app(db, {}, west_identity=IDENTITY_NONE)) as client:

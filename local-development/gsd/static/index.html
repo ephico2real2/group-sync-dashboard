@@ -160,7 +160,7 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards. */
-                clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
+                clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
                 clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false,
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
@@ -839,6 +839,27 @@ function narrowedOnHost() {
   if (!w || !w.authenticated) return false;
   return scopeFor(w, null) !== "all";
 }
+/* D5 (SPEC_D2b §3.11): WHICH RULE decided this reader's view of the selected cluster, read off whoami's
+   `visibility.clusters[id]` = {policy, identity, scope} and never derived. The wire does not tell a remote's
+   "denied" from "could not be asked" (that is D4's field, not built), so that line names both; it does not mark
+   the host either, so `inherit` says "the host decides", which is as true of the host as of a remote that
+   inherits. Empty with restrictions off, with no authenticated identity, and with no cluster selected. */
+function scopeWhy(w, cluster) {
+  const vis = w && w.authenticated && w.visibility;
+  if (!vis || vis.enabled === false || !cluster) return "";
+  const c = vis.clusters && vis.clusters[cluster];
+  if (!c) return "";
+  if (c.policy === "inherit") return "The host decides your view of this cluster.";
+  if (c.policy === "remote-sar") {
+    return c.scope === "all" ? "This cluster's own RBAC gives you the full view."
+      : "This cluster's own RBAC shows your own rows, or could not be asked.";
+  }
+  if (c.policy === "self-only") {
+    return c.identity === "same-as-host" ? "This cluster is self-only: everyone sees their own rows."
+      : "This cluster is self-only and does not treat your identity as its own.";
+  }
+  return "";
+}
 
 /* A withheld view is a NAMED refusal, never a blank: an empty audit tab reads as a healthy
    cluster, which is a lie of layout. So it says what exists and that it is reserved — and
@@ -1079,8 +1100,11 @@ function renderFilters() {
   // Fleet-wide pages have no cluster to select: Usage (per-pod activity) and the KPI page (#157),
   // which reads every served cluster at once and would otherwise claim a scope it does not have.
   const fleetWide = view.page === "usage" || view.page === "kpi";
+  // D5 (SPEC_D2b §3.11): the rule that decided the selected cluster's view, beside the selector that picks it.
+  const why = fleetWide ? "" : scopeWhy(data.whoami, view.cluster);
   let html = fleetWide ? "" : `<label for="f-cluster">Cluster</label>
-    <select id="f-cluster">${fleetOption}${goneOption}${opts}</select>`;
+    <select id="f-cluster">${fleetOption}${goneOption}${opts}</select>${
+      why ? `<span class="filterbar-note scope-why" id="scope-why">${esc(why)}</span>` : ""}`;
   if (view.page === "bindings" && !narrowedReader()) {
     html += searchBoxHtml("bindingSearch");
     html += `<label for="f-binding">Show</label>
@@ -5928,10 +5952,11 @@ const CC_VIS_MEAN = {
   inherit: "the host's tier decides",
   "self-only": "nobody is wide on this cluster",
   hidden: "polled and alerted on, never served through /api (404 like an unknown id)",
+  "remote-sar": "this cluster's own RBAC decides, for the reader's OpenShift username",
 };
 const CC_ID_MEAN = {
   none: "fails closed: person-scoped views answer 403 there, cluster health still shows",
-  "same-as-host": "the host's username is the same person on this cluster (clusters share an identity provider)",
+  "same-as-host": "the reader is matched by OpenShift username, the User object's name, on this cluster",
 };
 const CC_OAUTH_REASON = "the password-for-token exchange is #119 P2, not built yet";
 const CC_LABEL = "groupsync-dashboard.io/secret-type";
@@ -6132,7 +6157,7 @@ function ccAddForm(d) {
         <p class="cc-hint" id="cc-ca-bundle-note"${f.caMode === "trustedBundle" ? "" : " hidden"}>the dashboard's own trust store — the chart's <span class="mono">trustedCA</span> bundles (the injected OpenShift CA, the enterprise bundle) plus the system store.</p>
         <div class="cc-warn" id="cc-ca-insecure-warn"${f.caMode === "insecure" ? "" : " hidden"}><strong>insecure</strong> — the API server certificate is not verified. Anyone on the path can impersonate the cluster.</div></div>
       <div class="cc-field"><label for="cc-visibility">Visibility</label>
-        <select id="cc-visibility">${["inherit", "self-only", "hidden"].map((v) => opt(v, f.visibility, `${v} — ${CC_VIS_MEAN[v]}`)).join("")}</select></div>
+        <select id="cc-visibility">${["inherit", "self-only", "hidden", "remote-sar"].map((v) => opt(v, f.visibility, `${v} — ${CC_VIS_MEAN[v]}`)).join("")}</select></div>
       <div class="cc-field"><label for="cc-identity">Identity</label>
         <select id="cc-identity">${["none", "same-as-host"].map((v) => opt(v, f.identity, `${v} — ${CC_ID_MEAN[v]}`)).join("")}</select></div>
       <div class="cc-field"><span class="cc-lbl">Labels</span>
@@ -6302,7 +6327,7 @@ function wireClusterConfig() {
   });
 }
 function ccEmptyForm() {
-  return { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "self-only", identity: "none",
+  return { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
            labels: {}, labelKey: "", labelVal: "", test: null };
 }
 

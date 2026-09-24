@@ -176,21 +176,21 @@ clusters:
     # pointed at `enterprise-and-cluster-ca-bundle` (the enterprise root plus kube-root-ca), so the
     # injected bundle verifies api.crc.testing and the OAuth route as well as enterprise-signed
     # endpoints. Declaring a caBundleFile here would OVERRIDE that and stop exercising the real path.
-    # NO visibility / identity ON PURPOSE. `self-only` is the chart default for every entry but the
-    # first enabled one, and it can only narrow: nobody is ever wide on this cluster. `mock` sets
-    # `inherit` explicitly because it is a toy; a real remote should stay narrow until someone
-    # decides otherwise. Copying mock's keys here would widen shared-rnd's membership to every host
-    # cluster-admin — a decision, not a consistency fix.
+    # NO visibility / identity ON PURPOSE. A remote that states neither is asked about the reader
+    # itself — `remote-sar` + `same-as-host` (SPEC_D2b) — so shared-rnd's OWN RBAC decides who sees it
+    # wide, and the Secret the lookup writes follows this stanza for as long as it is the lookup's own.
+    # `mock` sets `inherit` explicitly because it is a toy. Copying mock's keys here would widen
+    # shared-rnd's membership to every host cluster-admin — a decision, not a consistency fix.
     enabled: true
   - name: mock
     apiUrl: https://mock-openshift:6443
     tokenFile: /etc/gsd/mock/token
     caBundleFile: /etc/gsd/mock/ca.crt
     enabled: true
-    # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer an editor.
-    # A second cluster defaults to self-only/identity:none — the chart never ASSUMES a host identity
-    # means the same thing elsewhere. Here we STATE it: a host-authenticated reader is the same identity
-    # on the mock, so their tier is computed by SAR (not forced to self), and the admin tabs render.
+    # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer a report
+    # auditor. A second cluster that states nothing takes remote-sar + same-as-host — its own RBAC
+    # decides. Here we STATE `inherit` instead: the host's tier decides the mock's rows, as a toy's
+    # should, and the reader is matched by OpenShift username.
     visibility: inherit
     identity: same-as-host
 

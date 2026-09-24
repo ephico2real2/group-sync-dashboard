@@ -12,6 +12,8 @@ the code that knows the refusal.
 
 from __future__ import annotations
 
+import dataclasses
+
 from ..config import ClusterConfig
 from . import LABEL_SELECTOR
 from .parser import Finding, parse_secret
@@ -33,8 +35,8 @@ _ACTIONS = {
     "credential-ambiguous": "give config one credential, not two",
     "ca-data-invalid": "tlsClientConfig.caData must be base64 of a PEM bundle that loads",
     "insecure-with-ca": "choose one: caData to trust a bundle, or insecure to verify nothing",
-    "visibility-invalid": "visibility must be inherit, self-only or hidden",
-    "identity-invalid": "identity must be none or same-as-host",
+    "visibility-invalid": "visibility must be inherit, self-only, hidden or remote-sar",
+    "identity-invalid": "identity must be none or same-as-host, and remote-sar needs same-as-host",
     "enabled-invalid": 'enabled must be "true" or "false"',
     "host-cluster-not-from-secret": "the host cluster comes from the chart's values, not a Secret",
     "duplicate-cluster-name": "remove one of the two Secrets, or rename the cluster in one",
@@ -108,6 +110,9 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
             continue
         parsed = group[0]
         secret_name = parsed.source.split(":", 1)[1]
+        # The ownership the check below makes, recorded on the config itself (SPEC_D2b §3.4): the merge
+        # serves a stanza's policy over the Secret the lookup wrote for it, and only that Secret.
+        parsed = dataclasses.replace(parsed, token_source=token_source.get(secret_name))
         if parsed.name in values_names:
             # The retriever's own Secret over the stanza that asked for it is the design, not a
             # shadow (SPEC_S4 §1): the values entry declares the mode, the Secret says it came from it.

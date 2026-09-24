@@ -227,6 +227,10 @@ back**: not in these responses, not in a log line, not in the database, not in `
  "visibility": "self-only", "identity": "none", "labels": {"environment": "prod"}}
 ```
 
+`visibility` and `identity` may be omitted; the pair is resolved as discovery resolves the Secret it writes
+(`gsd/config.py#remote_policy`, SPEC_D2b §3.2): neither stated is `remote-sar` + `same-as-host`, `identity: none`
+alone is `self-only` + `none`, and `remote-sar` beside `identity: none` is `422 identity-invalid`.
+
 `tls.mode` is one of `trustedBundle` (the dashboard's own trust store — the default), `caData` (this
 cluster's bundle, base64 PEM in `tls.caData`), `insecure` (verification off). The request is validated by
 the same parser discovery runs, so a refusal carries S1's finding code in `detail` — `422

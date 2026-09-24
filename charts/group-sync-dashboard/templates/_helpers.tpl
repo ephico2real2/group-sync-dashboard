@@ -986,10 +986,8 @@ them on the next start.
 {{- if has $vis (list "hidden" "remote-sar") -}}
 {{- fail (printf "clusters[%d] (%s) is the hosting cluster — %s, the one the oauth-proxy authenticates against — and visibility %q makes no sense there: hidden would hide the login cluster, remote-sar would review the host against itself. Use inherit (the default) or self-only." $i $name $how $vis) -}}
 {{- end -}}
-{{- else if and (eq $vis "remote-sar") (eq (index $modeOf $name | default "") "saTokenLookup") -}}
-{{- fail (printf "clusters[%d] (%s): visibility remote-sar with saTokenLookup — the lookup writes this cluster as a Secret, and remote-sar is not yet accepted from a Secret (SPEC_S1). Use inherit, self-only or hidden until it is." $i $name) -}}
-{{- else if and (eq $vis "remote-sar") (ne $id "same-as-host") -}}
-{{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host. The review names the host's username on that cluster, which only means something if both clusters share an identity provider — say so explicitly." $i $name) -}}
+{{- else if and (eq $vis "remote-sar") (eq $id "none") -}}
+{{- fail (printf "clusters[%d] (%s): visibility remote-sar needs identity: same-as-host — the review names the reader's OpenShift username on this cluster; set same-as-host or leave identity out." $i $name) -}}
 {{- end -}}
 {{- end -}}
 {{- /* SPEC_S4b (#284): a saTokenLookup stanza WRITES gsd-cluster-<name> into the release namespace

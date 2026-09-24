@@ -1696,9 +1696,11 @@ class TestPerClusterVisibility:
         ok, out = self._render(**{"clusters[1].visibility": "self_only"})
         assert not ok and "not one of inherit, self-only, hidden, remote-sar" in out
 
-    def test_remote_sar_without_same_as_host_is_refused(self):
-        ok, out = self._render(**{"clusters[1].visibility": "remote-sar"})
+    def test_remote_sar_with_identity_none_is_refused(self):
+        ok, out = self._render(**{"clusters[1].visibility": "remote-sar", "clusters[1].identity": "none"})
         assert not ok and "needs identity: same-as-host" in out
+        ok, _ = self._render(**{"clusters[1].visibility": "remote-sar"})
+        assert ok, "an omitted identity resolves to same-as-host (SPEC_D2b)"
         ok, _ = self._render(**{"clusters[1].visibility": "remote-sar",
                                 "clusters[1].identity": "same-as-host"})
         assert ok
@@ -1744,7 +1746,7 @@ class TestPerClusterVisibility:
         assert noted.returncode == 0, noted.stdout + noted.stderr
         lines = [l.strip() for l in noted.stdout.splitlines() if l.strip().startswith(("first:", "host:"))]
         assert lines == ["host: visibility inherit (host), identity same-as-host (host)",
-                         "first: visibility self-only (default), identity none (default)"], lines
+                         "first: visibility remote-sar (default), identity same-as-host (default)"], lines
 
     def test_a_garbage_enabled_word_is_refused_at_render(self):
         ok, out = self._render(**{"clusters[0].enabled": "maybe"})
@@ -1763,7 +1765,7 @@ class TestPerClusterVisibility:
         assert done.returncode == 0, done.stdout + done.stderr
         lines = [l.strip() for l in done.stdout.splitlines() if l.strip().startswith(("host:", "east:"))]
         assert lines == ["east: visibility self-only, identity same-as-host (host)",
-                         "host: visibility self-only (default), identity none (default)"], lines
+                         "host: visibility remote-sar (default), identity same-as-host (default)"], lines
 
     def test_a_padded_null_entry_is_refused_by_name_not_by_a_nil_pointer(self):
         """Found by the D2 live check: Helm never merges lists and pads an index set beyond the

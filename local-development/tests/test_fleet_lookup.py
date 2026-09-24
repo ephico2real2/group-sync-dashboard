@@ -133,7 +133,7 @@ class TestTheLoop:
             SOURCE_SERVICE_ACCOUNT_ANNOTATION: "group-sync-dashboard-cluster-poller", LOOKUP_ACCOUNT_ANNOTATION: USER}
         config = json.loads(obj["stringData"]["config"])
         assert config == {"tlsClientConfig": {"insecure": False}, "bearerToken": SA_TOKEN}, "the declaration's trust, no caData"
-        assert obj["stringData"]["visibility"] == "self-only" and obj["stringData"]["identity"] == "none"
+        assert obj["stringData"]["visibility"] == "remote-sar" and obj["stringData"]["identity"] == "same-as-host"
         assert result.written == "created" and result.sa_token.last_used == "2026-09-22"
         assert len(wire.revokes) == 1, "the login's token is revoked; the stored one is the target's"
         assert set(result.secrets) == {PASSWORD, TOKEN, SA_TOKEN}
