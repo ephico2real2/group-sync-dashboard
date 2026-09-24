@@ -1,0 +1,30 @@
+version : 0.32.0
+commit  : 8e50ff8eec  (branch feat/338-remote-sar-every-join)
+tag     : 0.32.0-8e50ff8eec
+reused  : 0.32.0-8e50ff8eec is already in the registry, both images (the same commit); not building
+release : ../environments/crc.yaml
+helm    : uninstalling release group-sync-dashboard (the PVCs and the minted Secrets survive)
+These resources were kept due to the resource policy:
+[PersistentVolumeClaim] group-sync-dashboard-report-artifacts
+[PersistentVolumeClaim] group-sync-dashboard-data
+
+release "group-sync-dashboard" uninstalled
+argocd  : group-sync-dashboard -> revision 8e50ff8eec, image 0.32.0-8e50ff8eec
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+12:51:03Z  ?          ?            ?          (status is for the previous spec) (revision ?, want 8e50ff8eec) 
+12:51:18Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+12:51:33Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+12:51:49Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+12:52:04Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+deployment "group-sync-dashboard" successfully rolled out
+deployment "group-sync-dashboard-report" successfully rolled out
+running : 8e50ff8eec — verified in-pod
+syncPolicy: already the recorded one
+Synced Healthy 8e50ff8eec
+PVCs: identical to the baseline
+2026-09-24 08:51:21,217-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-24 08:51:21,217-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-qa source=secret:gsd-cluster-shared-qa credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+kubeadmin: {'shared-rnd': ('remote-sar', 'all'), 'shared-qa': ('remote-sar', 'self')}
+developer: {'shared-rnd': ('remote-sar', 'self'), 'shared-qa': ('remote-sar', 'self')}
+test-user-002: {'shared-rnd': ('remote-sar', 'self'), 'shared-qa': ('remote-sar', 'self')}

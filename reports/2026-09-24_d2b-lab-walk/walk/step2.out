@@ -1,0 +1,8 @@
+CRC  kubeadmin: yes
+CRC  jane.smith: yes
+CRC  developer: no
+CRC  test-user-002: no
+mock kubeadmin: {"allowed":true,"binding":"cluster-admin-crb","groups":["app-ocp-rbac-demo-cluster-admin","system:authenticated","system:authenticated:oauth"]}
+mock jane.smith: {"allowed":false,"binding":null,"groups":["platform-team-cluster-admin","system:authenticated","system:authenticated:oauth"]}
+mock developer: {"allowed":true,"binding":"report-auditors-crb","groups":["app-ocp-rbac-demo-report-auditors","system:authenticated","system:authenticated:oauth"]}
+mock test-user-002: {"allowed":false,"binding":null,"groups":["system:authenticated","system:authenticated:oauth"]}

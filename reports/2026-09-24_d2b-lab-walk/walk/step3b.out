@@ -1,0 +1,184 @@
+version : 0.32.0
+commit  : 8e50ff8eec  (branch feat/338-remote-sar-every-join)
+tag     : 0.32.0-8e50ff8eec
+built   : group-sync-dashboard:0.32.0-8e50ff8eec (stamp verified)
+built   : group-sync-dashboard-report:0.32.0-8e50ff8eec (stamp verified)
+Getting image source signatures
+Copying blob sha256:918d23ec424ab2296eb6e4a8c97012a95a1d26865b24827125020fa61c7ec76c
+Copying blob sha256:d7e5ddccb385b9492d26fdc11eba8956cb90b4d3c45285ede7ee63676b4454c0
+Copying blob sha256:ccc265d5ad79d13616978c6dd79b01497890f9e435c9ab6885ed1239d8a2d2e2
+Copying blob sha256:b76fc143c2b60504f652fa590fac8653d026c7bcd040fce6ad24ca5dd5450658
+Copying blob sha256:c98f5df8bc1d40028edbe43ea91667dd7ed74db294369f15583f8f35f12b8e97
+Copying blob sha256:3a33b951d71d0af66e489d046c521b6f42241eabc10f6361183b18c4c9e68c9e
+Copying blob sha256:bb46b1d29fe9e886f3f45c2b5c4c4231b4c7d985b796a9957280616cb5ffc5f6
+Copying blob sha256:41f9d0b3a7ba596e88d5c273ef53c816cf8d595c55b37507b742c64a9af06083
+Copying blob sha256:39d42c77046f24624e1521476c178fd11ecee4bc6df906728a7de852473ff4f5
+Copying blob sha256:ecef7e602114b3e8b737b3a62b34f03b476bd97a1683a9ae4fde67e3d0928c37
+Copying blob sha256:12093014e5c74cb3c8c194ecc59985de5483878deccff6489093954c83af99ac
+Copying blob sha256:80e215d2819bb02a94d4f6eb831ed8bc57d45281294d6f39d633f1e8d3d696e9
+Copying blob sha256:3159166f383e40019caa3d4a8bf3f22e5b37aeb0a73f5ca06ea7a5c10a7826ae
+Copying blob sha256:6faff41460ef9de07b7537f4edadaaa5e54f5998475928e00e1594a70690be6d
+Copying blob sha256:367e288dcfe96a1b3f232217a65b3ef336468f93db3c6dbad4489e2dc42bed91
+Copying blob sha256:0794109cbcb680d3dcf22a140cf1733cd18b25886ff6c0027245413253d97f0c
+Copying blob sha256:f7a0589297b3606b4b9bf48e30fab16e1e316b9cba0b272f86ad4320d25ee0b8
+Copying blob sha256:32947df7c1a67676de6c1e7dbb5a9e72f92df1a074c18d25b2395f9ad9d13e79
+Copying blob sha256:6d2828378a9c4b4b07c8fa18475538d0a71476c22b2b49e742e028aa009b1b64
+Copying blob sha256:6f86caaab82cc26d4d38cd7200a9104173d8efc43adc8e968b403c8e7a81af72
+Copying blob sha256:9265bf1f24a889675303fd402ef161a2de2ae5543f870e4c5c0aa564bd2fea3d
+Copying blob sha256:ac3d7e0f8bae0e462e537918087e073571e9c1467e949a6ad761b0ebba672192
+Copying blob sha256:4eab4e777e914a659dbc7b28da97945c6106f248a862a8152a3c48f2388e02ad
+Copying blob sha256:d3299d20157a8696d3024d9fedf2ea571b94a3db4ff39cfcaa287ec1efb9d3b9
+Copying blob sha256:e91fbe932ee75086ca24a2c89c938ad0919b2af0b6fbd35af3595ec3198ea70e
+Copying blob sha256:ee5523555c8586f09a4cedd3c9a19a8cd26cacb0b7954b2a7beb27869350d487
+Copying blob sha256:a8f6404f9fb8a201a9296761fb94d4ee341219d75e6804e7d0ef1f8e9d6e6664
+Copying blob sha256:0940c399cb77aa49d9f8b1e6197fd886ec19260e3974cb3adf026a779bfe0a5d
+Copying blob sha256:03c1eaba240f3d1e099c77e4b48791d32fc90347cd32ede7db4f6af255bfa612
+Copying blob sha256:2fc34458b9a3c92a72be3dbd0ea34190bb72d95779cfb688a848cfae8d152015
+Copying blob sha256:4be28b1a8a33e4ea93743c7d40cfd57048723ee3ff4e49b5c93276b2085e4f56
+Copying blob sha256:9acbbd765b923d82a194275c1496889da58c3f4895dc2e7ced7eaa0cd1583855
+Copying blob sha256:d4af848145d77ac6ac2ae7e7abc9152be118d135aa926470d0216eca0b2f7756
+Copying blob sha256:ea8f776674f3579088ffc5a46e0919d64804224261f00b53390b1a6adfe7de1d
+Copying blob sha256:ebe5896bee8eced44dea10eb9f421a2f721f37d9e9316de259e0c428bf29575e
+Copying blob sha256:97dab69b3d692e3209123d7a3315a3ff35eabde9d51de9226349eaf19aceddda
+Copying blob sha256:e34bdb5cf7a0716974b964c7cf38459bcd8ed1225c5ee6f706b78d59d085ad2e
+Copying blob sha256:c4b605f6579df7ae8a274ec7699941e2bf9b1f486c4cada354601d1ffabc57fe
+Copying blob sha256:187aba96ec4b49370438ebc449c51d7aab5154856b4ee117334d59a67faddca0
+Copying blob sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+Copying blob sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+Copying config sha256:2a9cc363e7ce0effee46efda0fc8d40ddc96f345f062b66ae023d29cdc29431a
+Writing manifest to image destination
+pushed  : default-route-openshift-image-registry.apps-crc.testing/group-sync-dashboard/group-sync-dashboard:0.32.0-8e50ff8eec
+Getting image source signatures
+Copying blob sha256:918d23ec424ab2296eb6e4a8c97012a95a1d26865b24827125020fa61c7ec76c
+Copying blob sha256:d7e5ddccb385b9492d26fdc11eba8956cb90b4d3c45285ede7ee63676b4454c0
+Copying blob sha256:ccc265d5ad79d13616978c6dd79b01497890f9e435c9ab6885ed1239d8a2d2e2
+Copying blob sha256:b76fc143c2b60504f652fa590fac8653d026c7bcd040fce6ad24ca5dd5450658
+Copying blob sha256:3a33b951d71d0af66e489d046c521b6f42241eabc10f6361183b18c4c9e68c9e
+Copying blob sha256:c98f5df8bc1d40028edbe43ea91667dd7ed74db294369f15583f8f35f12b8e97
+Copying blob sha256:bb46b1d29fe9e886f3f45c2b5c4c4231b4c7d985b796a9957280616cb5ffc5f6
+Copying blob sha256:41f9d0b3a7ba596e88d5c273ef53c816cf8d595c55b37507b742c64a9af06083
+Copying blob sha256:39d42c77046f24624e1521476c178fd11ecee4bc6df906728a7de852473ff4f5
+Copying blob sha256:ecef7e602114b3e8b737b3a62b34f03b476bd97a1683a9ae4fde67e3d0928c37
+Copying blob sha256:12093014e5c74cb3c8c194ecc59985de5483878deccff6489093954c83af99ac
+Copying blob sha256:80e215d2819bb02a94d4f6eb831ed8bc57d45281294d6f39d633f1e8d3d696e9
+Copying blob sha256:3159166f383e40019caa3d4a8bf3f22e5b37aeb0a73f5ca06ea7a5c10a7826ae
+Copying blob sha256:6faff41460ef9de07b7537f4edadaaa5e54f5998475928e00e1594a70690be6d
+Copying blob sha256:367e288dcfe96a1b3f232217a65b3ef336468f93db3c6dbad4489e2dc42bed91
+Copying blob sha256:0794109cbcb680d3dcf22a140cf1733cd18b25886ff6c0027245413253d97f0c
+Copying blob sha256:f7a0589297b3606b4b9bf48e30fab16e1e316b9cba0b272f86ad4320d25ee0b8
+Copying blob sha256:32947df7c1a67676de6c1e7dbb5a9e72f92df1a074c18d25b2395f9ad9d13e79
+Copying blob sha256:6d2828378a9c4b4b07c8fa18475538d0a71476c22b2b49e742e028aa009b1b64
+Copying blob sha256:6f86caaab82cc26d4d38cd7200a9104173d8efc43adc8e968b403c8e7a81af72
+Copying blob sha256:9265bf1f24a889675303fd402ef161a2de2ae5543f870e4c5c0aa564bd2fea3d
+Copying blob sha256:ac3d7e0f8bae0e462e537918087e073571e9c1467e949a6ad761b0ebba672192
+Copying blob sha256:4eab4e777e914a659dbc7b28da97945c6106f248a862a8152a3c48f2388e02ad
+Copying blob sha256:d3299d20157a8696d3024d9fedf2ea571b94a3db4ff39cfcaa287ec1efb9d3b9
+Copying blob sha256:e91fbe932ee75086ca24a2c89c938ad0919b2af0b6fbd35af3595ec3198ea70e
+Copying blob sha256:ee5523555c8586f09a4cedd3c9a19a8cd26cacb0b7954b2a7beb27869350d487
+Copying blob sha256:a8f6404f9fb8a201a9296761fb94d4ee341219d75e6804e7d0ef1f8e9d6e6664
+Copying blob sha256:0940c399cb77aa49d9f8b1e6197fd886ec19260e3974cb3adf026a779bfe0a5d
+Copying blob sha256:03c1eaba240f3d1e099c77e4b48791d32fc90347cd32ede7db4f6af255bfa612
+Copying blob sha256:2fc34458b9a3c92a72be3dbd0ea34190bb72d95779cfb688a848cfae8d152015
+Copying blob sha256:4be28b1a8a33e4ea93743c7d40cfd57048723ee3ff4e49b5c93276b2085e4f56
+Copying blob sha256:9acbbd765b923d82a194275c1496889da58c3f4895dc2e7ced7eaa0cd1583855
+Copying blob sha256:39b1883fd8d6d90b7fbaeb840dd4ce006e34606b48ec27f0ba72835aa5971f75
+Copying blob sha256:8b6ff053c2dcebd063bcbd916898c1e7ee31e539c5080e79ea79cc369962d100
+Copying blob sha256:1e0f108a8dfe0a76704380ce59bbbe156d4ae5c011789c4037b444166c4f33e8
+Copying blob sha256:1c1dc337ab2fe4fc38efdab7bc4aa90a7efadbcda827db2b1a32ef33fc73ad33
+Copying blob sha256:0a44d1e9ca2d546ff33af26873817ce9363780d6ea8815283fcfeffdb9f27478
+Copying blob sha256:953a4ef0a9747a576fd4252a5d26eafe4eca7c7703eea6b4c23c86067f0d3bd6
+Copying blob sha256:ee07b73d03c4c6975f4dbbf710ab9fda87e1fadfff64e9e9805cf0c7c62bc6f9
+Copying blob sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+Copying blob sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef
+Copying config sha256:d4912221f5d6bc0e4f52fcf0a646ec9b3cdca819b1f65dc5cc2ca8c5c93708da
+Writing manifest to image destination
+pushed  : default-route-openshift-image-registry.apps-crc.testing/group-sync-dashboard/group-sync-dashboard-report:0.32.0-8e50ff8eec
+release : /Users/olasumbo/gitRepos/group-sync-dashboard/environments/crc-d2b-walk.yaml
+Release "group-sync-dashboard" has been upgraded. Happy Helming!
+NAME: group-sync-dashboard
+LAST DEPLOYED: Thu Sep 24 01:48:36 2026
+NAMESPACE: group-sync-dashboard
+STATUS: deployed
+REVISION: 2
+DESCRIPTION: Upgrade complete
+TEST SUITE: None
+NOTES:
+group-sync-dashboard deployed to namespace group-sync-dashboard.
+
+Image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.32.0-8e50ff8eec
+
+Route (the router names the host and reports it in status; spec.host is empty unless you set it):
+  oc get route group-sync-dashboard -n group-sync-dashboard -o jsonpath='{.status.ingress[0].host}'
+
+Confirm what is actually running — the pod reports the commit it was built from:
+  curl -sk https://<the host above>/api/version
+
+The KPI page's doors and the Grafana board (chart README, "Prerequisites — the Grafana and Observe
+integration"): user-workload monitoring on (the OpenShift engineers, once per cluster; the
+openshift-grafana chart's post-install Job reports it); a Grafana in this namespace —
+  discovered by the Route labelled app.kubernetes.io/name=openshift-grafana in group-sync-dashboard (the openshift-grafana
+  chart's: helm install grafana <repo>/openshift-grafana -n group-sync-dashboard --timeout 15m);
+  until one exists the page says so instead of drawing a dead button
+and `view` on group-sync-dashboard for every reader group (the console's namespace dashboard and
+Grafana's login both check `get pods` here):
+  oc adm policy add-role-to-group view <group> -n group-sync-dashboard
+
+Authentication: OpenShift OAuth. Anyone who can log into this cluster can view the
+dashboard.
+Sessions: the proxy cookie lives 4h from login, and it is ABSOLUTE — there is
+no cookie refresh and no mid-session revalidation, so an active reader is signed out at
+that mark too, and a revoked user keeps access until it. Change it with
+oauthProxy.cookie.expire. Signing out ends the proxy session; it does NOT revoke the OAuth
+token, because this chart authenticates as a ServiceAccount whose tokens carry only
+user:info and user:check-access — the DELETE was built, measured returning 403, and dropped.
+
+Visibility: RESTRICTED (visibility.enabled=true, the default). Each reader sees only their
+own profile, groups, grants and login attempts. A reader sees everything only if a
+SubjectAccessReview allows:
+
+  list clusterrolebindings.rbac.authorization.k8s.io
+
+This is a custom check (visibility.adminSar): whoever holds a role granting it gets the
+wide view. Stock cluster-reader passes every threshold measured for this feature.
+Grant the wide view through normal RBAC, never a chart value:
+
+  oc adm policy add-cluster-role-to-user cluster-reader <username>
+
+  (prefer the group form — a grant naming a person survives their departure:
+   oc adm policy add-cluster-role-to-group cluster-reader <ldap-group>)
+
+An indeterminate review (API error, timeout) yields the narrow view, never the wide one.
+Restore the old everyone-sees-everything behaviour only as a deliberate choice:
+  --set visibility.enabled=false
+
+Several clusters are configured. The reader was authenticated by this pod's OWN cluster; what
+they see about each of the others is that entry's own policy (docs/ACCESS_CONTROL.md §11):
+  dashboard: visibility inherit (host), identity same-as-host (host)
+  shared-rnd: visibility remote-sar (default), identity same-as-host (default)
+  mock: visibility remote-sar (default), identity same-as-host (default)
+
+Login capture: AUDIT LOG. The dashboard reads /var/log/oauth-server/audit.log on the
+control-plane nodes through the API server's node proxy — a ClusterRole with `get nodes/proxy`,
+which is read access to everything the kubelet serves on those nodes. No Debug verbosity is
+needed; if authLogLevel.manage is still true with enabled=false, the Job is converging the
+cluster back to Normal and you can set manage=false once the rollout has finished.
+First read backfills as far as the rotated audit files reach, 400 days at most.
+
+Reporting is ON: the report service runs as deploy/group-sync-dashboard-report on
+image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard-report:0.32.0-8e50ff8eec, reached through the dashboard's proxy under /report/. Administrators
+(the wide tier) generate reports from the Reports tab; the Usage tab records who generated what.
+Pre-flight for TLS between the pods (reporting.tls.enabled):
+  oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c oauth-proxy -- /usr/bin/oauth-proxy --help 2>&1 | grep upstream-ca
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 of 1 updated replicas are available...
+deployment "group-sync-dashboard" successfully rolled out
+Waiting for deployment "group-sync-dashboard-report" rollout to finish: 0 of 1 updated replicas are available...
+deployment "group-sync-dashboard-report" successfully rolled out
+running : 8e50ff8eec — verified in-pod
+warning: volume "mock-creds" did not previously exist and was not overwritten. A new volume with this name has been created instead.deployment.apps/group-sync-dashboard volume updated
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 of 1 updated replicas are available...
+deployment "group-sync-dashboard" successfully rolled out
+step3 done: pod/group-sync-dashboard-5959b69544-h78wh
+PVCs: identical to the baseline (same UIDs, volumes, creation times)

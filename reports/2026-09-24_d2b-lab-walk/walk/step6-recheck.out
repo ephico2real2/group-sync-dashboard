@@ -1,0 +1,6 @@
+token is not a JWT (len 0 )
+first 401 for shared-qa in this pod: 2026-09-24 02:49:51,799-
+kubeadmin shared-rnd -> This cluster's own RBAC gives you the full view.
+kubeadmin shared-qa -> This cluster's own RBAC shows your own rows, or could not be asked.
+jane.smith shared-rnd -> This cluster's own RBAC gives you the full view.
+jane.smith shared-qa -> This cluster's own RBAC shows your own rows, or could not be asked.

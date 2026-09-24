@@ -1,0 +1,74 @@
+== A. re-create mock-sar through the tab (runtime Secret, the tab-made join)
+{"secret":"gsd-cluster-mock-sar","cluster":"mock-sar","discovery":"requested"}
+  cycle=5 cluster=mock-sar visibility=remote-sar identity=same-as-host enabled=true
+== B. shared-qa expired (intentional): its token
+sub system:serviceaccount:group-sync-operator:shared-qa-poller | exp 2026-09-23T01:57:12+00:00
+== B. scopes through the API
+  kubeadmin       File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+  jane.smith      File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+  developer       File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+  test-user-002   File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+== B. the fixed Step 6 page check (one fresh page per reader and cluster)
+  ok  kubeadmin dashboard The host decides your view of this cluster.
+  ok  kubeadmin shared-rnd This cluster's own RBAC gives you the full view.
+  ok  kubeadmin shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  kubeadmin mock-sar This cluster's own RBAC gives you the full view.
+  ok  jane.smith dashboard The host decides your view of this cluster.
+  ok  jane.smith shared-rnd This cluster's own RBAC gives you the full view.
+  ok  jane.smith shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  jane.smith mock-sar This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  developer dashboard The host decides your view of this cluster.
+  ok  developer shared-rnd This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  developer shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  developer mock-sar This cluster's own RBAC gives you the full view.
+  ok  test-user-002 dashboard The host decides your view of this cluster.
+  ok  test-user-002 shared-rnd This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  test-user-002 shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  test-user-002 mock-sar This cluster's own RBAC shows your own rows, or could not be asked.
+== C. Step 11: rejoin shared-qa with a long-lived token
+secret/shared-qa-poller-token created
+sub system:serviceaccount:group-sync-operator:shared-qa-poller | exp NONE (no expiry)
+{"secret":"gsd-cluster-shared-qa","cluster":"shared-qa","discovery":"requested"}
+  cycle=6 cluster=shared-qa visibility=remote-sar identity=same-as-host enabled=true
+  poller after the rejoin: 2026-09-24 09:08:46,498-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 62 groups, 3 new sync event(s), 0 membership change(s)
+== C. scopes through the API
+  kubeadmin       File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+  jane.smith      File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+  developer       File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+  test-user-002   File "<string>", line 2
+    v=json.load(sys.stdin)["visibility"]["clusters"]; print("  ".join(f"{c}={v.get(c,{}).get(\"scope\")}" for c in sys.argv[1:]))
+                                                                                              ^
+SyntaxError: unexpected character after line continuation character
+== C. the page check after the rejoin
+  ok  kubeadmin shared-qa This cluster's own RBAC gives you the full view.
+  ok  jane.smith shared-qa This cluster's own RBAC gives you the full view.
+  ok  developer shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+  ok  test-user-002 shared-qa This cluster's own RBAC shows your own rows, or could not be asked.
+== D. mock-sar removed again
+  DELETE mock-sar: 200
+== E. the e2e walk, again
+84 steps passed, 0 failed → /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined
+24 / 24 extra steps ok; 11 / 11 PDFs rendered
+11 / 11 reports pass → /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk/../e2e/2026-09-24_d2b-rejoined/integrity.jsonl
+  e2e exit 0

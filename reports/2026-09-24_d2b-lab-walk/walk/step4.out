@@ -1,0 +1,17 @@
+== baseline
+2026-09-24 02:49:21,721-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+[]
+== annotation removed
+secret/gsd-cluster-shared-rnd annotated
+2026-09-24 02:54:21,793-0400 INFO    gsd.clusterconfig cluster-resolved cycle=2 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=self-only identity=none enabled=true
+["shadows-values-entry"]
+== annotation restored
+secret/gsd-cluster-shared-rnd annotated
+2026-09-24 02:59:21,805-0400 INFO    gsd.clusterconfig cluster-resolved cycle=3 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+[]
+== Secret deleted; waiting for the lookup to write it again
+secret "gsd-cluster-shared-rnd" deleted from group-sync-dashboard namespace
+rewritten after 305 s
+visibility=remote-sar
+identity=same-as-host
+2026-09-24 03:04:21,907-0400 INFO    gsd.clusterconfig cluster-resolved cycle=5 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
