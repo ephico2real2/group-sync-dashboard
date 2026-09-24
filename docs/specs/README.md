@@ -30,6 +30,22 @@ Two consequences for the tooling:
 - The verbatim bodies are exempt from `markdownlint` (see the comment in the lint config at the
   repository root); this index is not.
 
+## Implementation blocks
+
+A specification written after the programme carries its code as **implementation blocks**, so that it is
+implemented from the written document and nothing else. Each block is one HTML comment line naming a file and an
+action, followed by its fenced code:
+
+- `<!-- block: <path> | edit -->` and two fences: the exact Old text, then the New text. The Old text must occur
+  exactly once in the file, after the earlier blocks for that file are applied in order.
+- `<!-- block: <path> | create -->` and one fence: the whole new file, which must not exist.
+- `<!-- block: <path> | after: <line> -->` and one fence: inserted after that exact line, which must occur once.
+
+`local-development/apply-spec-blocks.py <spec> <tree>` checks every block against a tree and, with `--apply`,
+writes them, refusing a git tree with uncommitted changes so the resulting diff is the specification's blocks alone.
+A block found wrong during implementation is corrected in the specification, with the reason under its
+orchestrator's notes, in the same pull request, before it is applied again.
+
 ## The programme's rules, from the operator
 
 - **Modular, not blanket-off.** Every feature is a module with its own switch. The default is
