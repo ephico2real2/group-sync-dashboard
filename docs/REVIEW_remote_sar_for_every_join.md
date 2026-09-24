@@ -485,9 +485,9 @@ These are findings of the walk, not of any reviewer:
 
 ## Outcome
 
-- **Seven PRs merged:** #336 `b21f80b`, #337 `7c0a42c`, #339 `8f7d24e`, #343 `5b7d346`, #344 `5c22370`, #342
+- Seven PRs merged: #336 `b21f80b`, #337 `7c0a42c`, #339 `8f7d24e`, #343 `5b7d346`, #344 `5c22370`, #342
   `46b71be` and #345 `43befa4`.
-- **Review passes:** 7 on #336 and 5 on #337 (their commit messages), 14 on #339, and one each on #342, #343, #344
+- Review passes: 7 on #336 and 5 on #337 (their commit messages), 14 on #339, and one each on #342, #343, #344
   and #345.
 - **Rejected with a reason, or with the measurement that refuted it:** 20 proposals.
   - #336: 3 (Codex's seven-row table, Codex's §7 rewrite, Grok's 150-character line).
@@ -498,6 +498,6 @@ These are findings of the walk, not of any reviewer:
   - #343: 2 (the conflict gate, `Force=true`).
   - #344: 1 (Grok's Step 7 paragraph).
 - **App defects found by review and filed:** #346 and #347. For the operator: #312 (#348 closed as its duplicate) and the host-guard finding.
-- **Deployed and walked:** `release-crc.sh --argocd`, Synced/Healthy at `8e50ff8eec`, verified in-pod. §5 Steps 0–11
+- Deployed and walked: `release-crc.sh --argocd`, Synced/Healthy at `8e50ff8eec`, verified in-pod. §5 Steps 0–11
   pass, with the notes above. The e2e walk after the rejoin: 84/84 steps, 24/24 extra, 11/11 PDFs rendered, and
   11/11 reports passing integrity. The kept PVCs' UIDs were unchanged through every Helm round and the hand-back.

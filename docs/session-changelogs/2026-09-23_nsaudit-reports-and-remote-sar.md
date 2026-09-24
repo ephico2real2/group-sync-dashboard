@@ -401,7 +401,8 @@ Every review decision below is itemised, with the reviewer's own verdict, in
 - **D5 is in scope** by the operator's go-ahead, relayed by the coordinator. D4 stays out.
 - **`6b65a4e`** (22:20): §7 becomes 154 implementation blocks in 44 files, written by OB3, which does not review its
   own blocks. The orchestrator checked every block against a clean export of `b8e75b0`. The applied copy's
-  non-browser suite: **4892 passed, 20 skipped, 0 failed**. OB3's browser run: 593 passed (the commit message).
+  non-browser suite: **4892 passed, 20 skipped, 0 failed**, and OB3's browser run 593 passed (both from its commit
+  message, on #339).
 
 ### The blocks reviewed (→ 23:13) — commit `890f04c`
 
@@ -424,7 +425,7 @@ Every review decision below is itemised, with the reviewer's own verdict, in
   - Codex's retry-the-snapshot loop.
   - Its regression file: five of its seven tests match prose or execute the spec's own text.
   - Its request for per-test red/green proof.
-- The applied copy: 200 blocks, and **4911 passed, 20 skipped, 0 failed**.
+- The applied copy: 200 blocks, and **4911 passed, 20 skipped, 0 failed** (the `890f04c` commit message).
 
 ### The confirmation pass (→ 00:24) — commit `12d9d8d`
 
@@ -436,7 +437,7 @@ Every review decision below is itemised, with the reviewer's own verdict, in
   - **Codex B11 is recorded as refuted**, and the restore was reverted. The orchestrator had accepted B11 without
     measuring it (#210's row says so).
   - The orchestrator stopped OB3 after its draft report, because of its token cost (the orchestrator's summary).
-- 209 blocks. The applied copy: **4922 passed, 20 skipped, 0 failed**.
+- 209 blocks. The applied copy: **4922 passed, 20 skipped, 0 failed** (the `12d9d8d` commit message).
 
 ### Codex on `gpt-6-astra`, and OB1-lite (00:24 → 00:56) — commit `8460257`
 
@@ -469,7 +470,7 @@ Every review decision below is itemised, with the reviewer's own verdict, in
   - The renderer, its test and the counts hold.
   - A held arrival under 50 viewers' traffic kept one call per 30 s hold, which confirms the `began_held` rejection.
   - Its two wording corrections are `e4140d3`. The doc, spec and renderer tests on the applied copy: **1430 passed,
-    12 skipped**.
+    12 skipped** (the `e4140d3` commit message).
 - CI was 8/8 on `e4140d3` (`gh pr checks 339`). #339 merged at 01:14 as `8f7d24e`, after 14 review passes on six
   heads. #342's body calls them five review rounds.
 
@@ -477,7 +478,7 @@ Every review decision below is itemised, with the reviewer's own verdict, in
 
 - `local-development/apply-spec-blocks.py` on main `8f7d24e`: **221 blocks check out across 47 files**. No line was
   written outside the blocks except the re-rendered PNGs of Figures 2, 3 and 4. Figure 1's re-render differed by
-  2 px of height, so its PNGs were kept.
+  2 px of height, so its PNGs were kept (the PR body).
 - Chart 0.53.0 and application 0.32.0. The upgrade note is under `docs/CHANGELOG.md`'s Unreleased heading.
 - The non-browser suite on the branch: **4934 passed, 20 skipped, 0 failed** (the PR body).
 - **OB1-lite on `fd9bfb9`** (a message; the orchestrator's summary): **mergeable as is, no findings.**
@@ -492,7 +493,7 @@ Every review decision below is itemised, with the reviewer's own verdict, in
 - **Found by the lab walk, Step 3:** `local-development/release-crc.sh`'s Helm mode was refused once the chart
   version moved. The kept PVCs' labels were owned by `argocd-controller`, and Helm 4 applies server-side.
 - **The fix:** `--force-conflicts` on the Helm-mode install. Its test fails on main's script (1 failed, 20 passed)
-  and passes on the fix (21 passed).
+  and passes on the fix (21 passed) (the PR body and its commit message).
 - **The operator:** *"pvc should not be removed"*. The PR's comment at 01:44 recorded both PVCs' UIDs as a baseline,
   and showed that the flag transfers field ownership and deletes nothing.
 - **Grok 4.6:** C1, C3 and C4 CONFIRMED; C2 and C5 PLAUSIBLE (risk).
@@ -573,7 +574,8 @@ passing integrity.
   - **C3, accepted on the fact:** Step 7's sentence could read as the parser enforcing the operator's rule. The
     orchestrator's wording states the guard's scope; Grok's paragraph was not used.
   - **C5, accepted:** §5's Definition of Done said kubeadmin is wide on both remotes before Step 11.
-- Applied in `6769fa3`. Docs, specs index and apply-tool tests: **1077 passed, 12 skipped**.
+- Applied in `6769fa3`. Docs, specs index and apply-tool tests: **1077 passed, 12 skipped** (the `e61a38a` and `6769fa3`
+  commit messages).
 
 ### The evidence and the README (08:30 → 08:50) — commits `d82b898`, `70e4273`, PR #345
 
@@ -591,7 +593,7 @@ passing integrity.
   - #348, for the operator: the chart's own auditor binding is flagged as unmanaged.
 
   #312, open since 2026-09-23 01:46 UTC, already reports the same binding (found while writing this log).
-- Docs citations: **1022 passed, 12 skipped**. Diagrams, e2e selection and the environments README: **349 passed**
+- Docs citations: **1022 passed, 12 skipped** (the `d82b898` and `70e4273` commit messages). Diagrams, e2e selection and the environments README: **349 passed**
   (the PR body). #345 merged at 08:50 as `43befa4`.
 
 ### #338 closed (08:51, 08:52)
