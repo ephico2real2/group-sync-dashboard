@@ -44,7 +44,7 @@ kind: ClusterRole
 metadata:
   name: {{ printf "%s-report-auditor" (include "gsd.fullname" .) | trunc 253 | trimSuffix "-" }}
   labels:
-    {{- include "gsd.labels" . | nindent 4 }}
+    {{- include "gsd.rbacLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["user.openshift.io"]
     resources: ["users", "groups"]
@@ -98,7 +98,7 @@ metadata:
   # of attempting an immutable patch that the API server rejects on upgrade.
   name: {{ printf "%s-ra-%s" (include "gsd.fullname" $) (list $g.name $roleName | toJson | sha256sum | trunc 12) | trunc 253 | trimSuffix "-" }}
   labels:
-    {{- include "gsd.labels" $ | nindent 4 }}
+    {{- include "gsd.rbacLabels" $ | nindent 4 }}
   annotations:
     group-sync-dashboard/auditor-group: {{ $g.name | quote }}
 roleRef:
