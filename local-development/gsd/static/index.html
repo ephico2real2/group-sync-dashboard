@@ -1380,10 +1380,17 @@ function reachBadge(c) {
 }
 /* `detail` renders the same block for the OPENED cluster: a plain <div> with a plain heading — no
    control that opens where the reader already is, and no string surgery on the tile's markup. */
+// Bindings a person has to look at on a cluster: those that grant nobody (dangling, unresolved) and the
+// grants of a synced group made outside the policy system (unmanaged) — the three findings the Access
+// granted page lists for review. One place, so every view of a cluster counts the same thing (#347).
+function bindingsToReview(c) {
+  return (c.dangling_bindings || 0) + (c.unresolved_bindings || 0) + (c.unmanaged_bindings || 0);
+}
+
 function clusterTile(c, density, detail = false) {
   const degraded = c.status && c.status !== "ok";
   const never = c.status === null;
-  const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  const review = bindingsToReview(c);
   const rail = degraded ? "bad" : (c.unattributed_groups || review ? "warnrail" : "");
   const tag = detail ? "div" : "section";
   const name = detail ? esc(c.id) : `<button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button>`;
@@ -1398,7 +1405,7 @@ function clusterTile(c, density, detail = false) {
   </${tag}>`;
 }
 function tileFigures(c, density) {
-  const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  const review = bindingsToReview(c);
   // `extra`: the three figures the tiers past full hide (the mock's tiers, kept on the operator's
   // ruling — the scoped view carries every figure).
   const k = (lab, val, cls, extra) =>
@@ -1416,7 +1423,7 @@ function tileFigures(c, density) {
   </div>`;
 }
 function denseRow(c) {
-  const review = (c.dangling_bindings || 0) + (c.unresolved_bindings || 0);
+  const review = bindingsToReview(c);
   return `<tr class="rowlink" data-cluster="${esc(c.id)}">
     <td>${reachBadge(c)}</td>
     <td class="mono"><button class="linkish tile-open" data-cluster="${esc(c.id)}">${esc(c.id)}</button></td>
@@ -3958,6 +3965,54 @@ function loginsPage() {
   return captureSection(d, accessCard(data.access));
 }
 
+// What the Logins page says about its record depends on which log the rows come from — the API's
+// `source` (#346). The pod log is read at Debug from the moment watching began and dies with its pod;
+// the audit log sits on the control-plane nodes, a first read backfills through its rotated files, and
+// what a stalled reader missed is still there for the next read (docs/AUDIT_LOG_CAPTURE.md §2, §5).
+// Every source-specific sentence lives here, so the two sources' wording cannot drift apart.
+const LOGIN_SOURCE_TEXT = {
+  "pod-log": {
+    window: `Nothing before capture began was ever recorded — the oauth-server's log dies with its pod and
+      cannot be read backwards — so an empty list here means nothing was <em>observed</em>, never
+      that nobody signed in.`,
+    predates: `The oldest attempt predates the first read because that read looked back an hour, which
+      is expected rather than a fault.`,
+    stalled: `Attempts made since then are being lost, and they cannot be recovered later. Check the
+      dashboard pod's log for a refused <code>pods/log</code> read, and that an oauth-server pod is Running.`,
+    noMatch: `Either nobody has signed in since watching began, or the authentication operator is not at
+      Debug, in which case the oauth-server never writes a username. One command decides which:
+      <code>oc get authentications.operator.openshift.io cluster -o jsonpath='{.spec.logLevel}'</code>
+      must print <code>Debug</code>.`,
+    noRead: `The dashboard's ServiceAccount needs <code>pods</code> list and the
+      <code>pods/log</code> subresource in the oauth-server's namespace
+      (<code>openshift-authentication</code> unless configured otherwise), and at least one
+      oauth-server pod has to be Running. Note that
+      <code>oc auth can-i get pods/log</code> answers <code>no</code> even on a correct
+      grant — it reads <code>pods/log</code> as a resource <em>name</em>. Use
+      <code>--subresource=log</code>.`,
+  },
+  "audit-log": {
+    window: `Nothing older than the oldest audit file still on the control-plane nodes was read — a first
+      read backfills through the rotated files, bounded by <code>loginCapture.retentionDays</code> — so
+      an empty list here means nothing was <em>observed</em> in that window, never that nobody signed in.`,
+    predates: `The oldest attempt predates the first read because that read backfilled through the
+      rotated audit files, which is expected rather than a fault.`,
+    stalled: `Attempts made since then are not lost while the audit files that hold them are still on the
+      nodes: the next successful read picks them up. The dashboard pod's log names the cause — nodes that
+      cannot be listed, no node matching the selector, or a refused <code>nodes/proxy</code> read.`,
+    noMatch: `Either nobody has signed in within the audit log's window, or the cluster's audit profile is
+      <code>None</code>, under which the oauth-server writes no audit events. One command decides which:
+      <code>oc get apiserver cluster -o jsonpath='{.spec.audit.profile}'</code> must not print
+      <code>None</code>.`,
+    noRead: `The dashboard's ServiceAccount needs <code>list</code> on <code>nodes</code> (or
+      <code>loginCapture.auditLog.nodeNames</code> pinned) and <code>get</code> on
+      <code>nodes/proxy</code> — the <code>group-sync-dashboard-cluster-poller</code> ClusterRole the
+      group-sync-operator-helm chart installs grants both — and
+      <code>loginCapture.auditLog.nodeSelector</code> has to match the control-plane nodes (default
+      <code>node-role.kubernetes.io/master=</code>). The dashboard pod's log says which one failed.`,
+  },
+};
+
 function captureSection(d, access) {
   // Scope as the RESPONSE declares it. At "self" the record on screen is the viewer's own
   // slice: the whole-record summary and the ungoverned-accounts finding are not in the
@@ -3995,6 +4050,7 @@ function captureSection(d, access) {
   // capture rides the poll thread, so `last_read_at` should advance every poll interval. Five
   // intervals is late beyond argument, with a 5-minute floor so a fast poll does not raise this
   // on one slow cycle. The threshold is stated on screen rather than implied by a red badge.
+  const text = LOGIN_SOURCE_TEXT[d.source === "audit-log" ? "audit-log" : "pod-log"];
   const interval = d.read_interval_seconds || 60;
   const staleAfter = Math.max(300, interval * 5);
   const readAge = d.last_read_at
@@ -4012,8 +4068,8 @@ function captureSection(d, access) {
 
   // Each edge is stated only when it HAS a value. Before the first successful read all three are
   // null, and "Watching since —. Oldest attempt still retained —. Last read —." is three em-dashes
-  // of noise in front of the one sentence that state actually needs. The caveat below them is
-  // unconditional, because it is true in every state and is the whole point of the banner.
+  // of noise in front of the one sentence that state actually needs. The caveat below them is the
+  // source's (LOGIN_SOURCE_TEXT, #346): true in every state of that source, and the point of the banner.
   const edges = [
     d.capture_started_at
       && `Watching since <strong>${esc(fmtTime(d.capture_started_at))}</strong> (${
@@ -4026,21 +4082,15 @@ function captureSection(d, access) {
   ].filter(Boolean);
   const window_ = `<div class="filterbar-note mt-4">
     ${edges.length ? edges.join("; ") + "." : ""}
-    Nothing before capture began was ever recorded — the oauth-server's log dies with its pod and
-    cannot be read backwards — so an empty list here means nothing was <em>observed</em>, never
-    that nobody signed in.
-    ${predatesStart
-      ? `The oldest attempt predates the first read because that read looked back an hour, which
-         is expected rather than a fault.` : ""}
+    ${text.window}
+    ${predatesStart ? text.predates : ""}
   </div>`;
 
   const stalledNote = stalled
     ? `<div class="truncation-note">
         <strong>Capture has stopped.</strong> The last successful read was
         ${esc(ago(d.last_read_at))}, and reads are expected every ${interval}s — anything past
-        ${Math.round(staleAfter / 60)} minutes is overdue. Attempts made since then are being
-        lost, and they cannot be recovered later. Check the dashboard pod's log for a refused
-        <code>pods/log</code> read, and that an oauth-server pod is Running.
+        ${Math.round(staleAfter / 60)} minutes is overdue. ${text.stalled}
       </div>` : "";
 
   // Nothing recorded yet is the state most likely to be MISREAD, so it gets the whole card and
@@ -4058,22 +4108,11 @@ function captureSection(d, access) {
             scoped to you; it says nothing about whether anyone else signed in.</div>`
         : d.last_read_at ? `<div class="empty-note">
           Reads are working — the log was last read ${esc(ago(d.last_read_at))} — and
-          <strong>no login lines matched</strong>. Either nobody has signed in since watching
-          began, or the authentication operator is not at Debug, in which case the oauth-server
-          never writes a username. One command decides which:
-          <code>oc get authentications.operator.openshift.io cluster -o jsonpath='{.spec.logLevel}'</code>
-          must print <code>Debug</code>.
+          <strong>no login lines matched</strong>. ${text.noMatch}
         </div>`
         : `<div class="empty-note">
           <strong>No successful read yet.</strong> Capture is enabled but has not managed to
-          read a log, so this is a cluster-access problem rather than a quiet one. The
-          dashboard's ServiceAccount needs <code>pods</code> list and the
-          <code>pods/log</code> subresource in the oauth-server's namespace
-          (<code>openshift-authentication</code> unless configured otherwise), and at least one
-          oauth-server pod has to be Running. Note that
-          <code>oc auth can-i get pods/log</code> answers <code>no</code> even on a correct
-          grant — it reads <code>pods/log</code> as a resource <em>name</em>. Use
-          <code>--subresource=log</code>.
+          read a log, so this is a cluster-access problem rather than a quiet one. ${text.noRead}
         </div>`}
       ${stalledNote}
       ${window_}
@@ -4931,7 +4970,10 @@ function bindingsPage() {
   }
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
   const c = d.counts || {};
-  const review = (c.dangling || 0) + (c.unresolved || 0);
+  // The tiles partition the total. An unmanaged grant does grant a real group, but it is a review item,
+  // so it counts under Need review; the headline below stays the bindings that grant nobody (#347).
+  const grantNobody = (c.dangling || 0) + (c.unresolved || 0);
+  const review = grantNobody + (c.unmanaged || 0);
 
   const header = `<section class="card">
     <div class="kpis mt-0">
@@ -5012,8 +5054,8 @@ function bindingsPage() {
   // goes here too — without it this view would show a subset with no statement of the whole.
   return header + `<section class="card">
     <div class="hero">
-      <div class="value">${review}</div>
-      <div class="label">binding${review === 1 ? "" : "s"} that grant nobody</div>
+      <div class="value">${grantNobody}</div>
+      <div class="label">binding${grantNobody === 1 ? "" : "s"} that grant nobody</div>
     </div>
     <div class="filterbar-note">
       Each names a Group that does not exist, so the access it grants reaches no one.

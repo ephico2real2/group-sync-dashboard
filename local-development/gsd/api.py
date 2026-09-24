@@ -1117,6 +1117,9 @@ def build_app(
             "dangling_bindings": counts.get("dangling", 0),
             "unresolved_bindings": counts.get("unresolved", 0),
             "builtin_bindings": counts.get("built_in", 0),
+            # A grant of a synced group made outside the policy system: a review item beside the two
+            # that grant nobody, so a cluster's "Bindings to review" counts it (#347).
+            "unmanaged_bindings": counts.get("unmanaged", 0),
         }
 
     @app.get("/api/clusterconfigs")
@@ -1834,9 +1837,12 @@ def build_app(
 
         THE RECORD IS A WINDOW, and both of its edges are carried as data rather than implied.
         `capture_started_at` is when watching began and is stable; `retained_since` is the oldest
-        attempt still kept and moves under retention. Nothing before capture began exists to fetch —
-        the log dies with its pod — so an empty list is a statement about the window and never proof
-        that nobody logged in. The UI has to say that, which is why it is here and not a footnote.
+        attempt still kept and moves under retention. What lies before the window depends on `source`:
+        under `pod-log` nothing before capture began exists to fetch — the log dies with its pod; under
+        `audit-log` a first read backfills through the rotated audit files still on the control-plane
+        nodes, bounded by the retention. Either way an empty list is a statement about the window and
+        never proof that nobody logged in. The UI says that per source (#346), which is why it is here
+        and not a footnote.
 
         EVERY username is recorded, successful or not, member or not. `known_user: false` marks an
         account in NO synced group, which is the most valuable row this produces; `has_history: true`
