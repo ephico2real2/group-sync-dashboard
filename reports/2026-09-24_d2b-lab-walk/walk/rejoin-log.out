@@ -1,0 +1,7 @@
+2026-09-24 09:07:53,118-0400 WARNING gsd.kube shared-qa: visibility tier for 'kubeadmin' is indeterminate (auth_failed: 401 Unauthorized — token invalid or expired) — failing closed to the self view f
+2026-09-24 09:08:03,964-0400 INFO    gsd.clusterconfig cluster-resolved cycle=6 cluster=shared-qa source=secret:gsd-cluster-shared-qa credential=bearer tls=trusted-bundle visibility=remote-sar identit
+2026-09-24 09:08:46,498-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 62 groups, 3 new sync event(s), 0 membership change(s)
+2026-09-24 09:09:46,314-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 62 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-24 09:10:46,315-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 62 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-24 09:11:46,300-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 62 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-24 09:12:46,292-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 62 groups, 0 new sync event(s), 0 membership change(s)

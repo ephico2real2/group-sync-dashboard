@@ -37,14 +37,16 @@ your view of this cluster.*). Here kubeadmin, with cluster-wide `cluster-admin` 
 
 **Overview** — every joined cluster's health, the GroupSync and policy CRs, and the computed
 alerts across the fleet. Here six clusters and 12 alerts: three GroupSync schedules that have
-stopped firing, and grants bound to a person rather than an enterprise-managed group — 11 of
-them on the host, across 5 namespaces, 3 granting `admin` or `cluster-admin`.
+stopped firing, six for grants bound to a person rather than an enterprise-managed group — on the
+host, 11 such grants across 5 namespaces, 3 granting `admin` or `cluster-admin` — and three for
+groups synced with zero members.
 
 ![Overview tab](docs/screenshots/01-overview.png)
 
 **Access granted** — every group-subject binding, classified. 202 of them: 37 grant a real group,
-6 name a group that has never existed and therefore grant nobody, and 158 are built-in groups,
-which are expected and filtered out by default.
+6 name a group that has never existed and therefore grant nobody, 1 grants a synced group from
+outside the policy system (the one the RBAC policy tab lists), and 158 are built-in groups, which
+are expected and filtered out by default.
 
 ![Access granted tab](docs/screenshots/04-access-granted.png)
 
@@ -56,8 +58,9 @@ grants.
 
 **RBAC policy** — the policy operator's CRs beside the provenance of the bindings they template,
 and the grants that have none. Here 6 policy CRs, all reconciling, and 1 grant outside the
-policy system: a hand-made ClusterRoleBinding giving `app-ocp-rbac-groupsync-ns-auditor` the
-dashboard's report-auditor role.
+policy system: the ClusterRoleBinding this chart renders for its default auditor group
+(`rbacAuditors`), giving `app-ocp-rbac-groupsync-ns-auditor` the dashboard's report-auditor
+role — no policy CR templates it, so the tab lists it.
 
 ![RBAC policy tab](docs/screenshots/05-rbac-policy.png)
 
