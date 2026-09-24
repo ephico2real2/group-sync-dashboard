@@ -30,6 +30,22 @@ Two consequences for the tooling:
 - The verbatim bodies are exempt from `markdownlint` (see the comment in the lint config at the
   repository root); this index is not.
 
+## Implementation blocks
+
+A specification written after the programme carries its code as **implementation blocks**, so that it is
+implemented from the written document and nothing else. Each block is one HTML comment line naming a file and an
+action, followed by its fenced code:
+
+- `<!-- block: <path> | edit -->` and two fences: the exact Old text, then the New text. The Old text must occur
+  exactly once in the file, after the earlier blocks for that file are applied in order.
+- `<!-- block: <path> | create -->` and one fence: the whole new file, which must not exist.
+- `<!-- block: <path> | after: <line> -->` and one fence: inserted after that exact line, which must occur once.
+
+`local-development/apply-spec-blocks.py <spec> <tree>` checks every block against a tree and, with `--apply`,
+writes them, refusing a git tree with uncommitted changes so the resulting diff is the specification's blocks alone.
+A block found wrong during implementation is corrected in the specification, with the reason under its
+orchestrator's notes, in the same pull request, before it is applied again.
+
 ## The programme's rules, from the operator
 
 - **Modular, not blanket-off.** Every feature is a module with its own switch. The default is
@@ -70,6 +86,7 @@ Two consequences for the tooling:
 | S4a | [`SPEC_S4a_fleet_login_session.md`](SPEC_S4a_fleet_login_session.md) — S4 step A: the fleet login session — obtain, expire, retry, revoke; the code of #283 | S — cluster configuration | — | no version change (a module nothing calls yet; the release that first calls it bumps) | [#283](https://github.com/ephico2real2/group-sync-dashboard/issues/283) | in implementation |
 | S4b | [`SPEC_S4b_sa_token_lookup.md`](SPEC_S4b_sa_token_lookup.md) — S4 step B: the ServiceAccount token lookup — read as the fleet account, write as the dashboard; the code of #284 | S — cluster configuration | — | app 0.31.0, chart 0.50.0 | [#284](https://github.com/ephico2real2/group-sync-dashboard/issues/284) | specified |
 | S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.32.0, chart 0.53.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
+| D2b | [`SPEC_D2b_remote_sar_for_every_join.md`](SPEC_D2b_remote_sar_for_every_join.md) — `remote-sar` for every way a cluster is joined, and `remote-sar` + `same-as-host` the default for a remote (design D1, D2) | D — architecture | — | app and chart minor bumps at the PR | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → released` as each issue is worked; a spec's own header carries the same

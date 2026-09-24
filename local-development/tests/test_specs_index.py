@@ -33,8 +33,10 @@ HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \
 
 def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
-    programme = sorted(fid for fid in rows if fid[0] in "ABCD")
-    post = sorted(fid for fid in rows if fid[0] not in "ABCD")
+    # A programme id is a batch letter A-D and a number, nothing more: a step of a programme design that lands
+    # after R7 (D2b, #338) carries the design's id and a letter, and rides a later release like E1.
+    programme = sorted(fid for fid in rows if re.fullmatch(r"[A-D]\d", fid))
+    post = sorted(fid for fid in rows if fid not in programme)
     assert len(programme) == 13, f"expected the programme's thirteen index rows, matched {programme}"
     # the alternation admits `—` for the post-programme batches only; a programme row must still carry its
     # milestone (review of #233, Codex — A1's R1 mutated to `—` passed before this line)
@@ -43,7 +45,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 22, f"expected twenty-two index rows (the programme's thirteen, E1, S1, S2, S3, S4, S4a, S4b, S4c and T1), matched {sorted(rows)}"
+    assert len(rows) == 23, f"expected twenty-three index rows (the programme's thirteen, D2b, E1, S1, S2, S3, S4, S4a, S4b, S4c and T1), matched {sorted(rows)}"
     return rows
 
 
