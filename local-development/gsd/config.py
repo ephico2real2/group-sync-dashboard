@@ -284,7 +284,9 @@ class ClusterConfig:
     ca_data: str | None = field(default=None, repr=False, compare=False)   # PEM text from tlsClientConfig.caData
     oauth_username: str | None = field(default=None, repr=False, compare=False)
     oauth_password: str | None = field(default=None, repr=False, compare=False)
-    source: str = "values"                       # values | secret:<metadata.name>
+    source: str = "values"                       # values | secret:<name> | configmap:<name>:<index>
+    # SPEC_S5: ConfigMap name, UID and connection digest; no credential, no second registry.
+    onboarding: tuple[str, str, str] = ()
     labels: tuple[tuple[str, str], ...] = ()     # the Secret's other labels, the fleet's metadata for the tab
     # SPEC_S3 §3 (S3a): the connection mode declared instead of a credential, and the bootstrap account
     # that performs the login. Inert until S3b connects: the cluster is listed with a pending credential
@@ -1430,26 +1432,22 @@ def _cliff_settings(raw: dict) -> dict:
     }
 
 
-def load_settings(path: str | Path) -> Settings:
-    """Load and validate settings from a YAML file.
+def _is_host_api(url: str, host: ClusterConfig) -> bool:
+    """The controller's DNS aliases or the values host's scheme/host/effective port."""
+    from urllib.parse import urlsplit
 
-    Validation is strict and up-front: a typo in a cluster entry should fail at startup
-    with the offending key named, not surface later as a cluster that silently never polls.
-    """
-    try:
-        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    except OSError as exc:
-        raise ConfigError(f"cannot read config {str(path)!r}: {exc}") from exc
-    except yaml.YAMLError as exc:
-        raise ConfigError(f"invalid YAML in {str(path)!r}: {exc}") from exc
+    def endpoint(value):
+        parts = urlsplit(value)
+        return (parts.scheme, (parts.hostname or "").lower().rstrip("."),
+                parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80))
 
-    if not isinstance(raw, dict):
-        raise ConfigError(f"{path}: top level must be a mapping")
+    declared = endpoint(url)
+    return declared[1] in {"kubernetes.default.svc", "kubernetes.default.svc.cluster.local",
+                           "kubernetes.default"} or declared == endpoint(host.api_url)
 
-    entries = raw.get("clusters") or []
-    if not isinstance(entries, list) or not entries:
-        raise ConfigError(f"{path}: 'clusters' must be a non-empty list")
 
+def parse_cluster_entries(entries: list, path: str | Path, *, remote_host: ClusterConfig | None = None) -> list[ClusterConfig]:
+    """One values-shaped stanza parser; a runtime ConfigMap supplies its already-known host."""
     known = set(VALUES_CLUSTER_KEYS)
 
     clusters: list[ClusterConfig] = []
@@ -1464,6 +1462,16 @@ def load_settings(path: str | Path) -> Settings:
         if unknown:
             raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
 
+        if remote_host is not None:
+            # The same parser, with the runtime feed's no-credential / remote-only boundary.
+            if "tokenEnv" in entry or "tokenFile" in entry:
+                raise ConfigError(f"{where}: a ConfigMap may not carry a credential reference")
+            if entry.get("dashboardController") or entry.get("name") == remote_host.name:
+                raise ConfigError(f"{where}: the host is declared only in values")
+            if _is_host_api(str(entry.get("apiUrl", "")), remote_host):
+                raise ConfigError(f"{where}: the host is declared only in values")
+            if entry.get("saTokenLookup") is not True:
+                raise ConfigError(f"{where}: a ConfigMap needs saTokenLookup: true")
         name = str(_require(entry, "name", where))
         if name in seen:
             raise ConfigError(f"{where}: duplicate cluster name {name!r}")
@@ -1581,6 +1589,7 @@ def load_settings(path: str | Path) -> Settings:
     # on a remote. The host is not known until every entry has been read, so the check cannot be.
     host = (next((c for c in clusters if c.enabled and c.dashboard_controller), None)
             or next((c for c in clusters if c.enabled), None))
+    host = remote_host or host
     for cluster, where in zip(clusters, wheres):
         if cluster is host:
             how = ("declared by dashboardController" if cluster.dashboard_controller
@@ -1606,6 +1615,31 @@ def load_settings(path: str | Path) -> Settings:
                 f"{where}: visibility remote-sar needs identity: same-as-host — the review names the "
                 f"reader's OpenShift username on this cluster; set same-as-host or leave identity out"
             )
+
+    return clusters
+
+
+def load_settings(path: str | Path) -> Settings:
+    """Load and validate settings from a YAML file.
+
+    Validation is strict and up-front: a typo in a cluster entry should fail at startup
+    with the offending key named, not surface later as a cluster that silently never polls.
+    """
+    try:
+        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    except OSError as exc:
+        raise ConfigError(f"cannot read config {str(path)!r}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {str(path)!r}: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path}: top level must be a mapping")
+
+    entries = raw.get("clusters") or []
+    if not isinstance(entries, list) or not entries:
+        raise ConfigError(f"{path}: 'clusters' must be a non-empty list")
+
+    clusters = parse_cluster_entries(entries, path)
 
     admin_sar = _visibility_sar_setting(raw)
     usage_admin_sar = _usage_visibility_sar_setting(raw)

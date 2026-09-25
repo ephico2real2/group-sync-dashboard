@@ -5,10 +5,10 @@
 | Programme | Cluster configuration, continued: a runtime values-shaped feeder for S4b's remote lookup |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; independently reviewed after #284) |
-| Version on release | app and chart minor bumps at the PR |
+| Version on release | app 0.34.0, chart 0.55.0 |
 | Issue | [#293](https://github.com/ephico2real2/group-sync-dashboard/issues/293) |
 | Status | specified |
-| Source | Codex phase-1 specification, 2026-09-25, against main 35fcddb; operator comments in issue-293.md and supplied lab-snapshot.md; implementation blocks are the proposed code, not yet applied |
+| Source | Codex phase-1 specification, 2026-09-25, against main 35fcddb; operator comments in issue-293.md and supplied lab-snapshot.md; phase-2 blocks re-anchored after #361/#360, applied and checked locally; see phase2-report.md for limits |
 
 ## How to read this spec
 
@@ -25,12 +25,34 @@ Phase 2 applies reviewed blocks and runs tests. No phase-1 test result or live v
   remains specified; S5 uses the shipped S4b. The new index row sits after S4c and before D2b to
   preserve the index's enforced issue ordering (`local-development/tests/test_specs_index.py:94`).
   The count and S issue-set updates are **blocks**, so those tests intentionally await phase 2.
-- No release number is reserved while #353 is claiming the next versions. Four version blocks
-  deliberately say **"the next minor at merge"**. Before phase 2 application/build, the business
-  owner replaces those New values with the chosen chart minor and matching app minor in Chart.yaml,
-  pyproject.toml and gsd/__init__.py; the literal tokens are not valid deployable versions. This is
-  the operator's explicit phase-1 exception to `docs/specs/README.md:56`. Version coupling is held
-  by `local-development/tests/test_chart_versions.py:44` and `:133`.
+- Phase 2 (operator, 2026-09-25) reads `Chart.yaml` chart 0.54.0 / appVersion 0.33.0 and
+  `local-development/pyproject.toml` app 0.33.0 after #361/#360. Blocks 57–60 assign the next
+  minors: app 0.34.0 / chart 0.55.0. Blocks 78–80 move S4c's header/index to app 0.35.0 /
+  chart 0.56.0 and set S5's index; blocks 55–56 keep the index count and S issue-set checks.
+- Final review decisions (operator, phase-2 request, 2026-09-25; `grok1/report.md` C1–C8):
+  - TLS ruling: "I need this feature badly. So insecure is required in configmap." The refusal
+    and allow-list proposals are superseded. `insecureSkipVerify: true` stays accepted; existing
+    declared-trust and writer code preserve it in the generated Secret. Block 31 tests this;
+    blocks 61/63 document it. Whoever can write a labelled ConfigMap in the release namespace
+    can direct the fleet account's bind to a host of their choosing, with or without TLS
+    verification. ConfigMap write access there is therefore trusted like the fleet credential,
+    and the platform team must keep it restricted.
+  - Grok C1: block 2 refuses the three controller DNS aliases at any port and the values host's
+    scheme/hostname/effective port; block 31 tests aliases and the host endpoint. The operator's
+    2026-09-24 ruling reserves those DNS names for the controller. A physical-cluster match via
+    a different external URL (shared-rnd by design) remains allowed and tested.
+  - Grok C4: block 30 reserves valid names for cleanup but authors only successfully parsed and
+    validated stanzas. Block 31 removes invalid-map from duplicates and proves invalid input
+    cannot stop a values cluster; block 61 states the distinction.
+  - Grok C8: block 61 states the bound-failure/success gate, pre-write retry, restart/replica
+    limits and #285 deferral exactly; block 62 lists every cleanup ownership condition.
+  - Grok C7: block 31's Host applies the supplied selector, both Settings paths use load_settings,
+    and the bind test covers five discovery cycles and authorize-403 (credential phase).
+  - Grok C2: section 3.3 states the per-process budget table with each row's named test.
+  - Phase-2 verification: block 81 updates the existing exact API-row assertion for nullable
+    provenance. Block 66 now names the actual release and applies C8's precise budget to the
+    changelog too. Block 31 supplies enough mock responses for repeated values/restart attempts;
+    its host tests check the parser directly as well as the no-bind discovery outcome.
 - The operator requires baseline `file:line` citations. A narrow block exempts this pinned,
   point-in-time spec from the line-number prohibition only; all path/anchor checks and other docs
   stay covered (`local-development/tests/test_docs_citations.py:424`). Runtime documentation uses
@@ -44,7 +66,8 @@ Phase 2 applies reviewed blocks and runs tests. No phase-1 test result or live v
   body could not be fetched: `gh issue view 293 --repo ephico2real2/group-sync-dashboard --json
   title,body,url` answered `error connecting to api.github.com`. It is **not measured** here.
 - There is no `.codegraph/` in `wt/`; CodeGraph was therefore skipped under the supplied AGENTS rule.
-  No git mutation is part of this phase. Runtime code, tests, chart and public docs exist only in blocks.
+  No git write command is part of phase 2. The reviewed blocks are applied and verified as recorded
+  in the workspace `phase2-report.md`; baseline research citations remain pinned to phase 1.
 
 ## 1. Research ledger — evidence before design
 
@@ -98,7 +121,8 @@ our declaration contains no kubeconfig or token, while the generated credential 
    retirement (`docs/specs/SPEC_S3_connection_modes.md:691`, `:752`;
    `local-development/gsd/poller.py:1457`; `local-development/gsd/clusterconfig/registry.py:33`).
 3. **Duplicates load neither, with each author named.** Reserve a syntactically valid cluster name
-   even if the rest of its stanza is invalid. Values-versus-ConfigMap, map-versus-map, same-map
+   for cleanup even if its stanza is invalid; only successfully parsed and validated stanzas author
+   names for conflicts. Invalid stanzas never block values. Values-versus-ConfigMap, map-versus-map, same-map
    duplicates and unrelated labelled Secrets are conflicts. Suppress the name in the existing
    registry merge and stop a running values thread; returning a finding alone would fall back to
    values. The values host is protected first: a refused host declaration cannot switch off the
@@ -127,7 +151,9 @@ existing values envelope (`local-development/gsd/config.py:1444`; `docs/CLUSTER_
 
 Extract the values loop and second pass into `config.parse_cluster_entries`, then have both
 `load_settings` and the ConfigMap reader call it. The ConfigMap invocation supplies the known values
-host: never infer a host from the first remote entry. In that same parser refuse any `tokenEnv` or
+host: never infer a host from the first remote entry. In-cluster controller DNS aliases (any port)
+and the values host's scheme/hostname/effective port are refused. A different external URL of the
+same physical cluster remains allowed (operator, 2026-09-24; Grok C1). In that same parser refuse any `tokenEnv` or
 `tokenFile` key, require `saTokenLookup: true`, and protect host name/controller/in-cluster URL.
 Unknown keys (including tokens/passwords/labels) still fail the same known-key test. Cross-stanza
 conflicts are handled by the reader, since startup rejection cannot be used on a live feed
@@ -191,8 +217,8 @@ success followed by a failed token read/write does not mark the baseline gate
 (`local-development/gsd/poller.py:910`; `local-development/gsd/fleetlookup.py:97`, `:359`, `:367`, `:380`).
 
 For ConfigMap-triggered lookups, additionally mark the **same** gate immediately upon successful
-session entry, before `read_sa_token`. Thus this trigger gets at most one bind for the same canonical
-target/account/password in a process, regardless of 401/500/post-write timeout, successful read,
+session entry, before `read_sa_token`. After a bound failure or success this trigger never sends the
+same canonical target/account/password again in a process, including 401/403/500/post-write timeout, successful read,
 failed remote read, failed local create, renamed map/stanza, removal/re-add or policy edit. Existing
 values/Secret failure rules, retry scheduler and FleetLogin session cleanup are unchanged. No new
 retry loop, gate instance per map or on-demand login path is introduced
@@ -206,6 +232,24 @@ noticed by the existing cheap re-read. Different targets still have different #2
 account-wide durable/replica-shared fencing belongs to #285. This spec does **not** imply one total
 successful bind across pre-existing values triggers, all targets, replicas or restarts
 (`local-development/gsd/fleetlookup.py:108`, `:356`; `docs/specs/SPEC_S4b_sa_token_lookup.md:2942`).
+
+
+Grok C2's stated budget (review `grok1/report.md`, C2; accepted by the operator 2026-09-25).
+Counts concern one canonical target/account/password per process. “Attempt” before a password write
+is not a measured directory bind. Wire mocks measure authorize requests, not real LDAP binds.
+Tests below are in `tests/test_configmap_onboarding.py`; their execution is in `phase2-report.md`.
+
+| Scenario | ConfigMap | Values (unchanged) | Named test(s) |
+|---|---|---|---|
+| First cycle, successful session | 1 | 1 | `test_one_bind_budget_survives_rename_and_policy_changes[success]`; `test_values_bind_budget_is_unchanged[success]` |
+| First cycle, 401 / authorize-403 / 500 / post-send timeout | 1 | 1 | `test_one_bind_budget_survives_rename_and_policy_changes`; `test_values_bind_budget_is_unchanged` (401, 403, 500, timeout) |
+| First cycle, TLS/connect before password write | Attempt may retry; no gate mark | Same | `test_pre_write_failure_can_retry` (both feeds and failure types) |
+| Next five cycles, unchanged output present | 0 | 0 | `test_one_bind_budget_survives_rename_and_policy_changes[success]`; `test_values_bind_budget_is_unchanged[success]` |
+| Next five, success then token read / Secret write failed, no output | 0 | Rebinds up to `LOOKUP_ATTEMPTS` | `test_one_bind_budget_survives_rename_and_policy_changes`; `test_values_bind_budget_is_unchanged` (bad-read, write-failure) |
+| Policy / enabled / non-connection edit | 0 | n/a | `test_policy_and_enabled_changes_keep_the_token_and_do_not_bind`; `test_one_bind_budget_survives_rename_and_policy_changes` |
+| 401 / authorize-403 / 500 / post-send timeout over later cycles | 1 then 0 | 1 then 0 | `test_one_bind_budget_survives_rename_and_policy_changes`; `test_values_bind_budget_is_unchanged` |
+| ConfigMap LIST 403 | 0 | n/a | `test_failed_list_is_not_absence_and_cannot_authorize_lookup[/configmaps]` |
+| Restart / another replica, missing output | 1 with new gate | 1 with new gate | `test_restart_has_a_new_bind_budget` (fresh gate simulation; no real process/replica measured) |
 
 ### 3.4 Surface and trust boundary
 
@@ -264,7 +308,7 @@ red/green behavior. Proposed cases:
 | One-bind safety | Real MockTransport authorize counts for success, 401, 500, post-write timeout, bad read, local write failure; rename/case/policy change cannot rebind. |
 | Runtime retirement | Conflicting values thread stops; DB row disabled/history retained; conflict removal restores effective values. |
 | API/UI/RBAC | Protected provenance, no token exposure, generated write 409, pending and generated cards at phone width, exact Role rules in both switch states and no Role when discovery off. |
-| Version/spec discipline | Existing chart version consistency and exact index count / S issue set; S5 row/header specified with no named release numbers. |
+| Version/spec discipline | Existing chart version consistency and exact index count / S issue set; S5 row/header app 0.34.0 / chart 0.55.0; S4c moved to the following minors. |
 
 Additional cases cover write/discovery switches before login, disabled pending entries, password
 rotation rearming the same gate, connection edits waiting for a fresh inventory, and displaced
@@ -480,6 +524,20 @@ def load_settings(path: str | Path) -> Settings:
 New text:
 
 ```python
+def _is_host_api(url: str, host: ClusterConfig) -> bool:
+    """The controller's DNS aliases or the values host's scheme/host/effective port."""
+    from urllib.parse import urlsplit
+
+    def endpoint(value):
+        parts = urlsplit(value)
+        return (parts.scheme, (parts.hostname or "").lower().rstrip("."),
+                parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80))
+
+    declared = endpoint(url)
+    return declared[1] in {"kubernetes.default.svc", "kubernetes.default.svc.cluster.local",
+                           "kubernetes.default"} or declared == endpoint(host.api_url)
+
+
 def parse_cluster_entries(entries: list, path: str | Path, *, remote_host: ClusterConfig | None = None) -> list[ClusterConfig]:
     """One values-shaped stanza parser; a runtime ConfigMap supplies its already-known host."""
     known = set(VALUES_CLUSTER_KEYS)
@@ -502,7 +560,7 @@ def parse_cluster_entries(entries: list, path: str | Path, *, remote_host: Clust
                 raise ConfigError(f"{where}: a ConfigMap may not carry a credential reference")
             if entry.get("dashboardController") or entry.get("name") == remote_host.name:
                 raise ConfigError(f"{where}: the host is declared only in values")
-            if str(entry.get("apiUrl", "")).rstrip("/") == "https://kubernetes.default.svc":
+            if _is_host_api(str(entry.get("apiUrl", "")), remote_host):
                 raise ConfigError(f"{where}: the host is declared only in values")
             if entry.get("saTokenLookup") is not True:
                 raise ConfigError(f"{where}: a ConfigMap needs saTokenLookup: true")
@@ -1367,8 +1425,6 @@ def discover_onboarding(host_client, namespace: str, *, settings, mutate: bool):
             name = str(raw_name) if raw_name is not None else None  # same coercion as the values parser
             if isinstance(name, str) and _NAME.fullmatch(name):
                 reserved.add((cm, uid, name))
-                if name != host.name:
-                    authors.setdefault(name, []).append(source)
             else:
                 # Cannot identify which previous stanza this malformed entry replaced.
                 uncertain.add(cm)
@@ -1381,6 +1437,7 @@ def discover_onboarding(host_client, namespace: str, *, settings, mutate: bool):
                                         "invalid values-shaped stanza: check name/apiUrl, known keys, booleans, TLS and policy; "
                                         "use saTokenLookup: true, no credential or token reference, and no host declaration"))
                 continue
+            authors.setdefault(cluster.name, []).append(source)
             declarations[source] = dataclasses.replace(cluster, source=source, onboarding=(cm, uid, digest))
 
     # Values/ConfigMap duplicates load neither. Protect the values host before considering duplicates.
@@ -1501,6 +1558,7 @@ from __future__ import annotations
 import base64
 import copy
 import dataclasses
+import json
 import threading
 
 import httpx
@@ -1547,12 +1605,18 @@ class Host(_Host):
         self.lists.append((path, params))
         if path.endswith(self.fail_list or "never"):
             raise ClusterError("forbidden", "HTTP 403 on inventory")
-        if path.endswith("/configmaps"):
-            assert params == {"labelSelector": CONFIG_SELECTOR}
-            return copy.deepcopy([m for m in self.maps if m["metadata"]["labels"].get(CONFIG_TYPE_LABEL) in ("onboard", "sideload")])
-        assert path == "/api/v1/namespaces/ns/secrets" and params == {"labelSelector": LABEL_SELECTOR}
-        return copy.deepcopy([s for s in self.secrets.values()
-                              if s.get("metadata", {}).get("labels", {}).get("groupsync-dashboard.io/secret-type") == "cluster"])
+        objects = self.maps if path.endswith("/configmaps") else self.secrets.values()
+        selector = params.get("labelSelector", "")
+        if not selector:
+            return copy.deepcopy(list(objects))
+        if " in " in selector:
+            key, values = selector.split(" in ", 1)
+            allowed = {value.strip() for value in values.strip("()").split(",")}
+        else:
+            key, value = selector.split("=", 1)
+            allowed = {value}
+        return copy.deepcopy([obj for obj in objects
+                              if obj.get("metadata", {}).get("labels", {}).get(key.strip()) in allowed])
 
     def _send(self, client, method, path, *, json=None, secrets=()):
         self.mutations.append((method, path, copy.deepcopy(json)))
@@ -1626,8 +1690,11 @@ def test_values_and_configmap_call_the_same_parser(tmp_path, monkeypatch):
     path = tmp_path / "values.yaml"
     path.write_text(yaml.safe_dump({"clusters": [home, STANZA]}))
     values = load_settings(path)
-    _, clusters, findings, _ = cycle(Host())
-    assert not findings and calls[0] is None and calls[1].name == "host"
+    runtime_path = tmp_path / "runtime-values.yaml"
+    runtime_path.write_text(yaml.safe_dump({"clusters": [home]}))
+    runtime = load_settings(runtime_path)
+    _, clusters, findings, _ = cycle(Host(), runtime)
+    assert not findings and calls[0] is None and calls[1] is None and calls[2] is runtime.host_cluster()
     remote, = clusters
     assert dataclasses.replace(remote, source="values", onboarding=()) == values.clusters[1]
 
@@ -1667,7 +1734,7 @@ def test_label_mismatch_is_unclaimed_and_multiple_maps_are_one_list():
     assert len(host.lists) == 2
 
 
-@pytest.mark.parametrize("duplicate", ["values", "map", "same-map", "secret", "invalid-map"])
+@pytest.mark.parametrize("duplicate", ["values", "map", "same-map", "secret"])
 def test_every_conflicting_declaration_is_a_finding_and_none_loads(duplicate):
     host = Host()
     s = settings()
@@ -1675,9 +1742,8 @@ def test_every_conflicting_declaration_is_a_finding_and_none_loads(duplicate):
         s.clusters.append(ClusterConfig("rnd", API, token_env="X"))
     elif duplicate == "same-map":
         host.maps = [cm([STANZA, STANZA])]
-    elif duplicate in ("map", "invalid-map"):
-        extra = {"unknown": True} if duplicate == "invalid-map" else {}
-        host.maps.append(cm([{**STANZA, **extra}], name="second", uid="cm-2"))
+    elif duplicate == "map":
+        host.maps.append(cm(name="second", uid="cm-2"))
     else:
         host.secrets["human"] = _as_stored(secret_object(CreateRequest("rnd", API, "bearerToken", token=SA_TOKEN), "ns"))
         host.secrets["human"]["metadata"]["name"] = "human"
@@ -1788,19 +1854,31 @@ def test_policy_and_enabled_changes_keep_the_token_and_do_not_bind(wire):
     assert [m[0] for m in host.mutations] == ["POST", "PUT"] and len(wire.authorize) == 1
 
 
-@pytest.mark.parametrize("answer", ["success", "401", "500", "timeout", "bad-read", "write-failure"])
+@pytest.mark.parametrize("answer", ["success", "401", "403", "500", "timeout", "bad-read", "write-failure"])
 def test_one_bind_budget_survives_rename_and_policy_changes(wire, answer):
     host = Host(); s, clusters, _, _ = cycle(host); cluster, = clusters
     gate = CredentialGate()
     if answer == "401": wire.answers = [refused_401()]
+    if answer == "403": wire.answers = [httpx.Response(403)]
     if answer == "500": wire.answers = [httpx.Response(500)]
     if answer == "timeout": wire.answers = [lambda r: httpx.ReadTimeout("lost after send")]
     if answer == "bad-read": wire.secret = httpx.Response(403, text=SA_TOKEN)
     if answer == "write-failure": host.refuse = True
     try:
         lookup(cluster, s, host, own_namespace="ns", gate=gate, sleep=lambda _: None)
-    except LookupRefused:
+    except LookupRefused as error:
         assert answer != "success"
+        if answer == "403":
+            assert gate.refused(API, USER, PASSWORD) and "phase=credential" in error.detail
+    for _ in range(5):
+        _, current, _, _ = cycle(host, s)
+        if answer == "success":
+            assert current[0].credential_kind == "bearer"
+        else:
+            with pytest.raises(LookupRefused) as exc:
+                lookup(current[0], s, host, own_namespace="ns", gate=gate, sleep=lambda _: None)
+            assert exc.value.gated
+        assert len(wire.authorize) == 1
     wire.answers = [login_302()]
     moved = dataclasses.replace(cluster, name="renamed", source="configmap:new-name:9", visibility="self-only",
                                 api_url=API.replace("api.example", "API.Example"), onboarding=("new-name", "new-uid", "a" * 64))
@@ -1887,6 +1965,128 @@ def test_numeric_values_names_reserve_the_same_identity_as_quoted_names():
     assert not clusters and blocked == {"1"}
     assert len([f for f in findings if f.code == "duplicate-cluster-name"]) == 2
     assert not host.mutations
+
+
+@pytest.mark.parametrize("api", [
+    f"{scheme}://{name}{port}"
+    for name in ("kubernetes.default.svc", "kubernetes.default.svc.cluster.local", "kubernetes.default")
+    for scheme in ("http", "https") for port in ("", ":443", ":6443")
+] + ["https://KUBERNETES.DEFAULT.SVC.:8443"])
+def test_in_cluster_url_aliases_are_host_and_do_not_bind(api, wire):
+    with pytest.raises(ConfigError, match="host is declared only in values"):
+        parse_cluster_entries([{**STANZA, "apiUrl": api}], "configmap", remote_host=settings().host_cluster())
+    host = Host([cm([{**STANZA, "apiUrl": api}])])
+    _, clusters, findings, _ = cycle(host)
+    assert not clusters and not host.mutations and not wire.requests
+    assert any(f.code == "onboarding-invalid" for f in findings)
+
+
+@pytest.mark.parametrize("host_url,api", [
+    ("https://api.host.example", "https://API.HOST.EXAMPLE:443/"),
+    ("https://api.host.example:6443", "https://api.host.example:6443/"),
+    ("http://api.host.example", "http://api.host.example:80"),
+])
+def test_values_host_endpoint_is_refused(host_url, api, wire):
+    s = settings()
+    s.clusters[0] = dataclasses.replace(s.clusters[0], api_url=host_url)
+    with pytest.raises(ConfigError, match="host is declared only in values"):
+        parse_cluster_entries([{**STANZA, "apiUrl": api}], "configmap", remote_host=s.host_cluster())
+    _, clusters, findings, _ = cycle(Host([cm([{**STANZA, "apiUrl": api}])]), s)
+    assert not clusters and not wire.requests
+    assert any(f.code == "onboarding-invalid" for f in findings)
+
+
+@pytest.mark.parametrize("host_url", ["https://kubernetes.default.svc", "https://api.example.com:443",
+                                     "http://api.example.com:6443"])
+def test_external_url_of_same_cluster_is_allowed(host_url, wire):
+    # shared-rnd intentionally uses its external API even when it is the controller's physical cluster.
+    s = settings()
+    s.clusters[0] = dataclasses.replace(s.clusters[0], api_url=host_url)
+    host = Host([cm([{**STANZA, "name": "shared-rnd"}])])
+    generated(host, s)
+    assert "gsd-cluster-shared-rnd" in host.secrets and len(wire.authorize) == 1
+
+
+def test_insecure_configmap_is_accepted_and_secret_preserves_tls_choice(wire):
+    host = Host([cm([{**STANZA, "insecureSkipVerify": True}])])
+    generated(host)
+    config = json.loads(base64.b64decode(host.secrets["gsd-cluster-rnd"]["data"]["config"]))
+    assert config["tlsClientConfig"]["insecure"] is True
+    assert len(wire.authorize) == 1
+
+
+def test_invalid_configmap_stanza_does_not_stop_values(tmp_path, monkeypatch):
+    host = Host([cm([{**STANZA, "unknown": True}])])
+    s = settings(ClusterConfig("rnd", API, token_env="X"))
+    poller = Poller(Store(str(tmp_path / "invalid.db")), s)
+    poller._cluster_stops["rnd"] = threading.Event()
+    monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
+    monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: host)
+    monkeypatch.setattr(poller, "_start_cluster_thread", lambda _: None)
+    _, _, findings, blocked = cycle(host, s)
+    poller._discover_once(); poller._reconcile_threads()
+    assert blocked == set() and not poller._cluster_stops["rnd"].is_set()
+    assert s.cluster("rnd").source == "values"
+    assert any(f.code == "onboarding-invalid" for f in findings)
+    assert not any(f.code == "duplicate-cluster-name" for f in findings)
+
+
+@pytest.mark.parametrize("feed", ["configmap", "values"])
+@pytest.mark.parametrize("failure", ["connect", "tls"])
+def test_pre_write_failure_can_retry(feed, failure, wire):
+    host = Host(); s, clusters, _, _ = cycle(host)
+    cluster = clusters[0] if feed == "configmap" else dataclasses.replace(clusters[0], onboarding=(), source="values")
+    gate = CredentialGate()
+    def before_write(request):
+        import ssl
+        if failure == "tls":
+            raise httpx.ConnectError("certificate verify failed") from ssl.SSLCertVerificationError("untrusted")
+        raise httpx.ConnectError("connection refused")
+    wire.answers = [before_write] * 10
+    with pytest.raises(LookupRefused):
+        lookup(cluster, s, host, own_namespace="ns", gate=gate, sleep=lambda _: None)
+    assert not gate.refused(API, USER, PASSWORD)
+    attempted = len(wire.authorize)
+    wire.answers = [login_302()]
+    lookup(cluster, s, host, own_namespace="ns", gate=gate, sleep=lambda _: None)
+    assert len(wire.authorize) == attempted + 1 and "gsd-cluster-rnd" in host.secrets
+
+
+@pytest.mark.parametrize("feed", ["configmap", "values"])
+def test_restart_has_a_new_bind_budget(feed, wire):
+    host = Host(); s, clusters, _, _ = cycle(host)
+    cluster = clusters[0] if feed == "configmap" else dataclasses.replace(clusters[0], onboarding=(), source="values")
+    wire.answers = [login_302(), login_302()]
+    for _ in range(2):
+        # A process/replica gets a fresh gate; no durable claim exists in S5.
+        wire.secret = httpx.Response(403)
+        with pytest.raises(LookupRefused):
+            lookup(cluster, s, host, own_namespace="ns", gate=CredentialGate(), sleep=lambda _: None)
+    assert len(wire.authorize) == 2
+
+
+@pytest.mark.parametrize("answer", ["success", "401", "403", "500", "timeout", "bad-read", "write-failure"])
+def test_values_bind_budget_is_unchanged(tmp_path, monkeypatch, wire, answer):
+    from gsd.fleetlookup import LOOKUP_ATTEMPTS
+    host = Host([])
+    s = settings(parse_cluster_entries([STANZA], "values", remote_host=settings().host_cluster())[0])
+    poller = Poller(Store(str(tmp_path / "values.db")), s)
+    monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
+    monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: host)
+    if answer == "401": wire.answers = [refused_401()]
+    if answer == "403": wire.answers = [httpx.Response(403)]
+    if answer == "500": wire.answers = [httpx.Response(500)]
+    if answer == "timeout": wire.answers = [lambda r: httpx.ReadTimeout("lost after send")]
+    if answer == "bad-read": wire.secret = httpx.Response(403)
+    if answer == "write-failure": host.refuse = True
+    if answer in ("bad-read", "write-failure"):
+        wire.answers = [login_302() for _ in range(LOOKUP_ATTEMPTS)]
+    for _ in range(6):  # first cycle, then the next five, with the retry delay elapsed
+        for state in poller._lookups.values():
+            state.not_before = 0
+        poller._discover_once(); poller._retrieve_pending()
+    expected = min(6, LOOKUP_ATTEMPTS) if answer in ("bad-read", "write-failure") else 1
+    assert len(wire.authorize) == expected
 ```
 
 ### Block 32 — `local-development/gsd/clusterconfig/writer.py`
@@ -2381,75 +2581,75 @@ New text:
 
 ### Block 57 — `charts/group-sync-dashboard/Chart.yaml`
 
-Orchestrator resolves the next minor at merge before application; #353 owns the competing version assignment. These tokens are not deployable versions.
+Phase 2 reads app 0.33.0 / chart 0.54.0 after #360 and assigns the next minor (operator, 2026-09-25).
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
 ```yaml
-version: 0.53.1
+version: 0.54.0
 ```
 
 New text:
 
 ```yaml
-# SPEC_S5 (#293): ConfigMap onboarding and namespaced read RBAC; the next minor at merge.
-version: "the next minor at merge"
+# SPEC_S5 (#293): ConfigMap onboarding and namespaced read RBAC; minor release.
+version: 0.55.0
 ```
 
 ### Block 58 — `charts/group-sync-dashboard/Chart.yaml`
 
-Orchestrator resolves the next minor at merge before application; #353 owns the competing version assignment. These tokens are not deployable versions.
+Phase 2 reads app 0.33.0 / chart 0.54.0 after #360 and assigns the next minor (operator, 2026-09-25).
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
 ```yaml
-appVersion: "0.32.0"
+appVersion: "0.33.0"
 ```
 
 New text:
 
 ```yaml
-appVersion: "the next minor at merge"
+appVersion: "0.34.0"
 ```
 
 ### Block 59 — `local-development/pyproject.toml`
 
-Orchestrator resolves the next minor at merge before application; #353 owns the competing version assignment. These tokens are not deployable versions.
+Phase 2 reads app 0.33.0 / chart 0.54.0 after #360 and assigns the next minor (operator, 2026-09-25).
 
 <!-- block: local-development/pyproject.toml | edit -->
 
 Old text:
 
 ```text
-version = "0.32.0"
+version = "0.33.0"
 ```
 
 New text:
 
 ```text
-version = "the next minor at merge"
+version = "0.34.0"
 ```
 
 ### Block 60 — `local-development/gsd/__init__.py`
 
-Orchestrator resolves the next minor at merge before application; #353 owns the competing version assignment. These tokens are not deployable versions.
+Phase 2 reads app 0.33.0 / chart 0.54.0 after #360 and assigns the next minor (operator, 2026-09-25).
 
 <!-- block: local-development/gsd/__init__.py | edit -->
 
 Old text:
 
 ```python
-__version__ = "0.32.0"
+__version__ = "0.33.0"
 ```
 
 New text:
 
 ```python
-__version__ = "the next minor at merge"
+__version__ = "0.34.0"
 ```
 
 ### Block 61 — `docs/CLUSTER_STANZA.md`
@@ -2486,6 +2686,7 @@ Extra data keys, `binaryData`, duplicate YAML keys and malformed YAML are refuse
 `tokenFile` or `tokenEnv` belongs in this feed. `saTokenLookup: true` is required; `userSelfLogin` is not
 implemented here. The host remains values-only. Unknown stanza keys are refused, including `labels`
 (the values stanza does not accept it). Custom ConfigMap metadata labels do not become Secret labels.
+`insecureSkipVerify: true` is accepted and preserved in the generated Secret.
 Use the existing TLS/policy keys; a `caBundleFile` must already exist in the dashboard container and
 cover the API and OAuth hosts. The generated Secret is also validated before a login is attempted.
 
@@ -2494,9 +2695,10 @@ requires `clusterConfig.secrets.writes.enabled`; ConfigMaps themselves are never
 The namespace's ConfigMap writers can initiate fleet credential lookups: reserve that permission for
 platform operators. The existing fleet account/password and remote token-reader grants still apply.
 
-A name repeated in values and a ConfigMap, within one map, across maps, or in an unrelated labelled
+A name repeated in values and a valid ConfigMap stanza, within one map, across maps, or in an unrelated labelled
 Secret loads neither declaration and produces a finding for each. A ConfigMap cannot disable or
 replace the values host: host declarations are refused before conflict resolution. Existing
+An invalid stanza reserves its name only to hold cleanup; it never blocks a values cluster.
 Secret-versus-values precedence outside this feed is unchanged.
 
 Edit or remove the source stanza. Policy and `enabled` edits reuse the credential; connection changes
@@ -2505,11 +2707,14 @@ label removal and UID replacement) repeatedly delete only outputs owned by this 
 stays. Failed cleanup remains a finding and is retried, including after restart. Invalid documents
 hold their outputs without polling or deleting them; a failed inventory read keeps the prior fleet.
 
-The ConfigMap trigger has at most one bind per target/account/password per process. A bound failure,
-or successful login followed by a read/write failure, does not get another bind when a stanza is
-renamed or edited. A missing output after that budget was spent stays pending with a finding; fix the
+The ConfigMap trigger marks the existing process-lifetime CredentialGate on a bound
+login failure and on a successful session (before the token read). After that mark,
+the same canonical target/account/password is not sent again in this process, including
+after a rename, policy edit, or a later read/write failure. A TLS or connect failure
+before the password is written may bind again. A restart or another replica binds
+again. There is no durable or replica-shared claim until #285. A missing output after that budget was spent stays pending with a finding; fix the
 cause and rotate the credential or deliberately restart after checking the account. Routine policy
-edits need neither. There is no durable or replica-shared claim until #285. Do not delete an output as
+edits need neither. Do not delete an output as
 a way to remove the declaration; the source is the record. Turning discovery off suspends all cleanup;
 remove declarations and wait for cleanup before disabling the feed.
 
@@ -2538,8 +2743,11 @@ lookup/discovery/poll duration; the earlier measured Secret timings below are no
 
 Cleanup compares the current inventories every cycle. It never relies on a one-time removed-name
 set: deleting a stanza, its map, its label or replacing the map UID retires its generated output, and
-a failed deletion is retried after the next LIST, also after restart. Only generator-marked Secrets
-with matching cluster identity are eligible; UID/resourceVersion preconditions protect replacements.
+a failed deletion is retried after the next LIST, also after restart. Eligibility requires the
+`secret-type: cluster` label, `managed-by: configmap-onboarding`, `token-source: remote-lookup`,
+source ConfigMap name and UID, a 64-hex connection hash, and data.name matching the deterministic
+`gsd-cluster-<name>` Secret name. A re-read checks ownership and UID/resourceVersion, and DELETE
+carries both preconditions to protect replacements.
 Writes off or a nonleader causes no mutation. Displaced outputs stop polling and have a standing
 cleanup finding while retained. An invalid document is not evidence of removal. A failed LIST keeps
 the previous registry and prevents retrieval from stale intent until both inventories succeed.
@@ -2567,6 +2775,14 @@ contains `data.clusters.yaml`, whose `clusters:` list is values-shaped and uses 
 The manifest is in `docs/CLUSTER_STANZA.md`. The #284 lookup reads the remote token and the existing
 writer creates `gsd-cluster-<name>` with `groupsync-dashboard.io/secret-type: cluster`. Nobody supplies
 that token in the ConfigMap. Fleet account/password settings and the remote grants are unchanged.
+
+`insecureSkipVerify: true` is accepted, exactly as in values; the generated Secret carries that
+choice as `tlsClientConfig.insecure: true`. Whoever can write a labelled ConfigMap in the release
+namespace can direct the fleet account's bind to a host of their choosing, with or without TLS
+verification. ConfigMap write access there is therefore trusted like the fleet credential, and the
+platform team must keep it restricted. This is the operator's final ruling of 2026-09-25:
+"I need this feature badly. So insecure is required in configmap."
+
 
 These generated Secrets carry `groupsync-dashboard.io/managed-by: configmap-onboarding`, plus the
 existing `token-source: remote-lookup`, source namespace/ServiceAccount and lookup account. Three
@@ -2648,7 +2864,7 @@ New text:
 
 ### Block 66 — `docs/CHANGELOG.md`
 
-Unreleased entry includes the behavior, ownership, RBAC and safety contract, with no reserved version numbers.
+Unreleased entry records app 0.34.0 / chart 0.55.0 and the precise post-mark bind budget (Grok C8).
 
 <!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 
@@ -2661,9 +2877,12 @@ Unreleased entry includes the behavior, ownership, RBAC and safety contract, wit
   generated Secrets have distinct ownership, and confirmed removals are pruned on every cycle
   until successful. Malformed/incomplete inventories never authorize deletion. ConfigMaps receive
   only namespaced `get/list/watch`; all Secret mutations keep the existing writes switch. The
-  ConfigMap trigger shares #284's credential gate and spends at most one bind per target/account/
-  password per process, including a successful bind followed by a failed read/write. App and chart
-  take their next minor bumps at the PR, assigned at merge alongside #353.
+  ConfigMap trigger shares #284's credential gate: after a bound failure or successful session,
+  the same canonical target/account/password is not sent again in that process, including after a
+  later read/write failure. TLS/connect failures before the password write may retry; a restart or
+  another replica has a fresh gate until #285. `insecureSkipVerify: true` is accepted and preserved;
+  ConfigMap write access in the release namespace is trusted like the fleet credential. This is
+  app 0.34.0, chart 0.55.0.
 ```
 
 ### Block 67 — `local-development/tests/test_clusterconfig_logging.py`
@@ -2923,3 +3142,77 @@ New text:
         for n, line in enumerate(md.read_text().split("\n"), start=1)
 ```
 
+
+### Block 78 — `docs/specs/SPEC_S4c_credential_lifecycle.md`
+
+Move the deferred lifecycle release beyond S5 (operator, 2026-09-25).
+
+<!-- block: docs/specs/SPEC_S4c_credential_lifecycle.md | edit -->
+
+Old text:
+
+```text
+| Version on release | app 0.34.0, chart 0.55.0 |
+```
+
+New text:
+
+```text
+| Version on release | app 0.35.0, chart 0.56.0 |
+```
+
+### Block 79 — `docs/specs/README.md`
+
+Keep the release cell equal to the spec header.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.34.0, chart 0.55.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
+```
+
+New text:
+
+```text
+| S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.35.0, chart 0.56.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
+```
+
+### Block 80 — `docs/specs/README.md`
+
+Keep the release cell equal to the spec header.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| S5 | [`SPEC_S5_configmap_onboarding.md`](SPEC_S5_configmap_onboarding.md) — ConfigMap onboarding: credential-free cluster declarations, remote lookup and owned Secret reconciliation | S — cluster configuration | — | app and chart minor bumps at the PR | [#293](https://github.com/ephico2real2/group-sync-dashboard/issues/293) | specified |
+```
+
+New text:
+
+```text
+| S5 | [`SPEC_S5_configmap_onboarding.md`](SPEC_S5_configmap_onboarding.md) — ConfigMap onboarding: credential-free cluster declarations, remote lookup and owned Secret reconciliation | S — cluster configuration | — | app 0.34.0, chart 0.55.0 | [#293](https://github.com/ephico2real2/group-sync-dashboard/issues/293) | specified |
+```
+
+### Block 81 — `local-development/tests/test_clusterconfig.py`
+
+The existing exact API row assertion includes the additive nullable provenance field (block 37).
+Phase-2 hermetic test failure identified this missing expectation; retain the full shape assertion.
+
+<!-- block: local-development/tests/test_clusterconfig.py | edit -->
+
+Old text:
+
+```python
+                              "status": None, "last_poll": None, "error": None, "retired": False}
+```
+
+New text:
+
+```python
+                              "status": None, "last_poll": None, "error": None, "retired": False,
+                              "onboarding_configmap": None}
+```

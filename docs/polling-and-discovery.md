@@ -1,5 +1,35 @@
 # Polling, cluster discovery, and forcing a refresh
 
+## ConfigMap discovery and cleanup (#293, SPEC_S5)
+
+The runtime sources now include release-namespace ConfigMaps selected by
+`groupsync-dashboard.io/config-type in (onboard,sideload)`. Each has `data.clusters.yaml` containing
+the same `clusters:` stanzas as values, with `saTokenLookup: true` and no credential or token reference.
+The manifest and refusal rules are in `docs/CLUSTER_STANZA.md`.
+
+One complete paged ConfigMap LIST and one complete labelled Secret LIST precede reconciliation on the
+existing binding cadence and at startup. Both use the host client, the release namespace and their
+own selector. This is polling, not a watch; the read grant retains `get/list/watch` to match the Secret
+feed. A successful lookup wakes ordinary Secret discovery. GitOps additions wait for the cadence plus
+lookup/discovery/poll duration; the earlier measured Secret timings below are not a ConfigMap measurement.
+
+Cleanup compares the current inventories every cycle. It never relies on a one-time removed-name
+set: deleting a stanza, its map, its label or replacing the map UID retires its generated output, and
+a failed deletion is retried after the next LIST, also after restart. Eligibility requires the
+`secret-type: cluster` label, `managed-by: configmap-onboarding`, `token-source: remote-lookup`,
+source ConfigMap name and UID, a 64-hex connection hash, and data.name matching the deterministic
+`gsd-cluster-<name>` Secret name. A re-read checks ownership and UID/resourceVersion, and DELETE
+carries both preconditions to protect replacements.
+Writes off or a nonleader causes no mutation. Displaced outputs stop polling and have a standing
+cleanup finding while retained. An invalid document is not evidence of removal. A failed LIST keeps
+the previous registry and prevents retrieval from stale intent until both inventories succeed.
+
+The existing discovery transition logger announces new/cleared findings. New codes are
+`onboarding-invalid`, `onboarding-cleanup-pending`, and `onboarding-ownership-conflict`; duplicate
+sources use `duplicate-cluster-name`. Successful policy writes use `cluster-secret-updated` and
+cleanup uses `cluster-secret-deleted`. The existing lookup events and gate remain the credential path.
+Neither policy edits nor cleanup authenticates to a remote cluster.
+
 How the dashboard decides *when* to read a cluster, how a cluster enters the fleet in the first
 place, and what can and cannot be made to happen sooner. Companion to
 `reference-architecture.md`'s §3, which covers what a poll *does*; this covers what makes one
@@ -29,7 +59,7 @@ stands by and re-checks in 5s rather than one poll interval, so a failover costs
 
 ## 2. How a cluster enters the fleet
 
-Two sources, and the difference decides how fast a change takes effect.
+One startup source and two runtime feeds; the difference decides how fast a change takes effect.
 
 **A values stanza** (`clusters:` in the values file) is read at startup. Changing one means a Helm
 upgrade and a restart.

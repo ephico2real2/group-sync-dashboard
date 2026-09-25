@@ -1,5 +1,44 @@
 # Cluster credentials: how a connection is made, how it breaks, how to get it back
 
+## Credential-free onboarding ConfigMaps (#293, SPEC_S5)
+
+A release-namespace ConfigMap labelled `groupsync-dashboard.io/config-type: onboard` or `sideload`
+contains `data.clusters.yaml`, whose `clusters:` list is values-shaped and uses `saTokenLookup: true`.
+The manifest is in `docs/CLUSTER_STANZA.md`. The #284 lookup reads the remote token and the existing
+writer creates `gsd-cluster-<name>` with `groupsync-dashboard.io/secret-type: cluster`. Nobody supplies
+that token in the ConfigMap. Fleet account/password settings and the remote grants are unchanged.
+
+`insecureSkipVerify: true` is accepted, exactly as in values; the generated Secret carries that
+choice as `tlsClientConfig.insecure: true`. Whoever can write a labelled ConfigMap in the release
+namespace can direct the fleet account's bind to a host of their choosing, with or without TLS
+verification. ConfigMap write access there is therefore trusted like the fleet credential, and the
+platform team must keep it restricted. This is the operator's final ruling of 2026-09-25:
+"I need this feature badly. So insecure is required in configmap."
+
+
+These generated Secrets carry `groupsync-dashboard.io/managed-by: configmap-onboarding`, plus the
+existing `token-source: remote-lookup`, source namespace/ServiceAccount and lookup account. Three
+additional annotations record `groupsync-dashboard.io/source-configmap`,
+`groupsync-dashboard.io/source-configmap-uid`, and `groupsync-dashboard.io/connection-hash`.
+The hash covers connection inputs and declared trust, never a password or token; it excludes policy.
+They are bookkeeping markers inside the trusted namespace, not authentication or a tamper-proof claim.
+UI and values-lookup Secrets are not adopted. Removing the stanza removes only this generator's local
+copy; it does not revoke the remote ServiceAccount token or delete its source Secret.
+
+Edit the source ConfigMap to change policy, disable or remove a generated cluster. The tab names it
+and does not offer Rotate/Delete for a generated row; the API refuses those operations too. The
+reconciler preserves a token through policy edits. Connection edits prune the old output, then await
+a new lookup. Cleanup repeats until successful and reports every retained displaced credential.
+
+The existing process-lifetime `CredentialGate` is shared by this trigger. ConfigMap logins also mark
+success before the token read: a later failed read/write cannot trigger a second bind for the same
+canonical target/account/password. Renaming or relabelling a ConfigMap, changing policy or removing
+and re-adding an entry does not reset it. A missing token output after that budget was spent remains
+pending, with a finding; correct the cause before rotating the password or deliberately restarting.
+The baseline values/Secret trigger still gates bound login failures as #284 specifies; this does not
+claim that its successful logins were globally one-shot. Cross-process and cross-target account-wide
+lockout protection is #285's work, not measured or implemented by this feature. Keep one replica.
+
 Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
 administrator recovers a cluster whose credential has gone bad.

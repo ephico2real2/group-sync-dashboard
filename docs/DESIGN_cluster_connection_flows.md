@@ -1,5 +1,12 @@
 # How a cluster connects — the six flows
 
+ConfigMap onboarding (SPEC_S5, #293) precedes the labelled-Secret flow below. A complete
+release-namespace ConfigMap/Secret inventory selects credential-free declarations, then the existing
+lookup generates a Secret. The generator emits `cluster-secret-updated` for policy changes and
+`cluster-secret-deleted` for confirmed removal; failures are findings announced by the existing
+discovery transition logger. See `docs/specs/SPEC_S5_configmap_onboarding.md` for the ownership,
+conflict and retry contract.
+
 The cluster-configuration module (#230) decides, for every cluster in the fleet, three things a
 reader eventually has to ask about: where its configuration came from, what authenticates it, and
 what its API server's certificate is checked against. This document is the picture of those

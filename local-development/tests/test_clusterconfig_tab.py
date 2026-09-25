@@ -474,6 +474,28 @@ class TestApi:
             "credential": {"kind": "bearerToken", "token": TOKEN},
             "tls": {"mode": "trustedBundle"}, "visibility": "self-only", "identity": "none", "labels": {"environment": "prod"}}
 
+    def test_configmap_provenance_and_findings_are_protected_and_generated_writes_refuse(self, rig):
+        import dataclasses
+        from gsd.clusterconfig import CONFIG_SELECTOR
+        c, app, host, settings = rig
+        east, = settings.cluster_registry.discovered()
+        east = dataclasses.replace(east, onboarding=("fleet", "uid-1", "a" * 64))
+        pending = ClusterConfig("pending", "https://api.pending", sa_token_lookup=True,
+                                source="configmap:fleet:1", onboarding=("fleet", "uid-1", "b" * 64))
+        settings.cluster_registry.replace([east, pending], [Finding("configmap:fleet:2", "onboarding-invalid", "invalid stanza")], at="now")
+        assert c.get("/api/clusterconfigs", headers=H("alice")).status_code == 403
+        payload = c.get("/api/clusterconfigs", headers=H("root")).json()
+        assert payload["configmaps"]["label"] == CONFIG_SELECTOR
+        rows = {r["id"]: r for r in payload["clusters"]}
+        assert rows["east"]["onboarding_configmap"] == "fleet"
+        assert rows["pending"]["source"] == "configmap:fleet:1"
+        assert payload["findings"][0]["secret"] == "configmap:fleet:2"
+        assert TOKEN not in json.dumps(payload)
+        for response in (c.put("/api/clusterconfigs/east/credential", json={"token": "replacement"}, headers=H("root")),
+                         c.delete("/api/clusterconfigs/east", headers=H("root"))):
+            assert response.status_code == 409 and "ConfigMap" in response.json()["detail"]
+        assert host.calls == []
+
     def test_every_write_is_the_manage_level_and_a_reader_without_it_is_refused(self, rig):
         c, *_ = rig
         assert c.post("/api/clusterconfigs", json=self.BODY, headers=H("alice")).status_code == 403
@@ -671,13 +693,15 @@ class TestApi:
 class TestChart:
     def test_the_writes_switch_is_off_by_default_and_on_adds_exactly_the_three_verbs(self):
         role = next(d for d in _render() if d.get("kind") == "Role" and d["metadata"]["name"].endswith("-cluster-secrets"))
-        assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch"]}]
+        assert role["rules"] == [{"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "list", "watch"]},
+                                 {"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch"]}]
         from test_chart_reporting import _config_data
         ok, out = _render_text()
         assert ok and _config_data(out)["clusterSecretsWritesEnabled"] is False
         role = next(d for d in _render("clusterConfig.secrets.writes.enabled=true")
                     if d.get("kind") == "Role" and d["metadata"]["name"].endswith("-cluster-secrets"))
-        assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch", "create", "update", "delete"]}]
+        assert role["rules"] == [{"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "list", "watch"]},
+                                 {"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch", "create", "update", "delete"]}]
         ok, out = _render_text(clusterConfig__secrets__writes__enabled="true")
         assert ok and _config_data(out)["clusterSecretsWritesEnabled"] is True
 

@@ -7010,9 +7010,31 @@ class TestClusterConfigPage:
         east = page.locator("#cc-cluster-east").inner_text()
         assert "bearerToken" in east and "trusted-bundle" in east and "environment=prod" in east and "remote-sar" in east
         assert "never polled" in east
-        assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
+        assert "No configuration findings" in page.locator("#cc-findings").inner_text()
         assert page.locator("#cc-cred-oauth").is_disabled() and "#119 P2, not built yet" in page.locator("#cc-oauth-reason").inner_text()
         assert not errors
+
+    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig):
+        import dataclasses
+        from gsd.clusterconfig.parser import Finding
+        from gsd.config import ClusterConfig
+        base, host, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        owner = ("fleet", "cm-uid", "a" * 64)
+        east = dataclasses.replace(east, onboarding=owner)
+        pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
+                                source="configmap:fleet:1", onboarding=owner)
+        settings.cluster_registry.replace([east, pending], [Finding("configmap:fleet:2", "onboarding-invalid", "invalid stanza")], at="now")
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-pending")
+        assert "ConfigMap fleet" in page.locator("#cc-cluster-pending").inner_text()
+        assert "ConfigMap fleet" in page.locator("#cc-cluster-east").inner_text()
+        assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 0
+        assert "configmap:fleet:2" in page.locator("#cc-findings").inner_text()
+        assert "onboard,sideload" in page.locator("#cc-head").inner_text()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
     def test_the_form_offers_remote_sar_and_starts_on_the_default_pair(self, page, cc_rig):
         """SPEC_D2b §3.3: the form starts on the pair a remote that states nothing resolves to, and offers
@@ -7238,7 +7260,7 @@ class TestClusterConfigPage:
         base, host, settings = cc_rig
         _open_as(page, base, "root")
         page.click("#tab-clusters"); page.wait_for_selector("#cc-findings")
-        assert "No malformed Secrets" in page.locator("#cc-findings").inner_text()
+        assert "No configuration findings" in page.locator("#cc-findings").inner_text()
         settings.cluster_registry.replace(settings.cluster_registry.discovered(),
                                           [Finding(secret="gsd-cluster-bad", code="config-not-json", detail="Expecting value: line 1 column 1")],
                                           at="2026-09-20T16:07:00Z")

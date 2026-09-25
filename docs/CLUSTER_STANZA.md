@@ -1,15 +1,73 @@
 # The cluster stanza — every accepted combination, measured
 
+## ConfigMap onboarding (#293, SPEC_S5)
+
+The existing measured values tables below remain the values contract. The additional runtime authoring
+path is a ConfigMap in the release namespace; its stanzas call the same parser as values. Example:
+
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: cluster-onboarding
+      namespace: group-sync-dashboard
+      labels:
+        groupsync-dashboard.io/config-type: onboard  # sideload is an exact synonym
+    data:
+      clusters.yaml: |
+        clusters:
+          - name: ocp-east
+            apiUrl: https://api.ocp-east.example.com:6443
+            saTokenLookup: true
+            enabled: true
+
+Use either `groupsync-dashboard.io/config-type: onboard` or `sideload`; any number of maps may match.
+`data.clusters.yaml` must contain only a `clusters` list; `clusters: []` intentionally removes all entries.
+Extra data keys, `binaryData`, duplicate YAML keys and malformed YAML are refused. No token, password,
+`tokenFile` or `tokenEnv` belongs in this feed. `saTokenLookup: true` is required; `userSelfLogin` is not
+implemented here. The host remains values-only. Unknown stanza keys are refused, including `labels`
+(the values stanza does not accept it). Custom ConfigMap metadata labels do not become Secret labels.
+`insecureSkipVerify: true` is accepted and preserved in the generated Secret.
+Use the existing TLS/policy keys; a `caBundleFile` must already exist in the dashboard container and
+cover the API and OAuth hosts. The generated Secret is also validated before a login is attempted.
+
+Both feeds share `clusterConfig.secrets.enabled`. Creating, updating or deleting generated Secrets
+requires `clusterConfig.secrets.writes.enabled`; ConfigMaps themselves are never written by the app.
+The namespace's ConfigMap writers can initiate fleet credential lookups: reserve that permission for
+platform operators. The existing fleet account/password and remote token-reader grants still apply.
+
+A name repeated in values and a valid ConfigMap stanza, within one map, across maps, or in an unrelated labelled
+Secret loads neither declaration and produces a finding for each. A ConfigMap cannot disable or
+replace the values host: host declarations are refused before conflict resolution. Existing
+An invalid stanza reserves its name only to hold cleanup; it never blocks a values cluster.
+Secret-versus-values precedence outside this feed is unchanged.
+
+Edit or remove the source stanza. Policy and `enabled` edits reuse the credential; connection changes
+retire and prune the prior output before another lookup. Confirmed removals (including map deletion,
+label removal and UID replacement) repeatedly delete only outputs owned by this generator. History
+stays. Failed cleanup remains a finding and is retried, including after restart. Invalid documents
+hold their outputs without polling or deleting them; a failed inventory read keeps the prior fleet.
+
+The ConfigMap trigger marks the existing process-lifetime CredentialGate on a bound
+login failure and on a successful session (before the token read). After that mark,
+the same canonical target/account/password is not sent again in this process, including
+after a rename, policy edit, or a later read/write failure. A TLS or connect failure
+before the password is written may bind again. A restart or another replica binds
+again. There is no durable or replica-shared claim until #285. A missing output after that budget was spent stays pending with a finding; fix the
+cause and rotate the credential or deliberately restart after checking the account. Routine policy
+edits need neither. Do not delete an output as
+a way to remove the declaration; the source is the record. Turning discovery off suspends all cleanup;
+remove declarations and wait for cleanup before disabling the feed.
+
 What a `clusters[]` entry in `values.yaml` may contain, what each combination does, and what is
 refused with which message. **Nothing here is written from reading the source**: every row was
 produced by rendering the chart with that stanza (`helm template`) and by loading the same stanza in
 the pod's own loader. The script is `local-development/tests/test_cluster_stanza_matrix.py`, which
 fails the build if the table below stops being true.
 
-There are three ways to declare a cluster and they are equal paths — the values stanza below, a
-labelled Secret (`docs/specs/SPEC_S1_cluster_secrets.md`), and the Cluster Configurations tab. The
-same keys mean the same thing in each. This document is the values path; the differences for a
-Secret are in [§6](#6-the-same-stanza-as-a-secret).
+There are four authoring paths: values, a labelled Secret, the Cluster Configurations tab, and
+ConfigMap onboarding (above). The values contract follows; Secret differences are in
+[§6](#6-the-same-stanza-as-a-secret). A ConfigMap calls the values parser with the additional
+remote-only and no-credential boundary described above.
 
 ## 1. The keys
 
