@@ -511,7 +511,12 @@ refresh-line people count and the Poller's hand-off of the settings' classifier,
 The guard also holds the stored `is_platform` flag's SQL comparisons (`is_platform = 0` / `= 1`) and its Python
 assignments (`["is_platform"] =`) under `gsd/`; a Python read of the flag (`r["is_platform"]`, `.get("is_platform")`), a
 dict-literal write (`"is_platform": …`) and a SELECT of the column are marked by hand and are not held by the regex
-(measured: six such reads under `gsd/` sit two lines below their marker — OB2, second pass of #361).
+(measured: six such reads under `gsd/` sit two lines below their marker — OB2, second pass of #361). The guard scans
+the `*.py` files under `gsd/` only (`test_platform_classification_marker.py`), so of the 61 marked lines it holds 36; the
+other 25 are kept by hand — the ten in `index.html`, `PlatformNamespaces.matches`'s own `def`, the `PlatformNamespaces()`
+default, the Poller's hand-off keyword, `derive_answer`'s default, the store's Group `LIKE 'system:%'` arm, the two
+column DDLs, `metrics.py`'s `FINDINGS`, the comment above the reports' omit, and the Python reads and dict-literal
+writes named above (measured by OB1-lite, Codex and OB2 on #360's `0199e21`).
 
 ### 3.11 Versions, chart documents, CHANGELOG, indexes
 
