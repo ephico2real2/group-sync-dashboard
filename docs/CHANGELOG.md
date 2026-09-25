@@ -10,6 +10,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **How to silence a legitimate grant, in the chart (chart 0.55.1).** `charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md` covers three things: the `rbac.ocp.io/config-source` label and the `rbac.ocp.io/unmanaged-exception` annotation, each with its `oc` command; what the platform rule silences without either (platform namespaces with `platformNamespaces.additional*`, platform users, OpenShift's three controller bindings); and what does not silence a grant. Documentation only.
+
 - **ConfigMap cluster onboarding (#293; SPEC_S5).** Commit credential-free `clusters:` stanzas in
   `data.clusters.yaml` on any release-namespace ConfigMap labelled
   `groupsync-dashboard.io/config-type: onboard` or `sideload`. The existing remote lookup creates

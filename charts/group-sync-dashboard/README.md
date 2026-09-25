@@ -60,6 +60,10 @@ A worked production file using these combinations:
 credential has gone bad — is in
 [`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file.
 
+**Silencing a legitimate grant** that the dashboard reports as unmanaged: the label and the annotation to put
+on the binding, and what the platform rule silences without either, are in
+[`docs/UNMANAGED_GRANT_EXCLUSIONS.md`](docs/UNMANAGED_GRANT_EXCLUSIONS.md).
+
 ### Image
 
 | Key | Default | Notes |
