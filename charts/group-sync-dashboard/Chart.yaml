@@ -233,7 +233,7 @@ type: application
 # reads ServiceAccount and User subjects and honours the same label on them (#353, SPEC_U1). The README and
 # the values comment say what the finding covers; no template changes.
 # SPEC_S5 (#293): ConfigMap onboarding and namespaced read RBAC; minor release.
-version: 0.55.0
+version: 0.55.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
