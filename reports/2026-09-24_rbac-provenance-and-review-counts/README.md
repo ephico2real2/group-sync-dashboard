@@ -2,8 +2,9 @@
 
 Captured on the CRC lab (OpenShift 4.22.7) against main `4f4c070`, application 0.32.0 and chart 0.53.1. It was
 deployed with `local-development/release-crc.sh --argocd`: Synced/Healthy, `4f4c070b08` verified in-pod, and the
-kept PVCs identical to the baseline. The scripts that ran and their raw output are in `walk/`; every number below
-is quoted from that output.
+kept PVCs identical to the baseline. The scripts that ran and their raw output are in `walk/`; every number in the
+sections below is quoted from that output, except the Logins dates, which are read from
+`screenshots/346-logins-banner.png`.
 
 #312's follow-up, #354, was not deployed when this was captured. It changes only the check that decides whether a
 policy operator is in use, and the lab has one in use, so no number here depends on it.
@@ -25,7 +26,8 @@ From `walk/verify-fixes.out`:
 
 - `group-sync-dashboard-ra-b78c05817c9d` carries `config-source=group-sync-dashboard`.
 - `oc auth can-i list clusterrolebindings` answers **yes** as a member of `app-ocp-rbac-groupsync-ns-auditor`, and
-  **no** without that group (the negative control). The auditor tier still passes `adminSar`.
+  **no** without that group (the negative control). That is the question `visibility.adminSar` asks
+  (`list clusterrolebindings`, `charts/group-sync-dashboard/values.yaml`), so the auditor tier still passes it.
 - The new pod logged 0 `UNMANAGED GRANT DISCOVERED` lines for the binding, after its first binding refresh
   (`refreshed 205 group bindings for dashboard`).
 - `/api/clusters` reports 0 unmanaged grants on every cluster.
@@ -38,9 +40,9 @@ From `walk/verify-fixes.out`, on the deployed page under `loginCapture.source: a
 - "dies with its pod": absent.
 - The Node column and the "control-plane node whose audit file" help: present.
 
-`screenshots/346-logins-banner.png` shows the note beside its own dates: capture began 2026-09-21, and the oldest
-attempt retained is from 2026-09-16, older than capture because the first read backfilled through the rotated
-audit files.
+`screenshots/346-logins-banner.png` shows the note beside its own dates: "Watching since 2026-09-21 02:15:28 EDT" and
+"oldest attempt still retained 2026-09-16 10:26:15 EDT", older than capture because the first read backfilled
+through the rotated audit files.
 
 ## #347 — every review count includes unmanaged grants
 

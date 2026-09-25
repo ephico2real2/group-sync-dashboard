@@ -634,7 +634,7 @@ The orchestrator's summary, with what was measured for this log:
 
 ---
 
-## Part 7 — this log merged; #312, #346, #347 and the indexes (2026-09-24 11:55 → 19:30)
+## Part 7 — this log merged; #312, #346, #347 and the indexes (2026-09-24 11:55 → 20:00)
 
 ### This log, the review record and the handover (11:55) — commits `a4c2f75`, `83872bf`, merged as `2f1aa21`, PR #349
 
@@ -696,12 +696,11 @@ The orchestrator's summary, with what was measured for this log:
   - `oc auth can-i` answers yes for an auditor-group member and no for its negative control.
   - The new pod logged 0 UNMANAGED warnings for it, and every cluster reports 0 unmanaged grants.
 - **#312's last item, the ServiceAccount question:** the orchestrator first settled it as Group-only on best
-  practice, reading 661 of the lab's 668 ServiceAccount-subject bindings with no label as noise. **The operator
+  practice, reading the lab's unlabelled ServiceAccount-subject bindings as noise. **The operator
   refuted it:** the goal is to find hand-made grants on groups, ServiceAccounts or users, and *"The exclusion is not
   automatic … We are going to decide who to exclude"*, *"Using that label. We just need capabilities"*: the operator
   labels the RoleBinding or ClusterRoleBinding. **Retracted**; the capability for ServiceAccount and User subjects is
-  #353. Measured for it: signals the platform already sets account for 656 of the 666 ServiceAccount-subject
-  bindings, and of the 10 left, 6 are CRC's `hostpath-provisioner` and 4 were made by hand.
+  #353, which carries the lab's ServiceAccount-subject measurement and its method.
 - **#346, measured:** the audit-log wording is on the deployed page, and the pod-log sentence is gone.
 - **#347, measured with a planted grant:** #312 had cleared the lab's only unmanaged grant, so a hand-made
   RoleBinding was planted in its own namespace, captured, and deleted.
@@ -735,7 +734,7 @@ The orchestrator's summary, with what was measured for this log:
 |---|---|
 | Pull requests merged | **28**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352 and #354 (`gh pr list --state merged`, merged since 04:11) |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
-| Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge and 2 merge commits (#349–#354's branches). |
+| Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
 | Reviewer findings accepted / rejected | For #324–#334, the record's Outcome: 6 code findings accepted, 3 snippets rejected with measurements, 1 trial retracted by its author, and 1 test rejected as brittle. Spec findings C21 and C22 were accepted, and the operator decided C21. #334: 3 accepted, 1 rejected. #335 is itemised in Part 4. For #336–#345, `docs/REVIEW_remote_sar_for_every_join.md` itemises every finding: 20 proposals were rejected, each with its reason or the measurement that refuted it. One of them, Codex's B11, had first been accepted without a measurement. |
 | Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also raised the host-guard question, closed in Part 7 as not a gap. |
