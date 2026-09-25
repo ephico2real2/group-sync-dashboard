@@ -1,0 +1,143 @@
+# #293 proof — 2026-09-25T06:48:29Z — 09d5526cae
+== 0. baseline
+{
+ "secrets": {},
+ "clusters": {},
+ "findings": []
+}== 1. one ConfigMap, two stanzas (A verified TLS; B by IP with insecureSkipVerify)
+configmap/cluster-onboarding created
+   [both Secrets generated and both clusters ok] met after 240s
+{
+ "secrets": {
+  "gsd-cluster-cm-demo-a": "configmap-onboarding",
+  "gsd-cluster-cm-demo-b": "configmap-onboarding"
+ },
+ "clusters": {
+  "cm-demo-a": {
+   "status": "ok",
+   "source": "secret:gsd-cluster-cm-demo-a",
+   "retired": false,
+   "onboarding_configmap": "cluster-onboarding"
+  },
+  "cm-demo-b": {
+   "status": "ok",
+   "source": "secret:gsd-cluster-cm-demo-b",
+   "retired": false,
+   "onboarding_configmap": "cluster-onboarding"
+  }
+ },
+ "findings": []
+}   B tlsClientConfig: {'insecure': True}
+   B annotations: ['groupsync-dashboard.io/connection-hash', 'groupsync-dashboard.io/lookup-account', 'groupsync-dashboard.io/managed-by', 'groupsync-dashboard.io/source-configmap', 'groupsync-dashboard.io/source-configmap-uid', 'groupsync-dashboard.io/source-namespace', 'groupsync-dashboard.io/source-service-account', 'groupsync-dashboard.io/token-source']
+   page step1: 'cm-demo-a' present:  High contrast Refresh Sign out Cluster cm-demo-a cm-demo-b dashboard mock-privateca mock-selfsigned mock-trusted shared-qa shared-rnd The host decides your vie
+   page step1: 'cm-demo-b' present: rast Refresh Sign out Cluster cm-demo-a cm-demo-b dashboard mock-privateca mock-selfsigned mock-trusted shared-qa shared-rnd The host decides your view of this 
+   page step1: 'cm-demo-dup' absent
+   page step1: 'cm-demo-cred' absent
+   page step1: 'cluster-onboarding' present: AL bearerToken set managed by ConfigMap cluster-onboarding — edit the stanza there TLS verified ca: trusted-bundle LABELS none VISIBILITY remote-sar this cluste
+== 2. B removed; a name repeated; a credential in a stanza
+configmap/cluster-onboarding configured
+   [B deleted, A ok, dup and cred refused] met after 300s
+{
+ "secrets": {
+  "gsd-cluster-cm-demo-a": "configmap-onboarding"
+ },
+ "clusters": {
+  "cm-demo-a": {
+   "status": "ok",
+   "source": "secret:gsd-cluster-cm-demo-a",
+   "retired": false,
+   "onboarding_configmap": "cluster-onboarding"
+  },
+  "cm-demo-b": {
+   "status": "ok",
+   "source": "secret:gsd-cluster-cm-demo-b",
+   "retired": true,
+   "onboarding_configmap": null
+  }
+ },
+ "findings": [
+  {
+   "secret": "configmap:cluster-onboarding:3",
+   "code": "onboarding-invalid",
+   "detail": "invalid values-shaped stanza: check name/apiUrl, known keys, booleans, TLS and policy; use saTokenLookup: true, no credential or token reference, and no host declaration"
+  },
+  {
+   "secret": "configmap:cluster-onboarding:1",
+   "code": "duplicate-cluster-name",
+   "detail": "cm-demo-dup is declared by configmap:cluster-onboarding:1, configmap:cluster-onboarding:2; none loads until the conflict is removed"
+  },
+  {
+   "secret": "configmap:cluster-onboarding:2",
+   "code": "duplicate-cluster-name",
+   "detail": "cm-demo-dup is declared by configmap:cluster-onboarding:1, configmap:cluster-onboarding:2; none loads until the conflict is removed"
+  }
+ ]
+}   page step2: 'cm-demo-a' present:  High contrast Refresh Sign out Cluster cm-demo-a dashboard mock-privateca mock-selfsigned mock-trusted shared-qa shared-rnd The host decides your view of this 
+   page step2: 'cm-demo-b' present: ON ok reachable 2026-09-25 06:57 Delete cm-demo-b Secret gsd-cluster-cm-demo-b disabled SERVER https://192.168.127.2:6443 CREDENTIAL bearerToken set TLS unknown
+   page step2: 'cm-demo-dup' present: ng:1 CODE duplicate-cluster-name DETAIL cm-demo-dup is declared by configmap:cluster-onboarding:1, configmap:cluster-onboarding:2; none loads until the conflict
+   page step2: 'cm-demo-cred' absent
+   page step2: 'cluster-onboarding' present: AL bearerToken set managed by ConfigMap cluster-onboarding — edit the stanza there TLS verified ca: trusted-bundle LABELS none VISIBILITY remote-sar this cluste
+== 3. the ConfigMap deleted
+configmap "cluster-onboarding" deleted from group-sync-dashboard namespace
+   [A's generated Secret removed] met after 280s
+{
+ "secrets": {},
+ "clusters": {
+  "cm-demo-a": {
+   "status": "ok",
+   "source": "secret:gsd-cluster-cm-demo-a",
+   "retired": true,
+   "onboarding_configmap": null
+  },
+  "cm-demo-b": {
+   "status": "ok",
+   "source": "secret:gsd-cluster-cm-demo-b",
+   "retired": true,
+   "onboarding_configmap": null
+  }
+ },
+ "findings": []
+}== log lines naming the demo
+2026-09-25 02:52:30,425-0400 INFO    gsd.clusterconfig discovery cycle=2 namespace=group-sync-dashboard seen=8 accepted=7 refused=1 added=cm-demo-a,cm-demo-b
+2026-09-25 02:52:30,425-0400 INFO    gsd.clusterconfig cluster-resolved cycle=2 cluster=cm-demo-a source=configmap:cluster-onboarding:0 credential=remote-lookup tls=trusted-bundle visibility=remote-sar identity=same-as-host enable
+2026-09-25 02:52:30,426-0400 INFO    gsd.clusterconfig cluster-resolved cycle=2 cluster=cm-demo-b source=configmap:cluster-onboarding:1 credential=remote-lookup tls=insecure visibility=remote-sar identity=same-as-host enabled=true
+2026-09-25 02:52:30,464-0400 INFO    gsd.fleetlogin fleet-login cluster=cm-demo-a account=ocp-oauth-bind-serviceid tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-25T06:52:30Z
+2026-09-25 02:52:30,473-0400 INFO    gsd.fleetlogin fleet-logout cluster=cm-demo-a account=ocp-oauth-bind-serviceid tls=trusted-bundle token=sha256~VK9eWmnZ9YmS5HYhV94908RaesMVHXk4vJyAQqOFIPU outcome=revoked
+2026-09-25 02:52:30,479-0400 INFO    gsd.clusterconfig.writer cluster-secret-created secret=gsd-cluster-cm-demo-a namespace=group-sync-dashboard cluster=cm-demo-a by=sa-token-lookup
+2026-09-25 02:52:30,479-0400 INFO    gsd.clusterconfig fleet-lookup cluster=cm-demo-a account=ocp-oauth-bind-serviceid secret=gsd-cluster-cm-demo-a written=created source=group-sync-operator/group-sync-dashboard-cluster-poller las
+2026-09-25 02:52:30,499-0400 INFO    gsd.fleetlogin fleet-login cluster=cm-demo-b account=ocp-oauth-bind-serviceid tls=insecure oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-25T06:52:30Z
+2026-09-25 02:52:30,506-0400 INFO    gsd.fleetlogin fleet-logout cluster=cm-demo-b account=ocp-oauth-bind-serviceid tls=insecure token=sha256~CMngTUlPSq5bCiKuUbgeoHolcuri69SLwulkHikrCi8 outcome=revoked
+2026-09-25 02:52:30,512-0400 INFO    gsd.clusterconfig.writer cluster-secret-created secret=gsd-cluster-cm-demo-b namespace=group-sync-dashboard cluster=cm-demo-b by=sa-token-lookup
+2026-09-25 02:52:30,512-0400 INFO    gsd.clusterconfig fleet-lookup cluster=cm-demo-b account=ocp-oauth-bind-serviceid secret=gsd-cluster-cm-demo-b written=created source=group-sync-operator/group-sync-dashboard-cluster-poller las
+2026-09-25 02:52:30,525-0400 INFO    gsd.clusterconfig discovery cycle=3 namespace=group-sync-dashboard seen=8 accepted=7 refused=1 changed=cm-demo-a,cm-demo-b
+2026-09-25 02:52:30,525-0400 INFO    gsd.clusterconfig cluster-resolved cycle=3 cluster=cm-demo-a source=secret:gsd-cluster-cm-demo-a credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-25 02:52:30,525-0400 INFO    gsd.clusterconfig cluster-resolved cycle=3 cluster=cm-demo-b source=secret:gsd-cluster-cm-demo-b credential=bearer tls=insecure visibility=remote-sar identity=same-as-host enabled=true
+2026-09-25 02:52:30,525-0400 INFO    gsd.poller cluster cm-demo-a: polling started (secret:gsd-cluster-cm-demo-a)
+2026-09-25 02:52:30,526-0400 INFO    gsd.poller cluster cm-demo-b: polling started (secret:gsd-cluster-cm-demo-b)
+2026-09-25 02:52:30,536-0400 DEBUG   gsd.kube fetched 61 users from cm-demo-b, 61 with an identity, 8 with a display name
+2026-09-25 02:52:30,537-0400 INFO    gsd.poller cm-demo-b: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-25 02:52:30,537-0400 DEBUG   gsd.kube fetched 61 users from cm-demo-a, 61 with an identity, 8 with a display name
+2026-09-25 02:52:30,537-0400 INFO    gsd.poller cm-demo-b/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-25T06:30:00Z (40 groups)
+2026-09-25 02:52:30,538-0400 INFO    gsd.poller cm-demo-b/autobahnusers-onboarding-groupsync: new sync observed at 2026-09-25T06:00:01Z (1 groups)
+2026-09-25 02:52:30,538-0400 INFO    gsd.poller cm-demo-b/bdp-oud-group-rbac-groupsync: new sync observed at 2026-09-25T06:00:01Z (21 groups)
+2026-09-25 02:52:30,541-0400 DEBUG   gsd.kube cm-demo-b: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-25 02:52:30,542-0400 INFO    gsd.poller polled cm-demo-b: 3 CRs, 62 groups, 3 new sync event(s), 85 membership change(s)
+2026-09-25 02:52:30,542-0400 INFO    gsd.poller cm-demo-a: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-25 02:52:30,542-0400 INFO    gsd.poller cm-demo-a/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-25T06:30:00Z (40 groups)
+2026-09-25 02:52:30,542-0400 INFO    gsd.poller cm-demo-a/autobahnusers-onboarding-groupsync: new sync observed at 2026-09-25T06:00:01Z (1 groups)
+2026-09-25 02:52:30,542-0400 INFO    gsd.poller cm-demo-a/bdp-oud-group-rbac-groupsync: new sync observed at 2026-09-25T06:00:01Z (21 groups)
+2026-09-25 02:52:30,547-0400 DEBUG   gsd.kube cm-demo-a: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-25 02:52:30,548-0400 INFO    gsd.poller polled cm-demo-a: 3 CRs, 62 groups, 3 new sync event(s), 85 membership change(s)
+2026-09-25 02:52:30,609-0400 DEBUG   gsd.auditlog cm-demo-b: crc: audit.log read 8388608 byte(s) from offset 0 (first sight: backfill) — 9948 line(s), 321 login event(s), 321 inside retention, 317 after the identity filter
+2026-09-25 02:52:30,703-0400 DEBUG   gsd.auditlog cm-demo-a: crc: audit.log read 8388608 byte(s) from offset 0 (first sight: backfill) — 9948 line(s), 321 login event(s), 321 inside retention, 317 after the identity filter
+2026-09-25 02:52:30,710-0400 INFO    gsd.auditlog cm-demo-b: recorded 317 login attempt(s) from the audit log on crc (audit.log)
+2026-09-25 02:52:30,711-0400 INFO    gsd.auditlog cm-demo-a: recorded 317 login attempt(s) from the audit log on crc (audit.log)
+2026-09-25 02:52:30,714-0400 INFO    gsd.kpi.rollup cm-demo-a: daily KPI rollup written for 2026-09-25 (8 metrics)
+2026-09-25 02:52:30,719-0400 INFO    gsd.kpi.rollup cm-demo-b: daily KPI rollup written for 2026-09-25 (8 metrics)
+2026-09-25 02:52:30,743-0400 DEBUG   gsd.kube fetched 919 binding subject rows from cm-demo-b
+2026-09-25 02:52:30,745-0400 DEBUG   gsd.kube fetched 919 binding subject rows from cm-demo-a
+2026-09-25 02:52:30,785-0400 INFO    gsd.poller cm-demo-b: 206 group binding(s) added, 0 removed since the last refresh
+2026-09-25 02:52:30,789-0400 INFO    gsd.poller cm-demo-a: 206 group binding(s) added, 0 removed since the last refresh
+== leftovers (must be none)
+   none
+proof exit 0
