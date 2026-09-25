@@ -1,5 +1,30 @@
 # API reference
 
+## ConfigMap onboarding additions to `/api/clusterconfigs` (#293, SPEC_S5)
+
+The existing `clusterconfig:view` gate covers both feeds; there is no new write endpoint. The response
+adds `configmaps: {enabled, label}`, with label
+`groupsync-dashboard.io/config-type in (onboard,sideload)`. Its namespace, discovery time and LIST
+error are the existing `secrets.namespace`, `secrets.last_discovery` and `secrets.error` shared by the
+single discovery stage. `secrets.label` remains `groupsync-dashboard.io/secret-type=cluster`.
+
+An awaiting stanza has `source: configmap:<metadata.name>:<zero-based-index>` and credential
+`remote-lookup`; after lookup its source is `secret:gsd-cluster-<name>` and its credential is `bearer`.
+Live cluster entries add nullable `onboarding_configmap` naming the source ConfigMap; retired rows
+may omit it. No token, password, YAML body, CA bytes or connection hash is added to this API.
+
+For wire compatibility findings retain the field `secret`: it identifies a Secret name, a qualified
+`configmap:<name>:<index>` (or `configmap:<name>` for a document error), or `values` for a conflicting
+values stanza. The UI labels this field “source”. New codes: `onboarding-invalid`,
+`onboarding-cleanup-pending`, `onboarding-ownership-conflict`. `duplicate-cluster-name` names every
+conflicting source, all suppressed; lookup refusals keep #284's codes. A failed inventory read is
+`discovery-failed` and preserves the prior set. Findings never quote the supplied YAML or unknown values.
+
+Rotate and Delete on a live generated row return `409 not-our-secret`, directing the operator to its
+ConfigMap. The raw writer repeats this check so a stale tab cannot mutate a newly generated Secret.
+Confirmed removal retires the row and retains history. Cleanup pending is visible even if the output
+is no longer polled. `clusterConfig.secrets.writes.enabled` still gates every Secret mutation.
+
 Every endpoint is **read-only**. None returns a token, none accepts one from the browser, and
 none mutates cluster state the dashboard reports on (§9, §11) — the ServiceAccount holds no
 write verb on anything.

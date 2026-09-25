@@ -39,7 +39,7 @@ _ACTIONS = {
     "identity-invalid": "identity must be none or same-as-host, and remote-sar needs same-as-host",
     "enabled-invalid": 'enabled must be "true" or "false"',
     "host-cluster-not-from-secret": "the host cluster comes from the chart's values, not a Secret",
-    "duplicate-cluster-name": "remove one of the two Secrets, or rename the cluster in one",
+    "duplicate-cluster-name": "remove or rename the duplicate declaration; every conflicting source is listed on the tab",
     "shadows-values-entry": "edit the Secret, or delete it to fall back to the values entry",
     "oauth-exchange-not-built": "use a bearerToken until the password exchange lands (#119 P2)",
 }
@@ -68,14 +68,16 @@ def finding_event(code: str) -> tuple[str, str, str]:
 
 def discover(cluster_client, namespace: str, *, host_name: str | None,
              values_names: tuple[str, ...] = (),
-             values_modes: dict[str, str] | None = None) -> tuple[list[ClusterConfig], list[Finding]]:
+             values_modes: dict[str, str] | None = None,
+             items: list[dict] | None = None) -> tuple[list[ClusterConfig], list[Finding]]:
     """`values_modes` maps a values entry's name to the credential kind its declared connection mode
     resolves to (`remote-lookup` / `self-login`, SPEC_S3 §3). A Secret over such an entry whose
     `token-source` annotation names that same kind is the retriever's own write (SPEC_S4 §1) — the
     Secret is MEANT to win there, so it is not a shadow finding. Any other shadow still is."""
     path = f"/api/v1/namespaces/{namespace}/secrets"
-    with cluster_client._client() as client:
-        items = cluster_client._list_all_with(client, path, {"labelSelector": LABEL_SELECTOR})
+    if items is None:
+        with cluster_client._client() as client:
+            items = cluster_client._list_all_with(client, path, {"labelSelector": LABEL_SELECTOR})
     # Deterministic: the findings list the same way every cycle.
     items.sort(key=lambda o: str((o.get("metadata") or {}).get("name") or ""))
     parsed_ok: list[ClusterConfig] = []

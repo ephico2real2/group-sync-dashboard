@@ -262,6 +262,8 @@ class _Host(_FakeClient):
 
     def _get(self, client, path, params):
         self.calls.append(path)
+        if path == "/api/v1/namespaces/ns/configmaps":
+            return {"items": []}
         if path == "/api/v1/namespaces/ns/secrets":
             if _Host.secrets is FORBIDDEN:
                 raise ClusterError(FORBIDDEN, "403 Forbidden on /api/v1/namespaces/ns/secrets")
@@ -398,7 +400,8 @@ class TestApi:
                               "api_url": "https://api.east.example:6443", "enabled": True, "credential": "bearer",
                               "labels": {"environment": "prod"}, "visibility": "remote-sar", "identity": "same-as-host",
                               "tls": {"insecure": False, "ca": "trusted-bundle"},
-                              "status": None, "last_poll": None, "error": None, "retired": False}
+                              "status": None, "last_poll": None, "error": None, "retired": False,
+                              "onboarding_configmap": None}
         assert by["c1"]["tls"] == {"insecure": False, "ca": "trusted-bundle"}
         assert body["findings"] == [{"secret": "gsd-cluster-broken", "code": "config-not-json", "detail": "Expecting value"}]
         # a cluster the store holds but no source names — its Secret vanished — is listed as retired, never dropped
@@ -429,7 +432,9 @@ class TestChart:
         docs = _render()
         role = next(d for d in docs if d.get("kind") == "Role" and d["metadata"]["name"].endswith("-cluster-secrets"))
         assert role["metadata"]["namespace"] == "x"
-        assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch"]}]
+        assert role["rules"] == [
+            {"apiGroups": [""], "resources": ["configmaps"], "verbs": ["get", "list", "watch"]},
+            {"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "watch"]}]
         binding = next(d for d in docs if d.get("kind") == "RoleBinding" and d["metadata"]["name"].endswith("-cluster-secrets"))
         assert binding["roleRef"]["kind"] == "Role" and binding["subjects"][0]["kind"] == "ServiceAccount"
         assert not any(d.get("kind") == "ClusterRole" and "secrets" in {r for rule in d.get("rules", []) for r in rule.get("resources", [])}

@@ -22,11 +22,14 @@ class ClusterRegistry:
         # the lookup succeeds or the cluster stops being pending. Separate from `_findings`, which a
         # discovery replaces every cycle — a lookup finding must survive the cycles between attempts.
         self._lookups: dict[str, Finding] = {}
+        self._blocked: set[str] = set()
 
-    def replace(self, clusters: list[ClusterConfig], findings: list[Finding], *, at: str, error: str | None = None) -> None:
+    def replace(self, clusters: list[ClusterConfig], findings: list[Finding], *, at: str,
+                error: str | None = None, blocked: set[str] | None = None) -> None:
         with self._lock:
             self._discovered = {c.name: c for c in clusters}
             self._findings = list(findings)
+            self._blocked = set(blocked or ())
             self.last_discovery = at
             self.error = error
 
@@ -66,8 +69,11 @@ class ClusterRegistry:
         (SPEC_S3). A Secret with no values entry is appended."""
         with self._lock:
             discovered = dict(self._discovered)
+            blocked = set(self._blocked)
         out: list[ClusterConfig] = []
         for c in values:
+            if c.name in blocked:
+                continue
             found = discovered.pop(c.name, None)
             if found is None:
                 out.append(c)
@@ -77,5 +83,5 @@ class ClusterRegistry:
                                                enabled=c.enabled and found.enabled))
             else:
                 out.append(found)
-        out.extend(discovered.values())
+        out.extend(c for c in discovered.values() if c.name not in blocked)
         return out

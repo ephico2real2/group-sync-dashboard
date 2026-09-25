@@ -57,7 +57,7 @@ class _Client:
         return _Ctx()
 
     def _list_all_with(self, client, path, params):
-        return self.items
+        return [] if path.endswith("/configmaps") else self.items
 
 
 class TestTheEventShape:
@@ -262,7 +262,7 @@ class TestARefusalIsAnnouncedOnceNotEveryCycle:
         a message it did not."""
         monkeypatch.setenv("X", TOKEN)
         # `_discover_once` imports it from the package at call time, so that is the name to patch.
-        monkeypatch.setattr("gsd.clusterconfig.discover",
+        monkeypatch.setattr("gsd.clusterconfig.onboarding.discover_onboarding",
                             lambda *a, **k: (_ for _ in ()).throw(
                                 ClusterError(UNREACHABLE, f"HTTP 502 on /api/v1: proxy echoed Bearer {TOKEN}")))
         poller = self._poller(tmp_path)
@@ -689,7 +689,7 @@ class _RaisingHost:
     def _list_all_with(self, client, path, params):
         if _RaisingHost.raise_with is not None:
             raise _RaisingHost.raise_with
-        return list(_RaisingHost.items)
+        return [] if path.endswith("/configmaps") else list(_RaisingHost.items)
 
 
 class _RigBase:

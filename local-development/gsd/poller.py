@@ -1260,7 +1260,10 @@ class Poller:
         while not self._stop.is_set() and not own_stop.is_set():
             # The current config for this name: a Secret-sourced cluster whose token was rotated or
             # whose server moved takes effect here, on its next cycle, with no restart (SPEC_S1 C3).
-            cluster = self.settings.cluster(cluster.name) or cluster
+            current = self.settings.cluster(cluster.name)
+            if current is None or not current.enabled or current.credential_pending is not None:
+                break
+            cluster = current
             started = datetime.now(UTC)
             if self.elector is not None and not self.elector.is_leader:
                 # Standby: serve reads, write nothing. Checked every cycle rather than once,
@@ -1413,7 +1416,7 @@ class Poller:
         """One discovery of the labelled cluster Secrets (SPEC_S1 C3): the host's client LISTs the pod's
         own namespace by label; the registry is replaced on success and keeps the previous set on a
         failed LIST, which becomes the cycle's one finding. Only the leader writes the cluster rows."""
-        from .clusterconfig import discover
+        from .clusterconfig.onboarding import discover_onboarding
         from .clusterconfig.events import event, failure
         log = discovery_log    # the discovery story is the module's; see `discovery_log`
         registry = self.settings.cluster_registry
@@ -1433,18 +1436,16 @@ class Poller:
                 detail="no host cluster or no namespace: the mount names neither")
             return
         try:
-            clusters, findings = discover(
+            clusters, findings, blocked = discover_onboarding(
                 ClusterClient(host, timeout=self.settings.request_timeout_seconds), namespace,
-                host_name=host.name, values_names=tuple(c.name for c in self.settings.clusters),
-                # A values stanza that declares a mode expects the retriever's Secret over it
-                # (SPEC_S4 §1); the reader keeps that one out of `shadows-values-entry`.
-                values_modes={c.name: c.credential_kind for c in self.settings.clusters
-                              if c.connection_mode is not None})
+                settings=self.settings,
+                mutate=(self.elector is None or self.elector.is_leader)
+                       and not (self.elector is None and self.settings.replica_count > 1))
         except ClusterError as exc:
             registry.fail(at, f"{exc.outcome}: {exc.message}")
             self._announce_discovery_failure(
                 cycle, exc.outcome,
-                action=("grant the ServiceAccount list on secrets in this namespace, or check "
+                action=("grant the ServiceAccount list on secrets and configmaps in this namespace, or check "
                         "the API server is reachable — the previous set stands meanwhile"),
                 namespace=namespace, result=exc.outcome, detail=exc.message,
                 # The LIST's message can carry the host's own token, echoed by a proxy in front of
@@ -1455,7 +1456,7 @@ class Poller:
         self._clear_discovery_failure(cycle, namespace)
         before = {c.name for c in registry.discovered()}
         before_shape, before_findings = self._discovered_shape, self._discovery_findings
-        registry.replace(clusters, findings, at=at)
+        registry.replace(clusters, findings, at=at, blocked=blocked)
         after = {c.name for c in clusters}
         # TRANSITIONS, NOT STATES (#245), and the FINDINGS ARE A TRANSITION TOO (review of #247,
         # Grok C2). The first version gated on `or findings` — this cycle's list, not a diff — so a
@@ -1513,8 +1514,8 @@ class Poller:
             served = self.settings.cluster(cluster.name) or cluster
             self.store.upsert_cluster(cluster.name, cluster.api_url, served.enabled,
                                       source=cluster.source, credential=cluster.credential_kind)
-        for name in before - after:
-            if name not in {c.name for c in self.settings.clusters}:
+        for name in (before - after) | blocked:
+            if name in blocked or name not in {c.name for c in self.settings.clusters}:
                 # Retired, never deleted (#96): the rows stay, the thread stops.
                 row = next((r for r in self.store.clusters() if r["id"] == name), None)
                 if row is not None:
@@ -1532,7 +1533,7 @@ class Poller:
                 log.info("cluster %s: polling started (%s)", name, cluster.source)
         for name in running - set(wanted):
             values_entry = next((c for c in self.settings.clusters if c.name == name), None)
-            if values_entry is not None and values_entry.credential_pending is None:
+            if values_entry is not None and self.settings.cluster(name) is not None and values_entry.credential_pending is None:
                 continue    # a values cluster with its own credential is never stopped at runtime: its config rolls the pod
             # A values stanza that declares a mode polls through the Secret the lookup wrote; with that
             # Secret gone it is pending again and must not poll its stanza (SPEC_S4b, SPEC_S3 §4.2).
@@ -1560,6 +1561,8 @@ class Poller:
         from .clusterconfig.writer import secret_name_for
         from .fleetlookup import LOOKUP_ATTEMPTS, LookupRefused, lookup
         registry = self.settings.cluster_registry
+        if registry.error:
+            return  # An incomplete inventory cannot authorize a login from stale intent.
         pending = {c.name: c for c in self.settings.effective_clusters()
                    if c.enabled and c.credential_kind == CREDENTIAL_LOOKUP}
         for name in [n for n in self._lookups if n not in pending]:
@@ -1674,7 +1677,7 @@ class Poller:
         effective = self.settings.effective_clusters()
         # When the discovery could not look, absence proves nothing about a Secret-sourced cluster:
         # spare those rows rather than retiring the whole fleet on one failed LIST (Grok C6).
-        keep = ("secret:",) if discovery_failed else ()
+        keep = ("secret:", "configmap:") if discovery_failed else ()
         retired = self.store.retire_absent_clusters([c.name for c in effective], keep_sources=keep)
         if retired:
             log.info("retired %d cluster(s) no longer in the configuration", retired)
