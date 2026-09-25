@@ -428,9 +428,9 @@ These are findings of the walk, not of any reviewer:
 - **The Helm handover** (Step 3) → #343.
 - **Step 6's stale page check,** and **Step 7's in-cluster row** → #344.
 - **The host guard refuses only the exact string** `https://kubernetes.default.svc` (Step 7, continued). Other
-  spellings of the in-cluster endpoint pass it. This is open for the operator (the spec's notes and the walk record);
-  a search of the issues finds none filed for it. The guard is
-  `local-development/gsd/clusterconfig/parser.py#IN_CLUSTER_SERVER`.
+  spellings of the in-cluster endpoint pass it. The guard is
+  `local-development/gsd/clusterconfig/parser.py#IN_CLUSTER_SERVER`. **Closed after the walk (2026-09-24), not a
+  gap:** a Secret never names the pod's token or CA file (`local-development/gsd/clusterconfig/parser.py` sets neither), so whatever URL it gives, the cluster is read with the Secret's own credential. Another spelling only lists the host again under that credential, as `shared-rnd` does on purpose.
 - **Not measured:** the alert in Step 8, and Step 9's check that the mock is not asked. The operator stopped Step 9
   before it ran. It could not have been trusted anyway, because a local `podman` container held the port its
   port-forward uses.
@@ -497,7 +497,7 @@ These are findings of the walk, not of any reviewer:
     renderer test's placement, and Codex's option-column rewrites).
   - #343: 2 (the conflict gate, `Force=true`).
   - #344: 1 (Grok's Step 7 paragraph).
-- **App defects found by review and filed:** #346 and #347. For the operator: #312 (#348 closed as its duplicate) and the host-guard finding.
+- **App defects found by review and filed:** #346 and #347. For the operator: #312 (#348 closed as its duplicate), fixed afterwards in #350; the host-guard finding, closed as not a gap.
 - Deployed and walked: `release-crc.sh --argocd`, Synced/Healthy at `8e50ff8eec`, verified in-pod. §5 Steps 0–11
   pass, with the notes above. The e2e walk after the rejoin: 84/84 steps, 24/24 extra, 11/11 PDFs rendered, and
   11/11 reports passing integrity. The kept PVCs' UIDs were unchanged through every Helm round and the hand-back.

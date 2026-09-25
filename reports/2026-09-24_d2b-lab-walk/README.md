@@ -23,8 +23,8 @@ corrected it; the scripts that ran them and their raw output are in `walk/`, and
   token is expired on purpose, so Steps 6 and 10 expect `self` there until Step 11; and Step 7's in-cluster URL row
   asked for a URL the parser refuses by design. A substitute URL tried for that row is retracted: every in-cluster
   name is the dashboard controller's own endpoint, never a remote's (the operator).
-- **Open for the operator:** the host guard refuses only the exact string `https://kubernetes.default.svc`, so other
-  spellings of the in-cluster endpoint pass it.
+- **Closed after the walk, not a gap:** the host guard refuses only the exact string `https://kubernetes.default.svc`,
+  so other spellings of the in-cluster endpoint pass it. But a Secret never names the pod's token or CA file (`local-development/gsd/clusterconfig/parser.py` sets neither), so whatever URL it gives, the cluster is read with the Secret's own credential. Another spelling only lists the host again under that credential, as `shared-rnd` does on purpose.
 - **Not measured:** Step 9's check that the mock is not asked was stopped before it ran, and could not have been
   trusted: a stale local `podman` container held the port its port-forward uses.
 
