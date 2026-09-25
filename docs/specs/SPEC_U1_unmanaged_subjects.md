@@ -504,9 +504,10 @@ Home filters, its two platform badges and its export column. The consumers the r
 refresh-line people count and the Poller's hand-off of the settings' classifier, `api.py`'s Home cluster-wide counts, `store.py`'s Group `system:` rule and people count in
 `namespace_detail`, the direct-grant count in `namespaces` and `user_bindings_by_namespace`'s two predicates, and
 `index.html`'s namespace-index platform rows and hidden-with-findings list, Home's via/wide filters and the hand-made badge.
-The guard also holds every Python write of the stored `is_platform` flag (`["is_platform"] =`) and every SQL comparison
-of it with `0` or `1`, under `gsd/`; a Python read of it (`r["is_platform"]`, `.get("is_platform")`) is marked by hand and
-not held by the guard.
+The guard also holds the stored `is_platform` flag's SQL comparisons (`is_platform = 0` / `= 1`) and its Python
+assignments (`["is_platform"] =`) under `gsd/`; a Python read of the flag (`r["is_platform"]`, `.get("is_platform")`), a
+dict-literal write (`"is_platform": …`) and a SELECT of the column are marked by hand and are not held by the regex
+(measured: six such reads under `gsd/` sit two lines below their marker — OB2, second pass of #361).
 
 ### 3.11 Versions, chart documents, CHANGELOG, indexes
 
@@ -3846,8 +3847,8 @@ SITE = re.compile(
     r"|\bis_platform_user\s*\(|\bis_platform_namespace\s*\("
     r"|PLATFORM_CONTROLLER_BINDINGS\b|^PLATFORM_(NAMESPACE_PREFIXES|NAMESPACES|USER_PREFIXES) ="
     r"|^def _platform_namespaces_setting\(|_platform_namespaces_setting\(raw\)|^\s+platform_namespaces: PlatformNamespaces = "
-    # ... and every Python write of the stored flag, and every SQL comparison of it with 0 or 1 (OB1-lite, review of
-    # #361); a Python read (`r["is_platform"]`, `.get("is_platform")`) is marked by hand, not held here
+    # ... and the stored flag's SQL comparisons and Python assignments (OB1-lite, review of #361); a Python read
+    # or a dict-literal write of the flag is marked by hand and not held here (OB2, second pass)
     r'|\bis_platform\s*=\s*[01]\b|\["is_platform"\]\s*=')
 CHART_SITES = {
     ROOT / "charts/group-sync-dashboard/values.yaml": "platformNamespaces:",
