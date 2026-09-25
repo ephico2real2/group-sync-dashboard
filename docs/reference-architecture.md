@@ -929,7 +929,7 @@ data — who was present, on which days, between which times — and the argumen
 the rest of this dashboard ("you could read the groups with `oc` anyway") is true of group
 membership and false of who looked at it (`gsd/api.py#membership_changes`). `userActivity.visibility: all`
 restores the older behaviour as an explicit choice. Anything unrecognised means `self`, never
-`all` (`gsd/config.py#_ca_cache_lock`). It is now the first of two ways that view can widen —
+`all` (`gsd/config.py#_visibility_setting`). It is now the first of two ways that view can widen —
 §7.5 has the second.
 
 There IS an administrator tier, and §7.5 describes it. This paragraph used to say the
@@ -943,7 +943,7 @@ so a read does not depend on the API server being up.
 
 `config.unmanagedAudit.mode` is `off` | `log`, default `off`. `off` runs no discovery code at
 all; `log` publishes every finding to the pod log. Neither needs a write verb, and anything
-unrecognised is treated as `off` (`gsd/config.py#_ca_cache_lock`).
+unrecognised is treated as `off` (`gsd/config.py#_audit_mode_setting`).
 
 There was an `annotate` mode. It labelled the bindings it classified `unmanaged` — a
 `rbac.ocp.io/unmanaged: "true"` label to select on, plus detected-at and detected-by annotations
@@ -1039,9 +1039,10 @@ CA bundles come from up to two mounted sources, colon-separated in `GSD_TRUSTED_
 `SSL_CERT_FILE`, and are **loaded in turn rather than concatenated into a temp file** — the
 root filesystem is read-only and writing certificates to `/tmp` to work around that would put
 them somewhere less controlled than where they started (`gsd/config.py#_trusted_ca_context`). The parsed
-context is cached keyed on the env value, and a null result is deliberately *not* cached,
-because the injected ConfigMap is populated asynchronously and can legitimately be absent for
-the first moments of a pod's life.
+context is cached keyed on the env value and on each file's identity (inode, mtime, size), so a
+bundle kubelet replaces through its `..data` symlink swap is read on the next poll without a
+restart (#340). A null result is deliberately *not* cached, because the injected ConfigMap is
+populated asynchronously and can legitimately be absent for the first moments of a pod's life.
 
 A per-cluster `caBundleFile` always wins over the cluster-wide bundle. That is a specific
 statement about what that cluster trusts, and silently widening it would be the wrong kind of
@@ -1653,11 +1654,11 @@ this were unbounded until recently.
 per user is both a scale problem and a disclosure one — `/metrics` is unauthenticated.
 
 **Adding a value to the chart.** It must be threaded through `templates/configmap.yaml` into
-`clusters.yaml`, read in `load_settings` (`gsd/config.py#_ca_cache_lock`), and land on `Settings`. Use
+`clusters.yaml`, read in `load_settings` (`gsd/config.py#load_settings`), and land on `Settings`. Use
 `_bool_setting` for booleans — `bool("false")` is `True`, so a plain cast turns every explicit
 disable into an enable, silently and in the direction that grants rather than withholds
-(`gsd/config.py#_ca_cache_lock`). Anything that widens access should fail safe on an unrecognised value,
-following `_visibility_setting` (`gsd/config.py#_ca_cache_lock`). `_audit_mode_setting` is the same
+(`gsd/config.py#_bool_setting`). Anything that widens access should fail safe on an unrecognised value,
+following `_visibility_setting` (`gsd/config.py#_visibility_setting`). `_audit_mode_setting` is the same
 pattern with one deliberate exception: the removed `annotate` downgrades to `log` rather than
 `off`, because failing to `off` would silently take the findings away from a cluster whose
 operator had asked for them (`gsd/config.py#_audit_mode_setting`).

@@ -1,5 +1,9 @@
 # Data requirements for the redesigned pages
 
+**Status: the analysis of 2026-09-17, kept as the record of what was planned; not maintained.** The ✅ / 📋 / ❌
+marks below are as of that date. The mocks it analyses are all **Implemented** (`docs/design/README.md`), and
+the issues it names say what shipped. Read a mark here as "was a gap on 2026-09-17", never as current state.
+
 What each mock in this folder renders, where that number comes from today, and what has to be
 built before the page can be real. Read against `local-development/gsd/` (API, store, metrics,
 `state.py`) and the issues filed on 2026-09-17. Nothing here is inferred from the mocks alone —
