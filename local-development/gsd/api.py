@@ -1117,8 +1117,9 @@ def build_app(
             "dangling_bindings": counts.get("dangling", 0),
             "unresolved_bindings": counts.get("unresolved", 0),
             "builtin_bindings": counts.get("built_in", 0),
-            # A grant of a synced group made outside the policy system: a review item beside the two
-            # that grant nobody, so a cluster's "Bindings to review" counts it (#347).
+            # A grant made outside the policy system — to a synced group, a ServiceAccount or a user
+            # (#353): a review item beside the two that grant nobody, so a cluster's "Bindings to
+            # review" counts it (#347).
             "unmanaged_bindings": counts.get("unmanaged", 0),
         }
 
@@ -2107,8 +2108,16 @@ def build_app(
             description="Maximum bindings to return across all tiers. `counts` and `total` "
                         "always describe the whole cluster, not this page."),
         offset: int = Query(default=0, ge=0, description="Bindings to skip, for paging."),
+        finding: str | None = Query(
+            default=None, pattern="^(ok|dangling|unresolved|built_in|unmanaged)$",
+            description="Only this tier's rows, paged by `limit`/`offset`. `counts` and `total` still "
+                        "describe the whole cluster; `truncated` compares against this tier's count."),
     ) -> dict:
-        """Every group-subject binding on a cluster, classified into five tiers.
+        """Every binding subject on a cluster — Group, ServiceAccount and User — classified into
+        five tiers. Each row carries `subject_kind` and `subject_namespace` (a ServiceAccount's; ''
+        otherwise); `group_name` is the subject's name whatever its kind (#353, SPEC_U1). The three
+        resolution tiers are Group tiers; a ServiceAccount or User row is `built_in` when it is the platform's
+        own identity (the stored `is_platform` flag), else `unmanaged` or `ok`.
 
         Three unresolved tiers rather than one: on a real cluster the large majority of
         unresolvable Group subjects are built-in virtual groups
@@ -2144,7 +2153,7 @@ def build_app(
         # rows, so it keeps describing the cluster once the rows are a page of it.
         counts = store.count_bindings_by_finding(cluster_id)
         total = sum(counts.values())
-        rows = store.all_bindings(cluster_id, limit=limit, offset=offset, reach=True)
+        rows = store.all_bindings(cluster_id, limit=limit, offset=offset, reach=True, finding=finding)
         by_tier: dict[str, list[dict]] = {
             "ok": [], "dangling": [], "unresolved": [], "built_in": [], "unmanaged": []
         }
@@ -2163,7 +2172,9 @@ def build_app(
             "total": total,
             "limit": limit,
             "offset": offset,
-            "truncated": offset + len(rows) < total,
+            # The tier asked for, or null for every tier: the rows below are that tier's alone.
+            "finding": finding,
+            "truncated": offset + len(rows) < (counts.get(finding, 0) if finding else total),
             # From the scalar query, NOT from by_tier — by_tier holds this page. Counting
             # the page here is the defect that shipped twice already.
             "counts": {tier: counts.get(tier, 0) for tier in by_tier},
@@ -2202,6 +2213,7 @@ def build_app(
         # reaches every namespace, which is what namespace_reach answers for the detail; the list
         # says the same (review of #167: Codex and OB1 on the count, OB1 F2 on the self tier).
         wide = store.namespace_detail(cluster_id, "", user_name=me, groups=groups)
+        # PLATFORM-CLASSIFICATION (#255, #353): Home's cluster-wide counts leave the platform's identities out (a system: group, a platform user)
         cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"] if not g["is_platform"]})
         cluster_wide_grants = len([d for d in wide["cluster_wide_grants"] if not d["is_platform"]])
         # The switch that lists every namespace is REACH — every cluster-wide binding naming the
@@ -2217,6 +2229,7 @@ def build_app(
         # grant counts (`excluded_platform`). A hidden row stays in `namespaces`: it is filtered on the
         # page, never dropped from the payload, so export, search and the drill still reach it.
         for row in rows:
+            # PLATFORM-CLASSIFICATION (#255, #353): the namespace index's hide-by-default flag
             row["platform"] = settings.platform_namespaces.matches(row["name"])
         platform = [r for r in rows if r["platform"]]
         # A CONFIGURED PATTERN THAT MATCHES NOTHING IS REPORTABLE (#255), and it has to be reported
@@ -2225,6 +2238,7 @@ def build_app(
         # `controller_is_declared`. Computed over the cluster's own namespace names, so it answers
         # "your `-operator` matches nothing HERE" rather than "nowhere", which is the actionable
         # version on a fleet where estates differ.
+        # PLATFORM-CLASSIFICATION (#255, #353): an `additional*` pattern that matches no namespace here is reported as stale
         stale_patterns = settings.platform_namespaces.unmatched([r["name"] for r in rows])
         source = store.namespaces_source(cluster_id)
         return {
@@ -2346,6 +2360,7 @@ def build_app(
             # The SAME classifier the namespace index uses (#255). Home and the audit disagreeing
             # about what "platform" means would be the divergence this stanza exists to end.
             "answer": derive_answer(groups, via, direct,
+                                    # PLATFORM-CLASSIFICATION (#255, #353): Home's "platform" is this classifier, the same one
                                     platform=settings.platform_namespaces.matches),
             "direct": direct,
             "changes": dict(group_changes(events, since), capped_clusters=sorted(capped)),
@@ -2425,6 +2440,7 @@ def build_app(
             "note": "direct user grants; migrate these to LDAP-managed groups",
             "by_namespace":
                 store.user_bindings_by_namespace(cluster_id) if scope == "all" else None,
+            # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's excluded count (is_platform_user, stored at poll time)
             "excluded_platform":
                 store.platform_user_binding_count(cluster_id) if scope == "all" else None,
             "namespace": namespace,
