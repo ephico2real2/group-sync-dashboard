@@ -105,8 +105,8 @@ record is the second half of `walk/plant.out`. One binding refresh is 300 s, so 
 
 `walk/counts-after.txt` and `walk/clusters-after.txt`, read afterwards: `dashboard` back at 50 rows on 47 bindings,
 `ok` 38, `built_in` 825; `shared-qa` and `shared-rnd` — the same cluster joined twice, by design — read the same
-50 / 6 / 825; the three mock entries read 1 unmanaged each (the mock cluster's own hand-made grant, as before this
-change).
+50 / 6 / 825; the three mock entries read 1 unmanaged each (the mock cluster's own hand-made grant; this folder holds
+no reading of them from before the change — the mock-cluster suite's own test is that grant's evidence).
 
 ## What this shows against #353's Definition of Done
 
