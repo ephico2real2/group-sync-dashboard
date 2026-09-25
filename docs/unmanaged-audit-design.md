@@ -15,15 +15,17 @@ label, and the handful that do not are exactly the hand-made ones, including a
 ClusterRoleBinding granting `cluster-admin` that nothing manages
 (`local-development/tests/test_rbac.py#TestUnmanagedFinding`).
 
-**Group subjects only, by design** (decided 2026-09-24, #312). The finding asks whether a person's
-access through a synced group bypassed governance. A binding to a ServiceAccount is a workload's
-identity, installed by operators and charts that do not use the label. On the lab, 661 of the 668
-bindings with a ServiceAccount subject carry no `rbac.ocp.io/config-source`, so flagging them would
-bury the findings this exists for. A hand-made grant to a ServiceAccount is therefore not reported.
+**What it covers today: Group subjects only** (`kube.py#_binding_views` keeps no other kind). The goal
+is wider, in the operator's words (2026-09-24, #312): find grants made by hand that bypass policy,
+whether the subject is a group, a ServiceAccount or a user, and silence the legitimate ones the
+operator decides to exclude. Exclusion is never inferred: the operator puts the config-source label
+(or the exception annotation) on a grant they have decided is legitimate, and only that silences
+it. Extending the finding to ServiceAccount and User subjects, with the same label, is not built
+yet (#353).
 
 **This chart's own RBAC** carries `rbac.ocp.io/config-source: group-sync-dashboard`
-(`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.rbacLabels`), so its auditor binding is not
-reported. That value is provenance, not evidence that a policy operator is in use
+(`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.rbacLabels`), so its auditor binding, which
+grants the auditor group what its job needs, is not reported. That value is provenance, not evidence that a policy operator is in use
 (`local-development/gsd/kube.py#CHART_CONFIG_SOURCE`). The binding is on every host by default, so
 counting it would switch the finding on for every hand-made grant on a host no policy operator
 governs.
@@ -140,9 +142,9 @@ the headline reverts to the capped count.
 It is still narrower than the cluster's total, in one direction only: an object already carrying
 the `rbac.ocp.io/unmanaged` label is a finding but is not re-announced (I3 below), so it is in
 neither number. The label gates announcement, not classification — `audit_stamped` appears
-nowhere in the classifying `CASE` (`store.py#Store.user_bindings`), only in the announcement filter
+nowhere in the classifying `CASE` (`store.py#_FINDING_CASE`), only in the announcement filter
 (`audit.py#plan_audit_stamps`). The cluster-wide set is `GET /api/clusters/{id}/bindings/findings`
-(`api.py#user_detail`), which the summary line points at for exactly this reason.
+(`api.py#binding_findings`), which the summary line points at for exactly this reason.
 
 ## How a finding is suppressed
 
@@ -153,8 +155,8 @@ oc annotate clusterrolebinding <name> \
   rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
 ```
 
-The dashboard reads that annotation (`kube.py#UNMANAGED_EXCEPTION_ANNOTATION`, `kube.py#_user_binding_views`) and stops classifying the
-binding as unmanaged (`store.py#Store.user_bindings`), so it leaves the log, the RBAC policy tab and the API.
+The dashboard reads that annotation (`kube.py#UNMANAGED_EXCEPTION_ANNOTATION`, `kube.py#_binding_views`) and stops classifying the
+binding as unmanaged (`store.py#_FINDING_CASE`), so it leaves the log, the RBAC policy tab and the API.
 Tested at `test_rbac.py#TestUnmanagedFinding.test_the_exception_annotation_acknowledges_it`.
 
 This is separation of duties rather than a limitation. The justification lives next to the
@@ -195,7 +197,7 @@ the binding carries no `config-source` label, the binding carries no exception a
 the cluster demonstrably uses the policy operator — some managed binding exists other than this
 chart's own, so a cluster that has never heard of `config-source` labels reports zero findings
 rather than sixty. All five
-conditions are one SQL `CASE` (`store.py#Store.user_bindings`), which is also what the API and the counts
+conditions are one SQL `CASE` (`store.py#_FINDING_CASE`), which is also what the API and the counts
 read, so the log and the UI cannot disagree about what a finding is. Tests:
 `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_stamped` and `test_rbac.py#TestUnmanagedFinding`.
 

@@ -501,7 +501,7 @@ into `group_state.cliff_silence` or from values; a silenced cliff is still compu
 
 ### Binding classification
 
-One SQL `CASE` decides all five tiers (`gsd/store.py#Store.user_bindings`), in this order:
+One SQL `CASE` decides all five tiers (`gsd/store.py#_FINDING_CASE`), in this order:
 
 | Finding | Meaning |
 |---|---|
@@ -582,7 +582,7 @@ the dashboard controls is bounded, and reports what it left out:
 | `/api/dashboard/activity` | `limit` default 500, max 5000 | — |
 
 On `/user-bindings` the flat list is paged and the per-namespace rollup deliberately is not
-(`gsd/api.py#user_detail`). The rollup is one row per namespace, bounded by a number the cluster
+(`gsd/api.py#direct_user_bindings`). The rollup is one row per namespace, bounded by a number the cluster
 already keeps small, and it is the view that answers "where is my exposure" — truncating it
 would make the risk ranking a ranking of an arbitrary subset. Ordering is applied before the
 limit, so a truncated page is the worst N rather than an arbitrary N (`gsd/store.py#Store.user_bindings_by_namespace`).
@@ -1013,7 +1013,7 @@ oc annotate clusterrolebinding <name> \
 ```
 
 The classifier reads that annotation and stops classifying the binding as `unmanaged`
-(`gsd/store.py#Store.user_bindings`), so it leaves the log, the RBAC policy tab and the API together. The
+(`gsd/store.py#_FINDING_CASE`), so it leaves the log, the RBAC policy tab and the API together. The
 justification lives next to the object it describes, and the acknowledgement is performed by
 somebody who holds the privileges that object grants — which the dashboard deliberately does not.
 Separation of duties, not a limitation.
@@ -1610,7 +1610,7 @@ $ helm install gsd gsd/group-sync-dashboard --set ingress.host=…
 | Activity aggregated per user-day | bounds the table at users × days, and avoids keeping a record of which colleague read whose membership | `gsd/store.py#SCHEMA` |
 | Activity self-scoped by default | it is identifiable personnel data, and "you could read it with `oc` anyway" does not cover who looked | `gsd/api.py#membership_changes` |
 | No write verb on anything the dashboard reports on | privilege-escalation prevention refuses a metadata patch on an RBAC object unless the writer already holds everything it grants: 4 planned, 0 landed, 175 rule sets demanded to label a `view` binding | `templates/rbac.yaml#NO WRITE VERB` |
-| A finding is suppressed by an annotation on the object, not in the dashboard | the justification belongs next to the object, and the acknowledgement belongs to somebody who holds the privileges | `gsd/store.py#Store.user_bindings` |
+| A finding is suppressed by an annotation on the object, not in the dashboard | the justification belongs next to the object, and the acknowledgement belongs to somebody who holds the privileges | `gsd/store.py#_FINDING_CASE` |
 | Role rules are never expanded | an incomplete effective-permission answer is a false negative that closes an incident wrongly | `gsd/api.py#list_events` |
 | `unresolved` and `built_in` never alert | built-ins are normal and `unresolved` cannot be told from a not-yet-synced group; alerting trains people to ignore the view | `gsd/api.py#list_alerts` |
 | Every unbounded list is capped and says so | a silently truncated audit list is worse than a slow one | `gsd/api.py#list_events`, `400-406` |
