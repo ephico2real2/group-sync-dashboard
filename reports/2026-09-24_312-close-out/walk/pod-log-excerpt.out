@@ -1,0 +1,38 @@
+# pod log excerpt — 2026-09-25T02:10:50Z — pod pod/group-sync-dashboard-8556cc6bb5-bwm2d — TZ=America/New_York
+2026-09-24 21:20:50,502-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 21:20:50,657-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 21:20:50,696-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 21:26:49,987-0400 INFO    gsd.poller refreshed 207 group bindings for shared-rnd
+2026-09-24 21:26:49,988-0400 INFO    gsd.poller refreshed 207 group bindings for shared-qa
+2026-09-24 21:26:49,990-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — shared-rnd: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-
+2026-09-24 21:26:49,991-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — shared-qa: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-r
+2026-09-24 21:26:50,060-0400 INFO    gsd.poller refreshed 207 group bindings for dashboard
+2026-09-24 21:26:50,061-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-r
+2026-09-24 21:31:49,855-0400 INFO    gsd.poller refreshed 207 group bindings for shared-rnd
+2026-09-24 21:31:49,856-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — shared-rnd: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-
+2026-09-24 21:32:49,723-0400 INFO    gsd.poller refreshed 207 group bindings for shared-qa
+2026-09-24 21:32:49,724-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — shared-qa: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-r
+2026-09-24 21:32:49,798-0400 INFO    gsd.poller refreshed 207 group bindings for dashboard
+2026-09-24 21:32:49,798-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-r
+2026-09-24 21:36:49,853-0400 INFO    gsd.poller refreshed 207 group bindings for shared-rnd
+2026-09-24 21:36:49,854-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — shared-rnd: RoleBinding gsd-evidence-347/evidence-347-hand-made grants view to group app-ocp-
+2026-09-24 21:37:49,897-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 21:37:49,936-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 21:42:49,934-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 21:42:50,007-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 21:43:49,719-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 21:47:50,148-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 21:47:50,222-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 21:48:50,177-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 21:52:50,288-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 21:52:50,351-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 21:54:49,889-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 21:58:50,124-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 21:58:50,215-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 21:59:49,804-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 22:04:50,044-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 22:04:50,146-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 22:04:50,182-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+2026-09-24 22:09:50,883-0400 INFO    gsd.poller refreshed 205 group bindings for shared-qa
+2026-09-24 22:09:50,884-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
+2026-09-24 22:09:50,992-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
