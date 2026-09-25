@@ -1,0 +1,6 @@
+   dashboard | unmanaged 50 | unresolved 6 | dangling 0 | built-in 825
+   mock-privateca | unmanaged 1 | unresolved 0 | dangling 0 | built-in 0
+   mock-selfsigned | unmanaged 1 | unresolved 0 | dangling 0 | built-in 0
+   mock-trusted | unmanaged 1 | unresolved 0 | dangling 0 | built-in 0
+   shared-qa | unmanaged 50 | unresolved 6 | dangling 0 | built-in 825
+   shared-rnd | unmanaged 50 | unresolved 6 | dangling 0 | built-in 825

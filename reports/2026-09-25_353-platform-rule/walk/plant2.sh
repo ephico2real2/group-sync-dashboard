@@ -1,0 +1,45 @@
+#!/bin/bash
+# plant2.sh: the planted-grant proof, continued after plant.sh's check line failed to parse (an f-string with escaped
+# quotes; the orchestrator's finding). plant.sh had already created the namespace, the account and the
+# ClusterRoleBinding at 06:18:44Z and NOTHING else; this script does not re-create them. Same steps from the check on:
+# reported → labelled and silent → the platform half built-in → everything removed (the CRB is cluster-scoped, so
+# it is deleted by name; deleting the namespace would not remove it). Appends to ${W}/plant.out.
+set -uo pipefail
+source "$(dirname "$0")/lib.sh"
+EV=gsd-evidence-353; SA=u1-evidence-sa; CRB=u1-evidence; PNS=openshift-monitoring; PSA=u1-platform-sa; PCRB=u1-platform
+row() {  # row <binding_name>: "<finding> <is_platform> <subject_kind> <namespace>/<name> managed_source=<v>" or "absent"
+  api_as kubeadmin "/api/clusters/dashboard/bindings/findings?limit=5000" | python3 -c '
+import json, sys
+d = json.load(sys.stdin); name = sys.argv[1]
+for tier in ("ok", "dangling", "unresolved", "built_in", "unmanaged"):
+    for r in d[tier]:
+        if r["binding_name"] == name:
+            subject = r["subject_namespace"] + "/" + r["group_name"]
+            print(r["finding"], r["is_platform"], r["subject_kind"], subject, "managed_source=" + str(r["managed_source"])); sys.exit(0)
+print("absent")' "$1"
+}
+wait_for() {  # wait_for <binding_name> <expected first word of row()>  (up to 420 s, one refresh is 300 s)
+  local t0=$(date +%s) got
+  while :; do got=$(row "$1"); [ "${got%% *}" = "$2" ] && { echo "   $(date -u +%H:%M:%SZ) ${1}: ${got}  (after $(( $(date +%s) - t0 )) s)"; return 0; }
+    [ $(( $(date +%s) - t0 )) -ge 420 ] && { echo "   TIMEOUT ${1}: ${got}"; return 1; }; sleep 10; done
+}
+{
+echo "# planted-grant proof, continued — $(date -u +%Y-%m-%dT%H:%M:%SZ) — pod $(pod)"
+echo "== 1 (cont.) the grant plant.sh created at 06:18:44Z, as the store classifies it now"
+oc get clusterrolebinding "$CRB" -o jsonpath='   crb {.metadata.name} created {.metadata.creationTimestamp} labels {.metadata.labels} subject {.subjects[0].kind} {.subjects[0].namespace}/{.subjects[0].name}{"\n"}'
+wait_for "$CRB" unmanaged
+echo "   log: $(oc logs -n "$NS" "$(pod)" -c dashboard | grep "UNMANAGED GRANT DISCOVERED" | grep " $CRB " | head -1 | cut -c1-220)"
+echo "== 2. the operator's label silences it"
+oc label clusterrolebinding "$CRB" rbac.ocp.io/config-source=platform-team
+wait_for "$CRB" ok
+echo "== 3. the platform half: a grant to an account in a platform namespace is built-in by rule"
+oc create serviceaccount "$PSA" -n "$PNS" && oc create clusterrolebinding "$PCRB" --clusterrole=view --serviceaccount="${PNS}:${PSA}"
+wait_for "$PCRB" built_in
+echo "   log names it? $(oc logs -n "$NS" "$(pod)" -c dashboard | grep -c " $PCRB ") line(s) (0 expected: a built-in row is never announced)"
+echo "== 4. removed — the ClusterRoleBindings by name (cluster-scoped), the platform account, the namespace"
+oc delete clusterrolebinding "$CRB" "$PCRB" && oc delete serviceaccount "$PSA" -n "$PNS" && oc delete namespace "$EV" --wait=false
+wait_for "$CRB" absent; wait_for "$PCRB" absent
+echo "   namespace: $(oc get namespace "$EV" -o jsonpath='{.status.phase}' 2>&1 | head -1)"
+echo "   crb: $(oc get clusterrolebinding "$CRB" "$PCRB" 2>&1 | tail -2 | tr '\n' ' ')"
+echo "# done — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} 2>&1 | tee -a "${W}/plant.out"

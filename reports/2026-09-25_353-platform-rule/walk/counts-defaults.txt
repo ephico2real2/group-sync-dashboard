@@ -1,0 +1,47 @@
+# counts (defaults) — 2026-09-25T06:06:33Z — pod pod/group-sync-dashboard-69bc7f6f99-k59bk
+## Argo: Synced Healthy c00aa2e4ff
+## image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.33.0-c00aa2e4ff
+## /api/version
+{"leader":true,"version":"0.33.0","commit":"c00aa2e4ff","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+## schema
+user_version 20
+rbac_group_binding columns ['cluster_id', 'binding_kind', 'binding_namespace', 'binding_name', 'role_kind', 'role_name', 'subject_kind', 'subject_namespace', 'is_platform', 'group_name', 'observed_at', 'managed_source', 'exception', 'audit_stamped']
+## /api/clusters/dashboard/bindings/findings — counts
+   total 919 | counts {'ok': 45, 'dangling': 0, 'unresolved': 6, 'built_in': 743, 'unmanaged': 125}
+## unmanaged rows, by kind, by namespace, distinct bindings  (finding=unmanaged&limit=5000)
+   rows 125 | truncated False | bindings 118
+   by kind {'User': 11, 'ServiceAccount': 114}
+   ServiceAccount rows by the account namespace:
+       23  metallb-system
+       18  group-sync-operator
+       15  kyverno
+       14  cert-manager
+        8  namespace-configuration-operator
+        8  group-sync-dashboard
+        7  mongodb-poc
+        6  cert-manager-operator
+        6  hostpath-provisioner
+        6  envoy-gateway-system
+        2  modernize-demo
+        1  ldap-testing
+   User rows: [('asmith', 1), ('bwilliams', 1), ('dana.lee', 1), ('developer', 1), ('jane.smith', 1), ('jdoe', 3), ('ocp-oauth-bind-serviceid', 2), ('tmp-contractor-9931', 1)]
+   Group rows: []
+## built_in rows by kind  (finding=built_in&limit=5000)
+   rows 743 | by kind {'ServiceAccount': 557, 'User': 24, 'Group': 162} | is_platform=1 581
+## /api/clusters (dashboard)
+    {'id': 'dashboard', 'bindings': None, 'ok_bindings': None, 'dangling_bindings': 0, 'unresolved_bindings': 6, 'unmanaged_bindings': 125, 'builtin_bindings': 743}
+## /metrics gsd_bindings_total{cluster="dashboard"}
+gsd_bindings_total{cluster="dashboard",finding="ok"} 45.0
+gsd_bindings_total{cluster="dashboard",finding="dangling"} 0.0
+gsd_bindings_total{cluster="dashboard",finding="unresolved"} 6.0
+gsd_bindings_total{cluster="dashboard",finding="built_in"} 743.0
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 125.0
+## the poller's last binding refresh lines (dashboard)
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding cluster-reader (cluster-wide) grants cluster-reader to user dana.lee, outside the policy system (no config-source
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding crc-csi-hostpathplugin-health-monitor-controller-cluster-role (cluster-wide) grants crc-hostpath-external-health-
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding crc-csi-hostpathplugin-provisioner-cluster-role (cluster-wide) grants crc-hostpath-external-provisioner-runner to
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding crc-hostpath-csi-provisioner-role (cluster-wide) grants crc-hostpath-external-provisioner-runner to ServiceAccoun
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding eg-gateway-helm-certgen:envoy-gateway-system (cluster-wide) grants eg-gateway-helm-certgen:envoy-gateway-system t
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding eg-gateway-helm-envoy-gateway-rolebinding (cluster-wide) grants eg-gateway-helm-envoy-gateway-role to ServiceAcco
+2026-09-25 02:06:04,330-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding grafana-operator.v5.24.0-7CwpvgMwMEmwQAV7rBsabS71gNx9JKnORBJZm2 (cluster-wide) grants grafana-operator.v5.24.0-7C
+2026-09-25 02:06:04,330-0400 DEBUG   gsd.poller dashboard poll cycle took 0.52s; next binding refresh in 300s

@@ -1,0 +1,45 @@
+# planted-grant proof — 2026-09-25T06:18:44Z — pod pod/group-sync-dashboard-7c65dff9f8-k92nj
+== 1. an unlabelled ServiceAccount grant in a namespace of its own (not the platform's)
+namespace/gsd-evidence-353 created
+serviceaccount/u1-evidence-sa created
+clusterrolebinding.rbac.authorization.k8s.io/u1-evidence created
+   labels:   subject: ServiceAccount gsd-evidence-353/u1-evidence-sa
+  File "<string>", line 6
+    print(r["finding"], r["is_platform"], r["subject_kind"], f"{r[\"subject_namespace\"]}/{r[\"group_name\"]}", "managed_source=" + str(r["managed_source"])); sys.exit(0)
+                                                                   ^
+SyntaxError: unexpected character after line continuation character
+  File "<string>", line 6
+    print(r["finding"], r["is_platform"], r["subject_kind"], f"{r[\"subject_namespace\"]}/{r[\"group_name\"]}", "managed_source=" + str(r["managed_source"])); sys.exit(0)
+                                                                   ^
+SyntaxError: unexpected character after line continuation character
+  File "<string>", line 6
+    print(r["finding"], r["is_platform"], r["subject_kind"], f"{r[\"subject_namespace\"]}/{r[\"group_name\"]}", "managed_source=" + str(r["managed_source"])); sys.exit(0)
+                                                                   ^
+SyntaxError: unexpected character after line continuation character
+  File "<string>", line 6
+    print(r["finding"], r["is_platform"], r["subject_kind"], f"{r[\"subject_namespace\"]}/{r[\"group_name\"]}", "managed_source=" + str(r["managed_source"])); sys.exit(0)
+                                                                   ^
+SyntaxError: unexpected character after line continuation character
+# planted-grant proof, continued — 2026-09-25T06:20:04Z — pod pod/group-sync-dashboard-7c65dff9f8-k92nj
+== 1 (cont.) the grant plant.sh created at 06:18:44Z, as the store classifies it now
+   crb u1-evidence created 2026-09-25T06:18:44Z labels  subject ServiceAccount gsd-evidence-353/u1-evidence-sa
+   06:23:47Z u1-evidence: unmanaged 0 ServiceAccount gsd-evidence-353/u1-evidence-sa managed_source=None  (after 223 s)
+   log: 2026-09-25 02:23:46,098-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding u1-evidence (cluster-wide) grants view to ServiceAccount gsd-evidence-353/u1-evidence-sa, outside the policy syst
+== 2. the operator's label silences it
+clusterrolebinding.rbac.authorization.k8s.io/u1-evidence labeled
+   06:29:53Z u1-evidence: ok 0 ServiceAccount gsd-evidence-353/u1-evidence-sa managed_source=platform-team  (after 365 s)
+== 3. the platform half: a grant to an account in a platform namespace is built-in by rule
+serviceaccount/u1-platform-sa created
+clusterrolebinding.rbac.authorization.k8s.io/u1-platform created
+   06:34:48Z u1-platform: built_in 1 ServiceAccount openshift-monitoring/u1-platform-sa managed_source=None  (after 295 s)
+   log names it? 0 line(s) (0 expected: a built-in row is never announced)
+== 4. removed — the ClusterRoleBindings by name (cluster-scoped), the platform account, the namespace
+clusterrolebinding.rbac.authorization.k8s.io "u1-evidence" deleted
+clusterrolebinding.rbac.authorization.k8s.io "u1-platform" deleted
+serviceaccount "u1-platform-sa" deleted from openshift-monitoring namespace
+namespace "gsd-evidence-353" deleted
+   06:40:53Z u1-evidence: absent  (after 365 s)
+   06:40:54Z u1-platform: absent  (after 1 s)
+   namespace: Error from server (NotFound): namespaces "gsd-evidence-353" not found
+   crb: Error from server (NotFound): clusterrolebindings.rbac.authorization.k8s.io "u1-evidence" not found Error from server (NotFound): clusterrolebindings.rbac.authorization.k8s.io "u1-platform" not found 
+# done — 2026-09-25T06:40:54Z

@@ -1,0 +1,40 @@
+# counts (after) — 2026-09-25T06:41:44Z — pod pod/group-sync-dashboard-7c65dff9f8-k92nj
+## Argo: Synced Healthy de303e9b22
+## image: image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.33.0-de303e9b22
+## /api/version
+{"leader":true,"version":"0.33.0","commit":"de303e9b22","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+## schema
+user_version 20
+rbac_group_binding columns ['cluster_id', 'binding_kind', 'binding_namespace', 'binding_name', 'role_kind', 'role_name', 'subject_kind', 'subject_namespace', 'is_platform', 'group_name', 'observed_at', 'managed_source', 'exception', 'audit_stamped']
+## /api/clusters/dashboard/bindings/findings — counts
+   total 919 | counts {'ok': 38, 'dangling': 0, 'unresolved': 6, 'built_in': 825, 'unmanaged': 50}
+## unmanaged rows, by kind, by namespace, distinct bindings  (finding=unmanaged&limit=5000)
+   rows 50 | truncated False | bindings 47
+   by kind {'User': 11, 'ServiceAccount': 39}
+   ServiceAccount rows by the account namespace:
+       23  metallb-system
+        7  mongodb-poc
+        6  envoy-gateway-system
+        2  modernize-demo
+        1  ldap-testing
+   User rows: [('asmith', 1), ('bwilliams', 1), ('dana.lee', 1), ('developer', 1), ('jane.smith', 1), ('jdoe', 3), ('ocp-oauth-bind-serviceid', 2), ('tmp-contractor-9931', 1)]
+   Group rows: []
+## built_in rows by kind  (finding=built_in&limit=5000)
+   rows 825 | by kind {'ServiceAccount': 639, 'User': 24, 'Group': 162} | is_platform=1 663
+## /api/clusters (dashboard)
+    {'id': 'dashboard', 'bindings': None, 'ok_bindings': None, 'dangling_bindings': 0, 'unresolved_bindings': 6, 'unmanaged_bindings': 50, 'builtin_bindings': 825}
+## /metrics gsd_bindings_total{cluster="dashboard"}
+gsd_bindings_total{cluster="dashboard",finding="ok"} 38.0
+gsd_bindings_total{cluster="dashboard",finding="dangling"} 0.0
+gsd_bindings_total{cluster="dashboard",finding="unresolved"} 6.0
+gsd_bindings_total{cluster="dashboard",finding="built_in"} 825.0
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 50.0
+## the poller's last binding refresh lines (dashboard)
+2026-09-25 02:40:46,090-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding metallb-operator-webhook-server-service-system:auth-delegator (cluster-wide) grants system:auth-delegator to Serv
+2026-09-25 02:40:46,090-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding metallb-operator.v4.22.0-4JrrVDNlJXx19HgpvBJ3dthDwazEDVm1w5bHHW (cluster-wide) grants metallb-operator.v4.22.0-4J
+2026-09-25 02:40:46,090-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding metallb-operator.v4.22.0-5aO8JAhO57RdAoCRRgsPfgas9R4dqVhds9Cvpw (cluster-wide) grants metallb-operator.v4.22.0-5a
+2026-09-25 02:40:46,090-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding metallb-operator.v4.22.0-75Z81InnaiGMSYshP1U3OueDEoVW9TR1JGRZKl (cluster-wide) grants metallb-operator.v4.22.0-75
+2026-09-25 02:40:46,090-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: ClusterRoleBinding metallb-operator.v4.22.0-766XC0FqNMvf91WdrG71jLke2aGiFVtz85wFxm (cluster-wide) grants metallb-operator.v4.22.0-76
+2026-09-25 02:40:46,090-0400 WARNING gsd.poller UNMANAGED GRANT DISCOVERED — dashboard: RoleBinding metallb-system/metallb-operator.v4.22.0-cpBx25MgX5VvoiRALixa2Tro5aZB2FZkpcw8xR grants metallb-operator.v4.22.0-cpBx25MgX
+2026-09-25 02:40:46,090-0400 DEBUG   gsd.poller dashboard poll cycle took 0.45s; next binding refresh in 300s
+2026-09-25 02:41:45,700-0400 DEBUG   gsd.poller dashboard poll cycle took 0.06s; next binding refresh in 240s

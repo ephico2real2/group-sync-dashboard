@@ -7,7 +7,7 @@
 | Release | — (post-programme) |
 | Version on release | app 0.33.0, chart 0.54.0 |
 | Issue | [#353](https://github.com/ephico2real2/group-sync-dashboard/issues/353) |
-| Status | in progress |
+| Status | merged |
 | Source | OB1's implementation specification of 2026-09-24, written before any code from the operator's words on #312 and #353, the upstream Kubernetes sources cited in §2.1, the lab measured read-only on 2026-09-24 (§2.2), and a map of every reader of the binding table on main `244d4ab` (§2.3) |
 
 ## How to read this spec
@@ -283,7 +283,11 @@ kubernetes/kubernetes master `90777f0b13827dcae8301137ea64f699f3449dbc`; kuberne
 ### 2.2 The lab — what the cluster holds (CRC, OpenShift 4.22.7, 2026-09-24)
 
 `oc get clusterrolebindings -o json` and `oc get rolebindings -A -o json`, tabulated by a script over the
-two files (the script and its output are in the session log):
+two files (the script and its output are in the session log). The platform-rule counts below were re-measured on
+those two files with `measure-353.py` (the review record of #361 and #360), which imports `_binding_views` and
+`_binding_is_platform` from the tree under test: run it from that tree's `local-development` with `PYTHONPATH=.` —
+by path alone, `sys.path[0]` is the script's own directory and the venv's editable install (another checkout's `gsd`)
+answers instead (OB2, review of #360).
 
 | | |
 |---|---|
@@ -497,7 +501,7 @@ where it becomes `clusters.yaml`, `_helpers.tpl` `gsd.validatePlatformNamespaces
 direct-user view's `excluded_platform`), `kube.py` `_user_binding_views`, `poller.py`'s user-row flag,
 `store.py`'s two `user_binding` predicates. The finding path (this spec): `poller.py` `_binding_is_platform`
 (three decisions), the `PlatformNamespaces()` default when a caller passes none, and the row dict, `store.py`'s column, migration 20's column and the two `built_in` arms of
-`_FINDING_CASE`, `reporting/snapshot.py`'s omit and its six `user_binding` predicates (the direct-user view's
+`_FINDING_CASE`, `reporting/snapshot.py`'s omit and its seven `user_binding` predicates (the direct-user view's
 flag on the reports' copy), `metrics.py`'s `FINDINGS` (a platform row counts under `built_in`), `index.html`'s
 Home filters, its two platform badges and its export column. The consumers the review of #361 found unmarked, now marked:
 `home.py` `derive_answer`'s signature (its `platform` callable and default) and its `ns_row` (the classifier the API passes in), `state.py`'s direct-user alert, `poller.py`'s
