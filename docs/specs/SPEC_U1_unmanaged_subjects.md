@@ -77,6 +77,13 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   same exact-shape way. The operator also asked to exclude `openshift-cluster-version`: it is already the
   platform's by the shipped prefix `openshift-`, so no rule changes, and the lab's own binding there is pinned
   by a test that names what decides it — the account's own namespace, since a ClusterRoleBinding has none.
+  One more ruling, on OB1-lite's question in the review of #361 (2026-09-25): a User subject spelt
+  `system:serviceaccount:<namespace>:<name>` — the same access as the ServiceAccount subject, since the
+  authorizer matches a User by name (`rule.go` `appliesToUser`) — stays the platform's through
+  `is_platform_user`'s `system:` prefix, unchanged; no namespace rule is added for it. The operator: keep it
+  silent. Measured on the lab: 5 such rows, all `openshift-kube-apiserver:check-endpoints`, platform by either
+  rule. The known consequence, recorded: a hand-made grant written that way in a project namespace is not
+  reported, and the SA `default` rule above does not reach it.
 - **Every line that decides or consumes "platform" carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`**
   (the operator: *"tell it to add a marker to the code, so OB1 can review and help us review the logic and that
   it is working as intended"*): on the classifiers and their defaults, their settings parse and the chart's
@@ -595,8 +602,15 @@ test below, which pins existing #255 behaviour and passes on main too (measured,
 
 ## 5. Verification on the lab
 
-After the deploy (`local-development/release-crc.sh --argocd`, Synced/Healthy, the commit verified in-pod,
-the PVC UIDs identical), with `KUBECONFIG` set to the lab's scratch kubeconfig:
+Before the deploy, with `KUBECONFIG` set to the lab's scratch kubeconfig: read `PRAGMA user_version` from the
+running pod's `/data/gsd.db` and record it in the evidence. Migration 20 was edited in place after PR #360 was
+opened (the `is_platform` column joined it), and `_migrate` skips a database already at 20, so a database that
+ran #360's version of the migration would never gain the column (OB1-lite, review of #361). #360 was never
+deployed to the lab, so the reading is expected to be 19 — deploy as is. If it reads 20 without the column
+(`PRAGMA table_info(rbac_group_binding)`), stop and tell the orchestrator before anything is built (the
+smallest remedy would be a migration 21 `ALTER TABLE … ADD COLUMN is_platform`, approved 2026-09-25 only
+against that measurement). Then, after the deploy (`local-development/release-crc.sh --argocd`, Synced/Healthy,
+the commit verified in-pod, the PVC UIDs identical):
 
 1. `PRAGMA user_version` in the pod's database reads 20 (`oc exec … -- python3 -c` over `/data/gsd.db`),
    and the report pod's `/report/readyz` is 200.
