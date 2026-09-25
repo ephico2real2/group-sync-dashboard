@@ -506,9 +506,9 @@ One SQL `CASE` decides all five tiers (`gsd/store.py#_FINDING_CASE`), in this or
 | Finding | Meaning |
 |---|---|
 | `dangling` | the group was observed operator-managed and is now absent — the binding grants nobody |
-| `built_in` | `system:*` — a virtual group that authorises real access and has no object by design |
+| `built_in` | `system:*` — a virtual group that authorises real access and has no object by design; or the platform's own identity — a ServiceAccount whose effective namespace `platformNamespaces` names, OpenShift's per-project `system:image-builders`/`system:deployers` controller bindings (the third, `system:image-pullers`, is a `system:` group), a `system:` user, `kubeadmin` — never a finding (#353) |
 | `unresolved` | names a group never seen managed, so possibly one that has never existed |
-| `unmanaged` | the group resolves and is synced, but no policy system manages this binding and no human has annotated an exception |
+| `unmanaged` | no policy system manages this binding and no human has annotated an exception — for a Group subject, one that resolves and is synced, on a cluster whose Group bindings show the policy operator in use; for a ServiceAccount or User subject that is not the platform's own (`built_in`), always, on every host (#353) |
 | `ok` | everything else |
 
 Three tiers for broken resolution rather than one, because on the reference cluster 110 of
@@ -516,9 +516,16 @@ Three tiers for broken resolution rather than one, because on the reference clus
 of which 9 matter, and a list that is 92% noise is one operators stop reading
 (`gsd/store.py#Store.binding_findings`).
 
-`unmanaged` additionally requires that the cluster demonstrably *uses* the policy operator —
-`EXISTS (… managed_source IS NOT NULL)`. Without that clause, every binding on a cluster
-that has never heard of `config-source` labels would flag.
+For a Group subject, `unmanaged` additionally requires that the cluster demonstrably *uses* the
+policy operator — `EXISTS (… managed_source IS NOT NULL …)` over Group-subject bindings other than
+this chart's own (#354). Without that clause, every Group binding on a cluster that has never heard
+of `config-source` labels would flag. A ServiceAccount or User subject has no such gate: the platform's own
+are `built_in` before this arm (the stored `is_platform` flag: a namespace `platformNamespaces` names, a
+`system:` user, kubeadmin, OpenShift's two per-project controller bindings), and nothing silences the rest but
+the label or the annotation on its own binding. The three tiers above it are Group
+tiers too: an account or a person has no Group object to resolve, so its row is `built_in` (the platform's
+own), `unmanaged` or `ok`; no Helm, OLM or Argo CD label and no binding name excludes it
+(`docs/specs/SPEC_U1_unmanaged_subjects.md`).
 
 #### The three "group does not exist" tiers, and why they are three
 

@@ -130,9 +130,9 @@ never-polled cluster and an unreachable one are different states, and rendering 
 `false` would report a failure that has not happened.
 
 `dangling_bindings`, `unresolved_bindings` and `unmanaged_bindings` are the three findings a
-person reviews — bindings that grant nobody, and grants of a synced group made outside the policy
-system; a cluster's "Bindings to review" is their sum. `builtin_bindings` are expected and not
-counted.
+person reviews — bindings that grant nobody, and grants made outside the policy system to a synced
+group, a ServiceAccount or a user; a cluster's "Bindings to review" is their sum. `builtin_bindings`
+are expected and not counted.
 
 `status` distinguishes `ok` / `auth_failed` / `forbidden` / `unreachable`. `forbidden`
 matters most: a ServiceAccount that can list GroupSyncs but not Groups produces a
@@ -678,25 +678,41 @@ Self tier: only rows naming the viewer, or a group the viewer belongs to.
 
 ### `GET /api/clusters/{cluster_id}/bindings/findings`
 
-Every group-subject binding, classified. Despite the path, this returns **all** bindings,
-including healthy ones — the caller filters.
+Every binding subject — a Group, a ServiceAccount or a User — classified. Despite the path, this
+returns **all** bindings, including healthy ones — the caller filters.
 
 ```json
 {
-  "total": 229, "limit": 500, "offset": 0, "truncated": false,
+  "total": 229, "limit": 500, "offset": 0, "finding": null, "truncated": false,
   "counts": {"ok": 70, "dangling": 0, "unresolved": 9, "built_in": 146, "unmanaged": 4},
   "ok": [
     {"binding_kind": "RoleBinding", "binding_namespace": "prod-ns", "binding_name": "managed-admin-rb",
-     "role_kind": "ClusterRole", "role_name": "admin", "group_name": "app-ocp-rbac-alpha-ns-admin",
+     "role_kind": "ClusterRole", "role_name": "admin",
+     "subject_kind": "Group", "subject_namespace": "", "is_platform": 0, "group_name": "app-ocp-rbac-alpha-ns-admin",
      "managed_source": "baseline-nonprod-rbac", "exception": null, "audit_stamped": 0, "finding": "ok",
      "member_count": 2, "logged_in_count": 1}
   ],
-  "dangling": [], "unresolved": [], "built_in": [], "unmanaged": [],
+  "dangling": [], "unresolved": [], "built_in": [],
+  "unmanaged": [
+    {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "shared-qa-poller",
+     "role_kind": "ClusterRole", "role_name": "cluster-admin",
+     "subject_kind": "ServiceAccount", "subject_namespace": "group-sync-operator", "is_platform": 0, "group_name": "shared-qa-poller",
+     "managed_source": null, "exception": null, "audit_stamped": 0, "finding": "unmanaged",
+     "member_count": null, "logged_in_count": null}
+  ],
   "operator_configs": {}
 }
 ```
 
-Every row, in every tier, has the same shape. `member_count` is the named group's synced members
+Every row, in every tier, has the same shape. `subject_kind` is `Group`, `ServiceAccount` or `User`
+— the three kinds RBAC defines — and **`group_name` is the subject's name whatever its kind** (the
+field predates the other two kinds; since #353 every kind is a row). `subject_namespace` is a
+ServiceAccount's namespace — the subject's own, or the RoleBinding's when the subject omits it,
+which is how the authorizer reads it — and `""` for the other kinds. `is_platform` is `1` for the
+platform's own identity: a ServiceAccount whose effective namespace the chart's `platformNamespaces` names or
+one of OpenShift's two per-project controller bindings, a `system:` user or `kubeadmin`; such a row is
+`built_in`, never a finding (the operator's rule, #353).
+`member_count` is the named group's synced members
 and `logged_in_count` is how many of those members have logged in — a User object with an identity,
 the Users tab's definition — both from the same membership rows, so their difference is exactly the
 members with no login. Both are `null` when no Group object exists (`dangling`, `unresolved`,
@@ -708,10 +724,14 @@ then), rather than a confident zero.
 |---|---|---|
 | `limit` | `500` (max 5000) | rows across **all** tiers combined, not per tier |
 | `offset` | `0` | for paging through `total` |
+| `finding` | none | one tier's rows only (`ok`, `dangling`, `unresolved`, `built_in`, `unmanaged`); echoed as `finding` |
 
 **`counts` and `total` always describe the whole cluster, never the page.** They come from a
 separate scalar query, because counting the rows you just limited is how "showing 50 of 30"
-reaches a report. `truncated` says whether rows were dropped.
+reaches a report. `truncated` says whether rows were dropped — measured against `counts[finding]`
+when `finding` is given. The page is ordered review tiers first, so on a cluster with more review
+rows than `limit` (the lab held 703 unmanaged rows before the platform rule, 124 after) a mixed page holds no `ok` or `built_in`
+row; the Access granted tab's one-tier filters ask for their tier.
 
 This was unbounded at the store, the API and the renderer simultaneously — measured at 2,280
 rows and 545,800 bytes on a cluster ten times the reference size, fetched on a 30-second
@@ -722,18 +742,27 @@ auto-refresh.
 | `ok` | the group exists; access reaches its members | no |
 | `dangling` | the group **was** operator-managed and has disappeared | **yes, critical** |
 | `unresolved` | names a group that has never existed here | no |
-| `built_in` | `system:*` virtual group; no object expected | no |
-| `unmanaged` | the group IS operator-synced, but no policy CR templates this binding — somebody granted access by hand | no |
+| `built_in` | a `system:*` virtual group (no object expected), or the platform's own identity — a ServiceAccount whose effective namespace `platformNamespaces` names, OpenShift's per-project `system:image-builders`/`system:deployers` controller bindings, a `system:` user, `kubeadmin` — never a finding (#353) | no |
+| `unmanaged` | no policy system labels this binding and no exception is annotated — for a Group subject, one that IS operator-synced, on a cluster where some other Group binding carries a policy label (#354); for a ServiceAccount or User subject that is not the platform's own (`built_in`), always, on every host — somebody granted access by hand | no |
 
-**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object:**
+The three "group does not exist" tiers are Group tiers: a ServiceAccount or User subject has no
+Group object to resolve, so its row is `built_in` (the platform's own identity — a namespace
+`platformNamespaces` names, a `system:` user, kubeadmin, OpenShift's two per-project controller bindings —
+by the stored `is_platform` flag), `unmanaged` or `ok`; no Helm, OLM or Argo CD label and no binding name
+excludes it — only that classification and the operator's label or exception on the binding do (#353).
+
+**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object** — the
+exception annotation, which records why, or the policy system's label, which names who decided:
 
 ```bash
 oc annotate clusterrolebinding <name> \
   rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
 ```
 
-The poller reads that annotation on its next binding refresh and stops classifying the binding
-as `unmanaged`, so it leaves this response, the RBAC policy tab and the log together. The
+The poller reads that annotation — or the label, `oc label clusterrolebinding <name>
+rbac.ocp.io/config-source=platform-team`, as this chart labels its own RBAC — on its next binding
+refresh and stops classifying the binding as `unmanaged`, so it leaves this response, the RBAC policy
+tab and the log together. The
 dashboard cannot write it for you — it holds no write verb on any cluster — and that is the
 point: the justification ends up next to the object it excuses, where `oc describe` finds it,
 and the acknowledgement is made by somebody who holds the privileges.
