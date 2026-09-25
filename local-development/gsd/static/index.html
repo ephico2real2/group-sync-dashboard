@@ -4921,7 +4921,7 @@ const BIND_SORT = {
 };
 
 function bindingMatches(r, q) {
-  return matchesSearch([r.group_name, r.role_name, r.binding_namespace, r.binding_name], q);
+  return matchesSearch([r.group_name, r.subject_namespace, r.role_name, r.binding_namespace, r.binding_name], q);
 }
 
 /* Which binding rows the Access granted tab paints: every tier filtered by the Find box, and the
@@ -4982,7 +4982,7 @@ function bindingsPage() {
   // generic error card, and never a blank that reads as a healthy cluster.
   if (d && d.forbidden) {
     return refusalCard("Access granted",
-      `Every group-subject binding on this cluster — who has been granted what — is the
+      `Every binding on this cluster — who has been granted what — is the
        cluster's RBAC surface.`);
   }
   if (!d) return `<section class="card"><div class="empty-note">Loading…</div></section>`;
@@ -4994,9 +4994,9 @@ function bindingsPage() {
 
   const header = `<section class="card">
     <div class="kpis mt-0">
-      <div class="kpi"><div class="label">Group bindings on this cluster</div>
+      <div class="kpi"><div class="label">Bindings on this cluster</div>
         <div class="value">${d.total || 0}</div></div>
-      <div class="kpi"><div class="label">Grant a real group</div>
+      <div class="kpi"><div class="label">Granted</div>
         <div class="value muted">${c.ok || 0}</div></div>
       <div class="kpi${review ? (c.dangling ? " flag-critical" : " flag-warning") : ""}"><div class="label">Need review</div>
         <div class="value ${review ? "" : "muted"}">${review}</div></div>
@@ -5004,21 +5004,21 @@ function bindingsPage() {
         <div class="value muted">${c.built_in || 0}</div></div>
     </div>
     <div class="filterbar-note mt-5">
-      Direct RoleBindings and ClusterRoleBindings whose subject is a Group. Role rules are
-      <strong>not</strong> evaluated, so this is what has been granted, not a computed list
-      of permitted actions.
+      Direct RoleBindings and ClusterRoleBindings, one row per subject — a Group, a
+      ServiceAccount or a User. Role rules are <strong>not</strong> evaluated, so this is what
+      has been granted, not a computed list of permitted actions.
     </div>
     ${d.truncated
       // Stated BEFORE the search note, so the denominator is qualified before it is used — the
-      // Users and Logins tabs' rule. The page holds FINDINGS_PAGE rows ordered by group name; the
+      // Users and Logins tabs' rule. The page holds FINDINGS_PAGE rows, review tiers first, then by subject name; the
       // header's counts are the cluster's, the lists and the Find box are the page's. Without this
       // a reader searching for a group past the cut would conclude it holds no grant (Cursor, #48).
       ? `<div class="truncation-note" id="binding-truncation-note">Showing the first
           <strong>${Object.values(raw).filter(Array.isArray).reduce((n, rows) => n + rows.length, 0)}</strong> of
-          <strong>${d.total || 0}</strong> group bindings, by group name; the cluster has more. The
+          <strong>${d.total || 0}</strong> bindings, review items first, then by subject name; the cluster has more. The
           Find box and the sort work only over these, so a binding past the cut cannot be found here.</div>` : ""}
     ${searching ? `<div class="filterbar-note mt-3" id="binding-search-note">Filtered by
-      <strong>${esc(q.trim())}</strong> — every word must appear in the group, role, namespace or binding
+      <strong>${esc(q.trim())}</strong> — every word must appear in the subject, role, namespace or binding
       name. ${visible.reduce((n, t) => n + f[t].length, 0)} of
       ${visible.reduce((n, t) => n + (raw[t] || []).length, 0)} ${d.truncated ? "loaded " : ""}bindings in the
       sections shown match.${d.truncated ? " A binding past the cut is not searched." : ""}
@@ -5030,12 +5030,13 @@ function bindingsPage() {
   // selected. It was originally rendered only on the default filter, where nobody found it.
   if (view.bindingFilter === "unmanaged") {
     return header + bindingSection("Unmanaged",
-      `The group is operator-synced, other bindings on this cluster carry the policy
-       operator's <code>config-source</code> label, and this one carries none — somebody
-       granted access by hand, outside the policy system. A deliberate one can be
-       acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on the
-       binding itself, which records the justification next to the object and clears it
-       from this list.`,
+      `Other bindings on this cluster carry the policy system's
+       <code>rbac.ocp.io/config-source</code> label and this one carries none — a grant to an
+       operator-synced group, a ServiceAccount or a user, made by hand outside the policy system.
+       Nothing about how it was applied excludes it; a legitimate one is silenced by labelling the
+       binding with <code>rbac.ocp.io/config-source</code>, as the platform's own grants are, or
+       acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation, which records
+       the justification next to the object. Either clears it from this list.`,
       f.unmanaged, sevBadge("warning", "unmanaged"));
   }
   if (view.bindingFilter === "ok") {
@@ -5056,8 +5057,8 @@ function bindingsPage() {
           + "binding now grants nobody.", f.dangling, sevBadge("critical", "dangling"))
       + bindingSection("Unresolved", "Names a group that has never existed here.",
           f.unresolved, sevBadge("warning", "unresolved"))
-      + bindingSection("Unmanaged", "Hand-made grant on an operator-synced group, outside the "
-          + "policy system.", f.unmanaged, sevBadge("warning", "unmanaged"))
+      + bindingSection("Unmanaged", "Hand-made grant — to a synced group, a ServiceAccount or a user — "
+          + "outside the policy system.", f.unmanaged, sevBadge("warning", "unmanaged"))
       + bindingSection("Granted", "The group exists; access reaches its members.", f.ok)
       + bindingSection("Built-in", "Virtual groups; no Group object is expected.", f.built_in);
   }
@@ -5077,7 +5078,7 @@ function bindingsPage() {
     <div class="filterbar-note">
       Each names a Group that does not exist, so the access it grants reaches no one.
       Nothing on the cluster reports this — <code>oc get rolebinding</code> shows a
-      perfectly healthy object. The ${c.ok || 0} bindings that grant a real group follow
+      perfectly healthy object. The ${c.ok || 0} granted bindings follow
       below; the ${c.built_in || 0} built-in ones are behind the filter above.
     </div>
   </section>
@@ -5089,9 +5090,11 @@ function bindingsPage() {
        misspelled group name, or an onboarding that stopped halfway.`,
       f.unresolved, sevBadge("warning", "unresolved"))}
   ${bindingSection("Unmanaged",
-      `Hand-made grants on operator-synced groups, outside the policy system. Acknowledge
-       a deliberate one with the <code>rbac.ocp.io/unmanaged-exception</code> annotation on
-       the binding; the justification then lives next to the object and clears it here.`,
+      `Hand-made grants outside the policy system — to operator-synced groups, ServiceAccounts
+       or users. Silence a legitimate one by labelling the binding with
+       <code>rbac.ocp.io/config-source</code>, or acknowledge it with the
+       <code>rbac.ocp.io/unmanaged-exception</code> annotation; either lives next to the object
+       and clears it here.`,
       f.unmanaged, sevBadge("warning", "unmanaged"))}
   ${bindingSection("Granted",
       "The group named by each of these exists, so the access reaches its members. This is what has actually been granted on this cluster through groups; Reaches says how many people that is today, and how many of them have ever logged in.",
@@ -5118,12 +5121,22 @@ function reachCell(r) {
     : `${members} <span class="muted">· ${r.logged_in_count} logged in</span>`;
 }
 
-/* The group name, as a drill only where a group page can answer. A built-in virtual group
+/* The subject, as a drill only where a page can answer. A ServiceAccount or a User subject
+   (#353) has no group page: the cell names it in full — `ServiceAccount <namespace>/<name>`,
+   the account RBAC matches, or `user <name>` — with the kind in front so a reader never takes
+   an account for a group. A Group drills as before: a built-in virtual group
    (system:authenticated, system:serviceaccounts:*) never has a Group object, and an unresolved
    binding names a group that has never existed here — both drilled to a 404 card that blamed a
    deletion which never happened (operator, 2026-09-04). Dangling and granted groups keep the
    drill: the object exists, or existed and left history the page can show. */
-function groupNameCell(r) {
+function subjectCell(r) {
+  const kind = r.subject_kind || "Group";
+  if (kind === "ServiceAccount") {
+    return `<span class="muted">ServiceAccount</span> <span class="mono">${esc(r.subject_namespace || "")}/${esc(r.group_name)}</span>`;
+  }
+  if (kind === "User") {
+    return `<span class="muted">user</span> <span class="mono">${esc(r.group_name)}</span>`;
+  }
   // A POSITIVE rule: drill only for the tiers where a group page can answer. Written as a
   // negative rule it drilled for a row that carried no tier at all (an older server), which is
   // exactly the dead end it was meant to remove (Codex second pass, 2026-09-04).
@@ -5143,12 +5156,12 @@ function bindingTable(rows) {
   const sorted = sortedBindings(rows);
   const th = (label, k, extra) => sortableTh(label, k, key, dir, "bind", extra);
   return `<div class="scroll-x"><table>
-      <thead><tr>${th("Group named by the binding", "group")}
+      <thead><tr>${th("Subject named by the binding", "group")}
         ${th("Reaches", "reaches")}
         ${th("Grants", "grants")}${th("Scope", "scope")}
         ${th("Binding", "binding")}</tr></thead>
       <tbody>${sorted.map((r) => `<tr>
-        <td>${groupNameCell(r)}</td>
+        <td>${subjectCell(r)}</td>
         <td>${reachCell(r)}</td>
         <td><code>${esc(r.role_name)}</code> <span class="muted">${esc(r.role_kind)}</span></td>
         <td>${r.binding_namespace
@@ -5182,49 +5195,62 @@ function policyPage() {
   }
   const f = data.findings || {};
   const unmanaged = f.unmanaged || [];
+  // The cluster's number, not the page's: `unmanaged` holds at most FINDINGS_PAGE rows, and
+  // `counts` describe the whole cluster (the findings endpoint's contract). Before SPEC_U1 the
+  // hero counted the rows it had loaded, which a cluster with more findings than the page holds
+  // — 703 on the lab once ServiceAccount and User grants count — would have shown as 500.
+  const unmanagedTotal = f.counts && f.counts.unmanaged != null ? f.counts.unmanaged : unmanaged.length;
   const stamped = unmanaged.filter((r) => r.audit_stamped).length;
 
-  if (oc && !oc.present) {
-    return `<section class="card">
-      <h2>RBAC policy</h2>
-      <div class="empty-note">
-        The namespace-configuration-operator is not installed on <code>${esc(view.cluster)}</code>.
-        This page reports the health of its NamespaceConfig and GroupConfig CRs and finds
-        grants that bypass them; without the operator there is no policy system to report on.
-      </div>
-    </section>`;
-  }
+  // A host with no namespace-configuration-operator still has findings: since SPEC_U1 a ServiceAccount
+  // or User grant is a finding by the label alone, so the "not installed" card is a card beside the
+  // findings, not a return before them (it was one while every finding needed the operator's labels,
+  // and it would have hidden 703 of them on the lab).
+  const operatorCard = oc && !oc.present
+    ? `<section class="card">
+        <h2>Policy operator</h2>
+        <div class="empty-note">
+          The namespace-configuration-operator is not installed on <code>${esc(view.cluster)}</code>.
+          This card reports the health of its NamespaceConfig and GroupConfig CRs where it is; the grants
+          outside the policy system above are found by the label on each binding and do not need it.
+        </div>
+      </section>`
+    : configHealth(oc);
 
   return `<section class="card">
     <h2>RBAC policy</h2>
     <div class="hero">
-      <span class="value mono">${unmanaged.length}</span>
-      <span class="label">grant${unmanaged.length === 1 ? "" : "s"} outside the policy system</span>
+      <span class="value mono">${unmanagedTotal}</span>
+      <span class="label">grant${unmanagedTotal === 1 ? "" : "s"} outside the policy system</span>
     </div>
     <div class="kpis">
       <div class="kpi"><div class="label">Policy CRs</div>
         <div class="value mono">${(oc && oc.configs || []).length}</div></div>
-      <div class="kpi ${unmanaged.length ? "flag-warning" : ""}">
+      <div class="kpi ${unmanagedTotal ? "flag-warning" : ""}">
         <div class="label">Unmanaged</div>
-        <div class="value mono ${unmanaged.length ? "" : "muted"}">${unmanaged.length}</div></div>
+        <div class="value mono ${unmanagedTotal ? "" : "muted"}">${unmanagedTotal}</div></div>
       <div class="kpi"><div class="label">Audit-stamped</div>
         <div class="value mono ${stamped ? "" : "muted"}">${stamped}</div></div>
     </div>
     <div class="filterbar-note mt-5">
-      A grant is <strong>unmanaged</strong> when it names an operator-synced group but
-      carries none of the policy operator's provenance — somebody granted access by hand.
-      Acknowledge a deliberate one with the
-      <code>rbac.ocp.io/unmanaged-exception</code> annotation on the binding; the
-      justification then lives next to the object and clears it here.
+      A grant is <strong>unmanaged</strong> when its binding carries none of the policy
+      system's provenance — a grant to an operator-synced group, a ServiceAccount or a user,
+      made by hand. Nothing about how it was applied excludes it. Silence a legitimate one by
+      labelling the binding with <code>rbac.ocp.io/config-source</code>, as the platform's own
+      grants are, or acknowledge it with the <code>rbac.ocp.io/unmanaged-exception</code>
+      annotation; the justification then lives next to the object and clears it here.
       ${stamped ? `<br>Audit stamping is enabled, so the current set is also selectable
         straight from the cluster:
         <br><code>oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true</code>`
       : ""}
     </div>
   </section>
-  ${configHealth(oc)}
+  ${operatorCard}
   ${bindingSection("Grants outside the policy system",
-      `Each names a group the operator syncs, and nothing templates the grant itself.`,
+      `Nothing in the policy system templates or labels the grant itself, whoever it names.`
+      + (unmanagedTotal > unmanaged.length
+          ? ` Showing the first ${unmanaged.length} of ${unmanagedTotal}, by subject name; the cluster has more.`
+          : ""),
       unmanaged, sevBadge("warning", "unmanaged"))}`;
 }
 
@@ -6513,8 +6539,9 @@ const EXPORT_COLUMNS = {
   users: ["user_name", "full_name", "logged_in", "first_login_at", "first_login_source", "providers", "group_count",
           "last_login_at", "first_seen_at"],
   groups: ["name", "member_count", "sync_provider", "group_synced_at", "ldap_uid"],
-  bindings: ["finding", "group_name", "member_count", "logged_in_count", "role_kind", "role_name",
-             "binding_kind", "binding_namespace", "binding_name", "managed_source", "exception"],
+  bindings: ["finding", "subject_kind", "subject_namespace", "group_name", "member_count", "logged_in_count",
+             "role_kind", "role_name", "binding_kind", "binding_namespace", "binding_name", "managed_source",
+             "exception"],
   myaccess: ["via_group", "role_kind", "role_name", "binding_kind", "binding_namespace", "binding_name"],
   nsaudit: ["user_name", "role_kind", "role_name", "binding_kind", "binding_namespace", "binding_name",
             "is_platform"],

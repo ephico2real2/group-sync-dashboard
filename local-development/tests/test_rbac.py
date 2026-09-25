@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from gsd.kube import CHART_CONFIG_SOURCE, BindingView, _binding_views
+from gsd.kube import CHART_CONFIG_SOURCE, SUBJECT_KINDS, BindingView, _binding_views
 from gsd.store import Store
 
 T1 = "2026-08-01T09:00:00Z"
@@ -44,8 +44,9 @@ def group_row(name, provider="ldap-groupsync_ldap"):
 
 
 class TestParsing:
-    def test_only_group_subjects_are_kept(self):
-        """User and ServiceAccount subjects cannot contribute to access-via-groups."""
+    def test_every_subject_kind_is_kept_with_its_kind(self):
+        """#353: a hand-made grant is a finding whoever it names, so User and ServiceAccount
+        subjects are rows too, each saying what it is; the Group-only questions filter in the store."""
         obj = {
             "metadata": {"name": "mixed-rb", "namespace": "alpha"},
             "roleRef": {"kind": "ClusterRole", "name": "edit"},
@@ -56,7 +57,9 @@ class TestParsing:
             ],
         }
         rows = _binding_views(obj, "RoleBinding")
-        assert [r.group_name for r in rows] == ["app-team"]
+        assert [(r.subject_kind, r.subject_namespace, r.group_name) for r in rows] == [
+            ("Group", "", "app-team"), ("User", "", "alice"), ("ServiceAccount", "alpha", "builder")]
+        assert set(SUBJECT_KINDS) == {"Group", "User", "ServiceAccount"}
 
     def test_a_binding_with_several_groups_becomes_several_rows(self):
         obj = {

@@ -47,7 +47,11 @@ PRIVILEGE_RANK = "CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3
 #: `g.name IS NULL AND b.group_name LIKE 'system:%'`). They stay in the copy so
 #: the RBAC-policy tab and unmanaged-audit still see them; reports must not list
 #: them as a person's grant or as unmanaged/handmade (#147). Same LIKE as the CASE.
-_OMIT_SYSTEM_GROUP_SUBJECTS = " AND b.group_name NOT LIKE 'system:%'"
+#: Group subjects ONLY: a User named `system:kube-scheduler` is not a virtual group, and
+#: nothing about its name excludes it from the unmanaged finding (#353, SPEC_U1).
+_OMIT_SYSTEM_GROUP_SUBJECTS = " AND NOT (b.subject_kind = 'Group' AND b.group_name LIKE 'system:%')"
+#: The group-shaped reads (a namespace's groups, a group's binding count): Group subjects only.
+_GROUP_SUBJECTS_ONLY = " AND b.subject_kind = 'Group'"
 
 
 class SnapshotError(Exception):
@@ -108,6 +112,16 @@ class Snapshot:
                     f"snapshot schema {self.schema_version} is newer than this report service understands "
                     f"({KNOWN_SCHEMA_VERSION}); the reporting image must be the dashboard's appVersion")
             self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            # An OLDER copy is accepted (only a newer one is refused): while the pods roll, the newest copy
+            # on the volume is the previous dashboard's until the new one writes. Before migration 20 the
+            # binding table held Group rows only and had no subject columns, and every binding read here
+            # names them — so the old table is read through a TEMP view that says what its rows are (a TEMP
+            # object shadows the copy's own name; the immutable copy itself is never written) (SPEC_U1).
+            if "rbac_group_binding" in self._tables and "subject_kind" not in {
+                    r[1] for r in self._conn.execute("PRAGMA main.table_info(rbac_group_binding)")}:
+                self._conn.execute("CREATE TEMP VIEW rbac_group_binding AS"
+                                   " SELECT *, 'Group' AS subject_kind, '' AS subject_namespace"
+                                   " FROM main.rbac_group_binding")
         except sqlite3.Error as exc:
             # A file named like a copy but not a readable SQLite database — truncated, torn, or not a
             # database at all; the connect / PRAGMA / catalog reads are where that surfaces. Translated
@@ -295,9 +309,12 @@ class Snapshot:
                 except ValueError:
                     pass
         roles: set[str] = set()
-        for table in ("rbac_group_binding", "user_binding"):
+        # The roles a report's role filter can match: those bound to a group (the Group rows) or named
+        # directly to a person (user_binding). A role bound only to ServiceAccounts is never offered —
+        # nothing that takes this list reads account grants (SPEC_U1; on the lab 356 roles against 66).
+        for table, only in (("rbac_group_binding", " AND subject_kind = 'Group'"), ("user_binding", "")):
             if self.has_table(table):
-                roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?", (cluster_id,)))
+                roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?{only}", (cluster_id,)))
         # The member count beside each group name (operator, 2026-09-21): group_state's count as of THIS snapshot, a
         # sibling `members` map so `values` stays the list of strings every consumer reads; cut where the names are.
         group_rows = self._rows("SELECT name, member_count FROM group_state WHERE cluster_id = ? ORDER BY name LIMIT ?", (cluster_id, limit)) \
@@ -363,36 +380,44 @@ class Snapshot:
             """SELECT ns AS namespace, SUM(g) AS group_bindings, SUM(u) AS user_bindings
                  FROM (SELECT CASE WHEN b.binding_namespace='' THEN ? ELSE b.binding_namespace END AS ns, 1 AS g, 0 AS u
                          FROM rbac_group_binding b WHERE b.cluster_id=?"""
-            + _OMIT_SYSTEM_GROUP_SUBJECTS + """
+            + _GROUP_SUBJECTS_ONLY + _OMIT_SYSTEM_GROUP_SUBJECTS + """
                        UNION ALL
                        SELECT CASE WHEN binding_namespace='' THEN ? ELSE binding_namespace END, 0, 1
                          FROM user_binding WHERE cluster_id=? AND is_platform=0)
                 GROUP BY ns ORDER BY ns""",
             (CLUSTER_SCOPE, cluster_id, CLUSTER_SCOPE, cluster_id))
 
-    def group_bindings(self, cluster_id: str, namespaces: list[str] | None = None) -> list[dict]:
-        """Group-subject bindings a report may list, classified by the dashboard's own CASE, with reach.
+    def group_bindings(self, cluster_id: str, namespaces: list[str] | None = None, *,
+                       kinds: tuple[str, ...] = ("Group",)) -> list[dict]:
+        """Bindings a report may list, classified by the dashboard's own CASE, with reach.
+
+        `kinds` is the subject kinds to list: Group only by default, which is what the group-shaped
+        reports (namespace access, privileged access, the matrix, the certification) want; the
+        binding-findings report asks for every kind, because a ServiceAccount or User grant outside
+        the policy system is a finding too (#353, SPEC_U1). A row of another kind carries
+        `subject_kind`, `subject_namespace` and null reach.
 
         `system:*` virtual groups are omitted here (see `_OMIT_SYSTEM_GROUP_SUBJECTS`). The CASE is
         still Store._FINDING_CASE — a remaining row cannot disagree with the RBAC-policy tab.
-        Ordered namespace, finding severity, group, binding — deterministic so two reports diff cleanly."""
+        Ordered namespace, finding severity, subject, binding — deterministic so two reports diff cleanly."""
         reach = """
                       CASE WHEN g.name IS NULL THEN NULL ELSE COALESCE(li.member_count, 0) END AS member_count,
                       CASE WHEN g.name IS NULL OR ust.cluster_id IS NULL THEN NULL
                            ELSE COALESCE(li.logged_in_count, 0) END AS logged_in_count,"""
         sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name, b.role_kind, b.role_name,
-                         b.group_name, b.managed_source, b.exception,""" + reach
+                         b.subject_kind, b.subject_namespace, b.group_name, b.managed_source, b.exception,""" + reach
                + Store._FINDING_CASE + " AS finding"
                + Store._FINDING_JOINS + Store._REACH_JOIN + Store._FINDING_WHERE
-               + _OMIT_SYSTEM_GROUP_SUBJECTS)
-        params: list = [cluster_id]
+               + _OMIT_SYSTEM_GROUP_SUBJECTS
+               + " AND b.subject_kind IN (" + ",".join("?" * len(kinds)) + ")")
+        params: list = [cluster_id, *kinds]
         if namespaces is not None:
             sql += " AND b.binding_namespace IN (" + ",".join("?" * len(namespaces)) + ")"
             params += namespaces
         sql += """ ORDER BY b.binding_namespace,
                           CASE finding WHEN 'dangling' THEN 0 WHEN 'unresolved' THEN 1 WHEN 'unmanaged' THEN 2
                                        WHEN 'ok' THEN 3 ELSE 4 END,
-                          b.group_name, b.binding_name"""
+                          b.group_name, b.binding_name, b.subject_kind, b.subject_namespace"""
         return self._rows(sql, params)
 
     def findings_counts(self, cluster_id: str) -> dict[str, int]:
@@ -433,7 +458,7 @@ class Snapshot:
     def groups(self, cluster_id: str) -> list[dict]:
         return self._rows(
             """SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at, g.ldap_uid, g.observed_at, g.cliff_silence,
-                      (SELECT COUNT(*) FROM rbac_group_binding b WHERE b.cluster_id = g.cluster_id AND b.group_name = g.name) AS bindings
+                      (SELECT COUNT(*) FROM rbac_group_binding b WHERE b.cluster_id = g.cluster_id AND b.subject_kind = 'Group' AND b.group_name = g.name) AS bindings
                  FROM group_state g WHERE g.cluster_id = ? ORDER BY g.name""", (cluster_id,))
 
     def group_rosters(self, cluster_id: str, group_names: list[str]) -> dict[str, list[dict]]:
@@ -625,14 +650,14 @@ class Snapshot:
             "users": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=?"),
             "users_logged_in": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=? AND has_identity=1"),
             "group_bindings": one("SELECT COUNT(*) AS n FROM rbac_group_binding b WHERE b.cluster_id=?"
-                                  + _OMIT_SYSTEM_GROUP_SUBJECTS),
+                                  + _GROUP_SUBJECTS_ONLY + _OMIT_SYSTEM_GROUP_SUBJECTS),
             "user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=0"),
             "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),
             "namespaces_with_bindings": one(
                 "SELECT COUNT(DISTINCT binding_namespace) AS n FROM ("
                 "SELECT b.binding_namespace FROM rbac_group_binding b"
                 " WHERE b.cluster_id=? AND b.binding_namespace<>''"
-                + _OMIT_SYSTEM_GROUP_SUBJECTS
+                + _GROUP_SUBJECTS_ONLY + _OMIT_SYSTEM_GROUP_SUBJECTS
                 + " UNION SELECT binding_namespace FROM user_binding"
                 " WHERE cluster_id=? AND binding_namespace<>'' AND is_platform=0)", cluster_id),
             "groupsyncs": one("SELECT COUNT(*) AS n FROM groupsync_state WHERE cluster_id=?"),

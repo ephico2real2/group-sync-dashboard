@@ -400,5 +400,5 @@ def finding_label(finding: str) -> str:
     return {"dangling": "DANGLING — grants nobody (group was managed, now absent)",
             "unresolved": "UNRESOLVED — names a group that has never existed",
             "built_in": "built-in virtual group",
-            "unmanaged": "UNMANAGED — synced group granted by hand, no policy operator source",
+            "unmanaged": "UNMANAGED — granted by hand (a synced group, a ServiceAccount or a user), no policy operator source",
             "ok": "ok"}.get(finding, finding)

@@ -958,7 +958,7 @@ class TestBindingFindingsVisible:
         assert "managed-admin-rb" in granted.first.inner_text()
         # The review hero is still the first thing on the page.
         assert "grant nobody" in dash.locator("#main").inner_text()
-        assert "grant a real group follow" in dash.locator("#main").inner_text()
+        assert "granted bindings follow" in dash.locator("#main").inner_text()
         assert dash.locator("#f-binding option[value='review']").inner_text().strip() == "granted + needs review"
 
     def test_each_granted_row_says_who_it_reaches(self, dash):
@@ -999,6 +999,56 @@ class TestBindingFindingsVisible:
         dash.evaluate("() => refresh()")
         dash.wait_for_function("() => data.findings && data.findings.ok[0].member_count !== undefined")
 
+    def test_a_serviceaccount_and_a_user_subject_are_named_in_full_and_never_drilled(self, dash):
+        """#353: a ServiceAccount or User grant outside the policy system is listed under Unmanaged
+        with its kind in front — the account's namespace included, since that is the account RBAC
+        matches — and has no group page to drill to. Injected into the fetched payload, so the seed
+        and the counts the other tests pin stay as they are."""
+        self._open(dash)
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        dash.evaluate("""() => {
+            const d = data.findings;
+            const sa = { binding_kind: "ClusterRoleBinding", binding_namespace: "", binding_name: "poller-crb",
+                         role_kind: "ClusterRole", role_name: "cluster-admin", group_name: "shared-qa-poller",
+                         subject_kind: "ServiceAccount", subject_namespace: "group-sync-operator",
+                         managed_source: null, exception: null, audit_stamped: 0, finding: "unmanaged",
+                         member_count: null, logged_in_count: null };
+            const user = Object.assign({}, sa, { binding_name: "contractor-rb", binding_namespace: "ldap-testing",
+                         role_name: "edit", group_name: "tmp-contractor-9931", subject_kind: "User", subject_namespace: "" });
+            data.findings = Object.assign({}, d, { unmanaged: d.unmanaged.concat([sa, user]),
+                                                   counts: Object.assign({}, d.counts, { unmanaged: d.counts.unmanaged + 2 }) });
+            render();
+        }""")
+        section = dash.locator("section.card:has(h2:has-text('Unmanaged'))").first
+        text = " ".join(section.inner_text().split())
+        assert "ServiceAccount group-sync-operator/shared-qa-poller" in text, text
+        assert "user tmp-contractor-9931" in text, text
+        assert section.locator("button.drill[data-group='shared-qa-poller']").count() == 0
+        assert section.locator("button.drill[data-group='tmp-contractor-9931']").count() == 0
+        assert section.locator("button.drill[data-group='app-ocp-rbac-alpha-ns-admin']").count() == 1
+        # The account's reach is nothing to say, not "0 members".
+        assert "0 members" not in text
+        assert errors == [], errors
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.findings && data.findings.unmanaged.length === 1")
+
+    def test_the_policy_page_counts_the_cluster_not_the_loaded_page(self, dash):
+        """The RBAC policy hero and its Unmanaged tile read `counts.unmanaged`, the cluster's number;
+        the list below is the page, at most FINDINGS_PAGE rows. Before SPEC_U1 they counted the rows
+        loaded, so a cluster with more unmanaged grants than the page holds under-reported the one
+        number the tab exists to show."""
+        dash.locator("button[data-nav='policy']").click()
+        dash.wait_for_selector("section.card:has(h2:has-text('Grants outside')) tbody tr")
+        dash.evaluate("""() => { data.findings = Object.assign({}, data.findings,
+            { counts: Object.assign({}, data.findings.counts, { unmanaged: 703 }) }); render(); }""")
+        assert dash.locator("#main .hero .value").first.inner_text().strip() == "703"
+        body = " ".join(dash.locator("#main").inner_text().split())
+        assert "Showing the first 1 of 703" in body, body
+        dash.evaluate("() => refresh()")
+        dash.wait_for_function("() => data.findings && data.findings.counts.unmanaged === 1")
+        self._open(dash)
+
     def test_typing_filters_every_section_and_says_so(self, dash):
         """The same box the Groups and Users tabs have: group, role, namespace or binding name."""
         self._open(dash)
@@ -1015,7 +1065,7 @@ class TestBindingFindingsVisible:
         note = dash.locator("#binding-search-note").inner_text()
         assert "klta" in note and f"1 of {shown} bindings in the sections shown match" in note, note
         # The header counts the cluster, never the match.
-        assert "Group bindings on this cluster" in dash.locator("#main").inner_text()
+        assert "Bindings on this cluster" in dash.locator("#main").inner_text()
         dash.fill("#f-binding-search", "prod-ns admin")
         dash.wait_for_function("() => view.bindingSearch === 'prod-ns admin'")
         names = dash.locator("tbody tr td:first-child").all_inner_texts()
@@ -1031,7 +1081,7 @@ class TestBindingFindingsVisible:
         assert dash.locator("#binding-truncation-note").count() == 0, "the fixture fits in one page"
         dash.evaluate("() => { data.findings = Object.assign({}, data.findings, { truncated: true, total: 900 }); render(); }")
         note = dash.locator("#binding-truncation-note").inner_text()
-        assert "of 900 group bindings" in note and "past the cut cannot be found here" in note, note
+        assert "of 900 bindings" in note and "past the cut cannot be found here" in note, note
         dash.fill("#f-binding-search", "klta")
         dash.wait_for_function("() => view.bindingSearch === 'klta'")
         search = dash.locator("#binding-search-note").inner_text()
@@ -1103,7 +1153,7 @@ class TestBindingFindingsVisible:
         """The original tab showed only non-resolving rows under a "Bindings" label,
         presenting 228 bindings as 154. Every one must be reachable."""
         self._open(dash)
-        assert "Group bindings on this cluster" in dash.locator("body").inner_text()
+        assert "Bindings on this cluster" in dash.locator("body").inner_text()
         dash.select_option("#f-binding", "all")
         dash.wait_for_function(
             "() => document.body.innerText.includes('Granted')")
@@ -1158,8 +1208,8 @@ class TestBindingFindingsVisible:
         self._open(dash)
         tiles = dash.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.kpis.mt-0 .kpi')].map(k =>
             [k.querySelector('.label').innerText.trim(), Number(k.querySelector('.value').innerText.replace(/,/g, ''))]))""")
-        total = tiles["Group bindings on this cluster"]
-        parts = (tiles["Grant a real group"], tiles["Need review"], tiles["Built-in"])
+        total = tiles["Bindings on this cluster"]
+        parts = (tiles["Granted"], tiles["Need review"], tiles["Built-in"])
         assert (total, parts) == (10, (1, 3, 6)), tiles
         assert sum(parts) == total
         assert dash.locator(".hero .value").first.inner_text().strip() == "2", "the headline counts only what grants nobody"
@@ -3684,6 +3734,26 @@ class TestRbacPolicyPage:
     def _open(self, dash):
         dash.click('button.tab:text-is("RBAC policy")')
         dash.wait_for_selector("h2:text-is('RBAC policy')")
+
+    def test_the_findings_render_when_the_policy_operator_is_absent(self, dash):
+        """SPEC_U1: a host with no namespace-configuration-operator still has findings — a ServiceAccount or
+        User grant is a finding by the label alone — so the "not installed" card is a card beside them, not
+        a return before them. Before, the page returned that card alone: 703 findings on the lab would have
+        vanished behind it (Codex, review of SPEC_U1)."""
+        self._open(dash)
+        # The tab paints first and fetches after: the findings and the operator card land with the fetch.
+        dash.wait_for_selector("h3:has-text('Policy operator')")
+        dash.wait_for_function("() => data.findings && data.findings.counts")
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        dash.evaluate("""() => { data.operatorConfigs = { present: false, configs: [] };
+            data.findings = Object.assign({}, data.findings,
+                { counts: Object.assign({}, data.findings.counts, { unmanaged: 703 }) }); render(); }""")
+        assert dash.locator("#main .hero .value").first.inner_text().strip() == "703"
+        body = " ".join(dash.locator("#main").inner_text().split())
+        assert "is not installed on" in body, body
+        assert dash.locator("section.card:has(h2:has-text('Grants outside')) tbody tr").count() == 1
+        assert errors == [], errors
 
     def test_the_page_renders_without_a_javascript_error(self, dash):
         errors = []

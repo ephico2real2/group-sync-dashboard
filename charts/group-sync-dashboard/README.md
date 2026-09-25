@@ -716,13 +716,17 @@ Read-only, in every mode. This feature finds hand-made access grants and reports
 writes nothing at all. The dashboard's only write on any cluster is its own leader-election
 Lease (`templates/rbac.yaml#leases`) — its coordination object, not anything it observes.
 
-A binding is `unmanaged` when it grants an operator-synced group access and carries neither
-the policy operator's `rbac.ocp.io/config-source` label nor an
-`rbac.ocp.io/unmanaged-exception` annotation — somebody granted access by hand, outside the
-governance system, and nothing on the cluster reports it. The classification also requires at
-least one *managed* binding to exist on that cluster, so a cluster that has never used
-config-source labels reports zero rather than flagging every binding on it
-(`local-development/gsd/store.py#Store.user_bindings`).
+A binding is `unmanaged` when it carries neither the policy system's `rbac.ocp.io/config-source`
+label nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
+ServiceAccount or a user (#353) — somebody granted access by hand, outside the governance system,
+and nothing on the cluster reports it. Nothing about how a grant was applied excludes it — not a
+`system:` name, a platform namespace or a Helm, OLM or Argo CD label; a legitimate one is silenced
+by labelling its binding `rbac.ocp.io/config-source=<who decided>`, as this chart labels its own
+RBAC. For a Group subject the classification also requires at least one *managed* Group binding to
+exist on that cluster, labelled by something other than this chart, so a cluster that has never used
+config-source labels reports no Group finding rather than flagging every binding on it (#354); a
+ServiceAccount or User grant needs no such evidence — nothing silences it but the label or the
+annotation on its own binding (`local-development/gsd/store.py#Store._FINDING_CASE`).
 
 `config.unmanagedAudit.mode` defaults to `log`, so each finding is published as one
 self-contained line, at **WARNING** — the HTTP client logs a line per request at INFO, so a finding at INFO
@@ -736,9 +740,10 @@ policy system (no config-source label, no exception annotation)
 
 Which object, what it grants, to whom, and why that is a finding — the line is actionable
 without opening the dashboard, and the fixed `UNMANAGED GRANT DISCOVERED` prefix is there to
-be alerted on. Only the groups whose rows were classified unmanaged are named: a binding can
-name two groups and be unmanaged for only one, and citing the managed one would send a reader
-to inspect a grant that is fine.
+be alerted on. The subject is spelt by its kind — `group <name>`,
+`ServiceAccount <namespace>/<name>` or `user <name>` — and only the subjects whose rows were
+classified unmanaged are named: a binding can name two subjects and be unmanaged for only one,
+and citing the managed one would send a reader to inspect a grant that is fine.
 
 One INFO summary line precedes them each refresh:
 
