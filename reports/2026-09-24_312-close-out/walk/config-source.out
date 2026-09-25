@@ -1,0 +1,9 @@
+# config-source on the lab — 2026-09-25T02:10:50Z
+   labelled bindings 51 | with a Group subject 44
+   baseline-nonprod-rbac bindings 26 | with a Group subject 26
+   baseline-cluster-rbac bindings 11 | with a Group subject 11
+   group-sync-dashboard bindings 8 | with a Group subject 1
+   baseline-prod-rbac bindings 3 | with a Group subject 3
+   bdp-oud-group-rbac bindings 1 | with a Group subject 1
+   custom-cluster-rbac bindings 1 | with a Group subject 1
+   trino-oud-group-rbac bindings 1 | with a Group subject 1

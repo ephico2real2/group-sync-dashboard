@@ -1,0 +1,5 @@
+# re-read 2026-09-25T01:49:23Z — every cluster after shared-rnd's own refresh
+   /api/clusters dashboard dangling 0 unresolved 6 unmanaged 0
+   /api/clusters shared-qa dangling 0 unresolved 6 unmanaged 0
+   /api/clusters shared-rnd dangling 0 unresolved 6 unmanaged 0
+   shared-rnd last refresh: 2026-09-24 21:47:50,148-0400 INFO    gsd.poller refreshed 205 group bindings for shared-rnd
