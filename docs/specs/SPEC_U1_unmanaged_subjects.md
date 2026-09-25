@@ -105,7 +105,8 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   name whatever its kind: it is read in 106 places in `store.py`, 33 in the report snapshot, 24 on the page
   and about a hundred in tests (measured with `grep -c`), so a rename is not a change this format can carry
   safely; the table comment, the API document and the row's `subject_kind` say what it names.
-- **No gate for ServiceAccount and User subjects; the Group arm keeps #354's gate, byte for byte.** The first
+- **No gate for ServiceAccount and User subjects; the Group arm keeps #354's gate** — the same predicate, guarded by
+  `subject_kind = 'Group'` because the table now holds other kinds. The first
   draft of this spec put one gate over every kind — a ServiceAccount or User grant was `unmanaged` only where
   some binding on the cluster carried a policy label. Codex refuted it on the premise and it is retracted: on a
   host with no label anywhere that gate silenced every unlabelled account and person by the cluster's state,
@@ -399,7 +400,8 @@ before provenance, makes a ServiceAccount or User row whose stored `is_platform`
 platform's own identity, never a finding (the note above). The provenance
 arm requires, for a Group subject, an operator-synced group and #354's gate — some other Group-subject
 binding on the cluster labelled by something other than this chart, read over Group rows only
-(`m.subject_kind = 'Group'`), so the arm is byte for byte what #354 shipped — and, for the other two kinds,
+(`m.subject_kind = 'Group'`), so the arm is #354's predicate, guarded by `subject_kind = 'Group'` because the table
+now holds other kinds — and, for the other two kinds,
 nothing but the absence of a label and an exception (`(b.subject_kind <> 'Group' OR …)` on both
 conditions): no gate — the platform's own rows never reach it, because the `is_platform` arm above is decided
 first, and for the rest the operator's label or exception is the only silence. The joins to
@@ -456,8 +458,9 @@ and the namespace audit are Group-only readers and do not change.
 
 ### 3.9 The reports
 
-`_OMIT_SYSTEM_GROUP_SUBJECTS` becomes kind-aware — it drops `system:` **Group** subjects only, so a User
-named `system:kube-scheduler` is not dropped as if it were a virtual group — and `_GROUP_SUBJECTS_ONLY`
+`_OMIT_SYSTEM_GROUP_SUBJECTS` becomes kind-aware — it drops `system:` **Group** subjects by name and every
+platform ServiceAccount or User row by its stored flag (`AND b.is_platform = 0`), so a User named
+`system:kube-scheduler` is omitted by the flag the poller stored, never by its name — and `_GROUP_SUBJECTS_ONLY`
 guards the group counts. `Snapshot.group_bindings` takes `kinds` (default `("Group",)`, so
 `namespace-access`, `privileged-access`, `access-matrix` and `access-certification` are unchanged); the
 `binding-findings` report asks for every kind and names each subject with `subject_label` and its own
@@ -486,10 +489,15 @@ where it becomes `clusters.yaml`, `_helpers.tpl` `gsd.validatePlatformNamespaces
 `api.py` (the namespace index's `platform` flag and its stale-pattern report, Home's `derive_answer`, the
 direct-user view's `excluded_platform`), `kube.py` `_user_binding_views`, `poller.py`'s user-row flag,
 `store.py`'s two `user_binding` predicates. The finding path (this spec): `poller.py` `_binding_is_platform`
-(three decisions) and the row dict, `store.py`'s column, migration 20's column and the two `built_in` arms of
-`_FINDING_CASE`, `reporting/snapshot.py`'s omit and its five `user_binding` predicates (the direct-user view's
+(three decisions), the `PlatformNamespaces()` default when a caller passes none, and the row dict, `store.py`'s column, migration 20's column and the two `built_in` arms of
+`_FINDING_CASE`, `reporting/snapshot.py`'s omit and its six `user_binding` predicates (the direct-user view's
 flag on the reports' copy), `metrics.py`'s `FINDINGS` (a platform row counts under `built_in`), `index.html`'s
-Home filters, its two platform badges and its export column.
+Home filters, its two platform badges and its export column. The consumers the review of #361 found unmarked, now marked:
+`home.py` `derive_answer`'s signature (its `platform` callable and default) and its `ns_row` (the classifier the API passes in), `state.py`'s direct-user alert, `poller.py`'s
+refresh-line people count and the Poller's hand-off of the settings' classifier, `api.py`'s Home cluster-wide counts, `store.py`'s Group `system:` rule and people count in
+`namespace_detail`, the direct-grant count in `namespaces` and `user_bindings_by_namespace`'s two predicates, and
+`index.html`'s namespace-index platform rows and hidden-with-findings list, Home's via/wide filters and the hand-made badge.
+The guard also holds every read or write of the stored `is_platform` flag, in Python or in SQL, under `gsd/`.
 
 ### 3.11 Versions, chart documents, CHANGELOG, indexes
 
@@ -505,8 +513,9 @@ holds equal and requires to sit above the tree's versions; the implementation PR
 ## 4. Tests — what fails before and passes after
 
 New file `local-development/tests/test_unmanaged_subjects.py`, one class per layer, each test named for its
-claim; and the edits to existing tests that pin the old shape. Every test below fails on main `244d4ab`
-(the attribute, column, key or word does not exist there) and passes with §7 applied.
+claim; and the edits to existing tests that pin the old shape. Every test below fails on main (`244d4ab` when written; on `35fcddb`, the amendment's base, the two new modules error at collection against main's `gsd` — measured)
+(the attribute, column, key or word does not exist there) and passes with §7 applied — except the values-path
+test below, which pins existing #255 behaviour and passes on main too (measured, OB1-lite's review of #361).
 
 - **The reader** (`TestReader`): every kind is kept with its kind; a RoleBinding ServiceAccount subject
   with no namespace stores the binding's; one with a namespace stores its own; a ClusterRoleBinding
@@ -530,8 +539,9 @@ claim; and the edits to existing tests that pin the old shape. Every test below 
   omit a platform row as they omit a virtual group.
 - **The classification** (`TestClassification`): an unlabelled ServiceAccount grant is `unmanaged` on a
   cluster where the policy operator is in use; the operator's label on the binding makes it `ok`; the
-  exception annotation makes it `ok`; a User named `system:kube-scheduler` is `unmanaged` and never
-  `built_in`; on a cluster whose only labels are the chart's, the chart's ServiceAccount rows are `ok`, a
+  exception annotation makes it `ok`; a User row stored with `is_platform = 0` is `unmanaged` whatever its
+  name (the poller sets the flag; `TestPlatformRule` proves `system:` users are silent); on a cluster whose
+  only labels are the chart's, the chart's ServiceAccount rows are `ok`, a
   hand-made account is `unmanaged` and a hand-made Group grant is `ok` until one policy label opens the
   Group gate (#354); an unlabelled account is a finding on a cluster with no label anywhere; a labelled
   account does not open the Group gate; an account named like a synced group is judged on provenance and
@@ -563,7 +573,8 @@ claim; and the edits to existing tests that pin the old shape. Every test below 
   at 0 on a cluster with none.
 - **The values path** (an edit in `tests/test_config.py`, the logic review's one test gap):
   `platformNamespaces: {}` and the shipped block of three empty lists both load as the shipped rule, and
-  `additionalSuffixes: ["-operator"]` widens it without touching the prefixes.
+  `additionalSuffixes: ["-operator"]` widens it without touching the prefixes — a pin of existing #255 behaviour,
+  which passes on main too.
 - **The implementation review's** (`TestAuditLogProgress`: a backlog rotates through the cap and a new
   finding goes first, the poll loop announces a new grant on the refresh that finds it, and without a
   scheduler the sorted first page as before; `TestGroupOnlyReportWording`: `finding_label` unchanged;
@@ -602,7 +613,7 @@ the PVC UIDs identical), with `KUBECONFIG` set to the lab's scratch kubeconfig:
    `oc create serviceaccount u1-evidence-sa -n gsd-evidence-353`, then a hand-made grant
    (`oc create clusterrolebinding u1-evidence --clusterrole=view --serviceaccount=gsd-evidence-353:u1-evidence-sa`),
    wait one refresh: the WARNING names `ServiceAccount gsd-evidence-353/u1-evidence-sa` — on that refresh,
-   because a finding first seen is listed first, ahead of the lab's backlog of 203 (`AuditLogProgress`) — the
+   because a finding first seen is listed first, ahead of the lab's backlog of 117 bindings (`AuditLogProgress`) — the
    row is in `unmanaged`, the tile counts it. Label it as the operator would
    (`oc label clusterrolebinding u1-evidence rbac.ocp.io/config-source=platform-team`), wait one refresh:
    the row is `ok`, `managed_source: platform-team`, no WARNING. Then the platform half: a grant to an
@@ -619,7 +630,9 @@ the PVC UIDs identical), with `KUBECONFIG` set to the lab's scratch kubeconfig:
    additionalNames: ["kyverno", "group-sync-dashboard"]}` — and main is redeployed (PVC UIDs identical). On the
    next binding refresh the accounts of `cert-manager`, `cert-manager-operator`, `group-sync-operator`,
    `hostpath-provisioner`, `kyverno`, `group-sync-dashboard` and `namespace-configuration-operator` are `built_in`
-   and nothing else changes: 49 rows on 46 bindings remain (§2.2), by namespace `metallb-system` 23, `mongodb-poc`
+   and — the platform arm preceding provenance — the chart's own 7 labelled rows in `group-sync-dashboard` move
+   from `ok` to `built_in` (measured through the store on the dump, OB1-lite: `ok` 7 → 0, `built_in` 740 → 822), so
+   the Granted count drops by 7; nothing else changes: 49 rows on 46 bindings remain (§2.2), by namespace `metallb-system` 23, `mongodb-poc`
    7, `envoy-gateway-system` 5, `modernize-demo` 2, `ldap-testing` 1, plus the 11 people; the rendered ConfigMap's
    `clusters.yaml` carries the `platformNamespaces` block and the pod's log the reclassified refresh.
 
@@ -1688,7 +1701,8 @@ FINDINGS = ("ok", "dangling", "unresolved", "built_in", "unmanaged")
         """Every binding subject on a cluster — Group, ServiceAccount and User — classified into
         five tiers. Each row carries `subject_kind` and `subject_namespace` (a ServiceAccount's; ''
         otherwise); `group_name` is the subject's name whatever its kind (#353, SPEC_U1). The three
-        resolution tiers are Group tiers; a ServiceAccount or User row is `unmanaged` or `ok`.
+        resolution tiers are Group tiers; a ServiceAccount or User row is `built_in` when it is the platform's
+        own identity (the stored `is_platform` flag), else `unmanaged` or `ok`.
 ```
 
 <!-- block: local-development/gsd/kpi/render_json.py | edit -->
@@ -2385,8 +2399,9 @@ appVersion: "0.32.0"
 ```yaml
 # that decided. MINOR: behaviour changes on upgrade for a remote that states nothing (docs/CHANGELOG.md).
 # 0.33.0 (2026-09-24). The unmanaged finding reads every subject kind — Group, ServiceAccount and User —
-# and a grant is silenced only by the operator's `rbac.ocp.io/config-source` label or the exception
-# annotation on its binding (#353, SPEC_U1). Schema migration 20 (the binding table's primary key gains
+# and a grant is silenced by the platform rule (`platformNamespaces`, OpenShift's two per-project controller
+# bindings, `system:` users) or by the operator's `rbac.ocp.io/config-source` label or the exception annotation
+# on its binding (#353, SPEC_U1). Schema migration 20 (the binding table's primary key gains
 # the subject's kind and namespace); `/bindings/findings` rows gain `subject_kind` and
 # `subject_namespace`. MINOR: additive on the wire; every unlabelled ServiceAccount and User grant outside
 # the platform's own is a finding from the first refresh after upgrade, which is the capability.
@@ -2586,9 +2601,14 @@ are expected and not counted.
 ```markdown
 Every group-subject binding, classified. Despite the path, this returns **all** bindings,
 including healthy ones — the caller filters.
+```
+```markdown
+Every binding subject — a Group, a ServiceAccount or a User — classified. Despite the path, this
+returns **all** bindings, including healthy ones — the caller filters.
+```
 
+<!-- block: local-development/API.md | edit -->
 ```json
-{
   "total": 229, "limit": 500, "offset": 0, "truncated": false,
   "counts": {"ok": 70, "dangling": 0, "unresolved": 9, "built_in": 146, "unmanaged": 4},
   "ok": [
@@ -2599,17 +2619,8 @@ including healthy ones — the caller filters.
   ],
   "dangling": [], "unresolved": [], "built_in": [], "unmanaged": [],
   "operator_configs": {}
-}
 ```
-
-Every row, in every tier, has the same shape. `member_count` is the named group's synced members
-```
-```markdown
-Every binding subject — a Group, a ServiceAccount or a User — classified. Despite the path, this
-returns **all** bindings, including healthy ones — the caller filters.
-
 ```json
-{
   "total": 229, "limit": 500, "offset": 0, "truncated": false,
   "counts": {"ok": 70, "dangling": 0, "unresolved": 9, "built_in": 146, "unmanaged": 4},
   "ok": [
@@ -2628,18 +2639,24 @@ returns **all** bindings, including healthy ones — the caller filters.
      "member_count": null, "logged_in_count": null}
   ],
   "operator_configs": {}
-}
 ```
 
+<!-- block: local-development/API.md | edit -->
+```markdown
+Every row, in every tier, has the same shape. `member_count` is the named group's synced members
+```
+```markdown
 Every row, in every tier, has the same shape. `subject_kind` is `Group`, `ServiceAccount` or `User`
 — the three kinds RBAC defines — and **`group_name` is the subject's name whatever its kind** (the
 field predates the other two kinds; since #353 every kind is a row). `subject_namespace` is a
 ServiceAccount's namespace — the subject's own, or the RoleBinding's when the subject omits it,
 which is how the authorizer reads it — and `""` for the other kinds. `is_platform` is `1` for the
-platform's own identity: a ServiceAccount whose namespace the chart's `platformNamespaces` names, or a
-`system:` user or `kubeadmin`; such a row is `built_in`, never a finding (the operator's rule, #353).
+platform's own identity: a ServiceAccount whose effective namespace the chart's `platformNamespaces` names or
+one of OpenShift's two per-project controller bindings, a `system:` user or `kubeadmin`; such a row is
+`built_in`, never a finding (the operator's rule, #353).
 `member_count` is the named group's synced members
 ```
+
 
 <!-- block: local-development/API.md | edit -->
 ```markdown
@@ -2660,11 +2677,6 @@ platform's own identity: a ServiceAccount whose namespace the chart's `platformN
 <!-- block: local-development/API.md | edit -->
 ```markdown
 **Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object:**
-
-```bash
-oc annotate clusterrolebinding <name> \
-  rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
-```
 ```
 ```markdown
 The three "group does not exist" tiers are Group tiers: a ServiceAccount or User subject has no
@@ -2673,26 +2685,27 @@ Group object to resolve, so its row is `built_in` (the platform's own identity �
 by the stored `is_platform` flag), `unmanaged` or `ok`; no Helm, OLM or Argo CD label and no binding name
 excludes it — only that classification and the operator's label or exception on the binding do (#353).
 
-**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object** — either
-the policy system's label, naming who decided the grant is legitimate, as the chart labels its own
-RBAC:
-
-```bash
-oc label clusterrolebinding <name> rbac.ocp.io/config-source=platform-team
+**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object** — the
+exception annotation, which records why, or the policy system's label, which names who decided:
 ```
 
-or the exception annotation, which records why:
+<!-- block: local-development/API.md | edit -->
+```markdown
+The poller reads that annotation on its next binding refresh and stops classifying the binding
+as `unmanaged`, so it leaves this response, the RBAC policy tab and the log together. The
+```
+```markdown
+The poller reads that annotation — or the label, `oc label clusterrolebinding <name>
+rbac.ocp.io/config-source=platform-team`, as this chart labels its own RBAC — on its next binding
+refresh and stops classifying the binding as `unmanaged`, so it leaves this response, the RBAC policy
+tab and the log together. The
+```
 
-```bash
-oc annotate clusterrolebinding <name> \
-  rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
-```
-```
 
 <!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 ```markdown
 
-- **The unmanaged finding reads ServiceAccount and User subjects: the platform's own built-in, the rest silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, unless it is the platform's own identity: a ServiceAccount in a namespace `platformNamespaces` names (the shipped defaults plus the estate's `additional*` lists), one of OpenShift's per-project controller bindings (`system:image-builders`/`system:deployers`, matched on all three parts, in every namespace), a `system:` user or `kubeadmin` joins the built-in tier and is never a finding, the operator's long-standing rule; every line that decides or consumes it carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`, held by a test; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing else about how a grant was applied excludes it — not a Helm, OLM or Argo CD label, not a binding's name; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant outside the platform's own is a finding from the first refresh** — on an OpenShift cluster that is hundreds of rows, most of them grants OLM wrote in its operators' namespaces (124 subject rows on 117 bindings on this project's CRC lab under the shipped defaults, OpenShift 4.22, measured 2026-09-24; 579 platform rows join the built-in tier): the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
+- **The unmanaged finding reads ServiceAccount and User subjects: the platform's own built-in, the rest silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, unless it is the platform's own identity: a ServiceAccount in a namespace `platformNamespaces` names (the shipped defaults plus the estate's `additional*` lists), one of OpenShift's per-project controller bindings (`system:image-builders`/`system:deployers`, matched on all three parts, in every namespace), a `system:` user or `kubeadmin` joins the built-in tier and is never a finding, the operator's long-standing rule; every line that decides or consumes it carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`, held by a test; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing else about how a grant was applied excludes it — not a Helm, OLM or Argo CD label, not a binding's name; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant outside the platform's own is a finding from the first refresh** — on an OpenShift cluster that is over a hundred rows, most of them grants OLM wrote in its operators' namespaces (124 subject rows on 117 bindings on this project's CRC lab under the shipped defaults, OpenShift 4.22, measured 2026-09-24; 579 platform rows join the built-in tier): the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
 ```
 
 <!-- block: local-development/tests/test_rbac.py | edit -->
@@ -3604,6 +3617,193 @@ FINDINGS = ("ok", "dangling", "unresolved", "built_in", "unmanaged")
         """An estate adds its own without restating the Red Hat list, which changes between releases."""
 ```
 
+<!-- block: local-development/gsd/home.py | edit -->
+```python
+    def ns_row(name: str) -> dict:
+        return namespaces.setdefault(name, {"name": name, "platform": platform(name), "grants": []})
+```
+```python
+    def ns_row(name: str) -> dict:
+        # PLATFORM-CLASSIFICATION (#255, #353): Home's namespace rows, by the classifier the API passes in (settings.platform_namespaces.matches)
+        return namespaces.setdefault(name, {"name": name, "platform": platform(name), "grants": []})
+```
+
+<!-- block: local-development/gsd/state.py | edit -->
+```python
+    people = [u for u in (user_bindings or []) if not u.get("is_platform")]
+```
+```python
+    # PLATFORM-CLASSIFICATION (#255, #353): the direct-user alert leaves the platform's identities out, by the stored is_platform_user flag
+    people = [u for u in (user_bindings or []) if not u.get("is_platform")]
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+        people = sum(1 for u in user_rows if not u.is_platform)
+```
+```python
+        # PLATFORM-CLASSIFICATION (#255, #353): the refresh line counts people by the direct-user flag
+        people = sum(1 for u in user_rows if not u.is_platform)
+```
+
+<!-- block: local-development/gsd/api.py | edit -->
+```python
+        cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"] if not g["is_platform"]})
+```
+```python
+        # PLATFORM-CLASSIFICATION (#255, #353): Home's cluster-wide counts leave the platform's identities out (a system: group, a platform user)
+        cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"] if not g["is_platform"]})
+```
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+                      FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND is_platform = 0
+```
+```python
+                      -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
+                      FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND is_platform = 0
+```
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+                for r in out:
+                    r["is_platform"] = 1 if r["group_name"].startswith(SYSTEM_GROUP_PREFIX) else 0
+```
+```python
+                for r in out:
+                    # PLATFORM-CLASSIFICATION (#255, #353): a system: group is the platform's — the Group rule, as the finding's CASE applies it
+                    r["is_platform"] = 1 if r["group_name"].startswith(SYSTEM_GROUP_PREFIX) else 0
+```
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+                people = len({r["user_name"] for r in members}
+                             | {r["user_name"] for r in [*direct, *cluster_wide_grants] if not r["is_platform"]})
+```
+```python
+                # PLATFORM-CLASSIFICATION (#255, #353): people are the non-platform direct and cluster-wide grants plus the members
+                people = len({r["user_name"] for r in members}
+                             | {r["user_name"] for r in [*direct, *cluster_wide_grants] if not r["is_platform"]})
+```
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+                     FROM user_binding
+                    WHERE cluster_id=? AND is_platform=0
+                    GROUP BY namespace
+```
+```python
+                     FROM user_binding
+                    -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
+                    WHERE cluster_id=? AND is_platform=0
+                    GROUP BY namespace
+```
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+                     FROM user_binding
+                    WHERE cluster_id=? AND is_platform=0
+                    ORDER BY user_name""",
+```
+```python
+                     FROM user_binding
+                    -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
+                    WHERE cluster_id=? AND is_platform=0
+                    ORDER BY user_name""",
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+    const name = `${esc(n.name)}${n.platform ? '<span class="plat">platform namespace</span>' : ""}`;
+```
+```javascript
+    // PLATFORM-CLASSIFICATION (#255, #353): Home's namespace row wears the server's platform flag
+    const name = `${esc(n.name)}${n.platform ? '<span class="plat">platform namespace</span>' : ""}`;
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  const platformCount = d.platform_count != null ? d.platform_count : all.filter((n) => n.platform).length;
+```
+```javascript
+  // PLATFORM-CLASSIFICATION (#255, #353): the namespace index hides the server-flagged platform rows by default
+  const platformCount = d.platform_count != null ? d.platform_count : all.filter((n) => n.platform).length;
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  const hiddenWithFindings = hidingPlatform
+```
+```javascript
+  // PLATFORM-CLASSIFICATION (#255, #353): a hidden platform namespace with a direct grant is still named
+  const hiddenWithFindings = hidingPlatform
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  const viaReal = via.filter((g) => !g.is_platform);
+```
+```javascript
+  // PLATFORM-CLASSIFICATION (#255, #353): the via/wide filters read the stored flag
+  const viaReal = via.filter((g) => !g.is_platform);
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
+```
+```javascript
+  // PLATFORM-CLASSIFICATION (#255, #353): cluster-wide grants naming a person, by the stored flag
+  const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+        <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${g.managed_source || g.is_platform ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
+```
+```javascript
+        <td class="muted">${esc(g.binding_kind)} <code>${esc(g.binding_name)}</code>${/* PLATFORM-CLASSIFICATION (#255, #353): no hand-made badge on a platform row */ ""}${g.managed_source || g.is_platform ? "" : ' <span class="badge warning"><span class="glyph" aria-hidden="true"></span>hand-made</span>'}</td>
+```
+
+<!-- block: local-development/gsd/home.py | edit -->
+```python
+def derive_answer(groups: list[dict], via: list[dict], direct: list[dict],
+                  *, platform=is_platform_namespace) -> dict:
+```
+```python
+# PLATFORM-CLASSIFICATION (#255, #353): Home's per-namespace flag — `platform` is settings.platform_namespaces.matches when the API calls
+# this, and the shipped rule alone for a caller without Settings (OB2, review of #361)
+def derive_answer(groups: list[dict], via: list[dict], direct: list[dict],
+                  *, platform=is_platform_namespace) -> dict:
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+                        audit_progress=audit_progress,
+                        platform_namespaces=self.settings.platform_namespaces,
+```
+```python
+                        audit_progress=audit_progress,
+                        # PLATFORM-CLASSIFICATION (#255, #353): the settings' classifier, the values file's additional* lists included, handed to every refresh
+                        platform_namespaces=self.settings.platform_namespaces,
+```
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+                               " AND b.is_platform = 0")
+```
+```python
+                               " AND b.is_platform = 0")   # PLATFORM-CLASSIFICATION (#255, #353): the flag the poller stored
+```
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+            "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),
+```
+```python
+            "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),   # PLATFORM-CLASSIFICATION (#255, #353)
+```
+
 <!-- block: local-development/tests/test_platform_classification_marker.py | create -->
 ```python
 """Every line that decides or consumes "platform" carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`
@@ -3612,6 +3812,7 @@ operator's requirement (2026-09-24), so the classification can be reviewed as on
 new call appears somewhere unmarked. Spec: docs/specs/SPEC_U1_unmanaged_subjects.md, "The marked sites"."""
 from __future__ import annotations
 
+import pytest
 import re
 from pathlib import Path
 
@@ -3620,9 +3821,14 @@ ROOT = Path(__file__).resolve().parents[2]
 GSD = ROOT / "local-development" / "gsd"
 # A decision or a consumption: the classifiers' definitions and defaults, and every call of them.
 SITE = re.compile(
-    r"platform_namespaces\.(matches|unmatched)\(|\bplatform\.matches\(|\bis_platform_user\(|\bis_platform_namespace\("
+    # A call, or the bound method passed as an argument (Home passes `settings.platform_namespaces.matches`);
+    # prose in a docstring ends the name with a backtick or a period, which neither form matches (Grok, #361).
+    r"platform_namespaces\.(matches|unmatched)\s*[(,)]|\bplatform\.matches\s*\(|PlatformNamespaces\(\)\.matches\s*\("
+    r"|\bis_platform_user\s*\(|\bis_platform_namespace\s*\("
     r"|PLATFORM_CONTROLLER_BINDINGS\b|^PLATFORM_(NAMESPACE_PREFIXES|NAMESPACES|USER_PREFIXES) ="
-    r"|^def _platform_namespaces_setting\(|_platform_namespaces_setting\(raw\)|^\s+platform_namespaces: PlatformNamespaces = ")
+    r"|^def _platform_namespaces_setting\(|_platform_namespaces_setting\(raw\)|^\s+platform_namespaces: PlatformNamespaces = "
+    # ... and every read or write of the stored flag, in Python or in SQL (OB1-lite, review of #361)
+    r'|\bis_platform\s*=\s*[01]\b|\["is_platform"\]\s*=')
 CHART_SITES = {
     ROOT / "charts/group-sync-dashboard/values.yaml": "platformNamespaces:",
     ROOT / "charts/group-sync-dashboard/templates/configmap.yaml": ".Values.platformNamespaces",
@@ -3653,7 +3859,7 @@ def test_the_marked_python_path_is_complete() -> None:
     marked = {str(p.relative_to(ROOT)) for p in GSD.rglob("*.py") if MARKER in p.read_text(encoding="utf-8")}
     assert {"local-development/gsd/home.py", "local-development/gsd/config.py", "local-development/gsd/kube.py",
             "local-development/gsd/api.py", "local-development/gsd/poller.py", "local-development/gsd/store.py",
-            "local-development/gsd/reporting/snapshot.py"} <= marked, marked
+            "local-development/gsd/state.py", "local-development/gsd/reporting/snapshot.py"} <= marked, marked
 
 
 def test_the_chart_path_is_marked() -> None:
@@ -3662,6 +3868,21 @@ def test_the_chart_path_is_marked() -> None:
         hit = next(i for i, line in enumerate(lines) if needle in line)
         window = "\n".join(lines[max(0, hit - 3):hit + 1])
         assert MARKER in window, (str(path.relative_to(ROOT)), needle, window)
+
+@pytest.mark.parametrize("line, is_site", [
+    ('            row["platform"] = settings.platform_namespaces.matches(row["name"])', True),
+    ("                                    platform=settings.platform_namespaces.matches),", True),
+    ("        if platform.matches(b.subject_namespace):", True),
+    ("    return PlatformNamespaces().matches(name)", True),
+    ('    ok = is_platform_user ("kubeadmin")', True),
+    ("                    WHERE cluster_id=? AND is_platform=0", True),
+    ('                    r["is_platform"] = 1 if r["group_name"].startswith(SYSTEM_GROUP_PREFIX) else 0', True),
+    ("    is_platform         INTEGER NOT NULL DEFAULT 0,", False),
+    ('    """The shipped rule. Callers holding a `Settings` use `settings.platform_namespaces.matches`', False),
+    ("from .config import PlatformNamespaces", False),
+])
+def test_the_site_pattern_sees_a_call_and_a_bound_method_pass_but_not_prose(line: str, is_site: bool) -> None:
+    assert bool(SITE.search(line)) is is_site, line
 ```
 
 <!-- block: local-development/tests/test_unmanaged_subjects.py | create -->
@@ -3819,7 +4040,7 @@ class TestClassification:
         assert findings(store) == {"hand-made-sa": "unmanaged", "hand-made-user": "unmanaged", "hand-made": "ok"}
 
     def test_a_labelled_account_does_not_open_the_group_gate(self, store):
-        """The Group arm's gate reads Group rows only, so it is byte for byte #354's: the operator's label
+        """The Group arm's gate reads Group rows only, so it is #354's (guarded by subject_kind): the operator's label
         on an account silences that account and changes nothing for a hand-made Group grant."""
         _synced(store, SYNCED)
         store.replace_bindings("crc", [sa("decided", managed_source="platform-team"),
@@ -4486,14 +4707,17 @@ class TestControllerBindingsAndTheDefaultAccount:
         assert got == {"system:image-builders": ("built_in", 1), "system:deployers": ("built_in", 1)}
 
     def test_any_other_shape_with_the_same_account_or_name_is_reported(self, store, monkeypatch):
-        got = self._refresh(store, monkeypatch, [
+        # One refresh per shape: the table's key has no role columns, so two shapes that differ only by role
+        # would be one row and the second would replace the first before the assert (Codex, review of #361).
+        for row in [
             self._rb("system:image-builders", "apps", "admin", "builder"),                # another role
             self._rb("builder-admin", "apps", "system:image-builder", "builder"),         # another binding name
             self._rb("system:deployers", "apps", "system:deployer", "ci-bot"),            # another account
             self._rb("system:deployers", "apps", "system:deployer", "deployer", sa_namespace="other"),   # another namespace
             self._rb("system:image-builders", "apps", "system:image-builder", "builder", role_kind="Role"),  # a Role, not the ClusterRole
-        ])
-        assert set(got.values()) == {("unmanaged", 0)}, got
+        ]:
+            got = self._refresh(store, monkeypatch, [row])
+            assert got == {row.binding_name: ("unmanaged", 0)}, (row, got)
 
     def test_the_third_controller_binding_is_a_system_group_and_the_group_arm_decides_it(self, store, monkeypatch):
         # (c) system:image-pullers → ClusterRole system:image-puller → Group system:serviceaccounts:<own namespace>:
@@ -4503,9 +4727,9 @@ class TestControllerBindingsAndTheDefaultAccount:
         assert self._refresh(store, monkeypatch, [row]) == {"system:image-pullers": ("built_in", 0)}
 
     def test_a_hand_made_grant_to_the_default_account_is_reported_in_a_project_namespace_only(self, store, monkeypatch):
-        got = self._refresh(store, monkeypatch, [self._rb("give-default-admin", "apps", "admin", "default"),
-                                                 self._rb("give-default-admin", "openshift-monitoring", "admin", "default")])
-        assert got == {"give-default-admin": ("unmanaged", 0)} or len(got) == 1, got
+        # The same binding name in two namespaces: _refresh's by-name dict would fold them, so read the rows.
+        self._refresh(store, monkeypatch, [self._rb("give-default-admin", "apps", "admin", "default"),
+                                           self._rb("give-default-admin", "openshift-monitoring", "admin", "default")])
         rows = {(r["binding_namespace"], r["finding"], r["is_platform"]) for r in store.all_bindings("crc")}
         assert rows == {("apps", "unmanaged", 0), ("openshift-monitoring", "built_in", 1)}
 
