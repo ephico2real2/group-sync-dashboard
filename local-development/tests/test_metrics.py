@@ -107,9 +107,6 @@ class TestExposition:
         assert found['gsd_bindings_total{cluster="crc",finding="ok"}'] == 1
         assert found['gsd_bindings_total{cluster="crc",finding="unresolved"}'] == 1
         assert found['gsd_bindings_total{cluster="crc",finding="built_in"}'] == 1
-        # Pre-seeded like the other tiers (SPEC_U1): the seed has no unmanaged grant, and the series
-        # is still there at 0, so `by (finding)` never loses it when a count returns to zero.
-        assert found['gsd_bindings_total{cluster="crc",finding="unmanaged"}'] == 0
 
     def test_cluster_up_reflects_the_last_poll(self, scrape):
         text, store = scrape

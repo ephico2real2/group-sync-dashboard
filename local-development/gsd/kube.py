@@ -348,14 +348,6 @@ UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
 # unmanaged gate ignores it; `tests/test_chart_rbac_provenance.py` holds the rendered value to it.
 CHART_CONFIG_SOURCE = "group-sync-dashboard"
 
-# The three subject kinds RBAC defines (k8s.io/api rbac/v1 types.go: GroupKind, ServiceAccountKind,
-# UserKind); the API server refuses any other at admission (pkg/apis/rbac/validation,
-# ValidateRoleBindingSubject). Every one is a grant the unmanaged finding reads (#353, SPEC_U1).
-GROUP_KIND = "Group"
-SERVICE_ACCOUNT_KIND = "ServiceAccount"
-USER_KIND = "User"
-SUBJECT_KINDS = (GROUP_KIND, SERVICE_ACCOUNT_KIND, USER_KIND)
-
 # READ, never written. The dashboard used to apply this label to its own findings; that
 # write path was removed (see the comment above `class ClusterClient`), so the label now
 # means "a human or a CI job acknowledged this finding" — a LABEL rather than an annotation
@@ -547,13 +539,12 @@ class OperatorConfigView:
 
 @dataclass
 class BindingView:
-    """One (binding, subject) pair.
+    """One (binding, Group subject) pair.
 
     Flattened per subject rather than per binding: a binding naming three groups is three
     rows, which is the shape both drill-downs read it in ("which bindings name THIS
-    group?"). Every subject kind is kept — Group, ServiceAccount and User (#353): the unmanaged
-    finding must see a hand-made grant whoever it names. The Group-only questions (a person's
-    access through their groups, a group's page) filter on `subject_kind` in the store.
+    group?"). Only ``kind: Group`` subjects are kept — User and ServiceAccount subjects
+    cannot contribute to a user's access-via-groups, which is the question being answered.
     """
 
     binding_kind: str          # RoleBinding | ClusterRoleBinding
@@ -562,12 +553,6 @@ class BindingView:
     role_kind: str             # Role | ClusterRole
     role_name: str
     group_name: str
-    """The subject's NAME, whatever its kind. The field predates the other two kinds and every
-    reader of these rows names it; `subject_kind` says what it names."""
-    subject_kind: str = GROUP_KIND
-    subject_namespace: str = ""
-    """A ServiceAccount's namespace — the subject's own, or the RoleBinding's when the subject
-    omits it, which is how the authorizer reads it (see _binding_views). "" for the other kinds."""
     managed_source: str | None = None
     """The provenance label value the policy operator stamps on bindings it templates
     (`rbac.ocp.io/config-source` by default). None means nothing manages this binding —
@@ -1472,7 +1457,7 @@ class ClusterClient:
         return None
 
     def fetch_bindings(self) -> list[BindingView]:
-        """Every RoleBinding and ClusterRoleBinding subject — Group, ServiceAccount and User.
+        """Every RoleBinding and ClusterRoleBinding subject of kind Group.
 
         Separate from fetch() and on its own slower cadence: this lists bindings across
         every namespace, which is far more expensive than the two list calls above, and
@@ -1484,7 +1469,7 @@ class ClusterClient:
                 out.extend(_binding_views(obj, "RoleBinding"))
             for obj in self._list_all(client, CLUSTERROLEBINDING_API):
                 out.extend(_binding_views(obj, "ClusterRoleBinding"))
-        log.debug("fetched %d binding subject rows from %s", len(out), self.cluster.name)
+        log.debug("fetched %d group-subject binding rows from %s", len(out), self.cluster.name)
         return out
 
     def fetch_operator_configs(self) -> list[OperatorConfigView] | None:
@@ -2033,56 +2018,29 @@ def _user_binding_views(obj: dict, binding_kind: str) -> list[UserBindingView]:
 
 
 def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
-    """Flatten one binding into a row per distinct subject, whatever its kind.
+    """Flatten one binding into a row per Group subject.
 
-    Subject matching is on ``kind`` exactly, against the three kinds RBAC defines
-    (SUBJECT_KINDS); a subject of any other kind, or with no name, contributes nothing. Every
-    kind is a grant the unmanaged finding must see (#353, SPEC_U1).
-
-    A ServiceAccount subject carries a namespace. On a ClusterRoleBinding the API server
-    requires it (pkg/apis/rbac/validation/validation.go, ValidateRoleBindingSubject); on a
-    RoleBinding it may be omitted, and the authorizer then reads it as the binding's own
-    namespace (pkg/registry/rbac/validation/rule.go, appliesToUser: "default the namespace to
-    namespace we're working in"). That resolved namespace is what is stored, so the row names
-    the account RBAC actually matches — `system:serviceaccount:<namespace>:<name>`. Measured on
-    the lab: 26 of 685 ServiceAccount subject entries omit it, on 13 RoleBindings — 9 written by
-    OLM, 3 by the cluster-version operator, 1 by hand. User and Group subjects have no
-    namespace; "" is stored, as for a ClusterRoleBinding's own.
-
-    A subject a binding names twice is one row: the authorizer grants it once and the store's
-    primary key keeps one. OLM writes some RoleBindings that way (10 repeated ServiceAccount
-    entries on the lab, `metallb-operator…` naming four accounts twice), and a reader that yielded
-    both made the refresh line count 925 subjects for the 915 rows the store held.
+    Subject matching is on ``kind`` exactly. A binding with no Group subject contributes
+    nothing, which is why 530 RoleBindings on the target cluster reduce to 178 rows.
     """
     meta = obj.get("metadata") or {}
     role_ref = obj.get("roleRef") or {}
     labels = meta.get("labels") or {}
     annotations = meta.get("annotations") or {}
-    # ClusterRoleBindings have no namespace; "" rather than None so it can sit in a NOT NULL
-    # primary key column without a sentinel row per binding.
-    binding_namespace = meta.get("namespace", "") or ""
     rows: list[BindingView] = []
-    seen: set[tuple[str, str, str]] = set()
     for subject in obj.get("subjects") or []:
-        kind = subject.get("kind")
-        if kind not in SUBJECT_KINDS or not subject.get("name"):
+        if subject.get("kind") != "Group" or not subject.get("name"):
             continue
-        subject_namespace = ((subject.get("namespace") or binding_namespace)
-                             if kind == SERVICE_ACCOUNT_KIND else "")
-        identity = (kind, subject_namespace, subject["name"])
-        if identity in seen:
-            continue
-        seen.add(identity)
         rows.append(
             BindingView(
                 binding_kind=binding_kind,
-                binding_namespace=binding_namespace,
+                # ClusterRoleBindings have no namespace; "" rather than None so it can sit
+                # in a NOT NULL primary key column without a sentinel row per binding.
+                binding_namespace=meta.get("namespace", "") or "",
                 binding_name=meta.get("name", ""),
                 role_kind=role_ref.get("kind", ""),
                 role_name=role_ref.get("name", ""),
                 group_name=subject["name"],
-                subject_kind=kind,
-                subject_namespace=subject_namespace,
                 managed_source=labels.get(CONFIG_SOURCE_LABEL),
                 exception=annotations.get(UNMANAGED_EXCEPTION_ANNOTATION),
                 audit_stamped=labels.get(UNMANAGED_LABEL) == "true",

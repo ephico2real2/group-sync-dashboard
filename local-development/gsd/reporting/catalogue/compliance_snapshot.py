@@ -36,14 +36,9 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
             KeyValues("Directory and users", [("Synced groups", c["groups"]), ("Empty groups", c["empty_groups"]), ("Unattributed groups", c["unattributed_groups"]),
                                               ("Distinct members", c["members"]), ("Users who have logged in", c["users_logged_in"]), ("Manual accounts", c["users"] - c["users_logged_in"]),
                                               ("Members added / removed, 30 d", f"{changes['added']} / {changes['removed']}")]),
-            # Two populations side by side (SPEC_U1): the group figure counts Group subjects, the
-            # finding figures count every subject kind, so each label says which — a reader must not
-            # take Unmanaged for a share of Group bindings.
-            KeyValues("RBAC", [("Group bindings (Group subjects)", c["group_bindings"]), ("Namespaces with bindings", c["namespaces_with_bindings"]),
-                               ("Dangling", findings.get("dangling", 0)), ("Unresolved", findings.get("unresolved", 0)),
-                               ("Bindings (every subject kind)", sum(findings.values())),
-                               ("Unmanaged (every subject kind)", findings.get("unmanaged", 0)),
-                               ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded from the direct-user figures)", c["platform_user_bindings"]),
+            KeyValues("RBAC", [("Group bindings", c["group_bindings"]), ("Namespaces with bindings", c["namespaces_with_bindings"]),
+                               ("Dangling", findings.get("dangling", 0)), ("Unresolved", findings.get("unresolved", 0)), ("Unmanaged", findings.get("unmanaged", 0)),
+                               ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded)", c["platform_user_bindings"]),
                                ("Privileged group grants", len(priv_g)), ("Privileged direct grants", len(priv_u))]),
             KeyValues("Access hygiene", [("Members who never logged in", len(never)),
                                          ("Access outside the login gate", len(awl) if gate and gate["group_name"] else "no gate known"),

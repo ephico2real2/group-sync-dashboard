@@ -229,10 +229,7 @@ type: application
 # `rbac.ocp.io/config-source: group-sync-dashboard`, the policy system's provenance label, so the
 # dashboard no longer reports the chart's own auditor binding as a grant made by hand (#312).
 # Metadata only: no rule, subject or role changes.
-# CHART 0.54.0 (2026-09-24), MINOR: appVersion moves to application 0.33.0 (below) — the unmanaged finding
-# reads ServiceAccount and User subjects and honours the same label on them (#353, SPEC_U1). The README and
-# the values comment say what the finding covers; no template changes.
-version: 0.54.0
+version: 0.53.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -316,13 +313,7 @@ version: 0.54.0
 # remote that states no policy defaults to `remote-sar` + `same-as-host`; a failing remote is held for 30 s;
 # a lookup-owned Secret serves its stanza's policy and switch; a line beside the selector names the rule
 # that decided. MINOR: behaviour changes on upgrade for a remote that states nothing (docs/CHANGELOG.md).
-# 0.33.0 (2026-09-24). The unmanaged finding reads every subject kind — Group, ServiceAccount and User —
-# and a grant is silenced only by the operator's `rbac.ocp.io/config-source` label or the exception
-# annotation on its binding (#353, SPEC_U1). Schema migration 20 (the binding table's primary key gains
-# the subject's kind and namespace); `/bindings/findings` rows gain `subject_kind` and
-# `subject_namespace`. MINOR: additive on the wire; every unlabelled ServiceAccount and User grant is a
-# finding from the first refresh after upgrade, which is the capability.
-appVersion: "0.33.0"
+appVersion: "0.32.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

@@ -347,14 +347,14 @@ def render(results: dict[str, dict], fmt: str) -> str:
             w("")
 
             counts = f.get("counts", {})
-            w(f"**Bindings — {f.get('total', 0)} total** (one row per subject: a group, a ServiceAccount or a user)")
+            w(f"**Group bindings — {f.get('total', 0)} total**")
             w("")
             if fmt == "markdown":
                 w("| Finding | Count | Meaning |")
                 w("|---|---|---|")
                 for tier, meaning in (
                     ("dangling", "grants nobody — the group no longer exists"),
-                    ("unmanaged", "hand-made, outside policy — a synced group, a ServiceAccount or a user"),
+                    ("unmanaged", "hand-made on an operator-synced group, outside policy"),
                     ("unresolved", "names a group that never existed"),
                     ("built_in", "virtual group, no object by design"),
                     ("ok", "resolves and is templated by the policy operator"),

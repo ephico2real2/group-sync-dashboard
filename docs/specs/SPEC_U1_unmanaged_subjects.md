@@ -7,7 +7,7 @@
 | Release | — (post-programme) |
 | Version on release | app 0.33.0, chart 0.54.0 |
 | Issue | [#353](https://github.com/ephico2real2/group-sync-dashboard/issues/353) |
-| Status | in progress |
+| Status | specified |
 | Source | OB1's implementation specification of 2026-09-24, written before any code from the operator's words on #312 and #353, the upstream Kubernetes sources cited in §2.1, the lab measured read-only on 2026-09-24 (§2.2), and a map of every reader of the binding table on main `244d4ab` (§2.3) |
 
 ## How to read this spec

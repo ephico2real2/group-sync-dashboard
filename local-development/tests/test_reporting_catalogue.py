@@ -311,7 +311,7 @@ class TestEveryReportBuildsAndRenders:
         assert bf.totals["direct_user"] == 2
         unmanaged_tbl = next(b for s in bf.sections for b in s.blocks
                              if getattr(b, "title", "") == "unmanaged")
-        assert [r[0] for r in unmanaged_tbl.rows] == ["group team-b"]
+        assert [r[0] for r in unmanaged_tbl.rows] == ["team-b"]
         assert all(not str(c).startswith("system:") for r in unmanaged_tbl.rows for c in r)
 
         # SA is stored, just not listed (is_platform). Store path is the include_platform read.

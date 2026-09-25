@@ -27,7 +27,7 @@ from typing import Iterator
 
 from .storage import SqliteHealth, StorageHealth  # noqa: F401
 from .kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED, qualified
-from .kube import CHART_CONFIG_SOURCE, GROUP_KIND, SYSTEM_GROUP_PREFIX
+from .kube import CHART_CONFIG_SOURCE, SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -214,15 +214,8 @@ CREATE INDEX IF NOT EXISTS membership_event_by_time
 CREATE INDEX IF NOT EXISTS membership_event_by_id
     ON membership_event(cluster_id, id);
 
--- One row per (binding, subject). Current state, replaced each refresh: a binding
+-- One row per (binding, Group subject). Current state, replaced each refresh: a binding
 -- is fully re-readable from the API, so nothing here is irreplaceable history.
---
--- Every subject kind RBAC defines is held — Group, ServiceAccount and User (#353, SPEC_U1,
--- migration 20) — because the unmanaged finding must see a hand-made grant whoever it names.
--- `group_name` is the subject's NAME whatever its kind: the column predates the other two
--- kinds and every reader of this table names it, so it kept its name; `subject_kind` says
--- what it names. The Group-only readers (a group's page, a person's access through groups,
--- the namespace audit, the history stream) filter on subject_kind = 'Group'.
 CREATE TABLE IF NOT EXISTS rbac_group_binding (
     cluster_id          TEXT NOT NULL,
     binding_kind        TEXT NOT NULL,   -- RoleBinding | ClusterRoleBinding
@@ -230,11 +223,7 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     binding_name        TEXT NOT NULL,
     role_kind           TEXT NOT NULL,   -- Role | ClusterRole
     role_name           TEXT NOT NULL,
-    subject_kind        TEXT NOT NULL DEFAULT 'Group',   -- Group | ServiceAccount | User
-    -- A ServiceAccount's namespace: the subject's own, or the RoleBinding's when the subject
-    -- omits it, which is how the authorizer reads it (kube.py _binding_views). '' otherwise.
-    subject_namespace   TEXT NOT NULL DEFAULT '',
-    group_name          TEXT NOT NULL,   -- the subject's name, whatever subject_kind says
+    group_name          TEXT NOT NULL,
     observed_at         TEXT NOT NULL,
     -- Provenance (migration 1). managed_source is the policy operator's config-source
     -- label; NULL means hand-made. exception is the operator-acknowledged justification
@@ -245,8 +234,7 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     -- audit label — read back from the cluster each refresh, so it is the cluster's
     -- truth, not a local counter that can drift from it.
     audit_stamped       INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name,
-                subject_kind, subject_namespace, group_name)
+    PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name, group_name)
 );
 
 -- Bindings that name a USER directly, rather than a group. Replaced each refresh.
@@ -1095,53 +1083,6 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
             "ALTER TABLE cluster ADD COLUMN credential TEXT NOT NULL DEFAULT ''",
         ],
     ),
-    (
-        20,
-        "rbac_group_binding holds ServiceAccount and User subjects beside Group ones (#353, SPEC_U1)",
-        [
-            # A table rebuild: the primary key gains the subject's kind and namespace, and SQLite
-            # cannot alter a primary key in place. The rows are carried across as Group subjects
-            # (every row an older release wrote is one) rather than dropped, so the bindings view
-            # is not blank until the next 300 s cycle and the next refresh's binding_event diff sees
-            # the same Group rows it left — a DROP alone would have re-recorded every binding on the
-            # cluster as `added`. On a fresh database the SCHEMA already created this shape and the
-            # rebuild copies an empty table onto itself, which is harmless. Migrations 1 and 2 have
-            # run by now, so the provenance and stamp columns exist on every source table.
-            """CREATE TABLE IF NOT EXISTS rbac_group_binding_v20 (
-                   cluster_id          TEXT NOT NULL,
-                   binding_kind        TEXT NOT NULL,
-                   binding_namespace   TEXT NOT NULL,
-                   binding_name        TEXT NOT NULL,
-                   role_kind           TEXT NOT NULL,
-                   role_name           TEXT NOT NULL,
-                   subject_kind        TEXT NOT NULL DEFAULT 'Group',
-                   subject_namespace   TEXT NOT NULL DEFAULT '',
-                   group_name          TEXT NOT NULL,
-                   observed_at         TEXT NOT NULL,
-                   managed_source      TEXT,
-                   exception           TEXT,
-                   audit_stamped       INTEGER NOT NULL DEFAULT 0,
-                   PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name,
-                               subject_kind, subject_namespace, group_name)
-               )""",
-            # OR IGNORE: the replay converges from a v20 table that is already populated. A crash
-            # cannot leave one — the INSERT opens the connection's implicit transaction and the DROP,
-            # the RENAME and the version write ride in it until Store.__init__ commits, so a crash
-            # rolls them back together and only the empty CREATE stands (measured, SPEC_U1 notes) —
-            # but a hand repair can, and _migrate tolerates no IntegrityError.
-            """INSERT OR IGNORE INTO rbac_group_binding_v20(
-                   cluster_id, binding_kind, binding_namespace, binding_name, role_kind, role_name,
-                   subject_kind, subject_namespace, group_name, observed_at,
-                   managed_source, exception, audit_stamped)
-               SELECT cluster_id, binding_kind, binding_namespace, binding_name, role_kind, role_name,
-                      'Group', '', group_name, observed_at,
-                      managed_source, exception, audit_stamped
-                 FROM rbac_group_binding""",
-            "DROP TABLE rbac_group_binding",
-            "ALTER TABLE rbac_group_binding_v20 RENAME TO rbac_group_binding",
-            "CREATE INDEX IF NOT EXISTS rbac_binding_by_group ON rbac_group_binding(cluster_id, group_name)",
-        ],
-    ),
 ]
 
 
@@ -1681,7 +1622,7 @@ class Store:
             via = {r["ns"]: r["n"] for r in self._rows(
                 f"""SELECT binding_namespace AS ns,
                            COUNT(DISTINCT CASE WHEN substr(group_name, 1, ?) = ? THEN NULL ELSE group_name END) AS n
-                      FROM rbac_group_binding WHERE cluster_id=? AND subject_kind = 'Group' AND binding_namespace != ''
+                      FROM rbac_group_binding WHERE cluster_id=? AND binding_namespace != ''
                       {"AND group_name IN (SELECT value FROM json_each(?))" if own else ""}
                      GROUP BY binding_namespace""",
                 (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id, group_list) if own
@@ -1715,7 +1656,7 @@ class Store:
         nonexistent name."""
         row = self._row(
             """SELECT EXISTS(SELECT 1 FROM rbac_group_binding
-                              WHERE cluster_id=? AND subject_kind = 'Group' AND binding_namespace IN (?, '')
+                              WHERE cluster_id=? AND binding_namespace IN (?, '')
                                 AND group_name IN (SELECT value FROM json_each(?)))
                    OR EXISTS(SELECT 1 FROM user_binding
                               WHERE cluster_id=? AND binding_namespace IN (?, '') AND user_name=?) AS reach""",
@@ -1749,7 +1690,7 @@ class Store:
                                b.managed_source, COALESCE(g.member_count, 0) AS member_count
                           FROM rbac_group_binding b
                           LEFT JOIN group_state g ON g.cluster_id = b.cluster_id AND g.name = b.group_name
-                         WHERE b.cluster_id=? AND b.subject_kind = 'Group' AND b.binding_namespace=?{own_groups}
+                         WHERE b.cluster_id=? AND b.binding_namespace=?{own_groups}
                          ORDER BY b.role_name, b.group_name""",
                     (cluster_id, namespace, group_list) if own else (cluster_id, namespace))
             # A `system:` subject (system:authenticated, system:nodes, system:serviceaccounts:<ns>) is a
@@ -2424,36 +2365,26 @@ class Store:
         rather than recorded as a mass grant — see sync_members for why the rows are still
         written.
         """
-        # Every row is a subject of some kind. A caller that names no kind wrote a Group row —
-        # every caller before #353 did, and the test seeds still do — so the defaults keep that
-        # meaning rather than making every one of them say it.
-        rows = [{"subject_kind": GROUP_KIND, "subject_namespace": "", "managed_source": None,
-                 "exception": None, "audit_stamped": 0, **r} for r in rows]
         with self._write() as conn:
-            # The history stream stays the Group subjects' (binding:Group). User subjects are
-            # recorded by replace_user_bindings from the same bindings under binding:User, and a
-            # second recording here would double every one of them; ServiceAccount subjects have
-            # no stream (docs/DESIGN_binding_events.md bounds subject_kind at two), a decision
-            # SPEC_U1 states rather than widens here.
             changes = self._append_binding_events(
                 conn, cluster_id, "Group", "group_name",
                 current=conn.execute(
                     """SELECT binding_kind, binding_namespace, binding_name, group_name AS subject,
                               role_kind, role_name, 0 AS is_platform
-                         FROM rbac_group_binding WHERE cluster_id=? AND subject_kind = 'Group'""",
-                    (cluster_id,)).fetchall(),
-                incoming=[r for r in rows if r["subject_kind"] == GROUP_KIND], observed_at=observed_at,
+                         FROM rbac_group_binding WHERE cluster_id=?""", (cluster_id,)).fetchall(),
+                incoming=rows, observed_at=observed_at,
             )
             conn.execute("DELETE FROM rbac_group_binding WHERE cluster_id=?", (cluster_id,))
             conn.executemany(
                 """INSERT OR REPLACE INTO rbac_group_binding(
                        cluster_id, binding_kind, binding_namespace, binding_name,
-                       role_kind, role_name, subject_kind, subject_namespace, group_name, observed_at,
+                       role_kind, role_name, group_name, observed_at,
                        managed_source, exception, audit_stamped)
                    VALUES(:cluster_id,:binding_kind,:binding_namespace,:binding_name,
-                          :role_kind,:role_name,:subject_kind,:subject_namespace,:group_name,:observed_at,
+                          :role_kind,:role_name,:group_name,:observed_at,
                           :managed_source,:exception,:audit_stamped)""",
-                [{**r, "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
+                [{"managed_source": None, "exception": None, "audit_stamped": 0, **r,
+                  "cluster_id": cluster_id, "observed_at": observed_at} for r in rows],
             )
         return changes
 
@@ -2578,7 +2509,7 @@ class Store:
         return self._rows(
             """SELECT binding_kind, binding_namespace, binding_name, role_kind, role_name
                  FROM rbac_group_binding
-                WHERE cluster_id=? AND subject_kind = 'Group' AND group_name=?
+                WHERE cluster_id=? AND group_name=?
                 ORDER BY binding_kind, binding_namespace, binding_name""",
             (cluster_id, group_name),
         )
@@ -2596,7 +2527,6 @@ class Store:
                  FROM group_member m
                  JOIN rbac_group_binding b
                    ON b.cluster_id = m.cluster_id AND b.group_name = m.group_name
-                  AND b.subject_kind = 'Group'
                 WHERE m.cluster_id=? AND m.user_name=?
                 ORDER BY b.binding_kind, b.binding_namespace, b.binding_name""",
             (cluster_id, user_name),
@@ -2611,8 +2541,7 @@ class Store:
             (user_name,))}
 
     def binding_findings(self, cluster_id: str) -> list[dict]:
-        """Every classified binding that is not `ok`: a Group subject with no Group object, or a
-        grant outside the policy system, whoever it names (#353).
+        """Classify every binding whose Group subject has no Group object.
 
         Three tiers, because two would be useless here. On the target cluster 110 of 149
         distinct Group subjects are built-in virtual groups; lumping those in with real
@@ -2632,55 +2561,39 @@ class Store:
     # producing counts that disagree with the rows they are counting.
     _FINDING_CASE = """
                       CASE
-                        -- Broken-resolution tiers first, for Group subjects: a binding that
-                        -- grants NOBODY is worse than one that grants outside governance,
-                        -- whoever made it. A ServiceAccount or User subject has no Group
-                        -- object to resolve, so these three arms never apply to it (#353);
-                        -- the joins below already never match it.
-                        WHEN b.subject_kind = 'Group' AND g.name IS NULL AND s.group_name IS NOT NULL
+                        -- Broken-resolution tiers first: a binding that grants NOBODY is
+                        -- worse than one that grants outside governance, whoever made it.
+                        WHEN g.name IS NULL AND s.group_name IS NOT NULL
                                                            THEN 'dangling'
-                        WHEN b.subject_kind = 'Group' AND g.name IS NULL AND b.group_name LIKE 'system:%'
+                        WHEN g.name IS NULL AND b.group_name LIKE 'system:%'
                                                            THEN 'built_in'
-                        WHEN b.subject_kind = 'Group' AND g.name IS NULL
-                                                           THEN 'unresolved'
-                        -- Provenance: a grant NO policy system manages is somebody bypassing
-                        -- governance by hand. For a Group subject that is only worth saying
-                        -- when the group is operator-SYNCED and the policy operator is in use
-                        -- at all — some other Group-subject binding on the cluster carries a
-                        -- label, read over Group rows only so this arm is exactly #354's — or
-                        -- every binding on a cluster that has never heard of config-source
-                        -- labels would flag; this chart's own label is not that evidence, its
-                        -- auditor binding being on every host by default (#312). For a
-                        -- ServiceAccount or a User it is said whenever the binding carries no
-                        -- label and no exception, on every host, with no gate: nothing about
-                        -- how the grant was applied (a `system:` name, a platform namespace, a
-                        -- Helm, OLM or Argo CD label) or about the rest of the cluster excludes
-                        -- it, only the operator's decision on the binding does (#353, SPEC_U1).
-                        -- An exception annotation on the binding acknowledges a deliberate one
-                        -- and suppresses the finding.
+                        WHEN g.name IS NULL                THEN 'unresolved'
+                        -- The group resolves. Now provenance: an operator-SYNCED group
+                        -- granted access by a binding NO policy system manages is somebody
+                        -- bypassing governance by hand. Requires the policy operator to be
+                        -- in use at all (any managed binding on the cluster), or every
+                        -- binding on a cluster that has never heard of config-source
+                        -- labels would flag. This chart's own label is not that evidence:
+                        -- its auditor binding is on every host by default (#312). An
+                        -- exception annotation on the binding acknowledges a deliberate
+                        -- one and suppresses the finding.
                         WHEN b.managed_source IS NULL
                              AND b.exception IS NULL
-                             AND (b.subject_kind <> 'Group' OR s.group_name IS NOT NULL)
-                             AND (b.subject_kind <> 'Group' OR EXISTS (
-                                      SELECT 1 FROM rbac_group_binding m
-                                       WHERE m.cluster_id = b.cluster_id
-                                         AND m.subject_kind = 'Group'
-                                         AND m.managed_source IS NOT NULL
-                                         AND m.managed_source <> '""" + CHART_CONFIG_SOURCE + """'))
+                             AND s.group_name IS NOT NULL
+                             AND EXISTS (SELECT 1 FROM rbac_group_binding m
+                                          WHERE m.cluster_id = b.cluster_id
+                                            AND m.managed_source IS NOT NULL
+                                            AND m.managed_source <> '""" + CHART_CONFIG_SOURCE + """')
                                                            THEN 'unmanaged'
                         ELSE 'ok'
                       END"""
 
-    # Group objects, sync records and members are joined to Group subjects only: an account or a
-    # person named like a group must not borrow that group's object, its provenance or its reach.
     _FINDING_JOINS = """
                  FROM rbac_group_binding b
                  LEFT JOIN group_state g
                         ON g.cluster_id = b.cluster_id AND g.name = b.group_name
-                       AND b.subject_kind = 'Group'
                  LEFT JOIN managed_group_seen s
-                        ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name
-                       AND b.subject_kind = 'Group'"""
+                        ON s.cluster_id = b.cluster_id AND s.group_name = b.group_name"""
     _FINDING_WHERE = """
                 WHERE b.cluster_id = ?"""
     # The name the count query and the docs use; the split above exists so that all_bindings can
@@ -2704,7 +2617,6 @@ class Store:
                                      ON u.cluster_id = m.cluster_id AND u.user_name = m.user_name
                              GROUP BY m.cluster_id, m.group_name) li
                         ON li.cluster_id = b.cluster_id AND li.group_name = b.group_name
-                       AND b.subject_kind = 'Group'
                  LEFT JOIN ocp_user_status ust
                         ON ust.cluster_id = b.cluster_id"""
 
@@ -2725,7 +2637,7 @@ class Store:
     def all_bindings(
         self, cluster_id: str, limit: int | None = None, offset: int = 0, *, reach: bool = False
     ) -> list[dict]:
-        """Every binding subject, each classified — one row per (binding, subject) of every kind.
+        """Every group-subject binding, each classified.
 
         `reach=True` adds two columns that say who the binding reaches today: `member_count`, the
         group's synced members, and `logged_in_count`, how many of those members have logged in
@@ -2760,22 +2672,12 @@ class Store:
                            ELSE COALESCE(li.logged_in_count, 0) END AS logged_in_count,"""
                       if reach else "")
         sql = ("""SELECT b.binding_kind, b.binding_namespace, b.binding_name,
-                      b.role_kind, b.role_name, b.subject_kind, b.subject_namespace, b.group_name,
+                      b.role_kind, b.role_name, b.group_name,
                       b.managed_source, b.exception, b.audit_stamped,""" + reach_cols
                + self._FINDING_CASE + " AS finding"
                + self._FINDING_JOINS + (self._REACH_JOIN if reach else "") + self._FINDING_WHERE
                + """
-                ORDER BY CASE finding WHEN 'dangling' THEN 0 WHEN 'unresolved' THEN 1
-                                      WHEN 'unmanaged' THEN 2 WHEN 'ok' THEN 3 ELSE 4 END,
-                         b.group_name, b.binding_kind, b.binding_namespace, b.binding_name,
-                         b.subject_kind, b.subject_namespace""")
-        # Severity first, then subject name: a page (the findings endpoint's `limit`) holds every
-        # review item before any healthy or built-in row. Since #353 a cluster holds hundreds of
-        # ServiceAccount rows (703 unmanaged on the lab against FINDINGS_PAGE 500), and by name
-        # alone they pushed a dangling group named past them off the page (OB1-lite, SPEC_U1).
-        # The key ends on every primary-key column, so limit/offset walks the set exactly once: one
-        # binding can name `x` as ServiceAccounts in two namespaces (the lab's
-        # system:controller:horizontal-pod-autoscaler does), or as an account and a user.
+                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
         params: list = [cluster_id]
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
@@ -4239,8 +4141,7 @@ class Store:
         # A correlated scalar over rbac_group_binding's (cluster_id, group_name) index, the same count
         # group_detail's bindings list has rows, which a test holds them to.
         grants = """(SELECT COUNT(*) FROM rbac_group_binding b
-                      WHERE b.cluster_id = g.cluster_id AND b.subject_kind = 'Group'
-                        AND b.group_name = g.name) AS binding_count"""
+                      WHERE b.cluster_id = g.cluster_id AND b.group_name = g.name) AS binding_count"""
         if user_name:
             sql = (f"""SELECT g.name, g.member_count, g.sync_provider, g.group_synced_at,
                              g.ldap_uid, g.observed_at, g.cliff_silence, {grants}

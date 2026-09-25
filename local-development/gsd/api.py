@@ -1117,9 +1117,8 @@ def build_app(
             "dangling_bindings": counts.get("dangling", 0),
             "unresolved_bindings": counts.get("unresolved", 0),
             "builtin_bindings": counts.get("built_in", 0),
-            # A grant made outside the policy system — to a synced group, a ServiceAccount or a user
-            # (#353): a review item beside the two that grant nobody, so a cluster's "Bindings to
-            # review" counts it (#347).
+            # A grant of a synced group made outside the policy system: a review item beside the two
+            # that grant nobody, so a cluster's "Bindings to review" counts it (#347).
             "unmanaged_bindings": counts.get("unmanaged", 0),
         }
 
@@ -2109,10 +2108,7 @@ def build_app(
                         "always describe the whole cluster, not this page."),
         offset: int = Query(default=0, ge=0, description="Bindings to skip, for paging."),
     ) -> dict:
-        """Every binding subject on a cluster — Group, ServiceAccount and User — classified into
-        five tiers. Each row carries `subject_kind` and `subject_namespace` (a ServiceAccount's; ''
-        otherwise); `group_name` is the subject's name whatever its kind (#353, SPEC_U1). The three
-        resolution tiers are Group tiers; a ServiceAccount or User row is `unmanaged` or `ok`.
+        """Every group-subject binding on a cluster, classified into five tiers.
 
         Three unresolved tiers rather than one: on a real cluster the large majority of
         unresolvable Group subjects are built-in virtual groups

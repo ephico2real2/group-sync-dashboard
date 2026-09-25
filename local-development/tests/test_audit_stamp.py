@@ -138,7 +138,7 @@ class TestEvidenceIsSelfContained:
         key = ("ClusterRoleBinding", "", "demo-crb")
         assert plan.stamp == [key]
         assert plan.evidence[key]["role"] == "cluster-admin"
-        assert plan.evidence[key]["subjects"] == ["group app-ocp-rbac-demo"]
+        assert plan.evidence[key]["groups"] == ["app-ocp-rbac-demo"]
 
     def test_only_the_unmanaged_group_is_evidence(self):
         """The subtle one. A binding can name two groups and be unmanaged for only one.
@@ -151,7 +151,7 @@ class TestEvidenceIsSelfContained:
             _row("two-groups", finding="ok", group="policy-managed-group"),
         ])
         key = ("RoleBinding", "ns-a", "two-groups")
-        assert plan.evidence[key]["subjects"] == ["group hand-made-group"], (
+        assert plan.evidence[key]["groups"] == ["hand-made-group"], (
             "a managed group must never be cited as evidence of being unmanaged"
         )
 
@@ -224,11 +224,9 @@ class TestTheSummaryLineReportsTheTrueTotal:
         )
 
         def binding(name, group, managed_source=None):
-            # The fields a BindingView carries; the poller reads every one of them (SPEC_U1).
             return types.SimpleNamespace(
                 binding_kind="RoleBinding", binding_namespace="ns", binding_name=name,
                 role_kind="ClusterRole", role_name="admin", group_name=group,
-                subject_kind="Group", subject_namespace="", audit_stamped=False,
                 managed_source=managed_source, exception=None,
             )
 

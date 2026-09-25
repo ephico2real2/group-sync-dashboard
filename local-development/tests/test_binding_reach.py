@@ -44,8 +44,7 @@ def test_reach_false_returns_exactly_the_columns_it_always_did(tmp_path):
     store.replace_bindings("c1", [_binding("team")], T)
     rows = store.all_bindings("c1")
     assert set(rows[0]) == {"binding_kind", "binding_namespace", "binding_name", "role_kind", "role_name",
-                            "subject_kind", "subject_namespace", "group_name", "managed_source", "exception",
-                            "audit_stamped", "finding"}
+                            "group_name", "managed_source", "exception", "audit_stamped", "finding"}
     assert "member_count" not in rows[0] and "logged_in_count" not in rows[0]
 
 

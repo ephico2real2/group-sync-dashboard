@@ -130,9 +130,9 @@ never-polled cluster and an unreachable one are different states, and rendering 
 `false` would report a failure that has not happened.
 
 `dangling_bindings`, `unresolved_bindings` and `unmanaged_bindings` are the three findings a
-person reviews — bindings that grant nobody, and grants made outside the policy system to a synced
-group, a ServiceAccount or a user; a cluster's "Bindings to review" is their sum. `builtin_bindings`
-are expected and not counted.
+person reviews — bindings that grant nobody, and grants of a synced group made outside the policy
+system; a cluster's "Bindings to review" is their sum. `builtin_bindings` are expected and not
+counted.
 
 `status` distinguishes `ok` / `auth_failed` / `forbidden` / `unreachable`. `forbidden`
 matters most: a ServiceAccount that can list GroupSyncs but not Groups produces a
@@ -678,9 +678,8 @@ Self tier: only rows naming the viewer, or a group the viewer belongs to.
 
 ### `GET /api/clusters/{cluster_id}/bindings/findings`
 
-```markdown
-Every binding subject — a Group, a ServiceAccount or a User — classified. Despite the path, this
-returns **all** bindings, including healthy ones — the caller filters.
+Every group-subject binding, classified. Despite the path, this returns **all** bindings,
+including healthy ones — the caller filters.
 
 ```json
 {
@@ -688,19 +687,11 @@ returns **all** bindings, including healthy ones — the caller filters.
   "counts": {"ok": 70, "dangling": 0, "unresolved": 9, "built_in": 146, "unmanaged": 4},
   "ok": [
     {"binding_kind": "RoleBinding", "binding_namespace": "prod-ns", "binding_name": "managed-admin-rb",
-     "role_kind": "ClusterRole", "role_name": "admin",
-     "subject_kind": "Group", "subject_namespace": "", "group_name": "app-ocp-rbac-alpha-ns-admin",
+     "role_kind": "ClusterRole", "role_name": "admin", "group_name": "app-ocp-rbac-alpha-ns-admin",
      "managed_source": "baseline-nonprod-rbac", "exception": null, "audit_stamped": 0, "finding": "ok",
      "member_count": 2, "logged_in_count": 1}
   ],
-  "dangling": [], "unresolved": [], "built_in": [],
-  "unmanaged": [
-    {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "shared-qa-poller",
-     "role_kind": "ClusterRole", "role_name": "cluster-admin",
-     "subject_kind": "ServiceAccount", "subject_namespace": "group-sync-operator", "group_name": "shared-qa-poller",
-     "managed_source": null, "exception": null, "audit_stamped": 0, "finding": "unmanaged",
-     "member_count": null, "logged_in_count": null}
-  ],
+  "dangling": [], "unresolved": [], "built_in": [], "unmanaged": [],
   "operator_configs": {}
 }
 ```
@@ -732,20 +723,13 @@ auto-refresh.
 | `dangling` | the group **was** operator-managed and has disappeared | **yes, critical** |
 | `unresolved` | names a group that has never existed here | no |
 | `built_in` | `system:*` virtual group; no object expected | no |
-| `unmanaged` | no policy system labels this binding and no exception is annotated — for a Group subject, one that IS operator-synced, on a cluster where some other Group binding carries a policy label (#354); for a ServiceAccount or User subject, always, on every host — somebody granted access by hand | no |
+| `unmanaged` | the group IS operator-synced, but no policy CR templates this binding — somebody granted access by hand | no |
 
-```markdown
-The three "group does not exist" tiers are Group tiers: a ServiceAccount or User subject has no
-Group object to resolve, so its row is `unmanaged` or `ok`, and nothing about its name (`system:…`),
-its namespace or the labels that applied it excludes it — only the operator's decision on the
-binding does (#353).
-
-**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object** — either
-the policy system's label, naming who decided the grant is legitimate, as the chart labels its own
-RBAC:
+**Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object:**
 
 ```bash
-oc label clusterrolebinding <name> rbac.ocp.io/config-source=platform-team
+oc annotate clusterrolebinding <name> \
+  rbac.ocp.io/unmanaged-exception="approved in TICKET-123, break-glass access"
 ```
 
 The poller reads that annotation on its next binding refresh and stops classifying the binding

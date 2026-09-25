@@ -315,13 +315,10 @@ config:
   # dashboard as a whole, the only object it writes on any cluster is its own
   # leader-election Lease, which is its coordination and not anything it reports on.
   #
-  # A binding is `unmanaged` when it carries neither the policy system's config-source label
-  # nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
-  # ServiceAccount or a user — somebody granted access by hand, outside the governance system,
-  # and nothing on the cluster reports it. Nothing about how a grant was applied (a `system:`
-  # name, a platform namespace, a Helm or OLM label) excludes it: a legitimate one is silenced
-  # by labelling its binding `rbac.ocp.io/config-source=<who decided>`, as this chart labels its
-  # own RBAC (#312, #353).
+  # A binding is `unmanaged` when it names an operator-synced group but carries neither the
+  # policy operator's config-source label nor an `rbac.ocp.io/unmanaged-exception`
+  # annotation — somebody granted access by hand, outside the governance system, and nothing
+  # on the cluster reports it.
   #
   # `log` publishes each finding as a self-contained line a log pipeline can alert on:
   #

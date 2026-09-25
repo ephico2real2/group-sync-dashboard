@@ -34,10 +34,7 @@ from .storage import StorageBackend
 log = logging.getLogger(__name__)
 
 STATES = (st.OK, st.LATE, st.OVERDUE, st.UNKNOWN)
-# Every tier Store._FINDING_CASE names, so each is pre-seeded at 0 and a series never vanishes
-# when its count does. `unmanaged` was missing until SPEC_U1 and appeared only while such rows
-# existed, which breaks `by (finding)` aggregation and hides a count going to zero.
-FINDINGS = ("ok", "dangling", "unresolved", "built_in", "unmanaged")
+FINDINGS = ("ok", "dangling", "unresolved", "built_in")
 
 # The full kind vocabulary gsd_alerts_total can emit, kept beside the code that emits it:
 # compute_alerts' kinds (state.py literals), the poll outcomes a failing cluster reports as
@@ -419,9 +416,8 @@ class DashboardCollector:
         )
         bindings = GaugeMetricFamily(
             "gsd_bindings_total",
-            "RoleBinding/ClusterRoleBinding subjects of every kind (Group, ServiceAccount, User) "
-            "by finding. finding=dangling means the binding grants nobody; finding=unmanaged means "
-            "a grant outside the policy system, whoever it names.",
+            "Group-subject RoleBindings/ClusterRoleBindings by finding. "
+            "finding=dangling means the binding grants nobody.",
             labels=["cluster", "finding"],
         )
         cr_last_sync = GaugeMetricFamily(

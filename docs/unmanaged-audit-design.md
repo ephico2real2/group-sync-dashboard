@@ -7,28 +7,21 @@ The rendered ClusterRole holds `get` and `list` on `rolebindings`/`clusterrolebi
 verb that can change either (`charts/group-sync-dashboard/templates/rbac.yaml#clusterrolebindings`), and the cluster client has no
 write method at all (`local-development/gsd/kube.py#UNREACHABLE`).
 
-A binding is `unmanaged` when it carries neither the policy system's `rbac.ocp.io/config-source`
-label nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
-ServiceAccount or a user — somebody granted access by hand, outside the governance system, and
-nothing else on the cluster reports it. On the reference cluster 77 of 85 convention bindings
-carry the label, and the handful that do not are exactly the hand-made ones, including a
+A binding is `unmanaged` when it names an operator-synced group and carries neither the policy
+operator's `rbac.ocp.io/config-source` label nor an `rbac.ocp.io/unmanaged-exception`
+annotation — somebody granted access by hand, outside the governance system, and nothing else
+on the cluster reports it. On the reference cluster 77 of 85 convention bindings carry the
+label, and the handful that do not are exactly the hand-made ones, including a
 ClusterRoleBinding granting `cluster-admin` that nothing manages
 (`local-development/tests/test_rbac.py#TestUnmanagedFinding`).
 
-**What it covers: every subject kind RBAC defines** — Group, ServiceAccount and User
-(`kube.py#_binding_views`, since #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`). The goal, in
-the operator's words (2026-09-24, #312): find grants made by hand that bypass policy, whether the
-subject is a group, a ServiceAccount or a user, and silence the legitimate ones the operator decides
-to exclude. Exclusion is never inferred: the operator puts the config-source label (or the exception
-annotation) on a grant they have decided is legitimate, and only that silences it — nothing about
-how a grant was applied (a `system:` name, a platform namespace, a Helm, OLM or Argo CD label)
-excludes it. A Group subject is a finding only when its group is operator-synced and the cluster
-uses the policy operator (the three resolution tiers below are Group tiers, and so is the gate of I2);
-a ServiceAccount or User subject, which has no Group object to resolve, is a finding whenever its
-binding carries no label and no exception, on every host, with no other labelled binding required —
-the operator's rule allows no default that silences a grant. A ServiceAccount
-subject is stored under the namespace RBAC matches it in — its own, or the RoleBinding's when it
-omits one, as the authorizer reads it.
+**What it covers today: Group subjects only** (`kube.py#_binding_views` keeps no other kind). The goal
+is wider, in the operator's words (2026-09-24, #312): find grants made by hand that bypass policy,
+whether the subject is a group, a ServiceAccount or a user, and silence the legitimate ones the
+operator decides to exclude. Exclusion is never inferred: the operator puts the config-source label
+(or the exception annotation) on a grant they have decided is legitimate, and only that silences
+it. Extending the finding to ServiceAccount and User subjects, with the same label, is not built
+yet (#353).
 
 **This chart's own RBAC** carries `rbac.ocp.io/config-source: group-sync-dashboard`
 (`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.rbacLabels`), so its auditor binding, which
@@ -199,17 +192,14 @@ Helm emits those verbatim, so three lines of rendered output contain the word `p
 text search would either trip on them or be written loosely enough to miss a real regression.
 
 **I2 — Finding set.** Unchanged in substance, renamed from "Target set" because nothing is
-targeted now. A (binding, subject) row is a finding only if the binding carries no `config-source`
-label and no exception annotation and — for a Group subject — its group resolves and is
-operator-synced and the cluster demonstrably uses the policy operator: some other Group-subject
-binding labelled by something other than this chart, so a cluster that has never heard of
-`config-source` labels reports no Group finding rather than sixty (#354, unchanged). A ServiceAccount
-or User subject has no group to resolve and no gate — the operator's rule allows no default that
-silences a grant — so it is a finding on the first two conditions alone (#353). All the conditions
-are one SQL `CASE` (`store.py#_FINDING_CASE`), which is also what the
-API, the counts and the reports read, so the log and the UI cannot disagree about what a finding
-is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_stamped`,
-`test_rbac.py#TestUnmanagedFinding` and `local-development/tests/test_unmanaged_subjects.py`.
+targeted now. An object is a finding only if its group resolves, its group is operator-synced,
+the binding carries no `config-source` label, the binding carries no exception annotation, and
+the cluster demonstrably uses the policy operator — some managed binding exists other than this
+chart's own, so a cluster that has never heard of `config-source` labels reports zero findings
+rather than sixty. All five
+conditions are one SQL `CASE` (`store.py#_FINDING_CASE`), which is also what the API and the counts
+read, so the log and the UI cannot disagree about what a finding is. Tests:
+`test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_stamped` and `test_rbac.py#TestUnmanagedFinding`.
 
 **I3 — Announced once while the label is absent.** Was "Idempotent", and the reason changed
 completely. An object already carrying `rbac.ocp.io/unmanaged=true` is left out of the discovery
@@ -260,16 +250,10 @@ object is identical. Tests: `test_audit_stamp.py#TestI5ModeGating.test_an_unreco
 **I6 — Bounded log volume.** Was "Bounded blast radius", and the blast radius it was named for
 is gone. `maxPerCycle` (default 20) caps how many findings are listed individually per refresh;
 the remainder is counted and reported as "not yet listed" in the summary rather than dropped, so
-the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). Each cluster's
-poll thread keeps an in-memory schedule (`audit.py#AuditLogProgress`): a finding first seen this
-cycle is listed this cycle, then the least recently listed follow, the key breaking ties, so a stable
-backlog is covered in ceil(N / cap) cycles and a new hand-made grant is announced on the refresh that
-finds it. The sorted prefix alone converged only while the write path stamped what it listed; in log
-mode it listed the same 20 of the lab's 689 every cycle and the rest never (review of #360). A
-restarted thread starts at the sorted first page again; nothing about a classification or an
-acknowledgement is cached. Resolutions are never capped: a closed finding must not queue behind new
-ones. A misclassification bug costs one screenful of log per 300s cycle rather than a cluster's worth.
-Tests:
+the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). The cap takes a
+sorted prefix, so deferred findings converge instead of being re-deferred forever. Resolutions
+are never capped: a closed finding must not queue behind new ones. A misclassification bug costs one
+screenful of log per 300s cycle rather than a cluster's worth. Tests:
 `test_audit_stamp.py#TestI6BlastRadius.test_stamps_are_capped_and_the_deferral_is_counted`, `test_audit_stamp.py#TestI4SelfHealing.test_healing_is_never_capped`.
 
 **I7 — One announcer, in the default shape.** Was "Single writer", and it still constrains
