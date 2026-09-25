@@ -120,13 +120,19 @@ One entry per configured cluster.
   "oldest_last_sync": "2026-08-02T00:00:11Z",
   "dangling_bindings": 0,
   "unresolved_bindings": 9,
-  "builtin_bindings": 145
+  "builtin_bindings": 145,
+  "unmanaged_bindings": 0
 }]
 ```
 
 `reachable` is **`null`, not `false`, when the cluster has never been polled.** A
 never-polled cluster and an unreachable one are different states, and rendering the first as
 `false` would report a failure that has not happened.
+
+`dangling_bindings`, `unresolved_bindings` and `unmanaged_bindings` are the three findings a
+person reviews — bindings that grant nobody, and grants of a synced group made outside the policy
+system; a cluster's "Bindings to review" is their sum. `builtin_bindings` are expected and not
+counted.
 
 `status` distinguishes `ok` / `auth_failed` / `forbidden` / `unreachable`. `forbidden`
 matters most: a ServiceAccount that can list GroupSyncs but not Groups produces a

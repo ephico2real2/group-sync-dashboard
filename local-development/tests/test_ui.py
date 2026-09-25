@@ -1150,6 +1150,42 @@ class TestBindingFindingsVisible:
         dash.select_option("#f-binding", "review")
         dash.wait_for_selector("text=grant nobody")
 
+    def test_the_tiles_partition_the_total_with_the_unmanaged_grant_under_review(self, dash):
+        """#347: the seed's cluster holds ten bindings — one ok, one dangling, one unresolved, one unmanaged,
+        six built-in. The tiles read 10 / 1 / 2 / 6 and summed to 9: the unmanaged grant, which the page lists
+        for review, was in no tile. It counts under Need review now, and the headline stays the bindings that
+        grant nobody — an unmanaged grant does grant a real group."""
+        self._open(dash)
+        tiles = dash.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.kpis.mt-0 .kpi')].map(k =>
+            [k.querySelector('.label').innerText.trim(), Number(k.querySelector('.value').innerText.replace(/,/g, ''))]))""")
+        total = tiles["Group bindings on this cluster"]
+        parts = (tiles["Grant a real group"], tiles["Need review"], tiles["Built-in"])
+        assert (total, parts) == (10, (1, 3, 6)), tiles
+        assert sum(parts) == total
+        assert dash.locator(".hero .value").first.inner_text().strip() == "2", "the headline counts only what grants nobody"
+
+    def test_the_cluster_card_counts_the_unmanaged_grant_to_review(self, dash, server):
+        """#347: /api/clusters' summary had no unmanaged count, so the card's "Bindings to review" (and the Overview
+        tile and dense row, which share one helper now) left the unmanaged grant out: 2 where the Access granted
+        page lists 3 for review."""
+        row = next(c for c in httpx.get(f"{server}/api/clusters").json() if c["id"] == "crc-local")
+        assert (row["dangling_bindings"], row["unresolved_bindings"], row["unmanaged_bindings"]) == (1, 1, 1)
+        values = dash.evaluate("""() => [...document.querySelectorAll('.tk .lab')]
+            .filter(l => l.innerText.trim() === 'Bindings to review').map(l => l.nextElementSibling.innerText.trim())""")
+        assert values and values[0] == "3", values
+
+    def test_the_overview_ranks_an_unmanaged_only_cluster_with_those_to_review(self, dash):
+        """#347 (review of #352, Grok C3): past three clusters the Overview sorts worst-first, and its rank still summed
+        dangling + unresolved — a cluster whose only finding is an unmanaged grant sorted among the clean ones while
+        its own tile read "Bindings to review"."""
+        order = dash.evaluate("""() => {
+            const base = {status: "ok", dangling_bindings: 0, unresolved_bindings: 0, group_count: 1, unattributed_groups: 0};
+            const el = document.createElement("div");
+            el.innerHTML = clustersCard([Object.assign({}, base, {id: "clean", unmanaged_bindings: 0}),
+                                         Object.assign({}, base, {id: "hand", unmanaged_bindings: 4})], "medium");
+            return [...el.querySelectorAll(".tile-open")].map(b => b.textContent.trim()); }""")
+        assert order[:2] == ["hand", "clean"], order
+
     def test_cluster_card_surfaces_the_count_without_navigating(self, dash):
         """Discoverability: the landing page must show that there is something to look at,
         or the page may as well not exist."""
@@ -1492,6 +1528,16 @@ class TestKpiPage:
         note = dash.locator('.kpi-page .kpi[data-kpi="bindings"] .note').inner_text()
         builtin = int(note.split("+")[1].split(" ")[0].replace(",", ""))
         assert (value, builtin, total) == (4, 6, 10)
+
+    def test_the_review_tile_and_the_table_count_the_unmanaged_grant(self, dash):
+        """#347 (review of #352, Grok C3): "To review" summed dangling + unresolved, so the seed read 2 here beside
+        the Overview's 3 and the Access granted page's 3. The tile, its note and the Clusters table count all three."""
+        self._open(dash)
+        value = int(dash.locator('.kpi-page .kpi[data-kpi="review"] .value').inner_text().replace(",", ""))
+        note = dash.locator('.kpi-page .kpi[data-kpi="review"] .note').inner_text()
+        cell = dash.locator("tr[data-cluster='crc-local'] td.num").nth(3).inner_text().strip()
+        assert (value, cell) == (3, "3"), (value, cell)
+        assert "1 unmanaged" in note, note
 
     def test_the_kpi_page_follows_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
         """The KPI page is fleet-wide and /api/kpi is gated on the host's tier, like the report ticket. Read per
@@ -6789,14 +6835,18 @@ class TestTabUplifts:
         assert users[2:] == [["Logged in, no synced group", "0", False], ["Synced, never logged in", "0", False]], users
         dash.locator("button[data-nav='bindings']").click()
         dash.wait_for_function("() => data.findings && data.findings.counts && document.body.innerText.includes('Need review')")
-        # the rail follows the worst finding present: critical with a dangling binding, warning with unresolved only,
-        # none at zero — the same severities the sections' badges and the Overview tile carry (OB3, M8)
+        # the rail follows the worst finding present: critical with a dangling binding, warning with unresolved or
+        # unmanaged only, none at zero — the same severities the sections' badges and the Overview tile carry (OB3, M8).
+        # Every count is set: an unmanaged grant is a review item (#347), so a case that left the seed's one in place
+        # was not the case it named.
         review = dash.evaluate("""() => { const c = data.findings.counts; const out = [];
-            for (const [d, u] of [[1, 0], [0, 2], [0, 0]]) { c.dangling = d; c.unresolved = u; render();
+            for (const [d, u, m] of [[1, 0, 0], [0, 2, 0], [0, 0, 1], [0, 0, 0]]) {
+              c.dangling = d; c.unresolved = u; c.unmanaged = m; render();
               const k = [...document.querySelectorAll('.kpis .kpi')].find(k => k.querySelector('.label').textContent === 'Need review');
               out.push([k.querySelector('.value').textContent, k.classList.contains('flag-critical'), k.classList.contains('flag-warning'), k.querySelector('.value').classList.contains('muted')]); }
             return out; }""")
-        assert review == [["1", True, False, False], ["2", False, True, False], ["0", False, False, True]], review
+        assert review == [["1", True, False, False], ["2", False, True, False], ["1", False, True, False],
+                          ["0", False, False, True]], review
 
     def test_every_groups_tile_holds_under_the_state_filter(self, dash):
         # Review of #225 (OB3): all three tiles, not the first — a head that counted Empty from the rows on
@@ -10262,3 +10312,64 @@ class TestTheRuleBesideTheSelector:
         _select_and_read(p, "far-sar", self.LINES[("alice", "far-sar")])
         assert p.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
         assert p.evaluate("() => document.getElementById('scope-why').getBoundingClientRect().right <= innerWidth")
+
+
+class TestTheLoginsCaveatFollowsItsSource:
+    """#346: the Logins page said "the oauth-server's log dies with its pod" whatever the source — on the lab, beside
+    an audit-log record whose oldest attempt predated capture by five days. Every source-specific sentence now comes
+    from LOGIN_SOURCE_TEXT, keyed on the API's `source`. This renders the capture section for each source in its two
+    empty states, which carry all five sentences: the window, the predates-capture note, the stalled note, and the
+    read-but-nothing-matched and never-read diagnoses."""
+
+    POD_LOG = ("dies with its pod", "pods/log", "authentication operator is not at Debug", "looked back an hour",
+               "cannot be recovered later")
+    AUDIT_LOG = ("oldest audit file still on the control-plane nodes", "backfilled through the rotated audit files",
+                 "nodes/proxy", "audit profile is None", "drops anything past that cut-off")
+
+    @staticmethod
+    def _render(dash, source: str) -> str:
+        """Both empty states' text: read an hour ago (stalled, oldest attempt before capture began), and never read."""
+        return dash.evaluate("""(source) => {
+            const iso = (ago) => new Date(Date.now() - ago).toISOString();
+            const base = {enabled: true, source, scope: "all", total: 0, read_interval_seconds: 60};
+            const read = Object.assign({}, base, {last_read_at: iso(3600e3), capture_started_at: iso(2 * 3600e3),
+                                                  retained_since: iso(3 * 3600e3)});
+            const never = Object.assign({}, base, {last_read_at: null, capture_started_at: null, retained_since: null});
+            const text = (d) => { const el = document.createElement("div"); el.innerHTML = captureSection(d, "");
+                                  return el.textContent; };
+            return (text(read) + " " + text(never)).replace(/\\s+/g, " ");
+        }""", source)
+
+    def test_the_pod_log_source_keeps_its_own_account(self, dash):
+        text = self._render(dash, "pod-log")
+        assert [p for p in self.POD_LOG if p not in text] == []
+        assert [a for a in self.AUDIT_LOG if a in text] == []
+
+    def test_the_audit_log_source_says_what_the_audit_log_can_and_cannot_account_for(self, dash):
+        text = self._render(dash, "audit-log")
+        assert [a for a in self.AUDIT_LOG if a not in text] == []
+        assert [p for p in self.POD_LOG if p in text] == [], "a pod-log sentence under the audit-log source"
+
+
+
+    def test_the_off_card_and_the_column_help_follow_the_source(self, dash):
+        """Review of #352 (Grok C1): the capture-off card still told an audit-log reader to raise the authentication
+        operator to Debug and roll the OAuth server, and the column help called a node "which oauth-server pod saw it"
+        under a header that already said Node."""
+        def render(source: str, enabled: bool) -> str:
+            return dash.evaluate("""([source, enabled]) => {
+                const iso = (ago) => new Date(Date.now() - ago).toISOString();
+                const d = {enabled, source, scope: "all", total: 1, read_interval_seconds: 60, last_read_at: iso(60e3),
+                           capture_started_at: iso(3600e3), retained_since: iso(3600e3), ungoverned: [],
+                           summary: {failures: 0, ungoverned_users: 0, distinct_users: 1, successes: 1, last_at: iso(60e3)},
+                           attempts: [{at: iso(60e3), user_name: "ada", outcome: "success", known_user: true,
+                                       has_history: false, provider: "ldap", pod_name: "master-0"}]};
+                const el = document.createElement("div"); el.innerHTML = captureSection(d, "");
+                return el.textContent.replace(/\\s+/g, " "); }""", [source, enabled])
+        off_audit, off_pod = render("audit-log", False), render("pod-log", False)
+        rows_audit, rows_pod = render("audit-log", True), render("pod-log", True)
+        pod_claims = ("spec.logLevel: Debug", "a cluster-wide write that rolls the OAuth server")
+        assert [c for c in pod_claims if c in off_audit] == [] and "None" in off_audit, off_audit
+        assert [c for c in pod_claims if c not in off_pod] == [], off_pod
+        assert "which oauth-server pod saw it" not in rows_audit and "control-plane node" in rows_audit, rows_audit
+        assert "which oauth-server pod saw it" in rows_pod

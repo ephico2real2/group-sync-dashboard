@@ -39,7 +39,7 @@ def render(kpis: tuple[Kpi, ...], ctx: Context) -> dict:
 def posture(store, cluster_id: str, grace: timedelta, now: datetime) -> dict:
     """The access-posture inputs for one cluster, from the scalar queries the cluster rows and
     /metrics already use. The Clusters table (#157) reads them as they are; the band SUMS them across
-    the fleet and combines named categories (dangling + unresolved = "to review") — arithmetic over
+    the fleet and combines named categories (dangling + unresolved + unmanaged = "to review", #347) — arithmetic over
     whole-set scalars, never over a capped row list. CR states are derived the way the CR list
     derives them."""
     from .. import state as st

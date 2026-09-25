@@ -42,9 +42,11 @@ nodes        list      discover which nodes are control-plane
 nodes/proxy  get       read the log through the API server
 ```
 
-**These are already granted**, and not by this repository's chart. They ship in the
-**`group-sync-operator-helm`** chart, in the ClusterRole `group-sync-dashboard-cluster-poller`, which
-is installed on each cluster to be observed. That is the boundary: the operator chart decides what
+**These are already granted.** On the hosting cluster this repository's chart binds them to the
+dashboard's ServiceAccount (`<release>-login-capture-audit`,
+`charts/group-sync-dashboard/templates/login-capture-rbac.yaml`). On every other observed cluster they
+ship in the **`group-sync-operator-helm`** chart, in the ClusterRole
+`group-sync-dashboard-cluster-poller`, which is installed on each cluster to be observed. That is the boundary: the operator chart decides what
 the dashboard may read on a cluster; the dashboard chart only consumes it. If that grant needs
 changing, it changes there.
 
