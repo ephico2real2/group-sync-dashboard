@@ -100,9 +100,11 @@ The mock drives the **real** trust path in `config.py::verify()` —
 | **negative control** | no CA anywhere → system trust → verify fails | `cluster_config(ca_bundle=None)` → `UNREACHABLE` |
 | **escape hatch** | `insecure_skip_verify=True` → verify off | `cluster_config(insecure=True)` |
 
-> **Cache gotcha (mode 3):** `gsd.config._ca_cache` is keyed on the raw env string and never
-> caches a null result. A matrix reusing the same `GSD_TRUSTED_CA_FILE` value across cases with
-> different CA contents serves a stale context — clear the cache (the fixtures do so in teardown).
+> **Cache gotcha (mode 3):** `gsd.config._ca_cache` is keyed on the raw env string and each file's
+> identity (inode, mtime, size), and never caches a null result. A file rewritten in place at the
+> same size within one filesystem timestamp tick keeps its identity, so a matrix reusing the same
+> `GSD_TRUSTED_CA_FILE` value across cases can still serve a stale context — clear the cache (the
+> fixtures do so in teardown).
 
 ## The SAR oracle
 

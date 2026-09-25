@@ -830,3 +830,48 @@ class TestThePatternsAreLiteralAndSaySo:
         duplicated line."""
         assert _load(tmp_path, 'platformNamespaces:\n  additionalSuffixes: ["-op", "-op", "-mgr"]\n'
                      ).additional_suffixes == ("-op", "-mgr")
+
+
+class TestTrustedCABundleRotation:
+    """#340: the trusted bundle is re-read when it is replaced at the same path, as a restart would read it.
+
+    A mounted ConfigMap is updated the way kubelet's atomic writer does it, measured in the lab pod:
+    `ca-bundle.crt -> ..data/ca-bundle.crt` and `..data -> ..<timestamp>`. An update writes a new timestamped
+    directory and swaps `..data`, so the path in GSD_TRUSTED_CA_FILE never changes while its content does."""
+
+    def _ca(self, directory, cn):
+        import subprocess
+        directory.mkdir()
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+             "-subj", f"/CN={cn}", "-keyout", str(directory / "k.pem"), "-out", str(directory / "ca-bundle.crt")],
+            check=True, capture_output=True,
+        )
+
+    @staticmethod
+    def _names(context):
+        return {v for cert in context.get_ca_certs() for rdn in cert["subject"] for k, v in rdn if k == "commonName"}
+
+    def test_a_bundle_swapped_in_place_is_read_without_a_restart(self, tmp_path, monkeypatch):
+        import os
+        from gsd import config as cfg
+        mount = tmp_path / "injected"
+        mount.mkdir()
+        self._ca(mount / "..2026_09_24_01", "before")
+        os.symlink("..2026_09_24_01", mount / "..data")
+        os.symlink("..data/ca-bundle.crt", mount / "ca-bundle.crt")
+        monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(mount / "ca-bundle.crt"))
+        cfg._ca_cache.clear()
+
+        first = cfg._trusted_ca_context()
+        assert "before" in self._names(first) and "after" not in self._names(first)  # beside the system store
+        assert cfg._trusted_ca_context() is first, "an unchanged bundle is served from the cache"
+
+        self._ca(mount / "..2026_09_24_02", "after")
+        os.symlink("..2026_09_24_02", mount / "..data_tmp")
+        os.replace(mount / "..data_tmp", mount / "..data")  # kubelet's swap: one rename, never a missing path
+
+        second = cfg._trusted_ca_context()
+        assert "after" in self._names(second) and "before" not in self._names(second), \
+            "the replaced bundle is what a restart would read"
+        assert cfg._trusted_ca_context() is second, "and it is cached again until it next changes"
