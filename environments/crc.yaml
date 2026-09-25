@@ -214,3 +214,12 @@ clusterConfig:
       namespace: openshift-config
       name: ldap-oauth-bind-secret
       key: bindPassword
+
+# The estate's own platform namespaces (#255), the reference answer values.yaml's comment documents — measured on
+# this cluster: `-operator` catches cert-manager-operator, group-sync-operator and namespace-configuration-operator,
+# `-manager` cert-manager, `-provisioner` hostpath-provisioner, and kyverno and group-sync-dashboard match no
+# pattern and are named. Since #353 a ServiceAccount in one of these is the platform's own — built-in, never an
+# unmanaged finding (SPEC_U1 §5 step 7: 124 finding rows on 117 bindings under the shipped defaults → 49 on 46).
+platformNamespaces:
+  additionalSuffixes: ["-operator", "-manager", "-provisioner"]
+  additionalNames: ["kyverno", "group-sync-dashboard"]
