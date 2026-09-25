@@ -52,8 +52,9 @@ def posture(store, cluster_id: str, grace: timedelta, now: datetime) -> dict:
     return {
         "groups": groups,
         # Every tier _FINDING_CASE names, `unmanaged` included: the page's Bindings figure is the
-        # cluster's group bindings less the built-in ones, and a tier left out here left a hand-made
-        # grant out of that count (measured: 3 of 4 on the UI seed).
+        # cluster's classified bindings — subjects of every kind since #353 — less the built-in
+        # ones, and a tier left out here left a hand-made grant out of that count (measured: 3 of 4
+        # on the UI seed).
         "bindings": {k: findings.get(k, 0) for k in ("ok", "dangling", "unresolved", "unmanaged", "built_in")},
         "groupsyncs": {"total": sum(states.values()), "states": states,
                        "oldest_last_sync": store.oldest_last_sync(cluster_id)},

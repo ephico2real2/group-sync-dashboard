@@ -31,10 +31,26 @@ BATCH_MIN_GROUPS = 3          # this many groups changing in one sync is one "at
 # `hostpath-provisioner`, `kyverno` and `namespace-configuration-operator` application namespaces, which
 # is seven wrong out of 106. `Settings.platform_namespaces` carries the estate's own answer and every
 # caller that has a Settings passes it; these remain the value it defaults to.
+# The shipped namespace defaults — a namespace here, or starting with a prefix here, is the platform's;
+# values.yaml `platformNamespaces.prefixes`/`names` replace them, `additionalPrefixes`/`additionalSuffixes`/
+# `additionalNames` widen them (config.py PlatformNamespaces).
+# PLATFORM-CLASSIFICATION (#255, #353): the namespace prefixes
 PLATFORM_NAMESPACE_PREFIXES = ("openshift-", "kube-")
-PLATFORM_NAMESPACES = frozenset({"default", "openshift", "kube-system", "kube-public", "kube-node-lease"})
+PLATFORM_NAMESPACES = frozenset({"default", "openshift", "kube-system", "kube-public", "kube-node-lease"})  # PLATFORM-CLASSIFICATION (#255, #353): the names
+# OpenShift's per-project controller bindings, excluded by design in EVERY namespace, matched on all three
+# parts — the binding's name, its ClusterRole, and the subject in the binding's own namespace — the shape
+# the controller writes ("auto-managed by a controller"); nothing broader, and no values key widens it (the
+# operator, 2026-09-24). The third such binding, `system:image-pullers` → ClusterRole `system:image-puller`
+# → Group `system:serviceaccounts:<namespace>`, is decided by the store's Group `system:` rule (store.py
+# _FINDING_CASE) and is listed here so all three stand in one place.
+# PLATFORM-CLASSIFICATION (#255, #353): the controller defaults, exact shape
+PLATFORM_CONTROLLER_BINDINGS = frozenset({
+    ("system:image-builders", "system:image-builder", "builder"),
+    ("system:deployers", "system:deployer", "deployer"),
+})
 
 
+# PLATFORM-CLASSIFICATION (#255, #353): the shipped rule alone, for a caller with no Settings
 def is_platform_namespace(name: str) -> bool:
     """The shipped rule. Callers holding a `Settings` use `settings.platform_namespaces.matches`
     instead — this is what that defaults to, and what a caller without settings still gets."""
@@ -66,6 +82,8 @@ def _rank(role: str) -> tuple[int, str]:
     return ROLE_RANK.get(role, len(ROLE_RANK)), role
 
 
+# PLATFORM-CLASSIFICATION (#255, #353): Home's per-namespace flag — `platform` is settings.platform_namespaces.matches when the API calls
+# this, and the shipped rule alone for a caller without Settings (OB2, review of #361)
 def derive_answer(groups: list[dict], via: list[dict], direct: list[dict],
                   *, platform=is_platform_namespace) -> dict:
     """The headline and the cards, from the three reads the drill-downs already serve.
@@ -106,6 +124,7 @@ def derive_answer(groups: list[dict], via: list[dict], direct: list[dict],
     namespaces: dict[str, dict] = {}
 
     def ns_row(name: str) -> dict:
+        # PLATFORM-CLASSIFICATION (#255, #353): Home's namespace rows, by the classifier the API passes in (settings.platform_namespaces.matches)
         return namespaces.setdefault(name, {"name": name, "platform": platform(name), "grants": []})
 
     for b in via:

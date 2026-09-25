@@ -779,6 +779,16 @@ class TestPlatformNamespacesAreConfigurable:
         names_only = PlatformNamespaces(additional_names=frozenset({"kyverno", "group-sync-dashboard"}))
         assert len([n for n in self.MISSED if not names_only.matches(n)]) == 5
 
+    def test_an_empty_stanza_keeps_the_defaults_and_a_suffix_appends(self, tmp_path):
+        """The chart drops empty lists before rendering the key (templates/configmap.yaml), and a hand-written
+        `platformNamespaces: {}` reaches the loader as an empty mapping; both must be the shipped rule, and the
+        suffix axis must widen it the way the prefix axis does (#353's logic review)."""
+        for body in ("platformNamespaces: {}\n", "platformNamespaces:\n  additionalPrefixes: []\n  additionalSuffixes: []\n  additionalNames: []\n"):
+            assert _load(tmp_path, body) == PlatformNamespaces(), body
+        widened = _load(tmp_path, 'platformNamespaces:\n  additionalSuffixes: ["-operator"]\n')
+        assert widened.matches("cert-manager-operator") and widened.matches("openshift-monitoring")
+        assert not widened.matches("demo-prod")
+
     def test_additional_appends_while_the_plain_axis_replaces(self, tmp_path):
         """An estate adds its own without restating the Red Hat list, which changes between releases."""
         appended = _load(tmp_path, 'platformNamespaces:\n  additionalPrefixes: ["acme-"]\n')

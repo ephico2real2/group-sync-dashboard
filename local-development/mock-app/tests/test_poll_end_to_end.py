@@ -103,3 +103,40 @@ def test_tier_resolver_personas(mock_cluster, persona, wide, usage):
 def test_tier_resolver_fails_closed_on_no_viewer(mock_cluster):
     cfg = mock_cluster.cluster_config(name="mock")
     assert _resolver(cfg, "list").tier_for(None) == TIER_SELF
+
+
+def test_refresh_bindings_stores_every_subject_kind_over_tls(tmp_path, store, caplog):
+    """#353 end to end: the reference fixture names Group and User subjects only, so a ServiceAccount
+    subject never crossed the real reader. This adds one RoleBinding naming an account twice — once with
+    no namespace (26 such entries on the lab, stored under the binding's) and once with it — and reads
+    it through poll_once + refresh_bindings into the Store (OB1-lite, review of #360)."""
+    import dataclasses
+
+    from conftest import FIXTURE_DIR, MockHandle, _clear_ca_cache
+    from mock_app.fixture import Binding, Fixture, RoleRef, Subject
+    from mock_app.server import MockClusterServer
+
+    base = Fixture.from_yaml(FIXTURE_DIR / "reference.yaml")
+    account = Binding(name="deployer-rb", namespace="acme-app", role_ref=RoleRef(kind="Role", name="viewer"),
+                      subjects=(Subject(kind="ServiceAccount", name="deployer"),
+                                Subject(kind="ServiceAccount", name="deployer", namespace="acme-app")))
+    fixture = dataclasses.replace(base, role_bindings=base.role_bindings + (account,))
+    server = MockClusterServer(fixture, host="127.0.0.1", port=0, tls=True)
+    server.start()
+    try:
+        ca = tmp_path / "ca.crt"
+        ca.write_bytes(server.ca_pem)
+        cfg = MockHandle(base_url=server.base_url, token=fixture.token, ca_file=str(ca), server=server,
+                         fixture=fixture).cluster_config(name="mock")
+        assert poll_once(store, cfg, timeout=5.0) == "ok"
+        with caplog.at_level("INFO", logger="gsd.poller"):
+            assert refresh_bindings(store, cfg, timeout=5.0, audit_mode="log") == "ok"
+    finally:
+        server.stop()
+        _clear_ca_cache()
+    rows = {(r.get("subject_kind"), r.get("subject_namespace"), r["group_name"]): r["finding"]
+            for r in store.all_bindings("mock")}
+    assert rows.get(("ServiceAccount", "acme-app", "deployer")) == "unmanaged", rows
+    assert rows.get(("User", "", "lateef.o")) == "unmanaged", rows
+    assert "refreshed 6 bindings for mock (4 Group, 1 ServiceAccount, 1 User subjects)" in caplog.text, caplog.text
+    assert "grants viewer to ServiceAccount acme-app/deployer" in caplog.text, caplog.text

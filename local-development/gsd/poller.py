@@ -18,11 +18,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-from .config import CREDENTIAL_LOOKUP, ClusterConfig, ConfigError, Settings, remote_policy
-from .kube import AUTH_FAILED, OK, UNREACHABLE, ClusterClient, ClusterError, GroupSyncView, GroupView, dn_equal
+from .config import CREDENTIAL_LOOKUP, ClusterConfig, ConfigError, PlatformNamespaces, Settings, remote_policy
+from .home import PLATFORM_CONTROLLER_BINDINGS
+from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACHABLE, USER_KIND, ClusterClient,
+                   ClusterError, GroupSyncView, GroupView, dn_equal, is_platform_user)
 from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
-from .audit import plan_audit_stamps
+from .audit import AuditLogProgress, plan_audit_stamps
 from .storage import StorageBackend
 from .timeutil import now_iso
 
@@ -621,6 +623,36 @@ def kyverno_metrics_url_for(settings: Settings, cluster: ClusterConfig) -> str:
     return settings.kyverno_metrics_url if host is not None and cluster.name == host.name else ""
 
 
+def _binding_is_platform(b, platform: PlatformNamespaces) -> int:
+    """The platform's own identity, never a finding — the operator's long-standing rule (#353).
+
+    A ServiceAccount is the platform's when its effective namespace — its own, or the RoleBinding's
+    when it omits one, the account the authorizer matches — is one the estate's `platformNamespaces`
+    name: the code's defaults (openshift-*, kube-*, default, …) plus the values file's `additional*`
+    lists, the one classifier Home and the namespace index already use (#255). A User is the
+    platform's when `is_platform_user` names it (system:*, kubeadmin, the node identities), as the
+    direct-user view has always decided. And OpenShift's own per-project controller bindings —
+    `system:image-builders` → ClusterRole `system:image-builder` → SA `builder`, `system:deployers` →
+    `system:deployer` → SA `deployer`, the subject in the binding's own namespace — are the platform's in
+    EVERY namespace, matched on all three parts and nothing broader (the controller defaults in home.py).
+    Computed here, where the settings are, so a values change reclassifies on the next refresh; a Group
+    subject is classified by its name in the store's CASE (the third controller binding,
+    `system:image-pullers` → Group `system:serviceaccounts:<namespace>`, is built_in there).
+    """
+    if b.subject_kind == SERVICE_ACCOUNT_KIND:
+        # PLATFORM-CLASSIFICATION (#255, #353): the effective namespace against the settings' classifier
+        if platform.matches(b.subject_namespace):
+            return 1
+        own_namespace = (b.binding_kind == "RoleBinding" and b.role_kind == "ClusterRole"
+                         and b.subject_namespace == b.binding_namespace)
+        # PLATFORM-CLASSIFICATION (#255, #353): OpenShift's controller bindings, all three parts, in every namespace
+        return 1 if own_namespace and (b.binding_name, b.role_name, b.group_name) in PLATFORM_CONTROLLER_BINDINGS else 0
+    if b.subject_kind == USER_KIND:
+        # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's rule, applied to a User subject on the finding path
+        return 1 if is_platform_user(b.group_name) else 0
+    return 0
+
+
 def refresh_bindings(
     store: StorageBackend,
     cluster: ClusterConfig,
@@ -632,6 +664,8 @@ def refresh_bindings(
     signals=None,
     kyverno: bool = False,
     kyverno_metrics_url: str = "",
+    audit_progress: AuditLogProgress | None = None,
+    platform_namespaces: PlatformNamespaces | None = None,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -650,6 +684,9 @@ def refresh_bindings(
         )
         return exc.outcome
 
+    # PLATFORM-CLASSIFICATION (#255, #353): the shipped rule when a caller passes none (a direct call, a test); the Poller passes
+    # the settings', which carry the values file's additional* lists.
+    platform = platform_namespaces if platform_namespaces is not None else PlatformNamespaces()
     group_changes = store.replace_bindings(
         cluster.name,
         [
@@ -659,9 +696,16 @@ def refresh_bindings(
                 "binding_name": b.binding_name,
                 "role_kind": b.role_kind,
                 "role_name": b.role_name,
+                "subject_kind": b.subject_kind,
+                "subject_namespace": b.subject_namespace,
+                "is_platform": _binding_is_platform(b, platform),   # PLATFORM-CLASSIFICATION (#255, #353)
                 "group_name": b.group_name,
                 "managed_source": b.managed_source,
                 "exception": b.exception,
+                # Read from the object's rbac.ocp.io/unmanaged label by kube.py and, until
+                # SPEC_U1, dropped here: every live row stored 0, so the RESOLVED line never
+                # fired from live data and the RBAC policy page's Audit-stamped tile read 0.
+                "audit_stamped": 1 if b.audit_stamped else 0,
             }
             for b in bindings
         ],
@@ -684,10 +728,12 @@ def refresh_bindings(
             [{"binding_kind": u.binding_kind, "binding_namespace": u.binding_namespace,
               "binding_name": u.binding_name, "role_kind": u.role_kind,
               "role_name": u.role_name, "user_name": u.user_name,
+              # PLATFORM-CLASSIFICATION (#255, #353): the direct-user flag, from is_platform_user in the reader
               "is_platform": 1 if u.is_platform else 0} for u in user_rows],
             now_iso(),
         )
         _note_binding_changes(signals, cluster.name, "User", user_changes)
+        # PLATFORM-CLASSIFICATION (#255, #353): the refresh line counts people by the direct-user flag
         people = sum(1 for u in user_rows if not u.is_platform)
         log.info("%s: %d direct-user binding(s), %d naming a person",
                  cluster.name, len(user_rows), people)
@@ -760,14 +806,20 @@ def refresh_bindings(
                          "/".join(read.policy_kinds_served) or "no", "y" if len(read.policies) == 1 else "ies",
                          len(read.results), read.reports, read.legacy_results, changes["appeared"], changes["cleared"])
 
-    log.info("refreshed %d group bindings for %s", len(bindings), cluster.name)
+    by_kind = {kind: sum(1 for b in bindings if b.subject_kind == kind) for kind in SUBJECT_KINDS}
+    log.info("refreshed %d bindings for %s (%d Group, %d ServiceAccount, %d User subjects)",
+             len(bindings), cluster.name, by_kind["Group"], by_kind["ServiceAccount"], by_kind["User"])
 
     # Unmanaged-grant discovery. Runs LAST, after this cycle's rows are stored, so the
     # findings are computed from exactly what was just observed rather than from the previous
     # cycle. Nothing here writes to the cluster.
     # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
     if audit_mode == "log":
-        plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
+        # The poll thread's scheduler lists the new findings first and rotates the rest through
+        # the cap; without one (a direct call, a test) the sorted first page as before.
+        rows = store.all_bindings(cluster.name)
+        plan = (audit_progress.plan(rows, audit_max_per_cycle) if audit_progress is not None
+                else plan_audit_stamps(rows, audit_max_per_cycle))
 
         # THE DISCOVERY IS THE DELIVERABLE.
         #
@@ -802,18 +854,21 @@ def refresh_bindings(
         for key in plan.stamp:
             kind, ns, name = key
             evidence = plan.evidence.get(key, {})
-            groups = evidence.get("groups") or []
+            subjects = evidence.get("subjects") or []
             # WARNING, not INFO. This needs a human, and the poller emits INFO for every
             # routine HTTP call — a finding at INFO is buried by the traffic that surrounds
             # it, and a log pipeline has no level to filter on. The fixed prefix is there to
             # be alerted on.
+            # `subjects` are spelt by audit.subject_label — `group <name>`, `ServiceAccount
+            # <namespace>/<name>`, `user <name>` — so a Group finding reads exactly as it did
+            # before #353 and the other kinds say what they are.
             log.warning(
-                "UNMANAGED GRANT DISCOVERED — %s: %s %s grants %s to group %s, "
+                "UNMANAGED GRANT DISCOVERED — %s: %s %s grants %s to %s, "
                 "outside the policy system (no config-source label, no exception annotation)",
                 cluster.name, kind,
                 f"{ns}/{name}" if ns else f"{name} (cluster-wide)",
                 evidence.get("role") or "an unknown role",
-                ", ".join(groups) if groups else "an operator-synced group",
+                ", ".join(subjects) if subjects else "a subject outside the policy system",
             )
 
         for key in plan.unstamp:
@@ -1200,6 +1255,7 @@ class Poller:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
         # shows nothing for its first interval is indistinguishable from a broken one.
         next_binding_refresh = 0.0
+        audit_progress = AuditLogProgress()
         own_stop = self._cluster_stops.setdefault(cluster.name, threading.Event())
         while not self._stop.is_set() and not own_stop.is_set():
             # The current config for this name: a Secret-sourced cluster whose token was rotated or
@@ -1285,6 +1341,9 @@ class Poller:
                         self.store, cluster, self.settings.request_timeout_seconds,
                         audit_mode=self.settings.unmanaged_audit_mode,
                         audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
+                        audit_progress=audit_progress,
+                        # PLATFORM-CLASSIFICATION (#255, #353): the settings' classifier, the values file's additional* lists included, handed to every refresh
+                        platform_namespaces=self.settings.platform_namespaces,
                         namespaces_read=self.settings.namespaces_read_enabled,
                         namespace_metadata_labels=self.settings.namespace_metadata_labels,
                         signals=self.signals,

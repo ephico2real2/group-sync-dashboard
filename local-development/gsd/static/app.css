@@ -1068,7 +1068,9 @@ td.num.warn { color: var(--warn); font-weight: 600; }
    wears the truncation edge whenever the page is a cut of a larger set, so "partial" is read
    before the download, not discovered in the spreadsheet. Tokens only: the contrast tables in
    tests/test_accessibility.py already cover every colour used here. */
-.export { display: inline-flex; align-items: center; gap: var(--space-3); }
+/* Wraps, and never wider than its bar: the partial note is nowrap, and at 375 px it pushed the page
+   sideways once every Access granted page on the lab became partial (#353, review of #360). */
+.export { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); max-width: 100%; }
 .export-label { color: var(--text-secondary); font-size: var(--text-sm); }
 .export-note { font-size: var(--text-sm); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .export-note.partial {

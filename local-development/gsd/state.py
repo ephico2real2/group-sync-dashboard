@@ -494,6 +494,7 @@ def compute_alerts(
     # Direct-user grants. ONE alert with the total, not one per binding: 36 separate
     # alerts would drown every other finding on the page, and the actionable unit is the
     # migration effort, not each row. The detail lives on the RBAC policy page.
+    # PLATFORM-CLASSIFICATION (#255, #353): the direct-user alert leaves the platform's identities out, by the stored is_platform_user flag
     people = [u for u in (user_bindings or []) if not u.get("is_platform")]
     if people:
         namespaces = {u.get("binding_namespace") or "(cluster-scoped)" for u in people}

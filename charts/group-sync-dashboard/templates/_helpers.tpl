@@ -861,6 +861,7 @@ has already shipped three of (#251). Measured in the review of #259, Codex C6: b
 `additionalSufixes` and a numeric entry both rendered happily into the ConfigMap and the pod refused
 them on the next start.
 */ -}}
+{{/* PLATFORM-CLASSIFICATION (#255, #353): refuses an unknown key or a non-list axis at render, so a typo never silently widens or narrows it */}}
 {{- define "gsd.validatePlatformNamespaces" -}}
 {{- with .Values.platformNamespaces -}}
 {{- if not (kindIs "map" .) -}}

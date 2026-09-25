@@ -172,6 +172,9 @@ class PlatformNamespaces:
     additional_suffixes: tuple[str, ...] = ()
     additional_names: frozenset[str] = frozenset()
 
+    # THE namespace classifier — names, prefixes, suffixes, each with its values.yaml
+    # `platformNamespaces.additional*` axis appended; every consumer of "is this namespace the platform's" calls it.
+    # PLATFORM-CLASSIFICATION (#255, #353)
     def matches(self, name: str) -> bool:
         """Whether this namespace is the platform's. Exact names first: the cheapest test, and the
         one an operator reaches for when a name has no pattern in it."""
@@ -836,6 +839,7 @@ class Settings:
     # `namespaceMetadataLabels` (rendered with toJson), the same convention as the audit lists.
     namespace_metadata_labels: tuple[str, ...] = ()
     # Which namespaces are the platform's (#255). Defaults to the rule gsd/home.py ships.
+    # PLATFORM-CLASSIFICATION (#255, #353): the settings every consumer reads it from (values.yaml platformNamespaces → clusters.yaml)
     platform_namespaces: PlatformNamespaces = PlatformNamespaces()
 
     def effective_clusters(self) -> list[ClusterConfig]:
@@ -943,6 +947,7 @@ def _audit_mode_setting(raw: dict) -> str:
     return "off"
 
 
+# PLATFORM-CLASSIFICATION (#255, #353): values.yaml `platformNamespaces` → the chart's configmap → clusters.yaml → this parse
 def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
     """`platformNamespaces` from the settings file (#255), or the shipped rule when absent.
 
@@ -1721,7 +1726,7 @@ def load_settings(path: str | Path) -> Settings:
         reporting_ticket_ttl_seconds=_num_setting(raw, "GSD_REPORTING_TICKET_TTL_SECONDS", "reportingTicketTtlSeconds", 300, int),
         namespaces_read_enabled=_bool_setting(raw, "GSD_NAMESPACES_READ_ENABLED", "namespacesReadEnabled", False),
         namespace_metadata_labels=_string_list_setting(raw, "namespaceMetadataLabels", ()),
-        platform_namespaces=_platform_namespaces_setting(raw),
+        platform_namespaces=_platform_namespaces_setting(raw),   # PLATFORM-CLASSIFICATION (#255, #353)
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int

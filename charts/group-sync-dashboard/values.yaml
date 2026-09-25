@@ -315,10 +315,14 @@ config:
   # dashboard as a whole, the only object it writes on any cluster is its own
   # leader-election Lease, which is its coordination and not anything it reports on.
   #
-  # A binding is `unmanaged` when it names an operator-synced group but carries neither the
-  # policy operator's config-source label nor an `rbac.ocp.io/unmanaged-exception`
-  # annotation — somebody granted access by hand, outside the governance system, and nothing
-  # on the cluster reports it.
+  # A binding is `unmanaged` when it carries neither the policy system's config-source label
+  # nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
+  # ServiceAccount or a user — somebody granted access by hand, outside the governance system,
+  # and nothing on the cluster reports it. The platform's own identities are never a finding: a
+  # ServiceAccount in a namespace `platformNamespaces` (below) names, a `system:` user, kubeadmin.
+  # Nothing else about how a grant was applied (a Helm or OLM label, a binding's name) excludes
+  # it: a legitimate one is silenced by labelling its binding `rbac.ocp.io/config-source=<who
+  # decided>`, as this chart labels its own RBAC (#312, #353).
   #
   # `log` publishes each finding as a self-contained line a log pipeline can alert on:
   #
@@ -1399,6 +1403,9 @@ kyverno:
 # The classification is never silent: the page says "67 platform namespaces hidden" with a control to
 # show them, a hidden row stays counted, exportable and drillable, and where a hidden namespace holds
 # a direct grant the page says that too.
+# PLATFORM-CLASSIFICATION (#255, #353): the estate's own additions to "which namespaces are the platform's" (#255). What
+# this decides: the namespace index and Home hide these namespaces by default, and since #353 a ServiceAccount
+# in one of them is the platform's own — silent under the built-in tier, never an unmanaged finding.
 platformNamespaces:
   # Uncomment to replace the shipped defaults outright (rarely what you want):
   # prefixes: ["openshift-", "kube-"]
