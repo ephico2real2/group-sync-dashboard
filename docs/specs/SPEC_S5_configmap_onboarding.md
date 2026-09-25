@@ -7,7 +7,7 @@
 | Release | — (post-programme; independently reviewed after #284) |
 | Version on release | app 0.34.0, chart 0.55.0 |
 | Issue | [#293](https://github.com/ephico2real2/group-sync-dashboard/issues/293) |
-| Status | specified |
+| Status | merged |
 | Source | Codex phase-1 specification, 2026-09-25, against main 35fcddb; operator comments in issue-293.md and supplied lab-snapshot.md; phase-2 blocks re-anchored after #361/#360, applied and checked locally; see phase2-report.md for limits |
 
 ## How to read this spec

@@ -4,12 +4,12 @@ What this session did, when, and how each claim was measured. Times are git auth
 merge time is its squash commit's on main. Every "measured" claim is one the session ran a command for; nothing below
 is recalled from memory alone. Numbers are quoted as a PR body, a commit message, a review record or a report states
 them, and each says where it comes from; where a PR's review decisions are written nowhere in the repository, the
-entry says so. The session began at 04:11 on 2026-09-23; this log runs to the evening of 2026-09-24: #338's close
-at 08:52, the cleanup, and Part 7. The product changelog (`docs/CHANGELOG.md`) says what each release changed for an operator; this
+entry says so. The session began at 04:11 on 2026-09-23; this log runs to 2026-09-25 02:30: #338's close
+at 08:52, the cleanup, Part 7, and Part 8 (2026-09-25). The product changelog (`docs/CHANGELOG.md`) says what each release changed for an operator; this
 says what a working session did. The review decisions of #336–#345 are itemised in
 `docs/REVIEW_remote_sar_for_every_join.md`; Part 6 cites it rather than repeating every line.
 
-Outcome in one line: **twenty-eight pull requests merged. Login capture reads the audit log by default. #261's Namespace audit parts 2 and 3 shipped, and the issue closed. The 2026-09-23 release was deployed through Argo CD and walked (84/84 steps, 15/15 release checks), and its one defect was fixed (#332). The operator's mandate was built end to end: SPEC_D2b was reviewed on six heads and merged with 221 blocks (#339), implemented from those blocks alone as application 0.32.0 and chart 0.53.0 (#342), and walked on the lab (Steps 0–11, then the e2e walk at 84/84). #338 closed with its evidence. In the evening, #312, #346 and #347 were fixed (#350, #352, #354) and proved on the lab, and the specs and design indexes were brought to the evidence (#351).**
+Outcome in one line: **twenty-eight pull requests merged. Login capture reads the audit log by default. #261's Namespace audit parts 2 and 3 shipped, and the issue closed. The 2026-09-23 release was deployed through Argo CD and walked (84/84 steps, 15/15 release checks), and its one defect was fixed (#332). The operator's mandate was built end to end: SPEC_D2b was reviewed on six heads and merged with 221 blocks (#339), implemented from those blocks alone as application 0.32.0 and chart 0.53.0 (#342), and walked on the lab (Steps 0–11, then the e2e walk at 84/84). #338 closed with its evidence. In the evening, #312, #346 and #347 were fixed (#350, #352, #354) and proved on the lab, and the specs and design indexes were brought to the evidence (#351). On 2026-09-25 #353 (the unmanaged finding on every subject, with the operator's platform rule), #293 (ConfigMap onboarding) and #340 (the CA cache) closed, each proved on the lab: thirty-nine PRs in all.**
 
 | | Before the session | After |
 |---|---|---|
@@ -728,11 +728,75 @@ The orchestrator's summary, with what was measured for this log:
 
 ---
 
+## Part 8 — #340, the indexes, #353 and #293 (2026-09-24 21:47 → 2026-09-25 02:30)
+
+### The CA cache (#340) and the indexes — PRs #358 (`4b07d45`, 21:47) and #359 (`ae431b0`, 21:57)
+
+- **#358:** the trusted CA bundle's cache now keys on each file's inode, mtime and size. A bundle kubelet swaps
+  through `..data` is read on the next poll. The test reproduces the swap and failed on main.
+  - Grok: C1–C5 **CONFIRMED**. Its note on two stale descriptions was **accepted**, its prose test **declined**.
+  - Measured (the PR body): **5561 passed, 20 skipped**. #340 closed itself on the merge.
+- **#359:** `reports/README.md` lists all 28 folders (it listed 7), held by `test_reports_index.py`.
+  - S3's version corrected (0.45.0 was #249's). `data-requirements.md` dated.
+  - Grok **REFUTED** three rows and two older cells as wider than their sources; all **accepted**.
+
+### #353 — OB1 on Fable (the record is OB1's log, `docs/session-changelogs/2026-09-24_ob1-312-close-out-and-353.md`)
+
+- PRs #357 (`35fcddb`), #361 (`a79da71`), #360 (`c00aa2e`), #362 (`de303e9`), #364 (`7f46760`). #353 closed.
+- **The operator's rulings, in order:**
+  - *"The exclusion is not automatic"*;
+  - *"Remember we are supposed to silence all platform service account … those namespaces we excluded them in code
+    and also add additional ones via values.yaml"*;
+  - *"I wanna exclude by namespaces as designed"*;
+  - the three OpenShift controller bindings as shipped defaults;
+  - a User spelt `system:serviceaccount:…` kept silent.
+- **The orchestrator's error, retracted:** its brief to OB1 said "no inference from `system:` names or namespaces".
+  That over-corrected the operator's first ruling and dropped the long-standing platform rule. The operator caught it,
+  and the consolidated mandate replaced it.
+- **The orchestrator's owner reviews:** a `_FINDING_CASE` comment and a `system:kube-scheduler` sentence that stated
+  the opposite of the rule, both fixed. It signed off on #361 and #360.
+- **Measured** (the evidence folder `reports/2026-09-25_353-platform-rule/`): 125 findings on the defaults, 50 with the
+  reference values. The PVC UIDs are identical.
+- **Found by the orchestrator:** OB1's planted-grant check had an f-string `SyntaxError` and was waiting blind. OB1
+  fixed it without re-planting.
+
+### #293 — Codex implements, the orchestrator reviews (PRs #363 `09d5526`, 01:45; #365 `35d2c0c`, 02:28)
+
+- **The workflow:** the operator asked Codex (gpt-6-astra, high) to implement #293 and the orchestrator to review it
+  with Grok. Phase 1 wrote SPEC_S5 with 77 blocks; Grok reviewed it before any code. Phase 2 applied them: 81 blocks,
+  31 files byte-identical to the spec.
+- **Found by the orchestrator in review:** a ConfigMap author can steer where the fleet account logs in. Put to the
+  operator: an allow-list was declined, then "refuse insecure" was chosen, then **superseded**: *"I need this feature
+  badly. So insecure is required in configmap."* The residual trust is recorded.
+- **The operator:** *"Whatever you do … do not reduce the current level of permissions that service account has."*
+  - **Measured** by rendering the chart's RBAC on main and on the branch: **REMOVED 0**, ADDED 3 (`configmaps
+    get/list/watch`).
+  - #360 measured the same way: 0 and 0.
+- **Grok on the spec:** C1 and C4 **REFUTED, accepted** (the host's in-cluster aliases; an invalid stanza blocking a
+  values cluster). C7 and C8 **accepted**.
+- **Grok on the code:** C1–C8 **CONFIRMED**. N1–N3 **accepted**. N2's scheduler test failed 3 of 3 against a
+  fresh-gate mutant, proven by the orchestrator.
+- **Measured** outside Codex's sandbox: **5175 passed, 16 skipped**; browser **606 passed**; helm lint clean.
+- **The lab walk** (`reports/2026-09-25_configmap-onboarding-293/`): one map with two stanzas → two generated Secrets,
+  both polling, one fleet login each (B by IP with `insecureSkipVerify`). Then removal deleted B's Secret, a repeated
+  name loaded nowhere, and a `bearerToken` stanza was refused. Deleting the map left no leftovers.
+  - Grok **REFUTED** the README as wider than its files; **accepted**, and the IP measurement is committed.
+
+### The incident
+
+- OB1's end-of-task cleanup ran `git worktree remove --force` on every registered worktree.
+- The operator's `~/gitRepos/gsd-grafana` (detached at `4f93ad1`) lost its three uncommitted PNGs under
+  `reports/2026-09-20_kyverno-170/`.
+- Nothing recovers them: no local snapshot (`tmutil listlocalsnapshots`), no Time Machine destination.
+- The committed versions are intact. OB1 reported it at once, and the rule is in memory.
+
+---
+
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **28**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352 and #354 (`gh pr list --state merged`, merged since 04:11) |
+| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11) |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
 | Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
