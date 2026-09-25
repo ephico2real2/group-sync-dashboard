@@ -1,0 +1,26 @@
+== #312 the chart's auditor binding, and the auditor tier with its negative control
+group-sync-dashboard-ra-b78c05817c9d: config-source=group-sync-dashboard
+member of app-ocp-rbac-groupsync-ns-auditor: Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+yes
+no auditor group (negative control):        Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+no
+binding refresh: 2026-09-24 21:20:50,696-0400 INFO    gsd.poller refreshed 205 group bindings for dashboard
+UNMANAGED GRANT DISCOVERED for the -ra- binding since this pod started: 0
+   dashboard dangling 0 unresolved 6 unmanaged 0
+   mock-privateca dangling 0 unresolved 0 unmanaged 0
+   mock-selfsigned dangling 0 unresolved 0 unmanaged 0
+   mock-trusted dangling 0 unresolved 0 unmanaged 0
+   shared-qa dangling 0 unresolved 6 unmanaged 0
+   shared-rnd dangling 0 unresolved 6 unmanaged 0
+== #347 the Access granted counts for dashboard
+   total 205 | ok 38 | need review 6 | built-in 161 | sum 205
+== the pages (#346 Logins, #347 Access granted and KPI)
+   logins: 'oldest audit file still on the control-plane nodes': present
+   logins: 'dies with its pod': absent
+   logins: 'Node': present
+   logins: 'control-plane node whose audit file': present
+   access granted tiles: {'Group bindings on this cluster': '205', 'Grant a real group': '38', 'Need review': '6', 'Built-in': '161'}
+   kpi to review: TO REVIEW 18 18 unresolved · 0 dangling · 0 unmanaged
+verify-fixes exit=0
