@@ -45,7 +45,7 @@ Decisions taken at review, recorded first and then applied:
   same reason; every other path now does too.
 - **The release versions** are app 0.32.0, chart 0.53.0 (all three reviewers): the draft's chart 0.51.0
   had already shipped (#307), and main is at 0.52.1 (#317). SPEC_D2b's implementation (#338) took those two
-  rungs first, so this spec now carries app 0.33.0, chart 0.54.0.
+  rungs first, then SPEC_U1 (#353) took app 0.33.0 and chart 0.54.0, so this spec now carries app 0.34.0, chart 0.55.0.
 
 ## 0. The requirement, in business terms
 

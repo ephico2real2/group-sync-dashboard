@@ -28,8 +28,8 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   or groups or service account"* (#312, 2026-09-24). A ServiceAccount or User grant is `unmanaged` unless the
   binding carries `rbac.ocp.io/config-source` or `rbac.ocp.io/unmanaged-exception`. No `system:` name, no
   platform namespace, no Helm, OLM or Argo CD label excludes anything (§3.4). The measured consequence on the
-  lab is stated in §2.2 and §6 so that nobody reads it as a defect: 713 of the lab's 720 ServiceAccount and
-  User subject rows carry no label today, and every one of them becomes a finding until the operator labels
+  lab is stated in §2.2 and §6 so that nobody reads it as a defect: 703 of the lab's 710 stored ServiceAccount and
+  User subject rows, on 689 bindings, carry no label today, and every one of them becomes a finding until the operator labels
   the grants they decide are legitimate.
 - **One table, widened in place; `group_name` keeps its name.** The rows join `rbac_group_binding`, with
   `subject_kind` and `subject_namespace` beside the subject's name, and the primary key gains both
@@ -39,15 +39,18 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   name whatever its kind: it is read in 106 places in `store.py`, 33 in the report snapshot, 24 on the page
   and about a hundred in tests (measured with `grep -c`), so a rename is not a change this format can carry
   safely; the table comment, the API document and the row's `subject_kind` say what it names.
-- **One gate per cluster, over every subject kind.** `unmanaged` still requires that some binding on the
-  cluster carries a config-source other than this chart's own (#354). The gate now reads labelled bindings
-  of every kind: a policy operator that labels only Group bindings (the lab's) opens the finding for
-  ServiceAccount and User grants too, and an operator with no policy operator opens it the moment they label
-  their first legitimate grant of any kind. The issue asked what "in use" means for kinds the policy
-  operator may never label; the answer is that the operator's own label IS the policy system for those
-  kinds, and one gate keeps one rule (§3.4). A per-kind gate was considered and rejected: it would leave
-  the lab's 713 unlabelled grants silent until someone labelled one of each kind, and it is a second rule
-  for the same label.
+- **No gate for ServiceAccount and User subjects; the Group arm keeps #354's gate, byte for byte.** The first
+  draft of this spec put one gate over every kind — a ServiceAccount or User grant was `unmanaged` only where
+  some binding on the cluster carried a policy label. Codex refuted it on the premise and it is retracted: on a
+  host with no label anywhere that gate silenced every unlabelled account and person by default, and the
+  operator's rule allows no default that silences a grant — *"The exclusion is not automatic … We are going to
+  decide who to exclude"*; exclusion is the label or the annotation on the binding and nothing else. So an
+  unlabelled ServiceAccount or User grant is a finding from its first observation on every host. The Group arm
+  is not this spec's to change: it keeps #354's gate — some other Group-subject binding labelled by something
+  other than this chart — read over Group rows only, so the arm classifies exactly as it did before this spec
+  (§3.4). The asymmetry that leaves (a plain host reports its hand-made account grants and not its hand-made
+  group grants until a Group binding carries a policy label) is stated on #353 for the operator to rule on;
+  widening or removing the Group gate is a decision, not a capability, and it is not taken here.
 - **A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's
   namespace**, because that is the account the authorizer matches (§2.1, `appliesToUser`). The row names
   what RBAC grants to, not what the object happens to spell. The lab has 26 such subjects (§2.2).
@@ -65,18 +68,50 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   as `unmanaged` until it is. The 35 User rows on the lab are stored twice for it (§6). `fetch_user_bindings`
   keeps its own two list calls; folding it into `fetch_bindings` is a pre-existing duplication this spec
   does not touch.
-- **Two adjacent defects found by the reader map are fixed here, because the blocks that fix them are the
-  blocks this spec edits anyway.** (1) `poller.refresh_bindings` never forwarded `audit_stamped` to the store
+- **Three adjacent defects found by the reader map and the review are fixed here, because the blocks that fix
+  them are the blocks this spec edits anyway.** (1) `poller.refresh_bindings` never forwarded `audit_stamped` to the store
   — `kube.py` read the `rbac.ocp.io/unmanaged` label into the view and the row dict dropped it, so
   `audit_stamped` was 0 for every live row, the RESOLVED line could never fire from live data and the RBAC
   policy page's "Audit-stamped" tile always read 0. The row dict now carries it (§3.6, tested §4). (2)
   `metrics.FINDINGS` lacked `unmanaged`, so `gsd_bindings_total{finding="unmanaged"}` was emitted only while
   such rows existed instead of being pre-seeded at 0 like the other four tiers — a series that vanishes
-  breaks `by (finding)` aggregation and hides a count going to zero. The tuple gains the word (§3.10).
+  breaks `by (finding)` aggregation and hides a count going to zero. The tuple gains the word (§3.10). (3)
+  `policyPage` returned a "not installed" card before its hero whenever the namespace-configuration-operator
+  was absent (Codex, review of SPEC_U1) — consistent while every finding needed that operator's labels, and a
+  page that hides 703 findings once an account is a finding by the label alone. The card is rendered beside
+  the findings now, not instead of them (§3.8).
 - **The RBAC policy page counts the cluster, not the loaded page.** Its hero and "Unmanaged" tile read
   `f.unmanaged.length`, the rows the page fetched (at most `FINDINGS_PAGE`, 500), while `counts.unmanaged`
-  is the cluster's. With one finding that was invisible; with 713 on the lab the tab would say 500. They
+  is the cluster's. With one finding that was invisible; with 703 on the lab the tab would say 500. They
   read `counts.unmanaged` now and the list says how many of the total it shows (§3.8).
+- **Migration 20's copy is `INSERT OR IGNORE`, so its replay converges from a populated `_v20` table**
+  (Grok, review of SPEC_U1, accepted on the property with its premise refuted). Grok held that each
+  statement of a migration commits on its own, so a crash between the copy and the drop would leave the
+  new table populated and the replay would raise `IntegrityError`, which `_migrate` does not tolerate.
+  Measured with the store's own `sqlite3.connect(path, check_same_thread=False)` on the images' Python
+  3.14: `isolation_level ''`, legacy transaction control; the `CREATE` runs outside any transaction, the
+  `INSERT` opens the implicit one, and the `DROP` and the `PRAGMA user_version` ride in it until
+  `Store.__init__` commits — after a simulated crash the new table held 0 rows, the old one was intact and
+  the version read 19, so the replay was already clean. `OR IGNORE` costs nothing and covers the one way
+  a populated `_v20` can exist, a hand repair; the test builds that state directly.
+- **The compliance snapshot names its two populations** (Grok; Codex on the third label): "Group bindings
+  (Group subjects)" beside "Unmanaged (every subject kind)", because on this seed 1 beside 2 — and on the lab
+  about 190 beside 703 — reads as a share of one population when it is two; and "Platform identity grants
+  (excluded from the direct-user figures)", because a platform-named User grant is excluded from those figures
+  and not from Unmanaged. Codex's explanatory note was rejected as the larger change for the same reading.
+- **Five findings of OB1-lite's review, accepted and re-measured.** (1) A subject an OLM RoleBinding names
+  twice was two rows in the reader and one in the store (10 on the lab: 925 entries, 915 rows), so the
+  refresh line over-counted; the reader keeps a distinct (kind, namespace, name) once, and every number in
+  this spec is the stored count: 915 rows, 703 finding rows on 689 bindings, 668 + 35 unlabelled. (2) The
+  findings page was ordered by name across tiers, so on the lab 254 of 703 unmanaged rows and a dangling
+  group named past `aa…` accounts fell off the 500-row page; it is ordered review tiers first, then name.
+  (3) The report service accepts an older copy by design, and every binding read now names
+  `subject_kind`: during the roll a schema-19 copy raised "no such column" on preview and run. It is read
+  through a TEMP view that supplies the two columns as Group rows. (4) The report form's role picker
+  offered every role any account is bound to (356 on the lab against 66 a report can match); it reads
+  Group rows and direct user grants. (5) The compliance snapshot's Unmanaged figure now sits under the
+  every-kind total it is a part of. Also corrected: the 26 namespace-less subjects sit on 13 RoleBindings
+  written by OLM (9), the cluster-version operator (3) and by hand (1), not "all OLM".
 - **`_OBSERVATION_SEEDS` is not changed.** The first draft narrowed the `binding:Group` seed to Group rows;
   the scratch application refuted it: migration 14 splices those statements into its own list, so the clause
   ran against a v0 database's old shape ("no such column: subject_kind"). And it was unnecessary — the marker
@@ -153,7 +188,8 @@ two files (the script and its output are in the session log):
 | bindings | 292 ClusterRoleBindings, 605 RoleBindings; 1 with no subjects (`system:node`) |
 | subject rows by kind | Group 205 (50 cluster-wide, 155 namespaced); **ServiceAccount 685** (234, 451); **User 35** (16, 19) |
 | `apiGroup` | Group and User `rbac.authorization.k8s.io` (240 rows), ServiceAccount absent (685 rows) — the defaults of §2.1, nothing else |
-| ServiceAccount subjects with no `namespace` | **26**, all on RoleBindings (OLM-written: `cert-manager-operator.v1.20.0`, `grafana-operator.v5.24.0`, `group-sync-operator.v0.0.36`), so §2.1's default applies to real objects here |
+| ServiceAccount subjects with no `namespace` | **26**, all on RoleBindings — 13 of them, 9 written by OLM (`cert-manager-operator.v1.20.0`, `grafana-operator.v5.24.0`, `group-sync-operator.v0.0.36`, …), 3 by the cluster-version operator (`console-operator`, `cluster-image-registry-operator`, `csi-snapshot-controller-operator-role`) and 1 by hand — so §2.1's default applies to real objects here |
+| subject entries a binding repeats | **10**, every one a ServiceAccount an OLM-written RoleBinding names twice (`metallb-operator…` four accounts, and one each on six others); the reader keeps one, so 925 entries store **915** rows |
 | RoleBinding ServiceAccount subjects naming another namespace | 85 — a stored namespace must be the subject's own, not the binding's, when the subject spells one |
 | bindings by subject-kind set | Group only 200, ServiceAccount only 663, User only 27, Group+User 3, ServiceAccount+User 3 |
 | `rbac.ocp.io/config-source` | 51 bindings: `baseline-nonprod-rbac` 26, `baseline-cluster-rbac` 11, `group-sync-dashboard` 8, `baseline-prod-rbac` 3, `custom-cluster-rbac` 1, `bdp-oud-group-rbac` 1, `trino-oud-group-rbac` 1 |
@@ -161,10 +197,10 @@ two files (the script and its output are in the session log):
 | `rbac.ocp.io/unmanaged-exception` | 0 |
 | User subject names | 16 distinct: `system:kube-scheduler` 6, `system:kube-controller-manager` 5, `system:serviceaccount:openshift-kube-apiserver:check-endpoints` 5, `jdoe` 3, and one or two each of `kubeadmin`, `system:admin`, `system:master`, `system:kube-apiserver`, `system:kube-proxy`, `ocp-oauth-bind-serviceid`, `dana.lee`, `asmith`, `bwilliams`, `tmp-contractor-9931`, `jane.smith`, `developer` |
 
-So on the lab, after this spec: the gate is open (44 policy-operator Group rows), the chart's 7
-ServiceAccount rows are `ok` by its own label, and the remaining **678 ServiceAccount and 35 User rows are
-`unmanaged`** until labelled — 713 findings, listed 20 per cycle by `maxPerCycle` and counted in full on the
-summary line, the tiles, the KPI page and `/metrics`. That is the capability the operator asked for; which
+So on the lab, after this spec: the chart's 7 ServiceAccount rows are `ok` by its own label, and the
+remaining **668 ServiceAccount and 35 User rows are `unmanaged`** until labelled — with no gate to open; the
+Group arm's gate is open anyway (43 policy-operator Group rows beside the chart's one) — 703 finding rows on 689 bindings: the summary line counts the bindings (689) and lists 20
+per cycle by `maxPerCycle`; the tiles, the KPI page and `/metrics` count the rows (703). That is the capability the operator asked for; which
 of them are legitimate is their decision, made by labelling.
 
 ### 2.3 The code today — every reader of the table (main `244d4ab`)
@@ -207,9 +243,9 @@ Measured by reading each file; the map is what §3 is applied against.
 |---|---|---|---|
 | stored as | `subject_kind='Group'`, `subject_namespace=''`, `group_name=<name>` | `'ServiceAccount'`, the subject's namespace or the RoleBinding's, `<name>` | `'User'`, `''`, `<name>` |
 | resolution tiers (`dangling`, `built_in`, `unresolved`) | as today | never — no Group object is expected | never |
-| `unmanaged` | group operator-synced, no label, no exception, gate open | no label, no exception, gate open | no label, no exception, gate open |
+| `unmanaged` | group operator-synced, no label, no exception, the gate open | no label, no exception | no label, no exception |
 | `ok` | otherwise | otherwise | otherwise |
-| the gate | some binding on the cluster, of any kind, carries `rbac.ocp.io/config-source` ≠ `group-sync-dashboard` | same | same |
+| the gate | some other Group-subject binding on the cluster carries `rbac.ocp.io/config-source` ≠ `group-sync-dashboard` (#354, unchanged) | none | none |
 | reach (`member_count`, `logged_in_count`) | the group's | `null` | `null` |
 | binding history (`binding_event`) | `binding:Group`, from this table | none | `binding:User`, from `user_binding` |
 | the log line | `grants <role> to group <name>` (unchanged) | `grants <role> to ServiceAccount <namespace>/<name>` | `grants <role> to user <name>` |
@@ -247,11 +283,13 @@ rows store `''`. `BindingView` gains the two fields with those defaults, so the 
 
 ### 3.4 The classification — `_FINDING_CASE`
 
-The three resolution arms apply to Group subjects only (`b.subject_kind = 'Group' AND …`); the provenance
-arm requires an operator-synced group for a Group subject and nothing but the absence of a label and an
-exception for the other two kinds (`(b.subject_kind <> 'Group' OR s.group_name IS NOT NULL)`); the gate is
-unchanged in text and now naturally reads every kind, because the rows of every kind are in the table it
-reads. The joins to `group_state` and `managed_group_seen` — and the reach join — carry
+The three resolution arms apply to Group subjects only (`b.subject_kind = 'Group' AND …`). The provenance
+arm requires, for a Group subject, an operator-synced group and #354's gate — some other Group-subject
+binding on the cluster labelled by something other than this chart, read over Group rows only
+(`m.subject_kind = 'Group'`), so the arm is byte for byte what #354 shipped — and, for the other two kinds,
+nothing but the absence of a label and an exception (`(b.subject_kind <> 'Group' OR …)` on both
+conditions): no gate, because the operator's rule allows no default that silences a grant. The joins to
+`group_state` and `managed_group_seen` — and the reach join — carry
 `AND b.subject_kind = 'Group'`, so a ServiceAccount or User named like a group never borrows that group's
 object, its sync record or its members: an account named `app-ocp-rbac-x` is judged on provenance alone
 and its reach is `null`. Nothing about a `system:` name, a namespace or a Helm, OLM or Argo CD label
@@ -284,7 +322,8 @@ kind filters on the field.
 ### 3.8 The page
 
 The Access granted tab's header says "Bindings on this cluster" and "Granted"; its note names the three
-kinds; the subject column is "Subject named by the binding", rendered by `subjectCell`: a Group drills as
+kinds; the RBAC policy tab renders its findings whether or not the namespace-configuration-operator is
+installed, with the "not installed" card beside them; the subject column is "Subject named by the binding", rendered by `subjectCell`: a Group drills as
 before, a ServiceAccount is `ServiceAccount <namespace>/<name>` and a User `user <name>`, each with the kind
 in muted text before the name and no drill. Search matches the namespace too; the export carries both new
 fields. The Unmanaged notes say a grant of any kind is a finding and the label or annotation on the binding
@@ -300,14 +339,16 @@ guards the group counts. `Snapshot.group_bindings` takes `kinds` (default `("Gro
 `namespace-access`, `privileged-access`, `access-matrix` and `access-certification` are unchanged); the
 `binding-findings` report asks for every kind and names each subject with `subject_label`; its per-tier
 tables' first column is "subject". `findings_counts` counts every kind, which is what
-`compliance-snapshot`'s Unmanaged figure now says.
+`compliance-snapshot`'s Unmanaged figure now says, and its RBAC figures name their populations: "Group
+bindings (Group subjects)", "Unmanaged (every subject kind)", "Platform identity grants (excluded from the
+direct-user figures)".
 
 ### 3.10 Metrics and KPI
 
 `FINDINGS` gains `unmanaged`, so `gsd_bindings_total{finding="unmanaged"}` is pre-seeded at 0 like the
 other tiers; the family's help text names the three kinds. No label is added (the note above). The KPI
 rollup's `bindings` and the page's Bindings and To review figures count rows of every kind; on the lab the
-To review figure rises by 713 the first refresh after this deploys, and that is the finding, not a
+To review figure rises by 703 the first refresh after this deploys, and that is the finding, not a
 regression — the CHANGELOG entry says so.
 
 ### 3.11 Versions, chart documents, CHANGELOG, indexes
@@ -334,10 +375,11 @@ claim; and the edits to existing tests that pin the old shape. Every test below 
 - **The classification** (`TestClassification`): an unlabelled ServiceAccount grant is `unmanaged` on a
   cluster where the policy operator is in use; the operator's label on the binding makes it `ok`; the
   exception annotation makes it `ok`; a User named `system:kube-scheduler` is `unmanaged` and never
-  `built_in`; on a cluster whose only labels are the chart's, the chart's ServiceAccount rows and a
-  hand-made one are all `ok` (the gate stays shut, #354) and one policy label opens it; the operator's
-  label on one ServiceAccount grant opens the gate for every kind; an account named like a synced group
-  is judged on provenance and its reach is `null`; `all_bindings` carries the two new columns.
+  `built_in`; on a cluster whose only labels are the chart's, the chart's ServiceAccount rows are `ok`, a
+  hand-made account is `unmanaged` and a hand-made Group grant is `ok` until one policy label opens the
+  Group gate (#354); an unlabelled account is a finding on a cluster with no label anywhere; a labelled
+  account does not open the Group gate; an account named like a synced group is judged on provenance and
+  its reach is `null`; `all_bindings` carries the two new columns.
 - **Group-only readers** (`TestGroupOnlyReaders`): with a ServiceAccount and a User row named like a group
   present, `group_bindings`, `user_bindings`, `groups` (`binding_count`), `namespaces` (`via_groups`) and
   `namespace_reach` answer exactly as they do without them.
@@ -362,6 +404,11 @@ claim; and the edits to existing tests that pin the old shape. Every test below 
   `binding-findings` report's Unmanaged table names `ServiceAccount <namespace>/<name>`.
 - **Metrics** (an edit in `tests/test_metrics.py`): `gsd_bindings_total{finding="unmanaged"}` is emitted
   at 0 on a cluster with none.
+- **The review's five** (`TestDuplicateSubjects`, `TestSeverityFirstPage`, `TestAnOlderCopyInTheRollingWindow`,
+  `TestRolePicker`, and the every-kind total in the compliance test): a subject a binding names twice is one
+  row; a page of findings holds the review tiers before the rest; a schema-19 copy is read as Group rows;
+  a role bound only to an account is not offered by the report form; the Unmanaged figure sits under the
+  total it is a part of.
 - **Edits to pinned shapes:** `tests/test_rbac.py#TestParsing` keeps every kind; `tests/test_binding_reach.py`
   adds the two columns to the exact set; `tests/test_audit_stamp.py` reads `evidence[key]["subjects"]`; the
   three `user_version == 19` pins read 20; `tests/test_ui.py`'s four wording assertions move with the tile
@@ -375,9 +422,9 @@ the PVC UIDs identical), with `KUBECONFIG` set to the lab's scratch kubeconfig:
 
 1. `PRAGMA user_version` in the pod's database reads 20 (`oc exec … -- python3 -c` over `/data/gsd.db`),
    and the report pod's `/report/readyz` is 200.
-2. The first refresh line reads `refreshed N bindings for dashboard (205 Group, 685 ServiceAccount, 35 User
-   subjects)` give or take the day's drift, and the summary line reads `713 outside the policy system (20
-   listed below, 693 held back by the per-cycle cap)` against the counts of §2.2.
+2. The first refresh line reads `refreshed N bindings for dashboard (205 Group, 675 ServiceAccount, 35 User
+   subjects)` give or take the day's drift, and the summary line reads `689 outside the policy system (20
+   listed below, 669 held back by the per-cycle cap)` — it counts bindings, the tiles count rows (703) — against the counts of §2.2.
 3. `GET /api/clusters/dashboard/bindings/findings` as kubeadmin: `counts.unmanaged` equals the sum of
    unlabelled ServiceAccount and User rows plus any unlabelled synced-group grant; the chart's seven
    ServiceAccount rows are in `ok` with `managed_source: group-sync-dashboard`.
@@ -396,12 +443,14 @@ the PVC UIDs identical), with `KUBECONFIG` set to the lab's scratch kubeconfig:
 ## 6. What changes, for whom, and what it costs
 
 - **An operator with a policy operator** (the lab): every unlabelled ServiceAccount and User grant is a
-  finding from the first refresh after upgrade — 713 on the lab. The log lists 20 per cycle and counts the
-  rest; the tiles, the KPI page and the metric carry the full number. The way down is the label on each
+  finding from the first refresh after upgrade — 703 rows on 689 bindings on the lab. The log lists 20 bindings
+  per cycle and counts the rest; the tiles, the KPI page and the metric carry the full number. The way down is the label on each
   legitimate grant, which is the operator's decision and the whole point.
-- **An operator with no policy operator** (a plain host): nothing changes until they label a grant with a
-  value other than the chart's; then every unlabelled grant of every kind is a finding.
-- **Storage:** one row per (binding, subject) of every kind — on the lab 925 rows instead of 205, plus the
+- **An operator with no policy operator** (a plain host): every unlabelled ServiceAccount and User grant is a
+  finding from the first refresh there too; the Group finding stays silent, as #354 left it, until a Group
+  binding carries a policy label. This spec changes nothing about the Group arm; the asymmetry is on #353.
+- **Storage:** one row per (binding, subject) of every kind — on the lab 915 rows instead of 205 (925 subject entries, 10 of them a
+  ServiceAccount an OLM RoleBinding names twice, kept once), plus the
   35 User rows already held by `user_binding` — replaced every refresh as before; migration 20 rebuilds the
   table once, carrying the rows.
 - **The API and the page:** two fields on every finding row; the tile words; the subject column. A reader
@@ -546,7 +595,7 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
 ```
 ```python
 def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
-    """Flatten one binding into a row per subject, whatever its kind.
+    """Flatten one binding into a row per distinct subject, whatever its kind.
 
     Subject matching is on ``kind`` exactly, against the three kinds RBAC defines
     (SUBJECT_KINDS); a subject of any other kind, or with no name, contributes nothing. Every
@@ -558,8 +607,14 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
     namespace (pkg/registry/rbac/validation/rule.go, appliesToUser: "default the namespace to
     namespace we're working in"). That resolved namespace is what is stored, so the row names
     the account RBAC actually matches — `system:serviceaccount:<namespace>:<name>`. Measured on
-    the lab: 26 of 685 ServiceAccount subjects omit it, all on OLM-written RoleBindings. User and
-    Group subjects have no namespace; "" is stored, as for a ClusterRoleBinding's own.
+    the lab: 26 of 685 ServiceAccount subject entries omit it, on 13 RoleBindings — 9 written by
+    OLM, 3 by the cluster-version operator, 1 by hand. User and Group subjects have no
+    namespace; "" is stored, as for a ClusterRoleBinding's own.
+
+    A subject a binding names twice is one row: the authorizer grants it once and the store's
+    primary key keeps one. OLM writes some RoleBindings that way (10 repeated ServiceAccount
+    entries on the lab, `metallb-operator…` naming four accounts twice), and a reader that yielded
+    both made the refresh line count 925 subjects for the 915 rows the store held.
     """
     meta = obj.get("metadata") or {}
     role_ref = obj.get("roleRef") or {}
@@ -569,10 +624,17 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
     # primary key column without a sentinel row per binding.
     binding_namespace = meta.get("namespace", "") or ""
     rows: list[BindingView] = []
+    seen: set[tuple[str, str, str]] = set()
     for subject in obj.get("subjects") or []:
         kind = subject.get("kind")
         if kind not in SUBJECT_KINDS or not subject.get("name"):
             continue
+        subject_namespace = ((subject.get("namespace") or binding_namespace)
+                             if kind == SERVICE_ACCOUNT_KIND else "")
+        identity = (kind, subject_namespace, subject["name"])
+        if identity in seen:
+            continue
+        seen.add(identity)
         rows.append(
             BindingView(
                 binding_kind=binding_kind,
@@ -582,8 +644,7 @@ def _binding_views(obj: dict, binding_kind: str) -> list[BindingView]:
                 role_name=role_ref.get("name", ""),
                 group_name=subject["name"],
                 subject_kind=kind,
-                subject_namespace=((subject.get("namespace") or binding_namespace)
-                                   if kind == SERVICE_ACCOUNT_KIND else ""),
+                subject_namespace=subject_namespace,
                 managed_source=labels.get(CONFIG_SOURCE_LABEL),
                 exception=annotations.get(UNMANAGED_EXCEPTION_ANNOTATION),
                 audit_stamped=labels.get(UNMANAGED_LABEL) == "true",
@@ -692,7 +753,12 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
                    PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name,
                                subject_kind, subject_namespace, group_name)
                )""",
-            """INSERT INTO rbac_group_binding_v20(
+            # OR IGNORE: the replay converges from a v20 table that is already populated. A crash
+            # cannot leave one — the INSERT opens the connection's implicit transaction and the DROP,
+            # the RENAME and the version write ride in it until Store.__init__ commits, so a crash
+            # rolls them back together and only the empty CREATE stands (measured, SPEC_U1 notes) —
+            # but a hand repair can, and _migrate tolerates no IntegrityError.
+            """INSERT OR IGNORE INTO rbac_group_binding_v20(
                    cluster_id, binding_kind, binding_namespace, binding_name, role_kind, role_name,
                    subject_kind, subject_namespace, group_name, observed_at,
                    managed_source, exception, audit_stamped)
@@ -885,24 +951,28 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
                                                            THEN 'unresolved'
                         -- Provenance: a grant NO policy system manages is somebody bypassing
                         -- governance by hand. For a Group subject that is only worth saying
-                        -- when the group is operator-SYNCED; for a ServiceAccount or a User it
-                        -- is said whenever the binding carries no label and no exception —
-                        -- nothing about how the grant was applied (a `system:` name, a platform
-                        -- namespace, a Helm, OLM or Argo CD label) excludes it, only the
-                        -- operator's decision on the binding does (#353, SPEC_U1). Requires the
-                        -- policy operator to be in use at all — some labelled binding of any
-                        -- kind on the cluster — or every binding on a cluster that has never
-                        -- heard of config-source labels would flag. This chart's own label is
-                        -- not that evidence: its auditor binding is on every host by default
-                        -- (#312). An exception annotation on the binding acknowledges a
-                        -- deliberate one and suppresses the finding.
+                        -- when the group is operator-SYNCED and the policy operator is in use
+                        -- at all — some other Group-subject binding on the cluster carries a
+                        -- label, read over Group rows only so this arm is exactly #354's — or
+                        -- every binding on a cluster that has never heard of config-source
+                        -- labels would flag; this chart's own label is not that evidence, its
+                        -- auditor binding being on every host by default (#312). For a
+                        -- ServiceAccount or a User it is said whenever the binding carries no
+                        -- label and no exception, on every host, with no gate: nothing about
+                        -- how the grant was applied (a `system:` name, a platform namespace, a
+                        -- Helm, OLM or Argo CD label) or about the rest of the cluster excludes
+                        -- it, only the operator's decision on the binding does (#353, SPEC_U1).
+                        -- An exception annotation on the binding acknowledges a deliberate one
+                        -- and suppresses the finding.
                         WHEN b.managed_source IS NULL
                              AND b.exception IS NULL
                              AND (b.subject_kind <> 'Group' OR s.group_name IS NOT NULL)
-                             AND EXISTS (SELECT 1 FROM rbac_group_binding m
-                                          WHERE m.cluster_id = b.cluster_id
-                                            AND m.managed_source IS NOT NULL
-                                            AND m.managed_source <> '""" + CHART_CONFIG_SOURCE + """')
+                             AND (b.subject_kind <> 'Group' OR EXISTS (
+                                      SELECT 1 FROM rbac_group_binding m
+                                       WHERE m.cluster_id = b.cluster_id
+                                         AND m.subject_kind = 'Group'
+                                         AND m.managed_source IS NOT NULL
+                                         AND m.managed_source <> '""" + CHART_CONFIG_SOURCE + """'))
                                                            THEN 'unmanaged'
                         ELSE 'ok'
                       END"""
@@ -1423,6 +1493,23 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         [[subject_label(r), ns_label(r["binding_namespace"]), r["role_name"], r["binding_name"], r["exception"]] for r in exceptions],
 ```
 
+<!-- block: local-development/gsd/reporting/catalogue/compliance_snapshot.py | edit -->
+```python
+            KeyValues("RBAC", [("Group bindings", c["group_bindings"]), ("Namespaces with bindings", c["namespaces_with_bindings"]),
+                               ("Dangling", findings.get("dangling", 0)), ("Unresolved", findings.get("unresolved", 0)), ("Unmanaged", findings.get("unmanaged", 0)),
+                               ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded)", c["platform_user_bindings"]),
+```
+```python
+            # Two populations side by side (SPEC_U1): the group figure counts Group subjects, the
+            # finding figures count every subject kind, so each label says which — a reader must not
+            # take Unmanaged for a share of Group bindings.
+            KeyValues("RBAC", [("Group bindings (Group subjects)", c["group_bindings"]), ("Namespaces with bindings", c["namespaces_with_bindings"]),
+                               ("Dangling", findings.get("dangling", 0)), ("Unresolved", findings.get("unresolved", 0)),
+                               ("Bindings (every subject kind)", sum(findings.values())),
+                               ("Unmanaged (every subject kind)", findings.get("unmanaged", 0)),
+                               ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded from the direct-user figures)", c["platform_user_bindings"]),
+```
+
 <!-- block: local-development/gsd/reporting/catalogue/common.py | edit -->
 ```python
             "unmanaged": "UNMANAGED — synced group granted by hand, no policy operator source",
@@ -1494,7 +1581,7 @@ function bindingMatches(r, q) {
       name. ${visible.reduce((n, t) => n + f[t].length, 0)} of
 ```
 ```javascript
-          <strong>${d.total || 0}</strong> bindings, by subject name; the cluster has more. The
+          <strong>${d.total || 0}</strong> bindings, review items first, then by subject name; the cluster has more. The
           Find box and the sort work only over these, so a binding past the cut cannot be found here.</div>` : ""}
     ${searching ? `<div class="filterbar-note mt-3" id="binding-search-note">Filtered by
       <strong>${esc(q.trim())}</strong> — every word must appear in the subject, role, namespace or binding
@@ -1632,7 +1719,7 @@ function subjectCell(r) {
   // The cluster's number, not the page's: `unmanaged` holds at most FINDINGS_PAGE rows, and
   // `counts` describe the whole cluster (the findings endpoint's contract). Before SPEC_U1 the
   // hero counted the rows it had loaded, which a cluster with more findings than the page holds
-  // — 713 on the lab once ServiceAccount and User grants count — would have shown as 500.
+  // — 703 on the lab once ServiceAccount and User grants count — would have shown as 500.
   const unmanagedTotal = f.counts && f.counts.unmanaged != null ? f.counts.unmanaged : unmanaged.length;
   const stamped = unmanaged.filter((r) => r.audit_stamped).length;
 ```
@@ -1708,6 +1795,44 @@ function subjectCell(r) {
              "exception"],
 ```
 
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  if (oc && !oc.present) {
+    return `<section class="card">
+      <h2>RBAC policy</h2>
+      <div class="empty-note">
+        The namespace-configuration-operator is not installed on <code>${esc(view.cluster)}</code>.
+        This page reports the health of its NamespaceConfig and GroupConfig CRs and finds
+        grants that bypass them; without the operator there is no policy system to report on.
+      </div>
+    </section>`;
+  }
+```
+```javascript
+  // A host with no namespace-configuration-operator still has findings: since SPEC_U1 a ServiceAccount
+  // or User grant is a finding by the label alone, so the "not installed" card is a card beside the
+  // findings, not a return before them (it was one while every finding needed the operator's labels,
+  // and it would have hidden 703 of them on the lab).
+  const operatorCard = oc && !oc.present
+    ? `<section class="card">
+        <h2>Policy operator</h2>
+        <div class="empty-note">
+          The namespace-configuration-operator is not installed on <code>${esc(view.cluster)}</code>.
+          This card reports the health of its NamespaceConfig and GroupConfig CRs where it is; the grants
+          outside the policy system above are found by the label on each binding and do not need it.
+        </div>
+      </section>`
+    : configHealth(oc);
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  ${configHealth(oc)}
+```
+```javascript
+  ${operatorCard}
+```
+
 <!-- block: local-development/cluster-report.py | edit -->
 ```python
             w(f"**Group bindings — {f.get('total', 0)} total**")
@@ -1722,6 +1847,67 @@ function subjectCell(r) {
 ```
 ```python
                     ("unmanaged", "hand-made, outside policy — a synced group, a ServiceAccount or a user"),
+```
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+                ORDER BY b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
+        params: list = [cluster_id]
+        if limit is not None:
+```
+```python
+                ORDER BY CASE finding WHEN 'dangling' THEN 0 WHEN 'unresolved' THEN 1
+                                      WHEN 'unmanaged' THEN 2 WHEN 'ok' THEN 3 ELSE 4 END,
+                         b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
+        # Severity first, then subject name: a page (the findings endpoint's `limit`) holds every
+        # review item before any healthy or built-in row. Since #353 a cluster holds hundreds of
+        # ServiceAccount rows (703 unmanaged on the lab against FINDINGS_PAGE 500), and by name
+        # alone they pushed a dangling group named past them off the page (OB1-lite, SPEC_U1).
+        params: list = [cluster_id]
+        if limit is not None:
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+      // Users and Logins tabs' rule. The page holds FINDINGS_PAGE rows ordered by group name; the
+```
+```javascript
+      // Users and Logins tabs' rule. The page holds FINDINGS_PAGE rows, review tiers first, then by subject name; the
+```
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+            self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        except sqlite3.Error as exc:
+```
+```python
+            self._tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            # An OLDER copy is accepted (only a newer one is refused): while the pods roll, the newest copy
+            # on the volume is the previous dashboard's until the new one writes. Before migration 20 the
+            # binding table held Group rows only and had no subject columns, and every binding read here
+            # names them — so the old table is read through a TEMP view that says what its rows are (a TEMP
+            # object shadows the copy's own name; the immutable copy itself is never written) (SPEC_U1).
+            if "rbac_group_binding" in self._tables and "subject_kind" not in {
+                    r[1] for r in self._conn.execute("PRAGMA main.table_info(rbac_group_binding)")}:
+                self._conn.execute("CREATE TEMP VIEW rbac_group_binding AS"
+                                   " SELECT *, 'Group' AS subject_kind, '' AS subject_namespace"
+                                   " FROM main.rbac_group_binding")
+        except sqlite3.Error as exc:
+```
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+        for table in ("rbac_group_binding", "user_binding"):
+            if self.has_table(table):
+                roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?", (cluster_id,)))
+```
+```python
+        # The roles a report's role filter can match: those bound to a group (the Group rows) or named
+        # directly to a person (user_binding). A role bound only to ServiceAccounts is never offered —
+        # nothing that takes this list reads account grants (SPEC_U1; on the lab 356 roles against 66).
+        for table, only in (("rbac_group_binding", " AND subject_kind = 'Group'"), ("user_binding", "")):
+            if self.has_table(table):
+                roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?{only}", (cluster_id,)))
 ```
 
 <!-- block: local-development/pyproject.toml | edit -->
@@ -1803,10 +1989,11 @@ ServiceAccount or a user (#353) — somebody granted access by hand, outside the
 and nothing on the cluster reports it. Nothing about how a grant was applied excludes it — not a
 `system:` name, a platform namespace or a Helm, OLM or Argo CD label; a legitimate one is silenced
 by labelling its binding `rbac.ocp.io/config-source=<who decided>`, as this chart labels its own
-RBAC. The classification also requires at least one *managed* binding to exist on that cluster,
-of any subject kind and labelled by something other than this chart, so a cluster that has never
-used config-source labels reports zero rather than flagging every binding on it
-(`local-development/gsd/store.py#Store._FINDING_CASE`).
+RBAC. For a Group subject the classification also requires at least one *managed* Group binding to
+exist on that cluster, labelled by something other than this chart, so a cluster that has never used
+config-source labels reports no Group finding rather than flagging every binding on it (#354); a
+ServiceAccount or User grant needs no such evidence — nothing silences it but the label or the
+annotation on its own binding (`local-development/gsd/store.py#Store._FINDING_CASE`).
 ```
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
@@ -1860,9 +2047,11 @@ subject is a group, a ServiceAccount or a user, and silence the legitimate ones 
 to exclude. Exclusion is never inferred: the operator puts the config-source label (or the exception
 annotation) on a grant they have decided is legitimate, and only that silences it — nothing about
 how a grant was applied (a `system:` name, a platform namespace, a Helm, OLM or Argo CD label)
-excludes it. A Group subject is a finding only when its group is operator-synced (the three
-resolution tiers below are Group tiers); a ServiceAccount or User subject, which has no Group object
-to resolve, is a finding whenever its binding carries no label and no exception. A ServiceAccount
+excludes it. A Group subject is a finding only when its group is operator-synced and the cluster
+uses the policy operator (the three resolution tiers below are Group tiers, and so is the gate of I2);
+a ServiceAccount or User subject, which has no Group object to resolve, is a finding whenever its
+binding carries no label and no exception, on every host, with no other labelled binding required —
+the operator's rule allows no default that silences a grant. A ServiceAccount
 subject is stored under the namespace RBAC matches it in — its own, or the RoleBinding's when it
 omits one, as the authorizer reads it.
 ```
@@ -1882,12 +2071,13 @@ read, so the log and the UI cannot disagree about what a finding is. Tests:
 ```markdown
 **I2 — Finding set.** Unchanged in substance, renamed from "Target set" because nothing is
 targeted now. A (binding, subject) row is a finding only if the binding carries no `config-source`
-label, the binding carries no exception annotation, the cluster demonstrably uses the policy
-system — some managed binding exists, of any subject kind, labelled by something other than this
-chart, so a cluster that has never heard of `config-source` labels reports zero findings rather
-than sixty — and, for a Group subject, its group resolves and is operator-synced; a ServiceAccount
-or User subject has no group to resolve and is a finding on the first three conditions alone
-(#353). All the conditions are one SQL `CASE` (`store.py#_FINDING_CASE`), which is also what the
+label and no exception annotation and — for a Group subject — its group resolves and is
+operator-synced and the cluster demonstrably uses the policy operator: some other Group-subject
+binding labelled by something other than this chart, so a cluster that has never heard of
+`config-source` labels reports no Group finding rather than sixty (#354, unchanged). A ServiceAccount
+or User subject has no group to resolve and no gate — the operator's rule allows no default that
+silences a grant — so it is a finding on the first two conditions alone (#353). All the conditions
+are one SQL `CASE` (`store.py#_FINDING_CASE`), which is also what the
 API, the counts and the reports read, so the log and the UI cannot disagree about what a finding
 is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_stamped`,
 `test_rbac.py#TestUnmanagedFinding` and `local-development/tests/test_unmanaged_subjects.py`.
@@ -1899,7 +2089,7 @@ is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_sta
 | `ok` | everything else |
 ```
 ```markdown
-| `unmanaged` | no policy system manages this binding and no human has annotated an exception — for a Group subject, one that resolves and is synced; for a ServiceAccount or User subject, always (#353) |
+| `unmanaged` | no policy system manages this binding and no human has annotated an exception — for a Group subject, one that resolves and is synced, on a cluster whose Group bindings show the policy operator in use; for a ServiceAccount or User subject, always, on every host (#353) |
 | `ok` | everything else |
 ```
 
@@ -1910,12 +2100,13 @@ is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_sta
 that has never heard of `config-source` labels would flag.
 ```
 ```markdown
-`unmanaged` additionally requires that the cluster demonstrably *uses* the policy system —
-`EXISTS (… managed_source IS NOT NULL …)`, some labelled binding of any subject kind other than
-this chart's own. Without that clause, every binding on a cluster that has never heard of
-`config-source` labels would flag. The three tiers above it are Group tiers: a ServiceAccount or
-User subject has no Group object to resolve, so its row is `unmanaged` or `ok` and nothing about
-its name or namespace excludes it (`docs/specs/SPEC_U1_unmanaged_subjects.md`).
+For a Group subject, `unmanaged` additionally requires that the cluster demonstrably *uses* the
+policy operator — `EXISTS (… managed_source IS NOT NULL …)` over Group-subject bindings other than
+this chart's own (#354). Without that clause, every Group binding on a cluster that has never heard
+of `config-source` labels would flag. A ServiceAccount or User subject has no such gate: nothing
+silences it but the label or the annotation on its own binding. The three tiers above it are Group
+tiers too: an account or a person has no Group object to resolve, so its row is `unmanaged` or `ok`
+and nothing about its name or namespace excludes it (`docs/specs/SPEC_U1_unmanaged_subjects.md`).
 ```
 
 <!-- block: local-development/API.md | edit -->
@@ -1993,7 +2184,7 @@ which is how the authorizer reads it — and `""` for the other kinds. `member_c
 | `unmanaged` | the group IS operator-synced, but no policy CR templates this binding — somebody granted access by hand | no |
 ```
 ```markdown
-| `unmanaged` | no policy system labels this binding and no exception is annotated — for a Group subject, one that IS operator-synced; for a ServiceAccount or User subject, always — somebody granted access by hand | no |
+| `unmanaged` | no policy system labels this binding and no exception is annotated — for a Group subject, one that IS operator-synced, on a cluster where some other Group binding carries a policy label (#354); for a ServiceAccount or User subject, always, on every host — somebody granted access by hand | no |
 ```
 
 <!-- block: local-development/API.md | edit -->
@@ -2030,7 +2221,7 @@ oc annotate clusterrolebinding <name> \
 <!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 ```markdown
 
-- **The unmanaged finding reads ServiceAccount and User subjects, silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` and some binding on the cluster is labelled by something other than this chart. Nothing about how a grant was applied excludes it: not a `system:` name, a platform namespace or a Helm, OLM or Argo CD label; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant is a finding from the first refresh** — 713 on the lab, listed 20 per cycle and counted in full on the summary line, the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}`, which is now pre-seeded at 0 like the other tiers. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
+- **The unmanaged finding reads ServiceAccount and User subjects, silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, because the operator's rule allows no default that silences a grant; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing about how a grant was applied excludes it: not a `system:` name, a platform namespace or a Helm, OLM or Argo CD label; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant is a finding from the first refresh** — 703 subject rows on 689 bindings on the lab: the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
 ```
 
 <!-- block: local-development/tests/test_rbac.py | edit -->
@@ -2296,6 +2487,38 @@ class TestParsing:
         self._open(dash)
 ```
 
+<!-- block: local-development/tests/test_ui.py | edit -->
+```python
+    def _open(self, dash):
+        dash.click('button.tab:text-is("RBAC policy")')
+        dash.wait_for_selector("h2:text-is('RBAC policy')")
+```
+```python
+    def _open(self, dash):
+        dash.click('button.tab:text-is("RBAC policy")')
+        dash.wait_for_selector("h2:text-is('RBAC policy')")
+
+    def test_the_findings_render_when_the_policy_operator_is_absent(self, dash):
+        """SPEC_U1: a host with no namespace-configuration-operator still has findings — a ServiceAccount or
+        User grant is a finding by the label alone — so the "not installed" card is a card beside them, not
+        a return before them. Before, the page returned that card alone: 703 findings on the lab would have
+        vanished behind it (Codex, review of SPEC_U1)."""
+        self._open(dash)
+        # The tab paints first and fetches after: the findings and the operator card land with the fetch.
+        dash.wait_for_selector("h3:has-text('Policy operator')")
+        dash.wait_for_function("() => data.findings && data.findings.counts")
+        errors = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        dash.evaluate("""() => { data.operatorConfigs = { present: false, configs: [] };
+            data.findings = Object.assign({}, data.findings,
+                { counts: Object.assign({}, data.findings.counts, { unmanaged: 713 }) }); render(); }""")
+        assert dash.locator("#main .hero .value").first.inner_text().strip() == "713"
+        body = " ".join(dash.locator("#main").inner_text().split())
+        assert "is not installed on" in body, body
+        assert dash.locator("section.card:has(h2:has-text('Grants outside')) tbody tr").count() == 1
+        assert errors == [], errors
+```
+
 <!-- block: local-development/tests/test_unmanaged_subjects.py | create -->
 ```python
 """The unmanaged finding on ServiceAccount and User subjects (#353, docs/specs/SPEC_U1_unmanaged_subjects.md).
@@ -2423,27 +2646,35 @@ class TestClassification:
                                        group("virtual", subject="system:authenticated")], T)
         assert findings(store) == {"managed": "ok", "scheduler": "unmanaged", "virtual": "built_in"}
 
-    def test_the_charts_own_label_silences_its_accounts_without_opening_the_gate(self, store):
-        """#354 carried over: the chart labels its seven ServiceAccount bindings; on a host with no
-        policy system nothing is reported, and one policy label switches the finding on."""
+    def test_the_charts_own_label_silences_only_its_own_accounts(self, store):
+        """#354 carried over for the Group arm: the chart labels its seven ServiceAccount bindings, and
+        on a host with no policy operator a hand-made GROUP grant is not reported until one policy label
+        exists. A hand-made account is reported regardless: the new kinds have no gate (Codex, review of
+        SPEC_U1 — a gate silenced them by default, which the operator's rule forbids)."""
         _synced(store, SYNCED)
         chart = [sa(f"chart-{i}", account="group-sync-dashboard", namespace="group-sync-dashboard",
                     managed_source=CHART_CONFIG_SOURCE) for i in range(2)]
         store.replace_bindings("crc", chart + [sa("hand-made-sa"), group("hand-made")], T)
-        assert findings(store) == {"chart-0": "ok", "chart-1": "ok", "hand-made-sa": "ok", "hand-made": "ok"}
+        assert findings(store) == {"chart-0": "ok", "chart-1": "ok", "hand-made-sa": "unmanaged", "hand-made": "ok"}
         store.replace_bindings("crc", chart + [sa("hand-made-sa"), group("hand-made"),
                                                group("managed", managed_source="prod-rbac")], T)
         assert findings(store) == {"chart-0": "ok", "chart-1": "ok", "hand-made-sa": "unmanaged",
                                    "hand-made": "unmanaged", "managed": "ok"}
 
-    def test_the_operators_label_on_one_account_opens_the_gate_for_every_kind(self, store):
-        """One gate per cluster (SPEC_U1): the operator's first label is the policy system for a
-        host that has no policy operator, and every unlabelled grant of every kind reports."""
+    def test_an_unlabelled_account_is_a_finding_with_no_label_anywhere_on_the_cluster(self, store):
+        """No gate for the new kinds: on a host with no label at all, the accounts and the person report;
+        the Group grant does not, as #354 left it."""
+        _synced(store, SYNCED)
+        store.replace_bindings("crc", [sa("hand-made-sa"), user("hand-made-user"), group("hand-made")], T)
+        assert findings(store) == {"hand-made-sa": "unmanaged", "hand-made-user": "unmanaged", "hand-made": "ok"}
+
+    def test_a_labelled_account_does_not_open_the_group_gate(self, store):
+        """The Group arm's gate reads Group rows only, so it is byte for byte #354's: the operator's label
+        on an account silences that account and changes nothing for a hand-made Group grant."""
         _synced(store, SYNCED)
         store.replace_bindings("crc", [sa("decided", managed_source="platform-team"),
-                                       sa("hand-made-sa"), user("hand-made-user"), group("hand-made")], T)
-        assert findings(store) == {"decided": "ok", "hand-made-sa": "unmanaged",
-                                   "hand-made-user": "unmanaged", "hand-made": "unmanaged"}
+                                       sa("hand-made-sa"), group("hand-made")], T)
+        assert findings(store) == {"decided": "ok", "hand-made-sa": "unmanaged", "hand-made": "ok"}
 
     def test_an_account_named_like_a_synced_group_borrows_nothing_from_it(self, store):
         """The joins to the Group object, its sync record and its members are Group-only: the
@@ -2558,6 +2789,39 @@ class TestMigration20:
                     rows[0]["managed_source"], rows[0]["audit_stamped"]) == ("Group", "", "app-ocp-rbac-team-ns-audit", "prod-rbac", 1)
             assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 20
             assert [r[1] for r in store._conn.execute("PRAGMA index_list(rbac_group_binding)")].count("rbac_binding_by_group") == 1
+        finally:
+            store.close()
+
+    def test_a_v20_table_left_populated_still_opens(self, tmp_path):
+        """The replay converges from a populated rbac_group_binding_v20 beside the old table (Grok,
+        review of SPEC_U1). A crash cannot produce that state — the copy, the drop and the rename ride
+        one implicit transaction — but a hand repair can, and without OR IGNORE the replay raised
+        IntegrityError, which _migrate does not tolerate, so the pod could not open its database."""
+        db = str(tmp_path / "repaired.db")
+        _v19_database(db)
+        conn = sqlite3.connect(db)
+        conn.executescript("""
+            CREATE TABLE rbac_group_binding_v20 (
+                cluster_id TEXT NOT NULL, binding_kind TEXT NOT NULL, binding_namespace TEXT NOT NULL,
+                binding_name TEXT NOT NULL, role_kind TEXT NOT NULL, role_name TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'Group', subject_namespace TEXT NOT NULL DEFAULT '',
+                group_name TEXT NOT NULL, observed_at TEXT NOT NULL, managed_source TEXT, exception TEXT,
+                audit_stamped INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(cluster_id, binding_kind, binding_namespace, binding_name,
+                            subject_kind, subject_namespace, group_name));
+            INSERT INTO rbac_group_binding_v20
+                SELECT cluster_id, binding_kind, binding_namespace, binding_name, role_kind, role_name,
+                       'Group', '', group_name, observed_at, managed_source, exception, audit_stamped
+                  FROM rbac_group_binding;
+        """)
+        conn.commit(); conn.close()
+        store = Store(db)
+        try:
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 20
+            rows = store.all_bindings("crc")
+            assert len(rows) == 1
+            assert (rows[0]["group_name"], rows[0]["managed_source"], rows[0]["audit_stamped"]) == (
+                "app-ocp-rbac-team-ns-audit", "prod-rbac", 1)
         finally:
             store.close()
 
@@ -2686,7 +2950,8 @@ class TestReports:
         assert snap.findings_counts("crc") == {"ok": 1, "unmanaged": 2}
         assert snap.counts("crc")["group_bindings"] == 1
 
-    def test_the_binding_findings_report_names_the_account(self, snap):
+    @staticmethod
+    def _build(snap, name):
         from gsd.reporting.catalogue import REGISTRY, RunContext, validate_params
         from gsd.reporting.config import ReportSettings
         from datetime import UTC, datetime
@@ -2699,11 +2964,114 @@ class TestReports:
         ctx = RunContext(settings=settings, cluster=snap.cluster("crc"), now=now, run_id="20260924T200000.000000Z-ab12",
                          generated_by="root", generated_by_note="proxy-verified", snapshot_stamp=info.stamp,
                          snapshot_age_seconds=info.age_seconds(now), schema_version=info.schema_version)
-        spec, build = REGISTRY["binding-findings"]
-        built = build(snap, ctx, validate_params(spec, {}))
+        spec, build = REGISTRY[name]
+        return build(snap, ctx, validate_params(spec, {}))
+
+    def test_the_binding_findings_report_names_the_account(self, snap):
+        built = self._build(snap, "binding-findings")
         unmanaged = next(b for s in built.sections if s.title == "Unmanaged bindings" for b in s.blocks)
         assert unmanaged.columns[0] == "subject"
         subjects = sorted(r[0] for r in unmanaged.rows)
         assert subjects == ["ServiceAccount group-sync-operator/shared-qa-poller", "user system:kube-scheduler"]
         assert built.totals["unmanaged"] == 2
+
+    def test_the_compliance_snapshot_names_its_two_populations(self, snap):
+        """The group figure counts Group subjects; the Unmanaged figure counts every kind (Grok, review
+        of SPEC_U1): 1 beside 2 on this seed, which read as two of one binding under the old labels."""
+        built = self._build(snap, "compliance-snapshot")
+        rbac = next(b for s in built.sections if s.title == "Key figures" for b in s.blocks if getattr(b, "title", None) == "RBAC")
+        figures = dict(rbac.items)
+        assert figures["Group bindings (Group subjects)"] == 1
+        assert figures["Unmanaged (every subject kind)"] == 2
+        # The every-kind total the Unmanaged figure is a part of (OB1-lite): 3 here, not the 1 Group binding.
+        assert figures["Bindings (every subject kind)"] == 3
+        assert figures["Unmanaged (every subject kind)"] <= figures["Bindings (every subject kind)"]
+        assert "Platform identity grants (excluded from the direct-user figures)" in figures
+        assert "Group bindings" not in figures and "Unmanaged" not in figures
+
+
+class TestDuplicateSubjects:
+    def test_a_subject_named_twice_on_one_binding_is_one_row(self):
+        """OLM writes some RoleBindings with the same ServiceAccount twice (10 on the lab, e.g.
+        metallb-system/metallb-operator.v4.22.0-202609151747 naming four accounts twice). The authorizer
+        grants it once and the store's primary key keeps one row, so the reader must yield one — or the
+        refresh line counts 925 subjects while the store holds 915 (OB1-lite, review of SPEC_U1)."""
+        obj = {"metadata": {"name": "op.v1", "namespace": "alpha"},
+               "roleRef": {"kind": "Role", "name": "op.v1"},
+               "subjects": [{"kind": "ServiceAccount", "name": "controller"},
+                            {"kind": "ServiceAccount", "name": "controller"},
+                            {"kind": "ServiceAccount", "name": "controller", "namespace": "alpha"},
+                            {"kind": "Group", "name": "g"}, {"kind": "Group", "name": "g"}]}
+        rows = _binding_views(obj, "RoleBinding")
+        assert [(r.subject_kind, r.subject_namespace, r.group_name) for r in rows] == [
+            ("ServiceAccount", "alpha", "controller"), ("Group", "", "g")]
+
+
+class TestSeverityFirstPage:
+    def test_a_page_of_findings_holds_the_review_tiers_before_the_rest(self, store):
+        """all_bindings(limit=…) is the page the Access granted and RBAC policy tabs render. Ordered by
+        subject name alone, 500 unmanaged ServiceAccount rows named `aa…` pushed a dangling group named
+        `zz…` off the page; severity first keeps every review item ahead of ok and built-in."""
+        store.record_managed_groups("crc", [{"name": "zz-was-synced", "sync_provider": "ldap"},
+                                            {"name": SYNCED, "sync_provider": "ldap"}], T)
+        store.replace_group_state("crc", [{"name": SYNCED, "member_count": 1, "sync_provider": "ldap",
+                                           "group_synced_at": None, "ldap_uid": None}], T)
+        rows = [group("managed", managed_source="prod-rbac"), group("gone", subject="zz-was-synced")]
+        rows += [sa(f"sa-{i}", account=f"aa-{i:03d}", namespace="ns") for i in range(3)]
+        store.replace_bindings("crc", rows, T)
+        page = [r["finding"] for r in store.all_bindings("crc", limit=2, offset=0)]
+        assert page == ["dangling", "unmanaged"], page
+        assert [r["finding"] for r in store.all_bindings("crc")] == ["dangling", "unmanaged", "unmanaged", "unmanaged", "ok"]
+
+
+class TestAnOlderCopyInTheRollingWindow:
+    def test_a_copy_written_before_migration_20_is_read_as_group_rows(self, tmp_path):
+        """The report service accepts an OLDER copy by design (only a newer one is refused): while the
+        pods roll, the newest snapshot on the volume is the 0.32.0 dashboard's, schema 19, until the new
+        dashboard writes one. Every binding read now names subject_kind; against that copy each one raised
+        "no such column: b.subject_kind" — a 500 on preview, a failed run — instead of reading the Group
+        rows the copy holds (OB1-lite, review of SPEC_U1)."""
+        from gsd.reporting.snapshot import Snapshot
+        store = Store(str(tmp_path / "live.db"))
+        store.upsert_cluster("crc", "https://x", True)
+        _synced(store, SYNCED)
+        store.replace_bindings("crc", [group("managed", managed_source="prod-rbac"), group("hand-made")], T)
+        d = tmp_path / "snapshots"; d.mkdir()
+        path = store.snapshot(str(d), keep=2)
+        store.close()
+        # The copy as release 0.32.0 wrote it: migration 20's one change undone, user_version 19.
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+            CREATE TABLE old AS SELECT cluster_id, binding_kind, binding_namespace, binding_name, role_kind,
+                                       role_name, group_name, observed_at, managed_source, exception, audit_stamped
+                                  FROM rbac_group_binding;
+            DROP TABLE rbac_group_binding;
+            ALTER TABLE old RENAME TO rbac_group_binding;
+            PRAGMA user_version = 19;""")
+        conn.commit(); conn.close()
+        with Snapshot(Path(path)) as s:
+            assert s.schema_version == 19
+            assert s.findings_counts("crc") == {"ok": 1, "unmanaged": 1}
+            assert s.counts("crc")["group_bindings"] == 2
+            rows = s.group_bindings("crc", kinds=SUBJECT_KINDS)
+            assert {(r["binding_name"], r["subject_kind"], r["subject_namespace"]) for r in rows} == {
+                ("managed", "Group", ""), ("hand-made", "Group", "")}
+            assert {g["name"]: g["bindings"] for g in s.groups("crc")} == {SYNCED: 2}
+
+
+class TestRolePicker:
+    def test_a_role_bound_only_to_an_account_is_not_offered(self, tmp_path):
+        """The report form's role picker (privileged-access `roles`) matches Group rows and direct user
+        grants only. Reading every subject kind offered roles no report that takes the list can match —
+        on the lab 356 distinct roles where 66 can (OB1-lite, review of SPEC_U1)."""
+        from gsd.reporting.snapshot import Snapshot
+        store = Store(str(tmp_path / "w.db"))
+        store.upsert_cluster("crc", "https://x", True)
+        store.replace_bindings("crc", [group("team-admin"),
+                                       sa("scc", account="builder", namespace="ci") | {"role_name": "system:openshift:scc:privileged"}], T)
+        d = tmp_path / "snapshots"; d.mkdir()
+        path = store.snapshot(str(d), keep=2)
+        store.close()
+        with Snapshot(Path(path)) as s:
+            assert s.discovered("crc", "", "")["roles"]["values"] == ["admin"]
 ```
