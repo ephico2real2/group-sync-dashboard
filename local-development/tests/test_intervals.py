@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
 import yaml
 
-from gsd.config import ClusterConfig, Settings, load_settings
+from gsd.config import ClusterConfig, ConfigError, Settings, load_settings
 from gsd.poller import Poller
 from gsd.store import Store
 from test_chart_strategy import CHART
@@ -63,3 +64,18 @@ def test_the_chart_renders_both_keys_into_the_configmap(tmp_path):
         assert done.returncode == 0, done.stderr
         config = yaml.safe_load(yaml.safe_load(done.stdout)["data"]["clusters.yaml"])
         assert (config["bindingIntervalSeconds"], config["discoveryIntervalSeconds"]) == expected
+
+
+def test_a_discovery_interval_below_one_is_refused_by_the_loader(tmp_path):
+    """0 is Event.wait(0): a busy loop of host LISTs and a zero lookup backoff (review of #368, Grok C6)."""
+    for value in ("0", "-1"):
+        with pytest.raises(ConfigError, match="discoveryIntervalSeconds must be at least 1"):
+            _load(tmp_path, f"discoveryIntervalSeconds: {value}\n")
+    assert _load(tmp_path, "discoveryIntervalSeconds: 1\n").discovery_interval_seconds == 1
+
+
+def test_the_chart_refuses_a_discovery_interval_below_one():
+    done = subprocess.run(["helm", "template", "t", str(CHART), "--show-only", "templates/configmap.yaml",
+                           "--set", "ingress.host=t.example.com", "--set", "config.discoveryIntervalSeconds=0"],
+                          capture_output=True, text=True)
+    assert done.returncode != 0 and "discoveryIntervalSeconds must be at least 1" in done.stderr

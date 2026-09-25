@@ -1158,7 +1158,7 @@ reporting:
 
   # The read-only copy for the report pod: how often the dashboard's leader writes it under
   # /data/report and how many to keep (the newest is read; the previous covers the moment a new
-  # one is being written). 300 = the binding cadence. Below 60 refuses the render: a VACUUM INTO
+  # one is being written). 300s, its own timer. Below 60 refuses the render: a VACUUM INTO
   # holds a read transaction for its duration (3.2 s measured on a 61 MB, 520k-row store).
   snapshot:
     intervalSeconds: 300
@@ -1438,7 +1438,7 @@ platformNamespaces:
 # Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
 # is a cluster — `name` (the id the dashboard shows), `server`, `config` (JSON: bearerToken or
 # oauth{username,password}; tlsClientConfig{caData,insecure}), and the D2 options `visibility`,
-# `identity`, `enabled`. The dashboard LISTs them by that label on the binding cadence and polls
+# `identity`, `enabled`. The dashboard LISTs them by that label on discoveryIntervalSeconds and polls
 # each like a `clusters[]` entry; written by hand, by the Cluster Configurations tab (S2) or by any
 # GitOps process, the app sees the same object. `clusters[]` above stays the bootstrap source and
 # the host is ALWAYS clusters[0]: a Secret naming the host is refused as a finding. A Secret that

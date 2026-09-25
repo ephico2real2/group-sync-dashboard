@@ -10,6 +10,9 @@ data:
     scheduleGraceSeconds: {{ .Values.config.scheduleGraceSeconds }}
     bindingIntervalSeconds: {{ .Values.config.bindingIntervalSeconds }}
     discoveryIntervalSeconds: {{ .Values.config.discoveryIntervalSeconds }}
+    {{- if lt (int .Values.config.discoveryIntervalSeconds) 1 }}
+    {{- fail (printf "config.discoveryIntervalSeconds must be at least 1: at 0 the discovery thread's wait returns at once, a busy loop of LISTs against the host API, and the #284 lookup's retry backoff collapses to 0; got %v" .Values.config.discoveryIntervalSeconds) }}
+    {{- end }}
     sqliteBusyTimeoutMs: {{ .Values.config.sqlite.busyTimeoutMs }}
     sqliteReaderBusyTimeoutMs: {{ .Values.config.sqlite.readerBusyTimeoutMs }}
     sqliteSynchronous: {{ .Values.config.sqlite.synchronous | quote }}
