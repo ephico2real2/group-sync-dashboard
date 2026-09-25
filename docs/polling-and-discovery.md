@@ -8,7 +8,7 @@ the same `clusters:` stanzas as values, with `saTokenLookup: true` and no creden
 The manifest and refusal rules are in `docs/CLUSTER_STANZA.md`.
 
 One complete paged ConfigMap LIST and one complete labelled Secret LIST precede reconciliation on the
-existing binding cadence and at startup. Both use the host client, the release namespace and their
+discovery cadence (`discoveryIntervalSeconds`) and at startup. Both use the host client, the release namespace and their
 own selector. This is polling, not a watch; the read grant retains `get/list/watch` to match the Secret
 feed. A successful lookup wakes ordinary Secret discovery. GitOps additions wait for the cadence plus
 lookup/discovery/poll duration; the earlier measured Secret timings below are not a ConfigMap measurement.
@@ -47,7 +47,8 @@ cluster's data hostage for the length of the timeout.
 | what | cadence | default |
 |---|---|---|
 | Groups and GroupSync CRs | `pollIntervalSeconds` | **60s** |
-| RoleBindings, operator-config health, **and cluster discovery** | `bindingIntervalSeconds` | **300s** |
+| RoleBindings and operator-config health | `bindingIntervalSeconds` | **3600s** (300s before chart 0.56.0) |
+| Cluster discovery and the #284 lookup's retry backoff | `discoveryIntervalSeconds` | **300s** (rode `bindingIntervalSeconds` before chart 0.56.0) |
 
 Bindings are deliberately slower: they are listed across every namespace — roughly 154 paged
 requests at 100× the reference cluster's scale — and they change on administrative action rather
@@ -69,7 +70,7 @@ upgrade and a restart.
 and becomes a cluster. This is the path the Cluster Configurations tab writes, and the path GitOps
 writes.
 
-Discovery itself runs in `gsd/poller.py#Poller._discover_once`, on the binding cadence. It logs only
+Discovery itself runs in `gsd/poller.py#Poller._discover_once`, on its own cadence (`discoveryIntervalSeconds`). It logs only
 on **transitions** — a cluster added, removed, changed, or a finding appearing or clearing — so a
 steady fleet is silent and a standing bad Secret does not flood the log every cycle.
 
@@ -78,7 +79,7 @@ steady fleet is silent and a standing bad Secret does not flood the log every cy
 The discovery loop does not sleep. It **waits on an event**, so the wait can be cut short:
 
 ```python
-self._discover_now.wait(self.settings.binding_interval_seconds)
+self._discover_now.wait(self.settings.discovery_interval_seconds)
 ```
 
 `gsd/poller.py#Poller.request_discovery` sets that event, and its docstring states the rule exactly:
@@ -95,7 +96,7 @@ it says**:
 | how the Secret was written | when it takes effect |
 |---|---|
 | through the API (the tab, or a direct call) | **seconds** — the write wakes discovery |
-| by `oc`, `kubectl`, Argo CD, or any GitOps flow | **up to one binding interval** (300s default) |
+| by `oc`, `kubectl`, Argo CD, or any GitOps flow | **up to one discovery interval** (`discoveryIntervalSeconds`, 300s default) |
 
 ### Measured
 
@@ -114,7 +115,7 @@ and rotating its credential with `oc patch`:
 ```
 
 Both are the documented behaviour, not a defect: neither command goes through the API, so neither
-woke the discovery thread. Both exceed one binding interval because the observed latency is the
+woke the discovery thread. Both exceed one discovery interval (300s; discovery then rode the binding interval) because the observed latency is the
 remainder of the current wait, plus discovery, plus starting the cluster's poll thread, plus its
 first poll.
 

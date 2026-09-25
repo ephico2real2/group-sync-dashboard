@@ -100,7 +100,7 @@ There is now one 403 path left in the client and it names listing
 
 ## What is published
 
-`log` mode emits one line per object plus a summary, on a refresh that runs every 300s
+`log` mode emits one line per object plus a summary, on a refresh that runs every `bindingIntervalSeconds` (3600s by default)
 (`config.py#Settings`), on the lease holder, after the cycle's rows are stored
 (`poller.py#refresh_bindings`). A cycle with nothing to report emits nothing at all: the summary is
 guarded on the plan being non-empty (`poller.py#refresh_bindings`), so a clean cluster is silent rather than
@@ -320,7 +320,7 @@ outranks `unmanaged` in the same `CASE` (`store.py#_FINDING_CASE`), so a vanishe
 manufacture an unmanaged finding. Tested at `test_rbac.py#TestUnmanagedFinding.test_broken_resolution_outranks_provenance`.
 
 **A grant created and removed between refreshes is never reported.** This is a sampler, not a
-watch: the ClusterRole holds no `watch` verb and the interval is 300s. A hand-made binding that
+watch: the ClusterRole holds no `watch` verb and the interval is `bindingIntervalSeconds` (3600s by default). A hand-made binding that
 exists for less than one interval can go unseen. That is accepted: the feature exists to find
 grants that persist, and closing the gap would cost a `watch` verb and a standing connection per
 cluster to catch grants that have already stopped existing before anyone could act on them.
@@ -335,7 +335,7 @@ so the new value is read, since settings load once at process start (`api.py#_fa
 
 What to check on first enabling it, in order. Read the rendered `unmanagedAuditMode`
 (`templates/configmap.yaml#unmanagedAuditMode`) so you know which mode the pod is actually in. Wait one binding
-refresh (300s) and compare the summary line against
+refresh (`bindingIntervalSeconds`) and compare the summary line against
 `GET /api/clusters/{id}/bindings/findings` — remembering that the summary's count excludes
 already-labelled objects and the capped remainder. Confirm each WARNING names a binding you can
 verify is hand-made, then annotate the deliberate ones with

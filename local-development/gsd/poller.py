@@ -1460,7 +1460,7 @@ class Poller:
         after = {c.name for c in clusters}
         # TRANSITIONS, NOT STATES (#245), and the FINDINGS ARE A TRANSITION TOO (review of #247,
         # Grok C2). The first version gated on `or findings` — this cycle's list, not a diff — so a
-        # single standing bad Secret logged a discovery line every binding interval forever, which
+        # single standing bad Secret logged a discovery line every discovery cycle forever, which
         # is precisely the flood this change exists to prevent. The set is compared instead: a
         # finding is announced when it appears and when it clears, and never in between.
         shape = {c.name: _cluster_shape(c) for c in clusters}
@@ -1630,7 +1630,7 @@ class Poller:
         state.attempts += 1
         state.last_code = exc.code
         state.gave_up = state.attempts >= LOOKUP_ATTEMPTS
-        wait = None if state.gave_up else min(self.settings.binding_interval_seconds * (2 ** (state.attempts - 1)), LOOKUP_WAIT_CAP)
+        wait = None if state.gave_up else min(self.settings.discovery_interval_seconds * (2 ** (state.attempts - 1)), LOOKUP_WAIT_CAP)
         state.not_before = now if wait is None else now + wait
         action = exc.action if not state.gave_up else (
             f"gave up after {LOOKUP_ATTEMPTS} attempts: nothing more is tried until the stanza or the fleet credential "
@@ -1640,10 +1640,11 @@ class Poller:
                 gave_up="true" if state.gave_up else None, action=action, detail=exc.detail, secrets=exc.secrets)
 
     def _run_discovery(self) -> None:
-        """The discovery stage on the binding cadence (SPEC_S1 C3), after the synchronous one in start();
-        a write from the tab shortens one wait through `request_discovery()`."""
+        """The discovery stage on its own cadence, `discoveryIntervalSeconds` (SPEC_S1 C3; off the binding
+        cadence since chart 0.56.0), after the synchronous one in start(); a write from the tab shortens
+        one wait through `request_discovery()`."""
         while not self._stop.is_set():
-            self._discover_now.wait(self.settings.binding_interval_seconds)
+            self._discover_now.wait(self.settings.discovery_interval_seconds)
             self._discover_now.clear()
             if self._stop.is_set():
                 return

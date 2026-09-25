@@ -9,6 +9,7 @@ data:
     pollIntervalSeconds: {{ .Values.config.pollIntervalSeconds }}
     scheduleGraceSeconds: {{ .Values.config.scheduleGraceSeconds }}
     bindingIntervalSeconds: {{ .Values.config.bindingIntervalSeconds }}
+    discoveryIntervalSeconds: {{ .Values.config.discoveryIntervalSeconds }}
     sqliteBusyTimeoutMs: {{ .Values.config.sqlite.busyTimeoutMs }}
     sqliteReaderBusyTimeoutMs: {{ .Values.config.sqlite.readerBusyTimeoutMs }}
     sqliteSynchronous: {{ .Values.config.sqlite.synchronous | quote }}

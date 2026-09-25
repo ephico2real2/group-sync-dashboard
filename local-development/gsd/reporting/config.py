@@ -212,7 +212,7 @@ class ReportSettings:
     #: namespaces read are on, and the binding cadence for the freshness line.
     login_capture_enabled: bool = False
     namespaces_read_enabled: bool = False
-    binding_interval_seconds: int = 300
+    binding_interval_seconds: int = 3600
     #: The ordered selector DIMENSIONS the namespace-access report offers (P2, multi-dimension:
     #: company.net/mnemonic AND company.net/app-environment). Empty = no selector. Each must be one of
     #: the captured namespaceMetadata.labels.
@@ -265,7 +265,7 @@ def load_report_settings() -> ReportSettings:
         enabled_reports=enabled,
         login_capture_enabled=_bool_env("GSD_REPORT_LOGIN_CAPTURE_ENABLED", False),
         namespaces_read_enabled=_bool_env("GSD_REPORT_NAMESPACES_READ_ENABLED", False),
-        binding_interval_seconds=_int_env("GSD_REPORT_BINDING_INTERVAL_SECONDS", 300, lo=1, hi=86400),
+        binding_interval_seconds=_int_env("GSD_REPORT_BINDING_INTERVAL_SECONDS", 3600, lo=1, hi=86400),
         namespace_selector_labels=_selector_labels_env(),
         max_queued_runs=_int_env("GSD_REPORT_MAX_QUEUED_RUNS", 8, lo=1, hi=100),
         log_level=os.environ.get("GSD_LOG_LEVEL", "INFO"),

@@ -331,7 +331,7 @@ class TestTheSchedule:
             raise LookupRefused("sa-token-secret-missing", "gone", action="create the token Secret on the target", spent=True)
         monkeypatch.setattr(fleetlookup, "lookup", failing)
         poller = self._poller(tmp_path, monkeypatch)
-        interval = poller.settings.binding_interval_seconds
+        interval = poller.settings.discovery_interval_seconds
         with caplog.at_level(logging.INFO, logger="gsd"):
             waits = []
             for n in range(1, 6):
@@ -387,7 +387,7 @@ class TestTheSchedule:
         poller = self._poller(tmp_path, monkeypatch)
         with caplog.at_level(logging.INFO, logger="gsd"):
             poller._retrieve_pending()                     # the bind: spent, attempt=1/5, gates the target
-            clock[0] += 10 * poller.settings.binding_interval_seconds
+            clock[0] += 10 * poller.settings.discovery_interval_seconds
             poller._retrieve_pending()                     # the gate: free, announced once with gave_up=true
             poller._retrieve_pending(); poller._retrieve_pending()   # silent, still re-reading the password
         lines = [m for m in caplog.messages if m.startswith("fleet-lookup-failed ")]

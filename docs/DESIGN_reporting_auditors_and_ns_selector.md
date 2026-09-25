@@ -66,7 +66,7 @@ The namespace read is a small, deliberately-scoped part of the poll, and it is t
 extends. Measured in `local-development/gsd/poller.py` and `local-development/gsd/kube.py`:
 
 ```
- poll_once(cluster)  [binding cadence: bindingIntervalSeconds, default 300s — NOT the 60s poll]
+ poll_once(cluster)  [binding cadence: bindingIntervalSeconds, default 3600s — NOT the 60s poll]
    └─ if namespaces_read  (chart rbac.namespaces granted get/list on namespaces; optional)
         └─ client.fetch_namespaces()          kube.py  — ONE list call over the namespaces API
              ├─ None      → store.mark_namespaces_unavailable(cluster, now)   (a 403: recorded, not fatal)
@@ -75,7 +75,7 @@ extends. Measured in `local-development/gsd/poller.py` and `local-development/gs
                                                         (FULL replace: DELETE then INSERT the cycle's set)
 ```
 
-- **Cadence and gate.** Namespaces ride the *binding* cadence (300s), not the 60s poll, and only when
+- **Cadence and gate.** Namespaces ride the *binding* cadence (`bindingIntervalSeconds`, 3600s by default), not the 60s poll, and only when
   the chart granted `namespaces [get,list]` (`rbac.namespaces` → `namespacesReadEnabled`). The grant is
   optional; a 403 is *recorded* (`mark_namespaces_unavailable`) so a report's coverage block can say why
   absence is not attested, and never fails the poll.
