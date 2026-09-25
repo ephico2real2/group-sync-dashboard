@@ -1028,7 +1028,7 @@ returns 19). No row points `shared-qa` at the in-cluster API. By the operator's 
 dashboard controller's own endpoint, used with the CA mounted into its pod, never a remote's; the parser enforces only
 part of that rule: it refuses a Secret whose `server` is exactly `https://kubernetes.default.svc` or whose `name` is the
 host's (`host-cluster-not-from-secret`, measured by the first walk: the cluster was retired until the next change), and
-other spellings are not refused (the open finding in the notes). The dead-URL row shows a URL change taking effect with
+other spellings are not refused (closed as not a gap; see the notes). The dead-URL row shows a URL change taking effect with
 no restart.
 Restore — the saved
 `resourceVersion` is stale by then and is stripped; `oc replace` of an object without one reads the live one and sends
@@ -1330,8 +1330,9 @@ poller uses this one every cycle.
   in-cluster row asked for a URL the reader refuses by design, so it is removed — an in-cluster name is the
   controller's endpoint, never a remote's (the operator). Step 3 also found that `release-crc.sh`'s Helm handover was
   refused once the chart version moved; #343 fixed it. Step 11 is added: once the expired case is shown, `shared-qa`
-  is rejoined with a long-lived token (the operator). Open for the operator: the host guard refuses only the exact
-  string `https://kubernetes.default.svc`, so other spellings of the in-cluster endpoint pass it.
+  is rejoined with a long-lived token (the operator). The host guard refuses only the exact string
+  `https://kubernetes.default.svc`, so other spellings of the in-cluster endpoint pass it. Examined after the walk
+  (2026-09-24) and closed as not a gap: a Secret never names the pod's token or CA file (`local-development/gsd/clusterconfig/parser.py` sets neither), so whatever URL it gives, the cluster is read with the Secret's own credential. Another spelling only lists the host again under that credential, as `shared-rnd` does on purpose.
 
 ## 7. Implementation blocks
 

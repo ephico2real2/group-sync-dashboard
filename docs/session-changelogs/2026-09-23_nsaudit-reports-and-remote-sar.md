@@ -4,20 +4,20 @@ What this session did, when, and how each claim was measured. Times are git auth
 merge time is its squash commit's on main. Every "measured" claim is one the session ran a command for; nothing below
 is recalled from memory alone. Numbers are quoted as a PR body, a commit message, a review record or a report states
 them, and each says where it comes from; where a PR's review decisions are written nowhere in the repository, the
-entry says so. The session began at 04:11 on 2026-09-23; this log runs to #338's close at 08:52 on 2026-09-24 and the
-cleanup after it. The product changelog (`docs/CHANGELOG.md`) says what each release changed for an operator; this
+entry says so. The session began at 04:11 on 2026-09-23; this log runs to the evening of 2026-09-24: #338's close
+at 08:52, the cleanup, and Part 7. The product changelog (`docs/CHANGELOG.md`) says what each release changed for an operator; this
 says what a working session did. The review decisions of #336–#345 are itemised in
 `docs/REVIEW_remote_sar_for_every_join.md`; Part 6 cites it rather than repeating every line.
 
-Outcome in one line: **twenty-three pull requests merged. Login capture reads the audit log by default. #261's Namespace audit parts 2 and 3 shipped, and the issue closed. The 2026-09-23 release was deployed through Argo CD and walked (84/84 steps, 15/15 release checks), and its one defect was fixed (#332). The operator's mandate was built end to end: SPEC_D2b was reviewed on six heads and merged with 221 blocks (#339), implemented from those blocks alone as application 0.32.0 and chart 0.53.0 (#342), and walked on the lab (Steps 0–11, then the e2e walk at 84/84). #338 closed with its evidence.**
+Outcome in one line: **twenty-eight pull requests merged. Login capture reads the audit log by default. #261's Namespace audit parts 2 and 3 shipped, and the issue closed. The 2026-09-23 release was deployed through Argo CD and walked (84/84 steps, 15/15 release checks), and its one defect was fixed (#332). The operator's mandate was built end to end: SPEC_D2b was reviewed on six heads and merged with 221 blocks (#339), implemented from those blocks alone as application 0.32.0 and chart 0.53.0 (#342), and walked on the lab (Steps 0–11, then the e2e walk at 84/84). #338 closed with its evidence. In the evening, #312, #346 and #347 were fixed (#350, #352, #354) and proved on the lab, and the specs and design indexes were brought to the evidence (#351).**
 
 | | Before the session | After |
 |---|---|---|
-| main | `cb64f81` (#307 merged, 2026-09-22 17:28) | `43befa4` (#345 merged, 2026-09-24 08:50): 23 PRs merged, one squash commit each; the tag `checkpoint-2026-09-23` is on `7c0a42c` |
-| chart / app | 0.51.0 / 0.31.0 | **0.53.0 / 0.32.0**: 0.52.0 from #320, 0.52.1 from #317, and 0.53.0 / 0.32.0 from #342 (Unreleased) |
-| deployed on the lab | not recorded in the repository | `8e50ff8eec` through `release-crc.sh --argocd`, Synced/Healthy and verified in-pod. Its code equals main's: the later commits change only the README, the screenshots, the spec's §5 and notes, and reports |
-| open PRs | #309, #313, #317, #320 | none (`gh pr list --state open` is empty) |
-| issues | #261 open (part 1 shipped in #264; parts 2–4 not built), #318 open | closed: #261, #318, #332 and #338. Opened: #321, #322, #332, #338, #340, #341, #346, #347 and #348. #341 is deferred |
+| main | `cb64f81` (#307 merged, 2026-09-22 17:28) | `b647db4` (#354 merged, 2026-09-24 20:00): 28 PRs merged, 27 as one squash commit each and #354 as a merge commit; the tag `checkpoint-2026-09-23` is on `7c0a42c` |
+| chart / app | 0.51.0 / 0.31.0 | **0.53.1 / 0.32.0**: 0.52.0 from #320, 0.52.1 from #317, 0.53.0 / 0.32.0 from #342, and 0.53.1 from #350 (Unreleased) |
+| deployed on the lab | not recorded in the repository | `4f4c070b08` through `release-crc.sh --argocd`, Synced/Healthy and verified in-pod; #354 is not deployed |
+| open PRs | #309, #313, #317, #320 | none once this log's PR merges |
+| issues | #261 open (part 1 shipped in #264; parts 2–4 not built), #318 open | closed: #261, #318, #332, #338, #346, #347 and #348. Opened: #321, #322, #332, #338, #340, #341, #346, #347, #348 and #353. #341 is deferred; #312 and #353 are handed to OB1 |
 
 ---
 
@@ -529,7 +529,7 @@ The operator: *"This was an intentional set to expires because we didnt use the 
   operator: *"`https://kubernetes.default.svc.cluster.local` - this is only connecting internally using the mounted
   ca into the pod for dashboard controller only."*
 - **Open, for the operator:** the host guard refuses only the exact string, so other spellings of the in-cluster
-  endpoint pass it.
+  endpoint pass it. Closed in Part 7 as not a gap.
 
 **Step 8, the hold:** two joins lacking `create subjectaccessreviews` and `list groups`, three readers for two
 minutes. The result: **4 warnings per cluster, one per 30 s**, against a budget of 7 per cluster, and the metric's
@@ -634,17 +634,112 @@ The orchestrator's summary, with what was measured for this log:
 
 ---
 
+## Part 7 — this log merged; #312, #346, #347 and the indexes (2026-09-24 11:55 → 19:30)
+
+### This log, the review record and the handover (11:55) — commits `a4c2f75`, `83872bf`, merged as `2f1aa21`, PR #349
+
+- Grok 4.6 reviewed `a4c2f75`: C1 and C3 **CONFIRMED**; C2 **accepted on the attribution, refuted on the numbers**.
+  Every count now names its source, applied in `83872bf` (the PR's review comment).
+
+### The host guard's other spellings — not a gap
+
+- The walk had left one question open: the parser refuses only the exact string `https://kubernetes.default.svc`.
+  The operator asked why that mattered. Re-read, the string has no power of its own. A cluster that a Secret
+  declares always connects with its own token and CA, whatever URL it names. Another spelling of the in-cluster
+  address only lists the host a second time, read with that Secret's token, as `shared-rnd` already does on purpose.
+  **Closed with no change**. The walk record says so.
+
+### #312 — the chart's own RBAC names the chart (18:16 → 18:26) — commit `47e9b73`, merged as `b04e85f`, PR #350
+
+- The operator asked for the provenance metadata the design already defines. The chart set
+  `rbac.ocp.io/config-source` on no template, so its own auditor binding was reported as a hand-made grant.
+- The fix is a `gsd.rbacLabels` helper, used by all 19 RBAC documents in the chart's seven RBAC templates.
+- **Research:** the dashboard counts any value as managed, and the namespace-configuration-operator never selects
+  on the label, so nothing cleans the chart's value up.
+- **Measured** (the PR body):
+  - The new test failed 3 on main's chart and passed 4 on the PR.
+  - Chart, version and citation tests: **1453 passed, 15 skipped**.
+- Grok 4.6: C1–C5 **CONFIRMED**. Chart 0.53.1. CI 8/8 (`gh pr checks`).
+
+### The specs and design indexes (18:31 → 18:51) — commits `cbd18b9`, `7739e07`, merged as `575befc`, PR #351
+
+- The plan was reviewed by Grok 4.6 before any edit, and its named changes were all applied.
+- The lifecycle is now defined per spec. Six specs moved to `merged` and two to `in progress`.
+  `prepare-release.py` moves `merged` to `released` when a release is cut, and a test holds every status to the
+  four words.
+- The design index tags its two shipped mocks **Implemented**, and its duplicate rows are gone.
+- Grok's confirmation pass: C1–C4 **CONFIRMED**, and C4's two points were **accepted** in `7739e07`.
+- **Measured** (the PR body): the four new tests fail on main. **1115 passed, 12 skipped**. CI 8/8.
+
+### #346 and #347 (18:41 → 19:13) — commits `ea2b7b2`, `ce3d8e2`, merged as `4f4c070`, PR #352
+
+- **#346:** the Logins page takes its wording from one `LOGIN_SOURCE_TEXT` table, keyed on the API's `source`.
+  Under the audit log it no longer says history "dies with its pod".
+- **#347:** `/api/clusters` gains `unmanaged_bindings`. One `bindingsToReview` helper counts it on the Overview, the
+  Access granted tiles and the KPI page.
+- **Grok 4.6's review of `ea2b7b2`:**
+  - C1 and C2 **REFUTED**, both **accepted**: three more pod-log assumptions, and a stalled note that overstated
+    recovery past `retentionDays`.
+  - C3 **accepted on the fact, one snippet rejected**: its KPI line would have added the fleet-wide unmanaged sum into
+    the per-cluster bindings sum.
+  - All applied in `ce3d8e2`.
+- **Measured** (the PR's review comment):
+  - Non-browser **4948 passed, 20 skipped**; browser **600 passed**.
+  - Four new UI tests fail on `ea2b7b2`. CI 8/8.
+
+### Deployed and proved on the lab (19:15 → 19:30)
+
+- `4f4c070` was deployed with `release-crc.sh --argocd`. Synced/Healthy, `4f4c070b08` verified in-pod, and the PVCs
+  identical to the baseline.
+- **#312, measured:**
+  - The auditor binding carries `config-source=group-sync-dashboard`.
+  - `oc auth can-i` answers yes for an auditor-group member and no for its negative control.
+  - The new pod logged 0 UNMANAGED warnings for it, and every cluster reports 0 unmanaged grants.
+- **#312's last item, the ServiceAccount question:** the orchestrator first settled it as Group-only on best
+  practice, reading 661 of the lab's 668 ServiceAccount-subject bindings with no label as noise. **The operator
+  refuted it:** the goal is to find hand-made grants on groups, ServiceAccounts or users, and *"The exclusion is not
+  automatic … We are going to decide who to exclude"*, *"Using that label. We just need capabilities"*: the operator
+  labels the RoleBinding or ClusterRoleBinding. **Retracted**; the capability for ServiceAccount and User subjects is
+  #353. Measured for it: signals the platform already sets account for 656 of the 666 ServiceAccount-subject
+  bindings, and of the 10 left, 6 are CRC's `hostpath-provisioner` and 4 were made by hand.
+- **#346, measured:** the audit-log wording is on the deployed page, and the pod-log sentence is gone.
+- **#347, measured with a planted grant:** #312 had cleared the lab's only unmanaged grant, so a hand-made
+  RoleBinding was planted in its own namespace, captured, and deleted.
+  - With it: `dashboard` 207 = 38 ok + 7 to review (6 unresolved, 1 unmanaged) + 162 built-in; the Overview tile 7 on
+    all three entries; the KPI page 21 = 18 unresolved · 0 dangling · 3 unmanaged.
+  - After it: 205 and 0 unmanaged on every cluster (the 20:36:35 refresh).
+- The evidence is in `reports/2026-09-24_rbac-provenance-and-review-counts/`.
+
+### #312's follow-up — the chart's label turned the finding on (19:39 → 20:00) — commits `061c224`, `c7a9b26`, merged by the merge commit `b647db4`, PR #354
+
+- **Found by the orchestrator**, re-reading the rule to answer the operator's question about it; #350's review had
+  confirmed C1–C5 without it. The finding fires only where some binding carries a config-source, which is how the
+  store tells whether a policy operator is in use. The chart's auditor binding is on every host by default, so #350
+  switched the finding on for a host with no policy operator.
+- **Measured:** the new test failed on main with the hand-made grant `unmanaged`. The lab cannot show it: 43 of its
+  group bindings carry policy-operator values (read from the pod's database).
+- The fix: the check ignores `CHART_CONFIG_SOURCE`, and the chart's own binding still counts as managed. The design
+  was posted on #312 at 19:39, before any code.
+- **Grok 4.6's review of `061c224`:** C1–C4 and C6 **CONFIRMED**. C5 **REFUTED, accepted and widened**: the
+  classifier was cited as `Store.user_bindings` in six places across two documents, with three more wrong pointers.
+  Its prose-pinning test was **rejected** as brittle.
+- The operator's decisions, given while this was in review, are in the #312 line above and in #353 (opened 19:47).
+- **Measured:** full suite on `061c224`, **5557 passed, 20 skipped**; docs citations on `c7a9b26`, **1037 passed,
+  12 skipped**. CI: 9 passed, `container-smoke` skipped (`gh pr checks`).
+
+---
+
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **23**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344 and #345 (`gh pr list --state merged`, merged since 04:11) |
-| Commits on main | 23, one squash commit per PR, from `a9f0875` to `43befa4` (`git rev-list`; each has one parent) |
-| Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. |
-| Review passes run | 42. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. |
+| Pull requests merged | **28**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352 and #354 (`gh pr list --state merged`, merged since 04:11) |
+| Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
+| Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge and 2 merge commits (#349–#354's branches). |
+| Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
 | Reviewer findings accepted / rejected | For #324–#334, the record's Outcome: 6 code findings accepted, 3 snippets rejected with measurements, 1 trial retracted by its author, and 1 test rejected as brittle. Spec findings C21 and C22 were accepted, and the operator decided C21. #334: 3 accepted, 1 rejected. #335 is itemised in Part 4. For #336–#345, `docs/REVIEW_remote_sar_for_every_join.md` itemises every finding: 20 proposals were rejected, each with its reason or the measurement that refuted it. One of them, Codex's B11, had first been accepted without a measurement. |
-| Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also found the host-guard finding, which is still open. |
-| Full suite, final | For the release: **5339 passed** on integration head `d86acd6` (the orchestrator's run, the record's C16; the skipped count is not stated). For D2b: **5527 passed** on #342's head `fd9bfb9` (OB1-lite's run in a git copy, per the orchestrator's summary of its report); #342's body gives the non-browser suite as **4934 passed, 20 skipped, 0 failed**. CI (`gh pr checks`): 8/8 on every merged head, except #336 (7 passed, `grype` skipped) and #342 (9 passed, `container-smoke` skipped). |
+| Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also raised the host-guard question, closed in Part 7 as not a gap. |
+| Full suite, final | For the release: **5339 passed** on integration head `d86acd6` (the orchestrator's run, the record's C16; the skipped count is not stated). For D2b: **5527 passed** on #342's head `fd9bfb9` (OB1-lite's run in a git copy, per the orchestrator's summary of its report); #342's body gives the non-browser suite as **4934 passed, 20 skipped, 0 failed**. CI (`gh pr checks`): 8/8 on every merged head, except #336 (7 passed, `grype` skipped) and #342 (9 passed, `container-smoke` skipped). Part 7: **5557 passed, 20 skipped** on #354's `061c224`, browser tests included (the orchestrator's run); CI 8/8 on #350–#352. |
 | Longest single loss | The D2b lab walk: over 230 minutes of the operator's tokens, in the operator's words. The operator killed the process during Step 9, before its mock-log check ran, and a local podman container on that check's port would have made it untrustworthy anyway. What changed: one background waiter per step, and no polling. |
 
 ## Where things are recorded
@@ -677,38 +772,30 @@ The orchestrator's summary, with what was measured for this log:
 
 ## State left behind
 
-- **main** is `43befa4`, at chart 0.53.0 and app 0.32.0, both under `docs/CHANGELOG.md`'s Unreleased heading. The tag
-  `checkpoint-2026-09-23` stays on `7c0a42c`.
-- **Deployed** on the lab: `8e50ff8eec` through `release-crc.sh --argocd`. It was Synced/Healthy and verified in-pod
-  at Step 10, with the recorded sync policy in place (the walk record; the orchestrator's summary). Its code equals
-  main's. Measured with `git diff --name-only 8e50ff8eec 43befa4`, the only differences are the README, the
-  screenshots under the docs folder, the spec, and the walk's report folder.
+- **main** is `b647db4` (#354), at chart 0.53.1 and app 0.32.0, both under `docs/CHANGELOG.md`'s Unreleased
+  heading. The tag `checkpoint-2026-09-23` stays on `7c0a42c`.
+- **Deployed** on the lab: `4f4c070b08` through `release-crc.sh --argocd`, Synced/Healthy and verified in-pod. #354 is
+  not deployed; its lab check is handed over (below).
 - **`shared-qa`** is rejoined with a ServiceAccount token that has no expiry (Step 11). `shared-rnd` is served from
   the Secret the lookup rewrote in Step 4.
-- **The kept PVCs** have the same UIDs, volumes and 2026-09-19 creation times as the walk's baseline:
-  `group-sync-dashboard-data` has UID `f065b7a4-535c-4ef1-868c-58f5afee4953`, and
+- **The kept PVCs** have the same UIDs, volumes and 2026-09-19 creation times as the walk's baseline, re-read after
+  the `4f4c070` deploy: `group-sync-dashboard-data` has UID `f065b7a4-535c-4ef1-868c-58f5afee4953`, and
   `group-sync-dashboard-report-artifacts` has UID `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`.
-- **Open PRs:** none.
+- **Open PRs:** none once this log's PR merges.
+- **Handed to OB1 (Fable 5.1)** at the operator's instruction:
+  - #312: deploy main with #354, check that nothing regressed, post the evidence, close.
+  - #353: the capability to honour the operator's label on ServiceAccount and User grants. Spec, review, then code.
 - **Open issues from this session:**
   - #321: remove the Debug path.
   - #322: the cluster-admin tier, decided and not built.
   - #340: the CA cache.
   - #341: deferred.
-  - #346 and #347: app defects from #345's review.
-  - #312: for the operator (#348 closed as its duplicate).
-
-  The host-guard finding is also open. It is recorded in the spec's notes and in the walk record, and no issue is
-  filed for it.
+  - #312 and #353, handed over above. #346 and #347 are closed with this folder's evidence.
 - **Carried, not acted on:**
-  - OB1-lite's NA-1: the specs index lists S3 and S4b as `specified` although steps shipped. It now also lists D2b
-    as `specified`. The status is the operator's to state.
   - NA-2: markdownlint MD012 in `docs/specs/README.md`, pre-existing.
   - `docs/ACCESS_CONTROL.md` keeps six pre-existing MD040 findings (#336's and #337's bodies).
   - `docs/CLUSTER_STANZA.md` still says "Fourteen refusals fail `helm template`", a count Grok called stale.
-  - #348 named the binding #312 already reports; closed as its duplicate.
-  - The identity-provider wording and N2, routed to D1's code PR, were applied by #342 (measured on main).
-- **Worktrees and branches:**
-  - Worktrees: the main checkout, and `gsd-grafana`, detached at `4f93ad1` with its three uncommitted PNGs.
-  - Local branches besides main and the branch this log was written on:
-    - `feat/285-credential-lifecycle`: its head `078ebfd` is an ancestor of #325's head, merged as `048e928`.
-    - `skill/review-models-fable`: its PR #137 closed unmerged.
+  - `docs/design/data-requirements.md` still describes gaps the implemented mocks closed, and S3's version cell in
+    the specs index names only its merged part (both noted by #351's review).
+  - `reports/README.md` lists 7 of the 28 report folders.
+- **Worktrees:** the main checkout, and `gsd-grafana`, detached at `4f93ad1` with its three uncommitted PNGs.
