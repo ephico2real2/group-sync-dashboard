@@ -730,19 +730,22 @@ The orchestrator's summary, with what was measured for this log:
 
 ## Part 8 — #340, the indexes, #353 and #293 (2026-09-24 21:47 → 2026-09-25 02:30)
 
-### The CA cache (#340) and the indexes — PRs #358 (`4b07d45`, 21:47) and #359 (`ae431b0`, 21:57)
+### The CA cache (#340) and the indexes — PRs #358 (`4b07d45`, 21:47) and #359 (`ae431b0`, 21:57); merge shas and times from `git log`
 
 - **#358:** the trusted CA bundle's cache now keys on each file's inode, mtime and size. A bundle kubelet swaps
   through `..data` is read on the next poll. The test reproduces the swap and failed on main.
-  - Grok: C1–C5 **CONFIRMED**. Its note on two stale descriptions was **accepted**, its prose test **declined**.
+  - Grok: C1–C5 **CONFIRMED**. Its note on two stale descriptions was **accepted**, its prose test **declined** (#358's
+    body and commit `2694c75`).
   - Measured (the PR body): **5561 passed, 20 skipped**. #340 closed itself on the merge.
 - **#359:** `reports/README.md` lists all 28 folders (it listed 7), held by `test_reports_index.py`.
   - S3's version corrected (0.45.0 was #249's). `data-requirements.md` dated.
-  - Grok **REFUTED** three rows and two older cells as wider than their sources; all **accepted**.
+  - Grok **REFUTED** three rows and two older cells as wider than their sources; all **accepted** (#359's review
+    comment, commit `30b6a43`).
 
 ### #353 — OB1 on Fable (the record is OB1's log, `docs/session-changelogs/2026-09-24_ob1-312-close-out-and-353.md`)
 
-- PRs #357 (`35fcddb`), #361 (`a79da71`), #360 (`c00aa2e`), #362 (`de303e9`), #364 (`7f46760`). #353 closed.
+- PRs #357 (`35fcddb`), #361 (`a79da71`), #360 (`c00aa2e`), #362 (`de303e9`), #364 (`7f46760`); merge shas from
+  `git log`. #353 closed, with its Definition-of-Done comment pinned to `7f46760`.
 - **The operator's rulings, in order:**
   - *"The exclusion is not automatic"*;
   - *"Remember we are supposed to silence all platform service account … those namespaces we excluded them in code
@@ -763,20 +766,21 @@ The orchestrator's summary, with what was measured for this log:
 ### #293 — Codex implements, the orchestrator reviews (PRs #363 `09d5526`, 01:45; #365 `35d2c0c`, 02:28)
 
 - **The workflow:** the operator asked Codex (gpt-6-astra, high) to implement #293 and the orchestrator to review it
-  with Grok. Phase 1 wrote SPEC_S5 with 77 blocks; Grok reviewed it before any code. Phase 2 applied them: 81 blocks,
-  31 files byte-identical to the spec.
+  with Grok. Phase 1 wrote SPEC_S5 with 77 blocks (commit `3a0c2ff`'s message); Grok reviewed it before any code.
+  Phase 2 applied them: 81 blocks, 31 files byte-identical to the spec (commit `63edb9a`'s message).
 - **Found by the orchestrator in review:** a ConfigMap author can steer where the fleet account logs in. Put to the
   operator: an allow-list was declined, then "refuse insecure" was chosen, then **superseded**: *"I need this feature
   badly. So insecure is required in configmap."* The residual trust is recorded.
 - **The operator:** *"Whatever you do … do not reduce the current level of permissions that service account has."*
   - **Measured** by rendering the chart's RBAC on main and on the branch: **REMOVED 0**, ADDED 3 (`configmaps
-    get/list/watch`).
-  - #360 measured the same way: 0 and 0.
+    get/list/watch`), recorded in #363's review comment and on #293.
+  - #360 measured the same way: 0 and 0 (the memory note never-reduce-the-dashboard-sa-permissions).
 - **Grok on the spec:** C1 and C4 **REFUTED, accepted** (the host's in-cluster aliases; an invalid stanza blocking a
   values cluster). C7 and C8 **accepted**.
 - **Grok on the code:** C1–C8 **CONFIRMED**. N1–N3 **accepted**. N2's scheduler test failed 3 of 3 against a
-  fresh-gate mutant, proven by the orchestrator.
-- **Measured** outside Codex's sandbox: **5175 passed, 16 skipped**; browser **606 passed**; helm lint clean.
+  fresh-gate mutant, proven by the orchestrator (commit `69d1ae0`'s message; #363's review comment).
+- **Measured** outside Codex's sandbox: **5175 passed, 16 skipped**; browser **606 passed**; helm lint clean (#363's
+    review comment).
 - **The lab walk** (`reports/2026-09-25_configmap-onboarding-293/`): one map with two stanzas → two generated Secrets,
   both polling, one fleet login each (B by IP with `insecureSkipVerify`). Then removal deleted B's Secret, a repeated
   name loaded nowhere, and a `bearerToken` stanza was refused. Deleting the map left no leftovers.
