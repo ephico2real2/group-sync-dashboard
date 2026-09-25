@@ -5,7 +5,7 @@
 | Programme | Cluster configuration as labelled Secrets (#230), continued — S1 and S2 shipped the contract, the reader and the tab; this is how a cluster is connected without a token being pasted |
 | Batch | S — cluster configuration |
 | Release | — (post-programme) |
-| Version on release | chart 0.45.0 |
+| Version on release | chart 0.47.0 (§4) and 0.49.0 (§3.1); the rest at its PR |
 | Issue | [#230](https://github.com/ephico2real2/group-sync-dashboard/issues/230) |
 | Status | in progress |
 | Source | the operator's design of 2026-09-20 (#248), with the OAuth-trust trap measured on the reference cluster |
@@ -1200,3 +1200,10 @@ locking the account.
   a **Connect** action for a stanza waiting on its credential.
 
 Each its own PR, each its own three-seat review, each walked on the reference cluster.
+
+## Orchestrator's notes
+
+- **Version on release, corrected 2026-09-24.** The header read `chart 0.45.0`, the version planned when this was
+  written. Chart 0.45.0 carried #249 (`dashboardController`). This spec's merged parts shipped in chart 0.47.0 (§4,
+  the connection-mode keys in both readers) and chart 0.49.0 (§3.1, the fleet account's password), per
+  `docs/CHANGELOG.md`. The header and the index now say so.
