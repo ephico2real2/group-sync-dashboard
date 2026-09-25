@@ -1141,7 +1141,7 @@ def build_app(
         # the deployment's switch, `can.manage` is the person's level, and the page needs both to tell
         # "this deployment does not write Secrets" from "you may not change them" (#230 S2).
         may_manage = _clusterconfig_tier(request, "manage") == TIER_ALL
-        from .clusterconfig import LABEL_SELECTOR
+        from .clusterconfig import CONFIG_SELECTOR, LABEL_SELECTOR
         registry = settings.cluster_registry
         host = settings.host_cluster()
         polled = {row["id"]: row for row in store.clusters()}
@@ -1154,7 +1154,7 @@ def build_app(
                 "api_url": c.api_url, "enabled": c.enabled, "credential": c.credential_kind,
                 "labels": dict(c.labels), "visibility": visibility, "identity": identity, "tls": c.tls_mode,
                 "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
-                "retired": False,
+                "retired": False, "onboarding_configmap": c.onboarding[0] if c.onboarding else None,
             })
         # A cluster the store still holds but no source names any more — a Secret that vanished, a values
         # entry removed — is retired (enabled=0, history kept, #96). The tab shows it as such rather than
@@ -1179,6 +1179,7 @@ def build_app(
             "secrets": {"enabled": settings.cluster_secrets_enabled, "writes": bool(settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled),
                         "namespace": registry.namespace,
                         "label": LABEL_SELECTOR, "last_discovery": registry.last_discovery, "error": registry.error},
+            "configmaps": {"enabled": settings.cluster_secrets_enabled, "label": CONFIG_SELECTOR},
             "clusters": clusters,
             "findings": [f.public() for f in registry.findings()],
         }
@@ -1280,6 +1281,8 @@ def build_app(
         cluster = settings.cluster(name)
         if cluster is None:
             raise HTTPException(status_code=404, detail=f"unknown cluster {name!r}")
+        if cluster.onboarding:
+            raise _write_error(WriteRefused("not-our-secret", "edit the source ConfigMap; this Secret is generated", conflict=True))
         if not cluster.source.startswith("secret:"):
             raise _write_error(WriteRefused("not-a-secret-cluster",
                                             f"{name} is declared by {cluster.source}; only a Secret-sourced cluster is written here",

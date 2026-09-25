@@ -431,6 +431,9 @@ def test_no_citation_uses_a_line_number():
     offenders = [
         f"{md.relative_to(REPO)}:{n} -> {m.group(0)}"
         for md in _markdown()
+        # #293 phase 1 explicitly requires baseline file:line evidence, pinned to 35fcddb.
+        # Exempt only that historical spec from this check; path/anchor checks still run on it.
+        if md.relative_to(REPO).as_posix() != "docs/specs/SPEC_S5_configmap_onboarding.md"
         for n, line in enumerate(md.read_text().split("\n"), start=1)
         for m in [LINE_NUMBER_CITATION.search(line)] if m
     ]

@@ -43,7 +43,7 @@ from pathlib import Path
 import httpx
 
 from .clusterconfig.writer import (
-    MANAGED_BY_LOOKUP, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
+    MANAGED_BY_LOOKUP, MANAGED_BY_ONBOARD, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
     store_lookup,
 )
 from .clusterconfig.events import is_transport_message, redact
@@ -318,7 +318,8 @@ def store(host_client: ClusterClient, own_namespace: str, cluster: ClusterConfig
         req = CreateRequest(name=cluster.name, server=cluster.api_url, credential_kind="bearerToken",
                             token=sa_token.token, tls_mode=tls_mode, ca_data=ca_data,
                             visibility=visibility, identity=identity, enabled=cluster.enabled,
-                            managed_by=MANAGED_BY_LOOKUP, token_source=TOKEN_SOURCE_LOOKUP, **provenance)
+                            managed_by=MANAGED_BY_ONBOARD if cluster.onboarding else MANAGED_BY_LOOKUP,
+                            onboarding=cluster.onboarding, token_source=TOKEN_SOURCE_LOOKUP, **provenance)
         # `taken` without this cluster: the stanza IS the entry the Secret is written for.
         taken = {c.name: c.source for c in settings.effective_clusters() if c.name != cluster.name}
         host = settings.host_cluster()
@@ -366,6 +367,10 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
                 secrets.append(session.token)
+                if cluster.onboarding:
+                    # #293's strict budget includes successful binds, even if the later read/write fails.
+                    # Keep the SAME process-lifetime gate used by every existing lookup caller.
+                    gate.refuse(cluster.api_url, account, password)
                 sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
         except LoginError as exc:
             which = f" against {exc.host}" if exc.host else ""

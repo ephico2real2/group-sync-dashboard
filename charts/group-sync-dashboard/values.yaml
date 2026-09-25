@@ -1435,6 +1435,9 @@ platformNamespaces:
 # the process's memory — not the database, not a log line, not a response, not /metrics.
 clusterConfig:
   secrets:
+    # Discovery includes ConfigMaps labelled config-type: onboard or sideload in this namespace.
+    # They contain data.clusters.yaml with values-shaped clusters, never credentials (#293, SPEC_S5).
+    # The existing switch controls the whole discovery stage; no ConfigMap is written by the app.
     enabled: true
     # The Cluster Configurations tab's writes (#230 S2, docs/specs/SPEC_S2_cluster_configurations_tab.md):
     # an administrator adds a cluster from the tab — the same labelled Secret a GitOps process would
@@ -1445,7 +1448,10 @@ clusterConfig:
     # and removes the exception. Turning it on is the decision to let the dashboard WRITE cluster
     # Secrets — the one grant, with two consumers that each declare their own intent: a person on
     # the tab (an identity and clusterconfig:manage), and the saTokenLookup lookup (a stanza that
-    # says so, per cluster; SPEC_S4b). It does not split, because a second switch would gate the
+    # says so, per cluster; SPEC_S4b), including ConfigMap onboarding (SPEC_S5): creates, policy
+    # updates and repeated cleanup of displaced generated Secrets all require this switch.
+    # ConfigMap writers in this namespace can initiate a fleet lookup; limit that RBAC to platform
+    # operators. It does not split, because a second switch would gate the
     # same verbs twice and decide nothing the stanza does not. On, the Role above
     # gains create, update and delete on secrets in the release namespace and the four write routes
     # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a

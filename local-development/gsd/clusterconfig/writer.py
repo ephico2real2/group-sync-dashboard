@@ -36,6 +36,10 @@ MANAGED_BY_UI = "ui"
 #: The saTokenLookup lookup (SPEC_S4b): the stanza key in kebab case, so `saTokenLookup: true` and
 #: `managed-by: sa-token-lookup` read as one thing. Says WHO wrote the Secret; `token-source` says how.
 MANAGED_BY_LOOKUP = "sa-token-lookup"
+MANAGED_BY_ONBOARD = "configmap-onboarding"
+CONFIGMAP_ANNOTATION = "groupsync-dashboard.io/source-configmap"
+CONFIGMAP_UID_ANNOTATION = "groupsync-dashboard.io/source-configmap-uid"
+CONNECTION_HASH_ANNOTATION = "groupsync-dashboard.io/connection-hash"
 #: PROVENANCE, NOT CONFIGURATION (SPEC_S3 §5.1). A bearer token is opaque: nothing in it says where it
 #: came from or what to rotate when it must change. These three answer that, on the tab and in a
 #: support ticket. They are ignored by the parser and by the poll — they exist for the human, and for
@@ -119,6 +123,7 @@ class CreateRequest:
     source_namespace: str | None = None
     source_service_account: str | None = None
     lookup_account: str | None = None
+    onboarding: tuple[str, str, str] = ()
 
 
 def secret_name_for(cluster: str) -> str:
@@ -152,6 +157,9 @@ def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -
                        (LOOKUP_ACCOUNT_ANNOTATION, req.lookup_account)):
         if value:
             annotations[key] = str(value)
+    if req.onboarding:
+        annotations.update(zip((CONFIGMAP_ANNOTATION, CONFIGMAP_UID_ANNOTATION,
+                                CONNECTION_HASH_ANNOTATION), req.onboarding))
     return {
         "apiVersion": "v1", "kind": "Secret",
         "metadata": {"name": secret_name_for(req.name), "namespace": namespace, "labels": labels,
@@ -263,13 +271,15 @@ def create(host_client: ClusterClient, namespace: str, req: CreateRequest, *, ho
     return name
 
 
-def _read_ours(host_client: ClusterClient, client, namespace: str, name: str) -> dict:
+def _read_ours(host_client: ClusterClient, client, namespace: str, name: str, *, allow_onboarding: bool = False) -> dict:
     try:
         obj = host_client._get(client, _path(namespace, name), {})
     except ClusterError as exc:
         if exc.message.startswith("HTTP 404"):
             raise WriteRefused("not-our-secret", f"Secret {name} is not in {namespace}") from exc
         raise _failed(exc) from exc
+    if not allow_onboarding and (obj.get("metadata", {}).get("annotations") or {}).get(MANAGED_BY_ANNOTATION) == MANAGED_BY_ONBOARD:
+        raise WriteRefused("not-our-secret", "edit the source ConfigMap; its generated Secret is reconciled automatically", conflict=True)
     if not _labelled(obj):
         # Never touched: the grant covers every Secret in the namespace, the app's own rule is the label.
         raise WriteRefused("not-our-secret", f"Secret {name} does not carry {SECRET_TYPE_LABEL}={SECRET_TYPE_CLUSTER}", conflict=True)
@@ -361,6 +371,74 @@ def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token
             raise _failed(exc, token, data["config"]) from exc
     event(log, logging.INFO, "cluster-secret-rotated", secret=name, namespace=namespace, cluster=cluster,
           by=MANAGED_BY_LOOKUP, secrets=(token,))
+
+
+def onboarding_owner(obj: dict) -> tuple[str, str, str] | None:
+    """Strict bookkeeping ownership on a raw Secret, never inferred from its name or label alone."""
+    from .parser import _data, _NAME
+    meta = obj.get("metadata") or {}
+    ann = meta.get("annotations") or {}
+    data, bad = _data(obj)
+    name = data.get("name", "")
+    owner = tuple(ann.get(k, "") for k in
+                  (CONFIGMAP_ANNOTATION, CONFIGMAP_UID_ANNOTATION, CONNECTION_HASH_ANNOTATION))
+    if (not _labelled(obj) or ann.get(MANAGED_BY_ANNOTATION) != MANAGED_BY_ONBOARD
+            or ann.get(TOKEN_SOURCE_ANNOTATION) != TOKEN_SOURCE_LOOKUP
+            or not all(isinstance(v, str) and v for v in owner)
+            or not re.fullmatch(r"[0-9a-f]{64}", owner[2])
+            or "name" in bad or not _NAME.fullmatch(name)
+            or meta.get("name") != secret_name_for(name)):
+        return None
+    return owner
+
+
+def reconcile_onboarding(host_client: ClusterClient, namespace: str, snapshot: dict,
+                         *, desired: ClusterConfig | None = None) -> dict | None:
+    """Delete a displaced output or sync its policy, with identity/version preconditions.
+
+    Callers gate writes and leadership. Re-read ownership before every mutation; do not inherit the
+    general writer's label-only rule. A 409 or failed DELETE remains in next cycle's inventory.
+    """
+    from .parser import _data
+    from ..config import remote_policy
+    meta = snapshot.get("metadata") or {}
+    owner = onboarding_owner(snapshot)
+    if owner is None or not meta.get("uid") or not meta.get("resourceVersion"):
+        raise WriteRefused("onboarding-ownership-conflict", "generated Secret has incomplete ownership; left untouched")
+    name = meta["name"]
+    with host_client._client() as client:
+        obj = _read_ours(host_client, client, namespace, name, allow_onboarding=True)
+        current = obj.get("metadata") or {}
+        if (onboarding_owner(obj) != owner
+                or current.get("uid") != meta["uid"]
+                or current.get("resourceVersion") != meta["resourceVersion"]):
+            raise WriteRefused("secret-changed", "generated Secret changed during discovery; retry next cycle")
+        data, _ = _data(obj)
+        if desired is not None:
+            if owner != desired.onboarding or data.get("name") != desired.name:
+                raise WriteRefused("onboarding-ownership-conflict", "generated Secret belongs to another declaration")
+            visibility, identity = remote_policy(desired.visibility, desired.identity)
+            policy = {"visibility": visibility, "identity": identity,
+                      "enabled": "true" if desired.enabled else "false"}
+            if all(data.get(k) == v for k, v in policy.items()):
+                return obj
+            # Keep the credential, trust, annotations, labels and resourceVersion exactly as read.
+            obj = {**obj, "data": {**(obj.get("data") or {})},
+                   "stringData": {**(obj.get("stringData") or {}), **policy}}
+        try:
+            if desired is None:
+                host_client._send(client, "DELETE", _path(namespace, name), json={
+                    "apiVersion": "v1", "kind": "DeleteOptions",
+                    "preconditions": {"uid": meta["uid"], "resourceVersion": meta["resourceVersion"]}})
+            else:
+                host_client._send(client, "PUT", _path(namespace, name), json=obj,
+                                  secrets=(data.get("config"), (obj.get("data") or {}).get("config")))
+        except ClusterError as exc:
+            # No remote body is repeated: it may echo a credential or an encoded config.
+            raise WriteFailed(exc.outcome, "generated Secret write failed; retry next cycle") from exc
+    event(log, logging.INFO, "cluster-secret-deleted" if desired is None else "cluster-secret-updated",
+          secret=name, namespace=namespace, cluster=data["name"], by=MANAGED_BY_ONBOARD)
+    return obj if desired is not None else None
 
 
 def delete(host_client: ClusterClient, namespace: str, name: str, *, viewer: str, cluster: str) -> None:

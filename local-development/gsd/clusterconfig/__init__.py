@@ -12,6 +12,9 @@ from __future__ import annotations
 SECRET_TYPE_LABEL = "groupsync-dashboard.io/secret-type"
 SECRET_TYPE_CLUSTER = "cluster"
 LABEL_SELECTOR = f"{SECRET_TYPE_LABEL}={SECRET_TYPE_CLUSTER}"
+CONFIG_TYPE_LABEL = "groupsync-dashboard.io/config-type"
+CONFIG_TYPES = ("onboard", "sideload")
+CONFIG_SELECTOR = f"{CONFIG_TYPE_LABEL} in ({','.join(CONFIG_TYPES)})"
 
 # The closed set of finding codes — the tab renders each with its own sentence, so a new code is a
 # page change too (SPEC_S1 §S1.2).
@@ -22,6 +25,7 @@ FINDING_CODES = (
     "visibility-invalid", "identity-invalid", "enabled-invalid",
     "host-cluster-not-from-secret", "duplicate-cluster-name", "shadows-values-entry",
     "oauth-exchange-not-built", "discovery-failed",
+    "onboarding-invalid", "onboarding-cleanup-pending", "onboarding-ownership-conflict",
     # SPEC_S4b (#284): the saTokenLookup lookup's findings, held per cluster by the registry until
     # the lookup succeeds. Each names its fix in `detail`; the tab renders code and detail as it does
     # every other finding.

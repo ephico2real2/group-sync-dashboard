@@ -6062,11 +6062,12 @@ function ccBadge(shape, word) {
 }
 function ccSourceKind(c) {
   if (c.host) return "in-cluster";
+  if (String(c.source || "").startsWith("configmap:")) return "configmap";
   return String(c.source || "").indexOf("secret:") === 0 ? "secret" : "values";
 }
 function ccSourceChip(c) {
   const kind = ccSourceKind(c);
-  const word = kind === "secret" ? `Secret ${c.source.slice(7)}` : kind === "in-cluster" ? "in-cluster" : "values";
+  const word = kind === "secret" ? `Secret ${c.source.slice(7)}` : kind === "configmap" ? `ConfigMap ${c.source.split(":")[1]}` : kind === "in-cluster" ? "in-cluster" : "values";
   return `<span class="rp-chip cc-src-${kind}">${esc(word)}</span>`;
 }
 function ccLabelChips(labels) {
@@ -6089,7 +6090,9 @@ function ccCredential(c) {
   // a retired row from before S1 recorded the kind carries "": say so rather than printing a bare badge
   let out = kind ? `${esc(kind)} ${ccBadge("ok", "set")}` : `<span class="muted">unknown</span>`;
   const secretRow = ccSourceKind(c) === "secret";
-  if (secretRow && !c.retired && ccWritesOn()) {
+  if (c.onboarding_configmap && !c.retired) {
+    out += ` <span class="cc-hint">managed by ConfigMap ${esc(c.onboarding_configmap)} — edit the stanza there</span>`;
+  } else if (secretRow && !c.retired && ccWritesOn()) {
     const open = view.clusterRotate === c.id;
     out += ` <button type="button" class="linkish" id="cc-rotate-${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
     if (open) {
@@ -6150,6 +6153,8 @@ function ccClusterCard(c) {
   let foot;
   if (c.retired) {
     foot = `<div class="cc-foot">its Secret is gone — the history is kept, the cluster is disabled</div>`;
+  } else if (c.onboarding_configmap) {
+    foot = `<div class="cc-foot">declared in ConfigMap ${esc(c.onboarding_configmap)} — remove the stanza there; its Secret is cleaned up automatically</div>`;
   } else if (secretRow && !ccWritesOn()) {
     foot = `<div class="cc-foot">declared by its Secret — delete it there; ${ccDeploymentWrites()
       ? "changing cluster configuration is reserved to cluster configuration administrators"
@@ -6177,7 +6182,7 @@ function ccClusterCard(c) {
 }
 function ccFinding(f) {
   return `<article class="card cc-finding">
-    <div class="cc-kv"><span class="k">secret</span><span class="v mono">${esc(f.secret)}</span></div>
+    <div class="cc-kv"><span class="k">source</span><span class="v mono">${esc(f.secret)}</span></div>
     <div class="cc-kv"><span class="k">code</span><span class="v mono">${esc(f.code)}</span></div>
     <div class="cc-kv"><span class="k">detail</span><span class="v">${esc(f.detail)}</span></div></article>`;
 }
@@ -6287,7 +6292,7 @@ function clusterConfigPage() {
   if (!d) return `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
   if (d.forbidden) return refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
   const clusters = d.clusters || [];
-  const n = { "in-cluster": 0, values: 0, secret: 0 };
+  const n = { "in-cluster": 0, values: 0, secret: 0, configmap: 0 };
   clusters.forEach((c) => { n[ccSourceKind(c)] += 1; });
   const s = d.secrets || {};
   const head = `<section class="card" id="cc-head">
@@ -6298,12 +6303,14 @@ function clusterConfigPage() {
     <div class="cc-kv"><span class="k">by source</span><span class="v cc-chips">
       <span class="rp-chip cc-src-in-cluster">in-cluster ${n["in-cluster"]}</span>
       <span class="rp-chip cc-src-values">values ${n.values}</span>
-      <span class="rp-chip cc-src-secret">Secret ${n.secret}</span></span></div>
+      <span class="rp-chip cc-src-secret">Secret ${n.secret}</span>
+      <span class="rp-chip">ConfigMap ${n.configmap}</span></span></div>
+    <div class="cc-kv"><span class="k">ConfigMap selector</span><span class="v mono">${esc((d.configmaps || {}).label || "")}</span></div>
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
       : `${n.secret} Secret${n.secret === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
   const findings = (d.findings || []).map(ccFinding).join("")
-    || `<div class="empty-note">No malformed Secrets. A Secret that fails to parse is a finding with the code named, never a crashed pod.</div>`;
+    || `<div class="empty-note">No configuration findings. Refused Secrets and ConfigMap stanzas are listed here with their source and reason.</div>`;
   return head + clusters.map(ccClusterCard).join("")
     + `<section class="card" id="cc-findings"><h2>Findings</h2>${findings}</section>`
     + ccAddForm(d);
