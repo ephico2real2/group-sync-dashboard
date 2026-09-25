@@ -20,10 +20,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gsd.kube import CHART_CONFIG_SOURCE, CONFIG_SOURCE_LABEL
+
 REPO = Path(__file__).resolve().parents[2]
 CHART = REPO / "charts" / "group-sync-dashboard"
 CRC_VALUES = REPO / "environments" / "crc.yaml"
-LABEL = "rbac.ocp.io/config-source"
+LABEL = CONFIG_SOURCE_LABEL  # the key and value the dashboard reads, not copies of them
 RBAC_KINDS = ("Role", "ClusterRole", "RoleBinding", "ClusterRoleBinding")
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not on PATH")
@@ -61,14 +63,14 @@ def test_every_rbac_object_names_the_chart_as_its_config_source(rendered, render
     objects = rendered[render]
     assert objects, f"{render}: no RBAC object rendered"
     missing = [f"{src}: {d['kind']}/{d['metadata']['name']}" for src, d in objects
-               if (d["metadata"].get("labels") or {}).get(LABEL) != "group-sync-dashboard"]
-    assert not missing, f"{render}: RBAC objects without {LABEL}=group-sync-dashboard: {missing}"
+               if (d["metadata"].get("labels") or {}).get(LABEL) != CHART_CONFIG_SOURCE]
+    assert not missing, f"{render}: RBAC objects without {LABEL}={CHART_CONFIG_SOURCE}: {missing}"
 
 
 def test_the_auditor_binding_is_no_longer_unmanaged(rendered):
     """The binding #312 names: the ClusterRoleBinding the chart renders for its default auditor group."""
     auditor = [d for src, d in rendered["crc"] if src == "rbac-auditors.yaml" and d["kind"] == "ClusterRoleBinding"]
-    assert auditor and all(d["metadata"]["labels"][LABEL] == "group-sync-dashboard" for d in auditor)
+    assert auditor and all(d["metadata"]["labels"][LABEL] == CHART_CONFIG_SOURCE for d in auditor)
     assert all(s.get("kind") == "Group" for d in auditor for s in d["subjects"]), "the finding is about Group subjects"
 
 

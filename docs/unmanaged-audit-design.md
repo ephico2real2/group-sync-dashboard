@@ -15,6 +15,19 @@ label, and the handful that do not are exactly the hand-made ones, including a
 ClusterRoleBinding granting `cluster-admin` that nothing manages
 (`local-development/tests/test_rbac.py#TestUnmanagedFinding`).
 
+**Group subjects only, by design** (decided 2026-09-24, #312). The finding asks whether a person's
+access through a synced group bypassed governance. A binding to a ServiceAccount is a workload's
+identity, installed by operators and charts that do not use the label. On the lab, 661 of the 668
+bindings with a ServiceAccount subject carry no `rbac.ocp.io/config-source`, so flagging them would
+bury the findings this exists for. A hand-made grant to a ServiceAccount is therefore not reported.
+
+**This chart's own RBAC** carries `rbac.ocp.io/config-source: group-sync-dashboard`
+(`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.rbacLabels`), so its auditor binding is not
+reported. That value is provenance, not evidence that a policy operator is in use
+(`local-development/gsd/kube.py#CHART_CONFIG_SOURCE`). The binding is on every host by default, so
+counting it would switch the finding on for every hand-made grant on a host no policy operator
+governs.
+
 **Until 2026-08-03 this document described a write path.** The feature stamped the objects it
 classified `unmanaged` with a label and two annotations, so an auditor could select them with
 `oc get ... -l rbac.ocp.io/unmanaged=true`. It was enabled on a live cluster, it wrote nothing,
@@ -179,8 +192,9 @@ text search would either trip on them or be written loosely enough to miss a rea
 **I2 — Finding set.** Unchanged in substance, renamed from "Target set" because nothing is
 targeted now. An object is a finding only if its group resolves, its group is operator-synced,
 the binding carries no `config-source` label, the binding carries no exception annotation, and
-the cluster demonstrably uses the policy operator — some managed binding exists, so a cluster
-that has never heard of `config-source` labels reports zero findings rather than sixty. All five
+the cluster demonstrably uses the policy operator — some managed binding exists other than this
+chart's own, so a cluster that has never heard of `config-source` labels reports zero findings
+rather than sixty. All five
 conditions are one SQL `CASE` (`store.py#Store.user_bindings`), which is also what the API and the counts
 read, so the log and the UI cannot disagree about what a finding is. Tests:
 `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_stamped` and `test_rbac.py#TestUnmanagedFinding`.
