@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import ssl
+import stat
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,7 +76,7 @@ class ConfigError(Exception):
     """Raised for a malformed or unusable cluster configuration."""
 
 
-_ca_cache: dict[str, ssl.SSLContext] = {}
+_ca_cache: dict[str, tuple[tuple, ssl.SSLContext]] = {}
 _ca_cache_lock = threading.Lock()
 
 
@@ -92,10 +93,15 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
     them somewhere less controlled than where they started.
 
     Cached, because this is consulted on every poll of every cluster and parsing a 226 KB,
-    148-certificate bundle each time is pure waste. Two details matter:
+    148-certificate bundle each time is pure waste. Three details matter:
 
     * the cache is keyed on the ENV VALUE, not global, so changing the configured paths
       takes effect rather than being masked by a stale entry;
+    * an entry holds only while every file is the one it was built from (#340). kubelet
+      updates a mounted ConfigMap by writing a new timestamped directory and swapping the
+      `..data` symlink the file resolves through, so `os.stat` sees a new inode; a file
+      rewritten in place changes its mtime. A replaced bundle is then read as a restart
+      would read it, including failing the same way if it does not load;
     * a null result is NOT cached. The injected ConfigMap is populated asynchronously, so
       it can legitimately be absent for the first moments of a pod's life; caching that
       absence would mean never picking it up without a restart.
@@ -104,13 +110,21 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
     if not raw:
         return None
 
-    cached = _ca_cache.get(raw)
-    if cached is not None:
-        return cached
-
-    paths = [p for p in (part.strip() for part in raw.split(":")) if p and Path(p).is_file()]
+    paths, identity = [], []
+    for path in (part.strip() for part in raw.split(":")):
+        try:
+            st = os.stat(path) if path else None
+        except OSError:
+            continue
+        if st is not None and stat.S_ISREG(st.st_mode):
+            paths.append(path)
+            identity.append((path, st.st_ino, st.st_mtime_ns, st.st_size))
     if not paths:
         return None  # deliberately uncached — see above
+
+    cached = _ca_cache.get(raw)
+    if cached is not None and cached[0] == tuple(identity):
+        return cached[1]
 
     context = ssl.create_default_context()
     for path in paths:
@@ -120,7 +134,7 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
             raise ConfigError(f"cannot load trusted CA bundle {path!r}: {exc}") from exc
 
     with _ca_cache_lock:
-        _ca_cache[raw] = context
+        _ca_cache[raw] = (tuple(identity), context)
     log.info("loaded %d trusted CA bundle(s): %s", len(paths), ", ".join(paths))
     return context
 
