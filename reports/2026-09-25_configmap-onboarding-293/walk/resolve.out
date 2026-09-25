@@ -1,0 +1,5 @@
+# what cm-demo-b's URL is — measured from the dashboard pod, 2026-09-25T07:08:11Z
+$ oc exec pod/group-sync-dashboard-5cb4cd6d57-mrcqr -c dashboard -- python3 -c '<resolve api.crc.testing; TCP and TLS to it on 6443>'
+api.crc.testing -> 192.168.127.2
+tcp to 192.168.127.2 :6443 ok
+tls by IP, verification off: TLSv1.3

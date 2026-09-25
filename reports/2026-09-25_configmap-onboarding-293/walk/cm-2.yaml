@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-onboarding
+  namespace: group-sync-dashboard
+  labels:
+    groupsync-dashboard.io/config-type: onboard
+data:
+  clusters.yaml: |
+    clusters:
+      - name: cm-demo-a
+        apiUrl: https://api.crc.testing:6443
+        saTokenLookup: true
+      - name: cm-demo-dup
+        apiUrl: https://api.crc.testing:6443
+        saTokenLookup: true
+      - name: cm-demo-dup
+        apiUrl: https://api.crc.testing:6443
+        saTokenLookup: true
+      - name: cm-demo-cred
+        apiUrl: https://api.crc.testing:6443
+        saTokenLookup: true
+        bearerToken: not-a-real-token

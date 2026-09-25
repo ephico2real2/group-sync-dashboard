@@ -1,0 +1,12 @@
+release : ../environments/crc.yaml
+argocd  : group-sync-dashboard -> revision 09d5526cae, image 0.34.0-09d5526cae
+06:47:10Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision de303e9b22, want 09d5526cae) successfully synced (all tasks run)
+06:47:25Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+06:47:40Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+06:47:55Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+06:48:11Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+deployment "group-sync-dashboard" successfully rolled out
+deployment "group-sync-dashboard-report" successfully rolled out
+running : 09d5526cae — verified in-pod
+release exit 0
