@@ -65,8 +65,8 @@ reported.
 
 ## Not a way to silence a grant
 
-- **`rbac.ocp.io/unmanaged=true`** marks a finding the log has already announced, so it is not announced again. The
-  grant is still reported everywhere else.
+- **`rbac.ocp.io/unmanaged=true`** is set by a person or CI (the dashboard never writes it) to acknowledge that the log
+  has announced a finding, so the WARNING is not repeated. The grant is still reported everywhere else.
 - **Group grants:** a hand-made grant to an operator-synced group is reported only once the cluster shows that a
   policy system is in use. That means some other group binding carries a `config-source` value other than
   `group-sync-dashboard`. ServiceAccount and User grants have no such condition.
