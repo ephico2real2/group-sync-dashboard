@@ -110,7 +110,10 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   through a TEMP view that supplies the two columns as Group rows. (4) The report form's role picker
   offered every role any account is bound to (356 on the lab against 66 a report can match); it reads
   Group rows and direct user grants. (5) The compliance snapshot's Unmanaged figure now sits under the
-  every-kind total it is a part of. Also corrected: the 26 namespace-less subjects sit on 13 RoleBindings
+  every-kind total it is a part of. And from its second pass: (6) neither ORDER BY named the two key
+  columns migration 20 adds, so rows that tie on the old key — one binding naming an account in two
+  namespaces, which the lab's `system:controller:horizontal-pod-autoscaler` does — came back in scan
+  order and a `limit`/`offset` walk could skip or repeat one; both orderings end on the whole key. Also corrected: the 26 namespace-less subjects sit on 13 RoleBindings
   written by OLM (9), the cluster-version operator (3) and by hand (1), not "all OLM".
 - **`_OBSERVATION_SEEDS` is not changed.** The first draft narrowed the `binding:Group` seed to Group rows;
   the scratch application refuted it: migration 14 splices those statements into its own list, so the clause
@@ -186,8 +189,9 @@ two files (the script and its output are in the session log):
 | | |
 |---|---|
 | bindings | 292 ClusterRoleBindings, 605 RoleBindings; 1 with no subjects (`system:node`) |
-| subject rows by kind | Group 205 (50 cluster-wide, 155 namespaced); **ServiceAccount 685** (234, 451); **User 35** (16, 19) |
-| `apiGroup` | Group and User `rbac.authorization.k8s.io` (240 rows), ServiceAccount absent (685 rows) — the defaults of §2.1, nothing else |
+| subject entries by kind (before deduplication) | Group 205 (50 cluster-wide, 155 namespaced); **ServiceAccount 685** (234, 451); **User 35** (16, 19) |
+| stored subject rows by kind (after deduplication) | Group 205; **ServiceAccount 675**; **User 35** — **915** rows in total |
+| `apiGroup` on subject entries | Group and User `rbac.authorization.k8s.io` (240 entries), ServiceAccount absent (685 entries) — the defaults of §2.1, nothing else |
 | ServiceAccount subjects with no `namespace` | **26**, all on RoleBindings — 13 of them, 9 written by OLM (`cert-manager-operator.v1.20.0`, `grafana-operator.v5.24.0`, `group-sync-operator.v0.0.36`, …), 3 by the cluster-version operator (`console-operator`, `cluster-image-registry-operator`, `csi-snapshot-controller-operator-role`) and 1 by hand — so §2.1's default applies to real objects here |
 | subject entries a binding repeats | **10**, every one a ServiceAccount an OLM-written RoleBinding names twice (`metallb-operator…` four accounts, and one each on six others); the reader keeps one, so 925 entries store **915** rows |
 | RoleBinding ServiceAccount subjects naming another namespace | 85 — a stored namespace must be the subject's own, not the binding's, when the subject spells one |
@@ -404,8 +408,9 @@ claim; and the edits to existing tests that pin the old shape. Every test below 
   `binding-findings` report's Unmanaged table names `ServiceAccount <namespace>/<name>`.
 - **Metrics** (an edit in `tests/test_metrics.py`): `gsd_bindings_total{finding="unmanaged"}` is emitted
   at 0 on a cluster with none.
-- **The review's five** (`TestDuplicateSubjects`, `TestSeverityFirstPage`, `TestAnOlderCopyInTheRollingWindow`,
-  `TestRolePicker`, and the every-kind total in the compliance test): a subject a binding names twice is one
+- **The review's six** (`TestDuplicateSubjects`, `TestSeverityFirstPage`, `TestTotalOrder`,
+  `TestAnOlderCopyInTheRollingWindow`, `TestRolePicker`, and the every-kind total in the compliance test): both
+  orderings end on every primary-key column, so a page walks the set exactly once; a subject a binding names twice is one
   row; a page of findings holds the review tiers before the rest; a schema-19 copy is read as Group rows;
   a role bound only to an account is not offered by the report form; the Unmanaged figure sits under the
   total it is a part of.
@@ -1858,11 +1863,15 @@ function subjectCell(r) {
 ```python
                 ORDER BY CASE finding WHEN 'dangling' THEN 0 WHEN 'unresolved' THEN 1
                                       WHEN 'unmanaged' THEN 2 WHEN 'ok' THEN 3 ELSE 4 END,
-                         b.group_name, b.binding_kind, b.binding_namespace, b.binding_name""")
+                         b.group_name, b.binding_kind, b.binding_namespace, b.binding_name,
+                         b.subject_kind, b.subject_namespace""")
         # Severity first, then subject name: a page (the findings endpoint's `limit`) holds every
         # review item before any healthy or built-in row. Since #353 a cluster holds hundreds of
         # ServiceAccount rows (703 unmanaged on the lab against FINDINGS_PAGE 500), and by name
         # alone they pushed a dangling group named past them off the page (OB1-lite, SPEC_U1).
+        # The key ends on every primary-key column, so limit/offset walks the set exactly once: one
+        # binding can name `x` as ServiceAccounts in two namespaces (the lab's
+        # system:controller:horizontal-pod-autoscaler does), or as an account and a user.
         params: list = [cluster_id]
         if limit is not None:
 ```
@@ -1908,6 +1917,16 @@ function subjectCell(r) {
         for table, only in (("rbac_group_binding", " AND subject_kind = 'Group'"), ("user_binding", "")):
             if self.has_table(table):
                 roles.update(r["role_name"] for r in self._rows(f"SELECT DISTINCT role_name FROM {table} WHERE cluster_id = ?{only}", (cluster_id,)))
+```
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+                          b.group_name, b.binding_name"""
+        return self._rows(sql, params)
+```
+```python
+                          b.group_name, b.binding_name, b.subject_kind, b.subject_namespace"""
+        return self._rows(sql, params)
 ```
 
 <!-- block: local-development/pyproject.toml | edit -->
@@ -2221,7 +2240,7 @@ oc annotate clusterrolebinding <name> \
 <!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 ```markdown
 
-- **The unmanaged finding reads ServiceAccount and User subjects, silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, because the operator's rule allows no default that silences a grant; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing about how a grant was applied excludes it: not a `system:` name, a platform namespace or a Helm, OLM or Argo CD label; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant is a finding from the first refresh** — 703 subject rows on 689 bindings on the lab: the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
+- **The unmanaged finding reads ServiceAccount and User subjects, silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, because the operator's rule allows no default that silences a grant; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing about how a grant was applied excludes it: not a `system:` name, a platform namespace or a Helm, OLM or Argo CD label; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant is a finding from the first refresh** — on an OpenShift cluster that is hundreds of rows, most of them grants OLM, the cluster-version operator and the platform wrote without the label (703 subject rows on 689 bindings on this project's CRC lab, OpenShift 4.22, measured 2026-09-24): the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
 ```
 
 <!-- block: local-development/tests/test_rbac.py | edit -->
@@ -2478,10 +2497,10 @@ class TestParsing:
         dash.locator("button[data-nav='policy']").click()
         dash.wait_for_selector("section.card:has(h2:has-text('Grants outside')) tbody tr")
         dash.evaluate("""() => { data.findings = Object.assign({}, data.findings,
-            { counts: Object.assign({}, data.findings.counts, { unmanaged: 713 }) }); render(); }""")
-        assert dash.locator("#main .hero .value").first.inner_text().strip() == "713"
+            { counts: Object.assign({}, data.findings.counts, { unmanaged: 703 }) }); render(); }""")
+        assert dash.locator("#main .hero .value").first.inner_text().strip() == "703"
         body = " ".join(dash.locator("#main").inner_text().split())
-        assert "Showing the first 1 of 713" in body, body
+        assert "Showing the first 1 of 703" in body, body
         dash.evaluate("() => refresh()")
         dash.wait_for_function("() => data.findings && data.findings.counts.unmanaged === 1")
         self._open(dash)
@@ -2511,8 +2530,8 @@ class TestParsing:
         dash.on("pageerror", lambda e: errors.append(str(e)))
         dash.evaluate("""() => { data.operatorConfigs = { present: false, configs: [] };
             data.findings = Object.assign({}, data.findings,
-                { counts: Object.assign({}, data.findings.counts, { unmanaged: 713 }) }); render(); }""")
-        assert dash.locator("#main .hero .value").first.inner_text().strip() == "713"
+                { counts: Object.assign({}, data.findings.counts, { unmanaged: 703 }) }); render(); }""")
+        assert dash.locator("#main .hero .value").first.inner_text().strip() == "703"
         body = " ".join(dash.locator("#main").inner_text().split())
         assert "is not installed on" in body, body
         assert dash.locator("section.card:has(h2:has-text('Grants outside')) tbody tr").count() == 1
@@ -3074,4 +3093,43 @@ class TestRolePicker:
         store.close()
         with Snapshot(Path(path)) as s:
             assert s.discovered("crc", "", "")["roles"]["values"] == ["admin"]
+
+
+class TestTotalOrder:
+    """A page and a report are ordered by the whole primary key. Before #353 the ORDER BY (subject name,
+    binding kind, namespace, name) named every key column; migration 20 added subject_kind and
+    subject_namespace to the key, and one binding can now name `x` twice — as ServiceAccounts in two
+    namespaces (the lab's system:controller:horizontal-pod-autoscaler names kube-system/ and
+    openshift-infra/horizontal-pod-autoscaler), or as an account and a user. Rows that tie on the ORDER BY
+    come back in whatever order SQLite scans them, so neither `/bindings/findings`' limit/offset walk nor
+    a report's row order was defined by content (OB1-lite, second pass of SPEC_U1)."""
+
+    def _rows(self):
+        hpa = "horizontal-pod-autoscaler"
+        # Inserted in the reverse of content order, so an order that falls back on the scan shows it.
+        return [user("same", person=hpa) | {"binding_kind": "ClusterRoleBinding", "binding_namespace": "",
+                                            "binding_name": "system:controller:hpa"},
+                sa("system:controller:hpa", account=hpa, namespace="openshift-infra"),
+                sa("system:controller:hpa", account=hpa, namespace="kube-system")]
+
+    def test_the_findings_page_orders_ties_by_subject_kind_and_namespace(self, store):
+        store.replace_bindings("crc", self._rows(), T)
+        want = [("ServiceAccount", "kube-system"), ("ServiceAccount", "openshift-infra"), ("User", "")]
+        assert [(r["subject_kind"], r["subject_namespace"]) for r in store.all_bindings("crc")] == want
+        walked = [(r["subject_kind"], r["subject_namespace"])
+                  for o in range(3) for r in store.all_bindings("crc", limit=1, offset=o)]
+        assert walked == want
+
+    def test_a_report_orders_ties_by_subject_kind_and_namespace(self, tmp_path):
+        from gsd.reporting.snapshot import Snapshot
+        live = Store(str(tmp_path / "w.db"))
+        live.upsert_cluster("crc", "https://x", True)
+        live.replace_bindings("crc", self._rows(), T)
+        d = tmp_path / "snapshots"; d.mkdir()
+        path = live.snapshot(str(d), keep=2)
+        live.close()
+        with Snapshot(Path(path)) as s:
+            rows = s.group_bindings("crc", kinds=SUBJECT_KINDS)
+        assert [(r["subject_kind"], r["subject_namespace"]) for r in rows] == [
+            ("ServiceAccount", "kube-system"), ("ServiceAccount", "openshift-infra"), ("User", "")]
 ```
