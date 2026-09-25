@@ -260,10 +260,16 @@ object is identical. Tests: `test_audit_stamp.py#TestI5ModeGating.test_an_unreco
 **I6 — Bounded log volume.** Was "Bounded blast radius", and the blast radius it was named for
 is gone. `maxPerCycle` (default 20) caps how many findings are listed individually per refresh;
 the remainder is counted and reported as "not yet listed" in the summary rather than dropped, so
-the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). The cap takes a
-sorted prefix, so deferred findings converge instead of being re-deferred forever. Resolutions
-are never capped: a closed finding must not queue behind new ones. A misclassification bug costs one
-screenful of log per 300s cycle rather than a cluster's worth. Tests:
+the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). Each cluster's
+poll thread keeps an in-memory schedule (`audit.py#AuditLogProgress`): a finding first seen this
+cycle is listed this cycle, then the least recently listed follow, the key breaking ties, so a stable
+backlog is covered in ceil(N / cap) cycles and a new hand-made grant is announced on the refresh that
+finds it. The sorted prefix alone converged only while the write path stamped what it listed; in log
+mode it listed the same 20 of the lab's 689 every cycle and the rest never (review of #360). A
+restarted thread starts at the sorted first page again; nothing about a classification or an
+acknowledgement is cached. Resolutions are never capped: a closed finding must not queue behind new
+ones. A misclassification bug costs one screenful of log per 300s cycle rather than a cluster's worth.
+Tests:
 `test_audit_stamp.py#TestI6BlastRadius.test_stamps_are_capped_and_the_deferral_is_counted`, `test_audit_stamp.py#TestI4SelfHealing.test_healing_is_never_capped`.
 
 **I7 — One announcer, in the default shape.** Was "Single writer", and it still constrains

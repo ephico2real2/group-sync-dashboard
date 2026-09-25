@@ -101,3 +101,37 @@ def plan_audit_stamps(rows: list[dict], max_per_cycle: int = 20) -> StampPlan:
         for key in list(stamp) + list(unstamp)
     }
     return StampPlan(stamp=stamp, unstamp=unstamp, capped=capped, evidence=evidence)
+
+
+class AuditLogProgress:
+    """Which findings the capped log lists this cycle: the new ones first, then the least recently
+    listed. One per cluster poll thread, in memory; it changes no finding and writes no label.
+
+    `plan_audit_stamps` takes a sorted prefix, which converged while the write path stamped each
+    object it listed. In log mode nothing is stamped, so the same first `max_per_cycle` keys were
+    listed every cycle and the rest never — on the lab 20 of 689, and a hand-made grant named past
+    them was never announced at all (Codex, review of #360). A restarted thread starts at the sorted
+    first page again; a stable backlog is covered in ceil(N / cap) cycles; a finding first seen this
+    cycle is listed this cycle.
+    """
+
+    def __init__(self) -> None:
+        self._last_logged: dict[tuple[str, str, str], int] = {}
+        self._cycle = 0
+
+    def plan(self, rows: list[dict], max_per_cycle: int = 20) -> StampPlan:
+        complete = plan_audit_stamps(rows, max_per_cycle=0)
+        current = set(complete.stamp)
+        new = current - self._last_logged.keys()
+        order = sorted(current, key=lambda key: (
+            0 if key in new else 1, self._last_logged.get(key, -1), key))
+        selected = order[:max_per_cycle] if max_per_cycle > 0 else order
+        self._last_logged = {key: self._last_logged.get(key, -1) for key in current}
+        for key in selected:
+            self._last_logged[key] = self._cycle
+        self._cycle += 1
+        return StampPlan(
+            stamp=selected, unstamp=complete.unstamp,
+            capped=len(order) - len(selected),
+            evidence={key: complete.evidence[key] for key in selected + complete.unstamp},
+        )

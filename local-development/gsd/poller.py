@@ -23,7 +23,7 @@ from .kube import (AUTH_FAILED, OK, SUBJECT_KINDS, UNREACHABLE, ClusterClient, C
                    GroupView, dn_equal)
 from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
-from .audit import plan_audit_stamps
+from .audit import AuditLogProgress, plan_audit_stamps
 from .storage import StorageBackend
 from .timeutil import now_iso
 
@@ -633,6 +633,7 @@ def refresh_bindings(
     signals=None,
     kyverno: bool = False,
     kyverno_metrics_url: str = "",
+    audit_progress: AuditLogProgress | None = None,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -776,7 +777,11 @@ def refresh_bindings(
     # cycle. Nothing here writes to the cluster.
     # docs/unmanaged-audit-design.md carries the invariants; gsd/audit.py the decisions.
     if audit_mode == "log":
-        plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
+        # The poll thread's scheduler lists the new findings first and rotates the rest through
+        # the cap; without one (a direct call, a test) the sorted first page as before.
+        rows = store.all_bindings(cluster.name)
+        plan = (audit_progress.plan(rows, audit_max_per_cycle) if audit_progress is not None
+                else plan_audit_stamps(rows, audit_max_per_cycle))
 
         # THE DISCOVERY IS THE DELIVERABLE.
         #
@@ -1212,6 +1217,7 @@ class Poller:
         # Poll immediately on start rather than sleeping first: a restarted dashboard that
         # shows nothing for its first interval is indistinguishable from a broken one.
         next_binding_refresh = 0.0
+        audit_progress = AuditLogProgress()
         own_stop = self._cluster_stops.setdefault(cluster.name, threading.Event())
         while not self._stop.is_set() and not own_stop.is_set():
             # The current config for this name: a Secret-sourced cluster whose token was rotated or
@@ -1297,6 +1303,7 @@ class Poller:
                         self.store, cluster, self.settings.request_timeout_seconds,
                         audit_mode=self.settings.unmanaged_audit_mode,
                         audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
+                        audit_progress=audit_progress,
                         namespaces_read=self.settings.namespaces_read_enabled,
                         namespace_metadata_labels=self.settings.namespace_metadata_labels,
                         signals=self.signals,

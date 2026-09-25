@@ -590,3 +590,89 @@ class TestTotalOrder:
             rows = s.group_bindings("crc", kinds=SUBJECT_KINDS)
         assert [(r["subject_kind"], r["subject_namespace"]) for r in rows] == [
             ("ServiceAccount", "kube-system"), ("ServiceAccount", "openshift-infra"), ("User", "")]
+
+
+class TestAuditLogProgress:
+    """The capped log lists new findings first, then the least recently listed (Codex, review of
+    #360). Without it the sorted prefix listed the same 20 of the lab's 689 every cycle and a
+    hand-made grant named past them never."""
+
+    @staticmethod
+    def _row(name):
+        return {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": name,
+                "group_name": name, "subject_kind": "ServiceAccount", "subject_namespace": "default",
+                "finding": "unmanaged", "audit_stamped": False, "role_name": "view"}
+
+    def test_a_backlog_rotates_through_the_cap_and_a_new_finding_goes_first(self):
+        from gsd.audit import AuditLogProgress
+        progress = AuditLogProgress()
+        rows = [self._row(n) for n in "abcd"]
+        names = lambda plan: [k[2] for k in plan.stamp]  # noqa: E731
+        first = progress.plan(rows, 2)
+        assert names(first) == ["a", "b"] and first.capped == 2
+        assert names(progress.plan(rows, 2)) == ["c", "d"]
+        # A finding first seen this cycle is listed this cycle, ahead of the rotation.
+        assert names(progress.plan(rows + [self._row("u1-evidence")], 2)) == ["u1-evidence", "a"]
+        # Labelled (no longer a finding): it leaves the schedule, and the rotation continues.
+        third = progress.plan(rows, 2)
+        assert names(third) == ["b", "c"] and third.capped == 2
+        assert set(third.evidence) == set(third.stamp)
+
+    def test_without_a_scheduler_the_poller_lists_the_sorted_first_page(self):
+        from gsd.audit import plan_audit_stamps
+        plan = plan_audit_stamps([self._row(n) for n in "dcba"], 2)
+        assert [k[2] for k in plan.stamp] == ["a", "b"] and plan.capped == 2
+
+    def test_the_poll_loop_announces_a_new_grant_on_the_refresh_that_finds_it(self, monkeypatch, caplog):
+        """The scheduler wired into _run_cluster: four findings under a cap of two, a fifth appearing on
+        the second cycle and labelled on the third. Every finding is announced, the new one on its own
+        cycle and once, eight WARNING lines over four cycles (Codex, review of #360)."""
+        from gsd import poller
+        from gsd.config import ClusterConfig, Settings
+        cluster = ClusterConfig("c", "https://x", token_env="TOKEN")
+        store = Store(":memory:")
+        store.upsert_cluster("c", "https://x", True)
+        settings = Settings(clusters=[cluster], binding_interval_seconds=0, unmanaged_audit_mode="log",
+                            unmanaged_audit_max_per_cycle=2, kyverno_enabled=False)
+        runner = poller.Poller(store, settings)
+        monkeypatch.setattr(poller, "poll_once", lambda *a, **kw: "ok")
+        monkeypatch.setattr(poller, "capture_once", lambda *a, **kw: None)
+        monkeypatch.setattr(runner, "_after_poll", lambda *a: None)
+        tick = iter(range(10000))
+        monkeypatch.setattr(poller.time, "monotonic", lambda: next(tick) * 1000.0)
+        cycles: list[int] = []
+
+        class Client:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self):
+                cycle = len(cycles); cycles.append(cycle)
+                names = ["a", "b", "c", "d"] + (["u1-evidence"] if cycle >= 1 else [])
+                if cycle == 3:
+                    runner._stop.set()
+                return [BindingView("ClusterRoleBinding", "", n, "ClusterRole", "view", n,
+                                    subject_kind="ServiceAccount", subject_namespace="default",
+                                    managed_source="platform-team" if n == "u1-evidence" and cycle >= 2 else None)
+                        for n in names]
+            def fetch_user_bindings(self): return []
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", Client)
+        with caplog.at_level("INFO", logger="gsd.poller"):
+            runner._run_cluster(cluster)
+        warnings = [r.message for r in caplog.records if r.levelname == "WARNING" and "UNMANAGED GRANT" in r.message]
+        assert "default/a," in warnings[0] and "default/b," in warnings[1]
+        assert "default/u1-evidence," in warnings[2]
+        assert any("default/d," in line for line in warnings), warnings
+        assert sum("default/u1-evidence," in line for line in warnings) == 1
+        assert len(warnings) == 8
+        assert store.count_bindings_by_finding("c")["unmanaged"] == 4
+        store.close()
+
+
+class TestGroupOnlyReportWording:
+    def test_the_group_only_reports_keep_their_group_only_finding_label(self, tmp_path):
+        """`finding_label` serves namespace-access and privileged-access, whose rows are Group subjects
+        only; a label naming accounts and people there described rows the report never holds (Codex,
+        review of #360)."""
+        from gsd.reporting.catalogue.common import finding_label
+        assert finding_label("unmanaged") == "UNMANAGED — synced group granted by hand, no policy operator source"

@@ -115,6 +115,16 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   namespaces, which the lab's `system:controller:horizontal-pod-autoscaler` does — came back in scan
   order and a `limit`/`offset` walk could skip or repeat one; both orderings end on the whole key. Also corrected: the 26 namespace-less subjects sit on 13 RoleBindings
   written by OLM (9), the cluster-version operator (3) and by hand (1), not "all OLM".
+- **Found in the implementation's review (#360) and written back here, the same PR.** (1) The capped log
+  listed the same sorted first twenty every cycle: `plan_audit_stamps` takes a sorted prefix, which
+  converged only while the write path stamped what it listed; in log mode nothing is stamped, so on the
+  lab 20 of 689 findings were announced every cycle and the other 669 never — and a new hand-made grant
+  named past them was never announced at all, which is the DoD's first half in the log (Grok on the
+  evidence procedure; Codex with the fix). Accepted with Codex's scheduler: `AuditLogProgress`, one per
+  poll thread, in memory, new findings first, then the least recently listed; the sorted prefix stays for
+  a call with no scheduler. Grok's alternative — naming the planted grant so it sorts first — was a
+  procedure that hid the hole and is superseded. (2) The `finding_label` block reworded a label that only
+  the Group-only reports read (Codex): removed, so those reports are byte for byte main's on the same seed.
 - **`_OBSERVATION_SEEDS` is not changed.** The first draft narrowed the `binding:Group` seed to Group rows;
   the scratch application refuted it: migration 14 splices those statements into its own list, so the clause
   ran against a v0 database's old shape ("no such column: subject_kind"). And it was unnecessary — the marker
@@ -310,7 +320,10 @@ before and after this spec for a table that holds Group rows only, which the exi
 ### 3.6 The poller and the announcer
 
 The row dict carries `subject_kind`, `subject_namespace` and — the adjacent fix — `audit_stamped`. The
-refresh line names the kinds it read. `audit.py` gains `subject_label(row)`, the one spelling of a subject
+refresh line names the kinds it read. `audit.py` gains `AuditLogProgress`, the poll thread's schedule for the capped log — a finding first
+seen this cycle is listed this cycle, then the least recently listed follow, so a new hand-made grant
+is announced on the refresh that finds it and a backlog rotates through the cap instead of the same
+twenty every cycle (invariant I6, rewritten) — and `subject_label(row)`, the one spelling of a subject
 for the log and the reports: `group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`; the plan's
 evidence lists `subjects` (the `groups` list, renamed, holding those labels), only for the rows classified
 `unmanaged`, as before. The WARNING line reads `grants <role> to <subjects>`, which for a Group is the same
@@ -341,8 +354,9 @@ audit are Group-only readers and do not change.
 named `system:kube-scheduler` is not dropped as if it were a virtual group — and `_GROUP_SUBJECTS_ONLY`
 guards the group counts. `Snapshot.group_bindings` takes `kinds` (default `("Group",)`, so
 `namespace-access`, `privileged-access`, `access-matrix` and `access-certification` are unchanged); the
-`binding-findings` report asks for every kind and names each subject with `subject_label`; its per-tier
-tables' first column is "subject". `findings_counts` counts every kind, which is what
+`binding-findings` report asks for every kind and names each subject with `subject_label` and its own
+definitions; `finding_label`, which only the Group-only reports read, is unchanged. `findings_counts`
+counts every kind, which is what
 `compliance-snapshot`'s Unmanaged figure now says, and its RBAC figures name their populations: "Group
 bindings (Group subjects)", "Unmanaged (every subject kind)", "Platform identity grants (excluded from the
 direct-user figures)".
@@ -408,6 +422,9 @@ claim; and the edits to existing tests that pin the old shape. Every test below 
   `binding-findings` report's Unmanaged table names `ServiceAccount <namespace>/<name>`.
 - **Metrics** (an edit in `tests/test_metrics.py`): `gsd_bindings_total{finding="unmanaged"}` is emitted
   at 0 on a cluster with none.
+- **The implementation review's** (`TestAuditLogProgress`: a backlog rotates through the cap and a new
+  finding goes first, the poll loop announces a new grant on the refresh that finds it, and without a
+  scheduler the sorted first page as before; `TestGroupOnlyReportWording`: `finding_label` unchanged).
 - **The review's six** (`TestDuplicateSubjects`, `TestSeverityFirstPage`, `TestTotalOrder`,
   `TestAnOlderCopyInTheRollingWindow`, `TestRolePicker`, and the every-kind total in the compliance test): both
   orderings end on every primary-key column, so a page walks the set exactly once; a subject a binding names twice is one
@@ -435,8 +452,9 @@ the PVC UIDs identical), with `KUBECONFIG` set to the lab's scratch kubeconfig:
    ServiceAccount rows are in `ok` with `managed_source: group-sync-dashboard`.
 4. **The evidence the issue's Definition of Done names.** Plant a hand-made ServiceAccount grant
    (`oc create clusterrolebinding u1-evidence --clusterrole=view --serviceaccount=default:u1-evidence-sa`),
-   wait one refresh: the WARNING names `ServiceAccount default/u1-evidence-sa`, the row is in `unmanaged`,
-   the tile counts it. Label it as the operator would
+   wait one refresh: the WARNING names `ServiceAccount default/u1-evidence-sa` — on that refresh, because a
+   finding first seen is listed first, ahead of the lab's backlog of 689 (`AuditLogProgress`) — the row is
+   in `unmanaged`, the tile counts it. Label it as the operator would
    (`oc label clusterrolebinding u1-evidence rbac.ocp.io/config-source=platform-team`), wait one refresh:
    the row is `ok`, `managed_source: platform-team`, no WARNING. Remove it.
 5. The Access granted page under `#page=bindings&cluster=dashboard` with the Unmanaged filter shows the
@@ -1245,6 +1263,129 @@ from .kube import (AUTH_FAILED, OK, SUBJECT_KINDS, UNREACHABLE, ClusterClient, C
             )
 ```
 
+<!-- block: local-development/gsd/audit.py | edit -->
+```python
+        for key in list(stamp) + list(unstamp)
+    }
+    return StampPlan(stamp=stamp, unstamp=unstamp, capped=capped, evidence=evidence)
+```
+```python
+        for key in list(stamp) + list(unstamp)
+    }
+    return StampPlan(stamp=stamp, unstamp=unstamp, capped=capped, evidence=evidence)
+
+
+class AuditLogProgress:
+    """Which findings the capped log lists this cycle: the new ones first, then the least recently
+    listed. One per cluster poll thread, in memory; it changes no finding and writes no label.
+
+    `plan_audit_stamps` takes a sorted prefix, which converged while the write path stamped each
+    object it listed. In log mode nothing is stamped, so the same first `max_per_cycle` keys were
+    listed every cycle and the rest never — on the lab 20 of 689, and a hand-made grant named past
+    them was never announced at all (Codex, review of #360). A restarted thread starts at the sorted
+    first page again; a stable backlog is covered in ceil(N / cap) cycles; a finding first seen this
+    cycle is listed this cycle.
+    """
+
+    def __init__(self) -> None:
+        self._last_logged: dict[tuple[str, str, str], int] = {}
+        self._cycle = 0
+
+    def plan(self, rows: list[dict], max_per_cycle: int = 20) -> StampPlan:
+        complete = plan_audit_stamps(rows, max_per_cycle=0)
+        current = set(complete.stamp)
+        new = current - self._last_logged.keys()
+        order = sorted(current, key=lambda key: (
+            0 if key in new else 1, self._last_logged.get(key, -1), key))
+        selected = order[:max_per_cycle] if max_per_cycle > 0 else order
+        self._last_logged = {key: self._last_logged.get(key, -1) for key in current}
+        for key in selected:
+            self._last_logged[key] = self._cycle
+        self._cycle += 1
+        return StampPlan(
+            stamp=selected, unstamp=complete.unstamp,
+            capped=len(order) - len(selected),
+            evidence={key: complete.evidence[key] for key in selected + complete.unstamp},
+        )
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+from .audit import plan_audit_stamps
+```
+```python
+from .audit import AuditLogProgress, plan_audit_stamps
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+    kyverno: bool = False,
+    kyverno_metrics_url: str = "",
+) -> str:
+```
+```python
+    kyverno: bool = False,
+    kyverno_metrics_url: str = "",
+    audit_progress: AuditLogProgress | None = None,
+) -> str:
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+    if audit_mode == "log":
+        plan = plan_audit_stamps(store.all_bindings(cluster.name), audit_max_per_cycle)
+```
+```python
+    if audit_mode == "log":
+        # The poll thread's scheduler lists the new findings first and rotates the rest through
+        # the cap; without one (a direct call, a test) the sorted first page as before.
+        rows = store.all_bindings(cluster.name)
+        plan = (audit_progress.plan(rows, audit_max_per_cycle) if audit_progress is not None
+                else plan_audit_stamps(rows, audit_max_per_cycle))
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+        next_binding_refresh = 0.0
+        own_stop = self._cluster_stops.setdefault(cluster.name, threading.Event())
+```
+```python
+        next_binding_refresh = 0.0
+        audit_progress = AuditLogProgress()
+        own_stop = self._cluster_stops.setdefault(cluster.name, threading.Event())
+```
+
+<!-- block: local-development/gsd/poller.py | edit -->
+```python
+                        audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
+                        namespaces_read=self.settings.namespaces_read_enabled,
+```
+```python
+                        audit_max_per_cycle=self.settings.unmanaged_audit_max_per_cycle,
+                        audit_progress=audit_progress,
+                        namespaces_read=self.settings.namespaces_read_enabled,
+```
+
+<!-- block: docs/unmanaged-audit-design.md | edit -->
+```markdown
+the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). The cap takes a
+sorted prefix, so deferred findings converge instead of being re-deferred forever. Resolutions
+are never capped: a closed finding must not queue behind new ones. A misclassification bug costs one
+screenful of log per 300s cycle rather than a cluster's worth. Tests:
+```
+```markdown
+the true total is recoverable from the line (`audit.py#plan_audit_stamps`, `poller.py#refresh_bindings`). Each cluster's
+poll thread keeps an in-memory schedule (`audit.py#AuditLogProgress`): a finding first seen this
+cycle is listed this cycle, then the least recently listed follow, the key breaking ties, so a stable
+backlog is covered in ceil(N / cap) cycles and a new hand-made grant is announced on the refresh that
+finds it. The sorted prefix alone converged only while the write path stamped what it listed; in log
+mode it listed the same 20 of the lab's 689 every cycle and the rest never (review of #360). A
+restarted thread starts at the sorted first page again; nothing about a classification or an
+acknowledgement is cached. Resolutions are never capped: a closed finding must not queue behind new
+ones. A misclassification bug costs one screenful of log per 300s cycle rather than a cluster's worth.
+Tests:
+```
+
 <!-- block: local-development/gsd/metrics.py | edit -->
 ```python
 FINDINGS = ("ok", "dangling", "unresolved", "built_in")
@@ -1513,14 +1654,6 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
                                ("Bindings (every subject kind)", sum(findings.values())),
                                ("Unmanaged (every subject kind)", findings.get("unmanaged", 0)),
                                ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded from the direct-user figures)", c["platform_user_bindings"]),
-```
-
-<!-- block: local-development/gsd/reporting/catalogue/common.py | edit -->
-```python
-            "unmanaged": "UNMANAGED — synced group granted by hand, no policy operator source",
-```
-```python
-            "unmanaged": "UNMANAGED — granted by hand (a synced group, a ServiceAccount or a user), no policy operator source",
 ```
 
 <!-- block: local-development/gsd/static/index.html | edit -->
@@ -3132,4 +3265,90 @@ class TestTotalOrder:
             rows = s.group_bindings("crc", kinds=SUBJECT_KINDS)
         assert [(r["subject_kind"], r["subject_namespace"]) for r in rows] == [
             ("ServiceAccount", "kube-system"), ("ServiceAccount", "openshift-infra"), ("User", "")]
+
+
+class TestAuditLogProgress:
+    """The capped log lists new findings first, then the least recently listed (Codex, review of
+    #360). Without it the sorted prefix listed the same 20 of the lab's 689 every cycle and a
+    hand-made grant named past them never."""
+
+    @staticmethod
+    def _row(name):
+        return {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": name,
+                "group_name": name, "subject_kind": "ServiceAccount", "subject_namespace": "default",
+                "finding": "unmanaged", "audit_stamped": False, "role_name": "view"}
+
+    def test_a_backlog_rotates_through_the_cap_and_a_new_finding_goes_first(self):
+        from gsd.audit import AuditLogProgress
+        progress = AuditLogProgress()
+        rows = [self._row(n) for n in "abcd"]
+        names = lambda plan: [k[2] for k in plan.stamp]  # noqa: E731
+        first = progress.plan(rows, 2)
+        assert names(first) == ["a", "b"] and first.capped == 2
+        assert names(progress.plan(rows, 2)) == ["c", "d"]
+        # A finding first seen this cycle is listed this cycle, ahead of the rotation.
+        assert names(progress.plan(rows + [self._row("u1-evidence")], 2)) == ["u1-evidence", "a"]
+        # Labelled (no longer a finding): it leaves the schedule, and the rotation continues.
+        third = progress.plan(rows, 2)
+        assert names(third) == ["b", "c"] and third.capped == 2
+        assert set(third.evidence) == set(third.stamp)
+
+    def test_without_a_scheduler_the_poller_lists_the_sorted_first_page(self):
+        from gsd.audit import plan_audit_stamps
+        plan = plan_audit_stamps([self._row(n) for n in "dcba"], 2)
+        assert [k[2] for k in plan.stamp] == ["a", "b"] and plan.capped == 2
+
+    def test_the_poll_loop_announces_a_new_grant_on_the_refresh_that_finds_it(self, monkeypatch, caplog):
+        """The scheduler wired into _run_cluster: four findings under a cap of two, a fifth appearing on
+        the second cycle and labelled on the third. Every finding is announced, the new one on its own
+        cycle and once, eight WARNING lines over four cycles (Codex, review of #360)."""
+        from gsd import poller
+        from gsd.config import ClusterConfig, Settings
+        cluster = ClusterConfig("c", "https://x", token_env="TOKEN")
+        store = Store(":memory:")
+        store.upsert_cluster("c", "https://x", True)
+        settings = Settings(clusters=[cluster], binding_interval_seconds=0, unmanaged_audit_mode="log",
+                            unmanaged_audit_max_per_cycle=2, kyverno_enabled=False)
+        runner = poller.Poller(store, settings)
+        monkeypatch.setattr(poller, "poll_once", lambda *a, **kw: "ok")
+        monkeypatch.setattr(poller, "capture_once", lambda *a, **kw: None)
+        monkeypatch.setattr(runner, "_after_poll", lambda *a: None)
+        tick = iter(range(10000))
+        monkeypatch.setattr(poller.time, "monotonic", lambda: next(tick) * 1000.0)
+        cycles: list[int] = []
+
+        class Client:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self):
+                cycle = len(cycles); cycles.append(cycle)
+                names = ["a", "b", "c", "d"] + (["u1-evidence"] if cycle >= 1 else [])
+                if cycle == 3:
+                    runner._stop.set()
+                return [BindingView("ClusterRoleBinding", "", n, "ClusterRole", "view", n,
+                                    subject_kind="ServiceAccount", subject_namespace="default",
+                                    managed_source="platform-team" if n == "u1-evidence" and cycle >= 2 else None)
+                        for n in names]
+            def fetch_user_bindings(self): return []
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", Client)
+        with caplog.at_level("INFO", logger="gsd.poller"):
+            runner._run_cluster(cluster)
+        warnings = [r.message for r in caplog.records if r.levelname == "WARNING" and "UNMANAGED GRANT" in r.message]
+        assert "default/a," in warnings[0] and "default/b," in warnings[1]
+        assert "default/u1-evidence," in warnings[2]
+        assert any("default/d," in line for line in warnings), warnings
+        assert sum("default/u1-evidence," in line for line in warnings) == 1
+        assert len(warnings) == 8
+        assert store.count_bindings_by_finding("c")["unmanaged"] == 4
+        store.close()
+
+
+class TestGroupOnlyReportWording:
+    def test_the_group_only_reports_keep_their_group_only_finding_label(self, tmp_path):
+        """`finding_label` serves namespace-access and privileged-access, whose rows are Group subjects
+        only; a label naming accounts and people there described rows the report never holds (Codex,
+        review of #360)."""
+        from gsd.reporting.catalogue.common import finding_label
+        assert finding_label("unmanaged") == "UNMANAGED — synced group granted by hand, no policy operator source"
 ```
