@@ -45,7 +45,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 23, f"expected twenty-three index rows (the programme's thirteen, D2b, E1, S1, S2, S3, S4, S4a, S4b, S4c and T1), matched {sorted(rows)}"
+    assert len(rows) == 24, f"expected twenty-four index rows (the programme's thirteen, D2b, E1, S1, S2, S3, S4, S4a, S4b, S4c, T1 and U1), matched {sorted(rows)}"
     return rows
 
 
