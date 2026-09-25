@@ -1,0 +1,3 @@
+# read 2026-09-25T05:47:10Z from pod/group-sync-dashboard-8556cc6bb5-bwm2d, file:/data/gsd.db?mode=ro
+user_version 19
+rbac_group_binding columns ['cluster_id', 'binding_kind', 'binding_namespace', 'binding_name', 'role_kind', 'role_name', 'group_name', 'observed_at', 'managed_source', 'exception', 'audit_stamped']
