@@ -286,7 +286,7 @@ class TestPoller:
     def _poller(self, tmp_path, **kw):
         store = Store(str(tmp_path / "p.db"))
         settings = Settings(clusters=[ClusterConfig("host", "https://kubernetes.default.svc", token_env="X")],
-                            db_path=str(tmp_path / "p.db"), poll_interval_seconds=1, binding_interval_seconds=1, **kw)
+                            db_path=str(tmp_path / "p.db"), poll_interval_seconds=1, binding_interval_seconds=1, discovery_interval_seconds=1, **kw)
         return Poller(store, settings), store, settings
 
     def _wait(self, cond, timeout=5.0):

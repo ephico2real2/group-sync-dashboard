@@ -190,7 +190,7 @@ class TestThePollPath:
         store = Store(str(tmp_path / "p.db"))
         settings = Settings(clusters=[ClusterConfig("host", "https://kubernetes.default.svc", token_env="X"),
                                       ClusterConfig("shared-rnd", "https://api.crc.testing:6443", sa_token_lookup=True)],
-                            db_path=str(tmp_path / "p.db"), poll_interval_seconds=1, binding_interval_seconds=1)
+                            db_path=str(tmp_path / "p.db"), poll_interval_seconds=1, binding_interval_seconds=1, discovery_interval_seconds=1)
         poller = Poller(store, settings)
         with caplog.at_level("INFO", logger="gsd.poller"):
             poller.start()
@@ -209,7 +209,7 @@ class TestThePollPath:
         _Host.secrets = {"items": [_secret(config={"userSelfLogin": True})]}
         store = Store(str(tmp_path / "p.db"))
         settings = Settings(clusters=[ClusterConfig("host", "https://kubernetes.default.svc", token_env="X")],
-                            db_path=str(tmp_path / "p.db"), poll_interval_seconds=1, binding_interval_seconds=1)
+                            db_path=str(tmp_path / "p.db"), poll_interval_seconds=1, binding_interval_seconds=1, discovery_interval_seconds=1)
         poller = Poller(store, settings)
         poller.start()
         try:

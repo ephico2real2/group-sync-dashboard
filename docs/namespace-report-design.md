@@ -328,7 +328,7 @@ and membership rosters require an explicit, recorded switch.
   compliance artifact from an unreproducible build should say so.
 * **Data freshness, split by kind** — the part a screenshot can never carry:
   * *snapshot* data (bindings, groups, member counts): "as observed at last poll `<ts>`;
-    bindings refresh every 300s" (`values.yaml#scheduleGraceSeconds`) — current as of the poll, not live;
+    bindings refresh every 3600s" (`values.yaml#scheduleGraceSeconds`) — current as of the poll, not live;
   * *accumulated* data (membership/sync timeline): "covers only the period since this dashboard
     began observing — earliest event `<ts>`" (already stamped at `api.py#list_clusters`, `api.py#build_app`).
     Without this an empty timeline reads as "nothing ever changed".

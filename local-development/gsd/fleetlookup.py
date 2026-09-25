@@ -60,7 +60,7 @@ LAST_USED_LABEL = "kubernetes.io/legacy-token-last-used"
 #: Stamped by the cleaner on an auto-generated token unused for the period; the token is refused after.
 INVALID_SINCE_LABEL = "kubernetes.io/legacy-token-invalid-since"
 #: The schedule the poller runs this under (SPEC_S4b, orchestrator's notes): a failure that SPENT a
-#: login counts, `attempt=n/5`, the next try binding_interval × 2^(n−1) later, capped at a day, then
+#: login counts, `attempt=n/5`, the next try discovery_interval × 2^(n−1) later, capped at a day, then
 #: gave up out loud until the declaration changes, the pod restarts or #285 re-arms it.
 LOOKUP_ATTEMPTS = 5
 LOOKUP_WAIT_CAP = 86400.0

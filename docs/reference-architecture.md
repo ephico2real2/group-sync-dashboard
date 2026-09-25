@@ -73,7 +73,7 @@ flowchart TB
 
   subgraph dash["The dashboard — read-only, one replica"]
     direction TB
-    poll["Poll<br/>60s CRs and groups<br/>300s bindings"]
+    poll["Poll<br/>60s CRs and groups<br/>3600s bindings"]
     classify{"Classify every<br/>binding and grant"}
     store[("SQLite on a PVC<br/>current state + accumulated history")]
     poll --> store --> classify
@@ -126,7 +126,7 @@ flowchart TB
    rolebinding` reports it healthy, and no operator will ever mention it.
 
 3. **The dashboard polls and classifies.** Reads only — CRs and groups every 60s, bindings
-   every 300s. Classification is where the value is: it compares what the bindings claim
+   every `bindingIntervalSeconds` (3600s by default). Classification is where the value is: it compares what the bindings claim
    against what the groups and the policy labels actually say.
 
 4. **Every finding is an absence.** Not a failure anything reports — a group that is gone, a
@@ -220,7 +220,7 @@ sequential loop because a cluster that black-holes TCP would otherwise hold ever
 cluster's data hostage for the length of the timeout (`gsd/poller.py`).
 
 Two cadences on that one thread. Groups every `pollIntervalSeconds` (60s); bindings and
-operator-config health every `bindingIntervalSeconds` (300s). Bindings are listed across
+operator-config health every `bindingIntervalSeconds` (3600s by default). Bindings are listed across
 every namespace — roughly 154 paged requests at 100× the reference cluster's scale — and
 they change on administrative action rather than on a sync schedule, so minute-level
 freshness buys nothing (`gsd/config.py#Settings`).
@@ -1000,7 +1000,7 @@ whose rows were classified `unmanaged` are cited: a binding can name two groups 
 for one of them, and citing the managed one would send a reader to inspect a grant that is fine
 (`gsd/audit.py#plan_audit_stamps`).
 
-`maxPerCycle` (default 20) bounds how many findings are *listed* individually per 300s refresh.
+`maxPerCycle` (default 20) bounds how many findings are *listed* individually per binding refresh.
 The summary always reports the true total and the remainder is counted as "not yet listed" rather
 than dropped, so a misclassification bug costs one screenful of log per cycle instead of the
 whole cluster at once. Resolutions are never capped — a closed finding must not queue behind new

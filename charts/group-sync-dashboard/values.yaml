@@ -247,7 +247,22 @@ config:
   # administrative action rather than on a schedule, so minute-level freshness buys
   # nothing. Deliberately slower than the group poll, which means it moves when the group
   # poll moves, or the expensive call becomes the frequent one.
-  bindingIntervalSeconds: 300
+  #
+  # HOURLY BY DEFAULT (the operator, 2026-09-25: every 5 minutes was "too much checking and
+  # checking on every clusters"). The same timer also times operator-config and Kyverno health.
+  # Nothing alerts on the age of a binding refresh, and /healthz does not depend on it. The
+  # liveness probe keeps its own period (probes.liveness.periodSeconds), by the operator's
+  # ruling: it makes no cluster call, and tying it here would leave a hung pod for hours.
+  bindingIntervalSeconds: 3600
+
+  # CLUSTER DISCOVERY, on its own timer so that slowing the bindings never delays a new cluster
+  # (the operator, 2026-09-25). One pass is one LIST of labelled Secrets and one of onboarding
+  # ConfigMaps in this namespace, on the host only: no call reaches a managed cluster. A cluster
+  # applied with oc or GitOps is picked up within this interval; a write through the dashboard's
+  # own API wakes discovery at once. The #284 lookup's retry backoff rides it too
+  # (interval x 2^(attempt-1), capped at 24h). 300 is the cadence discovery had before it moved
+  # off bindingIntervalSeconds in chart 0.56.0.
+  discoveryIntervalSeconds: 300
 
   requestTimeoutSeconds: 15
 
@@ -379,7 +394,7 @@ config:
     # pipeline you have not tuned yet. Findings stay visible in the RBAC policy tab and the
     # API either way; `off` only silences the log.
     mode: "log"
-    # At most this many findings LISTED individually per 300s refresh, so a misclassification
+    # At most this many findings LISTED individually per binding refresh, so a misclassification
     # bug fills one screenful of log per cycle instead of the whole cluster at once.
     #
     # The cap does NOT shrink the headline number: the summary reports every finding awaiting
@@ -1143,7 +1158,7 @@ reporting:
 
   # The read-only copy for the report pod: how often the dashboard's leader writes it under
   # /data/report and how many to keep (the newest is read; the previous covers the moment a new
-  # one is being written). 300 = the binding cadence. Below 60 refuses the render: a VACUUM INTO
+  # one is being written). 300s, its own timer. Below 60 refuses the render: a VACUUM INTO
   # holds a read transaction for its duration (3.2 s measured on a 61 MB, 520k-row store).
   snapshot:
     intervalSeconds: 300
@@ -1423,7 +1438,7 @@ platformNamespaces:
 # Argo CD's model: a Secret in THIS namespace labelled `groupsync-dashboard.io/secret-type: cluster`
 # is a cluster — `name` (the id the dashboard shows), `server`, `config` (JSON: bearerToken or
 # oauth{username,password}; tlsClientConfig{caData,insecure}), and the D2 options `visibility`,
-# `identity`, `enabled`. The dashboard LISTs them by that label on the binding cadence and polls
+# `identity`, `enabled`. The dashboard LISTs them by that label on discoveryIntervalSeconds and polls
 # each like a `clusters[]` entry; written by hand, by the Cluster Configurations tab (S2) or by any
 # GitOps process, the app sees the same object. `clusters[]` above stays the bootstrap source and
 # the host is ALWAYS clusters[0]: a Secret naming the host is refused as a finding. A Secret that

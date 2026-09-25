@@ -8214,7 +8214,7 @@ refresh();
 // The automatic refresh. Two guards and a slower clock, all for the same reason: the browser
 // was asking more often than the answer can change, and repainting regardless.
 //
-// 60s, not 30s — config.pollIntervalSeconds is 60, bindingIntervalSeconds is 300, and the login
+// 60s, not 30s — config.pollIntervalSeconds is 60, bindingIntervalSeconds is 3600, and the login
 // capture flushes every 60s. At 30s every other poll provably could not have new data, and each
 // one still replaced #main. Matching the fastest backend cadence is the most this can usefully be.
 //

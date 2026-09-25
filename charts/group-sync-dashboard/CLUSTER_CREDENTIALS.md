@@ -131,7 +131,7 @@ so the *entire* JSON must be supplied, not just the token.
 | written by | noticed within |
 |---|---|
 | the API (the Cluster Configurations tab) | **seconds** — the write wakes discovery |
-| `oc`, `kubectl`, or GitOps | **up to one binding interval** (`bindingIntervalSeconds`, 300s default) |
+| `oc`, `kubectl`, or GitOps | **up to one discovery interval** (`discoveryIntervalSeconds`, 300s default) |
 
 Measured on the reference cluster: 8m30s for a newly created Secret, and 3m42s / 4m08s for a rotation
 — all via `oc`. Detail in [`docs/polling-and-discovery.md`](../../docs/polling-and-discovery.md).

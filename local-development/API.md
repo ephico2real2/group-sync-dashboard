@@ -244,7 +244,7 @@ never registered, not one that refuses); `GET /api/clusterconfigs` says which in
 `groupsync-dashboard.io/secret-type: cluster` (the app checks the label before every update or delete
 — RBAC cannot scope a verb by label). Each successful write logs one line naming the person, the verb
 and the Secret, and wakes the discovery thread so the result is on `GET /api/clusterconfigs` within
-seconds; a Secret written by GitOps still rides the binding cadence. **The credential never comes
+seconds; a Secret written by GitOps still rides the discovery cadence (`discoveryIntervalSeconds`). **The credential never comes
 back**: not in these responses, not in a log line, not in the database, not in `/metrics`
 (`docs/specs/SPEC_S2_cluster_configurations_tab.md`, a test with a sentinel token).
 

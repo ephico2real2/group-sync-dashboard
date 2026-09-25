@@ -73,7 +73,7 @@ reported.
 
 ## When it takes effect
 
-At the next binding refresh: `bindingIntervalSeconds`, 300 seconds by default. A labelled or annotated binding then
+At the next binding refresh: `bindingIntervalSeconds`, 3600 seconds (one hour) by default. A labelled or annotated binding then
 moves out of **Unmanaged**. On the Access granted page it is counted as granted. A platform identity is counted as
 **Built-in**.
 

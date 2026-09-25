@@ -469,7 +469,11 @@ class Settings:
     cycle and the state flaps to ``late`` on each pass. See state.py.
     """
 
-    binding_interval_seconds: int = 300
+    binding_interval_seconds: int = 3600
+
+    discovery_interval_seconds: int = 300
+    """Cluster discovery and the #284 lookup's retry backoff. Its own timer, so an hourly binding
+    refresh never delays a cluster applied with oc or GitOps (the operator, 2026-09-25)."""
 
     # Login capture. OFF by default: it needs a read grant the chart only creates when asked, and it
     # records nothing at all unless the authentication operator's logLevel is Debug — so enabling it
@@ -1652,11 +1656,16 @@ def load_settings(path: str | Path) -> Settings:
         # more often than once a minute is a load the poll thread should not carry. The chart refuses
         # the same value at render; this is the second boundary, for a hand-written config.
         raise ConfigError("reportingSnapshotIntervalSeconds must be at least 60")
+    if int(raw.get("discoveryIntervalSeconds", 300)) < 1:
+        # The discovery thread waits on this alone (Poller._run_discovery); bindingIntervalSeconds has
+        # no such guard because the poll loop's max(1.0, ...) paces it (review of #368, Grok C6).
+        raise ConfigError("discoveryIntervalSeconds must be at least 1: at 0 the discovery thread's wait returns at once, a busy loop of LISTs against the host API, and the #284 lookup's retry backoff collapses to 0")
     return Settings(
         clusters=clusters,
         poll_interval_seconds=int(raw.get("pollIntervalSeconds", 60)),
         schedule_grace_seconds=int(raw.get("scheduleGraceSeconds", 120)),
-        binding_interval_seconds=int(raw.get("bindingIntervalSeconds", 300)),
+        binding_interval_seconds=int(raw.get("bindingIntervalSeconds", 3600)),
+        discovery_interval_seconds=int(raw.get("discoveryIntervalSeconds", 300)),
         login_capture_enabled=str(raw.get("loginCaptureEnabled", "false")).lower() == "true",
         login_capture_namespace=raw.get("loginCaptureNamespace") or "openshift-authentication",
         login_capture_htpasswd_providers=tuple(
