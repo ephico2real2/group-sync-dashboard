@@ -37,7 +37,7 @@ platform operators. The existing fleet account/password and remote token-reader 
 
 A name repeated in values and a valid ConfigMap stanza, within one map, across maps, or in an unrelated labelled
 Secret loads neither declaration and produces a finding for each. A ConfigMap cannot disable or
-replace the values host: host declarations are refused before conflict resolution. Existing
+replace the values host: host declarations are refused before conflict resolution.
 An invalid stanza reserves its name only to hold cleanup; it never blocks a values cluster.
 Secret-versus-values precedence outside this feed is unchanged.
 

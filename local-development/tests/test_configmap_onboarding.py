@@ -454,10 +454,43 @@ def test_external_url_of_same_cluster_is_allowed(host_url, wire):
 
 
 def test_insecure_configmap_is_accepted_and_secret_preserves_tls_choice(wire):
+    """The operator's ruling, end to end: the stanza's insecure flag reaches the Secret, the Secret parses back
+    as insecure, and the rediscovered cluster polls with verification off, all on one bind."""
+    from gsd.clusterconfig.parser import parse_secret
     host = Host([cm([{**STANZA, "insecureSkipVerify": True}])])
     generated(host)
-    config = json.loads(base64.b64decode(host.secrets["gsd-cluster-rnd"]["data"]["config"]))
+    obj = host.secrets["gsd-cluster-rnd"]
+    config = json.loads(base64.b64decode(obj["data"]["config"]))
     assert config["tlsClientConfig"]["insecure"] is True
+    parsed = parse_secret(obj, host_name="host")
+    assert parsed.insecure_skip_verify is True and parsed.verify() is False
+    _, clusters, _, _ = cycle(host)
+    live, = clusters
+    assert live.source == "secret:gsd-cluster-rnd"
+    assert live.insecure_skip_verify is True and live.verify() is False
+    assert len(wire.authorize) == 1
+
+
+@pytest.mark.parametrize("answer", ["403", "bad-read", "write-failure"])
+def test_configmap_bind_budget_through_the_poller(tmp_path, monkeypatch, wire, answer):
+    """#284's lesson, composed: the budget holds through the Poller's own scheduler across six cycles, not only
+    through a direct lookup call (Grok, review of #363, N2)."""
+    host = Host()
+    s = settings()
+    poller = Poller(Store(str(tmp_path / "cm-budget.db")), s)
+    monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
+    monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: host)
+    if answer == "403":
+        wire.answers = [httpx.Response(403)]
+    if answer == "bad-read":
+        wire.secret = httpx.Response(403, text=SA_TOKEN)
+    if answer == "write-failure":
+        host.refuse = True
+    for _ in range(6):
+        for state in poller._lookups.values():
+            state.not_before = 0
+        poller._discover_once()
+        poller._retrieve_pending()
     assert len(wire.authorize) == 1
 
 
