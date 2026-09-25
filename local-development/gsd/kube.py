@@ -343,6 +343,10 @@ def dn_equal(a: str | None, b: str | None) -> bool:
 SYNC_PROVIDER_LABEL = "group-sync-operator.redhat-cop.io/sync-provider"
 CONFIG_SOURCE_LABEL = "rbac.ocp.io/config-source"
 UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
+# The config-source this chart writes on its own RBAC (`gsd.rbacLabels`, #312). It is provenance for
+# the chart's objects, not evidence that a policy operator governs the cluster, so the store's
+# unmanaged gate ignores it; `tests/test_chart_rbac_provenance.py` holds the rendered value to it.
+CHART_CONFIG_SOURCE = "group-sync-dashboard"
 
 # READ, never written. The dashboard used to apply this label to its own findings; that
 # write path was removed (see the comment above `class ClusterClient`), so the label now

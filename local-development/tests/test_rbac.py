@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from gsd.kube import BindingView, _binding_views
+from gsd.kube import CHART_CONFIG_SOURCE, BindingView, _binding_views
 from gsd.store import Store
 
 T1 = "2026-08-01T09:00:00Z"
@@ -286,6 +286,21 @@ class TestUnmanagedFinding:
         self._seed(store, [self._binding("hand-made")])
         findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
         assert findings["hand-made"] == "ok"
+
+    def test_the_charts_own_label_does_not_mean_a_policy_operator_is_in_use(self, store):
+        """#312: the chart labels its own auditor binding, and that binding is on every host by
+        default. It must stay unreported without switching the finding on for a cluster no policy
+        operator governs; only a policy operator's label does that."""
+        chart = self._binding("chart-auditor", managed_source=CHART_CONFIG_SOURCE)
+        self._seed(store, [chart, self._binding("hand-made")])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings == {"chart-auditor": "ok", "hand-made": "ok"}
+        assert store.count_bindings_by_finding("crc").get("unmanaged", 0) == 0
+
+        self._seed(store, [chart, self._binding("managed", managed_source="prod-rbac"),
+                           self._binding("hand-made")])
+        findings = {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")}
+        assert findings == {"chart-auditor": "ok", "managed": "ok", "hand-made": "unmanaged"}
 
     def test_broken_resolution_outranks_provenance(self, store):
         """A binding that grants NOBODY is worse than one that grants outside governance;

@@ -27,7 +27,7 @@ from typing import Iterator
 
 from .storage import SqliteHealth, StorageHealth  # noqa: F401
 from .kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED, qualified
-from .kube import SYSTEM_GROUP_PREFIX
+from .kube import CHART_CONFIG_SOURCE, SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -2573,14 +2573,17 @@ class Store:
                         -- bypassing governance by hand. Requires the policy operator to be
                         -- in use at all (any managed binding on the cluster), or every
                         -- binding on a cluster that has never heard of config-source
-                        -- labels would flag. An exception annotation on the binding
-                        -- acknowledges a deliberate one and suppresses the finding.
+                        -- labels would flag. This chart's own label is not that evidence:
+                        -- its auditor binding is on every host by default (#312). An
+                        -- exception annotation on the binding acknowledges a deliberate
+                        -- one and suppresses the finding.
                         WHEN b.managed_source IS NULL
                              AND b.exception IS NULL
                              AND s.group_name IS NOT NULL
                              AND EXISTS (SELECT 1 FROM rbac_group_binding m
                                           WHERE m.cluster_id = b.cluster_id
-                                            AND m.managed_source IS NOT NULL)
+                                            AND m.managed_source IS NOT NULL
+                                            AND m.managed_source <> '""" + CHART_CONFIG_SOURCE + """')
                                                            THEN 'unmanaged'
                         ELSE 'ok'
                       END"""
