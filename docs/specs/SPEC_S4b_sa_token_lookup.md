@@ -7,7 +7,7 @@
 | Release | — (post-programme; S4 step B, the issue's own label S3b-B) |
 | Version on release | app 0.31.0, chart 0.50.0 |
 | Issue | [#284](https://github.com/ephico2real2/group-sync-dashboard/issues/284) |
-| Status | specified |
+| Status | merged |
 | Source | OB1's implementation specification of 2026-09-22, written before the code from the business owner's brief and the six corrections on the issue, `docs/specs/SPEC_S4_token_retrieval.md` §1, §4, §6 and §9, `docs/specs/SPEC_S4a_fleet_login_session.md` §2.1 and §6, the upstream sources cited in §2, and the lab measured 2026-09-21/22 |
 
 ## How to read this spec

@@ -153,6 +153,47 @@ def sentence(reason: str) -> str:
     return text
 
 
+# A spec index row, and a spec header, whose Status cell is `merged`: only the cell is matched, because
+# spec bodies use "merged" as history ("S1 (the Secret contract, merged)") and those words must stay.
+_INDEX_MERGED = re.compile(
+    r"^(?P<pre>\| (?P<id>[A-Z]\d[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)"
+    r"[^|]*\| [^|]+\| (?:R\d|—) \| [^|]+ \| \[\#\d+\]\([^)]+\) \| )merged(?P<post> \|)$",
+    re.M,
+)
+_HEADER_MERGED = re.compile(r"^(\| Status \| )merged( \|)$", re.M)
+
+
+def promote_merged_specs() -> list[pathlib.Path]:
+    """When Unreleased becomes a release heading, every spec that was only waiting on that heading is
+    released (docs/specs/README.md's lifecycle). Status cells only, in the index and in each spec's header.
+    A tree with no specs index — the release test's sandbox — is a no-op, not a refusal."""
+    index = REPO / "docs" / "specs" / "README.md"
+    if not index.is_file():
+        return []
+    text = index.read_text()
+    hits = list(_INDEX_MERGED.finditer(text))
+    changed: list[pathlib.Path] = []
+    if hits:
+        new_index, n = _INDEX_MERGED.subn(r"\g<pre>released\g<post>", text)
+        if n != len(hits):
+            raise ReleaseError(f"specs index: expected {len(hits)} merged rows, replaced {n}")
+        index.write_text(new_index)
+        changed.append(index)
+    for m in hits:
+        spec = REPO / "docs" / "specs" / m["file"]
+        new_body, count = _HEADER_MERGED.subn(r"\1released\2", spec.read_text(), count=1)
+        if count != 1:
+            raise ReleaseError(f"{spec.relative_to(REPO)}: index row {m['id']} is merged but its header "
+                               f"Status is not (found {count} `| Status | merged |`)")
+        spec.write_text(new_body)
+        changed.append(spec)
+    leftovers = sorted(p.name for p in (REPO / "docs" / "specs").glob("SPEC_*.md")
+                       if p not in changed and _HEADER_MERGED.search(p.read_text()))
+    if leftovers:
+        raise ReleaseError(f"header Status is merged but the index is not: {leftovers}")
+    return changed
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("reason", help="one line: what this release is, for Chart.yaml and the changelog")
@@ -251,6 +292,7 @@ def run(args: argparse.Namespace) -> int:
     else:
         log = insert_before_line(log, r"^## ", heading + "\n\n" + bullet + "\n", "first release heading")
     CHANGELOG.write_text(log)
+    changed += promote_merged_specs()
 
     for path in changed:
         print(f"edited  : {path.relative_to(REPO)}")
