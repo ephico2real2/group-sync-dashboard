@@ -10,15 +10,19 @@ The lab ran `4f4c070b08` before.
 
 The scripts in `walk/` are copies of `reports/2026-09-24_rbac-provenance-and-review-counts/walk/` with their `source`
 and `SHOTS` lines (and `WALK` in `lib.sh`) pointed at the scratch folder this session ran them from, plus one change:
-the planted-grant script reads the refresh count it waits for from the pod's log instead of carrying 206 and 205
-(`diff` the two folders to see exactly that). Two scripts are new: `config-source.sh`, the label census #354's premise
-rests on, and `pod-log-excerpt.sh`, the pod's own refresh and finding lines, read once while the pod still lived.
-Every number and time below is quoted from the `.out` files, and the wait budget from `evidence-347.sh`; the pictures
+the planted-grant script reads the baseline refresh count from the pod's log, waits for baseline + 1 after planting
+and for the baseline again after removal, instead of carrying 206 and 205 (`diff` the two folders to see exactly
+that); in this run the baseline was 205, so the first wait still targeted 206 and the pod refreshed to 207 (below).
+Two scripts are new: `config-source.sh`, the label census #354's premise rests on, and `pod-log-excerpt.sh`, the pod's
+own refresh and finding lines, read once while the pod still lived. Every number and time below is quoted from the
+files in `walk/` — the `.out` files, `release-244d4ab.log` for the Argo CD stamp, the two PVC files — with the wait
+budget and the KPI capture's clip from their scripts (`evidence-347.sh`, `verify-fixes.sh`), the one page time from
+its picture, and the chart version from the tree; sums and UTC equivalents are worked from those values. The pictures
 are the same captures the previous folder made, taken again on this deploy. The Logins capture the verification script
 also takes belongs to #346, which is closed, and is not committed here.
 
 **Times.** Every pod time below is the pod's own, UTC−4: its `TZ` is `America/New_York` (`walk/pod-log-excerpt.out`,
-line 1), its log lines carry `-0400`, and the pages print EDT (`screenshots/347-access-granted.png`, "updated 21:24:49
+line 1), its log lines carry `-0400`, and the pages print EDT (`screenshots/347-access-granted.png`, "updated 21:24:47
 EDT"). The lab host's clock, and the session log, are CDT, one hour behind; the Argo CD and PVC stamps are UTC.
 
 | File | What it shows |
@@ -45,9 +49,9 @@ From `walk/verify-fixes.out`:
 - `oc auth can-i list clusterrolebindings` answers **yes** as a member of `app-ocp-rbac-groupsync-ns-auditor` and
   **no** without that group — the negative control. That is the question `visibility.adminSar` asks, so the auditor
   tier still passes it after the label.
-- The new pod's first binding refresh, `refreshed 205 group bindings for dashboard` at 21:20:50 −0400 (01:20:50Z,
-  one second before Argo CD reported Synced/Healthy), logged 0 `UNMANAGED GRANT DISCOVERED` lines for the `-ra-`
-  binding.
+- The new pod's first binding refresh, `refreshed 205 group bindings for dashboard` at 21:20:50 −0400 (01:20:50Z;
+  the release's Argo CD wait, polling every 15 s, first saw Synced/Healthy at 01:20:51Z), logged 0
+  `UNMANAGED GRANT DISCOVERED` lines for the `-ra-` binding.
 - `/api/clusters` reports 0 unmanaged grants on every cluster; the Access granted tiles read 205 = 38 + 6 + 161, and
   the KPI page's To review 18 = 18 unresolved · 0 dangling · 0 unmanaged.
 
@@ -59,7 +63,8 @@ of them name a Group (`walk/config-source.out`). 43 of those belong to the polic
 `baseline-cluster-rbac` 11, `baseline-prod-rbac` 3, and one each of `custom-cluster-rbac`, `bdp-oud-group-rbac` and
 `trino-oud-group-rbac` — and the 44th is the chart's auditor binding, the only one of the chart's 8 labelled bindings
 with a Group subject. So the gate is open with or without the chart's label, and #354 must change nothing here. It did
-not: a hand-made grant is still reported, and every count is the one the previous folder measured on `4f4c070`.
+not: a hand-made grant is still reported, and every count is the one the previous folder measured on `4f4c070` but
+one — `shared-rnd`'s first read after the removal, 1 here and 0 there, because its own refresh had not yet run (below).
 
 | | Before | With the grant | After removing it |
 |---|---|---|---|
