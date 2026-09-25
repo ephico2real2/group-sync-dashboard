@@ -794,7 +794,7 @@ The orchestrator's summary, with what was measured for this log:
   - NA-2: markdownlint MD012 in `docs/specs/README.md`, pre-existing.
   - `docs/ACCESS_CONTROL.md` keeps six pre-existing MD040 findings (#336's and #337's bodies).
   - `docs/CLUSTER_STANZA.md` still says "Fourteen refusals fail `helm template`", a count Grok called stale.
-  - `docs/design/data-requirements.md` still describes gaps the implemented mocks closed, and S3's version cell in
-    the specs index names only its merged part (both noted by #351's review).
-  - `reports/README.md` lists 7 of the 28 report folders.
+  - Closed after this log's Part 7, in the docs PR that carries this line: `docs/design/data-requirements.md` marked
+    as the dated 2026-09-17 analysis; S3's version corrected (chart 0.45.0 was #249's; S3 shipped in 0.47.0 and
+    0.49.0); `reports/README.md` lists all 28 folders, held by `local-development/tests/test_reports_index.py`.
 - **Worktrees:** the main checkout, and `gsd-grafana`, detached at `4f93ad1` with its three uncommitted PNGs.
