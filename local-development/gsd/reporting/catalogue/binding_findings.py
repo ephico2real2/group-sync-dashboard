@@ -2,28 +2,32 @@
 
 from __future__ import annotations
 
+from ...audit import subject_label
+from ...kube import SUBJECT_KINDS
 from ..model import KeyValues, Note, Section, Table
 from ..snapshot import Snapshot
 from .common import Built, ReportSpec, RunContext, cut, ns_label
 
 SPEC = ReportSpec(
     name="binding-findings", title="RBAC binding findings",
-    summary="Dangling, unresolved and unmanaged group bindings and direct user grants; system:* virtual groups are omitted (a platform built-in, not a person's grant).",
+    summary="Dangling, unresolved and unmanaged bindings — the subject a group, a ServiceAccount or a user — and direct user grants; system:* virtual groups are omitted (a platform built-in, not a person's grant).",
     values_key="bindingFindings",
 )
 
 _DEFINITIONS = [
     ("dangling", "the group was observed operator-managed and is now absent — something broke; the binding grants nobody"),
     ("unresolved", "the group has never been seen managed and does not exist — the binding names something that never existed"),
-    ("unmanaged", "a synced group granted by a binding no policy operator manages, with no exception annotation — governance bypassed by hand"),
-    ("ok", "resolves normally"),
+    ("unmanaged", "a grant no policy operator manages, with no exception annotation — a synced group, a ServiceAccount or a user granted by hand; governance bypassed"),
+    ("ok", "resolves normally, or carries the policy system's label"),
 ]
 
 
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
     counts = snap.findings_counts(cid)
-    rows = snap.group_bindings(cid)
+    # Every subject kind: a ServiceAccount or User grant outside the policy system is a finding
+    # (#353); the group-shaped reports keep the Group default.
+    rows = snap.group_bindings(cid, kinds=SUBJECT_KINDS)
     truncated = False
     sections = [Section("Summary", [
         KeyValues("Bindings by tier", [(k, counts.get(k, 0)) for k, _ in _DEFINITIONS]),
@@ -33,14 +37,14 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         tier_rows, t = cut([r for r in rows if r["finding"] == tier])
         truncated = truncated or t
         sections.append(Section(f"{tier.capitalize()} bindings", [Table(
-            tier, ["group", "scope", "role", "binding", "kind", "source", "exception"],
-            [[r["group_name"], ns_label(r["binding_namespace"]), f"{r['role_kind']}/{r['role_name']}", r["binding_name"], r["binding_kind"],
+            tier, ["subject", "scope", "role", "binding", "kind", "source", "exception"],
+            [[subject_label(r), ns_label(r["binding_namespace"]), f"{r['role_kind']}/{r['role_name']}", r["binding_name"], r["binding_kind"],
               r["managed_source"] or "hand-made", r["exception"] or ""] for r in tier_rows],
             empty_text=f"no {tier} bindings")], page_break=True))
     exceptions = [r for r in rows if r["exception"]]
     sections.append(Section("Acknowledged exceptions", [Table(
-        "Bindings carrying rbac.ocp.io/unmanaged-exception", ["group", "scope", "role", "binding", "exception"],
-        [[r["group_name"], ns_label(r["binding_namespace"]), r["role_name"], r["binding_name"], r["exception"]] for r in exceptions],
+        "Bindings carrying rbac.ocp.io/unmanaged-exception", ["subject", "scope", "role", "binding", "exception"],
+        [[subject_label(r), ns_label(r["binding_namespace"]), r["role_name"], r["binding_name"], r["exception"]] for r in exceptions],
         note="An exception suppresses the unmanaged finding; it is listed so a reviewer can re-judge it.", empty_text="none")]))
     users = snap.user_bindings(cid)
     users, t = cut(users)

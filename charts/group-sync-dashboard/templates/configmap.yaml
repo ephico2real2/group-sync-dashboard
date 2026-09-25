@@ -149,6 +149,7 @@ data:
     namespaceMetadataLabels: {{ include "gsd.namespaceMetadataLabels" . }}
     # Which namespaces are the platform's (#255). Rendered only when set: an absent key is the
     # shipped rule, and an empty mapping here would read as "replace the defaults with nothing".
+    # PLATFORM-CLASSIFICATION (#255, #353): values.yaml platformNamespaces → this file → config.py _platform_namespaces_setting
     {{- $_ := include "gsd.validatePlatformNamespaces" . }}
     {{- with .Values.platformNamespaces }}
     {{- $set := dict }}

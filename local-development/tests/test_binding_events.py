@@ -319,7 +319,7 @@ class TestUpgrade:
         try:
             cols = {r[1] for r in store._conn.execute("PRAGMA table_info(membership_event)")}
             assert "baseline" in cols
-            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 19
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 20
             assert store._conn.execute("SELECT baseline FROM membership_event").fetchone()[0] == 0
             store.upsert_cluster("crc", "https://api.crc.testing:6443", True)
             # events already exist for crc, so this is NOT a first observation
