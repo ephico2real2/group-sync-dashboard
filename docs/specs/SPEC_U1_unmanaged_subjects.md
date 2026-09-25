@@ -1,4 +1,4 @@
-# SPEC U1 — the unmanaged finding on ServiceAccount and User subjects, silenced only by the operator's label (#353)
+# SPEC U1 — the unmanaged finding on ServiceAccount and User subjects: the platform's own built-in, the rest silenced only by the operator's label (#353)
 
 | | |
 |---|---|
@@ -86,15 +86,17 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   when a call of `platform_namespaces.matches`, `is_platform_user` or the constants appears in
   `local-development/gsd/` without the marker on its line or the line above, so the map cannot rot.
 
-- **Exclusion is the operator's label on the binding, and nothing else — the operator's rule, not a
-  design choice.** *"The exclusion is not automatic … We are going to decide who to exclude"*, *"Using that
-  label. We just need capabilities"*, *"We will labeling the role bindings or clusterrolebindings for users
-  or groups or service account"* (#312, 2026-09-24). A ServiceAccount or User grant is `unmanaged` unless the
-  binding carries `rbac.ocp.io/config-source` or `rbac.ocp.io/unmanaged-exception`. No `system:` name, no
-  platform namespace, no Helm, OLM or Argo CD label excludes anything (§3.4). The measured consequence on the
-  lab is stated in §2.2 and §6 so that nobody reads it as a defect: 703 of the lab's 710 stored ServiceAccount and
-  User subject rows, on 689 bindings, carry no label today, and every one of them becomes a finding until the operator labels
-  the grants they decide are legitimate.
+- **Exclusion is the platform classification and the operator's label on the binding, and nothing else —
+  the operator's rule, not a design choice.** *"The exclusion is not automatic … We are going to decide who
+  to exclude"*, *"Using that label. We just need capabilities"*, *"We will labeling the role bindings or
+  clusterrolebindings for users or groups or service account"* (#312, 2026-09-24), and the platform rule
+  quoted above. A platform identity is `built_in` before the finding's arm is reached; every other
+  ServiceAccount or User grant is `unmanaged` unless the binding carries `rbac.ocp.io/config-source` or
+  `rbac.ocp.io/unmanaged-exception`. No Helm, OLM or Argo CD label and no binding name excludes anything
+  (§3.4). The measured consequence on the lab is stated in §2.2 and §6 so that nobody reads it as a defect:
+  703 of the lab's 710 stored ServiceAccount and User subject rows, on 689 bindings, carry no label today; 579
+  of them are the platform's own and join the built-in tier, and the remaining 124, on 117 bindings, are
+  findings until the operator labels the grants they decide are legitimate.
 - **One table, widened in place; `group_name` keeps its name.** The rows join `rbac_group_binding`, with
   `subject_kind` and `subject_namespace` beside the subject's name, and the primary key gains both
   (migration 20, §3.2). A second table for the other kinds would have meant a second copy of the
@@ -103,16 +105,16 @@ Decisions taken where the issue was silent, each with its reason. They bind the 
   name whatever its kind: it is read in 106 places in `store.py`, 33 in the report snapshot, 24 on the page
   and about a hundred in tests (measured with `grep -c`), so a rename is not a change this format can carry
   safely; the table comment, the API document and the row's `subject_kind` say what it names.
-- **No gate for ServiceAccount and User subjects; the Group arm keeps #354's gate, byte for byte** (written
-  before the amendment above; its "no default that silences a grant" is the brief's over-correction, and
-  the platform classification, which is the operator's own configured decision, silences as stated
-  there). The first
+- **No gate for ServiceAccount and User subjects; the Group arm keeps #354's gate, byte for byte.** The first
   draft of this spec put one gate over every kind — a ServiceAccount or User grant was `unmanaged` only where
   some binding on the cluster carried a policy label. Codex refuted it on the premise and it is retracted: on a
-  host with no label anywhere that gate silenced every unlabelled account and person by default, and the
-  operator's rule allows no default that silences a grant — *"The exclusion is not automatic … We are going to
-  decide who to exclude"*; exclusion is the label or the annotation on the binding and nothing else. So an
-  unlabelled ServiceAccount or User grant is a finding from its first observation on every host. The Group arm
+  host with no label anywhere that gate silenced every unlabelled account and person by the cluster's state,
+  which is not a decision anyone made — *"The exclusion is not automatic … We are going to decide who to
+  exclude"*. What silences a ServiceAccount or User grant is the estate's own configured decision, twice: the
+  platform classification (the amendment above), which makes the row `built_in` before this arm, and the label
+  or the annotation the operator puts on the binding. So an unlabelled ServiceAccount or User grant that is not
+  the platform's own is a finding from its first observation on every host. (An earlier version of this bullet
+  said "no default that silences a grant"; that was the brief's over-correction, retracted above.) The Group arm
   is not this spec's to change: it keeps #354's gate — some other Group-subject binding labelled by something
   other than this chart — read over Group rows only, so the arm classifies exactly as it did before this spec
   (§3.4). The asymmetry that leaves (a plain host reports its hand-made account grants and not its hand-made
@@ -352,7 +354,7 @@ Measured by reading each file; the map is what §3 is applied against.
 |---|---|---|---|
 | stored as | `subject_kind='Group'`, `subject_namespace=''`, `group_name=<name>` | `'ServiceAccount'`, the subject's namespace or the RoleBinding's, `<name>` | `'User'`, `''`, `<name>` |
 | resolution tiers (`dangling`, `built_in`, `unresolved`) | as today | `built_in` when the account's effective namespace is one `platformNamespaces` names — the platform's own identity, never a finding; the other two never | `built_in` when `is_platform_user` names it (`system:*`, `kubeadmin`); the other two never |
-| `unmanaged` | group operator-synced, no label, no exception, the gate open | no label, no exception | no label, no exception |
+| `unmanaged` | group operator-synced, no label, no exception, the gate open | not the platform's (`is_platform = 0`), no label, no exception | not the platform's (`is_platform = 0`), no label, no exception |
 | `ok` | otherwise | otherwise | otherwise |
 | the gate | some other Group-subject binding on the cluster carries `rbac.ocp.io/config-source` ≠ `group-sync-dashboard` (#354, unchanged) | none | none |
 | reach (`member_count`, `logged_in_count`) | the group's | `null` | `null` |
@@ -399,13 +401,15 @@ arm requires, for a Group subject, an operator-synced group and #354's gate — 
 binding on the cluster labelled by something other than this chart, read over Group rows only
 (`m.subject_kind = 'Group'`), so the arm is byte for byte what #354 shipped — and, for the other two kinds,
 nothing but the absence of a label and an exception (`(b.subject_kind <> 'Group' OR …)` on both
-conditions): no gate, because the operator's rule allows no default that silences a grant. The joins to
+conditions): no gate — the platform's own rows never reach it, because the `is_platform` arm above is decided
+first, and for the rest the operator's label or exception is the only silence. The joins to
 `group_state` and `managed_group_seen` — and the reach join — carry
 `AND b.subject_kind = 'Group'`, so a ServiceAccount or User named like a group never borrows that group's
 object, its sync record or its members: an account named `app-ocp-rbac-x` is judged on provenance alone
-and its reach is `null`. Nothing about a `system:` name, a namespace or a Helm, OLM or Argo CD label
-enters the `CASE`: the `built_in` arm is a Group arm, so a User named `system:kube-scheduler` is
-`unmanaged` when unlabelled, as the operator decided.
+and its reach is `null`. No Helm, OLM or Argo CD label and no binding name enters the `CASE`; a `system:` name
+or a platform namespace enters it only through the stored `is_platform` flag the poller computed, never
+through the name in the row: a User stored with `is_platform = 1` is `built_in`, and the same name stored
+with `0` is `unmanaged` when unlabelled (`test_the_store_classifies_a_user_by_the_stored_flag_not_its_name`).
 
 ### 3.5 Group-only readers, guarded
 
@@ -1158,12 +1162,13 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
                         -- label, read over Group rows only so this arm is exactly #354's — or
                         -- every binding on a cluster that has never heard of config-source
                         -- labels would flag; this chart's own label is not that evidence, its
-                        -- auditor binding being on every host by default (#312). For a
-                        -- ServiceAccount or a User it is said whenever the binding carries no
-                        -- label and no exception, on every host, with no gate: nothing about
-                        -- how the grant was applied (a `system:` name, a platform namespace, a
-                        -- Helm, OLM or Argo CD label) or about the rest of the cluster excludes
-                        -- it, only the operator's decision on the binding does (#353, SPEC_U1).
+                        -- auditor binding being on every host by default (#312). A
+                        -- ServiceAccount or User row that reaches this arm is not the
+                        -- platform's — those are already `built_in` above — so it is said
+                        -- whenever the binding carries no label and no exception, on every
+                        -- host, with no gate; a Helm, OLM or Argo CD label or a binding's name
+                        -- never excludes it, only the operator's decision on the binding does
+                        -- (#353, SPEC_U1).
                         -- An exception annotation on the binding acknowledges a deliberate one
                         -- and suppresses the finding.
                         WHEN b.managed_source IS NULL
@@ -1997,10 +2002,10 @@ function bindingMatches(r, q) {
       `This binding carries neither the policy system's <code>rbac.ocp.io/config-source</code>
        label nor an exception — a grant to an operator-synced group (where other Group bindings on
        this cluster do carry the label), a ServiceAccount or a user, made by hand outside the policy
-       system.
-       Nothing about how it was applied excludes it; a legitimate one is silenced by labelling the
-       binding with <code>rbac.ocp.io/config-source</code>, as the platform's own grants are, or
-       acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation, which records
+       system. The platform's own identities are built-in and never listed here; for the rest, no
+       Helm, OLM or Argo CD label and no binding name excludes it. A legitimate one is silenced by
+       labelling the binding with <code>rbac.ocp.io/config-source</code>, as this chart labels its
+       own RBAC, or acknowledged with the <code>rbac.ocp.io/unmanaged-exception</code> annotation, which records
        the justification next to the object. Either clears it from this list.`,
       f.unmanaged, sevBadge("warning", "unmanaged"));
   }
@@ -2154,9 +2159,10 @@ function subjectCell(r) {
     <div class="filterbar-note mt-5">
       A grant is <strong>unmanaged</strong> when its binding carries none of the policy
       system's provenance — a grant to an operator-synced group, a ServiceAccount or a user,
-      made by hand. Nothing about how it was applied excludes it. Silence a legitimate one by
-      labelling the binding with <code>rbac.ocp.io/config-source</code>, as the platform's own
-      grants are, or acknowledge it with the <code>rbac.ocp.io/unmanaged-exception</code>
+      made by hand. The platform's own identities are built-in and never listed here; for the rest,
+      no Helm, OLM or Argo CD label and no binding name excludes it. Silence a legitimate one by
+      labelling the binding with <code>rbac.ocp.io/config-source</code>, as this chart labels its
+      own RBAC, or acknowledge it with the <code>rbac.ocp.io/unmanaged-exception</code>
       annotation; the justification then lives next to the object and clears it here.
 ```
 
@@ -2382,8 +2388,8 @@ appVersion: "0.32.0"
 # and a grant is silenced only by the operator's `rbac.ocp.io/config-source` label or the exception
 # annotation on its binding (#353, SPEC_U1). Schema migration 20 (the binding table's primary key gains
 # the subject's kind and namespace); `/bindings/findings` rows gain `subject_kind` and
-# `subject_namespace`. MINOR: additive on the wire; every unlabelled ServiceAccount and User grant is a
-# finding from the first refresh after upgrade, which is the capability.
+# `subject_namespace`. MINOR: additive on the wire; every unlabelled ServiceAccount and User grant outside
+# the platform's own is a finding from the first refresh after upgrade, which is the capability.
 appVersion: "0.33.0"
 ```
 
@@ -2480,10 +2486,12 @@ ClusterRoleBinding granting `cluster-admin` that nothing manages
 (`kube.py#_binding_views`, since #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`). The goal, in
 the operator's words (2026-09-24, #312): find grants made by hand that bypass policy, whether the
 subject is a group, a ServiceAccount or a user, and silence the legitimate ones the operator decides
-to exclude. Exclusion is never inferred: the operator puts the config-source label (or the exception
-annotation) on a grant they have decided is legitimate, and only that silences it — nothing about
-how a grant was applied (a `system:` name, a platform namespace, a Helm, OLM or Argo CD label)
-excludes it. A Group subject is a finding only when its group is operator-synced and the cluster
+to exclude. Exclusion is the estate's own configured decision, twice, and never an inference from how a
+grant was applied: the platform classification — a ServiceAccount in a namespace `platformNamespaces` names
+(the code's defaults plus the values file's `additional*` lists), a `system:` user, kubeadmin, and OpenShift's
+two per-project controller bindings, all `built_in` — and the config-source label (or the exception
+annotation) the operator puts on a grant they have decided is legitimate. Nothing else silences a grant: no
+Helm, OLM or Argo CD label, no binding name. A Group subject is a finding only when its group is operator-synced and the cluster
 uses the policy operator (the three resolution tiers below are Group tiers, and so is the gate of I2);
 a ServiceAccount or User subject, which has no Group object to resolve, is a finding whenever its
 binding carries no label and no exception and it is not the platform's own identity — the operator's
@@ -2537,7 +2545,7 @@ is. Tests: `test_audit_stamp.py#TestI2TargetSet.test_only_unmanaged_rows_are_sta
 | `ok` | everything else |
 ```
 ```markdown
-| `unmanaged` | no policy system manages this binding and no human has annotated an exception — for a Group subject, one that resolves and is synced, on a cluster whose Group bindings show the policy operator in use; for a ServiceAccount or User subject, always, on every host (#353) |
+| `unmanaged` | no policy system manages this binding and no human has annotated an exception — for a Group subject, one that resolves and is synced, on a cluster whose Group bindings show the policy operator in use; for a ServiceAccount or User subject that is not the platform's own (`built_in`), always, on every host (#353) |
 | `ok` | everything else |
 ```
 
@@ -2551,10 +2559,13 @@ that has never heard of `config-source` labels would flag.
 For a Group subject, `unmanaged` additionally requires that the cluster demonstrably *uses* the
 policy operator — `EXISTS (… managed_source IS NOT NULL …)` over Group-subject bindings other than
 this chart's own (#354). Without that clause, every Group binding on a cluster that has never heard
-of `config-source` labels would flag. A ServiceAccount or User subject has no such gate: nothing
-silences it but the label or the annotation on its own binding. The three tiers above it are Group
-tiers too: an account or a person has no Group object to resolve, so its row is `unmanaged` or `ok`
-and nothing about its name or namespace excludes it (`docs/specs/SPEC_U1_unmanaged_subjects.md`).
+of `config-source` labels would flag. A ServiceAccount or User subject has no such gate: the platform's own
+are `built_in` before this arm (the stored `is_platform` flag: a namespace `platformNamespaces` names, a
+`system:` user, kubeadmin, OpenShift's two per-project controller bindings), and nothing silences the rest but
+the label or the annotation on its own binding. The three tiers above it are Group
+tiers too: an account or a person has no Group object to resolve, so its row is `built_in` (the platform's
+own), `unmanaged` or `ok`; no Helm, OLM or Argo CD label and no binding name excludes it
+(`docs/specs/SPEC_U1_unmanaged_subjects.md`).
 ```
 
 <!-- block: local-development/API.md | edit -->
@@ -2643,7 +2654,7 @@ platform's own identity: a ServiceAccount whose namespace the chart's `platformN
 | `unmanaged` | the group IS operator-synced, but no policy CR templates this binding — somebody granted access by hand | no |
 ```
 ```markdown
-| `unmanaged` | no policy system labels this binding and no exception is annotated — for a Group subject, one that IS operator-synced, on a cluster where some other Group binding carries a policy label (#354); for a ServiceAccount or User subject, always, on every host — somebody granted access by hand | no |
+| `unmanaged` | no policy system labels this binding and no exception is annotated — for a Group subject, one that IS operator-synced, on a cluster where some other Group binding carries a policy label (#354); for a ServiceAccount or User subject that is not the platform's own (`built_in`), always, on every host — somebody granted access by hand | no |
 ```
 
 <!-- block: local-development/API.md | edit -->
@@ -2657,9 +2668,10 @@ oc annotate clusterrolebinding <name> \
 ```
 ```markdown
 The three "group does not exist" tiers are Group tiers: a ServiceAccount or User subject has no
-Group object to resolve, so its row is `unmanaged` or `ok`, and nothing about its name (`system:…`),
-its namespace or the labels that applied it excludes it — only the operator's decision on the
-binding does (#353).
+Group object to resolve, so its row is `built_in` (the platform's own identity — a namespace
+`platformNamespaces` names, a `system:` user, kubeadmin, OpenShift's two per-project controller bindings —
+by the stored `is_platform` flag), `unmanaged` or `ok`; no Helm, OLM or Argo CD label and no binding name
+excludes it — only that classification and the operator's label or exception on the binding do (#353).
 
 **Suppressing an `unmanaged` finding is a cluster-admin task, performed on the object** — either
 the policy system's label, naming who decided the grant is legitimate, as the chart labels its own
@@ -2680,7 +2692,7 @@ oc annotate clusterrolebinding <name> \
 <!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 ```markdown
 
-- **The unmanaged finding reads ServiceAccount and User subjects, silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, unless it is the platform's own identity: a ServiceAccount in a namespace `platformNamespaces` names (the shipped defaults plus the estate's `additional*` lists), one of OpenShift's per-project controller bindings (`system:image-builders`/`system:deployers`, matched on all three parts, in every namespace), a `system:` user or `kubeadmin` joins the built-in tier and is never a finding, the operator's long-standing rule; every line that decides or consumes it carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`, held by a test; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing else about how a grant was applied excludes it — not a Helm, OLM or Argo CD label, not a binding's name; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant is a finding from the first refresh** — on an OpenShift cluster that is hundreds of rows, most of them grants OLM wrote in its operators' namespaces (124 subject rows on 117 bindings on this project's CRC lab under the shipped defaults, OpenShift 4.22, measured 2026-09-24; 579 platform rows join the built-in tier): the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
+- **The unmanaged finding reads ServiceAccount and User subjects: the platform's own built-in, the rest silenced only by the operator's label (application 0.33.0, chart 0.54.0; #353, `docs/specs/SPEC_U1_unmanaged_subjects.md`).** The binding table holds one row per subject of every kind RBAC defines — Group, ServiceAccount and User (schema migration 20, a primary-key rebuild that carries the rows) — and a grant to any of them is `unmanaged` when its binding carries neither `rbac.ocp.io/config-source` nor `rbac.ocp.io/unmanaged-exception` — a ServiceAccount or User grant on every host, with no gate, unless it is the platform's own identity: a ServiceAccount in a namespace `platformNamespaces` names (the shipped defaults plus the estate's `additional*` lists), one of OpenShift's per-project controller bindings (`system:image-builders`/`system:deployers`, matched on all three parts, in every namespace), a `system:` user or `kubeadmin` joins the built-in tier and is never a finding, the operator's long-standing rule; every line that decides or consumes it carries the marker `PLATFORM-CLASSIFICATION (#255, #353)`, held by a test; a Group grant, as before, also only where some other Group binding on the cluster carries a policy label (#354, unchanged). Nothing else about how a grant was applied excludes it — not a Helm, OLM or Argo CD label, not a binding's name; a legitimate one is silenced by labelling its binding, as the chart labels its own. **On upgrade every unlabelled ServiceAccount and User grant outside the platform's own is a finding from the first refresh** — on an OpenShift cluster that is hundreds of rows, most of them grants OLM wrote in its operators' namespaces (124 subject rows on 117 bindings on this project's CRC lab under the shipped defaults, OpenShift 4.22, measured 2026-09-24; 579 platform rows join the built-in tier): the poller lists 20 bindings per cycle and its summary line counts the bindings; the tiles, the KPI page and `gsd_bindings_total{finding="unmanaged"}` count the rows, and the metric is now pre-seeded at 0 like the other tiers. A subject a binding names twice is one row. The findings page is ordered review tiers first, so a page never drops a dangling group behind the accounts; a report service reading a copy written before migration 20 reads its rows as Group subjects. A ServiceAccount subject that omits its namespace on a RoleBinding is stored under the binding's, the account the authorizer matches. `/bindings/findings` rows gain `subject_kind` and `subject_namespace`; `group_name` is the subject's name whatever its kind (`local-development/API.md`). The poller's WARNING spells the subject by kind (`group <name>`, `ServiceAccount <namespace>/<name>`, `user <name>`), and forwards the `rbac.ocp.io/unmanaged` label it read, which it had dropped since the label became an input. The Access granted tab names each subject in full with no drill for an account or a person; the RBAC policy tab's hero counts the cluster rather than the loaded page; the `binding-findings` report lists every kind. The group pages, a person's access through groups, the namespace audit, the binding history and `/user-bindings` are unchanged.
 ```
 
 <!-- block: local-development/tests/test_rbac.py | edit -->
@@ -3656,9 +3668,11 @@ def test_the_chart_path_is_marked() -> None:
 ```python
 """The unmanaged finding on ServiceAccount and User subjects (#353, docs/specs/SPEC_U1_unmanaged_subjects.md).
 
-The operator's rule, tested layer by layer: a grant is excluded ONLY by the `rbac.ocp.io/config-source`
-label or the `rbac.ocp.io/unmanaged-exception` annotation on its binding, whoever it names; nothing
-about how it was applied — a `system:` name, a platform namespace, a Helm or OLM label — excludes it.
+The operator's rule, tested layer by layer: the platform's own identities are `built_in` by the estate's
+classification (a namespace `platformNamespaces` names, a `system:` user, kubeadmin, OpenShift's two
+per-project controller bindings); every other grant is excluded ONLY by the `rbac.ocp.io/config-source`
+label or the `rbac.ocp.io/unmanaged-exception` annotation on its binding, whoever it names — no Helm or
+OLM label, no binding name.
 The Group-only questions (a group's page, a person's access through groups, the namespace audit, the
 history stream) never see the new kinds. Every test here fails on the tree before SPEC_U1.
 """
@@ -3784,8 +3798,9 @@ class TestClassification:
     def test_the_charts_own_label_silences_only_its_own_accounts(self, store):
         """#354 carried over for the Group arm: the chart labels its seven ServiceAccount bindings, and
         on a host with no policy operator a hand-made GROUP grant is not reported until one policy label
-        exists. A hand-made account is reported regardless: the new kinds have no gate (Codex, review of
-        SPEC_U1 — a gate silenced them by default, which the operator's rule forbids)."""
+        exists. A hand-made account outside the platform's namespaces is reported regardless: the new kinds
+        have no gate (Codex, review of SPEC_U1 — a gate keyed on the cluster's labels silenced them by the
+        cluster's state; the only defaults that silence are the platform classification's)."""
         _synced(store, SYNCED)
         chart = [sa(f"chart-{i}", account="group-sync-dashboard", namespace="group-sync-dashboard",
                     managed_source=CHART_CONFIG_SOURCE) for i in range(2)]
@@ -3797,7 +3812,7 @@ class TestClassification:
                                    "hand-made": "unmanaged", "managed": "ok"}
 
     def test_an_unlabelled_account_is_a_finding_with_no_label_anywhere_on_the_cluster(self, store):
-        """No gate for the new kinds: on a host with no label at all, the accounts and the person report;
+        """No gate for the new kinds: on a host with no label at all, the non-platform accounts and the person report;
         the Group grant does not, as #354 left it."""
         _synced(store, SYNCED)
         store.replace_bindings("crc", [sa("hand-made-sa"), user("hand-made-user"), group("hand-made")], T)
