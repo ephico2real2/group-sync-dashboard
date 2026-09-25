@@ -50,7 +50,7 @@ the pod's loopback:
 | the `built_in` rows | 743: 557 ServiceAccount, 24 User, 162 Group — 581 of them by the stored `is_platform` flag (the platform rule), the 162 Groups by the `system:` rule |
 | `/api/clusters` (`dashboard`) | `unmanaged_bindings` 125, `unresolved_bindings` 6, `dangling_bindings` 0, `builtin_bindings` 743 |
 | `/metrics` | `gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 125.0`, `built_in` 743.0, `ok` 45.0, `unresolved` 6.0, `dangling` 0.0 |
-| the pod's log | one `UNMANAGED GRANT DISCOVERED` WARNING per listed binding on that refresh (the script keeps the last eight; the first names `ClusterRoleBinding cluster-reader (cluster-wide) grants cluster-reader to user dana.lee`) |
+| the pod's log | one `UNMANAGED GRANT DISCOVERED` WARNING per listed binding on that refresh (the script keeps the last seven, with the refresh's DEBUG line; the first names `ClusterRoleBinding cluster-reader (cluster-wide) grants cluster-reader to user dana.lee`) |
 | the page (`screenshots/defaults-access-granted.png`, `defaults-unmanaged-section.png`) | `v0.33.0 · c00aa2e4ff`; the tiles 919 = 45 granted + 131 to review (125 unmanaged + 6 unresolved) + 743 built-in; the section's heading "Unmanaged · 125" was read on screen during the run (the defaults run's tile print-out was not kept to a file, as the values run's `walk/shots-values.out` was; the heading is in the section PNG at its full 1140 px width) |
 
 **Against the spec's 124 rows on 117 bindings** (§2.2, measured on the 2026-09-24 dump): the live lab holds 919
@@ -91,7 +91,8 @@ platform arm preceding provenance — measured on the dump in the spec's review;
 ## 3. The planted grant (`walk/plant.out`, `walk/plant.sh`, `walk/plant2.sh`)
 
 `plant.sh` created the namespace `gsd-evidence-353`, the ServiceAccount `u1-evidence-sa` in it and
-`ClusterRoleBinding u1-evidence` (`view` → that account) at 06:18:44Z, then failed on its own check line — an f-string
+`ClusterRoleBinding u1-evidence` (`view` → that account) at 06:18:44Z, then failed on its own check line and was
+stopped mid-wait (the record holds no `TIMEOUT` line and no later step of that script) — an f-string
 with escaped quotes inside its braces, a `SyntaxError` the orchestrator caught while the wait ran blind. `plant2.sh`
 continued from the check with that line rewritten (the fields bound to a variable first), re-creating nothing; the
 record is the second half of `walk/plant.out`. One binding refresh is 300 s, so each step waited for the next one.
@@ -112,7 +113,8 @@ no reading of them from before the change — the mock-cluster suite's own test 
 
 - *Every non-platform ServiceAccount and User grant without the label reported*: 125 rows on 118 bindings under the
   shipped defaults, every row on the page and in the API's `unmanaged` list (`walk/counts-defaults.txt`); the refresh's
-  WARNING lines, of which the counts script kept the last eight; the planted one appeared on the refresh after it was
+  WARNING lines, of which the counts script kept the last seven (its `tail -8` of the log's matching lines ends with the
+  refresh's DEBUG line); the planted one appeared on the refresh after it was
   made, with its own WARNING in the record.
 - *Platform identities silent, including a namespace added through `additionalNames`*: 581 rows built-in by the flag
   under the defaults; 663 once `environments/crc.yaml` named the estate's own — `kyverno` and `group-sync-dashboard`
