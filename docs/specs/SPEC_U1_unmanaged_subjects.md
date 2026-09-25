@@ -504,7 +504,9 @@ Home filters, its two platform badges and its export column. The consumers the r
 refresh-line people count and the Poller's hand-off of the settings' classifier, `api.py`'s Home cluster-wide counts, `store.py`'s Group `system:` rule and people count in
 `namespace_detail`, the direct-grant count in `namespaces` and `user_bindings_by_namespace`'s two predicates, and
 `index.html`'s namespace-index platform rows and hidden-with-findings list, Home's via/wide filters and the hand-made badge.
-The guard also holds every read or write of the stored `is_platform` flag, in Python or in SQL, under `gsd/`.
+The guard also holds every Python write of the stored `is_platform` flag (`["is_platform"] =`) and every SQL comparison
+of it with `0` or `1`, under `gsd/`; a Python read of it (`r["is_platform"]`, `.get("is_platform")`) is marked by hand and
+not held by the guard.
 
 ### 3.11 Versions, chart documents, CHANGELOG, indexes
 
@@ -543,7 +545,9 @@ test below, which pins existing #255 behaviour and passes on main too (measured,
   `additionalNames` is silent, and the same row reclassifies on the next refresh when the settings change;
   an account elsewhere is reported, then silent once its binding is labelled; a `system:` user and
   `kubeadmin` are silent and a person is not; the Group arm is unchanged beside platform rows; the reports
-  omit a platform row as they omit a virtual group.
+  omit a platform row as they omit a virtual group; and the Poller hands the settings' classifier to every refresh — a poll loop with
+  `additionalNames: [kyverno]` in its Settings stores the `kyverno` account as `built_in` (a mutant that drops the
+  hand-off fails it; every other test passes the classifier to `refresh_bindings` itself — OB1-lite, review of #361).
 - **The classification** (`TestClassification`): an unlabelled ServiceAccount grant is `unmanaged` on a
   cluster where the policy operator is in use; the operator's label on the binding makes it `ok`; the
   exception annotation makes it `ok`; a User row stored with `is_platform = 0` is `unmanaged` whatever its
@@ -2313,8 +2317,9 @@ function subjectCell(r) {
                          b.group_name, b.binding_kind, b.binding_namespace, b.binding_name,
                          b.subject_kind, b.subject_namespace""")
         # Severity first, then subject name: a page (the findings endpoint's `limit`) holds every
-        # review item before any healthy or built-in row. Since #353 a cluster holds hundreds of
-        # ServiceAccount rows (703 unmanaged on the lab against FINDINGS_PAGE 500), and by name
+        # review item before any healthy or built-in row. Since #353 a cluster can hold more
+        # ServiceAccount rows than a page (the lab: 703 unmanaged before the platform rule, 124 after, against
+        # FINDINGS_PAGE 500), and by name
         # alone they pushed a dangling group named past them off the page (OB1-lite, SPEC_U1).
         # The key ends on every primary-key column, so limit/offset walks the set exactly once: one
         # binding can name `x` as ServiceAccounts in two namespaces (the lab's
@@ -3192,7 +3197,7 @@ reaches a report. `truncated` says whether rows were dropped.
 ```markdown
 reaches a report. `truncated` says whether rows were dropped — measured against `counts[finding]`
 when `finding` is given. The page is ordered review tiers first, so on a cluster with more review
-rows than `limit` (703 unmanaged on the lab since #353) a mixed page holds no `ok` or `built_in`
+rows than `limit` (the lab held 703 unmanaged rows before the platform rule, 124 after) a mixed page holds no `ok` or `built_in`
 row; the Access granted tab's one-tier filters ask for their tier.
 ```
 
@@ -3841,7 +3846,8 @@ SITE = re.compile(
     r"|\bis_platform_user\s*\(|\bis_platform_namespace\s*\("
     r"|PLATFORM_CONTROLLER_BINDINGS\b|^PLATFORM_(NAMESPACE_PREFIXES|NAMESPACES|USER_PREFIXES) ="
     r"|^def _platform_namespaces_setting\(|_platform_namespaces_setting\(raw\)|^\s+platform_namespaces: PlatformNamespaces = "
-    # ... and every read or write of the stored flag, in Python or in SQL (OB1-lite, review of #361)
+    # ... and every Python write of the stored flag, and every SQL comparison of it with 0 or 1 (OB1-lite, review of
+    # #361); a Python read (`r["is_platform"]`, `.get("is_platform")`) is marked by hand, not held here
     r'|\bis_platform\s*=\s*[01]\b|\["is_platform"\]\s*=')
 CHART_SITES = {
     ROOT / "charts/group-sync-dashboard/values.yaml": "platformNamespaces:",
@@ -4698,6 +4704,39 @@ class TestPlatformRule:
             assert {r["binding_name"] for r in s.group_bindings("crc", kinds=SUBJECT_KINDS)} == {"managed", "apps"}
             assert s.findings_counts("crc") == {"ok": 1, "unmanaged": 1}
 
+
+    def test_the_poller_hands_the_settings_classifier_to_every_refresh(self, monkeypatch):
+        """The values path through the poll loop: `platformNamespaces.additionalNames` reaches
+        refresh_bindings from Settings, so an account in that namespace is silent. Every other test here
+        hands the classifier to refresh_bindings itself, so none would see the Poller drop it (OB1-lite,
+        review of #361: with the hand-off removed the whole suite stayed green)."""
+        from gsd import poller
+        from gsd.config import PlatformNamespaces
+        cluster = ClusterConfig("crc", "https://x", token_env="T")
+        store = Store(":memory:")
+        store.upsert_cluster("crc", "https://x", True)
+        settings = Settings(clusters=[cluster], binding_interval_seconds=0, kyverno_enabled=False,
+                            platform_namespaces=PlatformNamespaces(additional_names=frozenset({"kyverno"})))
+        runner = poller.Poller(store, settings)
+        monkeypatch.setattr(poller, "poll_once", lambda *a, **kw: "ok")
+        monkeypatch.setattr(poller, "capture_once", lambda *a, **kw: None)
+        monkeypatch.setattr(runner, "_after_poll", lambda *a: None)
+        tick = iter(range(10000))
+        monkeypatch.setattr(poller.time, "monotonic", lambda: next(tick) * 1000.0)
+
+        class Client:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self):
+                runner._stop.set()
+                return [TestPlatformRule._sa("kyverno", "kyverno"), TestPlatformRule._sa("apps", "apps")]
+            def fetch_user_bindings(self): return []
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", Client)
+        runner._run_cluster(cluster)
+        got = {r["binding_name"]: (r["finding"], r["is_platform"]) for r in store.all_bindings("crc")}
+        store.close()
+        assert got == {"kyverno": ("built_in", 1), "apps": ("unmanaged", 0)}, got
 
 class TestControllerBindingsAndTheDefaultAccount:
     """OpenShift's three per-project controller bindings are the platform's in every namespace, matched on
