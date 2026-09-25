@@ -1,0 +1,2 @@
+NAME                                    PHASE     IMAGE
+group-sync-dashboard-8556cc6bb5-bwm2d   Running   image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.32.0-244d4ab9c0

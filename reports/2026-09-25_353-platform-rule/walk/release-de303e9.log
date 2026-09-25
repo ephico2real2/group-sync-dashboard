@@ -1,0 +1,19 @@
+version : 0.33.0
+commit  : de303e9b22  (branch main)
+tag     : 0.33.0-de303e9b22
+built   : group-sync-dashboard:0.33.0-de303e9b22 (stamp verified)
+built   : group-sync-dashboard-report:0.33.0-de303e9b22 (stamp verified)
+pushed  : default-route-openshift-image-registry.apps-crc.testing/group-sync-dashboard/group-sync-dashboard:0.33.0-de303e9b22
+pushed  : default-route-openshift-image-registry.apps-crc.testing/group-sync-dashboard/group-sync-dashboard-report:0.33.0-de303e9b22
+release : ../environments/crc.yaml
+argocd  : group-sync-dashboard -> revision de303e9b22, image 0.33.0-de303e9b22
+06:17:01Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision c00aa2e4ff, want de303e9b22) successfully synced (all tasks run)
+06:17:16Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+06:17:31Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+06:17:46Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+06:18:01Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+deployment "group-sync-dashboard" successfully rolled out
+deployment "group-sync-dashboard-report" successfully rolled out
+running : de303e9b22 — verified in-pod
+release-crc exit=0

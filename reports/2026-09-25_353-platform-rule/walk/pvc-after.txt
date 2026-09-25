@@ -1,0 +1,5 @@
+# PVCs after the deploy of c00aa2e — 2026-09-25T06:06:14Z
+NAME                                    UID                                    VOL                                        CREATED
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953   pvc-f065b7a4-535c-4ef1-868c-58f5afee4953   2026-09-19T00:56:50Z
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3   pvc-08c7d45c-a3eb-47be-8506-f24ea7a3e0e3   2026-09-19T00:56:50Z
+# Argo after: Synced Healthy c00aa2e4ff

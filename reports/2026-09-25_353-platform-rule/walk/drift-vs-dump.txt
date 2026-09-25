@@ -1,0 +1,10 @@
+# the lab's live unmanaged rows vs the 2026-09-24 dump under the shipped defaults
+dump: 124 rows | live: 125 rows
+in the live lab and not in the dump (lab drift since 2026-09-24):
+  + ('RoleBinding', 'envoy-gateway-system', 'system:openshift:scc:nonroot-v2', 'ServiceAccount', 'envoy-gateway-system', 'envoy-gwapi-demo-eg-8fbae7fe')
+in the dump and not in the live lab:
+# the one row the live lab has beyond the 2026-09-24 dump — read 2026-09-25T06:07:29Z
+RoleBinding envoy-gateway-system system:openshift:scc:nonroot-v2 | created 2026-09-25T02:17:09Z | labels None | annotations {} | roleRef ClusterRole system:openshift:scc:nonroot-v2 | subjects [('ServiceAccount', 'envoy-gateway-system', 'envoy-gwapi-demo-eg-8fbae7fe')]
+# the account it names
+ServiceAccount envoy-gateway-system/envoy-gwapi-demo-eg-8fbae7fe created 2026-09-25T02:16:12Z labels {"app.kubernetes.io/component":"proxy","app.kubernetes.io/managed-by":"envoy-gateway","app.kubernetes.io/name":"envoy","gateway.envoyproxy.io/owning-gateway-name":"eg","gateway.envoyproxy.io/owning-gateway-namespace":"gwapi-demo"}
+# an SCC RoleBinding OpenShift writes when a workload is admitted under the nonroot-v2 SCC (gwapi-demo, lab drift the mandate says to leave alone)
