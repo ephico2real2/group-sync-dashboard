@@ -1174,6 +1174,18 @@ class TestBindingFindingsVisible:
             .filter(l => l.innerText.trim() === 'Bindings to review').map(l => l.nextElementSibling.innerText.trim())""")
         assert values and values[0] == "3", values
 
+    def test_the_overview_ranks_an_unmanaged_only_cluster_with_those_to_review(self, dash):
+        """#347 (review of #352, Grok C3): past three clusters the Overview sorts worst-first, and its rank still summed
+        dangling + unresolved — a cluster whose only finding is an unmanaged grant sorted among the clean ones while
+        its own tile read "Bindings to review"."""
+        order = dash.evaluate("""() => {
+            const base = {status: "ok", dangling_bindings: 0, unresolved_bindings: 0, group_count: 1, unattributed_groups: 0};
+            const el = document.createElement("div");
+            el.innerHTML = clustersCard([Object.assign({}, base, {id: "clean", unmanaged_bindings: 0}),
+                                         Object.assign({}, base, {id: "hand", unmanaged_bindings: 4})], "medium");
+            return [...el.querySelectorAll(".tile-open")].map(b => b.textContent.trim()); }""")
+        assert order[:2] == ["hand", "clean"], order
+
     def test_cluster_card_surfaces_the_count_without_navigating(self, dash):
         """Discoverability: the landing page must show that there is something to look at,
         or the page may as well not exist."""
@@ -1516,6 +1528,16 @@ class TestKpiPage:
         note = dash.locator('.kpi-page .kpi[data-kpi="bindings"] .note').inner_text()
         builtin = int(note.split("+")[1].split(" ")[0].replace(",", ""))
         assert (value, builtin, total) == (4, 6, 10)
+
+    def test_the_review_tile_and_the_table_count_the_unmanaged_grant(self, dash):
+        """#347 (review of #352, Grok C3): "To review" summed dangling + unresolved, so the seed read 2 here beside
+        the Overview's 3 and the Access granted page's 3. The tile, its note and the Clusters table count all three."""
+        self._open(dash)
+        value = int(dash.locator('.kpi-page .kpi[data-kpi="review"] .value').inner_text().replace(",", ""))
+        note = dash.locator('.kpi-page .kpi[data-kpi="review"] .note').inner_text()
+        cell = dash.locator("tr[data-cluster='crc-local'] td.num").nth(3).inner_text().strip()
+        assert (value, cell) == (3, "3"), (value, cell)
+        assert "1 unmanaged" in note, note
 
     def test_the_kpi_page_follows_the_hosts_headline_not_the_selected_remote(self, page, scoped_server):
         """The KPI page is fleet-wide and /api/kpi is gated on the host's tier, like the report ticket. Read per
@@ -10302,7 +10324,7 @@ class TestTheLoginsCaveatFollowsItsSource:
     POD_LOG = ("dies with its pod", "pods/log", "authentication operator is not at Debug", "looked back an hour",
                "cannot be recovered later")
     AUDIT_LOG = ("oldest audit file still on the control-plane nodes", "backfilled through the rotated audit files",
-                 "nodes/proxy", "audit profile is None", "picks them up")
+                 "nodes/proxy", "audit profile is None", "drops anything past that cut-off")
 
     @staticmethod
     def _render(dash, source: str) -> str:
@@ -10328,3 +10350,26 @@ class TestTheLoginsCaveatFollowsItsSource:
         assert [a for a in self.AUDIT_LOG if a not in text] == []
         assert [p for p in self.POD_LOG if p in text] == [], "a pod-log sentence under the audit-log source"
 
+
+
+    def test_the_off_card_and_the_column_help_follow_the_source(self, dash):
+        """Review of #352 (Grok C1): the capture-off card still told an audit-log reader to raise the authentication
+        operator to Debug and roll the OAuth server, and the column help called a node "which oauth-server pod saw it"
+        under a header that already said Node."""
+        def render(source: str, enabled: bool) -> str:
+            return dash.evaluate("""([source, enabled]) => {
+                const iso = (ago) => new Date(Date.now() - ago).toISOString();
+                const d = {enabled, source, scope: "all", total: 1, read_interval_seconds: 60, last_read_at: iso(60e3),
+                           capture_started_at: iso(3600e3), retained_since: iso(3600e3), ungoverned: [],
+                           summary: {failures: 0, ungoverned_users: 0, distinct_users: 1, successes: 1, last_at: iso(60e3)},
+                           attempts: [{at: iso(60e3), user_name: "ada", outcome: "success", known_user: true,
+                                       has_history: false, provider: "ldap", pod_name: "master-0"}]};
+                const el = document.createElement("div"); el.innerHTML = captureSection(d, "");
+                return el.textContent.replace(/\\s+/g, " "); }""", [source, enabled])
+        off_audit, off_pod = render("audit-log", False), render("pod-log", False)
+        rows_audit, rows_pod = render("audit-log", True), render("pod-log", True)
+        pod_claims = ("spec.logLevel: Debug", "a cluster-wide write that rolls the OAuth server")
+        assert [c for c in pod_claims if c in off_audit] == [] and "None" in off_audit, off_audit
+        assert [c for c in pod_claims if c not in off_pod] == [], off_pod
+        assert "which oauth-server pod saw it" not in rows_audit and "control-plane node" in rows_audit, rows_audit
+        assert "which oauth-server pod saw it" in rows_pod
