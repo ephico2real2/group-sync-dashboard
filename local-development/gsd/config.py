@@ -100,7 +100,7 @@ def _trusted_ca_context() -> ssl.SSLContext | None:
     * an entry holds only while every file is the one it was built from (#340). kubelet
       updates a mounted ConfigMap by writing a new timestamped directory and swapping the
       `..data` symlink the file resolves through, so `os.stat` sees a new inode; a file
-      rewritten in place changes its mtime. A replaced bundle is then read as a restart
+      rewritten in place changes its mtime, at the filesystem's timestamp granularity. A replaced bundle is then read as a restart
       would read it, including failing the same way if it does not load;
     * a null result is NOT cached. The injected ConfigMap is populated asynchronously, so
       it can legitimately be absent for the first moments of a pod's life; caching that
