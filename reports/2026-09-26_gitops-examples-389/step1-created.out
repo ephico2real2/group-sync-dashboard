@@ -1,0 +1,17 @@
+elapsed 286s
+2026-09-26T16:54:37Z {"groupsync-dashboard.io/connection-hash":"17af23e88187a0dd3fae5e0f221fa2630f072b42aeeb49f83a5ab48a8a8778e6","groupsync-dashboard.io/lookup-account":"ocp-oauth-bind-serviceid","groupsync-dashboard.io/managed-by":"configmap-onboarding","groupsync-dashboard.io/source-configmap":"cluster-onboarding-389","groupsync-dashboard.io/source-configmap-uid":"5e23a9fb-2908-4440-bd8b-35a0edc8db50","groupsync-dashboard.io/source-namespace":"group-sync-operator","groupsync-dashboard.io/source-service-account":"group-sync-dashboard-cluster-poller","groupsync-dashboard.io/token-source":"rem
+pod/group-sync-dashboard-58bf7b9cb7-pgwcw
+2026-09-26 12:54:37,817-0400 INFO    gsd.clusterconfig discovery cycle=29 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=gitops-example-389
+2026-09-26 12:54:37,817-0400 INFO    gsd.clusterconfig cluster-resolved cycle=29 cluster=gitops-example-389 source=configmap:cluster-onboarding-389:0 credential=remote-lookup tls=trusted-bundle visibility=remote-sar iden
+2026-09-26 12:54:37,872-0400 INFO    gsd.fleetlogin fleet-login cluster=gitops-example-389 account=ocp-oauth-bind-serviceid tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-26T16:54:37
+2026-09-26 12:54:37,884-0400 INFO    gsd.fleetlogin fleet-logout cluster=gitops-example-389 account=ocp-oauth-bind-serviceid tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-26 12:54:37,889-0400 INFO    gsd.clusterconfig.writer cluster-secret-created secret=gsd-cluster-gitops-example-389 namespace=group-sync-dashboard cluster=gitops-example-389 by=sa-token-lookup
+2026-09-26 12:54:37,889-0400 INFO    gsd.clusterconfig fleet-lookup cluster=gitops-example-389 account=ocp-oauth-bind-serviceid secret=gsd-cluster-gitops-example-389 written=created source=group-sync-operator/group-sync-
+2026-09-26 12:54:37,898-0400 INFO    gsd.clusterconfig discovery cycle=30 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 changed=gitops-example-389
+2026-09-26 12:54:37,898-0400 INFO    gsd.clusterconfig cluster-resolved cycle=30 cluster=gitops-example-389 source=secret:gsd-cluster-gitops-example-389 credential=bearer tls=trusted-bundle visibility=remote-sar identity
+2026-09-26 12:54:37,899-0400 INFO    gsd.poller cluster gitops-example-389: polling started (secret:gsd-cluster-gitops-example-389)
+2026-09-26 12:54:37,911-0400 DEBUG   gsd.kube fetched 61 users from gitops-example-389, 61 with an identity, 8 with a display name
+2026-09-26 12:54:37,911-0400 INFO    gsd.poller gitops-example-389: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-26 12:54:37,911-0400 INFO    gsd.poller gitops-example-389/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-26T16:30:00Z (40 groups)
+
+[exited with code 0]
