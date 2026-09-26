@@ -123,6 +123,7 @@ main > .card:first-child { border-top: 2px solid color-mix(in srgb, var(--accent
 .tag-proposed { display: inline-block; font-family: var(--font-mono); font-size: var(--text-micro); font-weight: 700; letter-spacing: .06em;
   text-transform: uppercase; color: var(--accent); border: 1px dashed var(--accent); border-radius: var(--radius-sm);
   padding: 0 var(--space-3); vertical-align: middle; white-space: nowrap; }
+.tag-on-acc { color: var(--surface-1); border-color: var(--surface-1); }
 .is-proposed { outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; border-radius: var(--radius-md); }
 .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: var(--space-4); margin-top: var(--space-5); }
 .state { border: 1px solid var(--gridline); border-radius: var(--radius-md); padding: var(--space-4) var(--space-5); background: var(--zebra); min-width: 0; overflow-wrap: anywhere; }
@@ -155,7 +156,7 @@ button[disabled] { opacity: .6; cursor: progress; }
   <div class="proposed-banner" role="note">
     <strong>PROPOSED</strong> — Epic D mockup, not the shipped page. The dashed outlines mark what does not exist yet:
     <b>Refresh</b> (#311), <b>Rejoin</b> and its dialog (#316), and the <b>duplicate API URL</b> warning (#314).
-    Everything else is today's Cluster Configurations card. Names and URLs are the lab's <span class="mono">shared-qa</span>
+    Everything else is today's Cluster Configurations card, except that the lead card is abridged (marked on it). Names and URLs are the lab's <span class="mono">shared-qa</span>
     and <span class="mono">shared-rnd</span> entries, read 2026-09-26; the <span class="mono">auth_failed</span> state is an illustration.
   </div>
 
@@ -171,7 +172,8 @@ button[disabled] { opacity: .6; cursor: progress; }
   <main id="main">
     <section class="card" id="cc-head">
       <h2>Cluster Configurations</h2>
-      <div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per cluster, the live set. Only cluster administrators see this page.</div>
+      <div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per cluster, the live set. Only cluster administrators see this page. Changing a cluster also needs <code>clusterConfig.secrets.writes.enabled</code>.</div>
+      <div class="cc-hint"><span class="tag-proposed">abridged</span> today's card has more rows: the cluster count, namespace, selector, by source, ConfigMap selector, discovery, and the Add cluster button — left out of this mock only.</div>
       <div class="cc-warn is-proposed" role="status" id="cc-dup-url">
         <span aria-hidden="true">⚠️</span> <strong>Two entries declare the same API URL.</strong>
         <span class="rp-chip cc-chip">shared-qa</span> and <span class="rp-chip cc-chip">shared-rnd</span> both point at
@@ -184,7 +186,7 @@ button[disabled] { opacity: .6; cursor: progress; }
     <article class="card cc-cluster" id="cc-cluster-shared-qa">
       <div class="row-wrap"><h2>shared-qa <span class="rp-chip cc-src-secret">Secret gsd-cluster-shared-qa</span>
         <span class="badge ok"><span class="glyph" aria-hidden="true"></span>enabled</span>
-        <span class="badge warning is-proposed"><span class="glyph" aria-hidden="true"></span>shared API URL</span></h2></div>
+        <span class="badge warning is-proposed"><span class="glyph" aria-hidden="true"></span>shared API URL <span class="tag-proposed">proposed</span></span></h2></div>
       <div class="cc-kv"><span class="k">server</span><span class="v"><span class="mono">https://api.crc.testing:6443</span>
         <div class="cc-hint is-proposed" style="margin-top: 8px">⚠️ also declared by <span class="mono">shared-rnd</span> — a warning only <span class="tag-proposed">#314</span></div></span></div>
       <div class="cc-kv"><span class="k">credential</span><span class="v">bearerToken <span class="badge ok"><span class="glyph" aria-hidden="true"></span>set</span>
@@ -201,8 +203,8 @@ button[disabled] { opacity: .6; cursor: progress; }
           Secret holds; it never logs in. To fetch a new one with your own account, use <b>Rejoin</b>.
           <span class="tag-proposed">#311</span></div></span></div>
       <div class="cc-acts">
-        <button type="button" class="is-proposed" id="cc-refresh-shared-qa">Refresh</button>
-        <button type="button" class="cc-btn-acc is-proposed" id="cc-rejoin-shared-qa">Rejoin…</button>
+        <button type="button" class="is-proposed" id="cc-refresh-shared-qa">Refresh <span class="tag-proposed">proposed</span></button>
+        <button type="button" class="cc-btn-acc is-proposed" id="cc-rejoin-shared-qa">Rejoin… <span class="tag-proposed tag-on-acc">proposed</span></button>
         <button type="button" id="cc-delete-shared-qa">Delete</button>
         <span class="cc-hint">Refresh and Rejoin <span class="tag-proposed">proposed</span> · Rotate and Delete ship today</span>
       </div>
@@ -213,7 +215,7 @@ button[disabled] { opacity: .6; cursor: progress; }
         <div class="state"><span class="k">succeeded</span><span class="badge ok"><span class="glyph" aria-hidden="true"></span>connected</span> <span class="mono">2026-09-26T14:05:40Z</span></div>
         <div class="state"><span class="k">refused</span><span class="badge critical"><span class="glyph" aria-hidden="true"></span>auth_failed</span> <span class="mono">2026-09-26T14:02:11Z</span> · Rejoin offered</div>
       </div>
-      <div class="cc-hint">The four Refresh states (#311): each shows the word as well as the colour, with an absolute UTC time.</div>
+      <div class="cc-hint is-proposed">The four Refresh states (#311): each shows the word as well as the colour, with an absolute UTC time. <span class="tag-proposed">proposed · #311</span></div>
     </article>
   </main>
 

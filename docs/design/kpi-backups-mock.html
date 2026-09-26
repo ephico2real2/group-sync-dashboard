@@ -1697,6 +1697,8 @@ h2 .cc-chips { display: inline-flex; vertical-align: middle; }
   border-radius: var(--radius-md); padding: var(--space-5) var(--space-7); font-size: var(--text-sm); margin-bottom: var(--space-8); }
 .proposed-banner b { color: var(--status-warning-edge); letter-spacing: .06em; }
 .kpi-page.is-proposed { outline: 2px dashed var(--status-warning-edge); outline-offset: 3px; }
+.kpi-page .abridged { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 500; color: var(--text-muted);
+  border: 1px dashed var(--border); border-radius: var(--radius-pill); padding: 1px var(--space-4); margin-left: var(--space-5); }
 .kpi-page .ptag { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
   color: var(--status-warning-edge); border: 1px solid var(--status-warning-edge); border-radius: var(--radius-pill); padding: 1px var(--space-4); margin-left: var(--space-5); }
 .kpi-page .kband.bk { grid-template-columns: repeat(5, 1fr); }
@@ -1736,7 +1738,7 @@ h2 .cc-chips { display: inline-flex; vertical-align: middle; }
   </div>
   <main id="main">
   <section class="card kpi-page">
-    <h2>System status <span class="asof"><span class="beat" aria-hidden="true"></span>updated 0s ago · refresh 60s</span></h2>
+    <h2>System status <span class="abridged">abridged — today's card also shows CPU, Throttled and the threshold rule</span><span class="asof"><span class="beat" aria-hidden="true"></span>updated 0s ago · refresh 60s</span></h2>
     <div class="sys">
       <div class="comp" data-comp="dashboard" data-state="ok">
         <div class="comp-top"><span class="comp-name">dashboard</span>
@@ -1754,7 +1756,7 @@ h2 .cc-chips { display: inline-flex; vertical-align: middle; }
           <div class="meter-row"><span class="meter-lab">Memory</span><span class="track" style="--th:80%"><span class="fill" style="width:8%"></span></span><span class="meter-val"><b>7.6%</b> of 768Mi</span></div>
           <div class="meter-row"><span class="meter-lab">Artefacts</span><span class="track" style="--th:80%"><span class="fill" style="width:67%"></span></span><span class="meter-val"><b>119Ki</b> · 10 files</span></div>
         </div>
-        <div class="sub">(unchanged by #306)</div>
+        <div class="sub">100Gi of 149Gi used on the artefact volume's disk</div>
       </div>
     </div>
   </section>
