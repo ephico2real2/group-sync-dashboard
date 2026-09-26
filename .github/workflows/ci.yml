@@ -357,7 +357,10 @@ jobs:
           # local-development/docs/mermaid-ascii-terminal.md.
           url=$(curl -s https://api.github.com/repos/AlexanderGrooff/mermaid-ascii/releases/latest \
                   | grep "browser_download_url.*mermaid-ascii" | grep "$(uname)_$(uname -m)" \
-                  | cut -d: -f2,3 | tr -d '"' | tr -d ' ')
+                  | cut -d: -f2,3 | tr -d '"' | tr -d ' ') || url=""
+          # Under pipefail and bash -e, a reply with no download URL (a rate limit, a renamed asset)
+          # made grep exit 1 and killed this display-only step before its skip message (#397's run).
+          if [ -z "$url" ]; then echo "no mermaid-ascii release URL from the GitHub API; skipping the ASCII preview"; exit 0; fi
           if ! { curl -sL "$url" -o mermaid-ascii.tar.gz && tar xzf mermaid-ascii.tar.gz; }; then
             echo "mermaid-ascii install failed; skipping the ASCII preview"; exit 0
           fi
