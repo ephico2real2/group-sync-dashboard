@@ -24,13 +24,16 @@ def no_leaked_poller_threads():
 
     Why: a `poll-host` thread leaked by test_fleet_lookup called a later test's monkeypatched
     ClusterClient and ate one of its scripted cycles, failing that test at random (main CI run 36221028974).
+
+    Absolute, not a delta against the set at test start: a leftover from a previous test (the 2 s
+    join did not finish it) or from a higher-scope fixture is still a leak. Nothing in this suite
+    keeps a poll-* thread across tests (every module-scoped build_app uses run_poller=False).
     """
-    before = _poller_threads()
     yield
     deadline = time.monotonic() + _JOIN_BUDGET_SECONDS
-    started = _poller_threads() - before
-    for thread in started:
+    found = _poller_threads()
+    for thread in found:
         thread.join(max(0.0, deadline - time.monotonic()))
-    leaked = sorted(t.name for t in started if t.is_alive())
+    leaked = sorted(t.name for t in found if t.is_alive())
     if leaked:
         pytest.fail(f"poller thread(s) still running after the test: {', '.join(leaked)} — stop what started them")

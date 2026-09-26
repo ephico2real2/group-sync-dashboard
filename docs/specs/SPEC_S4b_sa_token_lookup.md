@@ -217,6 +217,10 @@ re-applied from these blocks):
   because CRC's `developer` password *is* the word `developer`, and the redactor strips the
   substring wherever it appears. Over-redaction on this lab is the correct behaviour; exempting
   `account=` from scrubbing would leak the password on any estate where the two differ.
+- **§3.14's copy of `test_a_retrieved_stanza_whose_secret_vanished_stops_polling_rather_than_polling_the_stanza`
+  leaks a thread (#378).** It seeds only `rnd` and `east`, so `_reconcile_threads` started a real
+  `poll-host` thread that nothing stopped, and it failed a later test (main CI run 36221028974). The
+  test in the tree seeds `host` too. The fenced copy below is left as the record it was.
 
 ## 1. The loop — four stages, one missing
 
