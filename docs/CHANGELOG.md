@@ -10,6 +10,22 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The database is copied before a new image upgrades it (#301, `docs/specs/SPEC_M1_pre_upgrade_copy.md`;
+  application behaviour arriving with the next application release, chart 0.58.4 for its values comment and
+  README).** When an image opens a database whose `user_version` is below its highest migration, it first
+  writes the database as it was to `pre-upgrade/` beside it (`/data/pre-upgrade`, or
+  `/data/$POD_NAME/pre-upgrade` when `replicaCount` is greater than 1), before its own schema, migrations or
+  seeds run. The copy is opened and checked (`user_version`, `integrity_check`), gets a `.sha256` sidecar, and
+  is logged at INFO before the first `schema migration N applied` line. When it cannot be written (the
+  directory is not writable, or the free space is below the database's size, its WAL included) the dashboard
+  does not start, the database is not upgraded, and the last log line names the reason and the directory. The
+  copy is taken once per upgrade: a restarted container or a replacement pod does not copy again, so a failed
+  upgrade cannot replace its clean copy. It is written whether or not `config.backup` is on, and its name is
+  outside the six-hourly `gsd-*.db` pattern, so the rotation, `config.backup.keep`, the offsite CronJob,
+  `gsd_backup_last_success_timestamp_seconds` and the KPI size line never see it. The copies of the newest
+  three upgrades are kept, each about the size of the database, so they count against `persistence.size`. A
+  new database, or one already at the image's version, takes no copy. Where the copies are and how to use
+  them: [RUNBOOK_backup_restore.md §6](RUNBOOK_backup_restore.md#6-pre-upgrade-copies).
 - **A migration ships with an application release (#298; CI and tests only, no version of its own).** CI
   fails a PR whose highest `_MIGRATIONS` entry is above the one at the commit that released the current
   application version, while that version stays put: the chart's default image, `:<appVersion>`, would be a

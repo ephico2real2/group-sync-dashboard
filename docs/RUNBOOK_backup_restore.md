@@ -1,13 +1,16 @@
 # Runbook — backing up and restoring the dashboard's history
 
 The sync timeline and membership history exist only because this process observed them; the
-cluster cannot replay them (`gsd/store.py#Store.backup`). Two copies exist:
+cluster cannot replay them (`gsd/store.py#Store.backup`). Three copies exist:
 
 * **on-volume** — `config.backup` writes `gsd-<UTC stamp>Z.db` under `config.backup.dir`
   (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim;
 * **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
   claim or to object storage, with a `.sha256` sidecar, after an integrity check
-  (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`).
+  (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`);
+* **pre-upgrade** — from the application release after 0.36.0, before a new image upgrades the database it
+  writes the database as it was to `pre-upgrade/` beside it, with a `.sha256` sidecar, even when scheduled
+  backups are disabled (§6).
 
 Everything below uses only what the pod has: `sh`, `cat`, `ls`, `rm`, `chgrp`, `chmod`,
 `python3.14` (`docs/DESIGN_hardened_image.md#What it changed for operators`). There is **no
@@ -249,7 +252,9 @@ for t in ("membership_event", "sync_event"):
 ```
 
 The numbers must equal the copy's (§1). The pod log shows `schema migration N applied` lines
-only if the copy predates the running version; the first poll then rebuilds every cache table.
+only if the copy predates the running version, each after a line about the pre-upgrade copy (§6): the
+copy that start wrote, or the one an earlier start of the same upgrade wrote; the first poll then
+rebuilds every cache table.
 `GET /api/clusters/<id>/membership-changes` should answer with the restored history and a
 `retention` object.
 
@@ -262,3 +267,50 @@ old copy to *read* its history is a reason to set both windows to `0` first.
 `accessModes` are immutable. Create the new claim (`persistence.existingClaim` pointing at it,
 or a new release name), scale to zero, and copy `gsd.db` **only** — never `-wal`/`-shm` — with
 the pattern in §4b (a helper pod with both claims), then §4c.
+
+## 6. Pre-upgrade copies
+
+A new image upgrades the database it finds at startup (its schema: the tables and columns) and cannot undo that
+upgrade, so the database as it was before the upgrade is the only way back to the previous image. From the
+application release after 0.36.0 the dashboard takes that copy itself (`gsd/store.py#_pre_upgrade_copy`, #301),
+before the new image creates a table or runs a migration. A new database, or one already at the image's schema
+version, needs no copy.
+
+* **Where.** `pre-upgrade/` beside the database: `/data/pre-upgrade/` when there is one replica, or
+  `/data/<pod-name>/pre-upgrade/` when `replicaCount` is greater than 1. It is written even when scheduled
+  backups are disabled, and the six-hourly rotation, the offsite CronJob, the backup metric and the KPI size
+  line never include it.
+* **Name.** `pre-upgrade-<UTC stamp>-schema-<from>-to-<to>-<pod>.db`. The two numbers are database schema
+  versions, not application versions, and `<pod>` is the pod that took the copy. `<from>` is the copy's schema:
+  restore it under an image that understands that schema or a newer one; an older image refuses to start (§4c).
+  The `.sha256` file beside it holds the checksum `sha256sum -c` verifies it with.
+* **Verified before the upgrade.** Startup writes a temporary file, checks its schema version and its
+  integrity, writes its checksum, saves both to disk, renames the copy into place, and only then upgrades.
+* **Once per upgrade.** A later start of the same image, a restarted container or a replacement pod, does not
+  copy again: a failed attempt has already committed this image's new tables and every migration before the
+  one that failed, so a second copy would not be the database the previous image wrote. Its log says
+  `pre-upgrade copy for schema <from> -> <to> not taken again: <file> already exists from an earlier attempt`.
+  The same holds when you restore that copy and start the same image again: the copy already there is the
+  database you restored. If the previous image ran on the restored database before you retry the upgrade, move
+  the earlier `-to-<to>-` copy and its `.sha256` out of `pre-upgrade/` first (to `/data/pre-restore/`, for
+  example), or the retry takes no copy of what that image wrote since.
+* **Kept.** The copies of the newest three upgrades; an older one is removed only when a newer upgrade's copy
+  has been written. `config.backup.keep` and the six-hourly rotation do not apply to them. Each takes about as
+  much space as the database and counts against `persistence.size`.
+
+The startup log names the copy before the first migration line, for example
+`pre-upgrade copy written before migrating schema 19 -> 20: /data/pre-upgrade/pre-upgrade-….db (9973760 bytes, 0.12 s)`
+and then `schema migration 20 applied: …`.
+
+**When the copy cannot be written, the dashboard does not start.** That start upgrades nothing: the container
+exits 1 before it binds its port. The last line of `oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1`
+names the reason and the directory, for example
+`gsd.store.StorePreUpgradeCopyFailed: schema 19 -> 20: the pre-upgrade copy of /data/gsd.db could not be written to /data/pre-upgrade, so the database was not migrated: free space 40.0 MiB, database 120.0 MiB. …`.
+Grow the claim or free space on it, or make the directory writable (the `oc debug` pod of §4a, `chgrp 0` and
+`chmod g=u`), and the next start takes the copy and upgrades. Or deploy the previous image: a start that could
+not write the copy changed nothing. A process killed while copying leaves only a temporary file, which the next
+start removes.
+
+**Using a copy.** Verify it with §1, reading `/data/pre-upgrade/<file>` instead of a backup; outside the
+cluster, run `sha256sum -c <file>.sha256` from the directory that holds both files (§3). To go back to the
+previous image, restore the copy with §4a from `/data/pre-upgrade/<file>` and deploy that image.

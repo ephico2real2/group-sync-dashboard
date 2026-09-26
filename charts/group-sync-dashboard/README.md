@@ -226,6 +226,12 @@ cover corruption, a bad migration and accidental deletion — not loss of the vo
 half is `backup.offsite` below: a CronJob mounting the same claim read-only. The dashboard
 itself never grows credentials for object storage.
 
+**The pre-upgrade copy is separate.** From the application release after 0.36.0, a new image copies the
+database as it was to `pre-upgrade/` beside it before it upgrades the schema, whether `config.backup` is on
+or off, and does not start without that copy. The copies of the newest three upgrades are kept, each about
+the size of the database, so they count against `persistence.size`; `config.backup.keep` does not apply to
+them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
+
 ### Off-volume backup — `backup.offsite`
 
 **Off by default** — it needs a destination the chart cannot choose for you. Once on, the copy is

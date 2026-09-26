@@ -15,12 +15,16 @@ Two tables here are not in PLAN §10 and are additions the first slice found it 
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import json
+import shutil
+import socket
 import sqlite3
 import threading
-from contextlib import contextmanager
+import time
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
@@ -1166,6 +1170,113 @@ def _schema_state(conn: sqlite3.Connection) -> tuple[int, bool]:
     return version, fresh
 
 
+#: Where the copy taken before a migration goes (#301): BESIDE the database, so it is written whatever
+#: config.backup says and each replica's /data/$POD_NAME/gsd.db has its own. Nothing that reads
+#: config.backup.dir looks here, and the name is outside their gsd-*.db pattern even if that setting pointed
+#: here: the six-hourly rotation, the offsite script, the backup metric and the KPI size line never see it.
+PRE_UPGRADE_DIR = "pre-upgrade"
+#: Copies kept, newest by name: the UTC stamp leads it, so name order is time order. Each is about the
+#: database's size and counts against persistence.size; nothing else prunes them, config.backup.keep included.
+PRE_UPGRADE_KEEP = 3
+
+
+class StorePreUpgradeCopyFailed(Exception):
+    """The copy of the database taken before a migration was not written, so the migration did not run (#301)."""
+
+
+def _pre_upgrade_copies(directory: Path) -> list[Path]:
+    """The copies in `directory`, oldest first."""
+    return sorted(directory.glob("pre-upgrade-*.db"))
+
+
+def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> None:
+    """Copy the database as it is, before SCHEMA and _migrate change it, and verify the copy (#301).
+
+    The migration is one-way, so this copy is the only way back to the build that wrote the database. It is
+    taken on the connection that has run nothing yet, so it holds no table SCHEMA would add, and VACUUM INTO
+    reads in one transaction: it needs no write lock and carries what a -wal left by the last pod holds.
+
+    Once per upgrade, whichever pod starts. A failed attempt commits SCHEMA's new tables and every migration
+    before the one that failed, so any later start, a restarted container or a replacement pod, would copy a
+    half-migrated database, and PRE_UPGRADE_KEEP of those would prune the clean one away. A copy for this
+    build's target schema ends the copying; the pod's name in the file says only which pod took it.
+    """
+    directory = Path(db_path).parent / PRE_UPGRADE_DIR
+    host = os.environ.get("POD_NAME") or socket.gethostname()
+    move = f"schema {version} -> {KNOWN_SCHEMA_VERSION}"
+    # The name's own target field (pre-upgrade-<stamp>-schema-<from>-to-<to>-<pod>.db; the stamp has no "-"):
+    # a pod name may itself contain "-to-<n>-" (Codex, #407).
+    earlier = [p for p in _pre_upgrade_copies(directory)
+               if p.name.split("-", 5)[-1].startswith(f"to-{KNOWN_SCHEMA_VERSION}-")]
+    if earlier:
+        log.info("pre-upgrade copy for %s not taken again: %s already exists from an earlier attempt",
+                 move, earlier[-1])
+        return
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    target = directory / f"pre-upgrade-{stamp}-schema-{version}-to-{KNOWN_SCHEMA_VERSION}-{host}.db"
+    tmp = target.with_name(target.name + ".tmp")
+    sidecar = target.with_name(target.name + ".sha256")
+    started = time.monotonic()
+
+    def refused(reason: object) -> StorePreUpgradeCopyFailed:
+        for leftover in (tmp, sidecar, target):          # a refused attempt leaves nothing behind
+            with suppress(OSError):
+                leftover.unlink(missing_ok=True)
+        return StorePreUpgradeCopyFailed(
+            f"{move}: the pre-upgrade copy of {db_path} could not be written to {directory}, so the database was "
+            f"not migrated: {reason}. Free space on the volume or make the directory writable, then restart; or "
+            f"deploy the image that understands schema {version} (docs/RUNBOOK_backup_restore.md §6)")
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        # What a killed attempt left: a .tmp is not a copy, and a sidecar without its copy verifies nothing.
+        for stale in directory.glob("pre-upgrade-*.db.tmp"):
+            stale.unlink()
+        for orphan in directory.glob("pre-upgrade-*.db.sha256"):
+            if not orphan.with_suffix("").exists():
+                orphan.unlink()
+        # The size SQLite reports, WAL included: the file alone can be a tenth of it.
+        need = conn.execute("PRAGMA page_count").fetchone()[0] * conn.execute("PRAGMA page_size").fetchone()[0]
+        free = shutil.disk_usage(directory).free
+        if free < need:
+            raise refused(f"free space {free / 1048576:.1f} MiB, database {need / 1048576:.1f} MiB")
+        conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
+        check = sqlite3.connect(f"file:{tmp}?immutable=1&mode=ro", uri=True)
+        try:
+            copied = check.execute("PRAGMA user_version").fetchone()[0]
+            verdict = check.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            check.close()
+        if copied != version or verdict != "ok":
+            raise refused(f"the copy reads schema {copied} and integrity_check {verdict!r}")
+        digest = hashlib.sha256()
+        with tmp.open("rb") as fh:
+            while chunk := fh.read(1 << 20):
+                digest.update(chunk)
+            os.fsync(fh.fileno())
+        # `sha256sum -c` format, as the offsite script writes it; the copy takes its name only once it has one.
+        with sidecar.open("w") as fh:
+            fh.write(f"{digest.hexdigest()}  {target.name}\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)                                 # the names, before the migration commits anything
+        finally:
+            os.close(fd)
+        log.info("pre-upgrade copy written before migrating %s: %s (%d bytes, %.2f s)", move, target,
+                 target.stat().st_size, time.monotonic() - started)
+    except (sqlite3.Error, OSError) as exc:
+        raise refused(exc) from exc
+    for old in _pre_upgrade_copies(directory)[:-PRE_UPGRADE_KEEP]:
+        for path in (old, old.with_name(old.name + ".sha256")):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                log.warning("could not remove the old pre-upgrade copy %s", path)
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Apply every unapplied migration in numeric order, independent of source layout."""
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
@@ -1239,7 +1350,7 @@ def _safe_pragma_word(value: str, default: str) -> str:
 # caller that has not moved. Its definition lives in gsd/timeutil.py: it was never a storage
 # concern, and keeping it here meant a service split would need the SQLite module just to
 # stamp a timestamp.
-__all__ = ["KNOWN_SCHEMA_VERSION", "Store", "StoreSchemaTooNew", "now_iso"]
+__all__ = ["KNOWN_SCHEMA_VERSION", "Store", "StorePreUpgradeCopyFailed", "StoreSchemaTooNew", "now_iso"]
 
 
 class Store:
@@ -1284,13 +1395,20 @@ class Store:
         _harden(self._conn)
         # Before anything below writes: the WAL switch rewrites the file header, SCHEMA creates
         # objects and the seeds insert rows, all blind to what a newer build's migrations added.
-        version, _ = _schema_state(self._conn)
+        version, fresh = _schema_state(self._conn)
         if version > KNOWN_SCHEMA_VERSION:
             self._conn.close()
             raise StoreSchemaTooNew(
                 f"database schema {version} is newer than this dashboard understands ({KNOWN_SCHEMA_VERSION}); "
                 f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4), "
                 f"or deploy the image that understands {version}")
+        # Older and not fresh: this open is about to migrate, so the copy comes first, or nothing does (#301).
+        if version < KNOWN_SCHEMA_VERSION and not fresh:
+            try:
+                _pre_upgrade_copy(self._conn, path, version)
+            except Exception:
+                self._conn.close()
+                raise
         self._conn.row_factory = sqlite3.Row
 
         # PRAGMA journal_mode returns the mode actually in force, which is NOT always the one

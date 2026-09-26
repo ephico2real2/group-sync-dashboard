@@ -302,6 +302,13 @@ config:
   # cover corruption, a bad migration and accidental deletion — not loss of the volume.
   # Ship them off it with a CronJob mounting the same PVC read-only; the dashboard
   # deliberately does not grow credentials for object storage.
+  #
+  # NOT THE PRE-UPGRADE COPY, which these keys do not control. From the application release after
+  # 0.36.0, a new image copies the database as it was, verified, to pre-upgrade/ beside it before it
+  # upgrades the schema: /data/pre-upgrade when there is one replica, /data/$POD_NAME/pre-upgrade when
+  # replicaCount is greater than 1, with backups on or off. It does not start if the copy cannot be
+  # written. The copies of the newest three upgrades are kept, each about the size of the database, so
+  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
   backup:
     enabled: true
     dir: /data/backup
