@@ -400,27 +400,45 @@ update
 {{- end -}}
 
 {{/*
-The cluster-configuration tier's two SAR blocks (#230): visibility.clusterConfigViewSar and
-visibility.clusterConfigManageSar. ONE parameterised helper rather than eight near-identical ones —
-the two blocks and their four fields validate identically, and a copy per field is four more places
-for a guard to drift. Call it with a dict: {ctx, block, field, default}.
+The cluster-admin tier's SAR block (#322): visibility.clusterAdminSar — one question, `update
+clusterrolebindings` on this cluster by default, gating the Cluster Configurations tab and the KPI
+page and granting every host tier to whoever passes it. ONE parameterised helper for its four fields
+rather than four near-identical ones. Call it with a dict: {ctx, field, default}.
 
 Same discipline as the adminSar helpers: nil-safe (commenting out the sub-keys leaves
 `visibility:` present-but-nil, which a bare field access panics on), and a malformed value FAILS
 THE RENDER rather than silently answering no for every viewer — which here would not demote an
-administrator but lock everyone out of the surface, including the person trying to fix it.
+administrator but close the Cluster Configurations tab and the KPI page to everyone, including the
+person trying to fix it.
 */}}
-{{- define "gsd.clusterConfigSarField" -}}
-{{- $sar := (index (.ctx.Values.visibility | default dict) .block) | default dict -}}
+{{- define "gsd.clusterAdminSarField" -}}
+{{- $sar := ((.ctx.Values.visibility | default dict).clusterAdminSar) | default dict -}}
 {{- if or (not (hasKey $sar .field)) (kindIs "invalid" (index $sar .field)) -}}
 {{- .default -}}
 {{- else -}}
 {{- $v := trim (toString (index $sar .field)) -}}
 {{- $ok := dict "apiGroup" "^[a-z0-9.-]*$" "resource" "^[a-z0-9-]+(/[a-z0-9-]+)?$" "verb" "^[a-z]+$" "namespace" "^[a-z0-9-]*$" -}}
 {{- if not (regexMatch (index $ok .field) $v) -}}
-{{- fail (printf "visibility.%s.%s %q is not a %s. RBAC matching is exact, so anything else would answer no for every viewer and close the Cluster Configurations surface to everyone." .block .field $v .field) -}}
+{{- fail (printf "visibility.clusterAdminSar.%s %q is not a %s. RBAC matching is exact, so anything else would answer no for every viewer and close the Cluster Configurations tab and the KPI page to everyone." .field $v .field) -}}
 {{- end -}}
 {{- $v -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The two blocks the cluster-admin tier replaced (#322): visibility.clusterConfigViewSar and
+visibility.clusterConfigManageSar, chart 0.42.1 to 0.56.0. Helm ignores a key no template reads, so a
+values file that still sets one would render clean while its question silently stopped being asked —
+refuse it, naming the key that took its place. Only a block that sets something is refused: a nulled
+block (`clusterConfigViewSar: null`, or its sub-keys commented out) or `{}` asked no question of its
+own, and Helm keeps a nulled key the chart's defaults do not carry, so presence alone is not the test.
+*/}}
+{{- define "gsd.refuseRemovedVisibilitySar" -}}
+{{- $vis := .Values.visibility | default dict -}}
+{{- range $old := list "clusterConfigViewSar" "clusterConfigManageSar" -}}
+{{- if index $vis $old -}}
+{{- fail (printf "visibility.%s was removed in chart 0.57.0 (#322). One question, visibility.clusterAdminSar (default: update clusterrolebindings.rbac.authorization.k8s.io, cluster-scoped), now gates the whole Cluster Configurations tab and the KPI page. Delete this block; to ask a different question, set visibility.clusterAdminSar.{apiGroup,resource,verb,namespace}." $old) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

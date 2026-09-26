@@ -512,6 +512,7 @@ def kpi_client(tmp_path_factory):
     _seed(db)
     app = build_app(_settings(db), run_poller=False)
     app.state.tier_resolver = _MapResolver({"root": "all"})
+    app.state.cluster_admin_resolver = _MapResolver({"root": "all"})   # /api/kpi is the cluster-admin tier (#322)
     with TestClient(app) as c:
         yield c
 
@@ -602,6 +603,7 @@ class TestPageSettings:
         _seed(db)
         app = build_app(_settings(db, grafana_url="https://g.example", kpi_disk_warn_percent=70.0), run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as client:
             body = client.get("/api/kpi", headers=H("root")).json()
         assert body["thresholds"] == {"memory_percent": 80.0, "cpu_percent": 80.0, "throttled_percent": 1.0, "disk_percent": 70.0}
@@ -623,6 +625,7 @@ class TestPageSettings:
         first = (now - timedelta(days=28)).strftime("%Y-%m-%dT00:00:30Z")                        # a drawn day
         app = build_app(_settings(db), run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as client:
             seeded = client.get("/api/kpi", headers=H("root")).json()["kpis"]["membership_added_30d"]["samples"][0]["value"]
             conn = sqlite3.connect(db)
@@ -671,6 +674,7 @@ class TestObserveDoor:
         _seed(db)
         app = build_app(_settings(db, console_url="https://console.example"), run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as client:
             links = client.get("/api/kpi", headers=H("root")).json()["links"]
         assert links["observe"] == ("https://console.example/dev-monitoring/ns/team%20a%2Fb"
@@ -683,6 +687,7 @@ class TestObserveDoor:
         _seed(db)
         app = build_app(_settings(db), run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as client:
             assert "observe" not in client.get("/api/kpi", headers=H("root")).json()["links"], "nothing discovered yet: no dead link"
             app.state.signals.note_console_url("https://discovered.example")
@@ -690,6 +695,7 @@ class TestObserveDoor:
             assert links["console"] == "https://discovered.example" and links["observe"] == "https://discovered.example/dev-monitoring/ns/ns1?dashboard=dashboard-k8s-resources-workloads-namespace"
         app2 = build_app(_settings(db, console_url="https://named.example"), run_poller=False)
         app2.state.tier_resolver = _MapResolver({"root": "all"})
+        app2.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         app2.state.signals.note_console_url("https://discovered.example")
         with TestClient(app2) as client:
             assert client.get("/api/kpi", headers=H("root")).json()["links"]["console"] == "https://named.example"
@@ -820,6 +826,7 @@ class TestObserveDoor:
             # the door: the chart's URL wins over a discovered one; the discovered one serves otherwise
             app = build_app(_settings(str(tmp_path / "w.db"), grafana_route_selector="k=v"), run_poller=False)
             app.state.tier_resolver = _MapResolver({"root": "all"})
+            app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
             app.state.signals.note_grafana_url("https://g.example")
             with TestClient(app) as client:
                 links = client.get("/api/kpi", headers=H("root")).json()["links"]

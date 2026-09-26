@@ -971,18 +971,27 @@ class TestVisibilityThreading:
         assert subject["kind"] == "ServiceAccount"
         assert subject["name"] == "t-group-sync-dashboard"
 
-    def test_the_sar_grant_disappears_when_nothing_needs_it(self):
-        """The invariant: the grant renders only when something asks a SubjectAccessReview. Every
-        user of it must therefore be named here — apiTokenAccess (on by default since chart 0.14.0)
-        and, since #230, the cluster-configuration tier, which asks regardless of visibility."""
+    def test_the_sar_grant_renders_whenever_the_proxy_is_on(self):
+        """The cluster-admin tier (#322) asks a SubjectAccessReview for the KPI page, which every
+        install has, whatever `visibility.enabled`, apiTokenAccess or cluster Secrets say. With all
+        three off the grant used to be absent, and KPI would have refused everyone (Grok's review of
+        SPEC_T2, C9)."""
         ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false",
                          clusterConfig__secrets__enabled="false")
         assert ok, out
+        assert any(d.get("kind") == "ClusterRoleBinding"
+                   and d["roleRef"]["name"] == "system:auth-delegator"
+                   for d in self._docs(out)), "the cluster-admin tier would ask a review it has no grant for"
+
+    def test_the_sar_grant_disappears_only_with_the_proxy_off(self):
+        """With the proxy off there is no verified identity, so nothing asks a review
+        (`trusted_viewer` is None) and the grant is not rendered."""
+        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false",
+                         reporting__enabled="false")
+        assert ok, out
         assert not any(d.get("kind") == "ClusterRoleBinding"
                        and d["roleRef"]["name"] == "system:auth-delegator"
-                       for d in self._docs(out)), (
-            "with visibility off, apiTokenAccess off and cluster Secrets off, nothing uses the SAR grant"
-        )
+                       for d in self._docs(out))
 
     def test_notes_carry_the_grant_command_and_the_rollback_flag(self):
         notes = (CHART / "templates" / "NOTES.txt").read_text()
@@ -1071,52 +1080,59 @@ class TestVisibilityThreading:
             assert not ok, f"usageAdminSar.{key}={bad!r} rendered happily"
             assert "visibility.usageAdminSar" in out
 
-    # ── The cluster-configuration tier's two levels (#230) ────────────────────────────
+    # ── The cluster-admin tier (#322) ─────────────────────────────────────────────────
 
-    def test_the_clusterconfig_sar_defaults_reach_the_configmap(self):
-        """view = `get secrets`, manage = `create secrets`, both in this release's namespace (an
-        empty namespace means the pod's own for these two, unlike adminSar's cluster-scoped empty)."""
+    def test_the_cluster_admin_sar_defaults_reach_the_configmap(self):
+        """`update clusterrolebindings`, cluster-scoped — the Usage question as its own setting —
+        and the #230 pair's eight keys are gone."""
         ok, out = render()
         assert ok, out
         cm = self._configmap(out)
-        assert cm["visibilityClusterConfigViewSarApiGroup"] == ""        # the core group
-        assert cm["visibilityClusterConfigViewSarResource"] == "secrets"
-        assert cm["visibilityClusterConfigViewSarVerb"] == "get"
-        assert cm["visibilityClusterConfigManageSarResource"] == "secrets"
-        assert cm["visibilityClusterConfigManageSarVerb"] == "create"
-        assert cm["visibilityClusterConfigViewSarNamespace"] == ""
-        assert cm["visibilityClusterConfigManageSarNamespace"] == ""
+        assert cm["visibilityClusterAdminSarApiGroup"] == "rbac.authorization.k8s.io"
+        assert cm["visibilityClusterAdminSarResource"] == "clusterrolebindings"
+        assert cm["visibilityClusterAdminSarVerb"] == "update"
+        assert cm["visibilityClusterAdminSarNamespace"] == ""
+        assert not [k for k in cm if k.startswith("visibilityClusterConfig")], "the #230 keys were replaced"
 
-    def test_a_nilled_clusterconfig_block_keeps_its_own_default_and_does_not_move_the_other(self):
-        """Commenting the sub-keys out leaves the block present-but-nil. Each level falls back to
-        ITS OWN default — the two are separate questions, so a nilled view must not drag manage's
-        verb with it, and never to an empty (allowed=false) check."""
-        for nilled, other in (("clusterConfigViewSar", "clusterConfigManageSar"),
-                              ("clusterConfigManageSar", "clusterConfigViewSar")):
-            ok, out = render(**{f"visibility.{nilled}": "null"})
-            assert ok, out
-            cm = self._configmap(out)
-            assert cm["visibilityClusterConfigViewSarVerb"] == "get"
-            assert cm["visibilityClusterConfigManageSarVerb"] == "create"
-            assert cm[f"visibility{other[0].upper()}{other[1:]}Resource".replace("Sar", "Sar")] == "secrets"
+    def test_a_nilled_cluster_admin_block_keeps_the_default(self):
+        """Commenting the sub-keys out leaves the block present-but-nil: the default question, never
+        an empty (allowed=false) check."""
+        ok, out = render(**{"visibility.clusterAdminSar": "null"})
+        assert ok, out
+        cm = self._configmap(out)
+        assert (cm["visibilityClusterAdminSarVerb"], cm["visibilityClusterAdminSarResource"]) == ("update", "clusterrolebindings")
 
-    def test_a_nonsensical_clusterconfig_sar_shape_is_refused(self):
+    def test_a_nonsensical_cluster_admin_sar_shape_is_refused(self):
         """A miscased or versioned field would answer no for every viewer — which here does not
-        demote an administrator but closes the surface to everyone, including whoever would fix it.
+        demote an administrator but closes two surfaces to everyone, including whoever would fix it.
         So it fails the render, with the field named and the reason said."""
-        for block in ("clusterConfigViewSar", "clusterConfigManageSar"):
-            for key, bad in (("verb", "Get"), ("resource", "Secrets"),
-                             ("apiGroup", "rbac.authorization.k8s.io/v1"), ("namespace", "Bad_NS")):
-                ok, out = render(**{f"visibility.{block}.{key}": bad})
-                assert not ok, f"{block}.{key}={bad!r} rendered happily"
-                assert f"visibility.{block}.{key}" in out
-                assert "RBAC matching is exact" in out
+        for key, bad in (("verb", "Update"), ("resource", "ClusterRoleBindings"),
+                         ("apiGroup", "rbac.authorization.k8s.io/v1"), ("namespace", "Bad_NS")):
+            ok, out = render(**{f"visibility.clusterAdminSar.{key}": bad})
+            assert not ok, f"clusterAdminSar.{key}={bad!r} rendered happily"
+            assert f"visibility.clusterAdminSar.{key}" in out
+            assert "RBAC matching is exact" in out
 
-    def test_the_sar_grant_renders_for_the_clusterconfig_tier_even_with_visibility_off(self):
-        """The cluster-configuration tier asks a SubjectAccessReview regardless of
-        `visibility.enabled` — that independence is the point of it. Without the auth-delegator
-        binding in that state every review errors and the surface refuses EVERYONE, administrators
-        included, with only a log line to say why (review of #235, the Fable seat)."""
+    def test_the_removed_clusterconfig_blocks_are_refused_by_name(self):
+        """`visibility.clusterConfigViewSar` / `.clusterConfigManageSar` were removed in chart 0.57.0
+        (#322). Helm ignores a key no template reads, so a values file that still sets one would
+        render clean while its question silently stopped being asked. Set — any field — it fails
+        the render with a message naming `clusterAdminSar`; a block that sets nothing (nulled, the
+        sub-keys commented out) asks no question and passes — Helm KEEPS such a key when the chart's
+        defaults no longer carry it, so this case fails a presence test (Grok's review of SPEC_T2, C7)."""
+        for block in ("clusterConfigViewSar", "clusterConfigManageSar"):
+            for key, value in (("verb", "get"), ("namespace", "ns")):
+                ok, out = render(**{f"visibility.{block}.{key}": value})
+                assert not ok, f"{block}.{key}={value!r} rendered happily"
+                assert f"visibility.{block} was removed" in out and "visibility.clusterAdminSar" in out
+            ok, out = render(**{f"visibility.{block}": "null"})
+            assert ok, out
+
+    def test_the_sar_grant_renders_for_the_cluster_admin_tier_even_with_visibility_off(self):
+        """The cluster-admin tier asks a SubjectAccessReview regardless of `visibility.enabled` —
+        that independence is the point of it (#322, as for the #230 tier before it). Without the
+        auth-delegator binding in that state every review errors and both surfaces refuse EVERYONE,
+        administrators included, with only a log line to say why (review of #235, the Fable seat)."""
         ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false")
         assert ok, out
         assert any(d.get("kind") == "ClusterRoleBinding"
@@ -1128,7 +1144,7 @@ class TestVisibilityThreading:
         (system:auth-delegator) the wide tier uses. So the default install carries exactly one
         such binding — one grant, two questions — and with visibility off the binding is still
         there, kept by its other consumer, API-token access (on by default since chart 0.14.0);
-        the both-off state that removes it is `test_the_sar_grant_disappears_when_nothing_needs_it`."""
+        the only state that removes it is the proxy off, `test_the_sar_grant_disappears_only_with_the_proxy_off`."""
         def delegator_bindings(out):
             return [d for d in self._docs(out)
                     if d.get("kind") == "ClusterRoleBinding"

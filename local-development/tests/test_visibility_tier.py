@@ -449,6 +449,9 @@ class TestSettings:
         # question about the same person.
         assert app.state.tier_resolver is not app.state.usage_tier_resolver
         assert app.state.tier_resolver._cache is not app.state.usage_tier_resolver._cache
+        # The cluster-admin tier is consulted first on both routes (#322); held at self here so the
+        # reviews counted below are the two resolvers under test and nothing else.
+        app.state.cluster_admin_resolver = type("Self", (), {"resolve": staticmethod(lambda viewer: "self")})()
 
         reviews = {"n": 0}
         groups = {"kind": "GroupList",

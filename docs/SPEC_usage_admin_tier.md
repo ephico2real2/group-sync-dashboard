@@ -1,5 +1,10 @@
 # Spec: a second, stricter tier for the Usage tab
 
+> 2026-09-25 (#322, `docs/specs/SPEC_T2_cluster_admin_tier.md`): the question this spec measured is also
+> the default of the cluster-admin tier, `visibility.clusterAdminSar`, as its own setting. That tier is
+> the top tier: a reader who passes it is wide on Usage whatever `usageAdminSar` answers, and with
+> `visibility.enabled: false` too. The Usage tier itself is unchanged.
+
 Branch `feat/per-user-visibility`, from `ac872d2`. Suite baseline **1201 passed / 0 failed**.
 
 ## The problem, measured

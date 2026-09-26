@@ -94,6 +94,13 @@ implementation is written back here, under "Orchestrator's notes", with the reas
     the `userActivity.visibility` comment in `values.yaml` and the grant's comment in `rbac.yaml`
     said the grant followed `visibility.enabled` / `clusterConfig.secrets.enabled`, or that Usage is
     per-person for a cluster-admin with visibility off; each is corrected by a block below.
+- 2026-09-25, implementation (OB1-lite): `TestTheHierarchy.rig` in the new test file gains
+  `reporting_url` and a `reporting_token_file` (reporting on refuses to start without a usable token). Measured on the blocks as first written: the full hermetic suite failed
+  `test_a_cluster_admin_is_wide_on_usage_whatever_the_usage_question_answers` at
+  `/api/dashboard/reports` (`'self' == 'all'`) because that route returns a hard-coded `scope: self`
+  when no report service is configured (`gsd/api.py#dashboard_reports`, `if not settings.reporting_url`),
+  before `usage_scope` is asked. The test was wrong, not the code: with a report service configured the
+  route reaches `usage_scope` and the cluster-admin grant.
 
 ## The decision (issue #322, operator, 2026-09-23)
 
@@ -2838,13 +2845,17 @@ class TestTheHierarchy:
         """The wide and Usage stubs deny EVERYONE — the case the issue names: adminSar and usageAdminSar
         pointed at checks the cluster-admin fails. Only clusterAdminSar admits root."""
         db = str(tmp_path / "gsd.db"); _seed(db)
+        token = tmp_path / "token"; token.write_bytes(b"t" * 48 + b"\n")
         settings = Settings(
             clusters=[ClusterConfig("c1", "https://api.c1.example.com:6443", token_env="X"),
                       ClusterConfig("c2", "https://api.c2.example.com:6443", token_env="Y", visibility="inherit"),
                       ClusterConfig("far", "https://api.far.example.com:6443", token_env="Z"),          # remote-sar, by default
                       ClusterConfig("solo", "https://api.solo.example.com:6443", token_env="W",
                                     visibility="self-only", identity="same-as-host")],
-            db_path=db, oauth_proxy_enabled=True)
+            # A report service configured, so /api/dashboard/reports reaches usage_scope rather than
+            # answering its reporting-off `self` before any tier is asked.
+            db_path=db, oauth_proxy_enabled=True, reporting_url="https://gsd-report.ns.svc:8443",
+            reporting_token_file=str(token))
         app = build_app(settings, run_poller=False)
         wide, usage, far = _MapResolver({}), _MapResolver({}), _MapResolver({})
         app.state.tier_resolver = wide

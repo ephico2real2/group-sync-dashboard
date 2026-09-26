@@ -91,8 +91,16 @@ and cached separately: a client will see `cluster-reader` come back `scope: all`
 SubjectAccessReview only asks whether a subject could. See docs/SPEC_usage_admin_tier.md.
 
 `GET /api/whoami` reports the same decision as a nested object rather than top-level fields:
-`"visibility": {"scope": "self", "enabled": true}`. `enabled` is the operator's switch
-(`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this reader.
+`"visibility": {"scope": "self", "enabled": true, "clusters": {...}, "cluster_admin": false}`.
+`enabled` is the operator's switch (`GSD_ENABLE_VIEW_RESTRICTIONS`), not the outcome for this
+reader; `cluster_admin` is the cluster-admin tier's verdict (#322, below), which the page reads to
+render or withhold the KPI and Cluster Configurations tabs.
+
+**The cluster-admin tier is the top tier (#322).** A reader who passes `visibility.clusterAdminSar`
+(default `update clusterrolebindings`, asked on the host whatever `visibility.enabled` says) is
+`scope: all` on the host and on every `inherit` cluster, and `all` on `/api/dashboard/activity` and
+`/api/dashboard/reports`, whatever `adminSar` and `usageAdminSar` answer for them — one way only. A
+`remote-sar` cluster still asks its own API about them; a `self-only` cluster stays `self`.
 
 **`groupsyncs` is served at both tiers minus two fields at `self`; only its events do not vary
 at all.** The criterion is measurable, not "is it about objects": `/metrics` is unauthenticated
@@ -103,7 +111,7 @@ credential-less `curl`, so refusing the same per-CR identity behind login would 
 `ldap_filter` and `error_message`, both of which can embed directory DNs and the gate group.
 Administrators receive the full row, unchanged.
 
-**`bindings/findings`, `operator-configs`, `kyverno` and `kpi` are the administrator tier** (`403` at self); **`clusterconfigs` is stricter still — `clusterconfig:view`, below.** The
+**`bindings/findings`, `operator-configs` and `kyverno` are the administrator tier** (`403` at self); **`kpi` and `clusterconfigs` are the cluster-admin tier (#322), below.** The
 Access granted tab at the narrowed tier reads the reader's own path instead — `/users/{name}`
 for their own name, whose `bindings` carry `via_group` — which the gate never withheld.
 They describe objects too, but that is not the test. A binding row names which *group* holds
@@ -165,16 +173,16 @@ half-populated view that otherwise looks exactly like a cluster with no groups.
 
 ### `GET /api/clusterconfigs`
 
-**`clusterconfig:view`, not the administrator tier.** The cluster-configuration tier is two levels of
-its own (#230), modelled on Argo CD's first-class `clusters` resource and asked natively as
-SubjectAccessReviews about the Secrets this surface exposes: **`clusterconfig:view`** (`get secrets` in
-the dashboard's namespace, chart `visibility.clusterConfigViewSar`) gates this route and, at #230 S2,
-the tab's existence; **`clusterconfig:manage`** (`create secrets`, `visibility.clusterConfigManageSar`)
-gates S2's write routes. The two are asked separately — `manage` never implies `view` — and both fail
-closed. This is deliberately **stricter than the administrator tier**, which the auditor persona
-(`cluster-reader`) passes by design: measured on CRC 2026-09-20, that ClusterRole has zero of its 172
-rules covering `secrets`, so the auditor fails both levels and a cluster-admin passes both. A refusal
-names the control and no cluster, Secret or namespace.
+**The cluster-admin tier (#322), not the administrator tier.** One SubjectAccessReview —
+`visibility.clusterAdminSar`, default `update clusterrolebindings.rbac.authorization.k8s.io` on the
+host, asked whatever `visibility.enabled` says — gates this route, the tab's existence (through
+`/api/whoami`'s `visibility.cluster_admin`) and the four write routes below; `can.manage` is `true`
+for whoever reaches it, the deployment's `secrets.writes` switch permitting. Deliberately **stricter
+than the administrator tier**, which the auditor persona (`cluster-reader`) passes by design: that
+persona fails `update clusterrolebindings` and a cluster-admin passes it (measured on CRC), while the
+`get`/`create secrets` pair this replaced (#230, `clusterconfig:view`/`manage`) admitted anyone holding
+`admin` or `edit` in the release namespace. A refusal leads with *For cluster administrators only.*
+and names no cluster, Secret or namespace.
 
 Every cluster this instance knows with **where it came from** — the values list
 (`source: values`), a labelled Secret in the pod's own namespace (`source: secret:<metadata.name>`,
@@ -235,7 +243,7 @@ answers the values list alone with `last_discovery: null`.
 
 ### The Cluster Configurations tab's writes (#230 S2)
 
-Four routes, all `clusterconfig:manage` (above — never the wide tier) and each needing a proxy-verified
+Four routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
 identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
 the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
 (`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
@@ -990,9 +998,11 @@ no history.
 ### `GET /api/kpi`
 
 The KPI module's in-app surface (#156): every KPI definition rendered as JSON, the 30-day trends,
-the daily rollup's series, and both processes' self-reported system usage. **Administrator tier**
-(`403` at self): the `internal` class counts people, and the trends aggregate the fleet's churn
-and logins — governance data about the clusters, not about the reader.
+the daily rollup's series, and both processes' self-reported system usage. **Cluster-admin tier**
+(#322; `403` below it, the auditor persona included, whatever `visibility.enabled` says): the
+`internal` class counts people, and the trends aggregate the fleet's churn and logins — governance
+data about the clusters, not about the reader. The refusal leads with *For cluster administrators
+only.*
 
 ```json
 {

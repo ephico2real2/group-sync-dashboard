@@ -463,10 +463,9 @@ class TestApi:
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
         app.state.remote_tier_resolvers = {}   # the discovered east is remote-sar (SPEC_D2b); no remote is asked
-        # The Cluster Configurations tier's own two seams (#230): root holds both levels here, and
-        # the tier's tests below drive every other combination.
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
-        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
+        # The cluster-admin tier's own seam (#322): root holds it here, and the tier's tests below
+        # drive every other persona.
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             yield c, app, host, settings
 
@@ -558,8 +557,7 @@ class TestApi:
         assert settings.cluster_secrets_writes_enabled is False
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
-        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             # a POST on the read path is a 405 (the path exists for GET); the write-only paths are 404s — routes that
             # were never registered, never routes that refuse
@@ -734,8 +732,7 @@ class TestClusterConfigTier:
         # EVERY persona passes the wide tier, exactly as cluster-reader does on a real cluster.
         app.state.tier_resolver = _MapResolver({"root": "all", "viewer": "all", "auditor": "all"})
         app.state.remote_tier_resolvers = {}   # the discovered east is remote-sar (SPEC_D2b); no remote is asked
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "viewer": "all"})
-        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})   # one tier for the whole tab (#322)
         with TestClient(app) as c:
             yield c
 
@@ -754,29 +751,18 @@ class TestClusterConfigTier:
         assert "east" not in read.text and "gsd-cluster" not in read.text    # no cluster names in a refusal
         assert [r.status_code for r in self._writes(rig, "auditor")] == [403, 403, 403, 403]
         who = rig.get("/api/whoami", headers=H("auditor")).json()
-        assert who["clusterconfig"] == {"view": False, "manage": False}      # no tab for this reader
+        assert who["visibility"]["cluster_admin"] is False                   # no tab for this reader
 
-    def test_view_without_manage_reads_the_surface_and_changes_nothing(self, rig):
-        body = rig.get("/api/clusterconfigs", headers=H("viewer")).json()
-        assert body["can"] == {"view": True, "manage": False}
-        assert [c["id"] for c in body["clusters"]]                            # the cards are there to read
+    def test_a_reader_the_wide_tier_admits_but_the_tier_refuses_gets_nothing_here(self, rig):
+        """`viewer` passes the wide tier and fails the cluster-admin one — the #230 view-only level
+        no longer exists (#322): one question decides the read route and the writes alike."""
+        assert rig.get("/api/clusterconfigs", headers=H("viewer")).status_code == 403
         assert [r.status_code for r in self._writes(rig, "viewer")] == [403, 403, 403, 403]
-        assert rig.get("/api/whoami", headers=H("viewer")).json()["clusterconfig"] == {"view": True, "manage": False}
+        assert rig.get("/api/whoami", headers=H("viewer")).json()["visibility"]["cluster_admin"] is False
 
-    def test_whoami_answers_manage_from_its_own_question_for_a_manage_only_reader(self, rig):
-        """Round 2 (OB2 C4): `manage` was derived `false` whenever `view` was — a composition the ruling
-        forbids — so the strip and the write routes disagreed for a reader granted `create secrets`
-        without `get secrets`. Each level is its own answer; the page still shows no control without
-        the page."""
-        rig.app.state.clusterconfig_view_resolver = _MapResolver({"root": "all", "viewer": "all"})
-        rig.app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all", "writer": "all"})
-        assert rig.get("/api/whoami", headers=H("writer")).json()["clusterconfig"] == {"view": False, "manage": True}
-        assert rig.get("/api/clusterconfigs", headers=H("writer")).status_code == 403
-        assert rig.post("/api/clusterconfigs/test", json=self.BODY, headers=H("writer")).status_code == 200
-
-    def test_the_administrator_holds_both_levels(self, rig):
+    def test_the_administrator_holds_the_tier_and_may_read_and_write(self, rig):
         assert rig.get("/api/clusterconfigs", headers=H("root")).json()["can"] == {"view": True, "manage": True}
-        assert rig.get("/api/whoami", headers=H("root")).json()["clusterconfig"] == {"view": True, "manage": True}
+        assert rig.get("/api/whoami", headers=H("root")).json()["visibility"]["cluster_admin"] is True
         assert rig.post("/api/clusterconfigs/test", json=self.BODY, headers=H("root")).status_code == 200
 
     def test_a_reader_with_no_trusted_identity_is_refused(self, rig):
@@ -811,15 +797,13 @@ class TestClusterConfigTier:
                 assert "identity" in r.json()["detail"]
             assert host.calls == before, "nothing reached the API server"
 
-    def test_the_pure_auditor_persona_is_refused_by_the_questions_themselves(self, rig):
-        """The operator's rule (2026-09-20): each level gates on its OWN SAR alone — no composition with
-        the administrator question, because RBAC is additive and whoever passes `get`/`create secrets`
-        can do the same with `oc`. The "no auditor" ruling survives by MEASUREMENT: the chart's auditor
-        role carries no rule over `secrets`, so the pure auditor answers no to both questions. Here the
-        auditor holds the wide tier and neither cluster-config level — exactly that shape."""
+    def test_the_pure_auditor_persona_is_refused_by_the_question_itself(self, rig):
+        """The "no auditor" ruling survives by MEASUREMENT (#322): cluster-reader passes the wide tier
+        and fails `update clusterrolebindings`, so the auditor answers no to the one question. Here
+        the auditor holds the wide tier and not the cluster-admin tier — exactly that shape."""
         assert rig.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
         assert [r.status_code for r in self._writes(rig, "auditor")] == [403, 403, 403, 403]
-        assert rig.get("/api/whoami", headers=H("auditor")).json()["clusterconfig"] == {"view": False, "manage": False}
+        assert rig.get("/api/whoami", headers=H("auditor")).json()["visibility"]["cluster_admin"] is False
 
     def test_visibility_disabled_does_not_open_this_surface(self, tmp_path, monkeypatch):
         """The ordinary wide views widen when `visibility.enabled` is off; this one must not, or the
@@ -838,12 +822,11 @@ class TestClusterConfigTier:
         with TestClient(app) as c:
             assert c.get("/api/clusterconfigs", headers=H("anyone")).status_code == 403
             assert [r.status_code for r in self._writes(c, "anyone")] == [403, 403, 403, 403]
-            assert c.get("/api/whoami", headers=H("anyone")).json().get("clusterconfig", {"view": False})["view"] is False
+            assert c.get("/api/whoami", headers=H("anyone")).json()["visibility"]["cluster_admin"] is False
 
     def test_no_resolver_fails_closed(self, rig):
-        """Argo's `policy.default: deny`: an instance that built no resolver — restrictions off, or no
-        host cluster to review against — refuses rather than falling back to the wide tier."""
-        rig.app.state.clusterconfig_view_resolver = None
-        rig.app.state.clusterconfig_manage_resolver = None
+        """Argo's `policy.default: deny`: an instance that built no resolver — no host cluster to
+        review against — refuses rather than falling back to the wide tier."""
+        rig.app.state.cluster_admin_resolver = None
         assert rig.get("/api/clusterconfigs", headers=H("root")).status_code == 403
         assert [r.status_code for r in self._writes(rig, "root")] == [403, 403, 403, 403]

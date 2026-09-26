@@ -476,13 +476,12 @@ config:
     # not. If you want an admins-only door for the whole dashboard instead, that is
     # oauthProxy.sar.
     #
-    # ONE EDGE WORTH KNOWING, measured: with `visibility.enabled=false` the usage tier is not
-    # consulted at all, so this view stays per-person for EVERY reader including a
-    # cluster-admin, and `all` here becomes the only thing that widens it. That is deliberate
-    # and it is the safe direction — switching off scoping for CLUSTER data must not, as a side
-    # effect, publish presence records. It also means no SubjectAccessReview is attempted in
-    # that state, which is why the auth-delegator grant may be absent there without breaking
-    # anything.
+    # ONE EDGE WORTH KNOWING: with `visibility.enabled=false` the usage tier is not consulted
+    # at all, so this view stays per-person for every reader but one who passes
+    # `visibility.clusterAdminSar` — the top tier, asked in that state too (#322) — and `all`
+    # here is the only thing that widens it for anyone else. That is deliberate and it is the
+    # safe direction — switching off scoping for CLUSTER data must not, as a side effect,
+    # publish presence records to the auditor.
     visibility: self
     # Requests are buffered in memory and written once per interval. A write per request
     # would put every API call behind the SQLite writer lock, contending with the poll's
@@ -1470,7 +1469,7 @@ clusterConfig:
     # same verbs twice and decide nothing the stanza does not. On, the Role above
     # gains create, update and delete on secrets in the release namespace and the four write routes
     # exist (the app still touches only Secrets carrying the label, in its own namespace, only for a
-    # reader holding clusterconfig:manage — visibility.clusterConfigManageSar — with a proxy-verified
+    # reader the cluster-admin tier admits — visibility.clusterAdminSar, #322 — with a proxy-verified
     # identity, one audit log line per write); off, no write route is registered and the tab
     # is read-only — the form still produces the Secret's YAML for a GitOps process to apply. The
     # credential never reaches a response, a log line, the database or /metrics either way.
@@ -2298,38 +2297,41 @@ visibility:
     verb: update
     namespace: ""
 
-  # THE CLUSTER-CONFIGURATION TIER — two levels of its own (#230), modelled on Argo CD's RBAC,
-  # where a first-class `clusters` resource carries `get` and `create/update/delete` actions.
-  # We hold no policy file: every tier here is a SubjectAccessReview against this cluster, so
-  # OpenShift groups and RoleBindings already are that mapping. The two questions are therefore
-  # asked about the very objects the surface exposes — the cluster Secrets themselves:
+  # THE CLUSTER-ADMIN TIER (#322; the operator's decision of 2026-09-23) — ONE SubjectAccessReview,
+  # asked on this cluster, for the surfaces that are for cluster administrators only:
   #
-  #   clusterConfigViewSar   (Argo `clusters, get`)      -> the Cluster Configurations tab and
-  #                                                         GET /api/clusterconfigs
-  #   clusterConfigManageSar (Argo `clusters, create…`)  -> the write routes and the form's
-  #                                                         Create / Rotate / Delete / Test (#230 S2)
+  #   the Cluster Configurations tab — its existence, GET /api/clusterconfigs, and the write routes
+  #     (Create / Rotate / Delete / Test), which clusterConfig.secrets.writes.enabled still switches
+  #   the KPI page — GET /api/kpi
+  #   Rejoin (#316), when it is built
   #
-  # It reads as what it is: you may SEE cluster credentials if you may read the Secrets that hold
-  # them, and CHANGE them if you may create those Secrets.
+  # THE TOP TIER: a reader who passes it is granted every tier this cluster decides — the wide view
+  # here and on `inherit` clusters, and Usage — whatever adminSar and usageAdminSar answer for them,
+  # and with visibility.enabled off too. One way only: passing adminSar or usageAdminSar never
+  # implies this one, so those stay separate and can be loosened without handing anyone this tab.
+  # Per-cluster policies still apply: a `remote-sar` cluster asks its own API about the person, a
+  # `self-only` cluster stays self, a `hidden` cluster stays hidden.
   #
-  # WHY NOT THE WIDE `adminSar`, measured on CRC 2026-09-20: `cluster-reader` — the deliberate
-  # auditor persona, which passes the wide tier by design — has ZERO of its 172 rules covering
-  # core/`secrets`, and `oc auth can-i {get,list,create,update,delete} secrets` answers `no`. So
-  # the auditor fails both levels by construction and a cluster-admin passes both.
+  # WHY THIS CHECK, measured on CRC: `list clusterrolebindings` (adminSar) admits cluster-reader, so
+  # the auditor saw the KPI page; `create secrets` in this namespace (the two-level tier this
+  # replaces, chart 0.42.1 to 0.56.0) kept the auditor out but admitted anyone holding `admin` or
+  # `edit` on that one namespace, who is not a cluster administrator. `update clusterrolebindings`
+  # — the question usageAdminSar already asks — a cluster-reader fails and a cluster-admin passes.
+  # Its own setting, not usageAdminSar's, so one moves without the other. Same exact-lowercase
+  # render guards as adminSar. THE DASHBOARD STILL NEVER WRITES: a SubjectAccessReview only asks.
   #
-  # An empty `namespace` means THIS RELEASE'S namespace, where the cluster Secrets live — the
-  # opposite of `adminSar`'s empty, which means a cluster-scoped check, because these questions
-  # are namespaced by nature. Point them at your own question (a dedicated `fleet-admin`
-  # ClusterRole, say) and both levels move independently: `manage` is never derived from `view`.
-  clusterConfigViewSar:
-    apiGroup: ""
-    resource: secrets
-    verb: get
-    namespace: ""
-  clusterConfigManageSar:
-    apiGroup: ""
-    resource: secrets
-    verb: create
+  # ASKED WHATEVER visibility.enabled SAYS, like the tier it replaces: turning the cluster-data
+  # restrictions off must not hand KPI or the fleet's wiring to every proxy-admitted reader. So with
+  # visibility.enabled: false the auth-delegator grant still renders and the review is still made;
+  # without that grant the two surfaces refuse everyone. An empty namespace is a cluster-scoped
+  # check, like adminSar's.
+  #
+  # `visibility.clusterConfigViewSar` and `visibility.clusterConfigManageSar` are REMOVED (chart
+  # 0.57.0): a values file that still sets either fails the render with a message naming this key.
+  clusterAdminSar:
+    apiGroup: rbac.authorization.k8s.io
+    resource: clusterrolebindings
+    verb: update
     namespace: ""
 
 # ---------------------------------------------------------------------------
