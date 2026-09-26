@@ -1,0 +1,21 @@
+# Replace the repository URL and apply this Application separately in openshift-gitops.
+# Argo CD sees kustomization.yaml and builds it: only configmap.yaml is applied,
+# so neither this Application nor the Flux Kustomization manages itself.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-onboarding
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/<your-org>/<your-repo>.git
+    targetRevision: main
+    path: examples/cluster-onboarding
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: group-sync-dashboard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

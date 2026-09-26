@@ -1377,6 +1377,18 @@ chart refuses to render otherwise. `gsd_dashboard_*` and every count metric then
 per-pod facts, so aggregate with `max()` or filter on `gsd_leader`, never `sum()`
 (`gsd/metrics.py#DashboardCollector._gather`).
 
+### Adding clusters through GitOps
+
+The GitOps route is the credential-free [onboarding ConfigMap](../examples/cluster-onboarding/), synced by
+Argo CD or Flux: both build the same Kustomize list, which holds only the ConfigMap. The dashboard reads it, logs
+in with the fleet account and writes a separate credential Secret; that needs
+`clusterConfig.secrets.writes.enabled`, and the prerequisites and removal rules are in
+[the cluster stanza guide](CLUSTER_STANZA.md). Removing the ConfigMap prunes the generated Secret and keeps the
+recorded history. Never put a `saTokenLookup` Secret under a self-healing GitOps tool: the dashboard rewrites that
+Secret in place with the looked-up token, self-heal reverts it, and the next lookup logs in again. For a token you
+hold, the [cluster Secret example](../examples/cluster-secret/) is for a one-off `oc apply`; never commit a real
+token.
+
 ---
 
 ## 8a. Reading a fleet without hosting anything

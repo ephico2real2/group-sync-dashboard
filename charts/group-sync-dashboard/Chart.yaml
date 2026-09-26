@@ -242,7 +242,9 @@ type: application
 # page; namespace-scoped `admin`/`edit` holders lose the Cluster Configurations tab.
 # CHART 0.58.1 (2026-09-26), PATCH: docs only — the chart README links the docs index (#319) and the
 # auditor-group and polling guides. No template, value or RBAC change; appVersion unchanged.
-version: 0.58.1
+# CHART 0.58.2 (2026-09-26), PATCH: docs only — link the GitOps onboarding and manual Secret
+# examples (#389). No template, value or RBAC change; appVersion unchanged.
+version: 0.58.2
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
