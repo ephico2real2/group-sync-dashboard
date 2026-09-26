@@ -46,11 +46,11 @@ def no_leaked_poller_threads():
 _DEFAULT_DB_FILES = ("gsd.db", "gsd.db-wal", "gsd.db-shm")
 
 
-def _default_db_state() -> dict[str, tuple[int, int] | None]:
+def _default_db_state(directory: str) -> dict[str, tuple[int, int] | None]:
     state: dict[str, tuple[int, int] | None] = {}
     for name in _DEFAULT_DB_FILES:
         try:
-            st = os.stat(name)
+            st = os.stat(os.path.join(directory, name))
         except FileNotFoundError:
             state[name] = None
         else:
@@ -60,21 +60,27 @@ def _default_db_state() -> dict[str, tuple[int, int] | None]:
 
 @pytest.fixture(autouse=True)
 def no_default_database_in_the_working_directory():
-    """Fail the test that writes the default relative database, rather than leave it in the tree.
+    """Fail the test during which the default relative database changed, rather than leave it in the tree.
 
     Why: one test built Settings without a db_path and left local-development/gsd.db behind on every
     run (#371, measured by a per-test file scan of the whole suite). A reviewer who runs the suite in
     the tree under review changed that tree.
 
     A delta, not absolute: a developer's checkout may hold a gsd.db from running the app locally, and
-    only a file that appears or changes during this test is this test's doing.
+    an unchanged file passes. Both snapshots read the directory the test started in, so a test that
+    changes directory can neither hide a write nor be blamed for another directory's file.
 
-    The first failure names the writer. A later test that never opens the file can fail too: with the
-    writer unfixed, a full run also failed one that uses its own db_path, on gsd.db changing under it.
+    A change is not proof of authorship: an earlier test's connection closing (a WAL checkpoint) or
+    another process can change the file during this one. With the writer unfixed, a full run also
+    failed a test that uses its own db_path.
     """
-    before = _default_db_state()
+    directory = os.getcwd()
+    before = _default_db_state(directory)
     yield
-    after = _default_db_state()
+    after = _default_db_state(directory)
     written = [name for name in _DEFAULT_DB_FILES if after[name] is not None and after[name] != before[name]]
     if written:
-        pytest.fail(f"the test wrote {', '.join(written)} in {os.getcwd()} — give Settings a db_path under tmp_path")
+        pytest.fail(
+            f"{', '.join(written)} in {directory} changed during this test — give Settings a db_path under"
+            " tmp_path; if this test opens no database, look for an earlier test's connection"
+        )
