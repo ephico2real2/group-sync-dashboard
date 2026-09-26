@@ -20,3 +20,7 @@ $ oc delete clusterrolebinding walk-322-developer-cluster-reader
 clusterrolebinding.rbac.authorization.k8s.io "walk-322-developer-cluster-reader" deleted
 $ oc auth can-i list clusterrolebindings --as developer
 no
+
+# Measured after the walk, 2026-09-26T04:19:52Z (review of #374, Grok C2): the cluster-admin persona's list answer.
+$ oc auth can-i list clusterrolebindings          # kubeadmin
+yes
