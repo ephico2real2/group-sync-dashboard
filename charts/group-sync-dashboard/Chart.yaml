@@ -248,7 +248,9 @@ type: application
 # CHART 0.58.4 (2026-09-26), PATCH: docs only — the values comment on config.backup and the README name
 # the pre-upgrade copy the next application release takes (#301, SPEC_M1). No template, value or RBAC
 # change; appVersion unchanged.
-version: 0.58.4
+# CHART 0.58.5 (2026-09-26), PATCH: appVersion moves to application 0.37.0 (below); Epic B: protect
+# the data during upgrades (#382).
+version: 0.58.5
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -343,7 +345,8 @@ version: 0.58.4
 # Configurations tab ask `visibility.clusterAdminSar`; `/api/whoami` carries `visibility.cluster_admin`
 # and drops `clusterconfig`; the `cluster_admin` threshold label replaces `clusterconfig_view` and
 # `clusterconfig_manage`. MINOR: who may open two surfaces changes on upgrade (docs/CHANGELOG.md).
-appVersion: "0.36.0"
+# 0.37.0 (2026-09-26). Epic B: protect the data during upgrades (#382). MINOR.
+appVersion: "0.37.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

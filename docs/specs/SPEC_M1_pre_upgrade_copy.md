@@ -5,10 +5,10 @@
 | Programme | Epic B (#382), protect the data during upgrades. #305 (merged in `16c339e`) reads the schema version before anything writes; this attaches to that read. #298, the CI guard and the epic's third child, merged in `411b6cc` |
 | Batch | M — schema migrations |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | chart 0.58.4 (docs); app 0.37.0 at the Epic B release |
+| Version on release | app 0.37.0, chart 0.58.5 |
 | Version note | This change keeps the application, `gsd/__init__.py` and `appVersion` at 0.36.0 and moves the chart by a PATCH, 0.58.3 to 0.58.4, because its values comment and README are chart content (§3.11). The Epic B release runs `local-development/prepare-release.py --app 0.37.0` and cuts the application; SPEC_S4c's reservation is left as it is here. A release that lands first makes block 12 fail its check, because its Old text is the chart version it replaces; the implementing pull request then corrects it here before applying (`docs/specs/README.md`) |
 | Issue | [#301](https://github.com/ephico2real2/group-sync-dashboard/issues/301) |
-| Status | specified |
+| Status | released |
 | Source | OB3's research and specification of 2026-09-26, written before any code from the issue, the epic (#382) and its decisions settled on 2026-09-26, and #305's merged code. Measured on main `cbbc65a` on this machine (Python 3.14.7 and SQLite 3.53.4, the versions the image carries) and read-only on the lab. Revised the same day after the review of `3973772` by Grok and Codex Astra, on the orchestrator's decisions (Orchestrator's notes), on a branch that merged main `411b6cc` (#298). §7's blocks were cut from a copy of that merge with the design implemented, and proved against a clean tree (§4.3) |
 
 ## How to read this spec
