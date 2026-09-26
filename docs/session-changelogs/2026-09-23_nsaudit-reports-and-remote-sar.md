@@ -938,13 +938,78 @@ The orchestrator's summary, with what was measured for this log:
   "missing on main" and stops, so that a merge that dropped a file by accident is not cleaned up as a success. These
   files were meant to go; after checking that by hand, the branch was deleted.
 
+## Part 11 — the failed Action, the review seats, the skill's lessons (2026-09-26 00:30 → 02:36)
+
+### The failed Action — PR #378 (merge `7bd8e87`, 01:56)
+
+- **Found by CI:** run 36221028974, on #376's merge `d1d046d`, failed the `tests (3.11)` job only; the
+  `tests (3.14)` job on the same commit passed. The failing test was
+  `test_unmanaged_subjects.py::TestAuditLogProgress::test_the_poll_loop_announces_a_new_grant_on_the_refresh_that_finds_it`.
+- **Diagnosed from the failing run's own log:**
+  - the test configures only cluster `c`, yet its captured log shows refreshes of a cluster `host`;
+  - a leaked `poll-host` thread called this test's monkeypatched `ClusterClient` and used up one of its scripted
+    cycles.
+  - The test passed 40 of 40 times locally (the orchestrator's runs, not published), so re-running could not
+    find the cause.
+- **The leaking test was found by a per-test thread probe:** a local pytest plugin, never committed, run by the
+  orchestrator over the full suite. It reported 5181 passing tests (its own count, not CI run 36221028974's 5182
+  passed and 1 failed) and exactly one test that left a thread alive,
+  `test_fleet_lookup.py::TestTheSchedule::test_a_retrieved_stanza_whose_secret_vanished_stops_polling_rather_than_polling_the_stanza`,
+  which leaves `poll-host`. It called `_reconcile_threads()` without seeding `host`.
+- **Built by OB1-lite, reviewed by Grok and Codex Astra** (#378's comments):
+  - the source fix: seed `host`;
+  - the mechanism: `local-development/tests/conftest.py`, a guard that fails any test leaving a poller thread alive.
+- **Review decisions:**
+  - Grok's C7 **accepted.** The guard used to ignore poller threads already running when a test started, so a leak
+    from one test was excused in every later one. Measured on a two-test probe, the second test passed while
+    `poll-host` was still running. The guard now fails any test that ends with a poller thread alive.
+  - Codex's hardening **rejected.** It wanted extra machinery in the product: a special thread class, extra scans,
+    and a suite-wide safety net. Neither reviewer found a test in this suite that needed it.
+  - Grok's N1 **accepted as a note** in SPEC_S4b. The spec still quotes the old test, which did not seed `host`;
+    that quoted example stays as the historical record, and only the real test in the tree was changed.
+- **Measured** (#378's comments): hermetic 5180 passed, browser 604. With the leak, both the leaking test and the
+  one after it now error, naming the thread.
+- **Main's CI on `7bd8e87`:** every job passed, including `tests (3.11)`.
+
+### Grok gets its shell back; the skill's lessons — PR #377 (merge `fb99e15`, 01:18)
+
+- **The operator:** *"cursor grok was better before and it could access shell and write it own file."*
+  - The CLI's own help calls `--mode ask` read-only, and every Grok pass from #368 to #376 used it.
+  - Grok now launches with `-p --force --workspace "$G"`, in a scratch folder of its own. That folder holds a copy
+    of the commit under review (under `head/`) and a `findings.md` that Grok writes itself. It was probed twice
+    before it was recorded (#377's commit body).
+- **The skill** (`.claude/skills/adversarial-review/SKILL.md`) gains:
+  - the implementers, Codex Astra and OB1-lite, and the rule that no seat reviews its own change;
+  - eight measured gotchas from #321 and #322 (listed in #377's commit body).
+- **Found by Grok** (its first review with a shell; it ran the new launch line itself): C3. The launch recipe still
+  made OB3 the default third seat. **Accepted.** A confirmation pass: C1–C3 CONFIRMED.
+
+### The seats (the operator, 2026-09-26)
+
+- *"Grant all the agent switch role capabilities."* `ob1-lite` and `ob3` gained OB2's REVIEWER/IMPLEMENTER switch,
+  with REVIEWER as the read-only default. Backups: `~/.claude/{ob1-lite,ob3}.md.bak-2026-09-26`.
+- **Found while validating** (PyYAML, run by the orchestrator, not published): both new descriptions broke strict
+  YAML, because of a `: ` in plain text, and OB1-lite's original description already did. Fixed; all three now
+  parse.
+- **Found by probing:** an agent edit takes effect in the next session. Both probes answered from the old
+  definitions.
+- **The allocation approved by the operator:**
+  - OB1-lite is the default builder;
+  - Codex Astra takes large mechanical work;
+  - OB3 takes only the riskiest design work;
+  - OB2 settles disagreements and is the backup builder.
+- **The operator's `claude-config` repository, PR #1** (merged by the operator at 02:36, its `mergedAt` time): the three agents at the top
+  level, and `restore.sh` now restores them. It never did before.
+- **Memory:** a single reference for every seat's exact launch line (the note *seat-invocations*), and the Grok
+  invocation (the note *grok-runs-with-shell-in-its-own-dir*).
+
 ---
 
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375 |
+| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375; Part 11 adds #376, #377 and #378 |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
 | Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
@@ -983,16 +1048,12 @@ The orchestrator's summary, with what was measured for this log:
 
 ## State left behind
 
-Written at the end of Part 10, 2026-09-26 00:10 CDT.
+Written at the end of Part 11, 2026-09-26 02:36 CDT.
 
-- **main** is `e5459e0` (#375), at chart 0.58.0 and app 0.36.0, all under `docs/CHANGELOG.md`'s Unreleased heading.
-- **Deployed** on the lab: `667b3c4a62` (#373's merge) through `release-crc.sh --argocd`, verified in-pod. Later
-  commits add reports only.
-- **The kept PVCs** are unchanged through all five deploys of Part 10: `group-sync-dashboard-data` UID
-  `f065b7a4-535c-4ef1-868c-58f5afee4953`, and `group-sync-dashboard-report-artifacts` UID
-  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`. The sources: #368's PR comment for `9584239`, then the `pvc-*.txt` files in
-  `reports/2026-09-25_cluster-admin-tier-322/walk/` and `reports/2026-09-25_remove-oauth-debug-321/walk/`.
+- **main** is `7bd8e87` (#378), at chart 0.58.0 and app 0.36.0. Its CI passed every job, including `tests (3.11)`.
+- **Deployed** on the lab: `667b3c4a62` (#373's merge). Later commits change only tests, docs, reports and the skill.
+- **The kept PVCs** are unchanged (Part 10's sources; there was no deploy in Part 11).
 - **Open PRs:** none once this log's PR merges.
-- **The implementers:** OB1-lite and Codex Astra, by the operator's mandate.
-- **Next:** #315, then #285 (the credential lifecycle), or #316 (Rejoin, which #322 now gates).
-- **Parked:** #369, operator-chart issue 70, and #341. **Open:** #210, #371.
+- **The seats:** every OB agent has the role switch, from the next session. The implementers are OB1-lite and Codex
+  Astra. Grok runs with a shell in its own directory.
+- **Next:** #315, then #285, or #316. **Parked:** #369, operator-chart issue 70, and #341. **Open:** #210, #371.
