@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **GitOps cluster examples (#389; chart 0.58.2, docs only).** The
+  [onboarding ConfigMap and Argo CD / Flux examples](../examples/cluster-onboarding/) keep
+  credentials out of Git and restrict reconciliation to the ConfigMap. The
+  [manual Secret example](../examples/cluster-secret/) uses verified platform trust and explains
+  why a lookup Secret must not be self-healed. The architecture and chart README link both paths;
+  parsed contract tests cover the examples. The chart patch publishes its README change.
 - **Documentation index (#319; chart 0.58.1, docs only).** [The docs index](README.md) groups
   operator guides first and development records by kind. The root README links the index; the chart's
   auditor-group and cluster-discovery values link their troubleshooting and polling guides. The chart
