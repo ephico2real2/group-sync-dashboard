@@ -1154,16 +1154,118 @@ The orchestrator's summary, with what was measured for this log:
 
 ---
 
+## Part 13 — Epic A released and deployed; Epic B built (2026-09-26 13:23 → 18:08)
+
+### Every epic is released and deployed — PR #401 (merge `afcf457`, 13:54)
+
+- **The operator:** *"In agile. You have deploy or redeploy every epic and cut a release note. So we are remaining
+  true."* I had proposed skipping Epic A's deploy because nothing in it reached the image. The rule is now the last
+  step of `.claude/skills/epic/SKILL.md` and a memory note (*every-epic-ends-with-release-and-deploy*).
+- **Found by Grok, accepted:** the first head deployed with bare `--argocd`, which builds HEAD and pins that image.
+  The published release deploys with `--argocd main` (the mode table in `local-development/release-crc.sh`). Also:
+  `publish.yml` builds an image only on an `--app` release, and the GitHub tag is the chart version.
+- **Found by OB1-lite, accepted:** a chart-only merge builds no image, but `helm.yaml` retags the existing one.
+
+### Epic A's release — PR #402 (merge `2b2c744`, 14:04)
+
+- Cut with `prepare-release.py --chart 0.58.3 "Epic A: quick cleanup (#381)"`. `docs/CHANGELOG.md` has its first
+  release heading since application 0.24.0. The script also moved the ten specs marked `merged` to `released`.
+- **Found by Grok and by OB1-lite, accepted:** my first bullet said every entry under the heading names the versions
+  that shipped it. Measured: 25 of the 62 entries name none. The bullet now says so.
+- `helm.yaml` published the chart release at 19:12:57Z (`gh release view`). The release note on GitHub carries the
+  epic's summary.
+
+### The lab's Argo CD controller (the operator's go-ahead, 13:19)
+
+- Found in Part 12: the `group-sync-dashboard` Application was Healthy but sync `Unknown`, with a `ComparisonError`
+  on the Route type.
+- Deleting `openshift-gitops-application-controller-0` (Ready again at 18:19:52Z) and a hard refresh made it
+  **Synced/Healthy** at the same revision. The dashboard pod was not rolled, and the PVC UIDs were unchanged
+  (recorded on #381).
+
+### Epic A deployed and walked — PR #405 (merge `cbbc65a`, 15:07)
+
+- `release-crc.sh --argocd main` reported Synced/Healthy at 19:14:46Z, with chart 0.58.3 and image 0.36.0; the PVC
+  UIDs were unchanged (`reports/2026-09-26_epic-a-release/README.md`).
+- **The operator asked:** *"Where is the screenshot of the newly added features."* The first evidence had been logs
+  only. The walk captured the Cluster Configurations tab before, with, and after a cluster added through the
+  committed GitOps example: the Secret was generated 257 s after the apply and pruned 272 s after the delete.
+- **Found by the walk:** #404, filed under Epic D. While the GitOps cluster was live, the header read `ConfigMap 0`,
+  because it counts a generated cluster under `Secret`.
+- **Found by OB1-lite:** the index row named Argo's revision instead of the application build (fixed); and the
+  discovery line counts retired rows (added to #404).
+- **Found by Grok, accepted in part:** the publish time and the discovery interval had no source in the README; they
+  now cite theirs. Rejected: removing the figures read off the screenshots, which both reviewers confirmed against
+  the images.
+- #381 is closed. Its screenshots are embedded on #381 and #389, pinned to `cbbc65a`.
+
+### Epic B: #305, refuse a database newer than the build — PR #403 (merge `16c339e`, 14:57)
+
+- **Built by OB1-lite:** `Store.__init__` reads `user_version` right after connecting, before the WAL pragma, `SCHEMA`
+  and the seeds, and raises `StoreSchemaTooNew` with both numbers. A real `uvicorn --factory` start exits 1.
+- **Found by Codex and by Grok:** a committed but uncheckpointed WAL is folded into `gsd.db` when the refusing
+  connection closes. The bytes change, not the contents. **Accepted Codex's advice:** I corrected my promise of
+  "byte-identical", not the code. A new test keeps a killed writer's WAL data through the refusal; with the guard
+  disabled, it fails with `DID NOT RAISE`.
+- **Found by the full suite** after main was merged in: `test_kyverno.py::test_f3…` read the chart version with a
+  lowercase `chart X.Y.Z`, which the first chart-led heading (`## Chart 0.58.3 …`) broke. It now reads both forms.
+- **My slip:** one review brief was written with an unquoted heredoc, so the shell ran a backticked word as a
+  command. Both reviewers were stopped and relaunched with the corrected brief.
+- #305 was reopened after the merge: its Definition of Done still owes the lab check at Epic B's release.
+
+### #298, a migration needs an application release — PR #406 (merge `411b6cc`, 15:36)
+
+- **Built by OB1-lite:** `prepare-release.py` gains `schema_since_app_release`, and a test fails when the highest
+  migration moved since the commit that released the current version. The tests job checks out with
+  `fetch-depth: 0`.
+- **Found by OB1-lite in my own brief:** the `git log -S` method I suggested finds no version bump, because `-S`
+  counts occurrences. It walks the first-parent chain instead, and agrees with `-G` on all 31 version changes.
+- **Rejected, with the fact:** Codex's F1, which asked to refuse any historical file with a second `_MIGRATIONS`
+  assignment. Such a file cannot reach a release, because this PR's own parity test runs on every PR.
+- Main's CI passed on `411b6cc`, the first run of the check on main.
+
+### #301, a copy before an upgrade migrates — spec review, then PR #407 (merge `50ec1b5`, 18:08)
+
+- **Researched and specified by OB3** (`docs/specs/SPEC_M1_pre_upgrade_copy.md`), reviewed before any code.
+  - OB3 measured that a failed migration still commits `SCHEMA`'s new tables. So a crash loop that re-copies would
+    copy a half-migrated database.
+- **Found by Grok and by Codex, independently (P1):** replacement pods each took a copy, and `keep=3` pruned the only
+  clean one. **Accepted Grok's fix:** copy once per *upgrade*, not per pod. Rejected Codex's (drop the pruning),
+  because each replacement pod would still add a copy, without bound.
+- **Accepted:** Codex's C4 (a `stat()` outside the failure handler), and both reviewers' C6 (no application bump in a
+  feature PR: chart 0.58.4 only).
+- **Code review:** Grok found no defect. Codex F1a was **accepted**: the skip matched `-to-<N>-` anywhere in the name,
+  so a pod name containing that string could waive the copy. It now reads the name's own target field; the test
+  fails without the fix. F1b was **rejected**: it asked to re-verify an existing copy's contents, but this code
+  never publishes an unverified copy.
+- Hermetic suite on the final head: `5248 passed, 19 skipped`.
+
+### Backups: what success looks like, and restore scoped
+
+- **The operator:** *"Pls put this screenshot in one the doc showing what successful backup looks like."* Captured
+  from the lab at 23:02:25Z:
+  - the log line `backup written … (4 kept)`;
+  - four copies in `/data/backup`;
+  - the runbook's §1 check, showing `integrity_check: ok` and `user_version: 20`;
+  - `gsd_backup_failures_total 0.0`.
+  It goes into `docs/RUNBOOK_backup_restore.md` at Epic B's release.
+- **The operator:** *"We also have to try backup and restore … scope it by testing certain things."* Measured first:
+  no committed walk has ever restored a database. Epic B's Definition of Done now carries checks R1–R7 (#382), run
+  on copies in a throwaway pod. The live rollback stays with #302 (Epic E).
+- **The operator chose** to prove #301 on a copy of the lab database, not by a live upgrade and restore.
+
+---
+
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375; Part 11 adds #376, #377 and #378; #379 (Part 11's log, merged 02:57) and Part 12's #380, #395, #396, #397, #398 and #399 are added |
+| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375; Part 11 adds #376, #377 and #378; #379 (Part 11's log, merged 02:57) and Part 12's #380, #395, #396, #397, #398 and #399 are added; Part 13 adds #400, #401, #402, #403, #405, #406 and #407 |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
 | Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
 | Reviewer findings accepted / rejected | For #324–#334, the record's Outcome: 6 code findings accepted, 3 snippets rejected with measurements, 1 trial retracted by its author, and 1 test rejected as brittle. Spec findings C21 and C22 were accepted, and the operator decided C21. #334: 3 accepted, 1 rejected. #335 is itemised in Part 4. For #336–#345, `docs/REVIEW_remote_sar_for_every_join.md` itemises every finding: 20 proposals were rejected, each with its reason or the measurement that refuted it. One of them, Codex's B11, had first been accepted without a measurement. |
-| Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also raised the host-guard question, closed in Part 7 as not a gap. Part 12 adds 2, both found by CI: the missing reports-index row on #398, and the ASCII preview step on #397 (fixed in #399). |
+| Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also raised the host-guard question, closed in Part 7 as not a gap. Part 12 adds 2, both found by CI: the missing reports-index row on #398, and the ASCII preview step on #397 (fixed in #399). Part 13 adds 2: `test_kyverno.py`'s release-heading regex (found by the full suite on #403), and #404 (found by the Epic A walk). |
 | Full suite, final | For the release: **5339 passed** on integration head `d86acd6` (the orchestrator's run, the record's C16; the skipped count is not stated). For D2b: **5527 passed** on #342's head `fd9bfb9` (OB1-lite's run in a git copy, per the orchestrator's summary of its report); #342's body gives the non-browser suite as **4934 passed, 20 skipped, 0 failed**. CI (`gh pr checks`): 8/8 on every merged head, except #336 (7 passed, `grype` skipped) and #342 (9 passed, `container-smoke` skipped). Part 7: **5557 passed, 20 skipped** on #354's `061c224`, browser tests included (the orchestrator's run); CI 8/8 on #350–#352. |
 | Longest single loss | The D2b lab walk: over 230 minutes of the operator's tokens, in the operator's words. The operator killed the process during Step 9, before its mock-log check ran, and a local podman container on that check's port would have made it untrustworthy anyway. What changed: one background waiter per step, and no polling. |
 
@@ -1197,20 +1299,22 @@ The orchestrator's summary, with what was measured for this log:
 
 ## State left behind
 
-Written at the end of Part 12, 2026-09-26 13:00 CDT.
+Written at the end of Part 13, 2026-09-26 18:08 CDT.
 
-- **main** is `4368409` (#399), at chart 0.58.2 and app 0.36.0. Its CI passed every job (`ci` and `mock-openshift`).
-- **Deployed** on the lab: `667b3c4a62` (#373's merge), chart 0.58.0. Later commits do not change the running image:
-  tests, docs, examples, reports, CI, skills, `.gitignore`, and the chart's README and version (0.58.1, 0.58.2).
+- **main** is `50ec1b5` (#407), at chart 0.58.4 and app 0.36.0. Epic B's application release (0.37.0) is the next cut.
+- **Deployed** on the lab: chart 0.58.3 at `2b2c744` through `release-crc.sh --argocd main`, image `0.36.0`; the
+  Application is Synced/Healthy after the controller restart.
 - **The kept PVCs** are unchanged: data `f065b7a4-535c-4ef1-868c-58f5afee4953`, report-artifacts
-  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3` (`reports/2026-09-26_gitops-examples-389/pvc-after.txt`).
-- **The lab's Argo CD Application** shows a `ComparisonError` on Route (Part 12). The operator decides on a
-  controller restart.
+  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3` (`reports/2026-09-26_epic-a-release/walk/pvc-after.txt`).
 - **Open PRs:** none once this log's PR merges.
-- **The seats:** the implementers are OB1-lite and Codex Astra; every OB agent has the role switch; Grok runs with a
-  shell in its own directory.
-- **Epics:** all seven children of Epic A (#381) are closed; #381 closes with its summary. Epics B–G (#382–#387) are
-  planned.
-- **Parked** under Epic P (#388): #369, operator-chart issue 70 and #341. **Open:** #210, also under Epic P.
-- **Open for the operator:** D8 (#316), #114's three questions, #255's ruling on expected grants, and #310's OAuth
-  restart.
+- **The seats:** the implementers are OB1-lite, Codex Astra and OB3 (the riskiest design). The reviewers are the two
+  seats that did not write the change, Grok always one.
+- **Epics:**
+  - Epic A (#381) is closed, released as chart 0.58.3.
+  - Epic B (#382) has #305, #298 and #301 merged. All three stay open until Epic B's release, deploy and lab checks:
+    the refusal on a copy, the pre-upgrade copy on a copy, and restore checks R1–R7.
+  - Epics C–G (#383–#387) are planned.
+- **Parked** under Epic P (#388): #369, operator-chart issue 70 and #341. **Open:** #210, also under Epic P; #404
+  under Epic D.
+- **Open for the operator:** D8 (#316), #114's three questions, #255's ruling on expected grants, #310's OAuth
+  restart, and whether each epic's release PR gets a Fable (OB2) composition review.
