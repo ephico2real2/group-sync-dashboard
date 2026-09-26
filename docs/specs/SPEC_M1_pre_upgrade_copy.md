@@ -63,6 +63,16 @@ and §7 and measured again on the implemented copy (§4).
    the pruning stays; the text says the copies of the newest three upgrades are kept.
 5. **The base.** The branch merged main `411b6cc` (#298) in `722b702` before this revision. The CHANGELOG entry goes
    first under `## Unreleased`, above #298's and #305's.
+6. **The code review of `c718a1a` (#407).** Grok: every claim held, no change. Codex Astra, F1, in two parts:
+   - **Accepted: the skip reads the name's own target field.** It matched `-to-<N>-` anywhere in the name, so a copy
+     for another target, taken by a pod whose name contains `-to-<N>-`, waived this upgrade's copy. Block 2 now splits
+     the name at its first five hyphens (the stamp has none) and reads the target field. Block 5 adds
+     `test_a_pod_name_containing_the_target_does_not_stand_in_for_the_copy`, which fails without the change
+     (`assert [] == ['pod-a']`: no copy taken).
+   - **Rejected: opening and re-verifying an existing copy (size, schema, integrity, sidecar) before trusting it.**
+     This code publishes a copy only after verifying it, so the invalid cases need a file planted, or corrupted on
+     disk afterwards. Grok judged the name-only rule the intended trade-off. Verifying on every retry grows the code,
+     and the review rule is that a fix stays smaller than the defect.
 
 ## 1. The mandate, and what is out of scope
 
@@ -767,7 +777,10 @@ def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> N
     directory = Path(db_path).parent / PRE_UPGRADE_DIR
     host = os.environ.get("POD_NAME") or socket.gethostname()
     move = f"schema {version} -> {KNOWN_SCHEMA_VERSION}"
-    earlier = [p for p in _pre_upgrade_copies(directory) if f"-to-{KNOWN_SCHEMA_VERSION}-" in p.name]
+    # The name's own target field (pre-upgrade-<stamp>-schema-<from>-to-<to>-<pod>.db; the stamp has no "-"):
+    # a pod name may itself contain "-to-<n>-" (Codex, #407).
+    earlier = [p for p in _pre_upgrade_copies(directory)
+               if p.name.split("-", 5)[-1].startswith(f"to-{KNOWN_SCHEMA_VERSION}-")]
     if earlier:
         log.info("pre-upgrade copy for %s not taken again: %s already exists from an earlier attempt",
                  move, earlier[-1])
@@ -1247,6 +1260,21 @@ def test_the_app_copies_with_backups_off_and_does_not_start_without_the_copy(tmp
     app.state.store.close()
     (copy,) = _copies(tmp_path)
     assert _facts(copy)["user_version"] == KNOWN_SCHEMA_VERSION - 1
+
+def test_a_pod_name_containing_the_target_does_not_stand_in_for_the_copy(tmp_path, monkeypatch):
+    """The skip reads the name's target field, not "-to-<n>-" anywhere: a copy for another target, taken by a pod
+    whose name happens to contain this build's target, must not waive this upgrade's copy (Codex, #407)."""
+    db = tmp_path / "gsd.db"
+    _older_database(db)
+    (tmp_path / PRE_UPGRADE_DIR).mkdir()
+    foreign = (f"pre-upgrade-20000101T000000.000000Z-schema-{KNOWN_SCHEMA_VERSION - 2}-to-{KNOWN_SCHEMA_VERSION - 1}"
+               f"-dashboard-to-{KNOWN_SCHEMA_VERSION}-abcde.db")
+    (tmp_path / PRE_UPGRADE_DIR / foreign).write_bytes(b"")
+    monkeypatch.setenv("POD_NAME", "pod-a")
+    Store(str(db)).close()
+    taken = [p for p in _copies(tmp_path) if COPY_NAME.match(p.name)]
+    assert [COPY_NAME.match(p.name).group(2) for p in taken] == ["pod-a"]
+    assert _facts(taken[0])["user_version"] == KNOWN_SCHEMA_VERSION - 1
 ```
 
 ### Block 6 — docs/RUNBOOK_backup_restore.md: the runbook names three copies

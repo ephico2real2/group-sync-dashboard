@@ -344,3 +344,18 @@ def test_the_app_copies_with_backups_off_and_does_not_start_without_the_copy(tmp
     app.state.store.close()
     (copy,) = _copies(tmp_path)
     assert _facts(copy)["user_version"] == KNOWN_SCHEMA_VERSION - 1
+
+def test_a_pod_name_containing_the_target_does_not_stand_in_for_the_copy(tmp_path, monkeypatch):
+    """The skip reads the name's target field, not "-to-<n>-" anywhere: a copy for another target, taken by a pod
+    whose name happens to contain this build's target, must not waive this upgrade's copy (Codex, #407)."""
+    db = tmp_path / "gsd.db"
+    _older_database(db)
+    (tmp_path / PRE_UPGRADE_DIR).mkdir()
+    foreign = (f"pre-upgrade-20000101T000000.000000Z-schema-{KNOWN_SCHEMA_VERSION - 2}-to-{KNOWN_SCHEMA_VERSION - 1}"
+               f"-dashboard-to-{KNOWN_SCHEMA_VERSION}-abcde.db")
+    (tmp_path / PRE_UPGRADE_DIR / foreign).write_bytes(b"")
+    monkeypatch.setenv("POD_NAME", "pod-a")
+    Store(str(db)).close()
+    taken = [p for p in _copies(tmp_path) if COPY_NAME.match(p.name)]
+    assert [COPY_NAME.match(p.name).group(2) for p in taken] == ["pod-a"]
+    assert _facts(taken[0])["user_version"] == KNOWN_SCHEMA_VERSION - 1

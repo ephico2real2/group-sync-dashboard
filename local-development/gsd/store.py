@@ -1204,7 +1204,10 @@ def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> N
     directory = Path(db_path).parent / PRE_UPGRADE_DIR
     host = os.environ.get("POD_NAME") or socket.gethostname()
     move = f"schema {version} -> {KNOWN_SCHEMA_VERSION}"
-    earlier = [p for p in _pre_upgrade_copies(directory) if f"-to-{KNOWN_SCHEMA_VERSION}-" in p.name]
+    # The name's own target field (pre-upgrade-<stamp>-schema-<from>-to-<to>-<pod>.db; the stamp has no "-"):
+    # a pod name may itself contain "-to-<n>-" (Codex, #407).
+    earlier = [p for p in _pre_upgrade_copies(directory)
+               if p.name.split("-", 5)[-1].startswith(f"to-{KNOWN_SCHEMA_VERSION}-")]
     if earlier:
         log.info("pre-upgrade copy for %s not taken again: %s already exists from an earlier attempt",
                  move, earlier[-1])
