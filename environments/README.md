@@ -51,7 +51,6 @@ declare — it only *overrides*, and the table says which way:
 |---|---|---|---|
 | `config.unmanagedAudit.mode` | `log` | `log` | redundant — already the default |
 | `logLevel` | `INFO` | `DEBUG` | lab override |
-| `authLogLevel.manage` / `.enabled` | `false` / `false` | `false` / `false` | inherits the default: the lab reads the AUDIT LOG, which names the person at the default verbosity, so the auth-loglevel Job (a post-upgrade hook) is not needed; the one-time convergence to Normal is done, so management is off (set `manage=true` only for the pod-log source) |
 | `loginCapture.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
 | `loginCapture.source` | `audit-log` | `audit-log` | redundant — the default since chart 0.52.0, stated here anyway so a moving default cannot silently change this cluster. The grant is a ClusterRole on `get nodes/proxy` (+ `list nodes`), read-only but cluster-wide: read access to everything the kubelet serves over GET on those nodes. Narrow it in production with `loginCapture.auditLog.nodeNames`, which drops the `list` entirely |
 | `oauthProxy.apiTokenAccess.enabled` | `true` | `true` | redundant — the default since chart 0.14.0 |
@@ -65,11 +64,7 @@ declare — it only *overrides*, and the table says which way:
 **Read the right-hand column as "why this is not the default".** The overrides that remain are
 fail-closed in the chart on purpose, and a plain `helm install` must not do them uninvited:
 
-- `authLogLevel` writes a **cluster-scoped** CR and rolls the OAuth server, which on a
-  single-replica cluster is a login outage rather than a rolling update. `values.yaml` carries the
-  measured blast radius and the check to run first. It is the one switch chart 0.14.0's
-  on-by-default rule left off: the oauth-server audit log is replacing it as the source of login
-  lines.
+- OAuth Debug management was removed; clusters left at Debug must restore Normal manually (chart README migration note).
 - `DEBUG` is for debugging. `INFO` is the level that stays readable at steady state.
 - `rbac.namespaces` adds a **cluster-scoped** read (`get`, `list` on namespaces, core group) the
   chart needs for nothing else, so it is off by default (the 0.14.0 rule). The lab turns it on

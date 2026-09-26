@@ -3968,46 +3968,8 @@ function loginsPage() {
   return captureSection(d, accessCard(data.access));
 }
 
-// What the Logins page says about its record depends on which log the rows come from — the API's
-// `source` (#346). The pod log is read at Debug from the moment watching began and dies with its pod;
-// the audit log sits on the control-plane nodes, a first read backfills through its rotated files, and
-// what a stalled reader missed is still there for the next read (docs/AUDIT_LOG_CAPTURE.md §2, §5).
-// Every source-specific sentence lives here, so the two sources' wording cannot drift apart.
+// Live capture is audit-only. Stored pod-log rows keep their outcomes and pod_name.
 const LOGIN_SOURCE_TEXT = {
-  "pod-log": {
-    window: `Nothing before capture began was ever recorded — the oauth-server's log dies with its pod and
-      cannot be read backwards — so an empty list here means nothing was <em>observed</em>, never
-      that nobody signed in.`,
-    predates: `The oldest attempt predates the first read because that read looked back an hour, which
-      is expected rather than a fault.`,
-    stalled: `Attempts made since then are being lost, and they cannot be recovered later. Check the
-      dashboard pod's log for a refused <code>pods/log</code> read, and that an oauth-server pod is Running.`,
-    noMatch: `Either nobody has signed in since watching began, or the authentication operator is not at
-      Debug, in which case the oauth-server never writes a username. One command decides which:
-      <code>oc get authentications.operator.openshift.io cluster -o jsonpath='{.spec.logLevel}'</code>
-      must print <code>Debug</code>.`,
-    noRead: `The dashboard's ServiceAccount needs <code>pods</code> list and the
-      <code>pods/log</code> subresource in the oauth-server's namespace
-      (<code>openshift-authentication</code> unless configured otherwise), and at least one
-      oauth-server pod has to be Running. Note that
-      <code>oc auth can-i get pods/log</code> answers <code>no</code> even on a correct
-      grant — it reads <code>pods/log</code> as a resource <em>name</em>. Use
-      <code>--subresource=log</code>.`,
-    disabled: `Not being captured. <code>loginCapture.enabled</code> — the module that reads the log —
-        is off on this release; the chart default since 0.14.0 is on. Login lines also only exist
-        while the authentication <em>operator</em> is at <code>spec.logLevel: Debug</code>, which
-        makes the oauth-server write a username at all; the chart leaves that off by default
-        because the oauth-server audit log is replacing it as the source. At the default verbosity
-        capture runs and finds nothing.`,
-    disabledHow: `Turning capture back on is <code>loginCapture.enabled=true</code>;
-        the Debug source is <code>authLogLevel.manage</code> and <code>.enabled</code>, a
-        cluster-wide write that rolls the OAuth server. See
-        <code>docs/LOGIN_CAPTURE_QUICKCHECK.md</code> for the five commands that prove the path
-        end to end.`,
-    column: "Replica",
-    columnHelp: `<strong>Replica</strong> is which oauth-server pod saw it, with the common prefix trimmed;
-      the two replicas serve different attempts, so a name here is the pod whose log to read.`,
-  },
   "audit-log": {
     window: `Nothing older than the oldest audit file still on the control-plane nodes was read — a first
       read backfills through the rotated files, bounded by <code>loginCapture.retentionDays</code> — so
@@ -4036,9 +3998,10 @@ const LOGIN_SOURCE_TEXT = {
       <code>spec.logLevel</code>, and nothing rolls the OAuth server.`,
     disabledHow: `Turning capture back on is <code>loginCapture.enabled=true</code> with
       <code>loginCapture.source=audit-log</code>; <code>docs/AUDIT_LOG_CAPTURE.md</code> shows the path end to end.`,
-    column: "Node",
+    column: "Node / stored pod",
     columnHelp: `<strong>Node</strong> is the control-plane node whose audit file recorded it — the node to read
-      with <code>oc adm node-logs &lt;node&gt; --path=oauth-server/audit.log</code>, not an oauth-server pod.`,
+      with <code>oc adm node-logs &lt;node&gt; --path=oauth-server/audit.log</code>. For a stored pod-log row,
+      this is the original oauth-server pod name; its LDAP cause remains visible.`,
   },
 };
 
@@ -4049,7 +4012,7 @@ function captureSection(d, access) {
   // group: 0" recomputed over one person would be the count-versus-page defect made
   // permanent (requirements Q5).
   const self = d.scope === "self";
-  const text = LOGIN_SOURCE_TEXT[d.source === "audit-log" ? "audit-log" : "pod-log"];
+  const text = LOGIN_SOURCE_TEXT["audit-log"];
   // Off is a DIFFERENT state from on-and-quiet, and conflating them sends the reader hunting
   // for logins that were never going to be recorded. Both halves are named because either one
   // alone records nothing: the module has to be running, and the operand has to be verbose.

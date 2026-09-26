@@ -150,7 +150,6 @@ def test_forbidden_fixture_tolerated(mock_factory):
     assert client.fetch_namespaces(["team"]) is None
     assert client.fetch_nodes("node-role.kubernetes.io/master=") is None
     assert client.fetch_oauth_providers() is None
-    assert client.fetch_oauth_pods("openshift-authentication") is None
 
 
 def test_crd_absent_fixture(mock_factory):

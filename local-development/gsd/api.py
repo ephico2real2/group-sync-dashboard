@@ -1815,12 +1815,9 @@ def build_app(
 
         THE RECORD IS A WINDOW, and both of its edges are carried as data rather than implied.
         `capture_started_at` is when watching began and is stable; `retained_since` is the oldest
-        attempt still kept and moves under retention. What lies before the window depends on `source`:
-        under `pod-log` nothing before capture began exists to fetch — the log dies with its pod; under
-        `audit-log` a first read backfills through the rotated audit files still on the control-plane
-        nodes, bounded by the retention. Either way an empty list is a statement about the window and
-        never proof that nobody logged in. The UI says that per source (#346), which is why it is here
-        and not a footnote.
+        attempt still kept and moves under retention. The live source is audit-log: first read
+        backfills available rotated files within retention. Historical pod-log rows retain their
+        own source and causes. An empty list is never proof that nobody logged in.
 
         EVERY username is recorded, successful or not, member or not. `known_user: false` marks an
         account in NO synced group, which is the most valuable row this produces; `has_history: true`
@@ -1892,10 +1889,8 @@ def build_app(
             "scope": scope,
             "viewer": viewer,
             "enabled": settings.login_capture_enabled,
-            # Which log the rows come from, and what that source can and cannot say — the two
-            # differ in exactly the ways a reader of this page needs to know (no cause from the
-            # audit log; no history from the pod log).
-            "source": settings.login_capture_source,
+            # Live reader source; individual stored rows can still have source=pod-log.
+            "source": "audit-log",
             "kinds": list(kinds) if kinds else ["credential", "cli", "session"],
             "note": (
                 "read from the oauth-server audit log on the control-plane nodes: no Debug "
@@ -1905,10 +1900,6 @@ def build_app(
                 "to. The audit log records no cause for a refusal beyond the HTTP status and, "
                 "for CLI failures, 'Authentication failed'; rows older than the configured "
                 "retention age out"
-                if settings.login_capture_source == "audit-log" else
-                "read from the oauth-server log at Debug verbosity; covers only the period "
-                "since capture began — earlier logins were never recorded and cannot be "
-                "fetched, and rows older than the configured retention age out"
             ),
             # Set once by the capture loop's first successful read. Falls back to the oldest retained
             # attempt for the one-cycle window after a crash before that row exists — an honest floor
@@ -3343,11 +3334,7 @@ def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
     all falls back to INFO and complains — the complaint is returned rather than logged here
     because logging is not configured yet at the moment this runs.
 
-    THE COMPLAINT POINTS AT `authLogLevel`, because the commonest reason to be fiddling with a log
-    level on this deployment is to make the Logins tab show something — and that is a different
-    setting, on a different object, which raises the OAUTH-SERVER's verbosity rather than this
-    app's. Naming it turns a puzzling fallback into a one-line fix. Only the five levels this app
-    accepts are ever listed; the message does not catalogue values that do not work here.
+    Login capture uses audit logs and needs no OAuth verbosity change.
     """
     if raw is None or not raw.strip():
         return logging.INFO, None
@@ -3373,9 +3360,8 @@ def _resolve_log_level(raw: str | None) -> tuple[int, str | None]:
         f"GSD_LOG_LEVEL is set to a {len(raw)}-character value that is not a log level this app "
         f"accepts, so it is running at INFO. The value is deliberately not repeated here, in case "
         f"something other than a log level was wired into it. Use one of "
-        f"{', '.join(LOG_LEVELS)} (case does not matter). If you were trying to raise the "
-        f"oauth-server's verbosity so the Logins tab has something to read, that is the chart's "
-        f"authLogLevel value — a different setting, on a different object, not this one."
+        f"{', '.join(LOG_LEVELS)} (case does not matter). Login capture uses the audit log "
+        f"at default OAuth verbosity; see docs/LOGIN_CAPTURE_QUICKCHECK.md."
     )
 
 

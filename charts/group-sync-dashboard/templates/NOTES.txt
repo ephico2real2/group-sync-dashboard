@@ -161,8 +161,7 @@ Set oauthProxy.enabled=true before exposing it on a shared cluster.
 Login capture: AUDIT LOG. The dashboard reads /var/log/oauth-server/audit.log on the
 control-plane nodes through the API server's node proxy — a ClusterRole with `get nodes/proxy`,
 which is read access to everything the kubelet serves on those nodes. No Debug verbosity is
-needed; if authLogLevel.manage is still true with enabled=false, the Job is converging the
-cluster back to Normal and you can set manage=false once the rollout has finished.
+needed. Clusters left at Debug must be restored manually; see the chart README migration note.
 First read backfills as far as the rotated audit files reach{{ if gt (int .Values.loginCapture.retentionDays) 0 }}, {{ .Values.loginCapture.retentionDays }} days at most{{ else }} (retentionDays is 0: no age limit){{ end }}.
 {{- end }}
 {{- if eq (include "gsd.reportingEnabled" .) "true" }}

@@ -98,7 +98,7 @@ capture tool: `fixtures/*.yaml` is the source of truth and the mock serves which
 
 **The format is fail-loud.** One YAML file with a fixed set of top-level keys — `meta`, `groupsyncs`,
 `groups`, `users`, `identities`, `namespaces`, `roles`, `bindings`, `operatorConfigs`, `nodes`, `oauth`,
-`oauthPods`, `auditLog`, `podLog`. Any unknown top-level key is **rejected** rather than ignored, so a
+`auditLog`. Any unknown top-level key is **rejected** rather than ignored, so a
 typo fails immediately instead of producing a quietly wrong cluster.
 
 **Audit lines are shorthand.** You write `{kind, decision, user, at, code, provider?}` and the mock

@@ -133,23 +133,9 @@ def test_fetch_oauth(client):
 
 
 # ── (l) OAuth pods ───────────────────────────────────────────────────────────────────────
-def test_fetch_oauth_pods(client):
-    pods = client.fetch_oauth_pods("openshift-authentication")
-    assert pods is not None
-    # Only Running pods; the Pending one is dropped.
-    assert sorted(pods) == [
-        "oauth-openshift-6d8f9c7b4-abcde",
-        "oauth-openshift-6d8f9c7b4-fghij",
-    ]
 
 
 # ── (m) Pod log ──────────────────────────────────────────────────────────────────────────
-def test_fetch_pod_log(client):
-    lines = client.fetch_pod_log("openshift-authentication", "oauth-openshift-6d8f9c7b4-abcde")
-    assert lines is not None
-    assert any('succeeded for "jane.smith"' in ln for ln in lines)
-    for ln in lines:
-        assert ln[:4].isdigit()                        # RFC3339 prefix present
 
 
 # ── (n) Node-log listing + (o) file read ─────────────────────────────────────────────────
@@ -219,3 +205,19 @@ def test_list_envelope_carries_the_real_api_version(kind, api_version):
     # review #118 C4: no literal "unknown".
     from mock_app.responses import k8s_list
     assert k8s_list([], kind=kind)["apiVersion"] == api_version
+
+
+def test_retired_pod_endpoints_are_not_routes(mock_cluster):
+    import httpx
+    with httpx.Client(base_url=mock_cluster.base_url, verify=mock_cluster.ca_file,
+                      headers={"Authorization": f"Bearer {mock_cluster.token}"}) as wire:
+        for path in ("/api/v1/namespaces/openshift-authentication/pods",
+                     "/api/v1/namespaces/openshift-authentication/pods/old/log"):
+            assert wire.get(path).status_code == 404
+
+
+def test_retired_fixture_keys_remain_unknown_key_refusals():
+    from mock_app.fixture import Fixture, FixtureError
+    for key in ("oauthPods", "podLog"):
+        with pytest.raises(FixtureError):
+            Fixture.from_dict({key: {}})

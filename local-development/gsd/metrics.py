@@ -460,8 +460,8 @@ class DashboardCollector:
         )
         capture_source = GaugeMetricFamily(
             "gsd_login_capture_source_info",
-            "Always 1; `source` is which log login capture reads for this cluster (pod-log or "
-            "audit-log). Join it onto gsd_login_capture_last_read_timestamp_seconds with "
+            "Always 1; `source` is audit-log for live capture. "
+            "Join it onto gsd_login_capture_last_read_timestamp_seconds with "
             "on(cluster) group_left(source) — a separate family so that series keeps its "
             "identity and the stalled alert keeps firing across the switch. Absent when "
             "capture is off.",
@@ -521,13 +521,11 @@ class DashboardCollector:
                 if read_ts is not None:
                     capture_last_read.add_metric([cluster], read_ts)
                 if self.settings is not None and getattr(self.settings, "login_capture_enabled", False):
-                    source = getattr(self.settings, "login_capture_source", "pod-log")
-                    capture_source.add_metric([cluster, source], 1)
-                    if source == "audit-log":
-                        for node, settled in sorted(self.store.audit_settled_by_node(cluster).items()):
-                            settled_ts = _epoch(settled)
-                            if settled_ts is not None:
-                                audit_settled.add_metric([cluster, node], settled_ts)
+                    capture_source.add_metric([cluster, "audit-log"], 1)
+                    for node, settled in sorted(self.store.audit_settled_by_node(cluster).items()):
+                        settled_ts = _epoch(settled)
+                        if settled_ts is not None:
+                            audit_settled.add_metric([cluster, node], settled_ts)
 
                 counts = self.store.group_counts(cluster)
                 groups.add_metric([cluster], counts["total"])

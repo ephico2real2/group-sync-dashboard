@@ -4065,14 +4065,14 @@ class TestLoginsDisabled:
         page.wait_for_selector("h2:text-is('Login attempts')")
         body = page.locator("body").inner_text()
         assert "Not being captured" in body
-        # BOTH halves, because either one alone records nothing: the module has to run, and the
-        # operand has to be verbose enough to write a username at all. Since chart 0.14.0 the
-        # module is on by default, so the card says that rather than prescribing the default.
+        # Since #321 one switch: the audit log names the person at default verbosity, so the card
+        # names the module and says nothing has to raise the operator's logLevel. Since chart
+        # 0.14.0 the module is on by default, so the card says that rather than prescribing it.
         assert "chart default since 0.14.0 is on" in body
         assert "loginCapture.enabled=true" in body
         assert "config.loginCapture.enabled" not in body, "the old card named a key that does not exist"
-        assert "authLogLevel.manage" in body
-        assert "Debug" in body
+        assert "authLogLevel" not in body, "the retired Debug switch must not be offered"
+        assert "spec.logLevel" in body
         assert "audit log" in body
         # And it must not show the seeded rows as though they were live.
         assert "mallory" not in body
@@ -10439,10 +10439,6 @@ class TestTheLoginsCaveatFollowsItsSource:
             return (text(read) + " " + text(never)).replace(/\\s+/g, " ");
         }""", source)
 
-    def test_the_pod_log_source_keeps_its_own_account(self, dash):
-        text = self._render(dash, "pod-log")
-        assert [p for p in self.POD_LOG if p not in text] == []
-        assert [a for a in self.AUDIT_LOG if a in text] == []
 
     def test_the_audit_log_source_says_what_the_audit_log_can_and_cannot_account_for(self, dash):
         text = self._render(dash, "audit-log")
@@ -10465,13 +10461,12 @@ class TestTheLoginsCaveatFollowsItsSource:
                                        has_history: false, provider: "ldap", pod_name: "master-0"}]};
                 const el = document.createElement("div"); el.innerHTML = captureSection(d, "");
                 return el.textContent.replace(/\\s+/g, " "); }""", [source, enabled])
-        off_audit, off_pod = render("audit-log", False), render("pod-log", False)
-        rows_audit, rows_pod = render("audit-log", True), render("pod-log", True)
+        off_audit = render("audit-log", False)
+        rows_audit = render("audit-log", True)
         pod_claims = ("spec.logLevel: Debug", "a cluster-wide write that rolls the OAuth server")
         assert [c for c in pod_claims if c in off_audit] == [] and "None" in off_audit, off_audit
-        assert [c for c in pod_claims if c not in off_pod] == [], off_pod
         assert "which oauth-server pod saw it" not in rows_audit and "control-plane node" in rows_audit, rows_audit
-        assert "which oauth-server pod saw it" in rows_pod
+        assert "stored pod-log row" in rows_audit
 
 
 class TestAOneTierFilterFetchesItsTier:

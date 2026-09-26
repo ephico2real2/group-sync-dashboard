@@ -552,7 +552,7 @@ class TestCaptureAndBackupGauges:
         store = Store(":memory:")
         try:
             store.upsert_cluster("crc", "https://x", True)
-            for source in ("pod-log", "audit-log"):
+            for source in ("audit-log",):
                 settings = SimpleNamespace(backup_dir="", login_capture_enabled=True,
                                            login_capture_source=source)
                 text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()

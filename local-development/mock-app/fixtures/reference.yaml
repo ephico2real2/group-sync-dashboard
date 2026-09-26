@@ -189,14 +189,6 @@ oauth:
   forbidden: false
   crdAbsent: false
 
-oauthPods:
-  namespace: openshift-authentication
-  entries:
-    - {name: oauth-openshift-6d8f9c7b4-abcde, phase: Running}
-    - {name: oauth-openshift-6d8f9c7b4-fghij, phase: Running}
-    - {name: oauth-openshift-6d8f9c7b4-pending, phase: Pending}
-  forbidden: false
-
 auditLog:
   node: master-0
   dir: oauth-server
@@ -210,9 +202,3 @@ auditLog:
         - {kind: credential, decision: allow, user: jane.smith, at: "2026-09-03T10:15:27.234567Z", code: 302, provider: acme-ldap}
         - {kind: cli,        decision: deny,  user: lateef.o,   at: "2026-09-03T10:16:01.000000Z", code: 401}
         - {kind: session,    decision: allow, user: dana.lee,   at: "2026-09-03T10:17:44.500000Z", code: 302}
-
-podLog:
-  namespace: openshift-authentication
-  lines:
-    - '2026-09-03T10:15:27.234567Z I0903 10:15:27.234567 1 login.go:191] Login with provider "acme-ldap" succeeded for "jane.smith"'
-    - '2026-09-03T10:16:01.000000Z I0903 10:16:01.000000 1 basicauth.go:48] Login with provider "acme-ldap" failed for login "lateef.o"'

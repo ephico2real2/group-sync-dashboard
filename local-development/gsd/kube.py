@@ -69,15 +69,6 @@ IDENTITY_API = "/apis/user.openshift.io/v1/identities"
 # resourceNames — which Kubernetes honours for get, unlike list.
 OAUTH_API = "/apis/config.openshift.io/v1/oauths/cluster"
 
-# The oauth-server's own pods, and their logs. Read for ONE purpose: the lines naming who logged in,
-# which exist only at `spec.logLevel: Debug` on the authentication OPERATOR CR — not the OAuth CR. See
-# docs/LOGIN_CAPTURE_QUICKCHECK.md.
-#
-# Templated on the namespace because it is a chart value (`loginCapture.namespace`), not because it
-# varies in practice: OpenShift installs the OAuth server into openshift-authentication and the grant
-# the chart creates is a Role in that one namespace.
-POD_API_TMPL = "/api/v1/namespaces/%s/pods"
-
 # The nodes and the kubelet's file server behind them, for the oauth-server AUDIT log
 # (docs/DESIGN_login_capture.md, "The oauth-server AUDIT LOG"). `oc adm node-logs <node>
 # --path=oauth-server/audit.log` is GET /api/v1/nodes/<node>/proxy/logs/oauth-server/audit.log —
@@ -88,9 +79,7 @@ POD_API_TMPL = "/api/v1/namespaces/%s/pods"
 NODE_API = "/api/v1/nodes"
 NODE_LOG_PROXY_TMPL = "/api/v1/nodes/%s/proxy/logs/%s"
 
-# One audit-file read's byte budget per cycle. The same figure as the pod-log cap and for the
-# same reason — a bounded transfer on the poll thread — and it is what bounds a backfill:
-# ten rotated files of 100 MB drain at this rate over cycles, not in one.
+# One audit-file read is bounded to 8 MiB per node per cycle; backfills drain over cycles.
 AUDIT_READ_MAX_BYTES = 8 * 1024 * 1024
 
 # The namespace-configuration-operator's CRs — SAME API group as GroupSync, different
@@ -100,14 +89,7 @@ NAMESPACECONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/namespaceconfigs"
 GROUPCONFIG_API = "/apis/redhatcop.redhat.io/v1alpha1/groupconfigs"
 ROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/rolebindings"
 
-# One pod-log read's wall-clock budget. The httpx timeout on _client caps the SILENCE between
-# chunks, not the transfer, so a stream dripping just under it can run for minutes (measured:
-# a timeout=1.0 client consumed a 3.1s dribble without raising). logincapture stamps the clock
-# behind its leading-edge guard AFTER this returns, and its no-loss accounting holds only while
-# that stamp lags the kubelet's window resolution by less than OVERLAP_SECONDS minus the settle
-# margin — loss measured from ~58.5s of latency with the shipped constants. Twenty seconds keeps
-# the overshoot far inside that, and a read this interrupts is deferred, not lost: the truncation
-# path keeps the oldest lines and the watermark machinery re-reads the rest next cycle.
+# Wall-clock budget for one node audit-file read, in addition to the HTTP silence timeout.
 LOG_READ_BUDGET_SECONDS = 20.0
 CLUSTERROLEBINDING_API = "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
 
@@ -1092,196 +1074,6 @@ class ClusterClient:
             if (name := (idp.get("name") or "").strip())
         )
 
-    def fetch_oauth_pods(self, namespace: str) -> list[str] | None:
-        """Names of the Running oauth-server pods, or None when we may not list them.
-
-        DISCOVERY IS NOT OPTIONAL. Pod names are generated, production runs two or three replicas, and
-        every roll replaces them — so there is no fixed name to read and no Deployment log subresource
-        to read instead (verified: `GET .../deployments/oauth-openshift/log` returns "the server could
-        not find the requested resource"). `oc logs deploy/x` only looks combined; the client resolves
-        the Deployment to its pods and reads each one, which is what this does.
-
-        Only Running pods. A Pending pod has produced nothing yet, and a Terminating one is mid-roll —
-        both are read next cycle if they are still there, and neither is worth a failed request.
-
-        None means FORBIDDEN, deliberately distinct from [] (permitted, no pods found). The grant is
-        optional: an install that never enabled loginCapture, or upgraded the image without
-        re-applying RBAC, gets a 403 here and must degrade rather than fail the poll.
-        """
-        path = POD_API_TMPL % namespace
-        with self._client() as client:
-            try:
-                items = self._list_all(client, path)
-            except ClusterError as exc:
-                if exc.outcome == FORBIDDEN and path in exc.message:
-                    # DEBUG, and factual only. This said "login capture is off. Grant it with
-                    # loginCapture.enabled=true." at INFO, which was wrong twice over: this method
-                    # is called ONLY from logincapture#capture_once, which has already returned when
-                    # capture is disabled — so whenever this fires capture is ON and the missing
-                    # thing is the RBAC grant, not the feature flag. It sent an operator to set a
-                    # value that was already set.
-                    #
-                    # The operator-facing sentence now lives in capture_once, which is the layer
-                    # that knows what a 403 MEANS for the feature and says it once, at WARNING.
-                    # This layer only reports what it saw.
-                    log.debug("%s: forbidden listing pods in %s; returning no pods",
-                              self.cluster.name, namespace)
-                    return None
-                raise
-        return [
-            name for obj in items
-            if (obj.get("status") or {}).get("phase") == "Running"
-            and (name := (obj.get("metadata") or {}).get("name"))
-        ]
-
-    def fetch_pod_log(
-        self,
-        namespace: str,
-        pod_name: str,
-        since_seconds: int | None = None,
-        max_bytes: int = 8 * 1024 * 1024,
-    ) -> list[str] | None:
-        """Timestamped log lines for one pod, or None when this pod cannot be read right now.
-
-        NOT THROUGH `_get()`, and that is mandatory rather than stylistic: `_get` always calls
-        `response.json()`, and this endpoint returns TEXT. `_client()` IS used — it only supplies the
-        bearer token and CA verification, which this needs exactly as much as any other call.
-
-        STREAMED, AND BYTE-BOUNDED — in BYTES, counted before any line is assembled. The previous
-        draft counted characters of lines `iter_lines()` had already buffered whole, so a single
-        line larger than the cap was held in memory before it could be measured, and a multi-byte
-        log undercounted. Stopping at the cap also ends the transfer instead of paying for lines
-        that would be discarded.
-
-        A CAP HIT KEEPS THE OLDEST LINES OF THE WINDOW, deliberately. The kubelet streams oldest
-        first, and oldest-first is the direction the watermark machinery REQUIRES: the cursor only
-        advances through lines actually returned, so the deferred newest lines fall inside the next
-        cycle's window and nothing is lost — only late. Keeping the newest instead would let the
-        cursor advance past everything the cap displaced and silently drop it forever; recency is
-        what the next cycle gets back anyway, completeness is not. (An earlier comment here claimed
-        the newest lines were kept; it described the opposite of what the code did.) The line the
-        cap cuts in half is dropped for the same reason: a truncated diagnostic can mis-parse — a
-        bind error losing its `data` sub-code reads as a plain wrong password — and the whole line
-        is inside the next cycle's overlap.
-
-        BOUNDED IN WALL-CLOCK TIME as well, and on the same path as the cap. The client's timeout
-        only caps the gap between chunks, so it bounds nothing about the whole transfer — and the
-        capture loop derives its leading-edge guard from a clock stamped AFTER this returns, so
-        every second spent here widens the band of attempts that guard throws away for good. See
-        LOG_READ_BUDGET_SECONDS for the measured threshold where that band reaches rows no cycle
-        ever recorded.
-
-        `timestamps=true` is what makes the result usable at all — it prefixes each line with the
-        kubelet's RFC3339 UTC stamp. klog's own stamp carries no year and no timezone.
-
-        RETURNS None FOR THE ORDINARY ROLL, RAISES FOR THE REST, and the distinction is the point:
-
-          404              the pod went away between listing and reading. Every roll does this.
-          400 not-ready    the container has not started, so there is no log yet. Measured message:
-                           "container nope is not valid for pod ..." — reason BadRequest.
-          403              the grant is missing. LOGGED AT WARNING, because it is permanent and will
-                           not fix itself, and a silent None here looks identical to "nobody logged
-                           in" forever.
-          any other        raised, so a real outage is not mistaken for roll noise.
-        """
-        params: dict[str, Any] = {"timestamps": "true"}
-        if since_seconds is not None:
-            params["sinceSeconds"] = str(since_seconds)
-        path = f"{POD_API_TMPL % namespace}/{pod_name}/log"
-
-        chunks: list[bytes] = []
-        size = 0
-        truncated = False
-        over_budget = False
-        started = time.monotonic()
-        try:
-            with self._client() as client:
-                with client.stream("GET", path, params=params) as response:
-                    if response.status_code >= 400:
-                        response.read()
-                        return self._log_read_refused(response, namespace, pod_name)
-                    for chunk in response.iter_bytes(chunk_size=min(64 * 1024, max(1, max_bytes))):
-                        if time.monotonic() - started > LOG_READ_BUDGET_SECONDS:
-                            # Checked before the chunk is kept: a chunk that arrived past the budget
-                            # proves the transfer is the slow kind, and keeping it would end the
-                            # batch mid-line anyway — the pop below drops the tail either way.
-                            truncated = over_budget = True
-                            break
-                        room = max_bytes - size
-                        if len(chunk) >= room:
-                            chunks.append(chunk[:room])
-                            size = max_bytes
-                            truncated = True
-                            break
-                        chunks.append(chunk)
-                        size += len(chunk)
-        except httpx.HTTPError as exc:
-            # A connect error or timeout reading ONE pod must not fail the cycle: the other pods still
-            # have lines, and this one is retried next time from the same watermark.
-            log.info("%s: could not read %s log (%s: %s)",
-                     self.cluster.name, pod_name, type(exc).__name__, exc)
-            return None
-
-        # errors="replace" cannot corrupt a kept line: the only place a multi-byte character can be
-        # split is the cap boundary, and the line holding it is popped below.
-        lines = b"".join(chunks).decode("utf-8", errors="replace").splitlines()
-        if truncated:
-            if lines:
-                lines.pop()
-            if over_budget:
-                log.info(
-                    "%s: %s log read exceeded its %.0fs budget after %d lines; the OLDEST lines of "
-                    "this window are kept, and the rest fall inside the next cycle's window once "
-                    "the watermark has advanced",
-                    self.cluster.name, pod_name, LOG_READ_BUDGET_SECONDS, len(lines),
-                )
-            else:
-                log.info(
-                    "%s: %s log hit the %d-byte cap after %d lines; the OLDEST lines of this window "
-                    "are kept, and the rest fall inside the next cycle's window once the watermark "
-                    "has advanced",
-                    self.cluster.name, pod_name, max_bytes, len(lines),
-                )
-        return lines
-
-    def _log_read_refused(
-        self, response: httpx.Response, namespace: str, pod_name: str
-    ) -> list[str] | None:
-        """Classify a >=400 on a pod-log read: benign roll noise, or something worth saying out loud.
-
-        The Kubernetes Status body carries `reason` and `message`, which is the only way to tell a
-        container-not-ready 400 from a 400 that means something else. Guessing from the code alone is
-        what turns a permanent misconfiguration into indistinguishable debug noise.
-        """
-        try:
-            body = response.json()
-        except ValueError:
-            body = {}
-        reason = body.get("reason") or ""
-        message = body.get("message") or response.text[:200]
-        code = response.status_code
-
-        if code == 404:
-            log.debug("%s: %s is gone (read raced a roll)", self.cluster.name, pod_name)
-            return None
-        if code == 403:
-            log.warning(
-                "%s: FORBIDDEN reading %s/%s log — capture will record nothing until this is fixed. "
-                "The chart grants it with loginCapture.enabled=true (a Role in %s). Reason: %s",
-                self.cluster.name, namespace, pod_name, namespace, reason or code,
-            )
-            return None
-        if code == 400 and ("ContainerCreating" in message or "not started" in message
-                            or "is waiting to start" in message):
-            log.debug("%s: %s container not ready yet (%s)", self.cluster.name, pod_name, reason)
-            return None
-        if code == 401:
-            raise ClusterError(AUTH_FAILED, f"401 Unauthorized reading {pod_name} log")
-        # Everything else — an unexpected 400 included — is surfaced rather than swallowed.
-        log.warning("%s: unexpected HTTP %d reading %s log (reason=%s): %s",
-                    self.cluster.name, code, pod_name, reason or "-", message[:200])
-        return None
-
     def fetch_nodes(self, label_selector: str) -> list[str] | None:
         """Names of the nodes matching a label selector, or None when we may not list them.
 
@@ -1395,9 +1187,8 @@ class ClusterClient:
         confirms rotation against the file's head fingerprint (gsd/auditlog.py) before acting;
         this flag is the cheap first signal. HEAD is not used: the node proxy answers it 405.
 
-        Bounded in bytes and in wall-clock (LOG_READ_BUDGET_SECONDS), like fetch_pod_log, and a
-        truncated read keeps the OLDEST bytes for the same reason it does there: the cursor
-        advances only through bytes actually returned.
+        Bounded in bytes and in wall-clock (LOG_READ_BUDGET_SECONDS); a truncated read keeps the
+        OLDEST bytes, because the cursor advances only through bytes actually returned.
         """
         url = NODE_LOG_PROXY_TMPL % (node, path)
         headers = dict(NODE_LOG_HEADERS)

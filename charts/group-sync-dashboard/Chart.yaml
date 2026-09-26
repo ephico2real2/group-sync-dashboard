@@ -1,4 +1,5 @@
 apiVersion: v2
+# 0.58.0 / app 0.36.0 (#321): audit-only capture; remove OAuth Debug Jobs and pod reader.
 name: group-sync-dashboard
 description: Read-only observability for the redhat-cop group-sync-operator
 type: application
@@ -239,7 +240,7 @@ type: application
 # `visibility.clusterConfigViewSar` and `.clusterConfigManageSar` are removed and refused by name.
 # appVersion moves to application 0.35.0 (below). WHO LOSES ACCESS: cluster-readers lose the KPI
 # page; namespace-scoped `admin`/`edit` holders lose the Cluster Configurations tab.
-version: 0.57.0
+version: 0.58.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -334,7 +335,7 @@ version: 0.57.0
 # Configurations tab ask `visibility.clusterAdminSar`; `/api/whoami` carries `visibility.cluster_admin`
 # and drops `clusterconfig`; the `cluster_admin` threshold label replaces `clusterconfig_view` and
 # `clusterconfig_manage`. MINOR: who may open two surfaces changes on upgrade (docs/CHANGELOG.md).
-appVersion: "0.35.0"
+appVersion: "0.36.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

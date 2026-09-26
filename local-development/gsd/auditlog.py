@@ -109,7 +109,7 @@ SKIPPED = -1
 # Costs one ~1 KiB request per in-progress file per cycle; complete rotated files pay nothing.
 FINGERPRINT_BYTES = 1024
 
-# The stamp format every login_event row uses (gsd/logincapture.py#event_dict). Fixed once.
+# The existing login_event storage format: microseconds and a literal UTC Z.
 STAMP = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 # Names that are never people. `kube:admin` is the installer's account; `system:` prefixes every

@@ -186,11 +186,6 @@ class OAuthCR:
     crd_absent: bool = False
 
 
-@dataclass(frozen=True)
-class OAuthPods:
-    namespace: str = "openshift-authentication"
-    entries: tuple[dict[str, str], ...] = ()   # {name, phase}
-    forbidden: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,10 +196,6 @@ class AuditFixture:
     malformed_416: bool = False       # emit a 416 with no Content-Range (exercise unranged retry)
 
 
-@dataclass(frozen=True)
-class PodLogFixture:
-    namespace: str = "openshift-authentication"
-    lines: tuple[str, ...] = ()       # whole lines, RFC3339 prefix + klog body
 
 
 @dataclass(frozen=True)
@@ -225,9 +216,7 @@ class Fixture:
     operator_configs: OperatorConfigs
     nodes: Feed
     oauth: OAuthCR
-    oauth_pods: OAuthPods
     audit: AuditFixture
-    pod_log: PodLogFixture
     source_path: str | None = None
 
     @classmethod
@@ -246,7 +235,7 @@ class Fixture:
     def from_dict(cls, data: dict) -> "Fixture":
         allowed = {
             "meta", "groupsyncs", "groups", "users", "identities", "namespaces", "roles",
-            "bindings", "operatorConfigs", "nodes", "oauth", "oauthPods", "auditLog", "podLog",
+            "bindings", "operatorConfigs", "nodes", "oauth", "auditLog",
         }
         unknown = set(data) - allowed
         if unknown:
@@ -286,9 +275,7 @@ class Fixture:
         operator_configs = _operator_configs(data.get("operatorConfigs"))
         nodes = _feed(data.get("nodes"), _node, "nodes")
         oauth = _oauth(data.get("oauth"))
-        oauth_pods = _oauth_pods(data.get("oauthPods"))
         audit = _audit(data.get("auditLog"))
-        pod_log = _pod_log(data.get("podLog"))
 
         return cls(
             cluster_name=cluster_name,
@@ -307,9 +294,7 @@ class Fixture:
             operator_configs=operator_configs,
             nodes=nodes,
             oauth=oauth,
-            oauth_pods=oauth_pods,
             audit=audit,
-            pod_log=pod_log,
         )
 
     # Convenience the router/inspect page use.
@@ -329,7 +314,6 @@ class Fixture:
             "roleBindings": len(self.role_bindings),
             "nodes": len(self.nodes.entries),
             "oauthProviders": len(self.oauth.identity_providers),
-            "oauthPods": len(self.oauth_pods.entries),
             "auditNode": self.audit.node,
             "auditFiles": [f.name for f in self.audit.files],
         }
@@ -521,17 +505,6 @@ def _oauth(value: Any) -> OAuthCR:
     )
 
 
-def _oauth_pods(value: Any) -> OAuthPods:
-    block = _as_dict(value, "oauthPods")
-    entries = tuple(
-        {"name": p["name"], "phase": p.get("phase", "Running")}
-        for p in _as_list(block.get("entries") or [], "oauthPods.entries")
-    )
-    return OAuthPods(
-        namespace=block.get("namespace", "openshift-authentication"),
-        entries=entries,
-        forbidden=bool(block.get("forbidden", False)),
-    )
 
 
 def _audit(value: Any) -> AuditFixture:
@@ -561,12 +534,6 @@ def _audit(value: Any) -> AuditFixture:
     )
 
 
-def _pod_log(value: Any) -> PodLogFixture:
-    block = _as_dict(value, "podLog")
-    return PodLogFixture(
-        namespace=block.get("namespace", "openshift-authentication"),
-        lines=tuple(block.get("lines") or ()),
-    )
 
 
 def load_fixture(path: str | Path) -> Fixture:

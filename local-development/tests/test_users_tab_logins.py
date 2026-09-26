@@ -313,11 +313,14 @@ class TestTheLoginsEnvelopeNamesItsSource:
         store.record_audit_login_events("c1", rows)
         store.close()
 
-    def test_pod_log_is_the_default_source_and_says_what_it_cannot_see(self, tmp_path):
+    def test_the_live_source_is_audit_log_and_stored_pod_log_rows_keep_their_own(self, tmp_path):
+        """#321: the envelope names the live reader (audit-log only); the seeded rows are stored
+        pod-log history and keep their row-level source and kind (decision 3)."""
         body = _client(tmp_path).get("/api/clusters/c1/logins", headers=ADMIN).json()
-        assert body["source"] == "pod-log"
+        assert body["source"] == "audit-log"
         assert body["kinds"] == ["credential", "cli"]
-        assert "since capture began" in body["note"] and "audit log" not in body["note"]
+        assert "audit log" in body["note"] and "since capture began" not in body["note"]
+        assert body["attempts"]
         assert all(r["source"] == "pod-log" and r["kind"] == "credential" for r in body["attempts"])
 
     def test_audit_log_source_shows_credential_and_cli_by_default_and_session_on_request(self, tmp_path):

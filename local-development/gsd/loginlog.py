@@ -1,17 +1,8 @@
 """Parse oauth-server logs into login attempts.
 
-PURE FUNCTIONS, no I/O and no cluster. The reader that fetches logs lives elsewhere; everything here
-takes text and returns records, so every rule below is testable against the real lines that produced it.
-
-WHAT THIS READS. The oauth-server writes a line per login attempt naming the account that made it, but
-only at `spec.logLevel: Debug` on `authentications.operator.openshift.io/cluster` — the authentication
-OPERATOR CR, not the OAuth CR. At the default verbosity the lines do not exist, so capture is inert
-until somebody enables it. See docs/LOGIN_CAPTURE_QUICKCHECK.md.
-
-EVERY USERNAME IS CAPTURED, successful or not. There is no allowlist and there must not be one: a
-username that appears here and belongs to NO synced group is the most interesting row this produces —
-either somebody whose access was removed and is still trying, or an account nobody governs. Filtering
-against known members would drop exactly those.
+PURE FUNCTIONS, no I/O and no cluster. This legacy parser and outcome vocabulary remain for
+historical-row fixtures and API/KPI consumers. The live pod-log reader is removed; auditlog.py
+is the only live input. Nothing in this module enables OAuth Debug or reads a cluster.
 
 ── THE GRAMMAR, MEASURED ─────────────────────────────────────────────────────────────────────────────
 

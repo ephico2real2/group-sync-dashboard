@@ -142,22 +142,10 @@ def test_an_unrecognised_value_degrades_to_info_and_says_so(written: str) -> Non
 
 @pytest.mark.parametrize("written", ["Normal", "Trace", "TraceAll"])
 def test_a_platform_operators_likely_mistake_is_rejected_and_redirected(written: str) -> None:
-    """The trap this chart sets for anyone who knows OpenShift.
-
-    This chart carries two log levels: `logLevel` for the dashboard's own Python logging, and
-    `authLogLevel`, which raises the OAUTH-SERVER's verbosity and is what makes the login lines the
-    dashboard reads exist at all. Someone reaching for the second and typing it into the first is
-    making an understandable mistake, so the complaint has to name the other setting or it is
-    useless.
-
-    The values themselves are parametrised here — a test may name what the docs do not advertise,
-    because its job is to prove they are refused.
-    """
     got = probe(written)
     assert got["effective"] == "INFO"
-    assert "authLogLevel" in got["complaint"], (
-        f"{written!r} must be refused with a pointer at authLogLevel"
-    )
+    assert "audit log" in got["complaint"]
+    assert "authLogLevel" not in got["complaint"]
 
 
 def test_unset_is_info() -> None:
@@ -287,7 +275,7 @@ def test_the_complaint_advertises_only_the_levels_that_work() -> None:
             f"should advertise what works, not catalogue what does not"
         )
     # The one pointer that stays, because it is the likely mistake rather than a near-miss level.
-    assert "authLogLevel" in complaint
+    assert "audit log" in complaint and "authLogLevel" not in complaint
 
 
 class TestTheDocsAdvertiseExactlyWhatWorks:

@@ -475,13 +475,8 @@ class Settings:
     """Cluster discovery and the #284 lookup's retry backoff. Its own timer, so an hourly binding
     refresh never delays a cluster applied with oc or GitOps (the operator, 2026-09-25)."""
 
-    # Login capture. OFF by default: it needs a read grant the chart only creates when asked, and it
-    # records nothing at all unless the authentication operator's logLevel is Debug — so enabling it
-    # here alone is inert rather than broken.
+    # Direct app installs opt into the audit node-proxy read; Helm enables it by default.
     login_capture_enabled: bool = False
-    # Where the oauth-server runs. A value rather than a constant only because the chart's Role is
-    # created in this namespace and the two must agree; it is fixed on any normal OpenShift cluster.
-    login_capture_namespace: str = "openshift-authentication"
     # Providers whose SUCCESSES are break-glass rather than people — kubeadmin and developer arrive on
     # the HTPasswd provider. Passed to the store so ungoverned-user counts exclude them; the store
     # cannot know which of a cluster's providers are local.
@@ -490,13 +485,8 @@ class Settings:
     # generous — over a year — and the prune is bounded per cycle so a long backlog cannot hold the
     # single writer.
     login_retention_days: int = 400
-    # WHICH LOG. `pod-log` reads the oauth-server pods' logs, which name a person only at
-    # spec.logLevel: Debug on the authentication operator CR. `audit-log` reads
-    # /var/log/oauth-server/audit.log on the control-plane nodes through the API server's node
-    # proxy: no Debug, no OAuth roll, history back to the rotated files — and a cluster-wide read
-    # grant, which is why the chart defaults it off. Anything unrecognised is pod-log: the
-    # shipped default, and inert rather than wide.
-    login_capture_source: str = "pod-log"
+    # The sole live source. Historical row source fields remain unchanged.
+    login_capture_source: str = "audit-log"
     # Which nodes hold the audit log: the control-plane ones, by selector — or by name, in which
     # case no node is ever listed and the nodes/proxy grant is pinned to those names.
     login_capture_audit_node_selector: str = "node-role.kubernetes.io/master="
@@ -1020,16 +1010,13 @@ def _string_list_setting(raw: dict, key: str, default: tuple[str, ...]) -> tuple
 
 
 def _login_capture_source_setting(raw: dict) -> str:
-    """pod-log | audit-log. Fail SAFE to pod-log: it is the shipped default and needs nothing
-    the audit source needs; a typo must not be what widens the read."""
-    source = os.environ.get("GSD_LOGIN_CAPTURE_SOURCE")
-    if source is None:
-        source = raw.get("loginCaptureSource", "pod-log")
-    word = str(source).strip().lower()
-    if word in ("pod-log", "audit-log"):
-        return word
-    log.warning("loginCaptureSource=%r is not pod-log/audit-log; using 'pod-log'", source)
-    return "pod-log"
+    """Refuse retired/unknown sources rather than silently changing the requested read grant."""
+    source = os.environ.get("GSD_LOGIN_CAPTURE_SOURCE", raw.get("loginCaptureSource", "audit-log"))
+    if str(source).strip() != "audit-log":
+        raise ConfigError("loginCaptureSource must be audit-log; pod-log was removed. "
+                          "Set loginCaptureSource/GSD_LOGIN_CAPTURE_SOURCE to audit-log, remove "
+                          "authLogLevel chart values, and restore OAuth verbosity to Normal manually.")
+    return "audit-log"
 
 
 def _visibility_setting(raw: dict) -> str:
@@ -1649,7 +1636,6 @@ def load_settings(path: str | Path) -> Settings:
         binding_interval_seconds=int(raw.get("bindingIntervalSeconds", 3600)),
         discovery_interval_seconds=int(raw.get("discoveryIntervalSeconds", 300)),
         login_capture_enabled=str(raw.get("loginCaptureEnabled", "false")).lower() == "true",
-        login_capture_namespace=raw.get("loginCaptureNamespace") or "openshift-authentication",
         login_capture_htpasswd_providers=tuple(
             p.strip() for p in str(raw.get("loginCaptureHtpasswdProviders", "developer")).split(",")
             if p.strip()

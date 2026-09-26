@@ -1,4 +1,39 @@
-# Quick check: is login capture actually working?
+# Login capture quickcheck — audit log only
+
+Login capture reads the oauth-server audit log at default OAuth verbosity. The OAuth Debug
+reader and auth-loglevel Jobs were removed in chart 0.58.0 / app 0.36.0. Migrate old values and
+restore Normal using the chart README's **OAuth Debug migration** section before upgrading.
+
+1. Render your complete cleaned values file with `helm template` and confirm there are no
+   auth-loglevel objects and no login-capture Role granting pods/log. Capture enabled renders
+   the audit ClusterRole with `get nodes/proxy`, plus `list nodes` unless nodeNames is pinned.
+2. Check the target cluster's poller ServiceAccount can `get nodes --subresource=proxy` and,
+   unless nodes are pinned, `list nodes`. On remote clusters use that target's credential and
+   context; installing the controller chart cannot authorize a remote read.
+3. Check the configured nodes hold `/var/log/oauth-server/audit.log`. See
+   [Audit log capture](AUDIT_LOG_CAPTURE.md) for the node-proxy URL, remote grants and worked
+   example. A 403 is a grant failure, not evidence that nobody logged in.
+4. Make one controlled successful `oc login` on the target, using a test account interactively
+   (do not place its password in shell history). Wait for a successful capture cycle. The
+   Logins tab and `GET /api/clusters/<cluster>/logins?kind=all` should contain its CLI row.
+   Inspect `source`, `status_code`, `identity_match`, `last_read_at` and `capture_started_at`.
+5. Check `gsd_login_capture_source_info{source="audit-log"}`, the last-read timestamp and
+   per-node audit-settled timestamps on `/metrics`. First read may drain a backfill over cycles;
+   one stalled node can lag while the aggregate last-read timestamp advances.
+
+Audit deny records contain HTTP status and sometimes a message, but no LDAP result code or
+AD sub-code: a wrong password cannot be distinguished from a locked account. Existing pod-log
+rows and their causes remain visible and are subject to the configured retention. No migration
+removes them. Capture disabled stops reads but does not hide retained history.
+
+These are verification instructions, not a claim that this release has been tested on a live cluster.
+
+## Historical transcript — retired OAuth Debug path
+
+The transcript below records 2026-08-07 behavior. **Do not execute its commands on this release.**
+The old keys, Jobs, pod reader and troubleshooting advice no longer apply. Use the audit-only
+quickcheck above. It is retained as a historical measurement, not current operating guidance.
+
 
 Five commands that prove the whole path end to end — turn the verbosity up, cause a login, and read
 that login back **using the dashboard's own ServiceAccount token**, which is the only identity that

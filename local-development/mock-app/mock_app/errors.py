@@ -6,7 +6,7 @@
   in the body too, for realism and for any caller that inspects it.
 * ``crd_absent_404(path)`` — a plain 404. kube.py's ``_get`` builds ``f"HTTP 404 on {path}: …"``
   which STARTS WITH ``"HTTP 404 on <path>"``, the anchor the CRD-absent branches match on.
-* ``status_json`` — a Kubernetes Status body, used for pod-log >=400.
+* ``status_json`` — the Kubernetes Status body used by these error responses.
 """
 
 from __future__ import annotations

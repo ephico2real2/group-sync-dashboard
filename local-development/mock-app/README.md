@@ -1,7 +1,7 @@
 # gsd-mock — a fixture-driven mock OpenShift API for group-sync-dashboard
 
 A self-contained HTTP(S) server that answers **exactly the request surface `gsd/kube.py`
-issues** — the ~16 read endpoints, the two node-log-proxy shapes, the pod-log stream, and the
+issues** — the ~16 read endpoints, the two node-log-proxy shapes, the audit stream, and the
 SubjectAccessReview POST — from one declarative YAML fixture. It is portable (pure Python, a
 `cryptography`-only extra for TLS; no cluster, no VM, no container runtime for the CI/local
 form), faithful (every response satisfies the parse contract in `gsd/kube.py` so the client
@@ -28,7 +28,6 @@ mock-app/
 │   ├── responses.py  k8s List/object envelopes; limit/continue paging; per-item shapes
 │   ├── sar.py        SarAuthorizer: RBAC evaluation over the fixture
 │   ├── auditlog.py   AuditServer: shorthand→audit JSON, HTML listing, Range/416
-│   ├── podlog.py     pod-log text stream
 │   ├── tls.py        ephemeral CA + serving leaf via `cryptography`
 │   ├── inspect.py    /_mock/ HTML page + /_mock/state + request-log ring buffer
 │   └── errors.py     forbidden_403(path) / crd_absent_404(path) / status_json
@@ -126,11 +125,11 @@ only a real `(Cluster)RoleBinding` reaching a `spec.groups`/`spec.user` subject 
 
 One YAML file (JSON accepted); unknown top-level keys are rejected (fail-loud). Top-level keys:
 `meta`, `groupsyncs`, `groups`, `users`, `identities`, `namespaces`, `roles`, `bindings`,
-`operatorConfigs`, `nodes`, `oauth`, `oauthPods`, `auditLog`, `podLog`. See
+`operatorConfigs`, `nodes`, `oauth`, `auditLog`. See
 `fixtures/reference.yaml` for the annotated reference cluster, and:
 
 - `crd-absent.yaml` — GroupSync/operator/OAuth CRDs missing (the plain-404 branches).
-- `forbidden.yaml` — users/identities/namespaces/nodes/oauth/pods answer 403 (tolerated → None).
+- `forbidden.yaml` — users/identities/namespaces/nodes/oauth answer 403 (tolerated → None).
 - `paging.yaml` — `meta.pageSize` caps the page below kube.py's `limit=500` to drive its real
   continue-token loop with a tiny fixture (a real API server may return fewer than the limit).
 

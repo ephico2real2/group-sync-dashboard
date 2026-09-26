@@ -143,4 +143,4 @@ recorded as failed with what the record has — the HTTP status (302 back to the
 
 That matters in one specific case: a **locked** directory account answers LDAP code 19, which
 OpenShift surfaces as an HTTP 500 rather than a 401. The audit log will show the failure but not that
-the account is locked. If that distinction is needed, the pod-log source is the only place it exists.
+the account is locked. The pod-log reader has been removed; new capture cannot supply that LDAP cause. Existing stored causes remain readable.

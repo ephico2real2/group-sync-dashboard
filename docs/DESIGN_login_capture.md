@@ -1,12 +1,14 @@
 # Login capture — as built
 
 Who logged in, when, from which provider, and why an attempt failed — accumulated from the
-oauth-server's own pod logs.
+oauth-server's own pod logs until chart 0.58.0 / app 0.36.0, and from its audit log since (#321).
 
-**Status: shipped.** The parser, capture loop, storage, API and Logins tab are live. This document
-describes what exists and the measurements behind it. Where a decision looks arbitrary, the reason is
-here; where something is deliberately *not* done, that is here too, because most of it will be
-proposed again.
+**Status: the pod-log reader is retired (#321).** Live capture reads only the audit log ("The
+oauth-server AUDIT LOG" below). The parser, storage, API and Logins tab remain, because stored
+pod-log rows stay readable. The pod-log sections are the as-built record of the retired reader and
+the measurements behind it; the loop, window and guard names they give no longer exist in the code.
+Where a decision looks arbitrary, the reason is here; where something is deliberately *not* done,
+that is here too, because most of it will be proposed again.
 
 Every measurement was taken on a live cluster and is dated. Nothing here is inferred.
 
@@ -15,8 +17,8 @@ Every measurement was taken on a live cluster and is dated. Nothing here is infe
 | piece | file | what it does |
 |---|---|---|
 | parser | `gsd/loginlog.py#parse` | log lines → `LoginAttempt` records. Knows nothing about clusters or storage, which is what makes it testable without either |
-| capture loop | `gsd/logincapture.py#capture_once` | reads each oauth-server pod incrementally, decides what is settled enough to record, advances a per-pod cursor |
-| log reader | `gsd/kube.py#ClusterClient.fetch_pod_log` | streamed, byte-bounded and wall-clock-bounded read of one pod's log |
+| capture loop | `gsd/logincapture.py#capture_once` | off reads nothing; on dispatches to `gsd/auditlog.py#capture_once`, which reads each control-plane node's audit file from a per-file cursor. The per-pod loop it replaced was removed in #321 |
+| log reader | `gsd/kube.py#ClusterClient.fetch_node_log_file` | byte-bounded and wall-clock-bounded read of one node's audit file through the node proxy. The pod-log reader (`fetch_pod_log`) was removed in #321 |
 | storage | `gsd/store.py` | `login_event`, `login_capture_watermark`, `login_capture_status` |
 | API | `gsd/api.py` | `/api/clusters/{id}/logins`, `/api/clusters/{id}/cluster-access` |
 | UI | `gsd/static/index.html` | the Logins tab and the cluster-access panel |
@@ -26,15 +28,15 @@ The constants that govern the loop, and why they are what they are:
 | constant | value | reason |
 |---|---|---|
 | `gsd/loginlog.py#ATTEMPT_WINDOW` | 1s | how long one attempt may go **quiet** before it is concluded. Measured attempts span 30–125 ms, so this is roughly 8× the widest — thinner than it sounds, because a directory under load stretches an attempt without changing anything else about it |
-| `gsd/logincapture.py#OVERLAP_SECONDS` | 60 | how far behind the cursor each read starts again. Must exceed 2×`ATTEMPT_WINDOW` for parse context (below) |
-| `gsd/logincapture.py#SETTLE_SECONDS` | 30 | how far behind the log's tip an attempt must be before it is recorded |
-| `gsd/logincapture.py#FIRST_SIGHT_SECONDS` | 3600 | how far back a first read goes for a pod with no cursor |
-| `gsd/kube.py#LOG_READ_BUDGET_SECONDS` | 20 | wall-clock bound on one pod-log read |
+| `OVERLAP_SECONDS` (retired, #321) | 60 | how far behind the cursor each pod-log read started again. Had to exceed 2×`ATTEMPT_WINDOW` for parse context (below) |
+| `SETTLE_SECONDS` (retired, #321) | 30 | how far behind the log's tip an attempt had to be before it was recorded |
+| `FIRST_SIGHT_SECONDS` (retired, #321) | 3600 | how far back a first read went for a pod with no cursor |
+| `gsd/kube.py#LOG_READ_BUDGET_SECONDS` | 20 | wall-clock bound on one node audit-file read (formerly one pod-log read) |
 
-The prerequisite is `authLogLevel`, which raises `spec.logLevel` on the authentication **operator** CR
-so the oauth-server names the person logging in, plus `loginCapture`, which grants a namespaced read
-of those pod logs. With capture on and Debug off this reads real logs and finds nothing — correct
-rather than broken.
+The pod-log reader's prerequisite was `authLogLevel`, which raised `spec.logLevel` on the
+authentication **operator** CR so the oauth-server named the person logging in, plus a namespaced
+read of those pod logs. Both were removed in #321: the audit log names the person at the default
+verbosity, and a cluster still at Debug is restored by hand (the chart README's migration note).
 
 ---
 
@@ -209,8 +211,8 @@ from a demoted leader cannot rewind it.
 
 | boundary | what goes wrong unguarded | guard |
 |---|---|---|
-| trailing edge (lines not written yet) | an attempt read mid-flight concludes on partial evidence — the provider-chain `failed` is present, the success that follows is not — and the honest-but-wrong `failed` row sits beside the real one forever | `gsd/logincapture.py#_recordable`: withhold attempts younger than `SETTLE_SECONDS` + `ATTEMPT_WINDOW` |
-| leading edge (lines behind the window) | a window opening between a bind error and its verdict parses the verdict alone, so a login already stored as `bad_password` at the cause is stored *again* as `failed` at the verdict | `gsd/logincapture.py#_not_clipped`: drop attempts within `ATTEMPT_WINDOW` of the window's start |
+| trailing edge (lines not written yet) | an attempt read mid-flight concludes on partial evidence — the provider-chain `failed` is present, the success that follows is not — and the honest-but-wrong `failed` row sits beside the real one forever | `_recordable` (retired, #321): withheld attempts younger than `SETTLE_SECONDS` + `ATTEMPT_WINDOW` |
+| leading edge (lines behind the window) | a window opening between a bind error and its verdict parses the verdict alone, so a login already stored as `bad_password` at the cause is stored *again* as `failed` at the verdict | `_not_clipped` (retired, #321): dropped attempts within `ATTEMPT_WINDOW` of the window's start |
 | the byte cap | an attempt straddling the cap byte is parsed half and recorded, then recorded again whole next cycle | keep the **oldest** lines, drop the half line, defer the rest |
 | `parse`'s own expiry | an attempt whose lines span more than a second concluded mid-flight, fabricating a `failed` beside a real `success` | measure **silence since the last line**, not age since the first |
 

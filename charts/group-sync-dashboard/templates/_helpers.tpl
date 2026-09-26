@@ -505,7 +505,7 @@ INFO
 {{- else -}}
 {{- $l := upper (trim (toString $raw)) -}}
 {{- if not (has $l (list "DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")) -}}
-{{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter).\n\nIf you are trying to raise the OAUTH-SERVER's verbosity so the Logins tab has something to read, that is the chart's `authLogLevel` value, not this one — a different setting on a different object.\n\nRefused here rather than passed through, because a release value can be corrected before anything is deployed. The app itself is more forgiving with a directly supplied GSD_LOG_LEVEL — it runs at INFO and logs a warning — so this is the stricter of two boundaries, not the only one." (toString $raw)) -}}
+{{- fail (printf "logLevel %q is not a log level. Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL (case does not matter). Login capture uses the audit log at default OAuth verbosity; see docs/LOGIN_CAPTURE_QUICKCHECK.md." (toString $raw)) -}}
 {{- end -}}
 {{- $l -}}
 {{- end -}}
@@ -609,18 +609,19 @@ false
 {{- end -}}
 
 # ── Login capture source ──────────────────────────────────────────────────────────────────
-# pod-log | audit-log, validated where it is resolved, and the ONE place the two switches that
-# interact are reconciled: audit-log makes Debug unnecessary, so a render that asks for both is a
-# contradiction and is refused — never resolved by quietly rolling the OAuth server.
+# Audit-only source; validate even when capture is disabled.
 {{- define "gsd.loginCaptureSource" -}}
-{{- $lc := .Values.loginCapture | default dict -}}
-{{- $s := "pod-log" -}}
-{{- if and (hasKey $lc "source") (not (kindIs "invalid" $lc.source)) -}}{{- $s = trim (toString $lc.source) -}}{{- end -}}
-{{- if not (has $s (list "pod-log" "audit-log")) -}}
-{{- fail (printf "loginCapture.source %q is not one of pod-log, audit-log." $s) -}}
+{{- if hasKey .Values "authLogLevel" -}}
+{{- fail "authLogLevel has been removed: remove the entire authLogLevel stanza (including false values), set loginCapture.source=audit-log, and manually restore the authentication operator to Normal as described in the chart README migration note." -}}
 {{- end -}}
-{{- if and (eq $s "audit-log") ($lc.enabled) ((.Values.authLogLevel | default dict).enabled) -}}
-{{- fail "loginCapture.source=audit-log and authLogLevel.enabled=true contradict each other: the audit log names every login at the DEFAULT verbosity, so Debug on the authentication operator CR buys nothing and costs an OAuth roll. The chart will not roll the OAuth server as a side effect of a read setting. Retire Debug in order:\n  1. --set loginCapture.source=audit-log --set authLogLevel.manage=true --set authLogLevel.enabled=false   (converges the cluster to Normal; one last roll — a login outage at one replica)\n  2. --set authLogLevel.manage=false once the rollout has finished.\nPass your whole values file each time (see the chart README)." -}}
+{{- $lc := .Values.loginCapture | default dict -}}
+{{- if hasKey $lc "namespace" -}}
+{{- fail "loginCapture.namespace has been removed: remove this key and use loginCapture.source=audit-log with loginCapture.auditLog.nodeNames or nodeSelector." -}}
+{{- end -}}
+{{- $s := "audit-log" -}}
+{{- if hasKey $lc "source" -}}{{- $s = trim (toString $lc.source) -}}{{- end -}}
+{{- if ne $s "audit-log" -}}
+{{- fail (printf "loginCapture.source %q is unsupported: pod-log has been removed; set loginCapture.source=audit-log, remove authLogLevel, and manually restore the authentication operator to Normal (chart README migration note)." $s) -}}
 {{- end -}}
 {{- $s -}}
 {{- end -}}
