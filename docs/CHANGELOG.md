@@ -8,6 +8,17 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **The dashboard refuses a database newer than it understands (#305; application only).** An image
+  whose highest migration is below the database's `user_version` (a rollback deployed before the database
+  was restored) now stops at startup, before its own schema, migrations or seeds run, with both numbers and
+  the fix: restore a backup at or below its schema, or deploy the image that understands the database's. It
+  used to open the file, run its own schema and seeds against it, and write blind. The report service's
+  refusal and `/report/readyz` are unchanged; both services now read the highest version from one constant
+  in `gsd/store.py`. What the refusal looks like and what to do:
+  [RUNBOOK_backup_restore.md §4c](RUNBOOK_backup_restore.md#4c-bring-it-back-and-verify).
+
 ## Chart 0.58.3 — application 0.36.0 — 2026-09-26
 
 - **Epic A: quick cleanup (#381).** The docs index (#319; chart 0.58.1, docs only), a test suite that leaves no
