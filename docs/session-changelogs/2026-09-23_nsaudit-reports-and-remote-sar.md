@@ -942,27 +942,31 @@ The orchestrator's summary, with what was measured for this log:
 
 ### The failed Action — PR #378 (merge `7bd8e87`, 01:56)
 
-- **Found by CI:** main run 36221028974 on `d1d046d` failed `tests (3.11)` only, while 3.14 passed on the same
-  commit. The failing test was
+- **Found by CI:** run 36221028974, on #376's merge `d1d046d`, failed the `tests (3.11)` job only; the
+  `tests (3.14)` job on the same commit passed. The failing test was
   `test_unmanaged_subjects.py::TestAuditLogProgress::test_the_poll_loop_announces_a_new_grant_on_the_refresh_that_finds_it`.
 - **Diagnosed from the failing run's own log:**
   - the test configures only cluster `c`, yet its captured log shows refreshes of a cluster `host`;
   - a leaked `poll-host` thread called this test's monkeypatched `ClusterClient` and used up one of its scripted
     cycles.
-  - The test passed 40 of 40 times locally, so re-running could not find the cause.
-- **The leaking test was found by a per-test thread probe** (a pytest plugin kept outside the tree) over the full
-  suite: 5181 passed, and exactly one test left a thread alive,
+  - The test passed 40 of 40 times locally (the orchestrator's runs, not published), so re-running could not
+    find the cause.
+- **The leaking test was found by a per-test thread probe:** a local pytest plugin, never committed, run by the
+  orchestrator over the full suite. It reported 5181 passing tests (its own count, not CI run 36221028974's 5182
+  passed and 1 failed) and exactly one test that left a thread alive,
   `test_fleet_lookup.py::TestTheSchedule::test_a_retrieved_stanza_whose_secret_vanished_stops_polling_rather_than_polling_the_stanza`,
   which leaves `poll-host`. It called `_reconcile_threads()` without seeding `host`.
 - **Built by OB1-lite, reviewed by Grok and Codex Astra** (#378's comments):
   - the source fix: seed `host`;
   - the mechanism: `local-development/tests/conftest.py`, a guard that fails any test leaving a poller thread alive.
 - **Review decisions:**
-  - Grok's C7 **accepted**: drop the `before` snapshot. It hid a leftover in the next test; measured, the follower
-    passed with `poll-host` alive.
-  - Codex's hardening **rejected**: a thread-identity class in product code, rescans and a whole-suite backstop, for
-    cases neither reviewer's inventory found in the suite.
-  - Grok's N1 **accepted as a note** in SPEC_S4b; the merged fence was left untouched.
+  - Grok's C7 **accepted.** The guard used to ignore poller threads already running when a test started, so a leak
+    from one test was excused in every later one. Measured on a two-test probe, the second test passed while
+    `poll-host` was still running. The guard now fails any test that ends with a poller thread alive.
+  - Codex's hardening **rejected.** It wanted extra machinery in the product: a special thread class, extra scans,
+    and a suite-wide safety net. Neither reviewer found a test in this suite that needed it.
+  - Grok's N1 **accepted as a note** in SPEC_S4b. The spec still quotes the old test, which did not seed `host`;
+    that quoted example stays as the historical record, and only the real test in the tree was changed.
 - **Measured** (#378's comments): hermetic 5180 passed, browser 604. With the leak, both the leaking test and the
   one after it now error, naming the thread.
 - **Main's CI on `7bd8e87`:** every job passed, including `tests (3.11)`.
@@ -971,11 +975,12 @@ The orchestrator's summary, with what was measured for this log:
 
 - **The operator:** *"cursor grok was better before and it could access shell and write it own file."*
   - The CLI's own help calls `--mode ask` read-only, and every Grok pass from #368 to #376 used it.
-  - Grok now launches with `-p --force --workspace "$G"`. `$G` is its own directory: the export in `head/`, and a
-    `findings.md` Grok writes itself. Probed twice before it was recorded.
+  - Grok now launches with `-p --force --workspace "$G"`, in a scratch folder of its own. That folder holds a copy
+    of the commit under review (under `head/`) and a `findings.md` that Grok writes itself. It was probed twice
+    before it was recorded (#377's commit body).
 - **The skill** (`.claude/skills/adversarial-review/SKILL.md`) gains:
   - the implementers, Codex Astra and OB1-lite, and the rule that no seat reviews its own change;
-  - eight measured gotchas from #321 and #322.
+  - eight measured gotchas from #321 and #322 (listed in #377's commit body).
 - **Found by Grok** (its first review with a shell; it ran the new launch line itself): C3. The launch recipe still
   made OB3 the default third seat. **Accepted.** A confirmation pass: C1–C3 CONFIRMED.
 
@@ -983,8 +988,9 @@ The orchestrator's summary, with what was measured for this log:
 
 - *"Grant all the agent switch role capabilities."* `ob1-lite` and `ob3` gained OB2's REVIEWER/IMPLEMENTER switch,
   with REVIEWER as the read-only default. Backups: `~/.claude/{ob1-lite,ob3}.md.bak-2026-09-26`.
-- **Found while validating:** both new descriptions broke strict YAML (a `: ` in plain text), and OB1-lite's
-  original description already did. Fixed; all three parse under PyYAML.
+- **Found while validating** (PyYAML, run by the orchestrator, not published): both new descriptions broke strict
+  YAML, because of a `: ` in plain text, and OB1-lite's original description already did. Fixed; all three now
+  parse.
 - **Found by probing:** an agent edit takes effect in the next session. Both probes answered from the old
   definitions.
 - **The allocation approved by the operator:**
@@ -992,7 +998,7 @@ The orchestrator's summary, with what was measured for this log:
   - Codex Astra takes large mechanical work;
   - OB3 takes only the riskiest design work;
   - OB2 settles disagreements and is the backup builder.
-- **The operator's `claude-config` repository, PR #1** (merged by the operator, 02:36): the three agents at the top
+- **The operator's `claude-config` repository, PR #1** (merged by the operator at 02:36, its `mergedAt` time): the three agents at the top
   level, and `restore.sh` now restores them. It never did before.
 - **Memory:** a single reference for every seat's exact launch line (the note *seat-invocations*), and the Grok
   invocation (the note *grok-runs-with-shell-in-its-own-dir*).
