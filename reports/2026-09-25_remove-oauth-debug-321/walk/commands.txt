@@ -1,0 +1,16 @@
+# The commands behind walk/oc-login.txt and walk/stored-rows.txt, as run (2026-09-26, UTC).
+# The developer password came from `crc console --credentials` into a shell variable; its value is not recorded
+# anywhere, and it was never on a command line of its own. KUBECONFIG pointed at a throwaway file for this one
+# login, never at the shared context.
+
+P="$(crc console --credentials | sed -nE 's/.*-u developer -p ([^ ]+).*/\1/p')"
+KUBECONFIG=<scratch>/walk-321/kc-developer oc login -u developer -p "$P" https://api.crc.testing:6443 --insecure-skip-tls-verify=true
+KUBECONFIG=<scratch>/walk-321/kc-developer oc whoami
+
+# The stored rows: a read-only (mode=ro) query of the pod's database.
+oc exec -n group-sync-dashboard <dashboard pod> -c <container> -- python3 -c '
+import sqlite3
+c = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
+... select cluster_id, user_name, outcome, at, source, kind, status_code, client_id, provider
+    from login_event where user_name="developer" and at >= "2026-09-26T04:25" order by at
+... select source, count(*) from login_event group by source'

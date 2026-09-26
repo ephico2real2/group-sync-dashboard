@@ -1,0 +1,17 @@
+# 2026-09-26T04:25:49Z after deploying 1178e03eb4
+$ oc get jobs,roles,rolebindings -A -o name | grep -iE "loglevel|auth-log"
+(none)
+$ oc get clusterroles,clusterrolebindings -o name | grep -iE "loglevel|auth-log"
+(none)
+$ oc get roles,rolebindings -n openshift-authentication -o name | grep -i dashboard
+(none)
+$ oc get authentications.operator.openshift.io cluster -o jsonpath={.spec.logLevel}
+Normal
+$ ConfigMap clusters.yaml, login-capture keys
+loginCaptureEnabled: true
+loginCaptureSource: "audit-log"
+loginCaptureAuditNodeSelector: "node-role.kubernetes.io/master="
+loginCaptureAuditNodeNames: []
+loginCaptureAuditProviders: []
+loginCaptureAuditIgnoreIdentityPatterns: ["ou=TrustedApplications"]
+loginCaptureHtpasswdProviders: "developer"
