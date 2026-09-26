@@ -1,0 +1,22 @@
+admin    : whoami {"user": "kubeadmin", "tier": null, "cluster_admin": true}
+admin    : tabs ["Home", "Overview", "KPIs", "Groups", "Users", "Access granted", "RBAC policy", "Kyverno", "Namespace audit", "Logins", "Usage", "Reports", "Library", "Cluster Configurations"]
+admin    : has KPI tab True | has Cluster Configurations tab True
+admin    : status {"/api/kpi": 200, "/api/clusterconfigs": 200, "/api/whoami": 200}
+shot     : 01-admin-home-1280.png
+admin    : #page=kpi shows "System status updated 1s ago \u00b7 refresh 60s dashboard watch MEMORY 23.2% of 512Mi CPU <0.01 / 0.5 cores THROTTLED 1.82% of periods DATA VOLUME 42Mi \u00b7 node disk 8"
+shot     : 02-admin-kpi-1280.png
+admin    : #page=clusters shows "Cluster Configurations 21 clusters Every cluster the dashboard reads, and where its configuration came from \u2014 a card per cluster, the live set. The cluster-conf"
+shot     : 03-admin-clusters-1280.png
+admin    : page errors []
+reader   : whoami {"user": "developer", "tier": null, "cluster_admin": false}
+reader   : tabs ["Home", "Overview", "Groups", "Users", "Access granted", "RBAC policy", "Kyverno", "Namespace audit", "Logins", "Usage", "Reports", "Library"]
+reader   : has KPI tab False | has Cluster Configurations tab False
+reader   : status {"/api/kpi": 403, "/api/clusterconfigs": 403, "/api/whoami": 200}
+shot     : 04-reader-home-1280.png
+reader   : #page=kpi shows "KPIs Withheld, not empty. This page reports the dashboard's own pods, the fleet's access posture and its trends \u2014 governance data about the clusters, not about "
+shot     : 05-reader-kpi-1280.png
+reader   : #page=clusters shows "Cluster Configurations Withheld, not empty. This page lists every cluster this dashboard reads, where each one's configuration came from, and the credential kin"
+shot     : 06-reader-clusters-1280.png
+reader   : page errors []
+errors   : []
+exit=0
