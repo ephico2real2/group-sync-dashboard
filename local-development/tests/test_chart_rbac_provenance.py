@@ -30,13 +30,8 @@ RBAC_KINDS = ("Role", "ClusterRole", "RoleBinding", "ClusterRoleBinding")
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not on PATH")
 
-# Two renders reach every RBAC template: the lab's values (audit-log login capture, the fleet account, the
-# cluster-Secret writes, the auditor binding) and the pod-log source with the authLogLevel Job, whose
-# Role and ClusterRole only exist on that path.
-RENDERS = {
-    "crc": [],
-    "pod-log": ["--set", "loginCapture.source=pod-log", "--set", "authLogLevel.manage=true"],
-}
+# The lab audit-log values reach every surviving RBAC template.
+RENDERS = {"crc": []}
 
 
 def _rbac_objects(extra: list[str]) -> list[tuple[str, dict]]:

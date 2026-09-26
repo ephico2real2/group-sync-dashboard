@@ -553,9 +553,7 @@ config:
 # 97% of DEBUG output: 356 lines of framing per 10 of the app's own. Set GSD_DEBUG_HTTP=true to
 # unpin it when diagnosing a handshake against a corporate CA.
 #
-# NOT TO BE CONFUSED WITH `authLogLevel` BELOW, which is a different setting on a different object:
-# it raises the oauth-server's own verbosity, which is what makes that server EMIT the login lines
-# this dashboard reads. If the Logins tab is empty, that is the one to check — not this one.
+# Login capture reads the audit log at default OAuth verbosity; logLevel is app logging only.
 logLevel: INFO
 
 # The HTTP REQUEST RECORD, separately from this app's own reasoning (#245). Governs `httpx`
@@ -798,7 +796,7 @@ clusters:
 secretsMint:
   enabled: true
   # `oc` is all the Job needs: the in-cluster imagestream every OpenShift cluster ships (the
-  # authLogLevel note explains why not registry.redhat.io). Override on a cluster that mirrors
+  # release payload avoids a separate registry.redhat.io pull). Override on a cluster that mirrors
   # elsewhere, or on plain Kubernetes.
   image:
     repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
@@ -1547,76 +1545,17 @@ clusterConfig:
 # ---------------------------------------------------------------------------
 # Login capture  (reads the oauth-server's audit log)
 # ---------------------------------------------------------------------------
-# Grants the DASHBOARD a read of the oauth-server's login records, which is where "who logged in"
-# comes from. Read-only, on the dashboard's own ServiceAccount. The grant follows `source` below:
-#
-#   audit-log (the default since 0.52.0) — a ClusterRole on `get nodes/proxy`, plus `list
-#     nodes` unless auditLog.nodeNames pins the nodes. Names the person at the DEFAULT
-#     verbosity: nothing to enable, no OAuth roll. Its cost is stated at `source` below.
-#   pod-log (deprecated, removal tracked in #321) — a Role on `pods/log` in ONE namespace,
-#     never a ClusterRole: cluster-wide it would read EVERY pod's logs — tokens, connection
-#     strings, customer data. It NEEDS authLogLevel.enabled=true TO SEE ANYTHING — measured:
-#     zero occurrences of "succeeded for login" until the level is Debug — and that write
-#     lives on a separate identity. The Role and RoleBinding land in a namespace the chart
-#     does not own: an ArgoCD Application shows them outside its destination, and a policy
-#     forbidding writes to `openshift-*` rejects them.
-#
-# ON by default since chart 0.14.0, with audit-log as its source since 0.52.0: the Users tab's login
-# columns need it. Set false where the nodes/proxy grant is unacceptable.
+# Grants the dashboard get nodes/proxy, plus list nodes unless auditLog.nodeNames is set.
+# This is read access to everything the kubelet serves over GET on those nodes, including
+# other containers' logs and the journal. Set enabled=false if that grant is unacceptable.
+# Audit capture names the person at default OAuth verbosity, with no OAuth rollout.
+# It records allow/deny/error, but no LDAP result code or AD sub-code (such as account locked).
+# First read backfills available rotated files within retentionDays; pin nodeNames to narrow RBAC.
+# Stored pod-log rows and their causes remain readable and are linked to matching audit events.
+# See docs/AUDIT_LOG_CAPTURE.md for the local/remote grant and worked example.
 loginCapture:
   enabled: true
-
-  # WHICH LOG TO READ. Two sources, and the whole point of the second is what it does not need:
-  #
-  #   pod-log     (deprecated, #321) the oauth-server pods' logs, through a Role in
-  #               openshift-authentication on `pods` and `pods/log`. Names a person ONLY at spec.logLevel: Debug on the
-  #               authentication operator CR (authLogLevel below), which rolls the OAuth server —
-  #               a login outage at one replica — and history dies with every pod. What it has that
-  #               the audit log does not: the LDAP result code and AD sub-code behind a refusal.
-  #   audit-log   /var/log/oauth-server/audit.log on the control-plane nodes, read through the API
-  #               server's node proxy (what `oc adm node-logs --path=oauth-server/audit.log` does).
-  #               Written at every audit profile but None, at the DEFAULT verbosity: no Debug, no
-  #               roll, no outage, and a first read backfills as far back as the rotated files
-  #               reach (audit-log-maxsize 100 MB x maxbackup 10 — by volume, not by days; one lab
-  #               cluster held sixteen months). It records allow/deny/error and the username,
-  #               never a cause. The identity provider is on the path for browser logins and is
-  #               resolved from the User's Identity otherwise, so a CLI kubeadmin login is still
-  #               labelled break-glass through htpasswdProviders.
-  #
-  # THE COST OF audit-log, STATED: the grant is a ClusterRole with `get` on `nodes/proxy`, which
-  # is READ ACCESS TO EVERYTHING THE KUBELET SERVES OVER GET on those nodes — every container's
-  # logs on them (/containerLogs), the kube-apiserver and openshift-apiserver audit logs, the
-  # journal — and `list nodes` to find the control-plane nodes. That is categorically wider than
-  # a namespaced pods/log Role, and it is a standing capability.
-  #
-  # IT IS NEVERTHELESS THE DEFAULT, by decision (2026-09-23). Capturing who logged in is what this
-  # feature is FOR, and the audit log is the only source that does it without raising the OAuth
-  # server's verbosity — which rolls it, a login outage at one replica. The previous default paired
-  # `enabled: true` with `source: pod-log` while `authLogLevel` stayed off, so a plain install
-  # captured no named login at all: the chart shipped a feature switched on and unable to work.
-  # Between a wide read-only grant an operator can see and narrow, and a feature that silently does
-  # nothing, the grant is the honest choice. TURN IT OFF with `enabled: false` if the grant is
-  # unacceptable — that is the override, not a source that cannot deliver.
-  #
-  # NARROW IT with auditLog.nodeNames below (resourceNames on nodes/proxy, and no list at all).
-  # That is the recommended production shape: name the control-plane nodes and the cluster-wide
-  # `list` disappears entirely.
-  #
-  # HOW IT MEETS authLogLevel: with source audit-log, Debug is unnecessary. The chart REFUSES
-  # source=audit-log together with authLogLevel.enabled=true — it will not roll the OAuth server
-  # as a side effect of a read setting — and the retirement order is the README's two-step:
-  #   1. loginCapture.source=audit-log  authLogLevel.manage=true   authLogLevel.enabled=false
-  #      (the Job converges the cluster to Normal; one last roll)
-  #   2. authLogLevel.manage=false once the rollout has finished.
-  # The audit log is the authoritative record from then on; pod-log rows already stored are kept,
-  # and an audit event that corresponds to one is linked to it rather than recorded twice.
-  #
-  # DEPRECATION: `pod-log` and the whole `authLogLevel` Job machinery are on their way out — the
-  # audit log is the supported path. Tracked in #321 so the removal is a decision, not a drift.
-  #
-  # HOW THE AUDIT PATH WORKS end to end — the node-proxy request, what it needs on a REMOTE cluster
-  # and which chart grants it, what counts as a login, and a worked example you can run against the
-  # lab's mock cluster: docs/AUDIT_LOG_CAPTURE.md
+  # The only supported source. Old pod-log values fail with migration guidance.
   source: audit-log
 
   auditLog:
@@ -1636,10 +1575,6 @@ loginCapture:
     # produced allows and denies through the challenging client; a service identity's failures are
     # not personnel events either, so the whole identity is dropped, every decision of it.
     ignoreIdentityPatterns: ["ou=TrustedApplications"]
-
-  # Where the oauth-server runs. Only change this if your cluster is unusual; it is the fixed
-  # namespace OpenShift installs the OAuth server into.
-  namespace: openshift-authentication
 
   # Provider NAMES that are local HTPasswd accounts rather than directory identities.
   #
@@ -1713,119 +1648,6 @@ clusterAccess:
   # failing. Pointless to grant when `group` is set, and the chart does not force the pairing because
   # an operator may want discovery available as a fallback.
   discoverFromOAuth: true
-
-# ---------------------------------------------------------------------------
-# DEPRECATED — oauth-server log verbosity  (OAuth Debug, pod-log source only)
-# ---------------------------------------------------------------------------
-# Login capture reads the oauth-server AUDIT LOG by default (`loginCapture.source: audit-log`),
-# which names the person at the default verbosity: nothing here is needed for it. This stanza raises
-# the OAuth server to Debug for the deprecated pod-log source, and remains only to move a cluster
-# left at Debug back to Normal (the two-step below). Do not enable it on a new install.
-# Removal: #321.
-#
-# The oauth-openshift server's POD LOG only names the person logging in when the AUTHENTICATION
-# OPERATOR CR — `authentications.operator.openshift.io/cluster` — has `spec.logLevel: Debug`.
-#
-# NOT the OAuth CR. `oauth.config.openshift.io/cluster` is the object that holds the identity
-# providers, and this feature never touches it; there is also a THIRD, one word apart:
-# `authentications.config.openshift.io/cluster`, which holds `type`/`serviceAccountIssuer`.
-# And within the operator CR, `logLevel` (the operand's verbosity) is not `operatorLogLevel`
-# (the operator's own) — patching the latter would change nothing this needs. At `Normal` the line
-# is not emitted at all — measured: zero occurrences of "succeeded for login" until this is on. So
-# this section is the prerequisite for the pod-log source, and nothing more.
-#
-# TWO SWITCHES, ON PURPOSE:
-#
-#   manage: false            nothing renders, no RBAC, this chart never touches the cluster's setting
-#   manage: true  enabled: t a hook Job sets Debug
-#   manage: true  enabled: f the same Job sets Normal  <- this is what makes "turn it off" work
-#
-# Helm does not run a Job you merely stopped rendering, so a one-way enable Job would strand the
-# cluster in Debug the moment somebody flipped the flag back and saw nothing happen.
-#
-# `manage: true` is the operator DECLARING THAT THIS CHART OWNS the cluster's log level. That is why
-# it defaults to false: opting in is what transfers ownership, and the uninstall revert below then
-# has the standing to put it back.
-#
-# Both stay false under the chart's on-by-default rule (0.14.0), on purpose: the Debug level is a
-# cluster-wide write that rolls the OAuth server, and the oauth-server audit log
-# (`loginCapture.source: audit-log`, the default since 0.52.0) has replaced it as the way login
-# lines are obtained. This block serves only the deprecated pod-log source and the move of a cluster
-# left at Debug back to Normal; its removal is tracked in #321.
-authLogLevel:
-  manage: false
-  enabled: false
-
-  # ⚠️  CHANGING THIS ROLLS THE OAUTH SERVER, WHICH IS A LOGIN OUTAGE ON A SINGLE-REPLICA CLUSTER.
-  # The authentication operator replaces deploy/oauth-openshift when logLevel changes; until the new
-  # pod is Ready, `authentication` reports "OAuthServerDeploymentAvailable: no oauth-openshift pods
-  # available on any node" and logins fail. Measured on a 1-replica CRC cluster: the replacement pod
-  # sat Pending (node at 91% CPU requests) and a second application watching the same cluster logged
-  # `HTTP 503 on /apis/user.openshift.io/v1/groups` while it happened.
-  #
-  # Check the blast radius first, and use a maintenance window if the answer is 1:
-  #   oc get deploy oauth-openshift -n openshift-authentication -o jsonpath='{.spec.replicas}{"\n"}'
-  #
-  # This applies to turning it OFF as much as ON — both directions are a logLevel change.
-
-  # Puts the level back to Normal on `helm uninstall`, via a pre-delete Job.
-  #
-  # LEAVE THIS ON. Without it, removing the dashboard leaves the OAuth server naming every person
-  # who authenticates — along with their LDAP DN and the bind filter — with nothing left watching
-  # the logs and nobody aware it is happening. The one thing that would have told you is the thing
-  # you just uninstalled.
-  revertOnUninstall: true
-
-  # WHAT DEBUG ACTUALLY EXPOSES, so this is a decision and not a shrug: the lines carry the username
-  # of everyone who authenticates, their resolved LDAP DN, and the bind filter used. Anyone who can
-  # read pod logs in openshift-authentication can read them. Turn it off when the capture is not
-  # needed; that is what the toggle is for.
-
-  # `oc` is all the Jobs need, and this is the IN-CLUSTER imagestream every OpenShift cluster ships
-  # — not registry.redhat.io.
-  #
-  # MEASURED: `registry.redhat.io/openshift4/ose-cli:latest` was the first choice and it failed here
-  # with ErrImagePull ("copying config: context canceled") after 40s. It needs registry.redhat.io
-  # credentials, it is a large image, and `:latest` is unpinned — three ways for a prerequisite Job
-  # to fail on somebody else's cluster. The internal imagestream is already mirrored by the release
-  # payload, so there is nothing to authenticate and usually nothing to pull.
-  #
-  # OpenShift-specific, deliberately: this whole section patches an OpenShift operator CR, so it has
-  # no meaning on plain Kubernetes. Override it if your cluster mirrors elsewhere.
-  image:
-    repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
-    tag: latest
-    pullPolicy: IfNotPresent
-
-  # How long to wait for the operator to roll the oauth pods after the patch.
-  #
-  # The Job does NOT use `oc rollout status` for this, and that is measured rather than cautious: on
-  # the reference cluster it returned "successfully rolled out" about THIRTY SECONDS BEFORE the
-  # rollout began, because the old ReplicaSet was still current and complete at that moment. The Job
-  # polls the Deployment's observedGeneration and available/updated replicas instead.
-  #
-  # A timeout here is NOT a failure — the patch has landed, which is the Job's actual work, and the
-  # rollout is the operator's to finish. Failing would fail `helm upgrade` over somebody else's slow
-  # reconcile.
-  waitSeconds: 180
-
-  # Wall clock on the whole attempt, so a Job that cannot reach the API server cannot hold up an
-  # upgrade indefinitely. Must stay above waitSeconds.
-  activeDeadlineSeconds: 300
-
-  # Deliberately short. An uninstall must not hang: a cluster left in Debug is fixable by hand, a
-  # wedged `helm uninstall` is not.
-  revertDeadlineSeconds: 120
-
-  backoffLimit: 2
-
-  resources:
-    requests:
-      cpu: 10m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi
 
 # ---------------------------------------------------------------------------
 # Networking

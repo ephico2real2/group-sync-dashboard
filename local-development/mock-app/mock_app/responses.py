@@ -262,15 +262,12 @@ def oauth_object(oauth: OAuthCR) -> dict:
     }
 
 
-def pod_item(name: str, phase: str) -> dict:
-    return {"apiVersion": "v1", "kind": "Pod",
-            "metadata": {"name": name}, "status": {"phase": phase}}
 
 
 def status_json(code: int, reason: str, message: str) -> dict:
     """A Kubernetes Status body (what a real API server returns on an error).
 
-    Read by kube.py's _log_read_refused (``.reason``, ``.message``) on a pod-log >=400.
+    Shared by the mock's forbidden and absent-resource responses.
     """
     return {
         "apiVersion": "v1",

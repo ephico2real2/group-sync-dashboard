@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Twenty-six specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Twenty-seven specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The twenty-six specifications
+## The twenty-seven specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|

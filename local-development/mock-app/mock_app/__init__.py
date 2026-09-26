@@ -1,7 +1,7 @@
 """gsd-mock — a fixture-driven mock of the OpenShift API surface group-sync-dashboard reads.
 
 Stands up exactly the request surface ``gsd/kube.py`` issues (the ~16 read endpoints, the two
-node-log-proxy shapes, the pod-log stream, and the SubjectAccessReview POST) from a declarative
+node-log-proxy shapes and the SubjectAccessReview POST) from a declarative
 YAML fixture, over real TLS on an ephemeral CA. See the DESIGN doc and README for the contract.
 """
 

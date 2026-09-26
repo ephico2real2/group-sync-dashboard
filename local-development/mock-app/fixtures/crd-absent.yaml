@@ -34,10 +34,6 @@ nodes:
 oauth:
   crdAbsent: true            # endpoint (k) answers a plain 404
 
-oauthPods:
-  namespace: openshift-authentication
-  entries: []
-
 auditLog:
   node: master-0
   dir: oauth-server

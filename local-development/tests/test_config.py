@@ -575,9 +575,9 @@ class TestIdleTimeout:
 class TestLoginCaptureSource:
     """D1: the source is a two-value enum with a safe fallback, and the audit settings are lists."""
 
-    def test_the_default_is_pod_log_with_the_measured_defaults(self, tmp_path):
+    def test_the_default_is_audit_log_with_the_measured_defaults(self, tmp_path):
         s = load_settings(write(tmp_path, BASE))
-        assert s.login_capture_source == "pod-log"
+        assert s.login_capture_source == "audit-log"
         assert s.login_capture_audit_node_selector == "node-role.kubernetes.io/master="
         assert s.login_capture_audit_node_names == ()
         assert s.login_capture_audit_providers == ()
@@ -616,12 +616,10 @@ class TestLoginCaptureSource:
             load_settings(write(tmp_path, BASE + "loginCaptureAuditProviders: [1, 2]\n"))
         assert load_settings(write(tmp_path, BASE + "loginCaptureAuditIgnoreIdentityPatterns: ''\n")).login_capture_audit_ignore_identity_patterns == ()
 
-    def test_junk_falls_back_to_pod_log_with_a_warning(self, tmp_path, caplog):
-        import logging
-        with caplog.at_level(logging.WARNING):
-            s = load_settings(write(tmp_path, BASE + "loginCaptureSource: both\n"))
-        assert s.login_capture_source == "pod-log"
-        assert "loginCaptureSource" in caplog.text and "both" in caplog.text
+    @pytest.mark.parametrize("source", ("pod-log", "both", "garbage"))
+    def test_retired_or_unknown_source_is_refused(self, tmp_path, source):
+        with pytest.raises(ConfigError, match="audit-log"):
+            load_settings(write(tmp_path, BASE + f"loginCaptureSource: {source}\n"))
 
     def test_the_environment_wins_over_the_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GSD_LOGIN_CAPTURE_SOURCE", "audit-log")

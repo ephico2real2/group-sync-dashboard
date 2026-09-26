@@ -800,27 +800,11 @@ elect a leader:
 | core (`""`) | `namespaces` | get, list — only when `rbac.namespaces` (the namespace report attests absence with it) |
 | `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
 
-A third role, on the dashboard's own ServiceAccount and only when `loginCapture.source: audit-log`
-(`charts/group-sync-dashboard/templates/login-capture-rbac.yaml#nodes/proxy`): `get nodes/proxy`
-(optionally `resourceNames`) and `list nodes`. Read-only and cluster-wide — read access to everything
-the kubelet serves over GET on those nodes — which is why it is the one grant in this chart whose
-default is off for breadth rather than for writing.
-
-A **separate** ClusterRole, on a ServiceAccount the dashboard never uses, is created only when
-`authLogLevel.manage=true`:
-
-| API group | Resources | Verbs |
-|---|---|---|
-| `operator.openshift.io` | `authentications`, `resourceNames: [cluster]` | get, **patch** |
-| `apps` | `deployments` | get |
-
-That is the chart's only *write* outside its own namespace — the oauth-proxy's
-`system:auth-delegator` binding is a read-path grant, not a write — and it is deliberately not
-reachable by the dashboard process: the two hook Jobs that enable and revert the OAuth server's
-`spec.logLevel` are its only consumers. Pinning `resourceNames` matters — unpinned it would be patch
-on every object in the group, which includes the cluster's whole authentication configuration.
-`resourceNames` IS honoured for `patch`, unlike `create` and `list` where the name is not in the
-request path.
+The login-capture ClusterRole grants `get nodes/proxy`, optionally pinned by `resourceNames`,
+and `list nodes` only when names are not pinned. It is enabled by `loginCapture.enabled` (true
+by default) and reads audit logs at default OAuth verbosity. It grants no pods/log access.
+The auth-loglevel Jobs, identity and authentication-operator patch grant have been removed.
+See the chart README migration note for the manual Debug-to-Normal step.
 
 No `watch`, and no write verb on anything the dashboard reports on. The Lease is its own
 coordination object; it is the only thing in the cluster the ServiceAccount can change.

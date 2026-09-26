@@ -26,10 +26,3 @@ nodes:
     - {name: worker-0, labels: {"node-role.kubernetes.io/worker": ""}}
     - {name: worker-1, labels: {"node-role.kubernetes.io/worker": ""}}
   forbidden: false
-
-oauthPods:
-  namespace: openshift-authentication
-  entries:
-    - {name: oauth-openshift-a, phase: Running}
-    - {name: oauth-openshift-b, phase: Running}
-    - {name: oauth-openshift-c, phase: Running}

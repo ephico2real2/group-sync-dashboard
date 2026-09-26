@@ -18,8 +18,6 @@ KEPT_OFF = {
     "securityContext.allowPrivilegeEscalation": "a hardening posture, not a feature switch",
     "trustedCA.existingConfigMap.enabled": "needs the name of a ConfigMap the operator supplies",
     "ingress.enabled": "exclusive with the Route, which the chart renders by default",
-    "authLogLevel.manage": "a cluster-wide write that rolls the OAuth server; the audit log replaces it",
-    "authLogLevel.enabled": "same decision as manage",
     "oauthProxy.skipProviderButton": "operator decision 2026-09-05: people log in from the OpenShift screen",
     "oauthProxy.requestLogging": "review finding: oauth-proxy logs the full request URI, the OAuth callback code included",
     "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
@@ -164,7 +162,8 @@ def test_the_chart_readme_login_capture_cells_are_the_values_defaults() -> None:
     values = yaml.safe_load((REPO / "charts" / "group-sync-dashboard" / "values.yaml").read_text())
     readme = (REPO / "charts" / "group-sync-dashboard" / "README.md").read_text()
     rows = {m[1]: m[2] for m in re.finditer(r"^\| `(loginCapture\.[^`]+)` \| `([^`]*)` \|", readme, re.M)}
-    assert len(rows) >= 9, sorted(rows)
+    # Eight since #321 removed loginCapture.namespace; a floor, so a table that loses rows still fails.
+    assert len(rows) >= 8, sorted(rows)
 
     def shown(value):
         if isinstance(value, bool):

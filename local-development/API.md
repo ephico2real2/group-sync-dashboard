@@ -580,9 +580,10 @@ the reader's own name is served, and the refusal for any other name comes before
 
 ### `GET /api/clusters/{cluster_id}/logins`
 
-Login attempts against this cluster's oauth-server: who, when, and why a failure failed. Read from the
-oauth-server pod log, which names the person only at `spec.logLevel: Debug` on the authentication
-**operator** CR (`authentications.operator.openshift.io/cluster` — not the OAuth CR).
+Login attempts against this cluster's oauth-server. The live reader is audit-log only: no
+OAuth Debug setting or pod-log read. Existing pod-log rows and their LDAP causes remain readable.
+Top-level `source` is audit-log; each attempt's `source` still identifies its original record.
+New failures report `status_code` and `error_message`, without LDAP result codes or AD sub-codes.
 
 | parameter | default | meaning |
 |---|---|---|
@@ -590,7 +591,7 @@ oauth-server pod log, which names the person only at `spec.logLevel: Debug` on t
 | `user` | all | the username as **typed**, which may match no `User` object and no group member — that mismatch is a finding, not an error |
 | `limit` | `200` | attempts returned, newest first. `truncated` reports whether older ones were dropped; `total` and `summary` always describe the whole retained record, never the page |
 
-**`rejected` — shown as "no match" — covers two different things and cannot separate them.** The identity provider's search
+**Historical `rejected` rows — shown as "no match" — cover two different things and cannot separate them.** The identity provider's search
 filter carries the login-gate group, so a real person who is not in that group and a username that does
 not exist produce the same `no entries matching` line. Telling them apart would need a directory read
 this application does not have.
@@ -599,13 +600,14 @@ this application does not have.
 
 | field | meaning |
 |---|---|
-| `capture_started_at` | when watching began. Stable — set once by the first successful read. May be *later* than `retained_since`, because the first read looks back an hour |
+| `capture_started_at` | when watching began. Stable — set once by the first successful read. May be later than `retained_since`, because audit backfill reads older rotated files |
 | `retained_since` | the oldest attempt still kept. Moves as retention ages rows out |
 | `last_read_at` | liveness. If this stops advancing, capture has stopped |
 | `read_interval_seconds` | how often `last_read_at` is *expected* to advance — capture rides the poll thread, so this is the poll interval. Sent because the browser is the only place that can judge whether a read is overdue and the only place that knows what a reader is looking at, but it has no way to learn the cadence: a threshold hardcoded in the page would call a 900s poll stalled every cycle |
 
-Nothing before capture began exists to fetch — the log dies with its pod — so **an empty `attempts` is a
-statement about the window, never proof that nobody logged in.**
+A first audit read backfills available rotated files within retention. **An empty `attempts` is a
+statement about that window, never proof that nobody logged in.** Historical pod-log rows keep their
+original observation window and causes. No migration deletes them; normal retention still applies.
 
 Every username is recorded, successful or not, member or not. Per attempt: `known_user` false marks an
 account in **no synced group**, which is the most valuable row here; `has_history` true separates

@@ -20,7 +20,6 @@ from . import errors
 from .auditlog import AuditServer, parse_range
 from .fixture import Fixture
 from .inspect import RequestLog, render_page, state_json
-from .podlog import PodLogServer
 from .responses import (
     binding_item,
     group_item,
@@ -32,7 +31,6 @@ from .responses import (
     oauth_object,
     operator_config_item,
     paginate,
-    pod_item,
     user_item,
 )
 from .sar import SarAuthorizer
@@ -140,7 +138,6 @@ def build_app(fixture: Fixture) -> FastAPI:
     state.fixture = fixture
     state.sar = SarAuthorizer(fixture)
     state.audit = AuditServer(fixture.audit)
-    state.podlog = PodLogServer(fixture.pod_log)
     state.reqlog = RequestLog()
 
     def authorized(request: Request) -> bool:
@@ -300,30 +297,6 @@ def build_app(fixture: Fixture) -> FastAPI:
             return errors.crd_absent_404(OAUTH_API)
         return JSONResponse(oauth_object(state.fixture.oauth))
 
-    # ── (l) OAuth-server pods ────────────────────────────────────────────────────────────────
-    @app.get("/api/v1/namespaces/{namespace}/pods")
-    def pods(request: Request, namespace: str):
-        if (r := gate(request)) is not None:
-            return r
-        request.state.endpoint = "l"
-        pods_fx = state.fixture.oauth_pods
-        if pods_fx.forbidden:
-            return errors.forbidden_403(f"/api/v1/namespaces/{namespace}/pods")
-        entries = pods_fx.entries if namespace == pods_fx.namespace else ()
-        items = [pod_item(p["name"], p["phase"]) for p in entries]
-        return list_response(request, items, "PodList", "l")
-
-    # ── (m) Pod log (TEXT stream) ────────────────────────────────────────────────────────────
-    @app.get("/api/v1/namespaces/{namespace}/pods/{pod}/log")
-    def pod_log(request: Request, namespace: str, pod: str):
-        if (r := gate(request)) is not None:
-            return r
-        request.state.endpoint = "m"
-        body = state.podlog.body()
-        # timestamps=true is what makes each line usable; the fixture already supplies the
-        # RFC3339 prefix, so we simply return the text.
-        return PlainTextResponse(content=body, media_type="text/plain; charset=utf-8")
-
     # ── (n)+(o) Node-log proxy ───────────────────────────────────────────────────────────────
     @app.api_route("/api/v1/nodes/{node}/proxy/logs/{subpath:path}",
                    methods=["GET", "HEAD"])
@@ -425,7 +398,6 @@ def build_app(fixture: Fixture) -> FastAPI:
         state.fixture = fresh
         state.sar = SarAuthorizer(fresh)
         state.audit = AuditServer(fresh.audit)
-        state.podlog = PodLogServer(fresh.pod_log)
         return JSONResponse({"reloaded": True, "summary": fresh.summary()})
 
     @app.get("/healthz")

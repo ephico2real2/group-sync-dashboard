@@ -56,6 +56,35 @@ text cannot exist on this baseline. The current-tree checker does not count them
 change those markers to `block`, reconcile Old text against the merged #322 metadata, and rerun
 all checks. A passing current-tree check must not be represented as validating those future edits.
 
+### Review round 1
+
+PR #373 decisions supplied by the orchestrator; review sources are ../tmp/review-ob1lite.txt
+and ../tmp/review-grok.txt. These decisions amend the executable blocks against daf22e2.
+
+| Finding | Seat | Decision | Reason |
+|---|---|---|---|
+| A: six deleted-symbol citations in docs/DESIGN_login_capture.md | OB1-lite | ACCEPT; four edits, Blocks 136–139 | Point live anchors at the audit reader and mark retired loop/window/guard names as historical text. |
+| B: README loginCapture table floor | OB1-lite | ACCEPT; Block 140 | Removing namespace leaves eight rows; lower the floor from 9 to 8. |
+| C / C8: login envelope source assertion | OB1-lite / Grok | ACCEPT; Block 141 | Top-level source is audit-log; retain nonempty stored pod-log row assertions. The baseline ledger entries below are corrected. |
+| D: disabled UI card | OB1-lite | ACCEPT; Block 142 | Assert no authLogLevel switch and retain the spec.logLevel/default-verbosity explanation. |
+| E / N1: login_event retention coverage | OB1-lite | ACCEPT; folded into Block 125 | Pin normal pruning, zero retention and standby behavior through the audit-only poller; the old loop test file is deleted. |
+| Empty else-if clause in login-capture-rbac.yaml | Grok | ACCEPT; folded into Block 4 | Delete the retired clause and explicitly preserve a valid closing `{{- end }}`. The supplied Block 4 already included the clause in Old text; the closing structure is now part of the payload too. |
+| N2: stale pod-reader comment at local-development/gsd/kube.py:72–74 | OB1-lite | ACCEPT; folded into Block 17 | Remove the comment together with POD_API_TMPL, using baseline text rather than the review's post-apply anchor. |
+| C5: warning plus audit-log fallback | Grok | REJECT; keep app refusal; DEBT-ACCEPTED explicit pod-log crash-loop | a chart-driven pod can never read a pod-log ConfigMap (ConfigMaps render before Deployments, checksum/config rolls pods, no extraEnv); a fallback would 403 on a grant the old chart never made; the crash-loop needs an operator to ask for pod-log explicitly, and that is accepted. |
+
+### Phase 2 verification correction
+
+| Finding | Seat | Decision | Reason |
+|---|---|---|---|
+| `git diff --check`: new blank lines at EOF in mock fixtures paging.yaml:29 and reference.yaml:205 | Codex implementation verification | Fold separator removal into Blocks 51 and 55; regenerate Block 56 payload | Deleting a final fixture section left its preceding blank line. Keep the deployed ConfigMap's reference.yaml byte-identical after trimming the separator. |
+
+Browser execution is blocked by this session's environment (Chromium Mach-port registration and
+local socket binding are denied). The supplied Python lacks cryptography; network installation
+fails because pypi.org cannot resolve. Cached cryptography/cffi wheels were subsequently recovered
+into scratch and exposed via PYTHONPATH for the same interpreter. Environment failures are not
+reasons to weaken application tests or change the specification's behavior.
+Measured commands, summaries and evidence are recorded in ../tmp/phase2-report.md.
+
 ## Measured scope and design
 
 The required first search was `git grep -n -E 'authLogLevel|auth_log_level|pod-log|pod_log|podlog'`.
@@ -553,9 +582,9 @@ That live result is **not measured** here. Restoring Normal is an operator actio
 | local-development/tests/test_ui.py:10443 |         assert [p for p in self.POD_LOG if p in text] == [], "a pod-log sentence under the audit-log source" | kept | Edit live-source caveat expectations; keep historical rows, outcomes and display coverage. |
 | local-development/tests/test_ui.py:10461 |         off_audit, off_pod = render("audit-log", False), render("pod-log", False) | edited | Edit live-source caveat expectations; keep historical rows, outcomes and display coverage. |
 | local-development/tests/test_ui.py:10462 |         rows_audit, rows_pod = render("audit-log", True), render("pod-log", True) | edited | Edit live-source caveat expectations; keep historical rows, outcomes and display coverage. |
-| local-development/tests/test_users_tab_logins.py:316 |     def test_pod_log_is_the_default_source_and_says_what_it_cannot_see(self, tmp_path): | kept | Keep stored-history API coverage and kinds/cause semantics. |
-| local-development/tests/test_users_tab_logins.py:318 |         assert body["source"] == "pod-log" | kept | Keep stored-history API coverage and kinds/cause semantics. |
-| local-development/tests/test_users_tab_logins.py:321 |         assert all(r["source"] == "pod-log" and r["kind"] == "credential" for r in body["attempts"]) | kept | Keep stored-history API coverage and kinds/cause semantics. |
+| local-development/tests/test_users_tab_logins.py:316 |     def test_pod_log_is_the_default_source_and_says_what_it_cannot_see(self, tmp_path): | edited | Update the live envelope to audit-log while keeping nonempty stored pod-log rows and their credential kind (Review round 1 C). |
+| local-development/tests/test_users_tab_logins.py:318 |         assert body["source"] == "pod-log" | edited | Update the live envelope to audit-log while keeping nonempty stored pod-log rows and their credential kind (Review round 1 C). |
+| local-development/tests/test_users_tab_logins.py:321 |         assert all(r["source"] == "pod-log" and r["kind"] == "credential" for r in body["attempts"]) | edited | Update the live envelope to audit-log while keeping nonempty stored pod-log rows and their credential kind (Review round 1 C). |
 | local-development/tests/test_values_defaults.py:21 |     "authLogLevel.manage": "a cluster-wide write that rolls the OAuth server; the audit log replaces it", | edited | Remove the retired surface or replace its values, fixture, test expectation or operator guidance; exact replacement is in implementation blocks. |
 | local-development/tests/test_values_defaults.py:22 |     "authLogLevel.enabled": "same decision as manage", | edited | Remove the retired surface or replace its values, fixture, test expectation or operator guidance; exact replacement is in implementation blocks. |
 | local-development/tests/test_values_defaults.py:99 |     &#96;authLogLevel.enabled&#96; and &#96;trustedCA.existingConfigMap.enabled&#96; are told apart.""" | kept | Unchanged compatibility assertion, audit behavior or explicitly historical incident context in a file otherwise edited. |
@@ -1086,11 +1115,13 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "gsd.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
 ```
 
 New text:
 
 ```text
+{{- end }}
 ```
 
 ### Block 5 — charts/group-sync-dashboard/templates/login-capture-rbac.yaml
@@ -2061,6 +2092,10 @@ Baseline: local-development/gsd/kube.py:76; later blocks for a file apply after 
 Old text:
 
 ```python
+# The oauth-server's own pods, and their logs. Read for ONE purpose: the lines naming who logged in,
+# which exist only at `spec.logLevel: Debug` on the authentication OPERATOR CR — not the OAuth CR. See
+# docs/LOGIN_CAPTURE_QUICKCHECK.md.
+#
 # Templated on the namespace because it is a chart value (`loginCapture.namespace`), not because it
 # varies in practice: OpenShift installs the OAuth server into openshift-authentication and the grant
 # the chart creates is a Role in that one namespace.
@@ -3002,6 +3037,7 @@ Baseline: local-development/mock-app/fixtures/paging.yaml:30; later blocks for a
 Old text:
 
 ```text
+
 oauthPods:
   namespace: openshift-authentication
   entries:
@@ -3092,6 +3128,7 @@ Baseline: local-development/mock-app/fixtures/reference.yaml:214; later blocks f
 Old text:
 
 ```text
+
 podLog:
   namespace: openshift-authentication
   lines:
@@ -3236,17 +3273,7 @@ New text:
 ```text
 apiVersion: v1
 data:
-  reference.yaml: "# reference.yaml \u2014 a small reference cluster that reproduces the four measured personas.\n#\n# The SAR oracle (DESIGN \xA75.4), which test_sar_personas.py asserts:\n#\n#   persona      fixture RBAC                                   list crb (wide)  update crb (usage)\n#   kubeadmin    cluster-admin CRB                              ALLOW            ALLOW\n#   dana.lee     cluster-reader CRB (read verbs, no update)     ALLOW            DENY\n#   lateef.o     no admin CRB                                   DENY             DENY\n#   jane.smith   in a group NAMED \"...-cluster-admin\" but with  DENY             DENY\n#                NO ClusterRoleBinding behind it (the decoy)\n#\n# The decoy is the point: a suggestively-named group must NOT grant the tier \u2014 only a real\n# (Cluster)RoleBinding reaching one of spec.groups/spec.user does.\n\nmeta:\n  clusterName: mock-openshift\n  token: \"mock-token-reference\"\n\ngroupsyncs:\n  - name: ldap-sync\n    namespace: group-sync-operator\n\
-    \    generation: 3\n    schedule: \"*/30 * * * *\"\n    providers:\n      - {name: acme-ldap, kind: rfc2307, filter: \"(objectClass=groupOfNames)\"}\n    lastSyncSuccessTime: \"2026-09-14T08:00:00Z\"\n    conditions:\n      - {type: ReconcileSuccess, lastTransitionTime: \"2026-09-14T08:00:00Z\"}\n  - crdAbsent: false\n\ngroups:\n  # Bound to cluster-admin via cluster-admin-crb \u2192 grants kubeadmin the wide + usage tiers.\n  - name: app-ocp-rbac-demo-cluster-admin\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    ldapUid: \"cn=ocp-admins,ou=Groups,dc=acme,dc=com\"\n    users: [kubeadmin]\n  # Bound to cluster-reader via cluster-reader-crb \u2192 dana.lee gets wide but not usage.\n  - name: cluster-readers\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [dana.lee]\n  # THE DECOY: name ends \"-cluster-admin\" but nothing binds it. jane.smith must stay self.\n  - name: platform-team-cluster-admin\n    syncProvider: acme-ldap\n \
-    \   syncTime: \"2026-09-14T08:00:00Z\"\n    users: [jane.smith]\n  # An ordinary application group with a namespaced viewer grant to a direct user.\n  - name: acme-app-viewers\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [lateef.o]\n  # An empty group (the API returns users: null) \u2014 exercises the null-users branch.\n  - name: empty-team\n    syncProvider: acme-ldap\n    users: null\n  # A legacy group carrying a non-person service account; the target of the hand-made\n  # (unmanaged) binding below. Deliberately holds NO persona, so it cannot perturb the oracle.\n  - name: legacy-ops\n    syncProvider: acme-ldap\n    users: [svc-legacy]\n  # The reporting-auditor group (rbacAuditors, #100): bound to the report-auditor ClusterRole below,\n  # which grants `list clusterrolebindings` \u2014 the wide-tier gate \u2014 so its members are AUDITORS (wide\n  # read-only, NOT usage). developer is a member, to test the auditor tier on the mock.\n  - name:\
-    \ app-ocp-rbac-demo-report-auditors\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [developer]\n\nusers:\n  entries:\n    - {name: kubeadmin,  fullName: \"Cluster Admin\", creationTimestamp: \"2026-01-01T00:00:00Z\",\n       identities: []}\n    - {name: dana.lee,   fullName: \"Dana Lee\",      creationTimestamp: \"2026-01-02T00:00:00Z\",\n       identities: [\"acme-ldap:dana.lee\"]}\n    - {name: lateef.o,   fullName: \"Lateef O.\",     creationTimestamp: \"2026-01-03T00:00:00Z\",\n       identities: [\"acme-ldap:lateef.o\"]}\n    - {name: jane.smith, fullName: \"Jane Smith\",    creationTimestamp: \"2026-01-04T00:00:00Z\",\n       identities: [\"acme-ldap:jane.smith\"]}\n    # The developer persona: member of the reporting-auditor group below, so it exercises the AUDITOR\n    # (wide read-only) tier \u2014 a member of a feature-granting group, for testing \"who belongs to it\".\n    - {name: developer,  fullName: \"Developer\",     creationTimestamp:\
-    \ \"2026-01-05T00:00:00Z\",\n       identities: [\"developer:developer\"]}\n  forbidden: false\n\nidentities:\n  entries:\n    - {userName: dana.lee,   creationTimestamp: \"2026-01-02T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: lateef.o,   creationTimestamp: \"2026-01-03T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: jane.smith, creationTimestamp: \"2026-01-04T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: developer,  creationTimestamp: \"2026-01-05T00:00:00Z\", providerPrefix: developer}\n  forbidden: false\n\nnamespaces:\n  entries:\n    # Two selector dimensions \u2014 company.net/mnemonic AND company.net/app-environment \u2014 mirroring the\n    # real crc-local convention (docs/DESIGN_reporting_selectors_snapshots_and_windows.md \xA76), so the\n    # multi-dimension selector (AND across dimensions, OR within one) is exercisable against the mock.\n    # `team` is kept on the first two so the single-label tests still hold.\n    - {name: acme-app,\
-    \ phase: Active, creationTimestamp: \"2026-01-02T00:00:00Z\",\n       labels: {\"team\": \"acme\", \"kubernetes.io/metadata.name\": \"acme-app\",\n                \"company.net/mnemonic\": \"acme\", \"company.net/app-environment\": \"prod\"}}\n    - {name: group-sync-operator, phase: Active, creationTimestamp: \"2026-01-01T00:00:00Z\",\n       labels: {\"team\": \"platform\",\n                \"company.net/mnemonic\": \"gso\", \"company.net/app-environment\": \"prod\"}}\n    - {name: demo-prod, phase: Active, creationTimestamp: \"2026-01-04T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"demo\", \"company.net/app-environment\": \"prod\"}}\n    - {name: demo-qa, phase: Active, creationTimestamp: \"2026-01-05T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"demo\", \"company.net/app-environment\": \"qa\"}}\n    - {name: beta-rnd, phase: Active, creationTimestamp: \"2026-01-06T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"beta\", \"company.net/app-environment\"\
-    : \"rnd\"}}\n    - {name: platform-prod, phase: Active, creationTimestamp: \"2026-01-07T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"klta\", \"company.net/app-environment\": \"prod\"}}\n    # Missing-dimension NEGATIVE case: mnemonic only, no app-environment \u2014 it must drop out of any\n    # two-dimension AND selection on app-environment (adversarial-review note, 2026-09-15).\n    - {name: gsd-shared, phase: Active, creationTimestamp: \"2026-01-08T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"gsd\"}}\n  forbidden: false\n\nroles:\n  clusterRoles:\n    - name: cluster-admin\n      rules:\n        - {verbs: [\"*\"], apiGroups: [\"*\"], resources: [\"*\"]}\n    - name: cluster-reader\n      rules:\n        # Read verbs only \u2014 deliberately NO `update`, which is what excludes the auditor\n        # (dana.lee) from the write-verb usage tier.\n        - {verbs: [get, list, watch], apiGroups: [\"*\"], resources: [\"*\"]}\n    # The reporting-auditor ClusterRole\
-    \ (chart renders <fullname>-report-auditor). Read-only get/list on\n    # identities and RBAC \u2014 `list clusterrolebindings` is what lifts a member to the wide (auditor) tier.\n    - name: group-sync-dashboard-report-auditor\n      rules:\n        - {verbs: [get, list], apiGroups: [\"user.openshift.io\"], resources: [\"users\", \"groups\"]}\n        - {verbs: [get, list], apiGroups: [\"rbac.authorization.k8s.io\"], resources: [\"roles\", \"rolebindings\", \"clusterroles\", \"clusterrolebindings\"]}\n  namespacedRoles:\n    - namespace: acme-app\n      name: viewer\n      rules:\n        - {verbs: [get, list], apiGroups: [\"\"], resources: [pods]}\n\nbindings:\n  clusterRoleBindings:\n    - name: cluster-admin-crb\n      roleRef: {kind: ClusterRole, name: cluster-admin}\n      subjects: [{kind: Group, name: app-ocp-rbac-demo-cluster-admin}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n    - name: cluster-reader-crb\n      roleRef: {kind: ClusterRole, name: cluster-reader}\n\
-    \      subjects: [{kind: Group, name: cluster-readers}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n    # A hand-made grant with no config-source label \u2192 the `unmanaged` finding the dashboard\n    # exists to surface; carries an operator-acknowledged exception annotation.\n    - name: handmade-reader-crb\n      roleRef: {kind: ClusterRole, name: cluster-reader}\n      subjects: [{kind: Group, name: legacy-ops}]\n      annotations: {\"rbac.ocp.io/unmanaged-exception\": \"reviewed 2026-09-10, temporary\"}\n    # Binds the auditor group to the report-auditor role \u2192 its members (developer) are wide-tier auditors.\n    - name: report-auditors-crb\n      roleRef: {kind: ClusterRole, name: group-sync-dashboard-report-auditor}\n      subjects: [{kind: Group, name: app-ocp-rbac-demo-report-auditors}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n  roleBindings:\n    - namespace: acme-app\n      name: viewer-rb\n      roleRef: {kind: Role, name: viewer}\n\
-    \      subjects: [{kind: User, name: lateef.o}]\n\noperatorConfigs:\n  namespaceConfigs:\n    - name: acme-nsconfig\n      conditions:\n        - {type: ReconcileSuccess, lastTransitionTime: \"2026-09-14T08:00:00Z\"}\n  groupConfigs: []\n  namespaceConfigsCrdAbsent: false\n  groupConfigsCrdAbsent: false\n\nnodes:\n  entries:\n    - {name: master-0, labels: {\"node-role.kubernetes.io/master\": \"\", \"node-role.kubernetes.io/control-plane\": \"\"}}\n    - {name: master-1, labels: {\"node-role.kubernetes.io/master\": \"\"}}\n    - {name: worker-0, labels: {\"node-role.kubernetes.io/worker\": \"\"}}\n  forbidden: false\n\noauth:\n  identityProviders:\n    - name: acme-ldap\n      ldapUrl: \"ldaps://openldap.acme.svc:636/dc=acme,dc=com?uid?sub?(&(uid=*)(memberOf=cn=ocp-admins,ou=Groups,dc=acme,dc=com))\"\n  forbidden: false\n  crdAbsent: false\n\nauditLog:\n  node: master-0\n  dir: oauth-server\n  malformed416: false\n  files:\n    - name: \"audit-2026-09-01T00-00-00.000.log\"     # a rotated\
-    \ backup (lumberjack form)\n      lines:\n        - {kind: session, decision: allow, user: dana.lee, at: \"2026-09-01T09:00:00.000000Z\", code: 302}\n    - name: audit.log                                # the live file\n      lines:\n        - {kind: credential, decision: allow, user: jane.smith, at: \"2026-09-03T10:15:27.234567Z\", code: 302, provider: acme-ldap}\n        - {kind: cli,        decision: deny,  user: lateef.o,   at: \"2026-09-03T10:16:01.000000Z\", code: 401}\n        - {kind: session,    decision: allow, user: dana.lee,   at: \"2026-09-03T10:17:44.500000Z\", code: 302}\n\n"
+  reference.yaml: "# reference.yaml \u2014 a small reference cluster that reproduces the four measured personas.\n#\n# The SAR oracle (DESIGN \xA75.4), which test_sar_personas.py asserts:\n#\n#   persona      fixture RBAC                                   list crb (wide)  update crb (usage)\n#   kubeadmin    cluster-admin CRB                              ALLOW            ALLOW\n#   dana.lee     cluster-reader CRB (read verbs, no update)     ALLOW            DENY\n#   lateef.o     no admin CRB                                   DENY             DENY\n#   jane.smith   in a group NAMED \"...-cluster-admin\" but with  DENY             DENY\n#                NO ClusterRoleBinding behind it (the decoy)\n#\n# The decoy is the point: a suggestively-named group must NOT grant the tier \u2014 only a real\n# (Cluster)RoleBinding reaching one of spec.groups/spec.user does.\n\nmeta:\n  clusterName: mock-openshift\n  token: \"mock-token-reference\"\n\ngroupsyncs:\n  - name: ldap-sync\n    namespace: group-sync-operator\n    generation: 3\n    schedule: \"*/30 * * * *\"\n    providers:\n      - {name: acme-ldap, kind: rfc2307, filter: \"(objectClass=groupOfNames)\"}\n    lastSyncSuccessTime: \"2026-09-14T08:00:00Z\"\n    conditions:\n      - {type: ReconcileSuccess, lastTransitionTime: \"2026-09-14T08:00:00Z\"}\n  - crdAbsent: false\n\ngroups:\n  # Bound to cluster-admin via cluster-admin-crb \u2192 grants kubeadmin the wide + usage tiers.\n  - name: app-ocp-rbac-demo-cluster-admin\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    ldapUid: \"cn=ocp-admins,ou=Groups,dc=acme,dc=com\"\n    users: [kubeadmin]\n  # Bound to cluster-reader via cluster-reader-crb \u2192 dana.lee gets wide but not usage.\n  - name: cluster-readers\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [dana.lee]\n  # THE DECOY: name ends \"-cluster-admin\" but nothing binds it. jane.smith must stay self.\n  - name: platform-team-cluster-admin\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [jane.smith]\n  # An ordinary application group with a namespaced viewer grant to a direct user.\n  - name: acme-app-viewers\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [lateef.o]\n  # An empty group (the API returns users: null) \u2014 exercises the null-users branch.\n  - name: empty-team\n    syncProvider: acme-ldap\n    users: null\n  # A legacy group carrying a non-person service account; the target of the hand-made\n  # (unmanaged) binding below. Deliberately holds NO persona, so it cannot perturb the oracle.\n  - name: legacy-ops\n    syncProvider: acme-ldap\n    users: [svc-legacy]\n  # The reporting-auditor group (rbacAuditors, #100): bound to the report-auditor ClusterRole below,\n  # which grants `list clusterrolebindings` \u2014 the wide-tier gate \u2014 so its members are AUDITORS (wide\n  # read-only, NOT usage). developer is a member, to test the auditor tier on the mock.\n  - name: app-ocp-rbac-demo-report-auditors\n    syncProvider: acme-ldap\n    syncTime: \"2026-09-14T08:00:00Z\"\n    users: [developer]\n\nusers:\n  entries:\n    - {name: kubeadmin,  fullName: \"Cluster Admin\", creationTimestamp: \"2026-01-01T00:00:00Z\",\n       identities: []}\n    - {name: dana.lee,   fullName: \"Dana Lee\",      creationTimestamp: \"2026-01-02T00:00:00Z\",\n       identities: [\"acme-ldap:dana.lee\"]}\n    - {name: lateef.o,   fullName: \"Lateef O.\",     creationTimestamp: \"2026-01-03T00:00:00Z\",\n       identities: [\"acme-ldap:lateef.o\"]}\n    - {name: jane.smith, fullName: \"Jane Smith\",    creationTimestamp: \"2026-01-04T00:00:00Z\",\n       identities: [\"acme-ldap:jane.smith\"]}\n    # The developer persona: member of the reporting-auditor group below, so it exercises the AUDITOR\n    # (wide read-only) tier \u2014 a member of a feature-granting group, for testing \"who belongs to it\".\n    - {name: developer,  fullName: \"Developer\",     creationTimestamp: \"2026-01-05T00:00:00Z\",\n       identities: [\"developer:developer\"]}\n  forbidden: false\n\nidentities:\n  entries:\n    - {userName: dana.lee,   creationTimestamp: \"2026-01-02T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: lateef.o,   creationTimestamp: \"2026-01-03T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: jane.smith, creationTimestamp: \"2026-01-04T00:00:00Z\", providerPrefix: acme-ldap}\n    - {userName: developer,  creationTimestamp: \"2026-01-05T00:00:00Z\", providerPrefix: developer}\n  forbidden: false\n\nnamespaces:\n  entries:\n    # Two selector dimensions \u2014 company.net/mnemonic AND company.net/app-environment \u2014 mirroring the\n    # real crc-local convention (docs/DESIGN_reporting_selectors_snapshots_and_windows.md \xA76), so the\n    # multi-dimension selector (AND across dimensions, OR within one) is exercisable against the mock.\n    # `team` is kept on the first two so the single-label tests still hold.\n    - {name: acme-app, phase: Active, creationTimestamp: \"2026-01-02T00:00:00Z\",\n       labels: {\"team\": \"acme\", \"kubernetes.io/metadata.name\": \"acme-app\",\n                \"company.net/mnemonic\": \"acme\", \"company.net/app-environment\": \"prod\"}}\n    - {name: group-sync-operator, phase: Active, creationTimestamp: \"2026-01-01T00:00:00Z\",\n       labels: {\"team\": \"platform\",\n                \"company.net/mnemonic\": \"gso\", \"company.net/app-environment\": \"prod\"}}\n    - {name: demo-prod, phase: Active, creationTimestamp: \"2026-01-04T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"demo\", \"company.net/app-environment\": \"prod\"}}\n    - {name: demo-qa, phase: Active, creationTimestamp: \"2026-01-05T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"demo\", \"company.net/app-environment\": \"qa\"}}\n    - {name: beta-rnd, phase: Active, creationTimestamp: \"2026-01-06T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"beta\", \"company.net/app-environment\": \"rnd\"}}\n    - {name: platform-prod, phase: Active, creationTimestamp: \"2026-01-07T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"klta\", \"company.net/app-environment\": \"prod\"}}\n    # Missing-dimension NEGATIVE case: mnemonic only, no app-environment \u2014 it must drop out of any\n    # two-dimension AND selection on app-environment (adversarial-review note, 2026-09-15).\n    - {name: gsd-shared, phase: Active, creationTimestamp: \"2026-01-08T00:00:00Z\",\n       labels: {\"company.net/mnemonic\": \"gsd\"}}\n  forbidden: false\n\nroles:\n  clusterRoles:\n    - name: cluster-admin\n      rules:\n        - {verbs: [\"*\"], apiGroups: [\"*\"], resources: [\"*\"]}\n    - name: cluster-reader\n      rules:\n        # Read verbs only \u2014 deliberately NO `update`, which is what excludes the auditor\n        # (dana.lee) from the write-verb usage tier.\n        - {verbs: [get, list, watch], apiGroups: [\"*\"], resources: [\"*\"]}\n    # The reporting-auditor ClusterRole (chart renders <fullname>-report-auditor). Read-only get/list on\n    # identities and RBAC \u2014 `list clusterrolebindings` is what lifts a member to the wide (auditor) tier.\n    - name: group-sync-dashboard-report-auditor\n      rules:\n        - {verbs: [get, list], apiGroups: [\"user.openshift.io\"], resources: [\"users\", \"groups\"]}\n        - {verbs: [get, list], apiGroups: [\"rbac.authorization.k8s.io\"], resources: [\"roles\", \"rolebindings\", \"clusterroles\", \"clusterrolebindings\"]}\n  namespacedRoles:\n    - namespace: acme-app\n      name: viewer\n      rules:\n        - {verbs: [get, list], apiGroups: [\"\"], resources: [pods]}\n\nbindings:\n  clusterRoleBindings:\n    - name: cluster-admin-crb\n      roleRef: {kind: ClusterRole, name: cluster-admin}\n      subjects: [{kind: Group, name: app-ocp-rbac-demo-cluster-admin}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n    - name: cluster-reader-crb\n      roleRef: {kind: ClusterRole, name: cluster-reader}\n      subjects: [{kind: Group, name: cluster-readers}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n    # A hand-made grant with no config-source label \u2192 the `unmanaged` finding the dashboard\n    # exists to surface; carries an operator-acknowledged exception annotation.\n    - name: handmade-reader-crb\n      roleRef: {kind: ClusterRole, name: cluster-reader}\n      subjects: [{kind: Group, name: legacy-ops}]\n      annotations: {\"rbac.ocp.io/unmanaged-exception\": \"reviewed 2026-09-10, temporary\"}\n    # Binds the auditor group to the report-auditor role \u2192 its members (developer) are wide-tier auditors.\n    - name: report-auditors-crb\n      roleRef: {kind: ClusterRole, name: group-sync-dashboard-report-auditor}\n      subjects: [{kind: Group, name: app-ocp-rbac-demo-report-auditors}]\n      labels: {\"rbac.ocp.io/config-source\": \"gitops\"}\n  roleBindings:\n    - namespace: acme-app\n      name: viewer-rb\n      roleRef: {kind: Role, name: viewer}\n      subjects: [{kind: User, name: lateef.o}]\n\noperatorConfigs:\n  namespaceConfigs:\n    - name: acme-nsconfig\n      conditions:\n        - {type: ReconcileSuccess, lastTransitionTime: \"2026-09-14T08:00:00Z\"}\n  groupConfigs: []\n  namespaceConfigsCrdAbsent: false\n  groupConfigsCrdAbsent: false\n\nnodes:\n  entries:\n    - {name: master-0, labels: {\"node-role.kubernetes.io/master\": \"\", \"node-role.kubernetes.io/control-plane\": \"\"}}\n    - {name: master-1, labels: {\"node-role.kubernetes.io/master\": \"\"}}\n    - {name: worker-0, labels: {\"node-role.kubernetes.io/worker\": \"\"}}\n  forbidden: false\n\noauth:\n  identityProviders:\n    - name: acme-ldap\n      ldapUrl: \"ldaps://openldap.acme.svc:636/dc=acme,dc=com?uid?sub?(&(uid=*)(memberOf=cn=ocp-admins,ou=Groups,dc=acme,dc=com))\"\n  forbidden: false\n  crdAbsent: false\n\nauditLog:\n  node: master-0\n  dir: oauth-server\n  malformed416: false\n  files:\n    - name: \"audit-2026-09-01T00-00-00.000.log\"     # a rotated backup (lumberjack form)\n      lines:\n        - {kind: session, decision: allow, user: dana.lee, at: \"2026-09-01T09:00:00.000000Z\", code: 302}\n    - name: audit.log                                # the live file\n      lines:\n        - {kind: credential, decision: allow, user: jane.smith, at: \"2026-09-03T10:15:27.234567Z\", code: 302, provider: acme-ldap}\n        - {kind: cli,        decision: deny,  user: lateef.o,   at: \"2026-09-03T10:16:01.000000Z\", code: 401}\n        - {kind: session,    decision: allow, user: dana.lee,   at: \"2026-09-03T10:17:44.500000Z\", code: 302}\n"
 kind: ConfigMap
 metadata:
   name: mock-fixture
@@ -6432,6 +6459,61 @@ def test_the_default_dispatches_to_audit_and_disabled_capture_reads_nothing(monk
     assert len(calls) == 1
     assert not hasattr(ClusterClient, "fetch_pod_log")
     assert not hasattr(ClusterClient, "fetch_oauth_pods")
+
+
+class _EmptyAuditNode:
+    """The four calls auditlog.capture_once makes, for one node whose audit file is empty."""
+
+    def fetch_nodes(self, selector):
+        return ["master-0"]
+
+    def fetch_oauth_providers(self):
+        return ["ldap"]
+
+    def list_node_log_files(self, node, directory):
+        return [auditlog.AUDIT_FILE]
+
+    def fetch_node_log_file(self, node, path, offset=0, max_bytes=8 << 20):
+        from gsd.kube import NodeLogRead
+        return NodeLogRead(data=b"", offset=offset, truncated=False, rotated=False)
+
+
+class _Elector:
+    def __init__(self, leader):
+        self.is_leader = leader
+
+
+@pytest.mark.parametrize(("retention_days", "leader", "kept"), (
+    (400, True, ["recent"]),               # Decision 3: normal retention still ages out history
+    (0, True, ["ancient", "recent"]),      # 0 disables retention, as before
+    (400, False, ["ancient", "recent"]),   # a standby never prunes
+))
+def test_stored_pod_log_history_keeps_its_retention_under_the_audit_only_poller(
+        tmp_path, monkeypatch, retention_days, leader, kept):
+    # The pod-log loop tests that pinned login_event retention are deleted with the loop; the
+    # audit path now owns the prune, so the same three outcomes are pinned through it.
+    from datetime import UTC, datetime
+    db = str(tmp_path / "retention.db")
+    store = Store(db)
+    try:
+        store.upsert_cluster("c", "https://example", True)
+        now = datetime.now(UTC)
+        store.record_login_events("c", [
+            {"pod_name": "oauth-old", "user_name": name, "outcome": "bad_password",
+             "at": (now - timedelta(days=age)).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+             "provider": "ldap", "ldap_result_code": 49, "detail": None,
+             "observed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+            for name, age in (("ancient", 500), ("recent", 1))])
+        monkeypatch.setattr(auditlog, "ClusterClient", lambda *a, **kw: _EmptyAuditNode())
+        cfg = ClusterConfig("c", "https://example")
+        settings = Settings(clusters=[cfg], db_path=db, login_capture_enabled=True,
+                            login_retention_days=retention_days,
+                            login_capture_audit_node_names=("master-0",))
+        logincapture.capture_once(store, cfg, settings, elector=_Elector(leader))
+        assert sorted(r["user_name"] for r in store.login_events("c")) == kept
+        assert all(r["source"] == "pod-log" for r in store.login_events("c"))
+    finally:
+        store.close()
 ```
 
 ### Block 126 — local-development/mock-app/tests/test_request_surface.py
@@ -7042,6 +7124,215 @@ New text:
             "source": "audit-log",
 ```
 
+### Block 135 — chart history
+
+Record the new release without rewriting older version-history comments.
+
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
+
+Old text:
+
+```text
+apiVersion: v2
+```
+
+New text:
+
+```text
+apiVersion: v2
+# 0.58.0 / app 0.36.0 (#321): audit-only capture; remove OAuth Debug Jobs and pod reader.
+```
+
+### Block 136 — docs/DESIGN_login_capture.md
+
+Review round 1: accepted OB1-lite fix A.
+
+<!-- block: docs/DESIGN_login_capture.md | edit -->
+
+Old text:
+
+```text
+Who logged in, when, from which provider, and why an attempt failed — accumulated from the
+oauth-server's own pod logs.
+
+**Status: shipped.** The parser, capture loop, storage, API and Logins tab are live. This document
+describes what exists and the measurements behind it. Where a decision looks arbitrary, the reason is
+here; where something is deliberately *not* done, that is here too, because most of it will be
+proposed again.
+```
+
+New text:
+
+```text
+Who logged in, when, from which provider, and why an attempt failed — accumulated from the
+oauth-server's own pod logs until chart 0.58.0 / app 0.36.0, and from its audit log since (#321).
+
+**Status: the pod-log reader is retired (#321).** Live capture reads only the audit log ("The
+oauth-server AUDIT LOG" below). The parser, storage, API and Logins tab remain, because stored
+pod-log rows stay readable. The pod-log sections are the as-built record of the retired reader and
+the measurements behind it; the loop, window and guard names they give no longer exist in the code.
+Where a decision looks arbitrary, the reason is here; where something is deliberately *not* done,
+that is here too, because most of it will be proposed again.
+```
+
+### Block 137 — docs/DESIGN_login_capture.md
+
+Review round 1: accepted OB1-lite fix A.
+
+<!-- block: docs/DESIGN_login_capture.md | edit -->
+
+Old text:
+
+```text
+| capture loop | `gsd/logincapture.py#capture_once` | reads each oauth-server pod incrementally, decides what is settled enough to record, advances a per-pod cursor |
+| log reader | `gsd/kube.py#ClusterClient.fetch_pod_log` | streamed, byte-bounded and wall-clock-bounded read of one pod's log |
+```
+
+New text:
+
+```text
+| capture loop | `gsd/logincapture.py#capture_once` | off reads nothing; on dispatches to `gsd/auditlog.py#capture_once`, which reads each control-plane node's audit file from a per-file cursor. The per-pod loop it replaced was removed in #321 |
+| log reader | `gsd/kube.py#ClusterClient.fetch_node_log_file` | byte-bounded and wall-clock-bounded read of one node's audit file through the node proxy. The pod-log reader (`fetch_pod_log`) was removed in #321 |
+```
+
+### Block 138 — docs/DESIGN_login_capture.md
+
+Review round 1: accepted OB1-lite fix A.
+
+<!-- block: docs/DESIGN_login_capture.md | edit -->
+
+Old text:
+
+```text
+| `gsd/logincapture.py#OVERLAP_SECONDS` | 60 | how far behind the cursor each read starts again. Must exceed 2×`ATTEMPT_WINDOW` for parse context (below) |
+| `gsd/logincapture.py#SETTLE_SECONDS` | 30 | how far behind the log's tip an attempt must be before it is recorded |
+| `gsd/logincapture.py#FIRST_SIGHT_SECONDS` | 3600 | how far back a first read goes for a pod with no cursor |
+| `gsd/kube.py#LOG_READ_BUDGET_SECONDS` | 20 | wall-clock bound on one pod-log read |
+
+The prerequisite is `authLogLevel`, which raises `spec.logLevel` on the authentication **operator** CR
+so the oauth-server names the person logging in, plus `loginCapture`, which grants a namespaced read
+of those pod logs. With capture on and Debug off this reads real logs and finds nothing — correct
+rather than broken.
+```
+
+New text:
+
+```text
+| `OVERLAP_SECONDS` (retired, #321) | 60 | how far behind the cursor each pod-log read started again. Had to exceed 2×`ATTEMPT_WINDOW` for parse context (below) |
+| `SETTLE_SECONDS` (retired, #321) | 30 | how far behind the log's tip an attempt had to be before it was recorded |
+| `FIRST_SIGHT_SECONDS` (retired, #321) | 3600 | how far back a first read went for a pod with no cursor |
+| `gsd/kube.py#LOG_READ_BUDGET_SECONDS` | 20 | wall-clock bound on one node audit-file read (formerly one pod-log read) |
+
+The pod-log reader's prerequisite was `authLogLevel`, which raised `spec.logLevel` on the
+authentication **operator** CR so the oauth-server named the person logging in, plus a namespaced
+read of those pod logs. Both were removed in #321: the audit log names the person at the default
+verbosity, and a cluster still at Debug is restored by hand (the chart README's migration note).
+```
+
+### Block 139 — docs/DESIGN_login_capture.md
+
+Review round 1: accepted OB1-lite fix A.
+
+<!-- block: docs/DESIGN_login_capture.md | edit -->
+
+Old text:
+
+```text
+| trailing edge (lines not written yet) | an attempt read mid-flight concludes on partial evidence — the provider-chain `failed` is present, the success that follows is not — and the honest-but-wrong `failed` row sits beside the real one forever | `gsd/logincapture.py#_recordable`: withhold attempts younger than `SETTLE_SECONDS` + `ATTEMPT_WINDOW` |
+| leading edge (lines behind the window) | a window opening between a bind error and its verdict parses the verdict alone, so a login already stored as `bad_password` at the cause is stored *again* as `failed` at the verdict | `gsd/logincapture.py#_not_clipped`: drop attempts within `ATTEMPT_WINDOW` of the window's start |
+```
+
+New text:
+
+```text
+| trailing edge (lines not written yet) | an attempt read mid-flight concludes on partial evidence — the provider-chain `failed` is present, the success that follows is not — and the honest-but-wrong `failed` row sits beside the real one forever | `_recordable` (retired, #321): withheld attempts younger than `SETTLE_SECONDS` + `ATTEMPT_WINDOW` |
+| leading edge (lines behind the window) | a window opening between a bind error and its verdict parses the verdict alone, so a login already stored as `bad_password` at the cause is stored *again* as `failed` at the verdict | `_not_clipped` (retired, #321): dropped attempts within `ATTEMPT_WINDOW` of the window's start |
+```
+
+### Block 140 — local-development/tests/test_values_defaults.py
+
+Review round 1: accepted OB1-lite fix B.
+
+<!-- block: local-development/tests/test_values_defaults.py | edit -->
+
+Old text:
+
+```text
+    assert len(rows) >= 9, sorted(rows)
+```
+
+New text:
+
+```text
+    # Eight since #321 removed loginCapture.namespace; a floor, so a table that loses rows still fails.
+    assert len(rows) >= 8, sorted(rows)
+```
+
+### Block 141 — local-development/tests/test_users_tab_logins.py
+
+Review round 1: accepted OB1-lite fix C.
+
+<!-- block: local-development/tests/test_users_tab_logins.py | edit -->
+
+Old text:
+
+```text
+    def test_pod_log_is_the_default_source_and_says_what_it_cannot_see(self, tmp_path):
+        body = _client(tmp_path).get("/api/clusters/c1/logins", headers=ADMIN).json()
+        assert body["source"] == "pod-log"
+        assert body["kinds"] == ["credential", "cli"]
+        assert "since capture began" in body["note"] and "audit log" not in body["note"]
+        assert all(r["source"] == "pod-log" and r["kind"] == "credential" for r in body["attempts"])
+```
+
+New text:
+
+```text
+    def test_the_live_source_is_audit_log_and_stored_pod_log_rows_keep_their_own(self, tmp_path):
+        """#321: the envelope names the live reader (audit-log only); the seeded rows are stored
+        pod-log history and keep their row-level source and kind (decision 3)."""
+        body = _client(tmp_path).get("/api/clusters/c1/logins", headers=ADMIN).json()
+        assert body["source"] == "audit-log"
+        assert body["kinds"] == ["credential", "cli"]
+        assert "audit log" in body["note"] and "since capture began" not in body["note"]
+        assert body["attempts"]
+        assert all(r["source"] == "pod-log" and r["kind"] == "credential" for r in body["attempts"])
+```
+
+### Block 142 — local-development/tests/test_ui.py
+
+Review round 1: accepted OB1-lite fix D.
+
+<!-- block: local-development/tests/test_ui.py | edit -->
+
+Old text:
+
+```text
+        # BOTH halves, because either one alone records nothing: the module has to run, and the
+        # operand has to be verbose enough to write a username at all. Since chart 0.14.0 the
+        # module is on by default, so the card says that rather than prescribing the default.
+        assert "chart default since 0.14.0 is on" in body
+        assert "loginCapture.enabled=true" in body
+        assert "config.loginCapture.enabled" not in body, "the old card named a key that does not exist"
+        assert "authLogLevel.manage" in body
+        assert "Debug" in body
+        assert "audit log" in body
+```
+
+New text:
+
+```text
+        # Since #321 one switch: the audit log names the person at default verbosity, so the card
+        # names the module and says nothing has to raise the operator's logLevel. Since chart
+        # 0.14.0 the module is on by default, so the card says that rather than prescribing it.
+        assert "chart default since 0.14.0 is on" in body
+        assert "loginCapture.enabled=true" in body
+        assert "config.loginCapture.enabled" not in body, "the old card named a key that does not exist"
+        assert "authLogLevel" not in body, "the retired Debug switch must not be offered"
+        assert "spec.logLevel" in body
+        assert "audit log" in body
+```
+
 ## Certified file deletions for phase 2
 
 After the empty-New blocks check and are applied, remove these empty paths; none is a surviving
@@ -7166,23 +7457,4 @@ New text:
 
 ```text
 | S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.37.0, chart 0.59.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
-```
-
-### Block 135 — chart history
-
-Record the new release without rewriting older version-history comments.
-
-<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
-
-Old text:
-
-```text
-apiVersion: v2
-```
-
-New text:
-
-```text
-apiVersion: v2
-# 0.58.0 / app 0.36.0 (#321): audit-only capture; remove OAuth Debug Jobs and pod reader.
 ```

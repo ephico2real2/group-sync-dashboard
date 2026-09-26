@@ -80,7 +80,7 @@ of an id or a name to filter; chips narrow by membership and by provider.
 ![Users tab](docs/screenshots/03-users.png)
 
 **Logins** — every login attempt against the cluster's own OAuth server: who, when, and why a
-failure failed. Read by default from the oauth-server audit log on the control-plane nodes
+failure failed, to the extent the record supplies a cause. Read from the oauth-server audit log on the control-plane nodes
 (`loginCapture.source: audit-log`) — no Debug verbosity, and history back to the rotated files;
 the tab says what period it can account for rather than implying it saw everything.
 
@@ -194,7 +194,7 @@ ones most likely to matter:
 | `monitoring.serviceMonitor.enabled` | `true` | Needs the Prometheus Operator CRDs (OpenShift ships them); on with `monitoring.prometheusRule.enabled` and the GrafanaDashboard CR since chart 0.36.0 — the chart README’s "Prerequisites — the Grafana and Observe integration" |
 | `replicaCount` | `1` | Leave at 1. Above one, each pod keeps its own database and history diverges — see the chart README's Scaling section |
 | `config.pollIntervalSeconds` | `60` | Poll cadence, and the error bar on "when did this person lose access?" |
-| `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else. `DEBUG` adds this app's own reasoning — login-capture accounting per pod, poll timing, row counts, which replica holds the Lease. Not the same setting as `authLogLevel`; the [chart README](charts/group-sync-dashboard/README.md#dashboard-log-verbosity--loglevel) lists what is refused and why |
+| `logLevel` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL`, and nothing else. Controls the app's own logging; login capture reads audit logs at default OAuth verbosity. See the [chart README](charts/group-sync-dashboard/README.md#dashboard-log-verbosity--loglevel). |
 
 ## Authentication
 

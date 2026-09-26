@@ -2930,7 +2930,7 @@ class Store:
 
         A dict rather than the parser's LoginAttempt, and that is not laziness: an attempt needs the
         POD it was read from to be deduplicated, and LoginAttempt cannot carry that without making the
-        parser know where its input came from. gsd/logincapture.event_dict() builds these, so callers
+        parser know where its input came from. Legacy fixtures use gsd/logincapture.event_dict(), so callers
         and tests do not hand-assemble them.
         """
         with self._write() as conn:
