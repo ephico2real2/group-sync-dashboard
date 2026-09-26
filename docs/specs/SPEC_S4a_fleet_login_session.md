@@ -7,7 +7,7 @@
 | Release | — (post-programme; S4 step A, the issue's own label S3b-A) |
 | Version on release | no version change (a module nothing calls yet; the release that first calls it bumps) |
 | Issue | [#283](https://github.com/ephico2real2/group-sync-dashboard/issues/283) |
-| Status | merged |
+| Status | released |
 | Source | OB1's implementation specification of 2026-09-21, written before the code from the business owner's brief, `docs/specs/SPEC_S4_token_retrieval.md` §3, §3.1, §5, §6, §8 and §9, and the mechanism re-measured on the reference cluster |
 
 ## How to read this spec

@@ -7,7 +7,7 @@
 | Release | — (after #322 merges) |
 | Version on release | app 0.36.0, chart 0.58.0 |
 | Issue | [#321](https://github.com/ephico2real2/group-sync-dashboard/issues/321) |
-| Status | merged |
+| Status | released |
 | Source | Codex phase-1 research and specification, 2026-09-25, baseline 9584239; supplied ../tmp/issue-321.md |
 
 ## How to read this spec
