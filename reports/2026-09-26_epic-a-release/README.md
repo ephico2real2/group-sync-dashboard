@@ -1,6 +1,6 @@
 # Epic A (#381) released and deployed — chart 0.58.3, 2026-09-26
 
-Chart 0.58.3 (release PR #402, merge `2b2c744`) was published by `helm.yaml` at 19:12:57Z and deployed to the CRC lab
+Chart 0.58.3 (release PR #402, merge `2b2c744`) was published by `helm.yaml` at 19:12:57Z (`gh release view group-sync-dashboard-0.58.3`, `publishedAt`) and deployed to the CRC lab
 with `local-development/release-crc.sh --argocd main`: the chart at `main` and the published image. Argo CD reported
 **Synced/Healthy** at 19:14:46Z (`walk/release-tail.log`). The dashboard runs `group-sync-dashboard-0.58.3` with
 `quay.io/ephico2real/group-sync-dashboard:0.36.0` (`walk/walk.out`). The kept PVCs have the same UIDs before and after
@@ -12,7 +12,9 @@ each time. Three values were changed to make it a throwaway the lab can reach (`
 (`cluster-onboarding-epic-a`), the cluster's name (`gitops-example-389`) and `apiUrl` (`https://api.crc.testing:6443`).
 It also captured the docs index (#319) as GitHub renders it at `2b2c744`.
 
-| Screenshot | What it shows |
+The committed PNGs are crops of `walk.sh`'s full-page captures, made after the walk: `1-cluster-configurations-before.png` → `1-before-retired-card.png`; `2-cluster-configurations-gitops-cluster-added.png` → `2a-page-top-gitops-cluster-active.png` (the page top) and `2b-gitops-cluster-card.png` (the card); `3-cluster-configurations-after-removal.png` → `3-after-removal-card.png`.
+
+| Screenshot | What it shows (read from the image) |
 |---|---|
 | `screenshots/1-before-retired-card.png` | Before the apply: `gitops-example-389` is already a **disabled** row, "its Secret is gone — the history is kept, the cluster is disabled", last reachable 16:59. That row is the retired cluster from #389's own lab check (`reports/2026-09-26_gitops-examples-389/`). |
 | `screenshots/2a-page-top-gitops-cluster-active.png` | The top of the tab while the GitOps cluster is active: 22 clusters, the ConfigMap selector `groupsync-dashboard.io/config-type in (onboard,sideload)`, and the version `v0.36.0 · 667b3c4a62`. **By source** reads `ConfigMap 0` (see the finding below). |
@@ -24,7 +26,9 @@ It also captured the docs index (#319) as GitHub renders it at `2b2c744`.
 
 - Applied at 19:15:06Z; the generated Secret existed 257 s later, annotated `managed-by: configmap-onboarding`.
 - Deleted at 19:19:52Z; the Secret was gone 272 s later.
-- Both are within one 300 s discovery interval.
+- Both are within one discovery interval, `config.discoveryIntervalSeconds: 300` in
+  `charts/group-sync-dashboard/values.yaml`. The waits poll every 15 s (`walk/walk.sh`), so each is an upper bound
+  within 15 s.
 
 ## Finding: the "by source" count misses a ConfigMap-declared cluster once its Secret exists
 
