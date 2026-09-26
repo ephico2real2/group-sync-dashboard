@@ -35,6 +35,7 @@ NO Co-Authored-By TRAILER. The operator cutting the release is its sole author.
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime as dt
 import pathlib
 import re
@@ -128,6 +129,58 @@ def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     if check and done.returncode != 0:
         raise ReleaseError(f"git {' '.join(args)} failed:\n{done.stdout}{done.stderr}")
     return done
+
+
+def _git_in(repo: pathlib.Path, *args: str) -> str:
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise ReleaseError(f"git {' '.join(args)} failed:\n{done.stderr}")
+    return done.stdout
+
+
+def highest_migration(source: str) -> int:
+    """The highest target in a store.py's `_MIGRATIONS`, or 0 when it has none.
+
+    Parsed, never imported: an old commit's store.py is not a module this interpreter can load.
+    """
+    for node in ast.parse(source).body:
+        names = node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]
+        if any(isinstance(name, ast.Name) and name.id == "_MIGRATIONS" for name in names):
+            targets = [ast.literal_eval(entry.elts[0]) for entry in node.value.elts]
+            if not all(type(target) is int for target in targets):
+                raise ReleaseError(f"_MIGRATIONS targets are not all integer literals: {targets}")
+            return max(targets, default=0)
+    return 0
+
+
+def schema_since_app_release(repo: pathlib.Path) -> tuple[str, int, int]:
+    """(the commit that released HEAD's application version, its highest migration, HEAD's).
+
+    The release commit is the first-parent commit whose first parent has another version: that
+    push is the one publish.yml moved the `:<version>` alias on, so its migrations are what the
+    chart's default image understands. The schema moved without a release when HEAD's is higher.
+    """
+    def version(rev: str) -> str | None:
+        pyproject = _git_in(repo, "show", f"{rev}:local-development/pyproject.toml")
+        match = re.search(r'^version = "(.+?)"$', pyproject, re.M)
+        return match.group(1) if match else None
+
+    def schema(rev: str) -> int:
+        return highest_migration(_git_in(repo, "show", f"{rev}:local-development/gsd/store.py"))
+
+    now = version("HEAD")
+    chain = _git_in(repo, "rev-list", "--first-parent", "HEAD").split()
+    release = chain[-1]
+    for commit, parent in zip(chain, chain[1:]):
+        if version(parent) != now:
+            release = commit
+            break
+    else:
+        if _git_in(repo, "rev-parse", "--is-shallow-repository").strip() == "true":
+            # A shallow boundary is not where the version began; stopping there would pass blind.
+            raise ReleaseError(f"history ends at {release} before application {now} began; "
+                               "this needs the full history (actions/checkout fetch-depth: 0)")
+    return release, schema(release), schema("HEAD")
 
 
 def sentence(reason: str) -> str:

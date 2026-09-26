@@ -47,8 +47,8 @@
 #                                   --build-only` ran the cutover with nothing built).
 #
 # Typical loop: iterate with the bare script (or --values for a local variant); before merging,
-# --argocd on the pushed head; after a merge, --argocd main — once the app release is cut, because
-# the published images lag main (measured: report schema 12 against main's 17, readyz 503).
+# --argocd on the pushed head; after a merge, --argocd main. The published images may lag main's
+# code, not its schema: CI fails a migration merged without an app release (#298).
 #
 # TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
 # Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
@@ -62,9 +62,9 @@
 # --argocd NEEDS THE COMMIT ON GITHUB: Argo pulls the chart from the repository, not from this
 # tree, so an unpushed commit cannot be synced — the script refuses with the push to run. It also
 # needs the image PASSED to the Application: the chart's default is the last PUBLISHED image
-# (quay.io …:<appVersion>), which lags main whenever the app version is not bumped — measured on
-# the first Argo sync of the dashboard: the published report image understood snapshot schema 12
-# against main's 17 and answered readyz 503 until the built tag was handed over.
+# (quay.io …:<appVersion>), which lags main's code whenever the app version is not bumped. Its
+# schema no longer lags (#298); before that guard, the first Argo sync of the dashboard met a report
+# image that understood snapshot schema 12 against main's 17 and answered readyz 503.
 #
 # Immutability rule: a given <version>-<sha> tag always means the same source. Pushing a
 # different image under an existing tag is refused rather than silently overwritten.

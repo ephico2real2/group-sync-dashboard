@@ -10,6 +10,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A migration ships with an application release (#298; CI and tests only, no version of its own).** CI
+  fails a PR whose highest `_MIGRATIONS` entry is above the one at the commit that released the current
+  application version, while that version stays put: the chart's default image, `:<appVersion>`, would be a
+  schema behind `main` and refuse readiness on any database `main` has migrated. The failure names the fix,
+  `prepare-release.py --app X.Y.Z "..." --no-commit` in the same PR. The `tests` job now checks out the full
+  history to find that commit; a shallower checkout fails the test with the reason.
+  [RELEASING.md](RELEASING.md#neither).
 - **The dashboard refuses a database newer than it understands (#305; application only).** An image
   whose highest migration is below the database's `user_version` (a rollback deployed before the database
   was restored) now stops at startup, before its own schema, migrations or seeds run, with both numbers and

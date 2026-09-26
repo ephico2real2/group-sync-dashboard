@@ -235,6 +235,13 @@ An ordinary code merge. An immutable `<appVersion>-<sha>` image is published for
 for the dev cluster. **Consumers see nothing**, because the chart still resolves the previous
 appVersion. That is the deliberate-release model: merging is not shipping.
 
+**A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
+without an application release leaves the chart's default image one schema behind `main`, and that image
+refuses readiness on any database `main`'s code has migrated. `tests/test_migration_needs_app_release.py`
+fails such a PR in CI (#298). Release the application in the same PR: on its branch, run
+`./prepare-release.py --app X.Y.Z "..." --no-commit` and commit the edits. Commit the bump after the
+migration: until the merge, the test takes the bump commit for the release.
+
 ---
 
 ## When GitHub Actions is unavailable
