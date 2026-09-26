@@ -72,6 +72,21 @@ and ../tmp/review-grok.txt. These decisions amend the executable blocks against 
 | N2: stale pod-reader comment at local-development/gsd/kube.py:72–74 | OB1-lite | ACCEPT; folded into Block 17 | Remove the comment together with POD_API_TMPL, using baseline text rather than the review's post-apply anchor. |
 | C5: warning plus audit-log fallback | Grok | REJECT; keep app refusal; DEBT-ACCEPTED explicit pod-log crash-loop | a chart-driven pod can never read a pod-log ConfigMap (ConfigMaps render before Deployments, checksum/config rolls pods, no extraEnv); a fallback would 403 on a grant the old chart never made; the crash-loop needs an operator to ask for pod-log explicitly, and that is accepted. |
 
+### Review round 2 (code, head `1178e03`, after the rebase onto #322)
+
+OB1-lite (Opus 5.5) measured and approved; Grok read the source and gave its verdicts from that reading.
+
+| Finding | Seat | Decision | Reason |
+|---|---|---|---|
+| F1(a): the only test of LOG_READ_BUDGET_SECONDS went with fetch_pod_log; fetch_node_log_file still relies on the budget | OB1-lite | ACCEPT | Restored as `test_a_read_that_outlives_its_budget_keeps_the_oldest_bytes`. Measured: it fails when the budget check is removed and passes when it is present. |
+| F1(b): fetch_node_log_file's docstring said "for the same reason it does there", and "there" was the deleted reader | OB1-lite | ACCEPT | Reworded. |
+| N1: a broken comment fragment in each of the three Containerfiles | OB1-lite | ACCEPT | Deleted the stray line. |
+| N2: tests/test_loginlog.py cites the deleted cross-seam test file (Grok found the same) | OB1-lite, Grok | ACCEPT | The docstring now says that test was removed in #321. |
+| N3: a dead `source` variable and an always-true `if` in metrics.py | OB1-lite | ACCEPT | Removed; less code. |
+| F1: drop `None` from the refusal matrix | Grok | REJECT | Grok made it conditional on `authLogLevel: null` rendering. OB1-lite measured rc=1 with the removal message. The spec's matrix lists `None` deliberately, because a supplied null is still a retired key. |
+
+These edits were applied after the blocks, so the tree differs from §6 by exactly them.
+
 ### Phase 2 verification correction
 
 | Finding | Seat | Decision | Reason |

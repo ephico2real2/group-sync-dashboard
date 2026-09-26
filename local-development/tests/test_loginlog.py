@@ -360,7 +360,8 @@ class TestASuccessNeverBorrowsAnotherAttemptsCause:
 
     It also moved her stamp onto that foreign cause, and `at` is part of the store's dedup key, so
     the same success read with and without the stranger's line in window did not collapse into one
-    row. That half is covered end to end in test_login_capture_cross_seam.py.
+    row. That half was covered end to end by the pod-log cross-seam test, removed with the pod-log
+    reader in #321.
     """
 
     #: A bind failure for a DN that names nobody in this test, and with NO `found dn=` line to

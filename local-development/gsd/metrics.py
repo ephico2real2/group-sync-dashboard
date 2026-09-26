@@ -521,13 +521,11 @@ class DashboardCollector:
                 if read_ts is not None:
                     capture_last_read.add_metric([cluster], read_ts)
                 if self.settings is not None and getattr(self.settings, "login_capture_enabled", False):
-                    source = "audit-log"
-                    capture_source.add_metric([cluster, source], 1)
-                    if source == "audit-log":
-                        for node, settled in sorted(self.store.audit_settled_by_node(cluster).items()):
-                            settled_ts = _epoch(settled)
-                            if settled_ts is not None:
-                                audit_settled.add_metric([cluster, node], settled_ts)
+                    capture_source.add_metric([cluster, "audit-log"], 1)
+                    for node, settled in sorted(self.store.audit_settled_by_node(cluster).items()):
+                        settled_ts = _epoch(settled)
+                        if settled_ts is not None:
+                            audit_settled.add_metric([cluster, node], settled_ts)
 
                 counts = self.store.group_counts(cluster)
                 groups.add_metric([cluster], counts["total"])

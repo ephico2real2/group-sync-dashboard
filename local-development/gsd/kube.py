@@ -1187,9 +1187,8 @@ class ClusterClient:
         confirms rotation against the file's head fingerprint (gsd/auditlog.py) before acting;
         this flag is the cheap first signal. HEAD is not used: the node proxy answers it 405.
 
-        Bounded in bytes and in wall-clock (LOG_READ_BUDGET_SECONDS), and a
-        truncated read keeps the OLDEST bytes for the same reason it does there: the cursor
-        advances only through bytes actually returned.
+        Bounded in bytes and in wall-clock (LOG_READ_BUDGET_SECONDS); a truncated read keeps the
+        OLDEST bytes, because the cursor advances only through bytes actually returned.
         """
         url = NODE_LOG_PROXY_TMPL % (node, path)
         headers = dict(NODE_LOG_HEADERS)

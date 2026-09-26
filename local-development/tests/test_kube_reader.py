@@ -43,6 +43,28 @@ class TestNodeLogRangeReads:
             lambda: httpx.Client(transport=transport, base_url="https://api.example"))
         return client
 
+    def test_a_read_that_outlives_its_budget_keeps_the_oldest_bytes(self, monkeypatch):
+        """LOG_READ_BUDGET_SECONDS bounds the whole transfer, not the gap between chunks. Its only
+        test went with fetch_pod_log (#321); this pins it on the reader that still uses it. Two
+        64 KiB chunks, and the clock passes the budget before the second is kept."""
+        import types
+
+        from gsd import kube
+
+        class Chunks(httpx.SyncByteStream):
+            def __iter__(self):
+                yield from (first, second)
+
+        first, second = b"a" * (64 * 1024), b"b" * (64 * 1024)
+        ticks = [0.0, 5.0, kube.LOG_READ_BUDGET_SECONDS + 30.0]
+        monkeypatch.setattr(kube, "time", types.SimpleNamespace(
+            monotonic=lambda: ticks.pop(0) if len(ticks) > 1 else ticks[0]))
+        handler = lambda request: httpx.Response(206, stream=Chunks(), request=request)
+        got = self._client(monkeypatch, handler).fetch_node_log_file(
+            "master-0", "oauth-server/audit.log", offset=10)
+        assert got is not None and got.truncated is True, got
+        assert got.data == first, "only the bytes read inside the budget are returned, oldest first"
+
     def test_a_range_exactly_at_the_size_is_nothing_new_not_rotation(self, monkeypatch):
         seen = []
         def handler(request):
