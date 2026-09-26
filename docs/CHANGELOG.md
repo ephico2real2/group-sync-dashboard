@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The dashboard refuses a database newer than it understands (#305; application only).** An
+  image whose highest migration is below the database's `user_version` — a rollback deployed
+  before the database was restored — now stops at startup, before it writes anything, with both
+  numbers and the fix: restore a backup at or below its schema, or deploy the image that
+  understands the database's. It used to open the file, run its own schema and seeds against it,
+  and write blind. The report service's refusal and `/report/readyz` are unchanged; both services
+  now read the highest version from one constant in `gsd/store.py`. What the refusal looks like
+  and what to do: [RUNBOOK_backup_restore.md §4c](RUNBOOK_backup_restore.md#4c-bring-it-back-and-verify).
 - **GitOps cluster examples (#389; chart 0.58.2, docs only).** The
   [onboarding ConfigMap and Argo CD / Flux examples](../examples/cluster-onboarding/) keep
   credentials out of Git and restrict reconciliation to the ConfigMap. The

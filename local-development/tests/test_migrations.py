@@ -334,3 +334,97 @@ def test_rows_written_without_a_marker_are_marked_at_the_next_open(tmp_path):
         assert reopened.membership_events("x", user_name="bob")[0]["baseline"] == 0
     finally:
         reopened.close()
+
+
+class TestSchemaNewerThanTheBuild:
+    """#305: a rollback deploys an older image onto a database a newer one migrated. Before this, the
+    open ran SCHEMA and the seeds against it and wrote blind; now it refuses before writing anything."""
+
+    def test_a_database_one_ahead_is_refused_and_left_byte_identical(self, tmp_path):
+        import hashlib
+        import os
+        from gsd.store import KNOWN_SCHEMA_VERSION, StoreSchemaTooNew, _schema_state
+        path = str(tmp_path / "newer.db")
+        # Rollback-journal mode on purpose: the WAL switch rewrites the header of exactly this file.
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE only_the_newer_build_knows(x)")
+        conn.execute(f"PRAGMA user_version = {KNOWN_SCHEMA_VERSION + 1}")
+        conn.commit()
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert _schema_state(conn) == (KNOWN_SCHEMA_VERSION + 1, False)
+        conn.close()
+        before = hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+        with pytest.raises(StoreSchemaTooNew) as exc:
+            Store(path)
+
+        assert str(exc.value) == (
+            f"database schema {KNOWN_SCHEMA_VERSION + 1} is newer than this dashboard understands "
+            f"({KNOWN_SCHEMA_VERSION}); restore a backup at or below schema {KNOWN_SCHEMA_VERSION} "
+            f"(docs/RUNBOOK_backup_restore.md §4), or deploy the image that understands {KNOWN_SCHEMA_VERSION + 1}")
+        assert hashlib.sha256(open(path, "rb").read()).hexdigest() == before
+        assert not os.path.exists(path + "-wal") and not os.path.exists(path + "-shm")
+        ro = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            assert [r[0] for r in ro.execute("SELECT name FROM sqlite_master")] == ["only_the_newer_build_knows"]
+        finally:
+            ro.close()
+
+    def test_a_database_at_the_build_version_opens(self, tmp_path):
+        from gsd.store import KNOWN_SCHEMA_VERSION, _schema_state
+        path = str(tmp_path / "current.db")
+        Store(path).close()
+        conn = sqlite3.connect(path)
+        assert _schema_state(conn) == (KNOWN_SCHEMA_VERSION, False)
+        conn.close()
+        store = Store(path)
+        try:
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == KNOWN_SCHEMA_VERSION
+        finally:
+            store.close()
+
+    def test_a_database_one_behind_migrates_to_the_build_version(self, tmp_path, caplog):
+        """Rewound from a current file: every migration must already replay on a SCHEMA-shaped database
+        (the fresh path does it), so this is a real top-1 open whatever the top is. The real 19 -> 20
+        shape is tests/test_unmanaged_subjects.py#TestMigration20."""
+        from gsd.store import KNOWN_SCHEMA_VERSION, _schema_state
+        path = str(tmp_path / "behind.db")
+        Store(path).close()
+        conn = sqlite3.connect(path)
+        conn.execute(f"PRAGMA user_version = {KNOWN_SCHEMA_VERSION - 1}")
+        conn.commit()
+        assert _schema_state(conn) == (KNOWN_SCHEMA_VERSION - 1, False)
+        conn.close()
+        with caplog.at_level("INFO", logger="gsd.store"):
+            store = Store(path)
+        try:
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == KNOWN_SCHEMA_VERSION
+            assert f"schema migration {KNOWN_SCHEMA_VERSION} applied" in caplog.text
+        finally:
+            store.close()
+
+    def test_a_fresh_file_opens_and_ends_at_the_build_version(self, tmp_path):
+        from gsd.store import KNOWN_SCHEMA_VERSION, _schema_state
+        path = str(tmp_path / "fresh.db")
+        conn = sqlite3.connect(path)
+        assert _schema_state(conn) == (0, True)
+        conn.close()
+        store = Store(path)
+        try:
+            assert store._conn.execute("PRAGMA user_version").fetchone()[0] == KNOWN_SCHEMA_VERSION
+        finally:
+            store.close()
+
+    def test_the_app_does_not_start_on_a_newer_database(self, tmp_path):
+        """The level it surfaces at: build_app is what `uvicorn gsd.api:create_app --factory` calls, and
+        an exception there stops the container before it binds the port."""
+        from gsd.api import build_app
+        from gsd.config import Settings
+        from gsd.store import KNOWN_SCHEMA_VERSION, StoreSchemaTooNew
+        path = str(tmp_path / "newer.db")
+        conn = sqlite3.connect(path)
+        conn.execute(f"PRAGMA user_version = {KNOWN_SCHEMA_VERSION + 1}")
+        conn.commit()
+        conn.close()
+        with pytest.raises(StoreSchemaTooNew, match=f"schema {KNOWN_SCHEMA_VERSION + 1} is newer"):
+            build_app(Settings(db_path=path, clusters=[]), run_poller=False)

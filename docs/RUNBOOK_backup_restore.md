@@ -214,8 +214,27 @@ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/ver
 ```
 
 Expected: `{"leader": true, "version": "0.15.0", …}` (with `oauthProxy.enabled` the app binds
-loopback; `curl` from inside the pod is the honest check). Then the counts, on the live file this
-time (a normal open, the pod's own connection is the writer):
+loopback; `curl` from inside the pod is the honest check).
+
+**A copy newer than the image is refused (#305).** When the restored file's `user_version` (§1) is
+above the highest migration the running image carries, the dashboard does not start: the container
+exits 1 before it binds its port, `oc rollout status` does not complete, and the last log line names
+both numbers:
+
+```sh
+oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1
+```
+
+```
+gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4), or deploy the image that understands 21
+```
+
+The refusal comes before the open writes anything, so the file is exactly as restored. Scale to 0
+(§4) and either restore a copy whose `user_version` is at or below the second number, or deploy the
+image that understands the first. A rollback to an older image without restoring the database first
+stops the same way.
+
+Then the counts, on the live file this time (a normal open, the pod's own connection is the writer):
 
 ```sh
 oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
