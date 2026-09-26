@@ -388,17 +388,16 @@ class TestVisibilitySignals:
             'gsd_visibility_tier_checks_total{outcome="forbidden",threshold="admin"}'] == 1
         assert found[
             'gsd_visibility_tier_checks_total{outcome="unreachable",threshold="usage"}'] == 0
-        # The cluster-configuration tier's two levels (#230) are thresholds like the others, so a
-        # check neither of them has ever run still reports 0 rather than being absent.
+        # The cluster-admin tier (#322) is a threshold like the others, so a check it has never run
+        # still reports 0 rather than being absent; the two labels of the tier it replaced are gone.
         assert found[
-            'gsd_visibility_tier_checks_total{outcome="denied",threshold="clusterconfig_view"}'] == 0
-        assert found[
-            'gsd_visibility_tier_checks_total{outcome="allowed",threshold="clusterconfig_manage"}'] == 0
+            'gsd_visibility_tier_checks_total{outcome="denied",threshold="cluster_admin"}'] == 0
+        assert not any("clusterconfig_" in label for label in found), "the #230 labels were replaced"
         # Named, not counted: a bare number says nothing about WHICH threshold went missing, and
         # this assertion is the one that catches a new resolver whose label was never pre-seeded.
         assert {label.split('threshold="')[1].rstrip('"}') for label in found} == {
-            "admin", "usage", "clusterconfig_view", "clusterconfig_manage"}
-        assert len(found) == 4 * 6, "4 thresholds x 6 outcomes, nothing else"
+            "admin", "usage", "cluster_admin"}
+        assert len(found) == 3 * 6, "3 thresholds x 6 outcomes, nothing else"
 
     def test_decisions_count_what_was_served(self):
         from gsd.metrics import RuntimeSignals

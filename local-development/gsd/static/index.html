@@ -1168,7 +1168,7 @@ function renderFilters() {
     <nav class="tabs" aria-label="Dashboard sections">
       ${tab("home", "Home")}
       ${tab("overview", "Overview")}
-      ${tab("kpi", "KPIs")}
+      ${clusterAdmin() ? tab("kpi", "KPIs") : ""}
       ${tab("groups", "Groups")}
       ${tab("users", "Users")}
       ${tab("bindings", "Access granted")}
@@ -1179,7 +1179,7 @@ function renderFilters() {
       ${tab("usage", "Usage")}
       ${reportingEnabled() ? tab("reports", "Reports") : ""}
       ${reportingEnabled() ? tab("library", "Library") : ""}
-      ${ccMayView() ? tab("clusters", "Cluster Configurations") : ""}
+      ${clusterAdmin() ? tab("clusters", "Cluster Configurations") : ""}
     </nav>`;
   // FOCUS AND CARET SURVIVE THE REBUILD, and this is load-bearing rather than polish. This function
   // replaces the whole bar's innerHTML, render() calls it before every repaint, and the page repaints
@@ -6113,24 +6113,22 @@ function ccCredential(c) {
   return out;
 }
 /* Two different reasons the form cannot write, and the page must not confuse them (#230): the
-   DEPLOYMENT's switch (clusterConfig.secrets.writes.enabled) and THIS READER's level
-   (clusterconfig:manage). Both must hold for a write control to exist; each has its own sentence. */
+   DEPLOYMENT's switch (clusterConfig.secrets.writes.enabled) and THIS READER's tier (the
+   cluster-admin tier, #322). Both must hold for a write control to exist; each has its own sentence. */
 function ccWritesOn() {
-  return ccDeploymentWrites() && ccMayManage();
+  return ccDeploymentWrites() && clusterAdmin();
 }
 function ccDeploymentWrites() {
   const d = data.clusterconfigs;
   return !!(d && d.secrets && d.secrets.writes);
 }
-/* The reader's levels, from whoami — the same cached decision the routes ask, so the tab strip, the
-   controls and the API cannot disagree. Absent whoami is indeterminate: no tab and no controls. */
-function ccMayView() {
+/* The reader's cluster-admin tier (#322), from whoami — the same cached decision the routes ask, so
+   the tab strip, the controls and the API cannot disagree. It gates the Cluster Configurations tab
+   whole (view and manage are one question) and the KPI page. Absent whoami is indeterminate: no tab
+   and no controls; so is an unauthenticated reader, who has no tier. */
+function clusterAdmin() {
   const w = data.whoami;
-  return !!(w && w.clusterconfig && w.clusterconfig.view);
-}
-function ccMayManage() {
-  const w = data.whoami;
-  return !!(w && w.clusterconfig && w.clusterconfig.manage);
+  return !!(w && w.authenticated && w.visibility && w.visibility.cluster_admin === true);
 }
 /* A live cluster ALWAYS has an effective mode — `trusted-bundle` when nothing overrides it — so a
    bare "—" here would hide the very thing a reader debugging a CERTIFICATE_VERIFY_FAILED needs. The
@@ -6297,7 +6295,7 @@ function clusterConfigPage() {
   const s = d.secrets || {};
   const head = `<section class="card" id="cc-head">
     <h2>Cluster Configurations <span class="rp-chip rp-count">${clusters.length} cluster${clusters.length === 1 ? "" : "s"}</span></h2>
-    <div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per cluster, the live set. The cluster-configuration tier: <span class="mono">clusterconfig:view</span> reads it, <span class="mono">clusterconfig:manage</span> changes it.</div>
+    <div class="filterbar-note">Every cluster the dashboard reads, and where its configuration came from — a card per cluster, the live set. Only cluster administrators see this page. Changing a cluster also needs <code>clusterConfig.secrets.writes.enabled</code>.</div>
     <div class="cc-kv"><span class="k">namespace</span><span class="v mono">${esc(s.namespace || "—")}</span></div>
     <div class="cc-kv"><span class="k">selector</span><span class="v"><code class="mono">${esc(s.label || "")}</code></span></div>
     <div class="cc-kv"><span class="k">by source</span><span class="v cc-chips">
@@ -7149,17 +7147,18 @@ function render() {
     if (!readerTierKnown()) {
       main.innerHTML = `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
     } else {
-      main.innerHTML = ccMayView() ? clusterConfigPage() : refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
-      if (ccMayView()) wireClusterConfig();
+      main.innerHTML = clusterAdmin() ? clusterConfigPage() : refusalCard("Cluster Configurations", CLUSTERS_REFUSAL);
+      if (clusterAdmin()) wireClusterConfig();
     }
   } else if (view.page === "kpi") {
-    // The same tier rule as the Overview, in the same words: the page is about the clusters and
-    // the dashboard's own pods, and answers nothing a reader can ask about themselves. Keyed on the
-    // HOST's headline, as Reports is and as the fetch is: the page is fleet-wide, so a narrowed
-    // remote left selected must not refuse a host administrator (review of #157, Grok).
+    // The cluster-admin tier (#322), read off whoami as the tab is: the page is about the clusters
+    // and the dashboard's own pods, and the wide tier admits the auditor persona it is not for. A
+    // host tier, whatever cluster is selected — the page is fleet-wide, so a narrowed remote left
+    // selected must not refuse a host administrator (review of #157, Grok). Never a refusal on
+    // silence: a null whoami is indeterminate (the Cluster Configurations rule above).
     if (!readerTierKnown()) {
       main.innerHTML = `<section class="card"><div class="empty-note">Loading…</div></section>`;
-    } else if (narrowedOnHost()) {
+    } else if (!clusterAdmin()) {
       main.innerHTML = refusalCard("KPIs", KPI_REFUSAL);
     } else {
       main.innerHTML = kpiPage();
@@ -7704,19 +7703,19 @@ async function refresh(opts = {}) {
     // Not cluster-scoped: this is who used the DASHBOARD, which has no cluster dimension.
     // Fetched only on its own tab, so the other pages do not pay for it.
     // The KPI page (#157): one payload, the KPI module's (#156) — every number on the page comes
-    // from it. Administrator tier: a narrowed reader gets the designed 403, rendered as the refusal
-    // card, so the fetch is skipped for a reader already known to be narrowed.
-    if (view.page === "kpi" && !narrowedOnHost()) {
+    // from it. Cluster-admin tier (#322): a reader without it gets the designed 403, rendered as
+    // the refusal card, so the fetch is skipped for a reader already known to fail it.
+    if (view.page === "kpi" && clusterAdmin()) {
       want.kpi = guard403(get("/api/kpi"));
     }
     // The Cluster Configurations page (#230 S2): one payload, and only for a reader the
-    // `clusterconfig:view` level admits — a reader without it makes NO request, so the surface
+    // cluster-admin tier admits (#322) — a reader without it makes NO request, so the surface
     // leaves no trace for them at all (#230; the tab is absent for them too).
-    // NOT gated on the wide tier (narrowedOnHost) any more: this surface has a tier OF ITS OWN
-    // (#230), and the route asks `clusterconfig:view` alone. A site may grant `get secrets` to
-    // someone the wide tier narrows; deferring to it here would have shown them an empty page the
+    // NOT gated on the wide tier (narrowedOnHost): this surface has a tier OF ITS OWN, and the
+    // route asks that tier alone. A site may point clusterAdminSar at a question someone the wide
+    // tier narrows passes; deferring to the wide tier here would have shown them an empty page the
     // API would have answered.
-    if (view.page === "clusters" && ccMayView()) {
+    if (view.page === "clusters" && clusterAdmin()) {
       want.clusterconfigs = guard403(get("/api/clusterconfigs"));
     }
     if (view.page === "reports" && reportingEnabled() && !narrowedOnHost()) {
@@ -7777,9 +7776,9 @@ async function refresh(opts = {}) {
     if ("kpi" in got) data.kpi = got.kpi;
     if ("clusterconfigs" in got) data.clusterconfigs = got.clusterconfigs;
     if (view.page === "clusters" && got.whoami) {   // decided again from the whoami that just arrived — the KPI rule below
-      // From THIS surface's own tier, not the wide one (#230): the whoami that just landed carries
-      // the levels, and a reader without `view` is refused here whatever the wide tier says.
-      if (!ccMayView()) {
+      // From THIS surface's own tier, not the wide one (#230, #322): the whoami that just landed
+      // carries it, and a reader without it is refused here whatever the wide tier says.
+      if (!clusterAdmin()) {
         data.clusterconfigs = { forbidden: true };
       } else if (got.whoami.authenticated && !("clusterconfigs" in got)) {
         const body = await guard403(get("/api/clusterconfigs"));
@@ -7791,7 +7790,7 @@ async function refresh(opts = {}) {
     // chosen from the previous cycle's identity, so a reader promoted mid-session would otherwise
     // sit on "Loading…" for a poll interval, and a demoted one would keep the payload in memory.
     if (view.page === "kpi" && got.whoami) {
-      if (narrowedOnHost()) {
+      if (!clusterAdmin()) {
         data.kpi = null;
       } else if (got.whoami.authenticated && !("kpi" in got)) {
         const body = await guard403(get("/api/kpi"));

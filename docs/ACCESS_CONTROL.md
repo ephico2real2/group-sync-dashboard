@@ -48,15 +48,28 @@ off there is no trusted identity at all — see §7.
 
 ---
 
-## 2. The two thresholds
+## 2. The three thresholds
 
 A reader is placed in a **tier** by asking the cluster a question about them — a
-SubjectAccessReview. There are two independent thresholds:
+SubjectAccessReview. There are three thresholds, each its own setting, resolver and cache:
 
 | threshold | values key | default check | governs |
 |---|---|---|---|
 | **wide tier** | `visibility.adminSar` | `list clusterrolebindings.rbac.authorization.k8s.io` | every cluster-data view |
 | **usage tier** | `visibility.usageAdminSar` | `update clusterrolebindings.rbac.authorization.k8s.io` | the Usage tab alone |
+| **cluster-admin tier** | `visibility.clusterAdminSar` | `update clusterrolebindings.rbac.authorization.k8s.io` | the KPI page and the whole Cluster Configurations tab (#322) — and, for whoever passes it, every tier above |
+
+**The cluster-admin tier is the top tier** (the operator's decision of 2026-09-23, #322). A reader who
+passes it is granted every tier the host decides — the wide view on the host and on `inherit`
+clusters, and Usage, with `visibility.enabled: false` too — whatever the other two questions answer
+for them (`gsd/api.py#viewer_scope`, `gsd/api.py#usage_scope` consult it first). One way only:
+passing the wide or the usage question never implies it, so those two can be loosened without
+handing anyone the Cluster Configurations tab. Per-cluster policies still apply (§11): a `remote-sar`
+cluster asks its own API about the person, a `self-only` cluster stays self, a `hidden` cluster stays
+hidden. It is asked whatever `visibility.enabled` says (§8), and the default is the usage tier's
+question as its own setting — a cluster-reader fails it, a cluster-admin passes it — where the
+`get`/`create secrets` pair it replaced admitted anyone holding `admin` or `edit` in the release
+namespace.
 
 A SubjectAccessReview **asks whether a subject could perform a verb**. It performs nothing. The
 dashboard holds no write grant on any resource, and the usage threshold naming a write verb does
@@ -101,6 +114,8 @@ diverge, so Usage gets the higher bar.
 | Overview | *For administrators only* | all | all |
 | Access granted | their own grants, via their groups | all | all |
 | RBAC policy | *For administrators only* | all | all |
+| KPIs | *For cluster administrators only* | **absent** | all |
+| Cluster Configurations | *For cluster administrators only* | **absent** | all |
 
 Access granted is narrowed, not refused: a reader's own path — the bindings that reach them through
 their groups, with the group named — is what `require_admin_tier` deliberately never withheld, and
@@ -135,6 +150,8 @@ subset. (Access granted has one: a reader's own path, above.)
 | `/report/**` | the report service's API behind the same proxy, admitted only by a ticket (viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 | — |
 | `/api/clusters/{c}/bindings/findings` | **403** | all |
 | `/api/clusters/{c}/operator-configs` | **403** | all |
+| `/api/kpi` | **403** | **403** unless the reader passes the cluster-admin tier (#322) |
+| `/api/clusterconfigs` and its four write routes | **403** | **403** unless the reader passes the cluster-admin tier (#322); the writes also need `clusterConfig.secrets.writes.enabled` |
 | `/api/clusters` | reachable; cluster-wide `operator_configs` withheld | full card |
 | `/api/clusters/{c}/groupsyncs` | full CR health **minus `ldap_filter` and `error_message`** | full row |
 | `/api/clusters/{c}/groupsyncs/{name}/events` | unchanged at both tiers | same |
@@ -349,10 +366,13 @@ a consequence.
 | proxy **off**, `visibility.enabled: false` | wide view, plus a loud startup warning. This is the pre-existing behaviour of a proxy-less install and is preserved |
 | proxy **off**, `visibility.enabled: true` | **the chart refuses to render**, naming both remedies |
 
-With `visibility.enabled=false` the usage tier is **not consulted at all** — measured — so no
-SubjectAccessReview is attempted in that state, which is why the `auth-delegator` grant may be
-absent there without breaking anything. Switching off scoping for *cluster* data must not, as a side
-effect, publish presence records.
+With `visibility.enabled=false` the usage tier is **not consulted at all** — measured — so switching
+off scoping for *cluster* data does not, as a side effect, publish presence records. The
+**cluster-admin tier is still asked** in that state (#322, as the Cluster Configurations tier it
+replaced was): the KPI page and the Cluster Configurations tab stay reserved to whoever passes it,
+and a cluster-admin keeps Usage through it. The chart therefore renders the `auth-delegator` grant
+with `visibility.enabled: false` too; without it every such review errors and both surfaces refuse
+everyone. With the proxy off there is no identity to ask about, so both are withheld.
 
 ---
 
@@ -404,6 +424,7 @@ this document deliberately carries no passwords.
 | turn per-reader scoping off entirely | `visibility.enabled: false` |
 | use a different bar for the wide tier | `visibility.adminSar.{apiGroup,resource,verb,namespace}` |
 | use a different bar for Usage | `visibility.usageAdminSar.{...}` |
+| use a different bar for the cluster-admin tier (KPIs, Cluster Configurations, and the top tier) | `visibility.clusterAdminSar.{...}` |
 | let everyone see all dashboard usage | `config.userActivity.visibility: all` (wins over the usage tier) |
 | shorten the fail-open window after a revocation | `visibility.tierTtlSeconds` (default 60; `0` disables caching). Env `GSD_VISIBILITY_TIER_TTL_SECONDS` still overrides it. A fractional or negative value fails the render rather than being silently discarded |
 | put an admins-only door on the whole dashboard | `oauthProxy.sar` — a different mechanism, at the proxy |

@@ -386,9 +386,15 @@ def server(tmp_path_factory):
         # inert combination and its startup warning. The visibility labelling has its own
         # scoped_server fixture below, where restrictions stay on.
         view_restrictions_enabled=False,
+        # The proxy is ON, with no header sent by default, so whoami is what it always was here
+        # (`authenticated: false`) — and a test that needs the KPI page, the cluster-admin tier
+        # (#322), sends `root` through _as_cluster_admin. Without the proxy there is no identity to
+        # ask about and no rig can reach that page.
+        oauth_proxy_enabled=True,
     )
     port = _free_port()
     app = build_app(settings, run_poller=False)
+    app.state.cluster_admin_resolver = _TierByName()   # root
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     srv = uvicorn.Server(config)
     thread = threading.Thread(target=srv.run, daemon=True)
@@ -407,6 +413,16 @@ def server(tmp_path_factory):
     yield base
     srv.should_exit = True
     thread.join(timeout=5)
+
+
+def _as_cluster_admin(page):
+    """Reload the page as `root`, the cluster-admin persona of the `server` rig (#322). The KPI tab
+    is drawn from whoami, so the header must be on the request that loads the page, not the next
+    poll; the tab is what says the reload landed."""
+    page.set_extra_http_headers({"X-Forwarded-User": "root"})
+    page.reload()
+    page.wait_for_selector("#tab-kpi", timeout=10_000)
+    return page
 
 
 @pytest.fixture()
@@ -655,7 +671,7 @@ class TestGroupDrilldown:
     def test_the_kpi_clusters_keep_their_padding_and_the_audit_table_takes_no_rule(self, dash):
         # Preservation: the rule is (0,0,1) — both halves in :where() — so .kpi-page's 18px (0,1,1) wins by
         # specificity wherever it sits; the audit table carries no rowlink and never sees it (Grok, Codex, OB3).
-        dash.locator("button[data-nav='kpi']").click()
+        _as_cluster_admin(dash).locator("button[data-nav='kpi']").click()
         dash.wait_for_selector(".kpi-page table tr.rowlink")
         assert dash.evaluate("() => parseFloat(getComputedStyle(document.querySelector('.kpi-page tr.rowlink td:first-child')).paddingLeft)") == 18
         dash.locator("button[data-nav='nsaudit']").click()
@@ -1256,6 +1272,8 @@ class TestTheShellAtPhoneWidth:
 
     @pytest.mark.parametrize("tab", TABS)
     def test_no_horizontal_overflow_and_every_tab_inside_the_viewport(self, dash, tab):
+        if tab == "kpi":
+            _as_cluster_admin(dash)     # the cluster-admin tier's tab (#322)
         dash.set_viewport_size({"width": 375, "height": 740})
         dash.click(f"#tab-{tab}")
         dash.wait_for_function("() => document.querySelector('#main .card, #main section, #main .empty-note')")
@@ -1407,6 +1425,7 @@ class TestKpiPage:
     the disk and its own bytes and says the cgroup is unavailable — never 0."""
 
     def _open(self, dash):
+        _as_cluster_admin(dash)         # the KPI page is the cluster-admin tier (#322)
         dash.click("#tab-kpi")
         dash.wait_for_selector(".kpi-page .kband .kpi", timeout=10_000)
         return dash
@@ -1606,14 +1625,15 @@ class TestKpiPage:
         assert p.locator("#main .scope-refusal").count() == 0, "a host administrator must not be refused the fleet page over the selected remote"
         p.evaluate("""() => {
           data.whoami.visibility.scope = "self";
+          data.whoami.visibility.cluster_admin = false;   // the host tier the page keys on since #322
           data.whoami.visibility.clusters = Object.assign({}, data.whoami.visibility.clusters,
             { west: { policy: "remote-sar", identity: "same-as-host", scope: "all" } });
           data.clusters = (data.clusters || []).concat([{ id: "west", visibility: { policy: "remote-sar", scope: "all" } }]);
           view.cluster = "west"; data.kpi = null; render();
         }""")
-        assert p.locator("#main .scope-refusal").count() == 1, "narrowed on the host is refused, not left on Loading…"
+        assert p.locator("#main .scope-refusal").count() == 1, "refused on the host is refused, not left on Loading…"
         # a designed 403 that reaches the renderer is the same card, never an exception
-        p.evaluate("() => { data.whoami.visibility.scope = 'all'; view.cluster = null; data.kpi = {forbidden: true}; render(); }")
+        p.evaluate("() => { data.whoami.visibility.scope = 'all'; data.whoami.visibility.cluster_admin = true; view.cluster = null; data.kpi = {forbidden: true}; render(); }")
         assert p.locator("#main .scope-refusal").count() == 1
 
 
@@ -4585,10 +4605,9 @@ def scoped_server(tmp_path_factory):
     port = _free_port()
     app = build_app(settings, run_poller=False)
     app.state.tier_resolver = _TierByName()
-    # The Cluster Configurations tier (#230): `root` holds both levels, `viewer` reads without
-    # changing, and everyone else — the auditor persona included — holds neither and gets no tab.
-    app.state.clusterconfig_view_resolver = _TierByName("root", "viewer")
-    app.state.clusterconfig_manage_resolver = _TierByName("root")
+    # The cluster-admin tier (#322): `root` holds it — the Cluster Configurations tab and the KPI
+    # page — and everyone else, the auditor persona included, gets neither tab.
+    app.state.cluster_admin_resolver = _TierByName("root")
     _SCOPED_APP = app   # the Cluster Configurations tests set the discovered clusters on its registry (#230 S2)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     srv = uvicorn.Server(config)
@@ -7170,19 +7189,6 @@ class TestClusterConfigPage:
         page.wait_for_timeout(300)
         assert [u for u in asked if "/api/clusterconfigs" in u] == []
 
-    def test_a_view_only_reader_reads_the_cards_and_has_no_write_control(self, page, cc_rig):
-        """`clusterconfig:view` without `manage` — the shape a site gets by granting `get secrets`
-        and not `create secrets`: the tab, the cards and the YAML twin, and nothing that writes."""
-        base, host, settings = cc_rig
-        _open_as(page, base, "viewer")
-        assert page.locator("#tab-clusters").count() == 1
-        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
-        for control in ("#cc-create", "#cc-test", "#cc-rotate-east", "#cc-delete-east"):
-            assert page.locator(control).count() == 0, control
-        assert page.locator("#cc-yaml").count() == 1                 # the GitOps twin stays: it writes nothing
-        note = page.locator("#cc-writes-off").inner_text()
-        assert "read-only for you" in note and "clusterConfig.secrets.writes.enabled" not in note
-
     def test_the_yaml_twin_is_the_object_the_api_would_write(self, page, cc_rig):
         """The pane's whole promise — "as GitOps would write it" — is that applying it yields the
         Secret the API writes. So the page's YAML is PARSED and compared field for field with
@@ -7465,11 +7471,11 @@ class TestReportsTab:
             page.click("#tab-reports")
             page.wait_for_selector("#tab-reports[aria-current='page']")
             page.wait_for_timeout(300)
-            # 13, not 14: the strip is PERSONA-dependent now. Cluster Configurations appears only for
-            # a reader the `clusterconfig:view` level admits (#230), and this walk runs as alice, who
-            # is not one — an auditor must not learn the surface exists; root counts 14 in
-            # TestClusterConfigPage. Home (#158), KPIs (#157), Kyverno (#170), Library (#229) are in.
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13
+            # 12, not 14: the strip is PERSONA-dependent now. Cluster Configurations and KPIs appear
+            # only for a reader the cluster-admin tier admits (#230, #322), and this walk runs as
+            # alice, who is not one — an auditor must not learn the surface exists; root counts 14 in
+            # TestClusterConfigPage. Home (#158), Kyverno (#170), Library (#229) are in.
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12
             assert page.evaluate("() => [document.documentElement.scrollWidth <= innerWidth, [...document.querySelectorAll('button.tab')].filter(t => t.getBoundingClientRect().right > innerWidth).map(t => t.id)]") == [True, []]
             assert not errors
         finally:
@@ -8925,6 +8931,8 @@ class TestRowlinkRailClearance:
         return len(tables)
 
     def test_every_rowlink_table_keeps_its_first_column_clear_of_the_rail(self, dash, server):
+        dash.set_extra_http_headers({"X-Forwarded-User": "root"})   # the KPI page is the cluster-admin tier (#322)
+
         def go(hash_, wait):
             dash.goto(f"{server}/{hash_}")
             dash.wait_for_selector(f"body[data-page='{hash_[6:].split('&')[0]}'] {wait}")
@@ -8999,7 +9007,7 @@ class TestLibraryPage:
             page.goto(base + "#page=library&cluster=crc-local")
             page.wait_for_selector("#library-lead")
             assert page.locator("#tab-library[aria-current='page']").count() == 1
-            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 13   # Reports and Library, with reporting on
+            assert page.evaluate("() => document.querySelectorAll('button.tab').length") == 12   # Reports and Library, with reporting on; no KPIs — this rig has no cluster-admin seam (#322)
             heads = page.evaluate("() => [...document.querySelectorAll('.lib-sec h2')].map(h => h.firstChild.textContent.trim())")
             # the fixture's schedules: `weekly` (0 6 * * 1 → "Weekly Mon 06:00") on groups, `paused-ns` on namespace-access
             assert "Weekly groups" in heads, heads   # the cadence's named word alone: "Weekly Mon" stays in the sub-line
@@ -10293,8 +10301,7 @@ def why_server(tmp_path_factory):
     app.state.remote_tier_resolvers = {"far-sar": _TierByName()}
     # The other seams answer by name too, so nothing here builds a resolver on a cluster the test does not have.
     app.state.usage_tier_resolver = _TierByName()
-    app.state.clusterconfig_view_resolver = _TierByName()
-    app.state.clusterconfig_manage_resolver = _TierByName()
+    app.state.cluster_admin_resolver = _TierByName()
     port = _free_port()
     srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=srv.run, daemon=True)

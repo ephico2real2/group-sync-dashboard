@@ -150,7 +150,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 
-{{- if and .Values.oauthProxy.enabled (or .Values.oauthProxy.apiTokenAccess.enabled (eq (include "gsd.visibilityEnabled" .) "true") (and .Values.clusterConfig.secrets.enabled (eq (include "gsd.visibilityEnabled" .) "false"))) }}
+{{- if .Values.oauthProxy.enabled }}
 ---
 # Delegated authorization for the oauth-proxy, so `Authorization: Bearer <token>` works
 # against /api and the API can be curl'd without a browser.
@@ -181,11 +181,15 @@ subjects:
 # every review errors and every reader, administrators included, fails closed to the self tier
 # permanently.
 #
-# AND IT RENDERS FOR THE CLUSTER-CONFIGURATION TIER TOO (#230, review of #235 by the Fable seat).
-# That tier is deliberately independent of visibility.enabled — turning cluster-DATA restrictions off
-# must not hand the fleet's wiring to every proxy-admitted reader — so it asks a SubjectAccessReview
-# even when visibility is off. Without this binding in that state every such review errors and the
-# surface refuses EVERYONE, administrators included, with nothing but a log line to say why. Measured
+# AND IT RENDERS FOR THE CLUSTER-ADMIN TIER TOO (#322; first for the #230 tier it replaced, review of
+# #235 by the Fable seat). That tier — visibility.clusterAdminSar, the Cluster Configurations tab and
+# the KPI page — is deliberately independent of visibility.enabled: turning cluster-DATA restrictions
+# off must not hand the fleet's wiring or the KPI page to every proxy-admitted reader, so it asks a
+# SubjectAccessReview even when visibility is off. Without this binding in that state every such
+# review errors and both surfaces refuse EVERYONE, administrators included, with nothing but a log
+# line to say why. The KPI page is on every install, so the binding renders WHENEVER THE PROXY IS ON
+# (#322, Grok's review of SPEC_T2, C9): the tier asks only about a proxy-verified identity, so with the
+# proxy off nothing asks and the binding is absent. Measured
 # before the fix: `helm template --set visibility.enabled=false` rendered no binding while the
 # cluster-secrets Role rendered, and a cluster-admin got 403 with no SubjectAccessReview attempted.
 apiVersion: rbac.authorization.k8s.io/v1

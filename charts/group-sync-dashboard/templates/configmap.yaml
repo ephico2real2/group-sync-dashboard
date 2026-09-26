@@ -123,16 +123,14 @@ data:
     visibilityUsageAdminSarResource: {{ include "gsd.usageVisibilitySarResource" . | quote }}
     visibilityUsageAdminSarVerb: {{ include "gsd.usageVisibilitySarVerb" . | quote }}
     visibilityUsageAdminSarNamespace: {{ include "gsd.usageVisibilitySarNamespace" . | quote }}
-    {{- /* The cluster-configuration tier's two levels (#230): view = Argo's `clusters, get`, manage
-           = its `create/update/delete`, asked as SARs about the Secrets this surface exposes. */}}
-    visibilityClusterConfigViewSarApiGroup: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "apiGroup" "default" "") | quote }}
-    visibilityClusterConfigViewSarResource: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "resource" "default" "secrets") | quote }}
-    visibilityClusterConfigViewSarVerb: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "verb" "default" "get") | quote }}
-    visibilityClusterConfigViewSarNamespace: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigViewSar" "field" "namespace" "default" "") | quote }}
-    visibilityClusterConfigManageSarApiGroup: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "apiGroup" "default" "") | quote }}
-    visibilityClusterConfigManageSarResource: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "resource" "default" "secrets") | quote }}
-    visibilityClusterConfigManageSarVerb: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "verb" "default" "create") | quote }}
-    visibilityClusterConfigManageSarNamespace: {{ include "gsd.clusterConfigSarField" (dict "ctx" . "block" "clusterConfigManageSar" "field" "namespace" "default" "") | quote }}
+    {{- /* The cluster-admin tier (#322): one question, `update clusterrolebindings` on this cluster by
+           default, gating the Cluster Configurations tab and the KPI page and granting every host tier
+           to whoever passes it. The two blocks it replaced are refused by name at render. */}}
+    {{- include "gsd.refuseRemovedVisibilitySar" . }}
+    visibilityClusterAdminSarApiGroup: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "apiGroup" "default" "rbac.authorization.k8s.io") | quote }}
+    visibilityClusterAdminSarResource: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "resource" "default" "clusterrolebindings") | quote }}
+    visibilityClusterAdminSarVerb: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "verb" "default" "update") | quote }}
+    visibilityClusterAdminSarNamespace: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "namespace" "default" "") | quote }}
     # Unquoted: the app casts this with int(), and a quoted value would still parse but the
     # other numeric keys here are unquoted and one convention is worth keeping.
     visibilityTierTtlSeconds: {{ include "gsd.visibilityTierTtl" . }}

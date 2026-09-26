@@ -381,10 +381,9 @@ class TestApi:
         # `east` states no policy, so it is remote-sar (SPEC_D2b); no resolver here, so no made-up remote is asked
         # and east is self for every reader, fail closed.
         app.state.remote_tier_resolvers = {}
-        # The read route is gated on clusterconfig:view, NOT the wide tier (#230, the operator's
-        # ruling of 2026-09-20): the wide tier admits the auditor persona by design.
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
-        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
+        # The read route is gated on the cluster-admin tier, NOT the wide tier (#230, #322): the
+        # wide tier admits the auditor persona by design.
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             yield c, app.state.store
 
@@ -613,20 +612,15 @@ class TestVanishedSecretIsNotServed:
             assert c.get("/api/clusters/east/groupsyncs", headers=H("root")).status_code == 404
 
 
-class TestClusterConfigTier:
-    """The cluster-configuration tier (#230; the operator's ruling of 2026-09-20, "a new tier boss
-    — look at how argocd does it").
+class TestClusterAdminTierOnClusterConfigs:
+    """The cluster-admin tier on the Cluster Configurations surface (#322, replacing the #230 pair).
 
-    Argo CD's RBAC carries a first-class `clusters` resource with `get` and `create/update/delete`
-    actions; ours is the same two levels asked natively as SubjectAccessReviews about the objects
-    this surface exposes — `get secrets` for view, `create secrets` for manage, in the dashboard's
-    own namespace.
-
-    WHY NOT THE WIDE TIER, measured on CRC 2026-09-20: `oc get clusterrole cluster-reader -o json`
-    has ZERO of its 172 rules covering core/`secrets` and `oc auth can-i {get,list,create,update,
-    delete} secrets` answers `no` — while that same cluster-reader, the deliberate auditor persona,
-    PASSES the wide tier by design (see api.usage_scope). Gating this surface on the wide tier would
-    hand the auditor the fleet's wiring, and at S2 the writes that change it.
+    ONE SubjectAccessReview — `update clusterrolebindings` on the host by default — decides the read
+    route and the writes alike. WHY NOT THE WIDE TIER: the deliberate auditor persona, cluster-reader,
+    PASSES the wide tier by design (see api.usage_scope) and fails this question (measured on CRC:
+    `oc auth can-i update clusterrolebindings` → no). Gating this surface on the wide tier would hand
+    the auditor the fleet's wiring, and at S2 the writes that change it. The per-surface cases live
+    in tests/test_cluster_admin_tier.py; these pin this route's own shapes.
     """
 
     @pytest.fixture
@@ -635,7 +629,7 @@ class TestClusterConfigTier:
         closes it and these cases need several clients."""
         seq = iter(range(100))
 
-        def _make(view=None, manage=None):
+        def _make(cluster_admin=None):
             db = str(tmp_path / f"gsd{next(seq)}.db"); _seed(db)
             settings = _settings(db)
             settings.cluster_registry.namespace = "ns"
@@ -646,35 +640,33 @@ class TestClusterConfigTier:
             # this gate exists for, so a passing test cannot be passing for the wrong reason.
             app.state.tier_resolver = _MapResolver({"root": "all", "auditor": "all", "viewer": "all"})
             app.state.remote_tier_resolvers = {}   # the discovered east is remote-sar (SPEC_D2b); no remote is asked
-            app.state.clusterconfig_view_resolver = view
-            app.state.clusterconfig_manage_resolver = manage
+            app.state.cluster_admin_resolver = cluster_admin
             return app
 
         return _make
 
     def test_the_auditor_passes_the_wide_tier_and_is_still_refused_with_no_cluster_named(self, make_app):
-        app = make_app(view=_MapResolver({"root": "all"}), manage=_MapResolver({"root": "all"}))
+        app = make_app(cluster_admin=_MapResolver({"root": "all"}))
         with TestClient(app) as c:
             # the same persona the wide tier admits
             assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
             refused = c.get("/api/clusterconfigs", headers=H("auditor"))
             assert refused.status_code == 403
             body = refused.json()["detail"]
-            assert "cluster-configuration administrators" in body
+            assert body.startswith("For cluster administrators only.")
             # the refusal names no cluster, no Secret and no namespace: it reaches the refused
             # person, and a sentence that named the Secret would be a map for the next attempt.
             # Whole words: "ns" lives inside "instance", which is not a leak.
             words = set(re.findall(r"[A-Za-z0-9_.-]+", body))
-            assert not words & {"c1", "east", "ns", "gsd-cluster-east", "secrets"}
+            assert not words & {"c1", "east", "ns", "gsd-cluster-east", "secrets", "clusterrolebindings"}
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
 
-    def test_view_and_manage_are_asked_separately_and_manage_does_not_imply_view(self, make_app):
-        # A site may grant the two apart: passing manage alone must NOT open the read route.
-        app = make_app(view=_MapResolver({"root": "all"}),
-                       manage=_MapResolver({"root": "all", "manager": "all"}))
+    def test_one_question_decides_the_whole_tab_so_can_manage_follows_can_view(self, make_app):
+        """The #230 pair asked `view` and `manage` apart; one tier means whoever reads may change
+        (the deployment's writes switch permitting), and the payload says so."""
+        app = make_app(cluster_admin=_MapResolver({"root": "all"}))
         with TestClient(app) as c:
-            assert c.get("/api/clusterconfigs", headers=H("manager")).status_code == 403
-            assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+            assert c.get("/api/clusterconfigs", headers=H("root")).json()["can"] == {"view": True, "manage": True}
 
     def test_it_fails_closed_on_no_resolver_no_identity_and_an_exploding_check(self, make_app):
         """Argo's `policy.default: deny` in our vocabulary — a surface naming cluster credentials
@@ -687,17 +679,17 @@ class TestClusterConfigTier:
             def resolve(self, viewer):
                 raise RuntimeError("the API server said no such luck")
 
-        with TestClient(make_app(view=None)) as c:
+        with TestClient(make_app(cluster_admin=None)) as c:
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
-        with TestClient(make_app(view=_MapResolver({"root": "all"}))) as c:
+        with TestClient(make_app(cluster_admin=_MapResolver({"root": "all"}))) as c:
             assert c.get("/api/clusterconfigs").status_code == 403          # no identity
-        with TestClient(make_app(view=_Explodes())) as c:
+        with TestClient(make_app(cluster_admin=_Explodes())) as c:
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
 
     def test_the_wide_tier_alone_never_opens_it_the_mutant_this_kills(self, make_app):
         """The mutant: gating the route on `require_admin_tier` again. Everyone here passes the
         wide tier, so that revert makes this assertion fail."""
-        app = make_app(view=_MapResolver({}))    # nobody passes the new tier
+        app = make_app(cluster_admin=_MapResolver({}))    # nobody passes the tier
         with TestClient(app) as c:
             for who in ("root", "auditor", "viewer"):
                 assert c.get("/api/clusterconfigs", headers=H(who)).status_code == 403
@@ -708,65 +700,46 @@ class TestClusterConfigTier:
         The wide views widen in that state by design — the deployment has said it trusts everyone
         its proxy admits for cluster DATA. This surface is not cluster data: it says how the fleet
         is wired. Usage made the same call (usage_scope stays self); we go further and still ask,
-        so a cluster-admin keeps the tab (review of #235, Grok C2)."""
+        so a cluster-admin keeps the tab (review of #235, Grok C2; kept by #322)."""
         db = str(tmp_path / "off.db"); _seed(db)
         # BOTH widening switches at once: `visibility.enabled=false` widens the wide views, and
         # `userActivity.visibility: all` widens Usage for every viewer. Neither is a statement about
-        # who may read this namespace's Secrets, so neither may widen this tier.
+        # who administers this cluster, so neither may widen this tier.
         settings = _settings(db, view_restrictions_enabled=False, user_activity_visibility="all")
         settings.cluster_registry.namespace = "ns"
         settings.cluster_registry.replace(
             [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
         app = build_app(settings, run_poller=False)
         app.state.tier_resolver = _MapResolver({"auditor": "all", "root": "all"})
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})   # auditor absent
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})   # auditor absent
         with TestClient(app) as c:
             assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
             assert c.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
 
-    def test_build_app_constructs_two_resolvers_with_two_questions_and_two_caches(self, tmp_path):
-        """The share-one-resolver mutant: one instance, its cache keyed by viewer alone, so a
-        `view` verdict would answer `manage`. Also pins that construction no longer depends on
-        the wide-view switch."""
-        db = str(tmp_path / "two.db"); _seed(db)
-        app = build_app(_settings(db), run_poller=False)          # no injection: the real path
-        v = app.state.clusterconfig_view_resolver
-        m = app.state.clusterconfig_manage_resolver
-        assert v is not None and m is not None and v is not m
-        assert v._attributes["verb"] == "get" and m._attributes["verb"] == "create"
-        assert v._attributes["resource"] == "secrets" == m._attributes["resource"]
-        assert v._cache is not m._cache
+    def test_build_app_constructs_the_resolver_with_its_own_question_and_cache(self, tmp_path):
+        """The share-one-resolver mutant: reusing the Usage resolver, whose cache is keyed by viewer
+        alone, would let an operator's custom Usage question answer this tier. Also pins that
+        construction does not depend on the wide-view switch and asks a cluster-scoped question."""
+        db = str(tmp_path / "one.db"); _seed(db)
+        app = build_app(_settings(db, view_restrictions_enabled=False), run_poller=False)   # no injection: the real path
+        r = app.state.cluster_admin_resolver
+        assert r is not None
+        assert r._attributes == {"verb": "update", "resource": "clusterrolebindings", "group": "rbac.authorization.k8s.io"}
+        assert "namespace" not in r._attributes, "cluster-scoped, like adminSar's empty namespace"
+        on = build_app(_settings(str(tmp_path / "on.db")), run_poller=False)
+        assert on.state.cluster_admin_resolver is not on.state.usage_tier_resolver
+        assert on.state.cluster_admin_resolver._cache is not on.state.usage_tier_resolver._cache
 
-    def test_a_namespace_admin_who_can_create_the_secret_is_admitted(self, make_app):
-        """Each level asks ITS OWN question and nothing else (the operator's ruling of 2026-09-20,
-        reversing an earlier ordering).
-
-        A reader who passes `create secrets` in this namespace — a namespace admin, say — can write
-        the cluster Secret with `oc` whether or not the dashboard lets them; refusing them in the UI
-        protects nothing, and because the gate IS the action's own question the ServiceAccount that
-        performs the write is not acting beyond what the asker could do. RBAC is additive: holding
-        the auditor role and a namespace-admin grant is not a contradiction to resolve.
-
-        What still excludes the auditor is the plain question, measured on CRC 2026-09-20 with the
-        persona's groups carried (`--as=lateef.o` plus his three groups): `get secrets` no,
-        `create secrets` no.
-        """
-        app = make_app(view=_MapResolver({"root": "all", "nsadmin": "all"}),
-                       manage=_MapResolver({"root": "all", "nsadmin": "all"}))
-        app.state.tier_resolver = _MapResolver({"root": "all"})       # nsadmin is self on the wide tier
+    def test_a_namespace_admin_who_could_create_the_secret_is_now_refused(self, make_app):
+        """WHO LOSES ACCESS (#322): the #230 pair admitted whoever passed `create secrets` in the
+        release namespace — a namespace admin, `john.doe` with cluster-wide `admin` (measured on
+        CRC) — who is not a cluster administrator. The cluster-scoped question refuses them."""
+        app = make_app(cluster_admin=_MapResolver({"root": "all"}))   # nsadmin fails `update clusterrolebindings`
+        app.state.tier_resolver = _MapResolver({"root": "all"})       # and is self on the wide tier, as measured
         with TestClient(app) as c:
-            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 200
+            assert c.get("/api/clusterconfigs", headers=H("nsadmin")).status_code == 403
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 200
-
-    def test_the_auditor_is_excluded_by_the_plain_question_without_composing_tiers(self, make_app):
-        """The operator's ruling — the reporting auditor may neither view nor change this — holds
-        with NO composition: the auditor simply fails `get secrets`."""
-        app = make_app(view=_MapResolver({"root": "all"}), manage=_MapResolver({"root": "all"}))
-        app.state.tier_resolver = _MapResolver({"root": "all", "auditor": "all"})   # wide admits them
-        with TestClient(app) as c:
-            assert c.get("/api/clusters", headers=H("auditor")).status_code == 200
-            assert c.get("/api/clusterconfigs", headers=H("auditor")).status_code == 403
 
     def test_with_no_proxy_there_is_no_identity_to_ask_about_so_it_refuses(self, tmp_path):
         """The OTHER way the refusal is reached (OB3 F2-residue): with no proxy, `trusted_viewer`
@@ -778,16 +751,15 @@ class TestClusterConfigTier:
         settings.cluster_registry.replace(
             [parse_secret(_secret(), host_name="c1")], [], at="2026-09-20T16:05:12Z")
         app = build_app(settings, run_poller=False)
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             assert c.get("/api/clusterconfigs", headers=H("root")).status_code == 403
 
-    def test_the_two_levels_have_their_own_defaults_and_caches(self):
-        """`manage` is not derived from `view`: separate settings, separate questions."""
+    def test_the_tier_has_its_own_default_the_usage_question(self):
+        """Its own setting, the same default question as Usage's — and the #230 fields are gone."""
         from gsd.config import Settings
         s = Settings(clusters=())
-        assert (s.visibility_clusterconfig_view_sar_verb,
-                s.visibility_clusterconfig_view_sar_resource) == ("get", "secrets")
-        assert (s.visibility_clusterconfig_manage_sar_verb,
-                s.visibility_clusterconfig_manage_sar_resource) == ("create", "secrets")
-        assert s.visibility_clusterconfig_view_sar_api_group == ""      # the core group
+        assert (s.visibility_cluster_admin_sar_api_group, s.visibility_cluster_admin_sar_resource,
+                s.visibility_cluster_admin_sar_verb, s.visibility_cluster_admin_sar_namespace) == (
+            "rbac.authorization.k8s.io", "clusterrolebindings", "update", "")
+        assert not [f for f in dir(s) if f.startswith("visibility_clusterconfig_")]

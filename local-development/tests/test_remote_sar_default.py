@@ -278,8 +278,7 @@ class TestTheTabsCreateRequestResolvesThePair:
                                                          dashboard_controller=True)],
                                  db_path=str(tmp_path / "t.db"), oauth_proxy_enabled=True, view_restrictions_enabled=True,
                                  cluster_secrets_enabled=True, cluster_secrets_writes_enabled=True),
-                        run_poller=False, tier_resolver=lambda v: "all",
-                        clusterconfig_view_resolver=lambda v: "all", clusterconfig_manage_resolver=lambda v: "all")
+                        run_poller=False, tier_resolver=lambda v: "all", cluster_admin_resolver=lambda v: "all")
 
         def _post(**extra):
             body = {"name": "new", "server": "https://api.new.example:6443",

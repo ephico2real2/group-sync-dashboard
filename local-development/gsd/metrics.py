@@ -64,9 +64,9 @@ ALERT_KINDS = (
 # Vocabularies for the process-event families. Fixed tuples, like STATES and FINDINGS:
 # every combination is pre-seeded to 0 so increase() has a baseline before the first event,
 # and a typo'd label value fails loudly in tests instead of minting a new series.
-# "clusterconfig_view" / "clusterconfig_manage": the two levels of the cluster-configuration
-# tier (#230), each counted apart so a refusal at one is never read as the other breaking.
-TIER_THRESHOLDS = ("admin", "usage", "clusterconfig_view", "clusterconfig_manage")
+# "cluster_admin": the cluster-admin tier (#322) — one question, `update clusterrolebindings` on the
+# host — counted apart so a refusal there is never read as the wide or Usage tier breaking.
+TIER_THRESHOLDS = ("admin", "usage", "cluster_admin")
 TIER_CHECK_OUTCOMES = ("allowed", "denied", "unreachable", "auth_failed", "forbidden", "error")
 # The poller's pulls of the report service's usage feed (docs/specs/SPEC_C3_reporting_microservice.md §3.2).
 REPORT_PULL_OUTCOMES = ("ok", "refused", "unreachable", "error")

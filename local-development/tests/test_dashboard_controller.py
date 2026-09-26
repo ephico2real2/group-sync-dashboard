@@ -78,8 +78,7 @@ class TestBuildAppUsesTheDeclaredController:
         settings = self._settings(tmp_path, view_restrictions_enabled=True)
         app = build_app(settings, run_poller=False)
         targets = {name: getattr(app.state, name)._kube.cluster.name
-                   for name in ("tier_resolver", "usage_tier_resolver",
-                                "clusterconfig_view_resolver", "clusterconfig_manage_resolver")}
+                   for name in ("tier_resolver", "usage_tier_resolver", "cluster_admin_resolver")}
         assert targets == {k: "home" for k in targets}, targets
         remotes = app.state.remote_tier_resolvers
         assert remotes.get("home") is None, "the controller is never asked as a remote"
@@ -102,8 +101,7 @@ class TestBuildAppUsesTheDeclaredController:
         monkeypatch.setattr("gsd.api.own_namespace", lambda: "ns")
         app = build_app(self._settings(tmp_path), run_poller=False)
         app.state.tier_resolver = _MapResolver({"root": "all"})
-        app.state.clusterconfig_view_resolver = _MapResolver({"root": "all"})
-        app.state.clusterconfig_manage_resolver = _MapResolver({"root": "all"})
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
         with TestClient(app) as c:
             body = c.get("/api/clusterconfigs", headers=H("root")).json()
         assert [r["id"] for r in body["clusters"] if r["host"]] == ["home"]
