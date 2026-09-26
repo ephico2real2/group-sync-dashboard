@@ -57,7 +57,9 @@ no feature is removed or deprecated unless an issue says so and the operator agr
 ## Definition of Done (epic)
 - [ ] Every child issue closed, with evidence pinned to a full merge sha.
 - [ ] The epic-level outcome, as a check someone can run.
-- [ ] Deployed to CRC through `release-crc.sh --argocd`, walked, PVC UIDs unchanged.
+- [ ] Released: `prepare-release.py` cut, with the epic as the release heading's first bullet; the release merged
+      and published.
+- [ ] The released version deployed to CRC through `release-crc.sh --argocd`, walked, PVC UIDs unchanged.
 - [ ] The branches this epic used are deleted, each proven merged first.
 - [ ] The session changelog records the epic.
 
@@ -99,6 +101,19 @@ Child by child, in the build order, per `.claude/skills/adversarial-review/SKILL
 Grok can help with a hard problem as an advisor, but its proposals are checked like any other.
 
 ## 6. Close the epic
+**Every epic is released and deployed, a docs-only one included.** The operator, 2026-09-26: *"In agile. You have
+deploy or redeploy every epic and cut a release note. So we are remaining true."* Never offer to skip either.
+
+1. **Release.** From a clean checkout of main, run `local-development/prepare-release.py`: `--app X.Y.Z` when
+   `gsd/` changed, otherwise `--chart A.B.C` (a patch). The reason is the epic, for example `"Epic A: quick
+   cleanup (#381)"`. The script turns `## Unreleased` into the release heading. Review and merge the release PR as
+   any other; `helm.yaml` publishes the chart, and `publish.yml` publishes an application image.
+2. **Release note.** Write the epic's summary (the children, their merge shas, the lab evidence) into the GitHub
+   release body for that chart tag: `gh release edit group-sync-dashboard-<version> --notes-file <file>`.
+3. **Deploy.** The released version, through `release-crc.sh --argocd`. Walk it, and record the PVC UIDs before and
+   after (`docs/RELEASING.md`, and the memory note on release-crc modes).
+
+Then:
 - Every Definition-of-Done box ticked.
 - A summary comment: each child's merge sha, the lab evidence, what was deferred and where.
 - The epic's branches deleted, each proven merged.
