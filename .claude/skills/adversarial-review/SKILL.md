@@ -42,9 +42,11 @@ PR that bumps the chart), never left as a dangling "follow-up".
 | Reviewer | Invocation | Verified by |
 |---|---|---|
 | Codex, GPT-5.6, highest reasoning | plugin agent `codex:codex-rescue` with **`--model gpt-5.6-sol --effort xhigh`** stated in the request; CLI form `codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reasoning_effort="xhigh" …` | probe from the repo root; the session jsonl under `~/.codex/sessions` records `"effort":"xhigh"`. The id `gpt-5.6` is REFUSED on this ChatGPT account. |
-| Cursor, Grok 4.6 high fast (ZDR) | `cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast "<brief>"` | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
-| Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-high "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
-| Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --mode ask --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>"` | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
+| Codex, **GPT-6 Astra**, high: the implementer seat since 2026-09-25, and a reviewer of what OB1-lite writes | `codex exec --skip-git-repo-check -m gpt-6-astra -c model_reasoning_effort="high" -s workspace-write -C <its own dir> "<brief>" < /dev/null` | the stderr header shows `model: gpt-6-astra` and `reasoning effort: high`. Its sandbox forbids opening sockets (see Gotchas). |
+| **OB1-lite**, Opus 5.5 high: the implementer seat since 2026-09-25, and a reviewer of what Codex writes | the `Agent` tool, `subagent_type: "ob1-lite"`; the brief's first line names the role, `Role: IMPLEMENTER` or `Role: REVIEWER` | the report cites file:line and command output for every verdict. **A change is never reviewed by the seat that wrote it** (the operator's mandate of 2026-09-25: *"Switch to coding with ob1-lite and codex astra"*). |
+| Cursor, Grok 4.6 high fast (ZDR) | `cursor agent -p --force --output-format text --trust --workspace "$G" --model cursor-grok-4.6-high-fast "<brief>" < /dev/null`, with `$G` Grok's own directory holding the export in `head/`; it writes `$G/findings.md` (Step 2) | probe from the repo root returns the expected words; `cursor agent models` lists the ids. |
+| Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --force --output-format text --trust --model claude-fable-5-thinking-high "<brief>" < /dev/null`, run inside the reviewer's own `git archive` export (Step 2) | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
+| Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --force --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>" < /dev/null`, run inside the reviewer's own `git archive` export (Step 2) | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
 | **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; the same Fable as Cursor's `claude-fable-5-thinking-*` rows above by another route — the pivot to OB1 exists because Cursor's Fable is capped by the Pro+ usage limit (measured 2026-09-17: the first launch hit the monthly limit); the Cursor Fable rows stay (the operator, 2026-09-17: "Dont drop the cursor fable role. We only pivot to ob1 because our token issues with cursor fable") | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
 | **OB2** — OB1 at **high** reasoning effort, the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob2"`** — the project agent `.claude/agents/ob2.md` (`model: fable`, `effort: high`, the reviewer's standing rules in its body: verdicts with artefacts, every finding with its full fix and its failing/passing test, read-only, measure-don't-reason, the report shape); the brief is its whole prompt, no `model` parameter needed | the operator, 2026-09-18: *"Create a new skill from OB1 called OB2 (OB1 high) with fable 5.1 but with high effort and assume OB2"* — every launch uses OB2 now; OB1 (the general-purpose launch at the session's effort) only when the operator asks for it by name. Same tools, same rules, the same report; its completion notification carries the answer. |
 | **OB3** — the same reviewer on **Opus 5.5**, choosing its own depth; the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob3"`** — the project agent `.claude/agents/ob3.md` (`model: claude-opus-5-5`, `effort: high` as a FLOOR, and a rubric in its body: shallow claims are settled by a grep, medium by one drive, deep ones get the harness, and the report names which it treated as deep). Also runnable as a background job: `claude -p "<the brief's prompt>" --agent ob3 --allowedTools "Bash,Read,Write,Edit,Glob,Grep" --output-format json --max-turns 300 < /dev/null` (drop `CLAUDECODE` from the environment first) | the operator, 2026-09-18: *"We have hit our weekly fable usage limit… use opus 5 high with auto switch effort… substitute the jobs and role of ob2 with ob3."* MEASURED that day: an OB2 background run died after 32 turns with "You've reached your Fable limit", $4.93 spent and no report. There is no `auto` effort value — the frontmatter takes a fixed tier and neither the `Agent` tool nor `claude -p` exposes an effort flag — so the tier is pinned at `high` and the self-scaling lives in the agent's body. |
@@ -195,9 +197,37 @@ file's contents verbatim to both reviewers.
 
 ```sh
 S=<scratchpad>
-nohup cursor agent -p --mode ask --output-format text --trust --model cursor-grok-4.6-high-fast \
-  "$(cat "$S/review_brief_<id>.md")" > "$S/review_cursor_<id>.txt" 2> "$S/review_cursor_<id>.err" &
+G="$S/review_<id>_grok"                 # Grok's OWN directory: its workspace root, never shared
+mkdir -p "$G/head" && git archive <head-sha> | tar -x -C "$G/head"      # the code under review: $G/head
+cp "$S/review_brief_<id>.md" "$G/brief.md"
+cd "$G" && nohup cursor agent -p --force --output-format text --trust --workspace "$G" \
+  --model cursor-grok-4.6-high-fast "$(cat "$G/brief.md")" < /dev/null \
+  > "$G/answer.txt" 2> "$G/answer.err" &
 ```
+
+**The directory, as Grok sees it.** Its workspace (`--workspace "$G"`) holds:
+- `head/`, the export of the commit under review. Grok reads and runs things there.
+- `brief.md`, the brief.
+- `findings.md`, which Grok writes itself: the verdicts, and for every finding the full code of the fix and its
+  failing/passing test. This is the same contract as Codex's findings file (memory: codex-findings-full-code-in-a-file).
+- `answer.txt` / `answer.err`, its printed reply, captured by the launch line.
+
+The brief must say, in words: *"Work in `head/`. Write your complete answer to `findings.md` in the workspace root.
+Change nothing outside this directory. No git writes, no cluster writes."* Copy `findings.md` out before anything
+cleans the directory.
+
+```sh
+sleep 30; ls -la "$G"; head -c 300 "$G/answer.err"   # answer.err empty and the process alive: it is working
+```
+
+**Why `-p --force`, and why an export.** The CLI's own help: `--mode ask` is *"Q&A style … (read-only)"*, while
+`-p` *"has access to all tools, including write and shell"* and `--force` runs commands without prompting.
+Every Grok pass from #368 to #376 ran with `--mode ask` and reported "Shell was blocked": its verdicts were read,
+not measured, and one was false. It said "no screenshots" for six committed PNGs it could not see. The operator,
+2026-09-26: *"cursor grok was better before and it could access shell and write it own file."* A probe with
+`-p --force` ran `uname`, `python3` and `helm` and wrote its own file. A seat with a shell can also change things,
+so it gets a `git archive` export (no `.git`, so no refs a stray command could move) in its own directory. Never
+give it a worktree, and never the main checkout. The brief still says no git writes and no cluster writes.
 
 and, in the same turn, Codex — either the `codex:codex-rescue` agent with: the brief path, "pass its
 ENTIRE contents verbatim", `--model gpt-5.6-sol --effort xhigh`, a scratchpad directory for copies (its
@@ -224,8 +254,8 @@ name the branch and say it must not switch). It runs in the background and repor
 predict or paraphrase its result before the notification arrives. Save its answer to
 `$S/review_ob1_<id>.txt` yourself when it comes in, so the record has all three side by side.
 
-What each can and cannot do: Cursor in ask mode has NO shell and no network — it traces from source and
-must mark what it cannot measure PLAUSIBLE, not CONFIRMED. Codex has a shell and is the reviewer that
+What each can and cannot do: Cursor launched as above has a shell, so it measures in its export. Launched with
+`--mode ask` it has NO shell: it traces from source and must mark what it cannot measure PLAUSIBLE, not CONFIRMED. Codex has a shell and is the reviewer that
 follows a value end to end; give it the venv interpreter path. OB1 has the session's tools and the live
 repository: it can read the real files and run read-only commands against the lab, so it is the reviewer
 that catches "the file the brief describes is not the file on disk" and "the number in the doc is not the
@@ -262,6 +292,35 @@ head as it stands then. Agreeing with OB3 because OB3 said it wastes the third-r
 - **Two reviewers writing into one file clobber each other** — never share an output file, and never
   give a reviewer the scratchpad root: a Codex exit trap once deleted the whole session directory. Each
   reviewer gets its own subdirectory and irreplaceable outputs are copied out first.
+
+- **Codex's sandbox forbids opening sockets** (`PermissionError: [Errno 1] Operation not permitted`). So the
+  browser suite, the mock suite and the local-TLS tests error inside it: on #321, 604 browser errors and 35 mock
+  errors. They are not failures of the code. Tell Codex to report those suites as not measured, and run them
+  yourself outside the sandbox. Codex cannot commit or push either: the orchestrator does, and
+  `apply-spec-blocks.py --apply` refuses a dirty tree, so commit first.
+- **A check that finds nothing must prove it looked.** The #321 RBAC diff printed `REMOVED 0 ADDED 0` twice,
+  from two empty inputs. The first time, the system `python3` had no `yaml`. The second time, a zsh substitution
+  put a space into the values-file path. Print each side's line count before the diff, and treat 0 lines as a
+  failed check, never a clean one.
+- **Tests in a worktree need `PYTHONPATH=<worktree>/local-development`.** The venv's editable install points at the
+  main checkout. **The mock suite needs its own venv** (`python3 -m venv … && pip install -e local-development -e
+  'local-development/mock-app[test]'`), because the main venv has no `cryptography`.
+- **Switching an implementer mid-task:** message it to stop (no code, no commits, hand over the branch, the head
+  and any review still running), and do not kill it. On #322 that kept OB2's spec, its worktree and a Grok review
+  that was already running; the next implementer continued from them.
+- **Stacked PRs with version bumps:** the later PR writes its version blocks as `deferred-block` (Old text that
+  cannot exist yet). After the rebase, turn them into `block`, commit, and apply only them. The index checks in
+  `tests/test_specs_index.py` then catch any resolution slip: on #321, row order by issue number and the status
+  of both rows.
+- **`merge-safe.sh` reads a deliberate deletion as "MISSING on main"** and keeps the branch. Check that each missing
+  file is one the PR removed on purpose (`git cat-file -e origin/main:<path>` fails for each), then delete the
+  branch by hand.
+- **Evidence READMEs quote only committed files.** Grok flagged unsourced or paraphrased numbers on #374, #375 and
+  #376. Commit the exact commands, with a password as a shell variable and never its value. Give a timestamp's UTC
+  offset whenever two clocks are compared.
+- **A test that monkeypatches a module-level client shares it with every live thread.** A `poll-host` thread leaked
+  by one test consumed another test's scripted fake client, and CI failed on the slower 3.11 runner only. Find a
+  leak with a per-test thread probe, not by rerunning: 40 local reruns passed.
 
 **Wait with a background wakeup, not a polling loop** (the operator, 2026-09-17: *"Pls dont poll background jobs
 and waste tokens. Pls use watcher and ask them to notify you or wake up when the done"*). Reviewers, the suite and CI each take minutes;
