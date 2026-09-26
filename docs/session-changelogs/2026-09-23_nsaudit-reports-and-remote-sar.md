@@ -9,13 +9,13 @@ at 08:52, the cleanup, Part 7, and Part 8 (2026-09-25). The product changelog (`
 says what a working session did. The review decisions of #336–#345 are itemised in
 `docs/REVIEW_remote_sar_for_every_join.md`; Part 6 cites it rather than repeating every line.
 
-Outcome in one line: **twenty-eight pull requests merged. Login capture reads the audit log by default. #261's Namespace audit parts 2 and 3 shipped, and the issue closed. The 2026-09-23 release was deployed through Argo CD and walked (84/84 steps, 15/15 release checks), and its one defect was fixed (#332). The operator's mandate was built end to end: SPEC_D2b was reviewed on six heads and merged with 221 blocks (#339), implemented from those blocks alone as application 0.32.0 and chart 0.53.0 (#342), and walked on the lab (Steps 0–11, then the e2e walk at 84/84). #338 closed with its evidence. In the evening, #312, #346 and #347 were fixed (#350, #352, #354) and proved on the lab, and the specs and design indexes were brought to the evidence (#351). On 2026-09-25 #353 (the unmanaged finding on every subject, with the operator's platform rule), #293 (ConfigMap onboarding) and #340 (the CA cache) closed, each proved on the lab: thirty-nine PRs in all.**
+Outcome in one line: **twenty-eight pull requests merged. Login capture reads the audit log by default. #261's Namespace audit parts 2 and 3 shipped, and the issue closed. The 2026-09-23 release was deployed through Argo CD and walked (84/84 steps, 15/15 release checks), and its one defect was fixed (#332). The operator's mandate was built end to end: SPEC_D2b was reviewed on six heads and merged with 221 blocks (#339), implemented from those blocks alone as application 0.32.0 and chart 0.53.0 (#342), and walked on the lab (Steps 0–11, then the e2e walk at 84/84). #338 closed with its evidence. In the evening, #312, #346 and #347 were fixed (#350, #352, #354) and proved on the lab, and the specs and design indexes were brought to the evidence (#351). On 2026-09-25 #353 (the unmanaged finding on every subject, with the operator's platform rule), #293 (ConfigMap onboarding) and #340 (the CA cache) closed, each proved on the lab: thirty-nine PRs in all. In Part 10, #322 (the cluster-admin tier) and #321 (the OAuth Debug path removed) shipped, each walked on the lab and closed with its evidence.**
 
 | | Before the session | After |
 |---|---|---|
-| main | `cb64f81` (#307 merged, 2026-09-22 17:28) | `7aa00f1` (#368 merged, 2026-09-25 08:53). Through Part 7, `b647db4` (#354, 2026-09-24 20:00); the tag `checkpoint-2026-09-23` is on `7c0a42c` |
-| chart / app | 0.51.0 / 0.31.0 | **0.56.0 / 0.34.1** (Unreleased). Through Part 7, 0.53.1 / 0.32.0; Parts 8–9 add U1 (0.54.0 / 0.33.0), S5 (0.55.0 / 0.34.0), #367 (0.55.1) and #368 (0.56.0 / 0.34.1) |
-| deployed on the lab | not recorded in the repository | `09d5526cae` (#363) through `release-crc.sh --argocd`; #367 and #368 are not yet deployed |
+| main | `cb64f81` (#307 merged, 2026-09-22 17:28) | `e5459e0` (#375 merged, 2026-09-26 00:10). Through Part 7, `b647db4` (#354, 2026-09-24 20:00); the tag `checkpoint-2026-09-23` is on `7c0a42c` |
+| chart / app | 0.51.0 / 0.31.0 | **0.58.0 / 0.36.0** (Unreleased). Through Part 7, 0.53.1 / 0.32.0; Parts 8–10 add U1 (0.54.0 / 0.33.0), S5 (0.55.0 / 0.34.0), #367 (0.55.1), #368 (0.56.0 / 0.34.1), #322 (0.57.0 / 0.35.0) and #321 (0.58.0 / 0.36.0) |
+| deployed on the lab | not recorded in the repository | `667b3c4a62` (#373's merge) through `release-crc.sh --argocd`, verified in-pod |
 | open PRs | #309, #313, #317, #320 | none once this log's PR merges |
 | issues | #261 open (part 1 shipped in #264; parts 2–4 not built), #318 open | closed: #261, #318, #332, #338, #346, #347 and #348. Opened: #321, #322, #332, #338, #340, #341, #346, #347, #348 and #353. #341 is deferred; #312 and #353 are handed to OB1 |
 
@@ -858,13 +858,93 @@ The orchestrator's summary, with what was measured for this log:
   - The routes tried and dropped (SharedSecret, native replication, the OAuth builder) stay on #369 as collapsed,
     outdated comments.
 
+## Part 10 — the redeploy, #322 and #321, and the switch to new implementers (2026-09-25 21:37 → 2026-09-26 00:10)
+
+### The session log and the redeploy — PR #370 (merge `9584239`, 21:37)
+
+- #370 carried Part 9 and brought the handover to `7aa00f1`.
+- **Found by Grok:**
+  - two numbers without a source (the 5791 suite count and the PVC re-read);
+  - #366 missing from Part 9;
+  - the handover stale.
+  All **accepted**, in `030739b`.
+- **Deployed** `9584239` with `release-crc.sh --argocd`: verified in-pod, PVCs identical (#368's PR comment).
+- **The timers, measured on the lab** (the evidence is #368's PR comment):
+  - bindings refreshed once, at 22:39:53 CDT;
+  - discovery cycles ran at 22:39:33, 22:44:33, 22:49:33 and 22:54:33. The cycles were timed by creating and deleting
+    a probe Secret, a clone of the lab's refused test Secret, since removed.
+- **Closed:** #308 (the `image` job passed on 8 of 8 main runs) and operator-chart issue 69 (the SharedSecret
+  research). **Filed:** #371, the suite writes into the working tree.
+
+### The implementers change (the operator, 2026-09-25 evening)
+
+- *"New mandate. Switch to coding with ob1-lite and codex astra."*
+- OB2 (Fable) was stopped mid-#322, after writing SPEC_T2 (`7f97731`) and before any code. Its worktree, branch and
+  pending Grok spec review were handed over intact.
+- The rule since then: a change is never reviewed by the seat that wrote it. OB1-lite's code gets Grok and Codex;
+  Codex's code gets Grok and OB1-lite.
+
+### #322, the cluster-admin tier — PR #372 (merge `49c4834`, 23:07), evidence PR #374 (merge `2f01a3c`, 23:30)
+
+- **The build:** OB1-lite (Opus 5.5) continued from OB2's spec, rebased, and applied 91 blocks (`18e7c66`).
+- **Grok's spec review:** C7 and C9 **accepted** (#372's first PR comment; SPEC_T2's Orchestrator's notes D7, D8).
+  - C7: a values file that still sets a removed block to `null` keeps that null, because the chart no longer
+    defaults the key. The first blocks refused any present key, so the render failed. Now a block is refused only
+    when it sets a field.
+  - C9: in one install (the proxy on; visibility, token access and cluster-Secret writes all off) no
+    `system:auth-delegator` binding was rendered, so KPI would refuse everyone. The binding now renders whenever the
+    proxy is on.
+- **Measured by OB1-lite:**
+  - hermetic 5232 passed (#372's Codex-review comment);
+  - browser 605 passed, and no Role or ClusterRole rule removed across five `helm template` combinations. The only
+    addition is that binding. These two are from OB1-lite's report to the orchestrator and are not in the
+    repository.
+- **Grok's code review:** no findings. Its shell was blocked, so the verdicts come from reading.
+- **Codex's code review** (gpt-6-astra): approved, with one P3 copy fix **accepted** (`4cc54b7`). The Cluster
+  Configurations note still named the removed tiers. The new test fails on the old text and passes on the new.
+- **The lab walk on `18e7c6690a`** (`reports/2026-09-25_cluster-admin-tier-322/`):
+  - kubeadmin: 200/200 and both tabs;
+  - `developer` with a temporary `cluster-reader` binding, removed after: 403/403, neither tab, and the refusal cards.
+- **Found by Grok on #374:** C1, C2 and C7 **accepted**. C6, "no screenshots", was **rejected**: `git ls-files` lists
+  all six, and Grok's seat does not see binary files.
+
+### #321, remove the OAuth Debug path — PR #373 (merge `667b3c4`, 23:46), evidence PR #375 (merge `e5459e0`, 00:10)
+
+- **The four open decisions** were settled on "easy to manage, best practice" and recorded on #321. The lab measured
+  `logLevel=Normal` and audit-log only.
+- **Phase 1, the spec:** Codex (gpt-6-astra) wrote SPEC_L1, 135 blocks across 57 files (#373's PR body).
+- **Spec review** (#373's spec-review comment; SPEC_L1, Review round 1):
+  - OB1-lite measured 9 tests failing after apply and supplied fixes A–E, with 1103 passing after. **Accepted**.
+  - Grok's C5 fallback was **rejected**. OB1-lite measured that no chart path gives a pod a pod-log ConfigMap.
+- **Phase 2, the code:** Codex applied the amended spec; review round 1 added Blocks 136–142 (SPEC_L1). Its sandbox
+  blocks sockets, so the orchestrator ran the suites outside it: browser 604, mock 59 in a CI-style venv, the Helm
+  refusals, and RBAC REMOVED 0 (default 63/63, crc 70/70). These are in #373's round-2 comment.
+- **The rebase onto #322:**
+  - three conflicts (the specs index, its pinned count, the CHANGELOG);
+  - the specs-index tests failed until L1's row sat above T2's (issue #321 before #322), T2's status was `merged`,
+    and L1's was `in progress`. That was during the rebase; L1 became `merged` in this log's PR;
+  - the version blocks applied: chart 0.58.0, app 0.36.0, SPEC_S4c to 0.59.0 / 0.37.0.
+- **Code review:** OB1-lite approved, measuring hermetic 5177, #322's suites 299, browser 604, the code 64 lines added
+  and 1223 deleted (#373's round-2 comment; SPEC_L1, Review round 2).
+  - F1 **accepted**: the lost test of the log-read budget, restored; it fails on a mutant.
+  - N1–N3 **accepted**.
+  - Grok's F1 **rejected** by its own condition: `authLogLevel: null` exits 1, as the spec intends.
+- **The lab** (`reports/2026-09-25_remove-oauth-debug-321/`):
+  - no Debug-path object left, and OAuth at `Normal`;
+  - a real `oc login -u developer` at 04:25:57Z was stored 23 s later as `success`, source `audit-log`, kind `cli`.
+  - Stored pod-log history cannot be shown on this lab, whose database has only audit-log rows. A test pins it.
+- **Found by Grok on #375:** C1 and C6 **accepted**, with the exact commands committed.
+- **Found by `merge-safe.sh`:** it would not delete #373's branch after the merge. It treats a file the PR removed as
+  "missing on main" and stops, so that a merge that dropped a file by accident is not cleaned up as a success. These
+  files were meant to go; after checking that by hand, the branch was deleted.
+
 ---
 
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368 |
+| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375 |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
 | Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
@@ -903,16 +983,16 @@ The orchestrator's summary, with what was measured for this log:
 
 ## State left behind
 
-Written at the end of Part 9, 2026-09-25.
+Written at the end of Part 10, 2026-09-26 00:10 CDT.
 
-- **main** is `7aa00f1` (#368), at chart 0.56.0 and app 0.34.1, both under `docs/CHANGELOG.md`'s Unreleased heading.
-- **Deployed** on the lab: `09d5526cae` (#363) through `release-crc.sh --argocd`, Argo CD Synced. The redeploy of the
-  latest main follows this log's PR.
-- **The kept PVCs** are unchanged: `group-sync-dashboard-data` UID `f065b7a4-535c-4ef1-868c-58f5afee4953`, and
-  `group-sync-dashboard-report-artifacts` UID `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`. Re-read with
-  `oc get pvc -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid` just before this log's
-  PR; the output is not committed.
+- **main** is `e5459e0` (#375), at chart 0.58.0 and app 0.36.0, all under `docs/CHANGELOG.md`'s Unreleased heading.
+- **Deployed** on the lab: `667b3c4a62` (#373's merge) through `release-crc.sh --argocd`, verified in-pod. Later
+  commits add reports only.
+- **The kept PVCs** are unchanged through all five deploys of Part 10: `group-sync-dashboard-data` UID
+  `f065b7a4-535c-4ef1-868c-58f5afee4953`, and `group-sync-dashboard-report-artifacts` UID
+  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`. The sources: #368's PR comment for `9584239`, then the `pvc-*.txt` files in
+  `reports/2026-09-25_cluster-admin-tier-322/walk/` and `reports/2026-09-25_remove-oauth-debug-321/walk/`.
 - **Open PRs:** none once this log's PR merges.
-- **Next, the operator's order:** #322 (the cluster-admin tier), then #321 (remove the OAuth Debug path).
-- **Parked:** #369, operator-chart issue 70, and #341.
-- **Worktrees:** the main checkout only. `gsd-grafana` is gone (Part 8's incident).
+- **The implementers:** OB1-lite and Codex Astra, by the operator's mandate.
+- **Next:** #315, then #285 (the credential lifecycle), or #316 (Rejoin, which #322 now gates).
+- **Parked:** #369, operator-chart issue 70, and #341. **Open:** #210, #371.
