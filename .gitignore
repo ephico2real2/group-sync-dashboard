@@ -37,9 +37,9 @@ auth.json
 RESUME.md
 ideas-multipods.md
 
-# The project's Claude Code directory. TRACKED: the four hand-written project skills — the
+# The project's Claude Code directory. TRACKED: the six hand-written project skills — the
 # adversarial review pass, the session change log, the end-to-end walk, the mermaid-ascii terminal
-# preview — and the project settings that carry the
+# preview, and the epic and issue formats (2026-09-26) — and the project settings that carry the
 # change-log hook and the read-only permission rules; the operator's process lives in them
 # (2026-09-14). IGNORED: everything else under .claude/ — the vendored UI/UX Pro Max skill set
 # (~2.8M of CSV design data + scripts, installed by
@@ -55,6 +55,8 @@ ideas-multipods.md
 !.claude/skills/changelog/
 !.claude/skills/e2e-walk/
 !.claude/skills/mermaid-ascii/
+!.claude/skills/epic/
+!.claude/skills/issue/
 
 # Rendered chart output (local-development/render-manifests.sh). Generated, never authored:
 # it is the chart rendered for inspection and testing. Two reasons it must not be committed —
