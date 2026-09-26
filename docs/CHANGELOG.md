@@ -10,6 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Documentation index (#319; chart 0.58.1, docs only).** [The docs index](README.md) groups
+  operator guides first and development records by kind. The root README links the index; the chart's
+  auditor-group and cluster-discovery values link their troubleshooting and polling guides. The chart
+  patch publishes those README changes; application content and RBAC are unchanged.
 - **OAuth Debug path removed (#321, SPEC_L1; app 0.36.0 / chart 0.58.0, after #322).**
   Operators using `loginCapture.source: pod-log` or any `authLogLevel` values must migrate:
   remove the whole `authLogLevel` stanza (even false settings), remove `loginCapture.namespace`,
