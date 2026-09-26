@@ -13,9 +13,9 @@ Outcome in one line: **twenty-eight pull requests merged. Login capture reads th
 
 | | Before the session | After |
 |---|---|---|
-| main | `cb64f81` (#307 merged, 2026-09-22 17:28) | `b647db4` (#354 merged, 2026-09-24 20:00): 28 PRs merged, 27 as one squash commit each and #354 as a merge commit; the tag `checkpoint-2026-09-23` is on `7c0a42c` |
-| chart / app | 0.51.0 / 0.31.0 | **0.53.1 / 0.32.0**: 0.52.0 from #320, 0.52.1 from #317, 0.53.0 / 0.32.0 from #342, and 0.53.1 from #350 (Unreleased) |
-| deployed on the lab | not recorded in the repository | `4f4c070b08` through `release-crc.sh --argocd`, Synced/Healthy and verified in-pod; #354 is not deployed |
+| main | `cb64f81` (#307 merged, 2026-09-22 17:28) | `7aa00f1` (#368 merged, 2026-09-25 08:53). Through Part 7, `b647db4` (#354, 2026-09-24 20:00); the tag `checkpoint-2026-09-23` is on `7c0a42c` |
+| chart / app | 0.51.0 / 0.31.0 | **0.56.0 / 0.34.1** (Unreleased). Through Part 7, 0.53.1 / 0.32.0; Parts 8–9 add U1 (0.54.0 / 0.33.0), S5 (0.55.0 / 0.34.0), #367 (0.55.1) and #368 (0.56.0 / 0.34.1) |
+| deployed on the lab | not recorded in the repository | `09d5526cae` (#363) through `release-crc.sh --argocd`; #367 and #368 are not yet deployed |
 | open PRs | #309, #313, #317, #320 | none once this log's PR merges |
 | issues | #261 open (part 1 shipped in #264; parts 2–4 not built), #318 open | closed: #261, #318, #332, #338, #346, #347 and #348. Opened: #321, #322, #332, #338, #340, #341, #346, #347, #348 and #353. #341 is deferred; #312 and #353 are handed to OB1 |
 
@@ -794,7 +794,13 @@ The orchestrator's summary, with what was measured for this log:
 - Nothing recovers them: no local snapshot (`tmutil listlocalsnapshots`), no Time Machine destination.
 - The committed versions are intact. OB1 reported it at once, and the rule is in memory.
 
-## Part 9 — the unmanaged-grant doc, the binding and discovery timers, the credential research (2026-09-25 07:59 → 10:00)
+## Part 9 — the handover, the unmanaged-grant doc, the binding and discovery timers, the credential research (2026-09-25 02:36 → 10:00)
+
+### The handover brought to #353, #293 and #340 — PR #366 (commit `481c312` 02:36; merge `4e24b7a` 02:45)
+
+- `docs/HANDOVER_2026-09-20.md` and Part 8 of this log were written at the end of the night.
+- **Found by Grok:** two stale handover lines, and Part 8 numbers without a source. **Accepted** in `481c312`, whose
+  subject names them.
 
 ### How to silence a legitimate unmanaged grant — PR #367 (commits `b850c4c` 07:59, `306d4ad` 08:03; merge `dd4892b` 08:12)
 
@@ -813,33 +819,44 @@ The orchestrator's summary, with what was measured for this log:
   bindingIntervalSeconds"*. The probe keeps `probes.liveness.periodSeconds: 300`.
 - **The operator:** cluster discovery *"should run on a different timer and parameters so … we don't lose a
   cluster"*.
-  - **Measured:** the discovery thread waited on `binding_interval_seconds` (`gsd/poller.py`, `_run_discovery`), and so
-    did the #284 lookup's retry backoff.
-  - Both moved to a new `config.discoveryIntervalSeconds`, default 300, so their schedule is unchanged. Chart 0.56.0,
-    app 0.34.1.
-- **Measured before review:**
-  - The chart render, diffed against main, changes only the two interval values, the new key, `checksum/config` and
-    the image tags. No RBAC object changes.
+  - **Measured** (`gsd/poller.py`, `_run_discovery` and the lookup's failure path): two things slept on
+    `binding_interval_seconds`. One was the thread that lists cluster Secrets. The other was the wait before the
+    dashboard retries logging in as the fleet account to fetch a remote cluster's ServiceAccount token (#284).
+  - Both now sleep on a new setting, `config.discoveryIntervalSeconds`, default 300 seconds. That is the cadence they
+    already had, so slowing bindings to an hour does not delay a new cluster. Chart 0.56.0, app 0.34.1.
+- **Measured before review** (both from #368's PR body):
+  - `helm template` on the branch, diffed against main's render. Only `bindingIntervalSeconds`, the new
+    `discoveryIntervalSeconds`, the Deployment's `checksum/config` annotation (which changes whenever the ConfigMap
+    changes) and the two image tags differ. No Role, ClusterRole or binding changes.
   - **Full suite: 5791 passed, 20 skipped** (7m32s).
 - **Grok on `437b3e6`:** C1–C5 **CONFIRMED**.
   - C6 **accepted**: `Event.wait(0)` returns at once, so `discoveryIntervalSeconds: 0` was a busy loop of LISTs against
     the host API, with a zero lookup backoff. The key is now refused below 1 at render and at startup.
   - C7 and V1 **accepted**: five texts still tied discovery to bindings, including the CHANGELOG heading.
   - Its phrase-blacklist doc test was **rejected**: it pins wording, not behaviour.
-- **CI** on `ff2c441`: 9 passed, `container-smoke` skipped (`gh pr checks 368`). Merged with `merge-safe.sh`.
+- **CI** on `ff2c441`: 9 passed, `container-smoke` skipped (`gh pr checks 368`). Merged with `merge-safe.sh`, which
+  records a merge commit rather than a squash and deletes the branch only after checking main.
 
 ### The fleet-credential research — issues, no code (09:10 → 10:00)
 
-- **Asked:** can Red Hat's Shared Resource CSI driver (SharedSecret) replace the operator chart's copy Jobs, since
-  Kyverno is not approved?
-  - **Measured:** group-sync-operator reads its credentials and CA only as API objects (its `pkg/syncer/ldap.go`, the
-    `Get` of `CredentialsSecret`). The OAuth bind Secret carries only `bindPassword`, and the driver creates no object.
-  - So SharedSecret cannot drop in. It was **ruled out by the operator**, in operator-chart issue 69.
-- **The end state, decided by the operator and parked:**
-  - #369 in its final form: credentials are an existing Secret or an `ExternalSecret` (External Secrets Operator for
-    Red Hat OpenShift, GA on OpenShift 4.20+). A global fleet credential, or a dedicated one chosen by the stanza.
-  - Operator-chart issue 70: the copy Jobs are deprecated in four phases.
-  - #369's discarded routes (SharedSecret, native replication, the OAuth builder) are hidden as outdated comments.
+- **Asked:** can Red Hat's Shared Resource CSI driver (the SharedSecret kind) replace the two Jobs in the
+  group-sync-operator Helm chart? Those Jobs copy the LDAP bind credential and CA from `openshift-config` into the
+  operator's own namespace, on each cluster where the chart is installed. Kyverno, which could do the copy, is not
+  approved.
+  - **Measured** (group-sync-operator's `pkg/syncer/ldap.go`, the `Get` of `CredentialsSecret`): the operator reads
+    its credential and CA only as Kubernetes API objects.
+  - SharedSecret only mounts files into a pod; it creates no Secret the operator could read. The OAuth bind Secret
+    also holds only `bindPassword`, measured on the lab.
+  - So SharedSecret cannot replace the Jobs. **Ruled out by the operator**, in operator-chart issue 69.
+- **Parked, as the operator decided:**
+  - #369: a cluster's credential is either an existing Secret, or one the External Secrets Operator creates from the
+    organization's secret manager. That operator is GA on OpenShift 4.20+ ([Red Hat's OpenShift 4.20
+    documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/security_and_compliance/external-secrets-operator-for-red-hat-openshift);
+    the lab catalog offers `openshift-external-secrets-operator.v1.2.1`, read with `oc get packagemanifests`). One
+    credential serves every cluster, unless a cluster's stanza names its own.
+  - Operator-chart issue 70: retire the copy Jobs in four phases.
+  - The routes tried and dropped (SharedSecret, native replication, the OAuth builder) stay on #369 as collapsed,
+    outdated comments.
 
 ---
 
@@ -892,7 +909,9 @@ Written at the end of Part 9, 2026-09-25.
 - **Deployed** on the lab: `09d5526cae` (#363) through `release-crc.sh --argocd`, Argo CD Synced. The redeploy of the
   latest main follows this log's PR.
 - **The kept PVCs** are unchanged: `group-sync-dashboard-data` UID `f065b7a4-535c-4ef1-868c-58f5afee4953`, and
-  `group-sync-dashboard-report-artifacts` UID `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`, re-read at 10:00.
+  `group-sync-dashboard-report-artifacts` UID `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`. Re-read with
+  `oc get pvc -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid` just before this log's
+  PR; the output is not committed.
 - **Open PRs:** none once this log's PR merges.
 - **Next, the operator's order:** #322 (the cluster-admin tier), then #321 (remove the OAuth Debug path).
 - **Parked:** #369, operator-chart issue 70, and #341.
