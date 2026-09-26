@@ -102,6 +102,15 @@ implementation is written back here, under "Orchestrator's notes", with the reas
   before `usage_scope` is asked. The test was wrong, not the code: with a report service configured the
   route reaches `usage_scope` and the cluster-admin grant.
 
+- **Codex's code review of `18e7c66`** (gpt-6-astra, high; run by the orchestrator; OB1-lite implemented):
+  - C1–C8 CONFIRMED with measurements: the routes, the negative control, one SubjectAccessReview for the
+    hierarchy, fail-closed on every outcome, the 60-second cache and the Helm refusals.
+  - **F1 (P3) accepted.** The Cluster Configurations page note still named the removed
+    `clusterconfig:view` / `clusterconfig:manage` tiers. It now reads "Only cluster administrators see this
+    page. Changing a cluster also needs `clusterConfig.secrets.writes.enabled`", pinned by
+    `test_cluster_configuration_help_describes_the_single_tier`.
+  - Applied after the blocks, so the tree differs from §6 by that sentence and that test.
+
 ## The decision (issue #322, operator, 2026-09-23)
 
 One new tier, `visibility.clusterAdminSar`, asking `update clusterrolebindings.rbac.authorization.k8s.io`

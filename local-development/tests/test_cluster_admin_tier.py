@@ -256,3 +256,15 @@ class TestTheResolverAndItsSetting:
             c.get(KPI, headers=H("root"))
             after = c.get("/metrics").text
             assert 'gsd_visibility_decisions_total{threshold="cluster_admin",tier="all"} 1.0' in after
+
+
+def test_cluster_configuration_help_describes_the_single_tier(tmp_path):
+    """The shipped page must not advertise the removed view/manage authorization split."""
+    app = _app(str(tmp_path / "copy.db"), cluster_admin=_MapResolver({"root": "all"}))
+    with TestClient(app) as client:
+        response = client.get("/", headers=H("root"))
+        assert response.status_code == 200
+        html = response.text
+    assert "clusterconfig:view" not in html
+    assert "clusterconfig:manage" not in html
+    assert "Only cluster administrators see this page." in html
