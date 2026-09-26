@@ -156,7 +156,7 @@ button[disabled] { opacity: .6; cursor: progress; }
   <div class="proposed-banner" role="note">
     <strong>PROPOSED</strong> — Epic D mockup, not the shipped page. The dashed outlines mark what does not exist yet:
     <b>Refresh</b> (#311), <b>Rejoin</b> and its dialog (#316), and the <b>duplicate API URL</b> warning (#314).
-    Everything else is today's Cluster Configurations card, except that the lead card is abridged (marked on it). Names and URLs are the lab's <span class="mono">shared-qa</span>
+    Everything else is today's Cluster Configurations card, except that the lead card is abridged (marked on it), and the header and tab bar are simplified: today's app has more tabs and controls. Names and URLs are the lab's <span class="mono">shared-qa</span>
     and <span class="mono">shared-rnd</span> entries, read 2026-09-26; the <span class="mono">auth_failed</span> state is an illustration.
   </div>
 
@@ -210,6 +210,7 @@ button[disabled] { opacity: .6; cursor: progress; }
       </div>
 
       <div class="states is-proposed" aria-label="Refresh states" style="margin-bottom: 10px">
+        <span class="tag-proposed">proposed · #311</span>
         <div class="state"><span class="k">idle</span><button type="button">Refresh</button></div>
         <div class="state"><span class="k">in flight</span><button type="button" disabled>Refreshing — probing /version and users/~</button></div>
         <div class="state"><span class="k">succeeded</span><span class="badge ok"><span class="glyph" aria-hidden="true"></span>connected</span> <span class="mono">2026-09-26T14:05:40Z</span></div>
