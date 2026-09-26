@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
+  its own).** `gsd/fleetlogin.py` writes its login-failure lines (`fleet-login-failed` for a retry, a give-up
+  or a stop, and `fleet-login-refused`) from one method instead of two, and names an exception's type inline
+  instead of through a one-line helper; two comments that repeated the module docstring now point to it. Every
+  event, field, phase, outcome word and `action=`/`detail=` sentence is unchanged, and the fleet tests pass
+  unedited. 742 → 734 lines, 32 → 30 functions and methods.
 - **The database is copied before a new image upgrades it (#301, `docs/specs/SPEC_M1_pre_upgrade_copy.md`;
   application behaviour arriving with the next application release, chart 0.58.4 for its values comment and
   README).** When an image opens a database whose `user_version` is below its highest migration, it first
