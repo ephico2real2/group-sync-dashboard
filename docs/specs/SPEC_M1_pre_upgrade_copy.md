@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Programme | Epic B (#382), protect the data during upgrades. #305 (merged in `16c339e`) reads the schema version before anything writes; this attaches to that read. #298, the CI guard, is the epic's third child |
+| Programme | Epic B (#382), protect the data during upgrades. #305 (merged in `16c339e`) reads the schema version before anything writes; this attaches to that read. #298, the CI guard and the epic's third child, merged in `411b6cc` |
 | Batch | M — schema migrations |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 0.37.0, chart 0.59.0 |
-| Version note | §7's version blocks move the application from 0.36.0 to 0.37.0 and the chart from 0.58.3 to 0.59.0, the next minors on main `cbbc65a`, and move SPEC_S4c's reservation (specified, not begun) to 0.38.0 and 0.60.0, as #322 and #321 did. A release that lands first makes those blocks fail their check, because each Old text is the version it replaces; the implementing pull request then corrects them here before applying (`docs/specs/README.md`) |
+| Version on release | chart 0.58.4 (docs); app 0.37.0 at the Epic B release |
+| Version note | This change keeps the application, `gsd/__init__.py` and `appVersion` at 0.36.0 and moves the chart by a PATCH, 0.58.3 to 0.58.4, because its values comment and README are chart content (§3.11). The Epic B release runs `local-development/prepare-release.py --app 0.37.0` and cuts the application; SPEC_S4c's reservation is left as it is here. A release that lands first makes block 12 fail its check, because its Old text is the chart version it replaces; the implementing pull request then corrects it here before applying (`docs/specs/README.md`) |
 | Issue | [#301](https://github.com/ephico2real2/group-sync-dashboard/issues/301) |
 | Status | specified |
-| Source | OB3's research and specification of 2026-09-26, written before any code from the issue, the epic (#382) and its decisions settled on 2026-09-26, and #305's merged code. Measured on main `cbbc65a` on this machine (Python 3.14.7 and SQLite 3.53.4, the versions the image carries) and read-only on the lab. §7's blocks were cut from a copy of `cbbc65a` with the design implemented, and proved against a clean copy (§4.3) |
+| Source | OB3's research and specification of 2026-09-26, written before any code from the issue, the epic (#382) and its decisions settled on 2026-09-26, and #305's merged code. Measured on main `cbbc65a` on this machine (Python 3.14.7 and SQLite 3.53.4, the versions the image carries) and read-only on the lab. Revised the same day after the review of `3973772` by Grok and Codex Astra, on the orchestrator's decisions (Orchestrator's notes), on a branch that merged main `411b6cc` (#298). §7's blocks were cut from a copy of that merge with the design implemented, and proved against a clean tree (§4.3) |
 
 ## How to read this spec
 
@@ -28,6 +28,41 @@ block touches it. A block found wrong during implementation is corrected here, w
 orchestrator's notes, before it is applied again.
 
 ## Orchestrator's notes
+
+Review of `3973772` by Grok and Codex Astra, decided by the orchestrator on 2026-09-26. Each decision is applied in §3
+and §7 and measured again on the implemented copy (§4).
+
+1. **C3, once per upgrade, not once per pod (both reviewers refuted it; the P1).** Under the first version's rule,
+   keyed per pod, every replacement pod copied the half-migrated database, and `PRE_UPGRADE_KEEP = 3` pruned the
+   clean copy when the fourth pod started (Grok's and Codex's attempt tables, pods A to D). Taken: Grok's fix. The
+   copy is skipped when any copy whose name contains `-to-<KNOWN_SCHEMA_VERSION>-` exists, whichever pod wrote it
+   (§3.6). `PRE_UPGRADE_KEEP = 3` and the pruning stay: each upgrade now adds at most one copy, so the copies of the
+   newest three upgrades are kept (§3.5). Rejected: Codex's proposal to remove the pruning and keep the per-pod rule,
+   because each replacement pod would still add a copy of a half-migrated database and the count would grow without
+   bound in a crash loop. Tests: Grok's `test_new_pods_in_a_crash_loop_do_not_prune_the_clean_copy`, parametrized over a
+   database at N-1 and at N-2, which carries Codex's 18/19 regression (from N-2 the failed attempt may commit migration
+   N-1 first, so later starts meet another version and must still take no copy); Grok's restart test, where a
+   replacement pod does not copy again; and `test_the_clean_copy_restored_under_the_same_image_is_not_copied_again`.
+   After a failed upgrade, restoring the clean copy and starting the same image again takes no second copy: the
+   `-to-N-` copy already there is that database. If the previous image ran on the restored database before the retry,
+   what it wrote since is only in its six-hourly backups; runbook §6 says to move the earlier copy aside first.
+2. **C4, the success line's stat (Codex F2, accepted).** The line read the copy's size after the handler, so a failure
+   there raised a bare `OSError` and left the copy and its sidecar behind. The line moves inside the existing `try`;
+   no new helper (§3.7). Test: `test_logging_stat_failure_is_named_and_cleans_up`.
+3. **C6, no application release in this change (both, accepted).** Codex's F3: the first version's blocks 12, 13, 15,
+   16 and 17 are deleted (pyproject, `gsd/__init__.py`, `appVersion`, and the move of SPEC_S4c's reservation). The
+   chart takes a PATCH, 0.58.4, with `appVersion` 0.36.0, because the values comment and the README are chart content
+   (§3.11). The CHANGELOG entry sits under `## Unreleased` as application behaviour arriving with the next application
+   release; the Epic B release (`prepare-release.py --app 0.37.0`) cuts the version. #298's
+   `tests/test_migration_needs_app_release.py`, on main since `411b6cc`, passes: this change adds no migration.
+4. **C7, the operator prose (both, accepted where they fit decision 1).** Runbook §6, the values comment, the chart
+   README and the CHANGELOG entry take Grok's three rewrites (an upgrade that cannot be undone, the replica paths,
+   what `<from>` means for a restore) and those of Codex's that fit (the schema explained, "even when scheduled
+   backups are disabled", `sha256sum -c` run from the directory holding both files, the copy arriving with the
+   application release after 0.36.0). Not taken: Codex's "completed copies are never deleted automatically", since
+   the pruning stays; the text says the copies of the newest three upgrades are kept.
+5. **The base.** The branch merged main `411b6cc` (#298) in `722b702` before this revision. The CHANGELOG entry goes
+   first under `## Unreleased`, above #298's and #305's.
 
 ## 1. The mandate, and what is out of scope
 
@@ -247,9 +282,9 @@ made by one pod is writable by the next the same way `/data/backup` is; nothing 
 
 `executescript(SCHEMA)` runs `CREATE … IF NOT EXISTS` statements outside any transaction, and a migration made only
 of `ALTER TABLE` statements commits each one and its `PRAGMA user_version` as it goes (§2.1's Python source:
-implicit transactions open only before `INSERT`, `UPDATE`, `DELETE` or `REPLACE`). Measured on `cbbc65a` (probe `crashloop`): a database shaped like schema 18
-(migration 19's two columns and `SCHEMA`'s `kyverno_result_event` absent), opened by this build with migration 20
-replaced by a failing statement:
+implicit transactions open only before `INSERT`, `UPDATE`, `DELETE` or `REPLACE`). Measured on `cbbc65a` (probe
+`crashloop`): a database shaped like schema 18 (migration 19's two columns and `SCHEMA`'s `kyverno_result_event`
+absent), opened by this build with migration 20 replaced by a failing statement:
 
 ```text
 KNOWN 20 before any attempt: {'user_version': 18, 'SCHEMA table kyverno_result_event': False, 'migration 19 column cluster.source': False}
@@ -260,6 +295,8 @@ attempt 2: OperationalError: no such table: no_such_table; the database now: {'u
 The second attempt finds schema 19 with this build's tables, not the database schema 18's image wrote, and #305
 makes that image refuse schema 19. A rule that copied at every start below the build's version and kept the newest
 N would, in a crash loop (10 s, 20 s, 40 s …), write N copies of that within about a minute and prune the clean one.
+The first version of this spec keyed the rule per pod, and the review measured a replacement pod doing the same:
+three of them pruned the clean copy (Orchestrator's notes, C3). Only a rule per upgrade keeps it.
 
 ## 3. The design
 
@@ -286,7 +323,7 @@ argument, so `open_backend` is unchanged. No reader of `gsd-*.db` looks there (�
 - **The stamp of `Store._vacuum_into`** (`%Y%m%dT%H%M%S.%fZ`, UTC, microseconds), so two copies never share a name.
 - **`schema-`**, so the numbers read as schemas, not application versions (the distinction #302 draws).
 - **`<pod>`**: `POD_NAME`, else the hostname, the identity the leader election already takes
-  (`local-development/gsd/leader.py#LeaderElector`), for §3.6.
+  (`local-development/gsd/leader.py#LeaderElector`). It says which pod took the copy; §3.6 does not read it.
 - **The sidecar is the offsite script's format** (`charts/group-sync-dashboard/scripts/offsite_backup.py#write_sidecar_part`),
   so `sha256sum -c` and that script's `--check` verify a copy wherever it travels.
 
@@ -297,10 +334,11 @@ argument, so `open_backend` is unchanged. No reader of `gsd-*.db` looks there (�
 2. Older and not fresh: `_pre_upgrade_copy`, then the open continues exactly as today: the WAL switch,
    `busy_timeout`, `synchronous`, `foreign_keys`, `SCHEMA`, `_migrate`, the seeds, the commit. The copy comes before
    the WAL switch too, because the switch rewrites the header (#305's reason for its own placement).
-3. Inside `_pre_upgrade_copy`: the once-per-pod check (§3.6); make the directory; delete what a killed attempt left
-   (`*.db.tmp`, and a sidecar whose copy is gone); the space check (§3.4); `VACUUM INTO <name>.tmp`; open it
+3. Inside `_pre_upgrade_copy`: the once-per-upgrade check (§3.6); make the directory; delete what a killed attempt
+   left (`*.db.tmp`, and a sidecar whose copy is gone); the space check (§3.4); `VACUUM INTO <name>.tmp`; open it
    `immutable=1&mode=ro` and require `user_version` equal to `<from>` and `integrity_check` `ok`; hash it and
-   `fsync` it; write the sidecar and `fsync` it; rename the copy into place; `fsync` the directory; log; prune (§3.5).
+   `fsync` it; write the sidecar and `fsync` it; rename the copy into place; `fsync` the directory; log the copy, all
+   inside the handler that turns a failure into the refusal (§3.7); then prune (§3.5).
 
 The copy's name appears only after its sidecar exists, as in the offsite script. The syncs are there because the
 migration that follows is the event the copy exists for: SQLite syncs the `VACUUM INTO` output itself at `synchronous`
@@ -320,19 +358,26 @@ The newest three (`PRE_UPGRADE_KEEP = 3`) by name, pruned only right after a new
 each copy's sidecar with it. `config.backup.keep`, the six-hourly job and the offsite script never touch them (§2.4).
 The bound: three copies at rest and four for the moment a fourth has been written, each about the size of the
 database (about 9 MB on the lab today, where the newest backup, the same `VACUUM INTO`, is 8,843,264 bytes), on
-the data claim, so they count against `persistence.size` (1Gi by default). Three is the last three schema-moving
-upgrades, and a spare for the replacement pod a failed upgrade may get (§3.6). A constant, not a setting: nothing in the issue asks to tune it, and a new key is three edits and a
-render guard.
+the data claim, so they count against `persistence.size` (1Gi by default). With one copy per upgrade (§3.6), three
+is the last three schema-moving upgrades. A constant, not a setting: nothing in the issue asks to tune it, and a
+new key is three edits and a render guard.
 
-### 3.6 Once per upgrade per pod
+### 3.6 Once per upgrade
 
-When the directory already holds a copy for this build's target written by this pod (a name ending
-`-to-<target>-<pod>.db`), the start does not copy again and says so at INFO. §2.6 is the reason. The pod's name,
-`POD_NAME` as the chart sets it from `metadata.name` or else the hostname, which in a pod is the same name (§2.5), is
-the same across its container's restarts and new for every pod. A crash loop keeps the clean
-copy and adds none; a new pod — a rollout, a deleted pod — takes a fresh copy of whatever the database is by then, so
-a rollback that ran the older image for days before the upgrade was retried is copied again. The mutation M6 in §4.2
-removes this rule and the test for it goes red.
+When the directory already holds a copy for this build's target schema (a name containing `-to-<target>-`),
+whichever pod wrote it, the start does not copy again and says so at INFO. §2.6 is the reason: after a failed
+attempt every later start, a restarted container or a replacement pod, meets a database that attempt has already
+changed, so the first copy is the only clean one and the pruning must never meet a second copy of the same upgrade.
+A crash loop, a deleted pod and a rollout all keep that one copy.
+
+After a failed upgrade, restoring that copy and starting the same image again takes no second copy: the copy already
+there is the database restored. If the previous image ran on the restored database before the upgrade is retried,
+what it wrote since is in its six-hourly backups and in no pre-upgrade copy; runbook §6 says to move the earlier
+`-to-<target>-` copy out of `pre-upgrade/` before the retry, and the retry then copies the database as it is.
+
+The first version of this spec keyed the rule per pod (a name ending `-to-<target>-<pod>.db`), and the review
+measured three replacement pods pruning the clean copy under it (Orchestrator's notes, C3). The mutations M6 and M6b
+in §4.2 remove the rule and restore the per-pod form; four tests go red under each.
 
 ### 3.7 The failure
 
@@ -345,9 +390,10 @@ names the move, the database, the directory, the reason and the ways out:
     writable, then restart; or deploy the image that understands schema 19 (docs/RUNBOOK_backup_restore.md §6)
 
 A refused attempt deletes its `.tmp`, its sidecar and its copy (§2.1: a partial file keeps the space it failed for).
-The database is not migrated. As with #305, closing the refusing connection may fold a committed `-wal` into the
-main file; the bytes change, the content does not. On success, one INFO line before the first
-`schema migration N applied`:
+The success line is inside the same handler, so a failure to read the copy's size for it is the same refusal
+(Orchestrator's notes, C4). The database is not migrated. As with #305, closing the refusing connection may fold a
+committed `-wal` into the main file; the bytes change, the content does not. On success, one INFO line before the
+first `schema migration N applied`:
 
     pre-upgrade copy written before migrating schema 19 -> 20: /data/pre-upgrade/pre-upgrade-….db (9973760 bytes, 0.12 s)
 
@@ -375,11 +421,14 @@ The copy is written; nothing else changes (§3.1).
 
 ### 3.11 Versions
 
-Application 0.37.0 and chart 0.59.0, both MINOR: a new directory on the data volume and a new way for a start to be
-refused. The chart moves because `appVersion` moves, and the values comment and README it publishes describe what the
-image it deploys does (`docs/RELEASING.md`: a chart change forced by an app change moves both in the same PR). #305,
-under Unreleased with no version of its own, ships in the same application release. SPEC_S4c's reservation moves to
-0.38.0 and 0.60.0.
+The chart moves by a PATCH, 0.58.3 to 0.58.4, because the values comment and the README are chart content and CI
+refuses a chart change without a new version (`.github/workflows/ci.yml`, "Chart changes bump the chart version").
+The application, `gsd/__init__.py` and `appVersion` stay at 0.36.0: `docs/RELEASING.md` moves them when a release is
+cut (`prepare-release.py --app`), a chart change that adds no template or value does not force them, and this change
+adds no migration, so #298's `tests/test_migration_needs_app_release.py` passes without them. The application
+behaviour ships with the Epic B release, `prepare-release.py --app 0.37.0`, which also carries #305 and #298.
+SPEC_S4c's reservation is not moved here. The values comment and the README say "from the application release after
+0.36.0", because chart 0.58.4's default image is still 0.36.0.
 
 ### 3.12 What does not change
 
@@ -400,57 +449,76 @@ All in `local-development/tests/test_pre_upgrade_copy.py` (§7, block 5):
 | a fresh file writes nothing | `test_a_fresh_file_writes_nothing` |
 | with the copy present, `keep` six-hourly backups survive `backup()` | `test_the_six_hourly_backups_do_not_see_the_copy`, two layouts: the chart's, and `config.backup.dir` pointed at the copies (also the metric, the KPI size line and `_STAMP`) |
 | the offsite script's newest-by-name is unchanged | the same test: `newest_backup` returns the newest ordinary backup in both layouts |
-| (§3.6) a restarted container does not copy again; a new pod does | `test_a_restarted_container_does_not_copy_again` |
+| (§3.6) a restarted container, and a replacement pod, do not copy again | `test_a_restarted_container_does_not_copy_again` |
+| (§3.6, review C3) replacement pods in a crash loop do not prune the clean copy, from N-1 and from N-2 | `test_new_pods_in_a_crash_loop_do_not_prune_the_clean_copy` |
+| (§3.6) the clean copy restored under the same image is not copied again | `test_the_clean_copy_restored_under_the_same_image_is_not_copied_again` |
+| (§3.7, review C4) a failing stat for the success line is the named refusal and leaves nothing | `test_logging_stat_failure_is_named_and_cleans_up` |
 | (§3.5) the newest three are kept; a killed attempt's files go | `test_the_newest_copies_are_kept_and_a_killed_attempt_leaves_nothing` |
 | (§3.10, §2.3) backups off still copies; the app does not start without the copy | `test_the_app_copies_with_backups_off_and_does_not_start_without_the_copy` |
 
 ### 4.2 Each test fails without the change
 
-The mutation harness (§4.4) runs the module against main's `gsd` and against eleven mutations of the implemented
-`store.py`, each package first on the path and the imported `gsd` printed:
+The mutation harness (§4.4) runs the module against main's `gsd` and against thirteen mutations of the implemented
+`store.py`, each package the working directory and first on the path, with the imported `gsd` printed:
 
 | run | the change to `store.py` | result | tests that go red |
 |---|---|---|---|
-| M0 | none: main `cbbc65a` | 1 error, at collection | all twelve: the module imports names this change adds |
-| — | the change as §7 writes it | 12 passed | none |
-| M1 | the copy is never taken | 10 failed, 2 passed | all but the two that must see nothing written |
+| M0 | none: main `411b6cc` | 1 error, at collection | all sixteen: the module imports names this change adds |
+| — | the change as §7 writes it | 16 passed | none |
+| M1 | the copy is never taken | 14 failed, 2 passed | all but the two that must see nothing written |
 | M2 | a database at the build's version is copied (`<=`) | 1 failed | `test_a_database_at_the_build_version_writes_nothing` |
-| M3 | a fresh file is copied (no `not fresh`) | 9 failed | `test_a_fresh_file_writes_nothing`, the equal-version test, and seven whose setup opens a fresh file |
-| M4 | the copy is taken after `SCHEMA` | 6 failed | the copy test (`SCHEMA`'s table is in the copy), the four refusal cases (`SCHEMA` ran before the refusal), the restart test |
+| M3 | a fresh file is copied (no `not fresh`) | 12 failed | `test_a_fresh_file_writes_nothing`, the equal-version test, and ten whose setup opens a fresh file |
+| M4 | the copy is taken after `SCHEMA` | 8 failed | the copy test (`SCHEMA`'s table is in the copy), the four refusal cases (`SCHEMA` ran before the refusal), the restart test and both crash-loop cases |
 | M5 | free space is checked against the file's size | 1 failed | `test_a_copy_that_cannot_be_written_refuses_the_start[free space for the file but not its WAL]` |
-| M6 | no once-per-pod rule | 1 failed | `test_a_restarted_container_does_not_copy_again` |
-| M7 | the name starts `gsd-preupgrade-` | 4 failed | `test_the_six_hourly_backups_do_not_see_the_copy[backup.dir set to the copies]` and three that assert the name |
+| M6 | no once-per-upgrade rule | 4 failed | the restart test, both crash-loop cases and the restored-copy test |
+| M6b | the rule keyed per pod, as the first version had it | 4 failed | the same four |
+| M7 | the name starts `gsd-preupgrade-` | 7 failed | `test_the_six_hourly_backups_do_not_see_the_copy[backup.dir set to the copies]` and six that depend on the name |
 | M8 | no pruning | 1 failed | `test_the_newest_copies_are_kept_and_a_killed_attempt_leaves_nothing` |
 | M9 | a killed attempt's `.tmp` stays | 1 failed | the same |
 | M10 | a sidecar without its copy stays | 1 failed | the same |
-| M11 | a refused attempt leaves its files | 1 failed | `test_a_copy_that_cannot_be_written_refuses_the_start[the rename fails]` |
+| M11 | a refused attempt leaves its files | 2 failed | `test_a_copy_that_cannot_be_written_refuses_the_start[the rename fails]`, `test_logging_stat_failure_is_named_and_cleans_up` |
+| M12 | the success line's stat after the handler, as the first version had it | 1 failed | `test_logging_stat_failure_is_named_and_cleans_up` |
 
 On main every test errors at collection (the module imports names this change adds). The two tests that must see
 nothing written pass under M1 by construction; M2 and M3 are what they are for.
 
+Before and after for the tests the review added or changed, against main, against the first version's code (the
+blocks of `3973772`) and against this revision:
+
+| test | main `411b6cc` | first version | this revision |
+|---|---|---|---|
+| `test_a_restarted_container_does_not_copy_again` | error at collection | failed: the log names "this pod wrote", and the replacement pod copies again | passed |
+| `test_new_pods_in_a_crash_loop_do_not_prune_the_clean_copy[19]` | error at collection | failed: `too many values to unpack (expected 1, got 3)`, the clean copy pruned | passed |
+| `test_new_pods_in_a_crash_loop_do_not_prune_the_clean_copy[18]` | error at collection | failed: the same | passed |
+| `test_the_clean_copy_restored_under_the_same_image_is_not_copied_again` | error at collection | failed: the new pod took a second copy | passed |
+| `test_logging_stat_failure_is_named_and_cleans_up` | error at collection | failed: `OSError: injected final stat I/O failure`, not the named refusal | passed |
+
+The other eleven pass on the first version's code and on this revision.
+
 ### 4.3 The proof
 
-§7 was not written by hand. The design was implemented in a copy of `cbbc65a`; the generator cut each block's Old
-text from main and its New text from that copy, at whole lines, and checked that each file's blocks, applied in order
-to main's file, give the implemented file byte for byte: `17 blocks across 11 files reproduce the prototype byte for
-byte`. Then, on a clean clone of this spec's own commit:
+§7 was not written by hand. The design was implemented in a copy of this branch after it merged main `411b6cc`
+(`722b702`); the generator cut each block's Old text from that merge and its New text from the implemented copy, at
+whole lines, and checked that each file's blocks, applied in order, give the implemented file byte for byte: `12
+blocks across 7 files reproduce the implemented copy byte for byte`. Then, on a clean clone of this spec's own
+commit:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_M1_pre_upgrade_copy.md .
-    17 blocks check out across 11 files
+    12 blocks check out across 7 files
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_M1_pre_upgrade_copy.md . --apply
 
-After `--apply` every changed file is identical (`cmp`) to the implemented copy, except `docs/specs/README.md`, which
-also carries this spec's own index row. On that applied tree, with `PYTHONPATH` at its `local-development` and
-`gsd.__version__` reading `0.37.0`:
+After `--apply` every changed file is identical (`cmp`) to the implemented copy. On that applied tree, with
+`PYTHONPATH` at its `local-development` and `gsd.__version__` reading `0.36.0`:
 
 | check | command | result |
 |---|---|---|
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `5236 passed, 19 skipped, 608 deselected` |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `5247 passed, 19 skipped, 608 deselected` |
 | browser suite | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `604 passed` |
-| this spec's commit alone | the same hermetic run on a clean clone of the commit, before `--apply` | `5223 passed, 19 skipped, 608 deselected` |
-| markdown | `markdownlint-cli2` on the runbook, the CHANGELOG, the specs index and the chart README | 15 findings before and after, all of them already on main (MD040, MD004, MD012); none new |
-| chart | `helm lint`; `helm template` of main and of the applied chart, diffed | lint clean; the only rendered differences are the chart and app version labels on 34 objects, the two image tags (0.36.0 to 0.37.0) and the config checksum |
-| RBAC | every rendered Role, ClusterRole and binding, rule by rule | 70 before, 70 after; REMOVED 0, ADDED 0 |
+| this spec's commit alone | the same hermetic run on a clean clone of the commit, before `--apply` | `5230 passed, 19 skipped, 608 deselected` |
+| #298's guard | `pytest tests/test_migration_needs_app_release.py -q -p no:cacheprovider` | `7 passed` |
+| markdown | `markdownlint-cli2` on the runbook, the CHANGELOG, the specs index and the chart README | 15 findings before and after, the same per file and rule (MD004, MD040, MD012), all on main already; none new |
+| chart | `helm lint`; `helm template` of main `411b6cc` and of the applied chart, diffed, with default values, `config.backup.enabled=false`, and `replicaCount=2` with `leaderElection.enabled=false` and `reporting.enabled=false` | lint clean; in each of the three renders the only differences are the chart label (0.58.3 to 0.58.4) on every object and the config checksum; no image tag moves, since `appVersion` stays 0.36.0 |
+| RBAC | every rendered Role, ClusterRole and binding, rule by rule, default values | 70 before, 70 after; REMOVED 0, ADDED 0 |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on `store.py` and the test module | both parse; CI's 3.11 job was not run here |
 
 ### 4.4 The probes
@@ -575,11 +643,13 @@ would record the difference as binding events, which are history.
 ## 6. What an operator sees, and what it costs
 
 - At an upgrade across a migration, one line before the migration lines, and a directory `pre-upgrade/` beside the
-  database holding up to three copies, each about the size of the database, and their sidecars.
+  database holding the copies of the newest three upgrades, one each, about the size of the database, and their
+  sidecars. A failed upgrade adds no second copy, however many times its pods restart or are replaced.
 - When the copy cannot be written: no start, a pod in `CrashLoopBackOff`, an Argo CD Application Progressing then
   Degraded after 600 s, and the reason as the last line of `oc logs --previous`. The database is untouched, and the
   previous image still opens it.
-- Time: 0.12 s at the lab's size, 25 s at a hundred times it (§2.1), inside the start.
+- Time: 0.12 s at the lab's size, 25 s at a hundred times it (§2.1), inside the start. The application behaviour
+  arrives with the next application release; this change alone publishes chart 0.58.4, whose default image is 0.36.0.
 - Code: the table below.
 
 Lines added and removed by §7, from `git diff --numstat` on the applied copy (§4.3):
@@ -587,23 +657,21 @@ Lines added and removed by §7, from `git diff --numstat` on the applied copy (�
 | file | added | removed |
 |---|---|---|
 | `local-development/gsd/store.py` | 118 (85 code, 23 comment or docstring, 10 blank) | 3 |
-| `local-development/tests/test_pre_upgrade_copy.py` (new) | 272 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 50 | 3 |
-| `docs/CHANGELOG.md` | 15 | 0 |
+| `local-development/tests/test_pre_upgrade_copy.py` (new) | 346 | 0 |
+| `docs/RUNBOOK_backup_restore.md` | 55 | 3 |
+| `docs/CHANGELOG.md` | 16 | 0 |
 | `charts/group-sync-dashboard/values.yaml` | 7 | 0 |
 | `charts/group-sync-dashboard/README.md` | 6 | 0 |
-| `charts/group-sync-dashboard/Chart.yaml` | 10 | 2 |
-| `local-development/pyproject.toml`, `local-development/gsd/__init__.py` | 1 each | 1 each |
-| `docs/specs/SPEC_S4c_credential_lifecycle.md`, `docs/specs/README.md` | 1 each | 1 each |
+| `charts/group-sync-dashboard/Chart.yaml` | 4 | 1 |
 
 ## 7. Implementation blocks
 
-Applied in this order. Blocks 1 to 4 are `store.py`; block 5 creates the tests; 6 to 11 are the documents; 12 to 17
-are the version fields, the history lines and SPEC_S4c's reservation.
+Applied in this order. Blocks 1 to 4 are `store.py`; block 5 creates the tests; 6 to 11 are the documents;
+block 12 is the chart PATCH.
 
 ### Block 1 — local-development/gsd/store.py: the imports the copy uses
 
-`hashlib` for the sidecar, `shutil.disk_usage` for the space check, `socket.gethostname` for the pod's name, `time.monotonic` for the elapsed time, `suppress` for the cleanup (§3.3, §3.4, §3.6, §3.7).
+`hashlib` for the sidecar, `shutil.disk_usage` for the space check, `socket.gethostname` for the pod's name in the file, `time.monotonic` for the elapsed time, `suppress` for the cleanup (§3.3, §3.4, §3.7).
 
 <!-- block: local-development/gsd/store.py | edit -->
 
@@ -691,17 +759,17 @@ def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> N
     taken on the connection that has run nothing yet, so it holds no table SCHEMA would add, and VACUUM INTO
     reads in one transaction: it needs no write lock and carries what a -wal left by the last pod holds.
 
-    Once per upgrade per pod. A failed attempt commits SCHEMA's new tables and every migration before the
-    one that failed, so the container's next attempt would copy a half-migrated database, and PRE_UPGRADE_KEEP
-    of those would prune the clean one away. The pod's name, read as gsd/leader.py reads it, survives the
-    container's restarts and changes with every new pod.
+    Once per upgrade, whichever pod starts. A failed attempt commits SCHEMA's new tables and every migration
+    before the one that failed, so any later start, a restarted container or a replacement pod, would copy a
+    half-migrated database, and PRE_UPGRADE_KEEP of those would prune the clean one away. A copy for this
+    build's target schema ends the copying; the pod's name in the file says only which pod took it.
     """
     directory = Path(db_path).parent / PRE_UPGRADE_DIR
     host = os.environ.get("POD_NAME") or socket.gethostname()
     move = f"schema {version} -> {KNOWN_SCHEMA_VERSION}"
-    earlier = [p for p in _pre_upgrade_copies(directory) if p.name.endswith(f"-to-{KNOWN_SCHEMA_VERSION}-{host}.db")]
+    earlier = [p for p in _pre_upgrade_copies(directory) if f"-to-{KNOWN_SCHEMA_VERSION}-" in p.name]
     if earlier:
-        log.info("pre-upgrade copy for %s not taken again: this pod wrote %s before an earlier attempt",
+        log.info("pre-upgrade copy for %s not taken again: %s already exists from an earlier attempt",
                  move, earlier[-1])
         return
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -757,10 +825,10 @@ def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> N
             os.fsync(fd)                                 # the names, before the migration commits anything
         finally:
             os.close(fd)
+        log.info("pre-upgrade copy written before migrating %s: %s (%d bytes, %.2f s)", move, target,
+                 target.stat().st_size, time.monotonic() - started)
     except (sqlite3.Error, OSError) as exc:
         raise refused(exc) from exc
-    log.info("pre-upgrade copy written before migrating %s: %s (%d bytes, %.2f s)", move, target,
-             target.stat().st_size, time.monotonic() - started)
     for old in _pre_upgrade_copies(directory)[:-PRE_UPGRADE_KEEP]:
         for path in (old, old.with_name(old.name + ".sha256")):
             try:
@@ -828,7 +896,7 @@ New text:
 
 ### Block 5 — local-development/tests/test_pre_upgrade_copy.py: the tests
 
-One test per Definition-of-Done item, §4.1.
+One test per Definition-of-Done item and per review finding, §4.1.
 
 <!-- block: local-development/tests/test_pre_upgrade_copy.py | create -->
 
@@ -842,6 +910,7 @@ start that cannot take it does not migrate, and nothing that manages the six-hou
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import importlib.util
 import os
@@ -892,6 +961,13 @@ def _facts(path: pathlib.Path) -> dict:
 def _copies(data: pathlib.Path) -> list[pathlib.Path]:
     """Every database file in the copy directory, whatever its name: the name is asserted, not assumed."""
     return sorted((data / PRE_UPGRADE_DIR).glob("*.db"))
+
+
+def _fail_the_last_migration(monkeypatch) -> None:
+    """This build's last migration fails after SCHEMA has run, as a broken upgrade would."""
+    failing = [m for m in store_module._MIGRATIONS if m[0] != KNOWN_SCHEMA_VERSION]
+    failing.append((KNOWN_SCHEMA_VERSION, "fails on purpose", ["INSERT INTO no_such_table VALUES (1)"]))
+    monkeypatch.setattr(store_module, "_MIGRATIONS", failing)
 
 
 def _grow_the_wal(db: pathlib.Path) -> None:
@@ -1043,13 +1119,12 @@ def test_the_six_hourly_backups_do_not_see_the_copy(tmp_path, offsite, backup_di
 def test_a_restarted_container_does_not_copy_again(tmp_path, monkeypatch, caplog):
     """A failed attempt commits what ran before the failure: here SCHEMA's table, and on main `cbbc65a` an 18 -> 20
     upgrade whose migration 20 failed also left user_version 19 (SPEC_M1 §2.6). A second copy would be of that,
-    and PRE_UPGRADE_KEEP of them would prune the clean one. A container restarts in its pod; a new pod copies."""
+    and PRE_UPGRADE_KEEP of them would prune the clean one. Any later start of this image, a new pod included,
+    does not copy again."""
     db = tmp_path / "gsd.db"
     _older_database(db)
     monkeypatch.setenv("POD_NAME", "crashing-pod")
-    failing = [m for m in store_module._MIGRATIONS if m[0] != KNOWN_SCHEMA_VERSION]
-    failing.append((KNOWN_SCHEMA_VERSION, "fails on purpose", ["INSERT INTO no_such_table VALUES (1)"]))
-    monkeypatch.setattr(store_module, "_MIGRATIONS", failing)
+    _fail_the_last_migration(monkeypatch)
     for _ in range(2):
         with caplog.at_level("INFO", logger="gsd.store"), \
                 pytest.raises(sqlite3.OperationalError, match="no_such_table"):
@@ -1057,11 +1132,78 @@ def test_a_restarted_container_does_not_copy_again(tmp_path, monkeypatch, caplog
     (copy,) = _copies(tmp_path)
     assert "kyverno_result_event" not in _facts(copy)["tables"]
     assert "kyverno_result_event" in _facts(db)["tables"], "the failed attempt committed nothing to copy"
-    assert f"not taken again: this pod wrote {copy} before an earlier attempt" in caplog.text
+    assert f"not taken again: {copy} already exists from an earlier attempt" in caplog.text
     monkeypatch.setenv("POD_NAME", "replacement-pod")
     with pytest.raises(sqlite3.OperationalError):
         Store(str(db))
-    assert [COPY_NAME.match(p.name).group(2) for p in _copies(tmp_path)] == ["crashing-pod", "replacement-pod"]
+    assert [COPY_NAME.match(p.name).group(2) for p in _copies(tmp_path)] == ["crashing-pod"]
+
+
+@pytest.mark.parametrize("version", [KNOWN_SCHEMA_VERSION - 1, KNOWN_SCHEMA_VERSION - 2])
+def test_new_pods_in_a_crash_loop_do_not_prune_the_clean_copy(tmp_path, monkeypatch, version):
+    """Review of SPEC_M1 (C3, Grok and Codex): with the copy taken once per pod, three replacement pods each copied
+    the half-migrated database and PRE_UPGRADE_KEEP pruned the clean one. From N-2 the failed attempt may also
+    commit migration N-1 first (SPEC_M1 §2.6), so a later start meets another version and still takes no copy."""
+    db = tmp_path / "gsd.db"
+    _older_database(db, version)
+    _fail_the_last_migration(monkeypatch)
+    for pod in ("pod-a", "pod-b", "pod-c", "pod-d"):
+        monkeypatch.setenv("POD_NAME", pod)
+        with pytest.raises(sqlite3.OperationalError, match="no_such_table"):
+            Store(str(db))
+    (kept,) = _copies(tmp_path)
+    assert COPY_NAME.match(kept.name).group(2) == "pod-a"
+    facts = _facts(kept)
+    assert facts["user_version"] == version and "kyverno_result_event" not in facts["tables"], (
+        f"keep={PRE_UPGRADE_KEEP} pruned the clean copy")
+
+
+def test_the_clean_copy_restored_under_the_same_image_is_not_copied_again(tmp_path, monkeypatch, caplog):
+    """After a failed upgrade the operator restores the clean copy (runbook §4a, with the dashboard scaled to zero)
+    and starts the same image again, fixed, in a new pod: the copy already there is the database restored, so none
+    is taken."""
+    db = tmp_path / "gsd.db"
+    _older_database(db)
+    monkeypatch.setenv("POD_NAME", "failed-pod")
+    with monkeypatch.context() as failing:
+        _fail_the_last_migration(failing)
+        with pytest.raises(sqlite3.OperationalError, match="no_such_table"):
+            Store(str(db))
+    (copy,) = _copies(tmp_path)
+    gc.collect()                        # the failed attempt's connection, held by its traceback, closes here
+    for leftover in ("gsd.db-wal", "gsd.db-shm"):
+        (tmp_path / leftover).unlink(missing_ok=True)
+    shutil.copyfile(copy, db)
+    monkeypatch.setenv("POD_NAME", "restored-pod")
+    with caplog.at_level("INFO", logger="gsd.store"):
+        Store(str(db)).close()
+    assert _copies(tmp_path) == [copy]
+    assert f"not taken again: {copy} already exists from an earlier attempt" in caplog.text
+    assert _facts(db)["user_version"] == KNOWN_SCHEMA_VERSION
+
+
+def test_logging_stat_failure_is_named_and_cleans_up(tmp_path, monkeypatch):
+    """Review of SPEC_M1 (C4, Codex F2): the success line read the copy's size outside the handler, so a failing
+    stat raised a bare OSError and left the copy and its sidecar behind."""
+    db = tmp_path / "gsd.db"
+    _older_database(db)
+    real_stat = pathlib.Path.stat
+
+    def stat_fails(path, *args, **kwargs):
+        if path.name.startswith("pre-upgrade-") and path.suffix == ".db":
+            raise OSError("injected final stat I/O failure")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "stat", stat_fails)
+    with pytest.raises(StorePreUpgradeCopyFailed, match="injected final stat I/O failure") as refused:
+        Store(str(db))
+    monkeypatch.undo()
+    directory = tmp_path / PRE_UPGRADE_DIR
+    assert str(refused.value).startswith(
+        f"schema {KNOWN_SCHEMA_VERSION - 1} -> {KNOWN_SCHEMA_VERSION}: the pre-upgrade copy of {db} could not "
+        f"be written to {directory}, so the database was not migrated: ")
+    assert _facts(db)["user_version"] == KNOWN_SCHEMA_VERSION - 1
+    assert not list(directory.iterdir())
 
 
 def test_the_newest_copies_are_kept_and_a_killed_attempt_leaves_nothing(tmp_path):
@@ -1135,13 +1277,14 @@ cluster cannot replay them (`gsd/store.py#Store.backup`). Three copies exist:
 * **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
   claim or to object storage, with a `.sha256` sidecar, after an integrity check
   (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`);
-* **pre-upgrade** — before a new image migrates the database, it writes the database as it was to
-  `pre-upgrade/` beside it, with a `.sha256` sidecar, whatever `config.backup` says (§6).
+* **pre-upgrade** — from the application release after 0.36.0, before a new image upgrades the database it
+  writes the database as it was to `pre-upgrade/` beside it, with a `.sha256` sidecar, even when scheduled
+  backups are disabled (§6).
 ```
 
-### Block 7 — docs/RUNBOOK_backup_restore.md: §4c: a restored older copy is copied again before it migrates
+### Block 7 — docs/RUNBOOK_backup_restore.md: §4c: a restored older copy meets the pre-upgrade copy before it migrates
 
-A copy restored under a newer image migrates at its next start, so it is copied first.
+A copy restored under a newer image upgrades at its next start, after the line about the pre-upgrade copy.
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -1156,13 +1299,14 @@ New text:
 
 ```text
 The numbers must equal the copy's (§1). The pod log shows `schema migration N applied` lines
-only if the copy predates the running version, each after the line naming the pre-upgrade copy the
-start took first (§6); the first poll then rebuilds every cache table.
+only if the copy predates the running version, each after a line about the pre-upgrade copy (§6): the
+copy that start wrote, or the one an earlier start of the same upgrade wrote; the first poll then
+rebuilds every cache table.
 ```
 
 ### Block 8 — docs/RUNBOOK_backup_restore.md: §6, the new section
 
-Where the copies are and how they are kept (the Definition of Done), what the refusal looks like, and how to use a copy. Inline code only: a fence inside a block would end the block (§4.3).
+Where the copies are and how they are kept (the Definition of Done), once per upgrade, what the refusal looks like, and how to use a copy. Inline code only: a fence inside a block would end the block (§4.3).
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -1179,52 +1323,55 @@ the pattern in §4b (a helper pod with both claims), then §4c.
 
 ## 6. Pre-upgrade copies
 
-A new image migrates the database it finds at startup, one way: `_MIGRATIONS` has no down-path, so the
-database as it was before the migration is the only way back to the image that wrote it. The dashboard
-takes that copy itself (`gsd/store.py#_pre_upgrade_copy`, #301) whenever the database's `user_version` is
-below the image's highest migration, before the image creates a table or runs a migration. A new database,
-and one already at the image's version, take none.
+A new image upgrades the database it finds at startup (its schema: the tables and columns) and cannot undo that
+upgrade, so the database as it was before the upgrade is the only way back to the previous image. From the
+application release after 0.36.0 the dashboard takes that copy itself (`gsd/store.py#_pre_upgrade_copy`, #301),
+before the new image creates a table or runs a migration. A new database, or one already at the image's schema
+version, needs no copy.
 
-* **Where.** `pre-upgrade/` beside the database: `/data/pre-upgrade/`, or `/data/<pod>/pre-upgrade/` above
-  one replica. It is written whether `config.backup` is on or off, and nothing that reads
-  `config.backup.dir` looks there: not the six-hourly rotation, the offsite CronJob, the backup metric or
-  the KPI size line.
-* **Name.** `pre-upgrade-<UTC stamp>-schema-<from>-to-<to>-<pod>.db`, and a `.sha256` sidecar in
-  `sha256sum -c` format. `<from>` is the copy's `user_version`: an image can open it only if its highest
-  migration is at least that.
-* **Verified before the migration runs.** The copy is written as `….db.tmp`, opened read-only and checked
-  (`user_version` equal to `<from>`, `integrity_check` `ok`), hashed and synced, and only then renamed.
-* **Kept.** The newest three, removed only when a newer copy has been written; `config.backup.keep` does
-  not apply to them. Each is about the size of the database, on the data claim, so they count against
-  `persistence.size`.
-* **Once per pod.** A container that restarts because its migration failed does not copy again: the
-  failed attempt committed this image's new tables and every migration before the one that failed, so a
-  second copy would not be the database the previous image wrote. Its log says
-  `pre-upgrade copy for schema <from> -> <to> not taken again: this pod wrote <file> before an earlier attempt`.
-  A new pod copies again.
+* **Where.** `pre-upgrade/` beside the database: `/data/pre-upgrade/` when there is one replica, or
+  `/data/<pod-name>/pre-upgrade/` when `replicaCount` is greater than 1. It is written even when scheduled
+  backups are disabled, and the six-hourly rotation, the offsite CronJob, the backup metric and the KPI size
+  line never include it.
+* **Name.** `pre-upgrade-<UTC stamp>-schema-<from>-to-<to>-<pod>.db`. The two numbers are database schema
+  versions, not application versions, and `<pod>` is the pod that took the copy. `<from>` is the copy's schema:
+  restore it under an image that understands that schema or a newer one; an older image refuses to start (§4c).
+  The `.sha256` file beside it holds the checksum `sha256sum -c` verifies it with.
+* **Verified before the upgrade.** Startup writes a temporary file, checks its schema version and its
+  integrity, writes its checksum, saves both to disk, renames the copy into place, and only then upgrades.
+* **Once per upgrade.** A later start of the same image, a restarted container or a replacement pod, does not
+  copy again: a failed attempt has already committed this image's new tables and every migration before the
+  one that failed, so a second copy would not be the database the previous image wrote. Its log says
+  `pre-upgrade copy for schema <from> -> <to> not taken again: <file> already exists from an earlier attempt`.
+  The same holds when you restore that copy and start the same image again: the copy already there is the
+  database you restored. If the previous image ran on the restored database before you retry the upgrade, move
+  the earlier `-to-<to>-` copy and its `.sha256` out of `pre-upgrade/` first (to `/data/pre-restore/`, for
+  example), or the retry takes no copy of what that image wrote since.
+* **Kept.** The copies of the newest three upgrades; an older one is removed only when a newer upgrade's copy
+  has been written. `config.backup.keep` and the six-hourly rotation do not apply to them. Each takes about as
+  much space as the database and counts against `persistence.size`.
 
 The startup log names the copy before the first migration line, for example
 `pre-upgrade copy written before migrating schema 19 -> 20: /data/pre-upgrade/pre-upgrade-….db (9973760 bytes, 0.12 s)`
 and then `schema migration 20 applied: …`.
 
-**When the copy cannot be written, the dashboard does not start.** The container exits 1 before it binds
-its port and the database is not migrated. The last line of
-`oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1` names the reason and the directory, for
-example
+**When the copy cannot be written, the dashboard does not start.** That start upgrades nothing: the container
+exits 1 before it binds its port. The last line of `oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1`
+names the reason and the directory, for example
 `gsd.store.StorePreUpgradeCopyFailed: schema 19 -> 20: the pre-upgrade copy of /data/gsd.db could not be written to /data/pre-upgrade, so the database was not migrated: free space 40.0 MiB, database 120.0 MiB. …`.
-Grow the claim or free space on it, or make the directory writable (the `oc debug` pod of §4a,
-`chgrp 0` and `chmod g=u`), and the next restart takes the copy and migrates. Or deploy the previous
-image, which opens the unmigrated database as before.
+Grow the claim or free space on it, or make the directory writable (the `oc debug` pod of §4a, `chgrp 0` and
+`chmod g=u`), and the next start takes the copy and upgrades. Or deploy the previous image: a start that could
+not write the copy changed nothing. A process killed while copying leaves only a temporary file, which the next
+start removes.
 
-**Using a copy.** Verify it with §1, reading `/data/pre-upgrade/<file>` instead of a backup, or outside
-the cluster with `sha256sum -c <file>.sha256` (§3). To go back to the image that wrote it, restore it with
-§4a from `/data/pre-upgrade/<file>` and deploy that image; an image whose highest migration is below
-`<from>` refuses it (§4c).
+**Using a copy.** Verify it with §1, reading `/data/pre-upgrade/<file>` instead of a backup; outside the
+cluster, run `sha256sum -c <file>.sha256` from the directory that holds both files (§3). To go back to the
+previous image, restore the copy with §4a from `/data/pre-upgrade/<file>` and deploy that image.
 ```
 
 ### Block 9 — charts/group-sync-dashboard/values.yaml: the values comment on `config.backup`
 
-None of the `config.backup` keys governs the copy, and it counts against `persistence.size`.
+None of the `config.backup` keys controls the copy, it arrives with the next application release, and it counts against `persistence.size`.
 
 <!-- block: charts/group-sync-dashboard/values.yaml | edit -->
 
@@ -1241,12 +1388,12 @@ New text:
 ```yaml
   # deliberately does not grow credentials for object storage.
   #
-  # NOT THE PRE-UPGRADE COPY, which none of these keys governs. Before a new image migrates the
-  # database, it writes a verified copy of the database as it was to pre-upgrade/ beside it
-  # (/data/pre-upgrade, or /data/$POD_NAME/pre-upgrade above one replica), with backups on or off,
-  # and refuses to start rather than migrate without one. The newest three are kept, each about the
-  # size of the database, so they count against persistence.size; `keep` and the six-hourly job
-  # never touch them (docs/RUNBOOK_backup_restore.md §6).
+  # NOT THE PRE-UPGRADE COPY, which these keys do not control. From the application release after
+  # 0.36.0, a new image copies the database as it was, verified, to pre-upgrade/ beside it before it
+  # upgrades the schema: /data/pre-upgrade when there is one replica, /data/$POD_NAME/pre-upgrade when
+  # replicaCount is greater than 1, with backups on or off. It does not start if the copy cannot be
+  # written. The copies of the newest three upgrades are kept, each about the size of the database, so
+  # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
   backup:
     enabled: true
 ```
@@ -1274,16 +1421,16 @@ cover corruption, a bad migration and accidental deletion — not loss of the vo
 half is `backup.offsite` below: a CronJob mounting the same claim read-only. The dashboard
 itself never grows credentials for object storage.
 
-**The pre-upgrade copy is separate.** Before a new image migrates the database, it writes the
-database as it was to `pre-upgrade/` beside it, whether `config.backup` is on or off, and does not
-start without it. The newest three are kept, each about the size of the database, so they count
-against `persistence.size`; `config.backup.keep` does not apply to them
-([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
+**The pre-upgrade copy is separate.** From the application release after 0.36.0, a new image copies the
+database as it was to `pre-upgrade/` beside it before it upgrades the schema, whether `config.backup` is on
+or off, and does not start without that copy. The copies of the newest three upgrades are kept, each about
+the size of the database, so they count against `persistence.size`; `config.backup.keep` does not apply to
+them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 ```
 
 ### Block 11 — docs/CHANGELOG.md: the CHANGELOG entry
 
-Under Unreleased, newest first, naming both versions (`tests/test_kyverno.py` holds the chart's).
+Under Unreleased, newest first, as application behaviour the next application release carries, naming the chart patch (`tests/test_kyverno.py` holds the chart's version to the entry).
 
 <!-- block: docs/CHANGELOG.md | edit -->
 
@@ -1292,7 +1439,7 @@ Old text:
 ```text
 ## Unreleased
 
-- **The dashboard refuses a database newer than it understands (#305; application only).** An image
+- **A migration ships with an application release (#298; CI and tests only, no version of its own).** CI
 ```
 
 New text:
@@ -1300,63 +1447,28 @@ New text:
 ```text
 ## Unreleased
 
-- **The database is copied before a new image migrates it (#301, `docs/specs/SPEC_M1_pre_upgrade_copy.md`;
-  application 0.37.0, chart 0.59.0).** When an image opens a database whose `user_version` is below its
-  highest migration, it first writes the database as it was to `pre-upgrade/` beside it (`/data/pre-upgrade`,
-  or `/data/$POD_NAME/pre-upgrade` above one replica), before its own schema, migrations or seeds run. The
-  copy is opened and checked (`user_version`, `integrity_check`), gets a `.sha256` sidecar, and is logged at
-  INFO before the first `schema migration N applied` line. When it cannot be written (the directory is not
-  writable, or the free space is below the database's size, its WAL included) the dashboard does not start,
-  the database is not migrated, and the last log line names the reason and the directory. The copy is
-  written whether or not `config.backup` is on, and its name is outside the six-hourly `gsd-*.db` pattern,
-  so the rotation, `config.backup.keep`, the offsite CronJob, `gsd_backup_last_success_timestamp_seconds`
-  and the KPI size line never see it. The newest three are kept, each about the size of the database, so
-  they count against `persistence.size`; a container that restarts after a failed migration does not copy
-  again. A new database, or one already at the image's version, takes no copy. Where the copies are and
-  how to use them: [RUNBOOK_backup_restore.md §6](RUNBOOK_backup_restore.md#6-pre-upgrade-copies). This
-  release also carries #305 below. SPEC_S4c's reserved versions move to app 0.38.0, chart 0.60.0.
-- **The dashboard refuses a database newer than it understands (#305; application only).** An image
+- **The database is copied before a new image upgrades it (#301, `docs/specs/SPEC_M1_pre_upgrade_copy.md`;
+  application behaviour arriving with the next application release, chart 0.58.4 for its values comment and
+  README).** When an image opens a database whose `user_version` is below its highest migration, it first
+  writes the database as it was to `pre-upgrade/` beside it (`/data/pre-upgrade`, or
+  `/data/$POD_NAME/pre-upgrade` when `replicaCount` is greater than 1), before its own schema, migrations or
+  seeds run. The copy is opened and checked (`user_version`, `integrity_check`), gets a `.sha256` sidecar, and
+  is logged at INFO before the first `schema migration N applied` line. When it cannot be written (the
+  directory is not writable, or the free space is below the database's size, its WAL included) the dashboard
+  does not start, the database is not upgraded, and the last log line names the reason and the directory. The
+  copy is taken once per upgrade: a restarted container or a replacement pod does not copy again, so a failed
+  upgrade cannot replace its clean copy. It is written whether or not `config.backup` is on, and its name is
+  outside the six-hourly `gsd-*.db` pattern, so the rotation, `config.backup.keep`, the offsite CronJob,
+  `gsd_backup_last_success_timestamp_seconds` and the KPI size line never see it. The copies of the newest
+  three upgrades are kept, each about the size of the database, so they count against `persistence.size`. A
+  new database, or one already at the image's version, takes no copy. Where the copies are and how to use
+  them: [RUNBOOK_backup_restore.md §6](RUNBOOK_backup_restore.md#6-pre-upgrade-copies).
+- **A migration ships with an application release (#298; CI and tests only, no version of its own).** CI
 ```
 
-### Block 12 — local-development/pyproject.toml: the application version
+### Block 12 — charts/group-sync-dashboard/Chart.yaml: the chart PATCH and its history line
 
-§3.11.
-
-<!-- block: local-development/pyproject.toml | edit -->
-
-Old text:
-
-```toml
-version = "0.36.0"
-```
-
-New text:
-
-```toml
-version = "0.37.0"
-```
-
-### Block 13 — local-development/gsd/__init__.py: the package version
-
-Held equal to pyproject's by `tests/test_chart_versions.py`.
-
-<!-- block: local-development/gsd/__init__.py | edit -->
-
-Old text:
-
-```python
-__version__ = "0.36.0"
-```
-
-New text:
-
-```python
-__version__ = "0.37.0"
-```
-
-### Block 14 — charts/group-sync-dashboard/Chart.yaml: the chart version and its history line
-
-§3.11; CI refuses a chart change without a new version.
+§3.11: the values comment and the README are chart content, and CI refuses a chart change without a new version; `appVersion` stays 0.36.0.
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
@@ -1371,69 +1483,8 @@ New text:
 
 ```yaml
 # CHART 0.58.3 (2026-09-26), PATCH: Epic A: quick cleanup (#381).
-# CHART 0.59.0, MINOR: appVersion moves to application 0.37.0 (below): the copy of the database taken
-# before a migration (#301, SPEC_M1) and the refusal of a database newer than the image (#305). The
-# values comment on config.backup and the README say where the copy goes and that it counts against
-# persistence.size. No template, value or RBAC change.
-version: 0.59.0
-```
-
-### Block 15 — charts/group-sync-dashboard/Chart.yaml: appVersion and its history line
-
-appVersion equals pyproject's version (`tests/test_chart_versions.py`).
-
-<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
-
-Old text:
-
-```yaml
-# `clusterconfig_manage`. MINOR: who may open two surfaces changes on upgrade (docs/CHANGELOG.md).
-appVersion: "0.36.0"
-```
-
-New text:
-
-```yaml
-# `clusterconfig_manage`. MINOR: who may open two surfaces changes on upgrade (docs/CHANGELOG.md).
-# 0.37.0. Before a migration, the database as it was is copied to pre-upgrade/ beside it, verified, with
-# a .sha256 sidecar, the newest three kept, and the image does not start rather than migrate without the
-# copy (#301, SPEC_M1). A database newer than the image is refused before anything writes to it (#305).
-# MINOR: a new directory on the data volume, and two ways a start is refused.
-appVersion: "0.37.0"
-```
-
-### Block 16 — docs/specs/SPEC_S4c_credential_lifecycle.md: SPEC_S4c's reservation moves
-
-A specified spec's versions stay above the tree's (`tests/test_specs_index.py`).
-
-<!-- block: docs/specs/SPEC_S4c_credential_lifecycle.md | edit -->
-
-Old text:
-
-```text
-| Version on release | app 0.37.0, chart 0.59.0 |
-```
-
-New text:
-
-```text
-| Version on release | app 0.38.0, chart 0.60.0 |
-```
-
-### Block 17 — docs/specs/README.md: the index row of SPEC_S4c
-
-The index and the spec's header say the same thing (`tests/test_specs_index.py`).
-
-<!-- block: docs/specs/README.md | edit -->
-
-Old text:
-
-```text
-| S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.37.0, chart 0.59.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
-```
-
-New text:
-
-```text
-| S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.38.0, chart 0.60.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
+# CHART 0.58.4 (2026-09-26), PATCH: docs only — the values comment on config.backup and the README name
+# the pre-upgrade copy the next application release takes (#301, SPEC_M1). No template, value or RBAC
+# change; appVersion unchanged.
+version: 0.58.4
 ```
