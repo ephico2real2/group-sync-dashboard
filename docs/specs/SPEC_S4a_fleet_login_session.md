@@ -26,6 +26,14 @@ serves are `docs/specs/SPEC_S3_connection_modes.md` §3; the account is §3.1 th
 
 ## Orchestrator's notes
 
+- **#291 consolidated `gsd/fleetlogin.py` after this spec, behaviour-preserving (2026-09-26); the §3.2 listing below
+  is the file as it was.** Two private helpers are gone from the code: `_log_retry` and `_log_stop` became one
+  `_log_failure(exc, attempt=None, *, retry_in=None, gave_up=False)`, and `_describe` is inlined as
+  `type(exc).__name__` at its two sites in `_revoke`. The public surface, the five log events with their field sets,
+  and every `action=`/`detail=` sentence are unchanged. The five fleet test files pass unedited, and a capture of all
+  236 log records they produce is byte-identical before and after (#291's PR). Read §3.2's references to those three
+  helpers as the pre-#291 shape.
+
 - **Issue #283's "precondition" section is superseded by SPEC_S4 §10.1, and this spec records the
   correction.** The issue says the fleet account is probably not loginable and prescribes an
   `ldapsearch -s base uid memberOf` against the bind DN. That is refuted by the target's own record.
