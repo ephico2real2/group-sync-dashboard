@@ -678,7 +678,9 @@ def test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_l
     headings = [l for l in log.splitlines() if l.startswith("## ")]
     if headings[0] != "## Unreleased":
         pytest.skip("no Unreleased section")
-    released = re.search(r"chart (\d+\.\d+\.\d+)", headings[1]).group(1)
+    # Both release heading forms prepare-release.py writes: "## Application X — chart Y — date" and
+    # "## Chart Y — application X — date" (the chart-only one, first cut as 0.58.3).
+    released = re.search(r"chart (\d+\.\d+\.\d+)", headings[1], re.I).group(1)
     unreleased = log.split("\n## Unreleased\n", 1)[1].split("\n## ", 1)[0]   # the heading LINE, not the intro's mention of it
     if chart != released:
         assert f"chart {chart}" in unreleased, f"Chart.yaml is {chart} (last released {released}) and no Unreleased entry names it"
