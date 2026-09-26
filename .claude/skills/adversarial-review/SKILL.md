@@ -48,8 +48,8 @@ PR that bumps the chart), never left as a dangling "follow-up".
 | Cursor, Claude Fable 5 **high** thinking (**NO ZDR**) | `cursor agent -p --force --output-format text --trust --model claude-fable-5-thinking-high "<brief>" < /dev/null`, run inside the reviewer's own `git archive` export (Step 2) | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The lighter tier — the confirmation (second) pass, or a smaller PR. |
 | Cursor, Claude Fable 5 **extra-high** thinking (**NO ZDR**) | `cursor agent -p --force --output-format text --trust --model claude-fable-5-thinking-xhigh "<brief>" < /dev/null`, run inside the reviewer's own `git archive` export (Step 2) | probe returns "Claude Fable 5"; `cursor agent models` lists the id. The deepest tier — the primary (first) pass / complex design; matches Codex xhigh. Cursor labels the 5.1 family "Claude Fable 5". |
 | **OB1** (Obi-Wan) — Anthropic Fable 5.1, inside Claude Code | the `Agent` tool with **`model: "fable"`** (`claude-fable-5-1`), `subagent_type` general-purpose, the brief as its ENTIRE prompt plus the read-only rule below; the same Fable as Cursor's `claude-fable-5-thinking-*` rows above by another route — the pivot to OB1 exists because Cursor's Fable is capped by the Pro+ usage limit (measured 2026-09-17: the first launch hit the monthly limit); the Cursor Fable rows stay (the operator, 2026-09-17: "Dont drop the cursor fable role. We only pivot to ob1 because our token issues with cursor fable") | the agent's completion notification carries its answer; it runs with the session's tools, so its `bash -n` / read-only `kubectl` / `curl` outputs are in its report. |
-| **OB2** — OB1 at **high** reasoning effort, the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob2"`** — the project agent `.claude/agents/ob2.md` (`model: fable`, `effort: high`, the reviewer's standing rules in its body: verdicts with artefacts, every finding with its full fix and its failing/passing test, read-only, measure-don't-reason, the report shape); the brief is its whole prompt, no `model` parameter needed | the operator, 2026-09-18: *"Create a new skill from OB1 called OB2 (OB1 high) with fable 5.1 but with high effort and assume OB2"* — every launch uses OB2 now; OB1 (the general-purpose launch at the session's effort) only when the operator asks for it by name. Same tools, same rules, the same report; its completion notification carries the answer. |
-| **OB3** — the same reviewer on **Opus 5.5**, choosing its own depth; the default from 2026-09-18 | the `Agent` tool with **`subagent_type: "ob3"`** — the project agent `.claude/agents/ob3.md` (`model: claude-opus-5-5`, `effort: high` as a FLOOR, and a rubric in its body: shallow claims are settled by a grep, medium by one drive, deep ones get the harness, and the report names which it treated as deep). Also runnable as a background job: `claude -p "<the brief's prompt>" --agent ob3 --allowedTools "Bash,Read,Write,Edit,Glob,Grep" --output-format json --max-turns 300 < /dev/null` (drop `CLAUDECODE` from the environment first) | the operator, 2026-09-18: *"We have hit our weekly fable usage limit… use opus 5 high with auto switch effort… substitute the jobs and role of ob2 with ob3."* MEASURED that day: an OB2 background run died after 32 turns with "You've reached your Fable limit", $4.93 spent and no report. There is no `auto` effort value — the frontmatter takes a fixed tier and neither the `Agent` tool nor `claude -p` exposes an effort flag — so the tier is pinned at `high` and the self-scaling lives in the agent's body. |
+| **OB2**: Fable 5.1, **high** effort. The tie-breaking reviewer, and the backup builder when the Opus pool is low | the `Agent` tool with **`subagent_type: "ob2"`**, the agent `~/.claude/agents/ob2.md` (`model: fable`, `effort: high`). The brief's first line names the role: `Role: REVIEWER` (the read-only default) or `Role: IMPLEMENTER` | The operator, 2026-09-18, made OB2 the default reviewer. Since the mandate of 2026-09-25 (*"Switch to coding with ob1-lite and codex astra"*) it is not the default: launch it to settle a disagreement between reviewers, for a second reading of an OB3 pass, or when the operator asks. Fable has its own weekly quota. |
+| **OB3**: Opus 5.5, **max** effort, choosing its own depth. For the riskiest design work, as implementer or reviewer | the `Agent` tool with **`subagent_type: "ob3"`**, the agent `~/.claude/agents/ob3.md` (`model: claude-opus-5-5`, `effort: max`, raised by the operator on 2026-09-19; never change it on your own). It has the same role switch. It is also runnable as a background job: `claude -p "<prompt>" --agent ob3 --allowedTools "Bash,Read,Write,Edit,Glob,Grep" --output-format json --max-turns 300 < /dev/null` (remove `CLAUDECODE` from the environment first) | It was the default reviewer from 2026-09-18, while the Fable quota was out. Since 2026-09-25 it is the expensive seat: use it where one wrong line is costly, such as #315/#285, where a single retry can lock the shared fleet account out on every cluster, or when the operator asks. |
 
 The Cursor reviewers are **independent** — call either, or both; Fable is the *third* reviewer beside
 Grok + Codex, through Cursor while its usage limit allows and through OB1 when it does not. **ZDR vs NO ZDR is the deciding trade:** Grok
@@ -245,9 +245,11 @@ cd "$W" && nohup codex exec --skip-git-repo-check -m gpt-5.6-sol -c model_reason
 sleep 20; head -c 400 "$S/review_codex_<id>.err"   # must show "OpenAI Codex … model: …", not only "Reading additional input from stdin..."
 ```
 
-and, in the same turn, **OB3** (from 2026-09-18 — `subagent_type: "ob3"`, the project agent on Opus 5.5 that scales its own depth per
-claim and carries the reviewer's standing rules; the brief is the whole prompt. OB2 is the same definition on Fable 5.1 and returns when
-that quota resets) — or, only when the operator asks for OB1 by name, **OB1** — the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
+and, in the same turn, **the third reviewer: the implementer seat that did NOT write the change** (the rule since
+2026-09-25). If Codex Astra wrote it, launch **OB1-lite** (`subagent_type: "ob1-lite"`, the brief's first line
+`Role: REVIEWER`). If OB1-lite wrote it, launch **Codex Astra** as reviewer, with the launch line in the table, its
+own directory, and `findings.md` + `fixes.patch`. **OB3** (the riskiest design work) and **OB2** (a disagreement, or
+a second reading) are added on top, not instead. Only when the operator asks for OB1 by name, **OB1**: the `Agent` tool, `model: "fable"`, `subagent_type: "general-purpose"`,
 `description: "OB1 adversarial review of <id>"`, the prompt = the read-only paragraph above + the brief's
 full text + the file paths it needs (it works in the repository itself, read-only — no export needed, but
 name the branch and say it must not switch). It runs in the background and reports on completion; never
@@ -365,8 +367,8 @@ with the decisions and the re-validation, and wait for CI green on that commit.
 
 ## Step 5 — the record and the memory
 
-`docs/REVIEW_<id>.md`: a table of claims × reviewers × decision (the reviewers named as run: Codex, Grok,
-**OB1 — Fable 5.1, Claude Code Agent**); one section per accepted or rejected
+`docs/REVIEW_<id>.md`: a table of claims × reviewers × decision (the reviewers named as run: Codex or Codex
+Astra, Grok, **OB1-lite — Opus 5.5**, or OB2, OB3 or OB1 if that is the seat that actually ran); one section per accepted or rejected
 finding with Finding / Re-check / Decision; a "Not asked" section for what a reviewer volunteered; an
 Outcome paragraph. Add the file to `REVIEW_ARTIFACTS` in `local-development/tests/test_docs_citations.py`
 — the record deliberately quotes wrong anchors and old lines, and that is the point of a record. Add one
@@ -386,9 +388,10 @@ confirmation pass and it still finds things (Cursor found the all-dots reason af
 2. Brief written to a file: numbered claims, exact locations, artefact demanded, snippet + failing test
    demanded for refutations, constraints stated, every safety property as a budget with its scope and
    the attempt-count table demanded (Step 0b).
-3. Probe Codex and Grok if anything changed; launch all three with the exact invocations above — own
-   output files, own subdirectories, Codex with stdin closed (`< /dev/null`) and its stderr header read
-   back, OB1 with the same brief and the read-only paragraph.
+3. Probe Codex and Grok if anything changed. Launch all three with the exact invocations above: their own
+   directories and output files, Codex with stdin closed (`< /dev/null`) and its stderr header read back, Grok with
+   `-p --force --workspace`, and as the third seat the implementer that did not write the change (OB1-lite
+   `Role: REVIEWER`, or Codex Astra). An OB seat gets the same brief and the read-only paragraph.
 4. Wait for all three; wait for the Codex process to actually exit and for OB1's completion notification;
    `git status`; remove reviewer artefacts.
 5. Re-check every verdict yourself; decide each in writing with the reason; route out-of-scope findings.
