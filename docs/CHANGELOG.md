@@ -10,10 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Chart 0.58.3 — application 0.36.0 — 2026-09-26
 
-- **Epic A: quick cleanup (#381).** The docs index (#319), a test suite that leaves no `gsd.db` in the working
-  tree (#371), and GitOps examples for adding clusters (#389). This is the first release heading cut since
-  application 0.24.0, so it also carries every entry merged since then; each entry names the application and
-  chart versions that shipped it.
+- **Epic A: quick cleanup (#381).** The docs index (#319; chart 0.58.1, docs only), a test suite that leaves no
+  `gsd.db` in the working tree (#371; tests only, no version of its own), and GitOps examples for adding clusters
+  (#389; chart 0.58.2, docs only). This is the first release heading cut since application 0.24.0, so it also
+  carries every entry merged since then. Where an entry names the versions that shipped it, that is its release;
+  25 of them name none.
 
 - **GitOps cluster examples (#389; chart 0.58.2, docs only).** The
   [onboarding ConfigMap and Argo CD / Flux examples](../examples/cluster-onboarding/) keep
