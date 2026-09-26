@@ -50,9 +50,17 @@ implementation is written back here, under "Orchestrator's notes", with the reas
     Codex C4) go with the namespaced question they protected.
   - **D6 — with the proxy off there is no one to ask about, so KPI is withheld**, exactly as the
     Cluster Configurations tab already was. The CHANGELOG says so.
-  - **D7 — the removed values blocks are refused only when set.** Helm's merge deletes a key given as
-    `null`, so a block nulled out passes; a block with any field set fails the render naming
-    `visibility.clusterAdminSar`.
+  - **D7 — the removed values blocks are refused only when set.** A block that sets nothing — nulled
+    (`clusterConfigViewSar: null`, or the key with its sub-keys commented out) or `{}` — asks no
+    question of its own and passes; a block with any field set fails the render naming
+    `visibility.clusterAdminSar`. The refusal tests the value's truth (`if index $vis $old`), not
+    the key's presence: see "Grok's review of the spec" below for the measurement.
+  - **D8 — the `auth-delegator` grant renders whenever the oauth-proxy is on.** The tier is asked
+    whatever `visibility.enabled` says, and KPI is on every install, so the grant can no longer be
+    tied to `clusterConfig.secrets.enabled`. With the proxy off `trusted_viewer` is `None` and no
+    review is asked, so the grant still disappears there. This ADDS the binding in one state only
+    (proxy on, `visibility.enabled`, `apiTokenAccess.enabled` and `clusterConfig.secrets.enabled` all
+    off) and removes none.
 - The index row for T2, the S4c reservation's move (app 0.36.0, chart 0.58.0, in `docs/specs/README.md` and
   `docs/specs/SPEC_S4c_credential_lifecycle.md`) and the row count in
   `local-development/tests/test_specs_index.py` are made in the commit that adds this document, not by a
@@ -62,6 +70,30 @@ implementation is written back here, under "Orchestrator's notes", with the reas
   header its whoami is unchanged: `authenticated: false`) and the cluster-admin seam; the four KPI
   sites send the `root` header and reload. Recorded here because it is a test-rig change forced by the
   operator's decision, not a symptom fix.
+- 2026-09-25, **Grok's review of the spec** (`cursor-grok-4.6-high-fast`), the two REFUTED claims,
+  traced and decided by OB1-lite (implementer):
+  - **C7 — accepted, fix narrowed.** The spec's premise ("Helm's merge deletes a key given as
+    `null`") is false for a key the chart's `values.yaml` no longer carries: Helm's coalesce deletes a
+    nulled user key only when the chart defaults hold it. Measured with Helm v4.3.0 on the blocks as
+    first written (`hasKey`): `-f` with `clusterConfigViewSar: null`, with `clusterConfigViewSar:`
+    (sub-keys commented out), with `clusterConfigViewSar: {}`, and `--set
+    visibility.clusterConfigViewSar=null` all FAILED the render with the removal message, so the
+    spec's own `render(**{"visibility.<block>": "null"})` assertion could not pass. A block that sets
+    nothing asks no question, so refusing it only breaks a values file copied from the old chart with
+    the sub-keys commented out. Grok's `and (hasKey …) (not (kindIs "invalid" …))` still refuses `{}`;
+    the refusal now tests the value's truth, `{{- if index $vis $old -}}`, which is one condition
+    instead of two and passes nil, `{}` and a missing key alike.
+  - **C9 — accepted as proposed.** Measured on the blocks as first written: `helm template` with
+    `visibility.enabled=false`, `oauthProxy.apiTokenAccess.enabled=false` and
+    `clusterConfig.secrets.enabled=false` rendered 0 `system:auth-delegator` bindings, while
+    `require_cluster_admin` (KPI) and `_cluster_admin_granted` ask a SubjectAccessReview whatever
+    `restrict` says — so in that state KPI would refuse everyone, administrators included, where main
+    serves it to every reader. The binding's condition becomes `oauthProxy.enabled` (D8);
+    `test_the_sar_grant_disappears_when_nothing_needs_it` pinned the hole and is replaced by a
+    triple-off case that fails before and passes after, and a proxy-off case. The chart README row,
+    the `userActivity.visibility` comment in `values.yaml` and the grant's comment in `rbac.yaml`
+    said the grant followed `visibility.enabled` / `clusterConfig.secrets.enabled`, or that Usage is
+    per-person for a cluster-admin with visibility off; each is corrected by a block below.
 
 ## The decision (issue #322, operator, 2026-09-23)
 
@@ -216,8 +248,9 @@ negative control), `nsadmin` (passes nothing cluster-scoped), `alice`:
   (`test_metrics.py`).
 - **The chart** (`test_chart_strategy.py`): the default render carries the four keys; a nonsensical
   shape is refused naming the field; each removed block, set, is refused naming `clusterAdminSar`;
-  a nulled block keeps the default; the `auth-delegator` binding still renders with `visibility.enabled`
-  off (the existing case, renamed).
+  a nulled block keeps the default; the `auth-delegator` binding renders whenever the proxy is on,
+  with `visibility.enabled`, `apiTokenAccess` and cluster Secrets all off (D8), and disappears only with
+  the proxy off.
 - **The page** (`test_ui.py`): the seams, and the KPI cases as `root`; the Cluster Configurations
   cases read `visibility.cluster_admin`.
 
@@ -226,7 +259,8 @@ negative control), `nsadmin` (passes nothing cluster-scoped), `alice`:
 One PR: the spec first (draft, reviewed), then the blocks below applied in one commit, versions
 app 0.35.0 / chart 0.57.0. Verification the implementer runs: the hermetic suite, the browser suite,
 `helm lint`, and the RBAC rule diff against `origin/main` (the dashboard ServiceAccount's REMOVED
-rules must be 0 — this change adds no RBAC and removes none). The CRC walk with screenshots
+rules must be 0 — this change removes none, and adds the `auth-delegator` binding in the one state
+it was missing from, D8). The CRC walk with screenshots
 (Definition of Done, last item) is the orchestrator's, who holds the lab.
 
 ## 6. Implementation blocks
@@ -502,10 +536,11 @@ TIER_THRESHOLDS = ("admin", "usage", "cluster_admin")
     # The operator's ruling is not conditional. For KPI this is a change: with restrictions off,
     # require_admin_tier admitted everyone; this still asks.
     #
-    # THE CONSEQUENCE, stated where it bites: with restrictions off a site may not have granted the
-    # auth-delegator role, so the SubjectAccessReview fails and both surfaces refuse everyone until
-    # that grant exists. That is the fail-closed direction for a view naming cluster credentials,
-    # and the chart's README says so beside the value. An empty namespace is a cluster-scoped
+    # THE CONSEQUENCE, stated where it bites: the review needs the auth-delegator role, which the
+    # chart binds whenever the proxy is on (#322, Grok's review of SPEC_T2, C9); a deployment built
+    # without it fails the review and both surfaces refuse everyone until that grant exists. That is
+    # the fail-closed direction for a view naming cluster credentials, and the chart's README says
+    # so beside the value. An empty namespace is a cluster-scoped
     # question, like adminSar's.
     cluster_admin_tier: TierResolver | None = None
     if cluster_admin_resolver is None and local_cluster is not None:
@@ -1157,6 +1192,27 @@ function clusterAdmin() {
     # reader the cluster-admin tier admits — visibility.clusterAdminSar, #322 — with a proxy-verified
 ```
 
+<!-- block: charts/group-sync-dashboard/values.yaml | edit -->
+
+```yaml
+    # ONE EDGE WORTH KNOWING, measured: with `visibility.enabled=false` the usage tier is not
+    # consulted at all, so this view stays per-person for EVERY reader including a
+    # cluster-admin, and `all` here becomes the only thing that widens it. That is deliberate
+    # and it is the safe direction — switching off scoping for CLUSTER data must not, as a side
+    # effect, publish presence records. It also means no SubjectAccessReview is attempted in
+    # that state, which is why the auth-delegator grant may be absent there without breaking
+    # anything.
+```
+
+```yaml
+    # ONE EDGE WORTH KNOWING: with `visibility.enabled=false` the usage tier is not consulted
+    # at all, so this view stays per-person for every reader but one who passes
+    # `visibility.clusterAdminSar` — the top tier, asked in that state too (#322) — and `all`
+    # here is the only thing that widens it for anyone else. That is deliberate and it is the
+    # safe direction — switching off scoping for CLUSTER data must not, as a side effect,
+    # publish presence records to the auditor.
+```
+
 ### `charts/group-sync-dashboard/templates/_helpers.tpl` — the field helper and the refusal
 
 <!-- block: charts/group-sync-dashboard/templates/_helpers.tpl | edit -->
@@ -1219,13 +1275,14 @@ person trying to fix it.
 The two blocks the cluster-admin tier replaced (#322): visibility.clusterConfigViewSar and
 visibility.clusterConfigManageSar, chart 0.42.1 to 0.56.0. Helm ignores a key no template reads, so a
 values file that still sets one would render clean while its question silently stopped being asked —
-refuse it, naming the key that took its place. A block nulled out (`clusterConfigViewSar: null`) is
-deleted by Helm's merge and passes; only a block with a field set is refused.
+refuse it, naming the key that took its place. Only a block that sets something is refused: a nulled
+block (`clusterConfigViewSar: null`, or its sub-keys commented out) or `{}` asked no question of its
+own, and Helm keeps a nulled key the chart's defaults do not carry, so presence alone is not the test.
 */}}
 {{- define "gsd.refuseRemovedVisibilitySar" -}}
 {{- $vis := .Values.visibility | default dict -}}
 {{- range $old := list "clusterConfigViewSar" "clusterConfigManageSar" -}}
-{{- if hasKey $vis $old -}}
+{{- if index $vis $old -}}
 {{- fail (printf "visibility.%s was removed in chart 0.57.0 (#322). One question, visibility.clusterAdminSar (default: update clusterrolebindings.rbac.authorization.k8s.io, cluster-scoped), now gates the whole Cluster Configurations tab and the KPI page. Delete this block; to ask a different question, set visibility.clusterAdminSar.{apiGroup,resource,verb,namespace}." $old) -}}
 {{- end -}}
 {{- end -}}
@@ -1260,7 +1317,17 @@ deleted by Helm's merge and passes; only a block with a field set is refused.
     visibilityClusterAdminSarNamespace: {{ include "gsd.clusterAdminSarField" (dict "ctx" . "field" "namespace" "default" "") | quote }}
 ```
 
-### `charts/group-sync-dashboard/templates/rbac.yaml` — the grant's comment
+### `charts/group-sync-dashboard/templates/rbac.yaml` — the grant's condition and its comment
+
+<!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
+
+```yaml
+{{- if and .Values.oauthProxy.enabled (or .Values.oauthProxy.apiTokenAccess.enabled (eq (include "gsd.visibilityEnabled" .) "true") (and .Values.clusterConfig.secrets.enabled (eq (include "gsd.visibilityEnabled" .) "false"))) }}
+```
+
+```yaml
+{{- if .Values.oauthProxy.enabled }}
+```
 
 <!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
 
@@ -1279,7 +1346,9 @@ deleted by Helm's merge and passes; only a block with a field set is refused.
 # off must not hand the fleet's wiring or the KPI page to every proxy-admitted reader, so it asks a
 # SubjectAccessReview even when visibility is off. Without this binding in that state every such
 # review errors and both surfaces refuse EVERYONE, administrators included, with nothing but a log
-# line to say why. Measured
+# line to say why. The KPI page is on every install, so the binding renders WHENEVER THE PROXY IS ON
+# (#322, Grok's review of SPEC_T2, C9): the tier asks only about a proxy-verified identity, so with the
+# proxy off nothing asks and the binding is absent. Measured
 ```
 
 ### `charts/group-sync-dashboard/Chart.yaml`, `local-development/pyproject.toml`, `local-development/gsd/__init__.py` — the versions
@@ -1356,6 +1425,16 @@ __version__ = "0.35.0"
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
 
 ```markdown
+| — | — | **Both levels are asked even when `visibility.enabled` is `false`.** That independence is deliberate: turning cluster-DATA restrictions off must not hand the fleet's wiring to every reader the proxy admits. It means the chart renders the `system:auth-delegator` binding whenever `clusterConfig.secrets.enabled` is on, because a tier that asks a SubjectAccessReview without the grant to ask it refuses everyone — administrators included — with only a log line to say why |
+```
+
+```markdown
+| — | — | **The cluster-admin tier is asked even when `visibility.enabled` is `false`.** That independence is deliberate: turning cluster-DATA restrictions off must not hand the fleet's wiring or the KPI page to every reader the proxy admits. It means the chart renders the `system:auth-delegator` binding whenever `oauthProxy.enabled` is on, because a tier that asks a SubjectAccessReview without the grant to ask it refuses everyone — administrators included — with only a log line to say why |
+```
+
+<!-- block: charts/group-sync-dashboard/README.md | edit -->
+
+```markdown
 | `clusterConfig.secrets.writes.enabled` | `false` | the Cluster Configurations tab's writes (#230 S2, `docs/specs/SPEC_S2_cluster_configurations_tab.md`): `create`, `update`, `delete` join the `-cluster-secrets` Role so an administrator can add a cluster from the tab (the same labelled Secret a GitOps process would write, `gsd-cluster-<name>`, annotated `groupsync-dashboard.io/managed-by: ui`), rotate its bearer token in place, or delete it (the cluster retires, its history kept). The app writes only in its own namespace, only Secrets carrying the label (checked by the app — RBAC cannot scope a verb by label), only for a reader holding `clusterconfig:manage` (`visibility.clusterConfigManageSar`, never the wide tier the auditor passes) with a proxy-verified identity, one audit log line per write naming the person, the verb and the Secret; the credential never reaches a response, a log line, the database or `/metrics`. **Off by default**, a stated exception to the on-by-default rule: a write path on Secrets widens the dashboard's read-only posture (its only write anywhere is its own leader Lease), so it stays off until the operator turns it on — the default is pending the operator's A/B call of 2026-09-20; B flips it and removes the exception. Off, no write route is registered (a POST is a `405`) and the tab is read-only, its form still producing the Secret's YAML for a GitOps process to apply |
 ```
 
@@ -1369,7 +1448,7 @@ __version__ = "0.35.0"
 
 ```markdown
 
-- **The cluster-admin tier: `visibility.clusterAdminSar` gates the Cluster Configurations tab and the KPI page, and grants every host tier (application 0.35.0, chart 0.57.0; #322, `docs/specs/SPEC_T2_cluster_admin_tier.md`).** One SubjectAccessReview — `update clusterrolebindings.rbac.authorization.k8s.io`, cluster-scoped, on the host — decides who may open `GET /api/kpi` and the whole Cluster Configurations tab (`GET /api/clusterconfigs`, its existence in the tab strip, and the Create / Rotate / Delete / Test routes, which `clusterConfig.secrets.writes.enabled` still switches). It is asked whatever `visibility.enabled` says, and a reader who passes it is granted every tier this cluster decides — the wide view on the host and on `inherit` clusters, and Usage — whatever `visibility.adminSar` and `visibility.usageAdminSar` answer for them; one way only, so those two settings can still be loosened without handing anyone this tab. A `remote-sar` cluster still asks its own API, a `self-only` cluster stays self. `/api/whoami` carries `visibility.cluster_admin` and drops `clusterconfig`; both tabs are absent, not disabled, for a reader who fails it; the refusal leads with *For cluster administrators only.* The `cluster_admin` threshold label replaces `clusterconfig_view` and `clusterconfig_manage` on `gsd_visibility_tier_checks_total` and `gsd_visibility_decisions_total`. **Who loses access on upgrade:** cluster-readers (the auditor persona, who passes `list clusterrolebindings`) lose the KPI page; holders of `admin` or `edit` in the release namespace — by RoleBinding or cluster-wide — who are not cluster administrators lose the Cluster Configurations tab, which `get`/`create secrets` used to open for them; and with the oauth-proxy off there is no identity to ask about, so the KPI page is withheld where the proxy-less install served it wide. **Upgrade:** `visibility.clusterConfigViewSar` and `visibility.clusterConfigManageSar` are removed; a values file that still sets either fails the render with a message naming `visibility.clusterAdminSar` — delete the block, and set `visibility.clusterAdminSar.{apiGroup,resource,verb,namespace}` only to ask a different question. With `visibility.enabled: false` the `auth-delegator` grant still renders, as it did for the tier this replaces; without it both surfaces refuse everyone. SPEC_S4c's reserved versions move to app 0.36.0, chart 0.58.0.
+- **The cluster-admin tier: `visibility.clusterAdminSar` gates the Cluster Configurations tab and the KPI page, and grants every host tier (application 0.35.0, chart 0.57.0; #322, `docs/specs/SPEC_T2_cluster_admin_tier.md`).** One SubjectAccessReview — `update clusterrolebindings.rbac.authorization.k8s.io`, cluster-scoped, on the host — decides who may open `GET /api/kpi` and the whole Cluster Configurations tab (`GET /api/clusterconfigs`, its existence in the tab strip, and the Create / Rotate / Delete / Test routes, which `clusterConfig.secrets.writes.enabled` still switches). It is asked whatever `visibility.enabled` says, and a reader who passes it is granted every tier this cluster decides — the wide view on the host and on `inherit` clusters, and Usage — whatever `visibility.adminSar` and `visibility.usageAdminSar` answer for them; one way only, so those two settings can still be loosened without handing anyone this tab. A `remote-sar` cluster still asks its own API, a `self-only` cluster stays self. `/api/whoami` carries `visibility.cluster_admin` and drops `clusterconfig`; both tabs are absent, not disabled, for a reader who fails it; the refusal leads with *For cluster administrators only.* The `cluster_admin` threshold label replaces `clusterconfig_view` and `clusterconfig_manage` on `gsd_visibility_tier_checks_total` and `gsd_visibility_decisions_total`. **Who loses access on upgrade:** cluster-readers (the auditor persona, who passes `list clusterrolebindings`) lose the KPI page; holders of `admin` or `edit` in the release namespace — by RoleBinding or cluster-wide — who are not cluster administrators lose the Cluster Configurations tab, which `get`/`create secrets` used to open for them; and with the oauth-proxy off there is no identity to ask about, so the KPI page is withheld where the proxy-less install served it wide. **Upgrade:** `visibility.clusterConfigViewSar` and `visibility.clusterConfigManageSar` are removed; a values file that still sets either fails the render with a message naming `visibility.clusterAdminSar` — delete the block, and set `visibility.clusterAdminSar.{apiGroup,resource,verb,namespace}` only to ask a different question. The `auth-delegator` grant now renders whenever `oauthProxy.enabled` is on — new only where `visibility.enabled`, `oauthProxy.apiTokenAccess.enabled` and `clusterConfig.secrets.enabled` were all off, which rendered none — because without it both surfaces would refuse everyone; no grant is removed. SPEC_S4c's reserved versions move to app 0.36.0, chart 0.58.0.
 ```
 
 ### `docs/ACCESS_CONTROL.md` — the tiers
@@ -2360,8 +2439,9 @@ class TestClusterAdminTierOnClusterConfigs:
         """`visibility.clusterConfigViewSar` / `.clusterConfigManageSar` were removed in chart 0.57.0
         (#322). Helm ignores a key no template reads, so a values file that still sets one would
         render clean while its question silently stopped being asked. Set — any field — it fails
-        the render with a message naming `clusterAdminSar`; nulled out, Helm's merge deletes it and
-        the render passes."""
+        the render with a message naming `clusterAdminSar`; a block that sets nothing (nulled, the
+        sub-keys commented out) asks no question and passes — Helm KEEPS such a key when the chart's
+        defaults no longer carry it, so this case fails a presence test (Grok's review of SPEC_T2, C7)."""
         for block in ("clusterConfigViewSar", "clusterConfigManageSar"):
             for key, value in (("verb", "get"), ("namespace", "ns")):
                 ok, out = render(**{f"visibility.{block}.{key}": value})
@@ -2375,6 +2455,57 @@ class TestClusterAdminTierOnClusterConfigs:
         that independence is the point of it (#322, as for the #230 tier before it). Without the
         auth-delegator binding in that state every review errors and both surfaces refuse EVERYONE,
         administrators included, with only a log line to say why (review of #235, the Fable seat)."""
+```
+
+<!-- block: local-development/tests/test_chart_strategy.py | edit -->
+
+```python
+    def test_the_sar_grant_disappears_when_nothing_needs_it(self):
+        """The invariant: the grant renders only when something asks a SubjectAccessReview. Every
+        user of it must therefore be named here — apiTokenAccess (on by default since chart 0.14.0)
+        and, since #230, the cluster-configuration tier, which asks regardless of visibility."""
+        ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false",
+                         clusterConfig__secrets__enabled="false")
+        assert ok, out
+        assert not any(d.get("kind") == "ClusterRoleBinding"
+                       and d["roleRef"]["name"] == "system:auth-delegator"
+                       for d in self._docs(out)), (
+            "with visibility off, apiTokenAccess off and cluster Secrets off, nothing uses the SAR grant"
+        )
+```
+
+```python
+    def test_the_sar_grant_renders_whenever_the_proxy_is_on(self):
+        """The cluster-admin tier (#322) asks a SubjectAccessReview for the KPI page, which every
+        install has, whatever `visibility.enabled`, apiTokenAccess or cluster Secrets say. With all
+        three off the grant used to be absent, and KPI would have refused everyone (Grok's review of
+        SPEC_T2, C9)."""
+        ok, out = render(visibility__enabled="false", oauthProxy__apiTokenAccess__enabled="false",
+                         clusterConfig__secrets__enabled="false")
+        assert ok, out
+        assert any(d.get("kind") == "ClusterRoleBinding"
+                   and d["roleRef"]["name"] == "system:auth-delegator"
+                   for d in self._docs(out)), "the cluster-admin tier would ask a review it has no grant for"
+
+    def test_the_sar_grant_disappears_only_with_the_proxy_off(self):
+        """With the proxy off there is no verified identity, so nothing asks a review
+        (`trusted_viewer` is None) and the grant is not rendered."""
+        ok, out = render(oauthProxy__enabled="false", visibility__enabled="false",
+                         reporting__enabled="false")
+        assert ok, out
+        assert not any(d.get("kind") == "ClusterRoleBinding"
+                       and d["roleRef"]["name"] == "system:auth-delegator"
+                       for d in self._docs(out))
+```
+
+<!-- block: local-development/tests/test_chart_strategy.py | edit -->
+
+```python
+        the both-off state that removes it is `test_the_sar_grant_disappears_when_nothing_needs_it`."""
+```
+
+```python
+        the only state that removes it is the proxy off, `test_the_sar_grant_disappears_only_with_the_proxy_off`."""
 ```
 
 <!-- block: local-development/tests/test_ui.py | edit -->
