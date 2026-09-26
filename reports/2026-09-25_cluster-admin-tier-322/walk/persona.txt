@@ -1,0 +1,22 @@
+# The cluster-reader persona for the walk: CRC's htpasswd user `developer` with a TEMPORARY cluster-reader
+# binding, created before the walk and deleted after it. Commands run with the lab's scratch kubeconfig
+# (kubeadmin); outputs as printed.
+
+$ oc get clusterrolebindings -o json | jq -r '.items[] | select(any(.subjects[]?; .kind=="User" and .name=="developer")) | .metadata.name'
+(no output: developer held no cluster role before the walk)
+
+$ oc create clusterrolebinding walk-322-developer-cluster-reader --clusterrole=cluster-reader --user=developer
+$ oc label clusterrolebinding walk-322-developer-cluster-reader rbac.ocp.io/config-source=walk-322
+$ oc auth can-i list clusterrolebindings --as developer
+yes
+$ oc auth can-i update clusterrolebindings --as developer
+no
+$ oc auth can-i update clusterrolebindings          # kubeadmin, the cluster-admin persona
+yes
+
+# ... walk.py ran here (walk-output.txt) ...
+
+$ oc delete clusterrolebinding walk-322-developer-cluster-reader
+clusterrolebinding.rbac.authorization.k8s.io "walk-322-developer-cluster-reader" deleted
+$ oc auth can-i list clusterrolebindings --as developer
+no
