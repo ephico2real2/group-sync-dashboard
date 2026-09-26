@@ -1,0 +1,18 @@
+# Credential-free cluster onboarding: the dashboard logs in as clusterConfig.fleetAccount, reads the
+# remote poller token and writes gsd-cluster-<name> itself. That write needs
+# clusterConfig.secrets.writes.enabled, which is off by default; the prerequisites are in
+# docs/CLUSTER_STANZA.md. Deleting this map prunes the generated Secret; recorded history stays.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-onboarding-epic-a
+  namespace: group-sync-dashboard
+  labels:
+    groupsync-dashboard.io/config-type: onboard
+data:
+  clusters.yaml: |
+    clusters:
+      - name: gitops-example-389
+        apiUrl: https://api.crc.testing:6443
+        saTokenLookup: true
+        enabled: true

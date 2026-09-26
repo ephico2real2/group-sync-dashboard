@@ -1,0 +1,17 @@
+== image and chart
+group-sync-dashboard-0.58.3 quay.io/ephico2real/group-sync-dashboard:0.36.0
+== 1 before
+  1-cluster-configurations-before.png: 'gitops-example-389' present: cret is gone — the history is kept, the cluster is disabled gitops-example-389 Secret gsd-cluster-gitops-example-389 disabled SERVER https://api.crc.testing:6443 CREDENTIAL bearerToken set TLS unknown its source no longe
+== apply 2026-09-26T19:15:06Z
+configmap/cluster-onboarding-epic-a created
+   secret after 257s: configmap-onboarding
+== 2 with the GitOps cluster
+  2-cluster-configurations-gitops-cluster-added.png: 'gitops-example-389' present: nopia-safe High contrast Refresh Sign out Cluster dashboard gitops-example-389 mock-privateca mock-selfsigned mock-trusted shared-qa shared-rnd The host decides your view of this cluster. Find Searches groups by name, us
+== delete 2026-09-26T19:19:52Z
+configmap "cluster-onboarding-epic-a" deleted from group-sync-dashboard namespace
+   secret gone after 272s: Error from server (NotFound): secrets "gsd-cluster-gitops-example-389" not found
+== 3 after
+  3-cluster-configurations-after-removal.png: 'gitops-example-389' present: cret is gone — the history is kept, the cluster is disabled gitops-example-389 Secret gsd-cluster-gitops-example-389 disabled SERVER https://api.crc.testing:6443 CREDENTIAL bearerToken set TLS unknown its source no longe
+== 4 docs index at 2b2c744655086af4e11d8627999855ede6e12b0f
+  4-docs-index.png: Documentation
+== done

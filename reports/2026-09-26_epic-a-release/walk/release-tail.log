@@ -1,0 +1,7 @@
+argocd  : group-sync-dashboard -> revision main (2b2c744655), the chart's default image
+19:13:46Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 667b3c4a62, want 2b2c744655) successfully synced (all tasks run)
+19:14:01Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+19:14:16Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+19:14:31Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+19:14:46Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
