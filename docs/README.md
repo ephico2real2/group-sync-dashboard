@@ -17,9 +17,10 @@ records follow separately; their status and measurements belong to the work they
 
 - [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — who can enter the dashboard and what each reader can see.
 - [api-access.md](api-access.md) — call the API from outside the cluster with curl or Postman.
-- [polling-and-discovery.md](polling-and-discovery.md) — polling, cluster discovery, cleanup and forcing a refresh.
+- [polling-and-discovery.md](polling-and-discovery.md) — polling cadences, how a cluster enters the fleet, ConfigMap cleanup, and why a fresh read cannot yet be forced.
 - [AUDIT_LOG_CAPTURE.md](AUDIT_LOG_CAPTURE.md) — audit-log login capture and how to check it is working.
-- [UNMANAGED_GRANT_EXCLUSIONS.md](../charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md) — which unmanaged grants are silenced automatically and how to label exclusions.
+- [LOGIN_CAPTURE_QUICKCHECK.md](LOGIN_CAPTURE_QUICKCHECK.md) — a step-by-step check that audit-log login capture works; its OAuth Debug transcript is history, not guidance.
+- [UNMANAGED_GRANT_EXCLUSIONS.md](../charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md) — which unmanaged grants are silenced automatically, and the label or annotation that records an exclusion.
 - [Reports](reports/README.md) — report contents, parameters and scheduling.
 
 ### Troubleshooting and runbooks
@@ -53,7 +54,6 @@ records follow separately; their status and measurements belong to the work they
 - [REPORTING_ENHANCEMENTS.md](REPORTING_ENHANCEMENTS.md) — reporting feature backlog.
 - [OAUTH_LOGLEVEL_REVIEW.md](OAUTH_LOGLEVEL_REVIEW.md) — review record for the retired OAuth Debug Jobs.
 - [HANDOVER_2026-09-20.md](HANDOVER_2026-09-20.md) — programme handover and dated state updates.
-- [LOGIN_CAPTURE_QUICKCHECK.md](LOGIN_CAPTURE_QUICKCHECK.md) — audit-only quickcheck with a historical transcript of the retired OAuth Debug path.
 - [image-vulnerability-scan.md](image-vulnerability-scan.md) — dated image and base-image scan evidence.
 
 ### Development guides and design records
