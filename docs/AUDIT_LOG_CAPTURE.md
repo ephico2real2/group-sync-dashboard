@@ -4,9 +4,9 @@ How the dashboard learns who logged in to a cluster it does not run on. The desi
 measurements behind it are in `docs/specs/SPEC_D1_audit_log_login_capture.md`; this is the
 operational picture, with the mock cluster as a worked example you can run yourself.
 
-The **other** capture source — the oauth-server pod log, which needs `spec.logLevel: Debug` — is
-described in `docs/DESIGN_login_capture.md` and `docs/LOGIN_CAPTURE_QUICKCHECK.md`. Those pages are
-about that path, not this one.
+This is the only capture source. The oauth-server pod-log reader, which needed `spec.logLevel: Debug`,
+was removed in chart 0.58.0 / application 0.36.0 (#321); `docs/DESIGN_login_capture.md` keeps its
+as-built record. `docs/LOGIN_CAPTURE_QUICKCHECK.md` is the short check that this source is working.
 
 ## 1. Nothing is shipped to the dashboard
 
