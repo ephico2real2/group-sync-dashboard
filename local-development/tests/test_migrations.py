@@ -338,7 +338,7 @@ def test_rows_written_without_a_marker_are_marked_at_the_next_open(tmp_path):
 
 class TestSchemaNewerThanTheBuild:
     """#305: a rollback deploys an older image onto a database a newer one migrated. Before this, the
-    open ran SCHEMA and the seeds against it and wrote blind; now it refuses before writing anything."""
+    open ran SCHEMA and the seeds against it and wrote blind; now it refuses before any of them run."""
 
     def test_a_database_one_ahead_is_refused_and_left_byte_identical(self, tmp_path):
         import hashlib
@@ -366,6 +366,49 @@ class TestSchemaNewerThanTheBuild:
         assert not os.path.exists(path + "-wal") and not os.path.exists(path + "-shm")
         ro = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
+            assert [r[0] for r in ro.execute("SELECT name FROM sqlite_master")] == ["only_the_newer_build_knows"]
+        finally:
+            ro.close()
+
+    def test_a_hot_wal_from_the_newer_build_is_kept_not_overwritten(self, tmp_path):
+        """The guarantee is logical, not byte-for-byte (Codex, #403): a committed but uncheckpointed WAL
+        is folded into the main file when the refusing connection closes, as SQLite always does. The
+        newer build's version, rows and tables survive, and none of this build's schema is created."""
+        import signal
+        import subprocess
+        import sys
+        from gsd.store import KNOWN_SCHEMA_VERSION, StoreSchemaTooNew
+        path = str(tmp_path / "hot.db")
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE only_the_newer_build_knows(x)")
+        conn.execute("INSERT INTO only_the_newer_build_knows VALUES ('checkpointed')")
+        conn.execute(f"PRAGMA user_version = {KNOWN_SCHEMA_VERSION}")
+        conn.commit()
+        assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        conn.close()
+        # A writer that commits the newer version and a row to the WAL, then dies before any checkpoint.
+        writer = subprocess.Popen([sys.executable, "-c", (
+            "import sqlite3, sys, time\n"
+            "c = sqlite3.connect(sys.argv[1]); c.execute('PRAGMA wal_autocheckpoint=0')\n"
+            "c.execute(\"INSERT INTO only_the_newer_build_knows VALUES ('committed in WAL')\")\n"
+            "c.execute('PRAGMA user_version=' + sys.argv[2]); c.commit()\n"
+            "print('ready', flush=True); time.sleep(30)\n"), path, str(KNOWN_SCHEMA_VERSION + 1)],
+            stdout=subprocess.PIPE, text=True)
+        try:
+            assert writer.stdout.readline().strip() == "ready"
+        finally:
+            writer.kill()
+            assert writer.wait() == -signal.SIGKILL
+            writer.stdout.close()
+
+        with pytest.raises(StoreSchemaTooNew):
+            Store(path)
+
+        ro = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            assert ro.execute("PRAGMA user_version").fetchone()[0] == KNOWN_SCHEMA_VERSION + 1
+            assert [r[0] for r in ro.execute("SELECT x FROM only_the_newer_build_knows ORDER BY rowid")] == [
+                "checkpointed", "committed in WAL"]
             assert [r[0] for r in ro.execute("SELECT name FROM sqlite_master")] == ["only_the_newer_build_knows"]
         finally:
             ro.close()

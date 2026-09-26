@@ -12,7 +12,7 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 - **The dashboard refuses a database newer than it understands (#305; application only).** An
   image whose highest migration is below the database's `user_version` — a rollback deployed
-  before the database was restored — now stops at startup, before it writes anything, with both
+  before the database was restored — now stops at startup, before its own schema, migrations or seeds run, with both
   numbers and the fix: restore a backup at or below its schema, or deploy the image that
   understands the database's. It used to open the file, run its own schema and seeds against it,
   and write blind. The report service's refusal and `/report/readyz` are unchanged; both services

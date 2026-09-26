@@ -229,7 +229,10 @@ oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1
 gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4), or deploy the image that understands 21
 ```
 
-The refusal comes before the open writes anything, so the file is exactly as restored. Scale to 0
+The refusal comes before this image runs any of its own schema, migrations or seeds, so the
+newer build's data is kept as it was. One physical change is possible: if the copy carries a committed
+`gsd.db-wal`, SQLite folds it into `gsd.db` when the refusing connection closes (a checkpoint). That
+changes the file's bytes, not its contents. Scale to 0
 (§4) and either restore a copy whose `user_version` is at or below the second number, or deploy the
 image that understands the first. A rollback to an older image without restoring the database first
 stops the same way.
