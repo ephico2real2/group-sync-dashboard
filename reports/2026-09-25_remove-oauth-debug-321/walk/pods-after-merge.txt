@@ -1,0 +1,9 @@
+group-sync-dashboard-58bf7b9cb7-pgwcw ready=true restarts=0 image=0.36.0-667b3c4a62
+group-sync-dashboard-report-6d68d5d496-ns5kh ready=true restarts=0 image=0.36.0-667b3c4a62
+ERROR/Traceback lines: 0
+2026-09-26 00:49:32,903-0400 DEBUG   gsd.auditlog dashboard: crc: 2 audit line(s) and no login attempt in any of them — either nobody logged in, or this oauth-s
+2026-09-26 00:49:32,903-0400 DEBUG   gsd.auditlog mock-selfsigned: master-0: audit.log read 0 byte(s) from offset 1559 — 0 line(s), 0 login event(s), 0 inside r
+2026-09-26 00:49:32,912-0400 DEBUG   gsd.auditlog shared-qa: crc: audit.log read 1084 byte(s) from offset 23856426 — 2 line(s), 0 login event(s), 0 inside reten
+2026-09-26 00:49:32,912-0400 DEBUG   gsd.auditlog shared-qa: crc: 2 audit line(s) and no login attempt in any of them — either nobody logged in, or this oauth-s
+
+[exited with code 0]

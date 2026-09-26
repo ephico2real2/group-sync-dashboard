@@ -1,0 +1,7 @@
+# 2026-09-26T04:29:08Z pod pod/group-sync-dashboard-7747c7f7df-tgtds
+## pod log lines about login capture since the deploy
+2026-09-26 00:26:20,025-0400 INFO    gsd.auditlog dashboard: recorded 1 login attempt(s) from the audit log on crc (audit.log)
+2026-09-26 00:26:20,098-0400 INFO    gsd.auditlog shared-qa: recorded 1 login attempt(s) from the audit log on crc (audit.log)
+2026-09-26 00:26:20,112-0400 INFO    gsd.auditlog shared-rnd: recorded 1 login attempt(s) from the audit log on crc (audit.log)
+## /api/clusters/dashboard/logins via the pod loopback, as kubeadmin (token on stdin)
+{"status":"this data is scoped to the authenticated viewer, and there is no authenticated identity to scope it to","source":null,"note":null,"attempts_total":0,"developer_since_login":[]}

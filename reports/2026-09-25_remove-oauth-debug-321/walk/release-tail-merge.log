@@ -1,0 +1,13 @@
+pushed  : default-route-openshift-image-registry.apps-crc.testing/group-sync-dashboard/group-sync-dashboard:0.36.0-667b3c4a62
+pushed  : default-route-openshift-image-registry.apps-crc.testing/group-sync-dashboard/group-sync-dashboard-report:0.36.0-667b3c4a62
+release : ../environments/crc.yaml
+argocd  : group-sync-dashboard -> revision 667b3c4a62, image 0.36.0-667b3c4a62
+04:47:47Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 1178e03eb4, want 667b3c4a62) successfully synced (all tasks run)
+04:48:02Z  OutOfSync  Healthy      Running    waiting for deletion of hook batch/Job/group-sync-dashboard-secrets-mint
+04:48:17Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+04:48:32Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+04:48:47Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+deployment "group-sync-dashboard" successfully rolled out
+deployment "group-sync-dashboard-report" successfully rolled out
+running : 667b3c4a62 — verified in-pod
