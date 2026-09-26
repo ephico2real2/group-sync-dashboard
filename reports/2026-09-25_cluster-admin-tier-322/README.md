@@ -10,7 +10,7 @@ the test that pins it (`4cc54b7`, from Codex's review).
 
 The merge was then deployed the same way:
 - Argo CD Synced/Healthy, and `running : 49c483430e — verified in-pod`.
-- The PVCs are identical before and after.
+- The PVCs are identical before and after (`walk/pvc-after-merge.txt`, the same UIDs as `walk/pvc-after.txt`).
 - Both pods were ready with 0 restarts on image `0.35.0-49c483430e`, and the dashboard pod logged 0 ERROR lines in
   its first 10 minutes. Measured with `oc get pods` and `oc logs --since=10m`; the output is not committed.
 
