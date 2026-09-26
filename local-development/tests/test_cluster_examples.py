@@ -53,7 +53,7 @@ def test_secret_parses_with_its_placeholder_and_verified_platform_trust(monkeypa
     assert cluster.verify() is True, "without a mounted bundle, httpx uses its verified default trust"
 
 
-def test_configmap_is_accepted_and_matches_the_documented_stanza_keys():
+def test_configmap_is_accepted_and_is_the_documented_manifest():
     obj = _manifest(ONBOARDING / "configmap.yaml")
     assert (obj["apiVersion"], obj["kind"]) == ("v1", "ConfigMap")
     assert obj["metadata"]["labels"][CONFIG_TYPE_LABEL] == "onboard"
@@ -67,8 +67,7 @@ def test_configmap_is_accepted_and_matches_the_documented_stanza_keys():
               itertools.groupby(lines, key=lambda line: line.startswith("    ")) if indented]
     documents = [yaml.safe_load(block) for block in blocks]
     documented, = [doc for doc in documents if isinstance(doc, dict) and doc.get("kind") == "ConfigMap"]
-    documented_stanza, = yaml.safe_load(documented["data"]["clusters.yaml"])["clusters"]
-    assert stanza.keys() == documented_stanza.keys()
+    assert obj == documented, "the example is the documented manifest: metadata, label and stanza alike"
     namespace = obj["metadata"]["namespace"]
     assert namespace == "group-sync-dashboard"
     obj["metadata"]["uid"] = "api-assigned-example-uid"
