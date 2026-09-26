@@ -1016,8 +1016,9 @@ The orchestrator's summary, with what was measured for this log:
 - #380 commits two mockups for the epics, each with its PNG, and a row in `docs/design/README.md`:
   - `docs/design/cluster-reconnect-mock.html`, for Epic D: Refresh, Rejoin and the duplicate-URL warning;
   - `docs/design/kpi-backups-mock.html`, for Epic E.
-- **Found by Grok** (with a shell, in three passes): each mockup broke the mockup contract.
-  - Today's chrome was abridged without saying so.
+- **Found by Grok** (with a shell, in three passes): each mockup broke the rule that anything unmarked is exactly
+  today's app and anything proposed carries its own PROPOSED tag.
+  - Today's header, tab bar and cards were shown shortened, and the mockup did not say so.
   - A proposed box was marked only by its dashed outline.
   - **Accepted**, fixed in `d3471ce` and `be3b359`. The third pass confirmed both.
 
@@ -1041,7 +1042,7 @@ The orchestrator's summary, with what was measured for this log:
   - the skill said 44 children; there are 51;
   - it said two issues were already shipped; there were seven;
   - it cited #291's rule as said on #291, which has no comments;
-  - the `ls` lesson named the wrong mechanism;
+  - the `ls` lesson described a two-path `ls`, not the brace-expanded one that had failed;
   - the skills said two reviewers, where the adversarial-review skill launches three. They now say "at least two
     seats other than the implementer, Grok one" and point to that skill.
 - **Found about Grok itself:** its answer said the review was in `findings.md`, but that file was never written. A
@@ -1058,8 +1059,9 @@ The orchestrator's summary, with what was measured for this log:
   - `docs/LOGIN_CAPTURE_QUICKCHECK.md` is an operator guide since #321;
   - `docs/AUDIT_LOG_CAPTURE.md` still described the removed Debug source;
   - nothing checked that the index's links resolve.
-- Grok confirmed all six of its claims. Measured (OB1-lite): 96 of 96 links resolve; docs, citations and
-  chart-version tests `1100 passed, 15 skipped`.
+- Grok confirmed all six claims of its brief (C1–C6). Measured after the fixes (#396's decisions comment): OB1-lite's
+  `check_fixes.sh` gives 3 PASS; 96 of 96 links resolve; docs, citations and chart-version tests
+  `1100 passed, 15 skipped`.
 - **The CRC walk was waived**, with a measured reason: the render differs only in the version label and
   `checksum/config`.
 
@@ -1068,11 +1070,11 @@ The orchestrator's summary, with what was measured for this log:
 - **Built by OB1-lite:** the one test that wrote `local-development/gsd.db` now uses `tmp_path`. A conftest guard
   fails a test during which the default database changes. It compares before and after, so an unchanged developer
   database passes.
-- **Found by Codex** (C3/P3), **accepted in part:**
-  - both snapshots now read the directory the test started in;
-  - the failure no longer claims that the test wrote the file, because an earlier connection's WAL checkpoint can
-    land during a later test;
-  - three of its five regression tests were kept. The stat-count test and the message-wording test were dropped.
+- **Found by Codex** (its claim C3, point P3), **accepted:** the guard could compare the wrong directory, and it
+  blamed the test for a change an earlier connection's WAL checkpoint can make. Both snapshots now read the directory
+  the test started in, and the failure no longer claims that the test wrote the file.
+- **Accepted in part:** Codex's regression file. Three of its five tests were kept; the stat-count test and the
+  message-wording test were dropped.
 - **Measured:** the three tests went from 2 failed and 1 passed to 3 passed. Full hermetic suite:
   `5183 passed, 19 skipped, 608 deselected`, with no `gsd.db*` left behind.
 - Grok confirmed C1–C6.
@@ -1093,16 +1095,20 @@ The orchestrator's summary, with what was measured for this log:
   - `examples/cluster-secret/secret.yaml`;
   - `local-development/tests/test_cluster_examples.py`: five tests, each failing before its file existed;
   - a §8 subsection and chart 0.58.2.
-- **Added by the orchestrator:** the writes switch the generated Secret needs, which is off by default, in the
-  ConfigMap's header.
-- **C1, the premise, measured by both reviewers:** OB1-lite ran `lookup()` twice on a Secret-sourced cluster with
-  one shared gate. Both calls returned `updated`, with 2 logins; the ConfigMap control was gated.
+- **Added by the orchestrator, before the first commit:** a note in the ConfigMap's header that the dashboard writes
+  the generated Secret only when `clusterConfig.secrets.writes.enabled` is on, and it is off by default.
+- **The premise, measured by both reviewers:** OB1-lite called `lookup()` twice on a cluster read from a Secret, with
+  one shared credential gate. Both calls returned `updated`, with 2 logins. The control, a cluster read from the
+  onboarding ConfigMap, was held by the gate.
 - **Found by OB1-lite (F1), accepted:** the drift test compared only the stanza's keys, and five edits to
   `docs/CLUSTER_STANZA.md` passed it. It now compares the whole manifest. Re-measured: doc-side drift fails.
-- **Not applied:** Grok's optional managed-by note. On the lab, the default instance's operator-owned ClusterRole
-  grants `configmaps` `*` cluster-wide.
-- **Found by CI:** a new `reports/` folder needs its row in `reports/README.md`. After the evidence was added only
-  the docs tests were run, not the full suite. Fixed in `69619cf`; full suite then `5189 passed, 19 skipped`.
+- **Not applied:** Grok's optional note about the `argocd.argoproj.io/managed-by` label, which matters only for a
+  namespaced Argo CD instance. On the lab, the default instance's operator-owned ClusterRole already grants
+  `configmaps` `*` cluster-wide, so the example needs nothing more.
+- **Found by CI** on `2a9903c` (run 36257489278): a new `reports/` folder needs its row in `reports/README.md`
+  (`test_every_report_folder_has_one_index_row`). The orchestrator had run only the docs tests after adding the
+  evidence (its own account). Fixed in `69619cf`; CI on that head: `5192 passed, 16 skipped, 608 deselected`
+  (run 36258361975).
 - **On CRC** (`reports/2026-09-26_gitops-examples-389/README.md`), with the committed example under a throwaway name:
   - the generated Secret appeared 286 s after the apply;
   - one fleet login, the session revoked;
@@ -1117,26 +1123,30 @@ The orchestrator's summary, with what was measured for this log:
   rate-limited `curl` stub: main exits 1 with no output; the fix exits 0 and says it skipped.
 - **Corrected by OB1-lite:** a network failure (curl exit 6) produces the same silent exit, and the log keeps no
   reply. So "rate limit" is plausible, not measured. The failing log is attempt 1 of run 36257920883.
-- Grok and OB1-lite ran every other line of the step against failing stubs, and each exits 0.
+- Grok and OB1-lite each ran the step with failing stubs for the download, `tar`, a missing binary, a failing binary
+  and an empty `mmd/`. Every case exits 0.
 
 ### Epic A's branches deleted
 
-- The epic's rule: *"Each deletion should happen after each epic is done."* 11 branches, each re-measured first:
+- **The operator:** *"Each deletion should happen after each epic is done."* 11 older branches, each re-measured
+  first:
   - 8 were ancestors of main;
-  - `feat/285-credential-lifecycle` is reachable from `refs/pull/325/head`, and #325 merged as `048e928`, which has
-    an identical SPEC_S4c;
+  - the local branch `feat/285-credential-lifecycle` (git: "Deleted branch feat/285-credential-lifecycle (was
+    078ebfd)") is reachable from `refs/pull/325/head`, and #325 merged as `048e928`, which has an identical
+    SPEC_S4c;
   - `skill/review-models-fable` and the remote `feat/mock-manifest-and-apple-silicon-notes` stay reachable as
     `refs/pull/137/head` and `refs/pull/196/head`.
 - Kept, because each is its own call: `grafana-integration` (its document is cited from main),
   `integration/design-programme` (the only ref to `5ad0551`), `master-backup` (the operator's) and `gh-pages`.
-- The epic's own branches, each shown to be inside its merged PR's head: `docs/319-docs-index`,
-  `fix/371-no-db-in-tree`, `skill/epic-and-issue` and `ci/ascii-preview-never-fails`. Worktrees were removed from
-  the orchestrator's own list only, each clean first.
+- Separately from those 11, the four branches this epic created were deleted, each shown to be inside its merged
+  PR's head: `docs/319-docs-index`, `fix/371-no-db-in-tree`, `skill/epic-and-issue` and
+  `ci/ascii-preview-never-fails`. Worktrees were removed from the orchestrator's own list only, each clean first.
 
 ### Found on the lab, reported, not changed
 
-- The `group-sync-dashboard` Argo CD Application reads Healthy, but sync `Unknown` with a `ComparisonError`: its
-  server-side-apply diff cannot resolve `route.openshift.io/v1` Route.
+- Read on the lab by the orchestrator (not published): the `group-sync-dashboard` Argo CD Application reads Healthy,
+  but sync `Unknown` with a `ComparisonError`. Its server-side-apply diff cannot resolve `route.openshift.io/v1`
+  Route.
 - The `grafana` Application, which also manages a Route, is Synced.
 - The last sync succeeded at `2026-09-26T04:48:04Z` (`status.operationState.finishedAt`). A hard refresh did not
   clear it.
@@ -1148,12 +1158,12 @@ The orchestrator's summary, with what was measured for this log:
 
 | | |
 |---|---|
-| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375; Part 11 adds #376, #377 and #378; Part 12 adds #379, #380, #395, #396, #397, #398 and #399 |
+| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368; Part 10 adds #370, #372, #373, #374 and #375; Part 11 adds #376, #377 and #378; #379 (Part 11's log, merged 02:57) and Part 12's #380, #395, #396, #397, #398 and #399 are added |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
 | Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
 | Reviewer findings accepted / rejected | For #324–#334, the record's Outcome: 6 code findings accepted, 3 snippets rejected with measurements, 1 trial retracted by its author, and 1 test rejected as brittle. Spec findings C21 and C22 were accepted, and the operator decided C21. #334: 3 accepted, 1 rejected. #335 is itemised in Part 4. For #336–#345, `docs/REVIEW_remote_sar_for_every_join.md` itemises every finding: 20 proposals were rejected, each with its reason or the measurement that refuted it. One of them, Codex's B11, had first been accepted without a measurement. |
-| Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also raised the host-guard question, closed in Part 7 as not a gap. |
+| Defects found by tooling rather than reviewers | 7. Three in the release: the IME test race (CI, #331), the walk's skipped picker parameter (the walk's own failure, 80/81), and the focused option under the Generate bar (the walk, #332). One by CI on #339's first head (the specs index row). Three by the D2b lab walk: the Helm handover (#343), Step 6's stale page check, and Step 7's in-cluster row (#344). The walk also raised the host-guard question, closed in Part 7 as not a gap. Part 12 adds 2, both found by CI: the missing reports-index row on #398, and the ASCII preview step on #397 (fixed in #399). |
 | Full suite, final | For the release: **5339 passed** on integration head `d86acd6` (the orchestrator's run, the record's C16; the skipped count is not stated). For D2b: **5527 passed** on #342's head `fd9bfb9` (OB1-lite's run in a git copy, per the orchestrator's summary of its report); #342's body gives the non-browser suite as **4934 passed, 20 skipped, 0 failed**. CI (`gh pr checks`): 8/8 on every merged head, except #336 (7 passed, `grype` skipped) and #342 (9 passed, `container-smoke` skipped). Part 7: **5557 passed, 20 skipped** on #354's `061c224`, browser tests included (the orchestrator's run); CI 8/8 on #350–#352. |
 | Longest single loss | The D2b lab walk: over 230 minutes of the operator's tokens, in the operator's words. The operator killed the process during Step 9, before its mock-log check ran, and a local podman container on that check's port would have made it untrustworthy anyway. What changed: one background waiter per step, and no polling. |
 
@@ -1189,13 +1199,18 @@ The orchestrator's summary, with what was measured for this log:
 
 Written at the end of Part 12, 2026-09-26 13:00 CDT.
 
-- **main** is `4368409` (#399), at chart 0.58.2 and app 0.36.0.
-- **Deployed** on the lab: `667b3c4a62` (#373's merge). Later commits change only tests, docs, examples, reports, CI
-  and skills.
+- **main** is `4368409` (#399), at chart 0.58.2 and app 0.36.0. Its CI passed every job (`ci` and `mock-openshift`).
+- **Deployed** on the lab: `667b3c4a62` (#373's merge), chart 0.58.0. Later commits do not change the running image:
+  tests, docs, examples, reports, CI, skills, `.gitignore`, and the chart's README and version (0.58.1, 0.58.2).
 - **The kept PVCs** are unchanged: data `f065b7a4-535c-4ef1-868c-58f5afee4953`, report-artifacts
-  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3` (read in Part 12).
+  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3` (`reports/2026-09-26_gitops-examples-389/pvc-after.txt`).
 - **The lab's Argo CD Application** shows a `ComparisonError` on Route (Part 12). The operator decides on a
   controller restart.
-- **Epics:** #381 (A) is done. B–G and P are planned: #382–#388.
-- **Parked:** #369 and operator-chart issue 70. **Open:** #210, #341.
-- **Open for the operator:** D8 (#316), #114's three questions, #255's expected grants, and #310's OAuth restart.
+- **Open PRs:** none once this log's PR merges.
+- **The seats:** the implementers are OB1-lite and Codex Astra; every OB agent has the role switch; Grok runs with a
+  shell in its own directory.
+- **Epics:** all seven children of Epic A (#381) are closed; #381 closes with its summary. Epics B–G (#382–#387) are
+  planned.
+- **Parked** under Epic P (#388): #369, operator-chart issue 70 and #341. **Open:** #210, also under Epic P.
+- **Open for the operator:** D8 (#316), #114's three questions, #255's ruling on expected grants, and #310's OAuth
+  restart.
