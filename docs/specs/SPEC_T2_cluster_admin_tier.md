@@ -7,7 +7,7 @@
 | Release | — (post-programme; its own PR and its own review) |
 | Version on release | app 0.35.0, chart 0.57.0 |
 | Issue | [#322](https://github.com/ephico2real2/group-sync-dashboard/issues/322) |
-| Status | merged |
+| Status | released |
 | Source | OB2's design of 2026-09-25 from the issue's Decision (verbatim, not re-litigated), measured on main `7aa00f1` with the commands and `file#anchor` citations below; there is no separate design-agent output |
 
 ## How to read this spec

@@ -7,7 +7,7 @@
 | Release | — (post-programme; supersedes #119 P1's mount mechanics) |
 | Version on release | chart 0.42.0, migration 19 |
 | Issue | [#230](https://github.com/ephico2real2/group-sync-dashboard/issues/230) |
-| Status | merged |
+| Status | released |
 | Source | this document is the orchestrator's own design, researched and cited below; there is no separate design-agent output |
 
 ## How to read this spec

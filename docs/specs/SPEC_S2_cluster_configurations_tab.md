@@ -7,7 +7,7 @@
 | Release | — (post-programme) |
 | Version on release | chart 0.44.0 |
 | Issue | [#230](https://github.com/ephico2real2/group-sync-dashboard/issues/230) |
-| Status | merged |
+| Status | released |
 | Source | the agreed mock `docs/design/cluster-configurations-mock.html` (operator: "I approve the design", 2026-09-20) and S1's contract; the orchestrator's own text, no separate design-agent output |
 
 ## How to read this spec

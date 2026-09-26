@@ -7,7 +7,7 @@
 | Release | — after the programme: with the next application release (Unreleased in `docs/CHANGELOG.md`) |
 | Version on release | app 0.25.0 |
 | Issue | [#229](https://github.com/ephico2real2/group-sync-dashboard/issues/229) |
-| Status | merged |
+| Status | released |
 | Source | hand-written by the orchestrator from the agreed mock `docs/design/report-library-mock.html` (drafted by Cursor Grok on 2026-09-20, six render-check findings fixed before agreement) and from the code measured below; no design agent |
 
 ## How to read this spec
