@@ -121,6 +121,7 @@ the same deployment — the administrator's into `docs/screenshots/`, an ordinar
 
 | Where | What |
 |---|---|
+| [Documentation index](docs/README.md) | operator guides first, followed by development guides and records |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | what each application and chart release changed, newest first |
 | [`docs/reference-architecture.md`](docs/reference-architecture.md) | **start here to operate or extend it** — components, poll and request flow, data model, concurrency, security, and the reason behind each deliberate constraint |
 | [`docs/reports/`](docs/reports/README.md) | the eleven standard reports — what each shows, its parameters, and how to schedule them by cadence across clusters |
