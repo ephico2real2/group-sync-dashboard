@@ -7353,9 +7353,9 @@ anticipated, not measured; re-anchor its two metadata rows together if #322 diff
 
 ### Deferred 1 — charts/group-sync-dashboard/Chart.yaml
 
-**Applied after rebasing onto #322.**
+**Applied after the rebase onto #322 (merge `49c4834`).**
 
-<!-- deferred-block: charts/group-sync-dashboard/Chart.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
@@ -7371,9 +7371,9 @@ version: 0.58.0
 
 ### Deferred 2 — charts/group-sync-dashboard/Chart.yaml
 
-**Applied after rebasing onto #322.**
+**Applied after the rebase onto #322 (merge `49c4834`).**
 
-<!-- deferred-block: charts/group-sync-dashboard/Chart.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
@@ -7389,9 +7389,9 @@ appVersion: "0.36.0"
 
 ### Deferred 3 — local-development/pyproject.toml
 
-**Applied after rebasing onto #322.**
+**Applied after the rebase onto #322 (merge `49c4834`).**
 
-<!-- deferred-block: local-development/pyproject.toml | edit -->
+<!-- block: local-development/pyproject.toml | edit -->
 
 Old text:
 
@@ -7407,9 +7407,9 @@ version = "0.36.0"
 
 ### Deferred 4 — local-development/gsd/__init__.py
 
-**Applied after rebasing onto #322.**
+**Applied after the rebase onto #322 (merge `49c4834`).**
 
-<!-- deferred-block: local-development/gsd/__init__.py | edit -->
+<!-- block: local-development/gsd/__init__.py | edit -->
 
 Old text:
 
@@ -7425,9 +7425,9 @@ __version__ = "0.36.0"
 
 ### Deferred 5 — docs/specs/SPEC_S4c_credential_lifecycle.md
 
-**Applied after rebasing onto #322.**
+**Applied after the rebase onto #322 (merge `49c4834`).**
 
-<!-- deferred-block: docs/specs/SPEC_S4c_credential_lifecycle.md | edit -->
+<!-- block: docs/specs/SPEC_S4c_credential_lifecycle.md | edit -->
 
 Old text:
 
@@ -7443,9 +7443,9 @@ New text:
 
 ### Deferred 6 — docs/specs/README.md
 
-**Applied after rebasing onto #322.**
+**Applied after the rebase onto #322 (merge `49c4834`).**
 
-<!-- deferred-block: docs/specs/README.md | edit -->
+<!-- block: docs/specs/README.md | edit -->
 
 Old text:
 
