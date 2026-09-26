@@ -117,9 +117,9 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    replaces `## Unreleased` in `docs/CHANGELOG.md` with `## Application X.Y.Z — chart A.B.C — date` or
    `## Chart A.B.C — application X.Y.Z — date`, puts the reason as that heading's first bullet, and moves every
    spec marked `merged` in `docs/specs/README.md` to `released`. Add the epic's children to that first bullet.
-   Review and merge the release PR as any other. After the merge, `helm.yaml` publishes the chart. `publish.yml`
-   publishes an application image only on an `--app` release; a `--chart`-only merge publishes no image
-   (`docs/RELEASING.md`, the chart-only flow).
+   Review and merge the release PR as any other. After the merge, `helm.yaml` publishes the chart and retags the
+   existing `:<appVersion>` image as `:<chart-version>`. `publish.yml` builds an application image only on an
+   `--app` release; a `--chart`-only merge builds none (`docs/RELEASING.md`, the chart-only flow).
 2. **Release note.** Once `helm.yaml` has created the GitHub release, write the epic's summary (the children, their
    merge shas, the lab evidence) into that release's body. The tag is the **chart** version just cut, not the
    application version: `gh release edit group-sync-dashboard-<chart-version> --notes-file <file>`.
