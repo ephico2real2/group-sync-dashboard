@@ -7,14 +7,15 @@ description: Write or refine ONE GitHub issue in the detailed, measured format �
 
 The operator, 2026-09-26: *"refine the issues now to align with our current state … with clearly set of what done
 means for each issue … create an /epic skill and an /issue that will allow us to work in this detailed version on
-ideas and specifications."* The format below is the one the 44 issues of epics #381–#388 were refined into.
+ideas and specifications."* The format below is the one the 51 children of epics #381–#388 were written in (44 refined, 6 new, and the
+operator chart's #70).
 
 ## The rules
 - **Measure, never recall.** Every fact carries its source: `file:line`, a command and its output, a PR or issue
   number, a lab read (read-only). Anything not measured is written "not measured".
 - **Plain English.** Two to five sentences for the problem. A cold reader must follow every sentence.
 - **Never remove or deprecate a feature** unless the issue itself asks for it and the operator agreed. An innovation
-  is a separate proposal, never folded into a fix (the operator, 2026-09-26, on #291).
+  is a separate proposal, never folded into a fix (the operator, 2026-09-26, about #291).
 - **Keep the original.** The refined body replaces the old one, and the old one is appended, collapsed:
   `<details><summary>Original description (filed <date>)</summary> … </details>`. Nothing the operator wrote is lost.
 - **Already done?** Say so in "Where this stands", with the evidence (the PR, the merge sha, the file:line, a lab
@@ -44,13 +45,13 @@ Behaviour, features and permissions this issue must leave exactly as they are.
 - [ ] The full hermetic suite and the browser suite are green; CI is green on the PR's head.
 - [ ] (chart changes) a version bump; rendered RBAC before and after, REMOVED 0.
 - [ ] Docs updated: <name them>.
-- [ ] Reviewed by two seats other than the implementer, Grok (with a shell) always one of them; decisions recorded
-      on the PR.
+- [ ] Reviewed by at least two seats other than the implementer, Grok (with a shell) always one of them, as
+      `.claude/skills/adversarial-review/SKILL.md` sets out; decisions recorded on the PR.
 - [ ] Deployed to CRC and walked; the evidence (and screenshots, for screen changes) committed under
       `reports/<date>_<slug>/` and posted here, pinned to the full merge sha.
 - [ ] Issue-specific checks: <each one testable>.
 
-**Implementer:** <seat> · **Reviewers:** <two seats, Grok one of them> · **Size:** <S/M/L>
+**Implementer:** <seat> · **Reviewers:** <at least two seats, Grok one of them> · **Size:** <S/M/L>
 ```
 
 **Seats:** OB1-lite (the default builder), Codex Astra (large mechanical work), OB3 (only the riskiest design work).
@@ -77,5 +78,5 @@ A child in another repository of the same owner links the same way (proven with 
   is left (`EPIC_*`, `NEW-*`), and the original is kept. A cross-repository reference once came out doubled
   (`owner/repoowner/repo#388`) because the draft already carried the prefix.
 - **Balance the code fences** in every body before posting: an odd number of fences swallows the rest of the page.
-- **Test a file check with a real test, not a brace-expanded `ls`.** `ls a/x b/x` fails if either path is missing,
-  so it reported all 44 drafts missing when every one existed.
+- **Test a file check with a real test, not a multi-path `ls`.** A brace-expanded `ls` over the drafts once reported
+  every one missing when each existed; a `Path.exists()` per file in Python was the check that held.

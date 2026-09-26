@@ -22,7 +22,7 @@ Give each drafting seat one or two epics, the format (the `/issue` body and the 
 read-only on the repository, on GitHub and on the lab; write only in its own scratch directory; measure every child
 (`gh issue view <n> --comments`, the code, the linked PRs, a read-only lab read); mark each child REFINE /
 CLOSE-CANDIDATE / SPLIT / MOVE; list the decisions the orchestrator must make. The 2026-09-26 run found, before any
-code was written: two issues already shipped, a proposed file name that would have deleted fresh backups, a gate
+code was written: seven issues already shipped (#119, #131, #165, #170, #171, #230, #245), a proposed file name that would have deleted fresh backups, a gate
 change that would have broken another feature, and a UI bug. That is what the measuring is for.
 
 **Decide every open question on "easy to manage, best practice"**, and record it in the epic. A question only the
@@ -92,7 +92,8 @@ A state file makes the posting idempotent: record every created number, and skip
 ## 5. Execute
 Child by child, in the build order, per `.claude/skills/adversarial-review/SKILL.md`:
 - research, then the spec and a spec review, then code by the implementer seat;
-- review by two other seats, Grok one of them;
+- review by the seats `.claude/skills/adversarial-review/SKILL.md` names: never the implementer, Grok (with a
+  shell) always one;
 - CI green, then a CRC deploy and walk, then evidence on the issue, then close.
 
 Grok can help with a hard problem as an advisor, but its proposals are checked like any other.
