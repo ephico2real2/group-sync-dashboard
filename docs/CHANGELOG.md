@@ -15,7 +15,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   merged without an application release (#298).
 
 - **The database is copied before a new image upgrades it (#301, `docs/specs/SPEC_M1_pre_upgrade_copy.md`;
-  application behaviour arriving with the next application release, chart 0.58.4 for its values comment and
+  application behaviour in application 0.37.0, chart 0.58.4 for its values comment and
   README).** When an image opens a database whose `user_version` is below its highest migration, it first
   writes the database as it was to `pre-upgrade/` beside it (`/data/pre-upgrade`, or
   `/data/$POD_NAME/pre-upgrade` when `replicaCount` is greater than 1), before its own schema, migrations or
