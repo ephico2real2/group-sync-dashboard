@@ -57,7 +57,10 @@ no feature is removed or deprecated unless an issue says so and the operator agr
 ## Definition of Done (epic)
 - [ ] Every child issue closed, with evidence pinned to a full merge sha.
 - [ ] The epic-level outcome, as a check someone can run.
-- [ ] Deployed to CRC through `release-crc.sh --argocd`, walked, PVC UIDs unchanged.
+- [ ] Released: `prepare-release.py` cut, with the epic as the first bullet under the new `docs/CHANGELOG.md`
+      heading; the release PR merged; `.github/workflows/helm.yaml` published the chart;
+      `.github/workflows/publish.yml` published the application image when `--app` was used.
+- [ ] The published release deployed to CRC through `release-crc.sh --argocd main`, walked, PVC UIDs unchanged.
 - [ ] The branches this epic used are deleted, each proven merged first.
 - [ ] The session changelog records the epic.
 
@@ -99,6 +102,34 @@ Child by child, in the build order, per `.claude/skills/adversarial-review/SKILL
 Grok can help with a hard problem as an advisor, but its proposals are checked like any other.
 
 ## 6. Close the epic
+**Every epic is released and deployed, a docs-only one included.** The operator, 2026-09-26: *"In agile. You have
+deploy or redeploy every epic and cut a release note. So we are remaining true."* Never offer to skip either.
+
+1. **Release.** On a clean checkout of `main` (`git status` empty: the script refuses a dirty tree and, unless you
+   pass `--no-commit`, any branch other than `main`), run `local-development/prepare-release.py` with the *next*
+   version and a one-line reason:
+   - `--app X.Y.Z` when `local-development/gsd/` changed, or when any other path in `publish.yml`'s filter changed
+     and this epic ships the image. The script also bumps the chart's patch unless you pass `--chart`.
+   - otherwise `--chart A.B.C`, the next chart patch.
+
+   The reason is the script's positional argument: the epic's title, for example `"Epic A: quick cleanup (#381)"`.
+   It must be one line, contain a letter or a digit, and contain no `*` and no unbalanced backtick. The script
+   replaces `## Unreleased` in `docs/CHANGELOG.md` with `## Application X.Y.Z — chart A.B.C — date` or
+   `## Chart A.B.C — application X.Y.Z — date`, puts the reason as that heading's first bullet, and moves every
+   spec marked `merged` in `docs/specs/README.md` to `released`. Add the epic's children to that first bullet.
+   Review and merge the release PR as any other. After the merge, `helm.yaml` publishes the chart and retags the
+   existing `:<appVersion>` image as `:<chart-version>`. `publish.yml` builds an application image only on an
+   `--app` release; a `--chart`-only merge builds none (`docs/RELEASING.md`, the chart-only flow).
+2. **Release note.** Once `helm.yaml` has created the GitHub release, write the epic's summary (the children, their
+   merge shas, the lab evidence) into that release's body. The tag is the **chart** version just cut, not the
+   application version: `gh release edit group-sync-dashboard-<chart-version> --notes-file <file>`.
+3. **Deploy.** After those workflows are green, deploy the published release with
+   `local-development/release-crc.sh --argocd main`. That mode uses the chart on GitHub at `main` and the published
+   quay image (the mode table in the `release-crc.sh` header and in `local-development/README.md`). Bare
+   `--argocd` builds HEAD and pins that image, so it is not the published release. Walk it, and record the two PVC
+   UIDs before and after; they must be unchanged.
+
+Then:
 - Every Definition-of-Done box ticked.
 - A summary comment: each child's merge sha, the lab evidence, what was deferred and where.
 - The epic's branches deleted, each proven merged.
