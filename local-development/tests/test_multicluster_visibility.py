@@ -357,7 +357,7 @@ class TestRestrictionsOff:
             assert c.get("/api/clusters/dark/groups", headers=ALICE).status_code == 404
 
 
-def test_access_control_section_11_names_only_routes_the_app_serves():
+def test_access_control_section_11_names_only_routes_the_app_serves(tmp_path):
     """Both reviewers of D2: §11 named `/api/events`, a route that does not exist (the events
     handler is under `/api/clusters/{id}/groupsyncs/{name}/events`). Every `/api/…` path the
     section names is held to the app's route table, with `{id}`/`{name}` as the placeholders."""
@@ -365,7 +365,8 @@ def test_access_control_section_11_names_only_routes_the_app_serves():
     import re
     text = (pathlib.Path(__file__).resolve().parents[2] / "docs" / "ACCESS_CONTROL.md").read_text()
     section = text.split("## 11. Several clusters in one instance", 1)[1].split("\n## ", 1)[0]
-    app = build_app(Settings(clusters=[ClusterConfig("h", "https://h", token_env="X")], oauth_proxy_enabled=True),
+    app = build_app(Settings(clusters=[ClusterConfig("h", "https://h", token_env="X")], oauth_proxy_enabled=True,
+                             db_path=str(tmp_path / "gsd.db")),
                     run_poller=False)
     routes = {getattr(r, "path", "").replace("{cluster_id}", "{id}") for r in app.routes}
     named = set(re.findall(r"`(/api/[A-Za-z0-9_{}/.-]*?)`", section))
