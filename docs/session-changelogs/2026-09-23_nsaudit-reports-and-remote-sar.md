@@ -794,13 +794,60 @@ The orchestrator's summary, with what was measured for this log:
 - Nothing recovers them: no local snapshot (`tmutil listlocalsnapshots`), no Time Machine destination.
 - The committed versions are intact. OB1 reported it at once, and the rule is in memory.
 
+## Part 9 — the unmanaged-grant doc, the binding and discovery timers, the credential research (2026-09-25 07:59 → 10:00)
+
+### How to silence a legitimate unmanaged grant — PR #367 (commits `b850c4c` 07:59, `306d4ad` 08:03; merge `dd4892b` 08:12)
+
+- **Asked by the operator:** *"What labels do we add to grants to exclude them from being reported?"* The answer is
+  written beside `Chart.yaml`: `charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md` covers the
+  `rbac.ocp.io/config-source` label, the `rbac.ocp.io/unmanaged-exception` annotation, and what the platform rule
+  already silences. Chart 0.55.1.
+- **Found by Grok:** the doc implied the dashboard could set the label. **Accepted**, in `306d4ad`: the label is set by
+  a person or CI, never by the dashboard.
+
+### Bindings refresh hourly; discovery keeps its own timer — PR #368 (commits `437b3e6` 08:33, `ff2c441` 08:44; merge `7aa00f1` 08:53)
+
+- **The operator:** a binding refresh every 300s on every cluster was *"too much checking and checking on every
+  clusters"*, and chose 3600s.
+- **Liveness stays separate.** The operator's ruling: *"liveness probes should Not be using the same parameter as
+  bindingIntervalSeconds"*. The probe keeps `probes.liveness.periodSeconds: 300`.
+- **The operator:** cluster discovery *"should run on a different timer and parameters so … we don't lose a
+  cluster"*.
+  - **Measured:** the discovery thread waited on `binding_interval_seconds` (`gsd/poller.py`, `_run_discovery`), and so
+    did the #284 lookup's retry backoff.
+  - Both moved to a new `config.discoveryIntervalSeconds`, default 300, so their schedule is unchanged. Chart 0.56.0,
+    app 0.34.1.
+- **Measured before review:**
+  - The chart render, diffed against main, changes only the two interval values, the new key, `checksum/config` and
+    the image tags. No RBAC object changes.
+  - **Full suite: 5791 passed, 20 skipped** (7m32s).
+- **Grok on `437b3e6`:** C1–C5 **CONFIRMED**.
+  - C6 **accepted**: `Event.wait(0)` returns at once, so `discoveryIntervalSeconds: 0` was a busy loop of LISTs against
+    the host API, with a zero lookup backoff. The key is now refused below 1 at render and at startup.
+  - C7 and V1 **accepted**: five texts still tied discovery to bindings, including the CHANGELOG heading.
+  - Its phrase-blacklist doc test was **rejected**: it pins wording, not behaviour.
+- **CI** on `ff2c441`: 9 passed, `container-smoke` skipped (`gh pr checks 368`). Merged with `merge-safe.sh`.
+
+### The fleet-credential research — issues, no code (09:10 → 10:00)
+
+- **Asked:** can Red Hat's Shared Resource CSI driver (SharedSecret) replace the operator chart's copy Jobs, since
+  Kyverno is not approved?
+  - **Measured:** group-sync-operator reads its credentials and CA only as API objects (its `pkg/syncer/ldap.go`, the
+    `Get` of `CredentialsSecret`). The OAuth bind Secret carries only `bindPassword`, and the driver creates no object.
+  - So SharedSecret cannot drop in. It was **ruled out by the operator**, in operator-chart issue 69.
+- **The end state, decided by the operator and parked:**
+  - #369 in its final form: credentials are an existing Secret or an `ExternalSecret` (External Secrets Operator for
+    Red Hat OpenShift, GA on OpenShift 4.20+). A global fleet credential, or a dedicated one chosen by the stanza.
+  - Operator-chart issue 70: the copy Jobs are deprecated in four phases.
+  - #369's discarded routes (SharedSecret, native replication, the OAuth builder) are hidden as outdated comments.
+
 ---
 
 ## Numbers
 
 | | |
 |---|---|
-| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11) |
+| Pull requests merged | **39**: #309, #313, #317, #320, #323, #324, #325, #326, #327, #328, #329, #330, #331, #333, #334, #335, #336, #337, #339, #342, #343, #344, #345, #349, #350, #351, #352, #354, #355, #356, #357, #358, #359, #360, #361, #362, #363, #364 and #365 (`gh pr list --state merged`, merged since 04:11). Part 9 adds #366, #367 and #368 |
 | Commits on main | 30: 27 squash commits, one per PR, from `a9f0875` to `4f4c070`; then #354's two commits and its merge commit `b647db4` (`merge-safe.sh` merges with `--merge`). Measured: `git rev-list cb64f81..b647db4` counts 30, 28 on the first-parent line, 1 merge |
 | Commits authored in the session | 45 non-merge and 18 merge commits on the merged PRs' branches (author time from 04:11). Another 13 commits of the merged PRs were authored before the session. Counted from each PR's commits through `gh api`, with the parents counted. Part 7 adds 9 non-merge commits (`a4c2f75`, `83872bf`, `47e9b73`, `cbd18b9`, `7739e07`, `ea2b7b2`, `ce3d8e2`, `061c224`, `c7a9b26`) and 2 merge commits on #352's branch (`82ad236`, `0989ca6`, main merged in; #352's commit list through `gh pr view`). |
 | Review passes run | 48. That is 24 on #309–#337: 12 from `docs/REVIEW_2026-09-23_release.md`, 7 from #336's commit messages and 5 from #337's. Then 14 on #339, across six heads, and one each on #342, #343, #344 and #345. None are recorded for #309, #313, #317, #320 or #323. Part 7 adds 6: Grok 4.6 once each on #349, #350, #352 and #354, and twice on #351 (the plan, then the head). |
@@ -839,30 +886,14 @@ The orchestrator's summary, with what was measured for this log:
 
 ## State left behind
 
-- **main** is `b647db4` (#354), at chart 0.53.1 and app 0.32.0, both under `docs/CHANGELOG.md`'s Unreleased
-  heading. The tag `checkpoint-2026-09-23` stays on `7c0a42c`.
-- **Deployed** on the lab: `4f4c070b08` through `release-crc.sh --argocd`, Synced/Healthy and verified in-pod. #354 is
-  not deployed; its lab check is handed over (below).
-- **`shared-qa`** is rejoined with a ServiceAccount token that has no expiry (Step 11). `shared-rnd` is served from
-  the Secret the lookup rewrote in Step 4.
-- **The kept PVCs** have the same UIDs, volumes and 2026-09-19 creation times as the walk's baseline, re-read after
-  the `4f4c070` deploy: `group-sync-dashboard-data` has UID `f065b7a4-535c-4ef1-868c-58f5afee4953`, and
-  `group-sync-dashboard-report-artifacts` has UID `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`.
+Written at the end of Part 9, 2026-09-25.
+
+- **main** is `7aa00f1` (#368), at chart 0.56.0 and app 0.34.1, both under `docs/CHANGELOG.md`'s Unreleased heading.
+- **Deployed** on the lab: `09d5526cae` (#363) through `release-crc.sh --argocd`, Argo CD Synced. The redeploy of the
+  latest main follows this log's PR.
+- **The kept PVCs** are unchanged: `group-sync-dashboard-data` UID `f065b7a4-535c-4ef1-868c-58f5afee4953`, and
+  `group-sync-dashboard-report-artifacts` UID `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`, re-read at 10:00.
 - **Open PRs:** none once this log's PR merges.
-- **Handed to OB1 (Fable 5.1)** at the operator's instruction:
-  - #312: deploy main with #354, check that nothing regressed, post the evidence, close.
-  - #353: the capability to honour the operator's label on ServiceAccount and User grants. Spec, review, then code.
-- **Open issues from this session:**
-  - #321: remove the Debug path.
-  - #322: the cluster-admin tier, decided and not built.
-  - #340: the CA cache.
-  - #341: deferred.
-  - #312 and #353, handed over above. #346 and #347 are closed with this folder's evidence.
-- **Carried, not acted on:**
-  - NA-2: markdownlint MD012 in `docs/specs/README.md`, pre-existing.
-  - `docs/ACCESS_CONTROL.md` keeps six pre-existing MD040 findings (#336's and #337's bodies).
-  - `docs/CLUSTER_STANZA.md` still says "Fourteen refusals fail `helm template`", a count Grok called stale.
-  - Closed after this log's Part 7, in the docs PR that carries this line: `docs/design/data-requirements.md` marked
-    as the dated 2026-09-17 analysis; S3's version corrected (chart 0.45.0 was #249's; S3 shipped in 0.47.0 and
-    0.49.0); `reports/README.md` lists all 28 folders, held by `local-development/tests/test_reports_index.py`.
-- **Worktrees:** the main checkout, and `gsd-grafana`, detached at `4f93ad1` with its three uncommitted PNGs.
+- **Next, the operator's order:** #322 (the cluster-admin tier), then #321 (remove the OAuth Debug path).
+- **Parked:** #369, operator-chart issue 70, and #341.
+- **Worktrees:** the main checkout only. `gsd-grafana` is gone (Part 8's incident).
