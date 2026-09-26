@@ -15,12 +15,13 @@ walk checked.
 The merge was then deployed the same way:
 - `walk/release-tail-merge.log` ends `running : 667b3c4a62 — verified in-pod`.
 - `walk/pvc-after-merge.txt` has the same UIDs as before.
-- `walk/pods-after-merge.txt`: both pods ready, 0 restarts, image `0.36.0-667b3c4a62`, 0 ERROR or Traceback lines. The
+- `walk/pods-after-merge.txt` (its log lines are cut at 170 characters): both pods ready, 0 restarts, image `0.36.0-667b3c4a62`, 0 ERROR or Traceback lines. The
   audit reader goes on reading from its saved offset (`audit.log read 1084 byte(s) from offset 23856426`).
 
 ## 1. Nothing of the Debug path is left on the cluster
 
-`walk/state-after-deploy.txt`, read after the deploy:
+`walk/state-after-deploy.txt`, read after deploying the reviewed head `1178e03eb4` (not re-read after the merge,
+which changes no template):
 
 | Check | Result |
 |---|---|
@@ -33,27 +34,29 @@ The merge was then deployed the same way:
 ## 2. A real `oc login` is captured from the audit log
 
 1. **The login:** `oc login -u developer https://api.crc.testing:6443`, into a throwaway kubeconfig, with the password
-   from the environment. `walk/oc-login.txt` records `login ok at 2026-09-26T04:25:57Z`, and `oc whoami` answers
-   `developer`.
-2. **The pod log** (`walk/capture.txt`), 23 seconds later:
-   `00:26:20 … gsd.auditlog dashboard: recorded 1 login attempt(s) from the audit log on crc (audit.log)`.
+   held in a shell variable (the exact commands are in `walk/commands.txt`). `walk/oc-login.txt` records
+   `login ok at 2026-09-26T04:25:57Z`, and `oc whoami` answers `developer`.
+2. **The pod log** (`walk/capture.txt`), 23 seconds later. The pod logs in `-0400`, so its
+   `2026-09-26 00:26:20,025-0400` is `04:26:20Z`:
+   `gsd.auditlog dashboard: recorded 1 login attempt(s) from the audit log on crc (audit.log)`.
    It logs the same line for `shared-qa` and `shared-rnd`. They are the same CRC cluster under three entries, which
    is the lab's deliberate duplication.
 3. **The stored row** (`walk/stored-rows.txt`, a read-only query of the pod's database):
 
-   | cluster | user | outcome | at | source | kind | status | client |
-   |---|---|---|---|---|---|---|---|
-   | `dashboard` | `developer` | `success` | `2026-09-26T04:25:57.319611Z` | `audit-log` | `cli` | `302` | `openshift-challenging-client` |
+   | cluster | user | outcome | at | source | kind | status | client | provider |
+   |---|---|---|---|---|---|---|---|---|
+   | `dashboard` | `developer` | `success` | `2026-09-26T04:25:57.319611Z` | `audit-log` | `cli` | `302` | `openshift-challenging-client` | `developer` |
 
    The same row is stored for `shared-qa` and `shared-rnd`.
 
-`walk/capture.txt` also holds a call to `/api/clusters/dashboard/logins` through the pod's loopback. It was refused,
-*"there is no authenticated identity to scope it to"*: the route reads the reader's identity from the oauth-proxy,
-which a loopback call does not pass through. That is why the row was read from the database instead.
+`walk/capture.txt` also holds a call to `/api/clusters/dashboard/logins` through the pod's loopback. It was refused
+with `"this data is scoped to the authenticated viewer, and there is no authenticated identity to scope it to"`.
+That is why the row was read from the database instead (`walk/commands.txt`).
 
 ## 3. What this lab could not show
 
 The spec's decision 3 is that **stored pod-log history stays readable**. This lab's database holds only `audit-log`
 rows (`walk/stored-rows.txt`: `('audit-log', 3797)`), so there is no pod-log history here to read. The guarantee is
 pinned by the test `test_audit_default_reads_stored_pod_history_over_api_and_metrics_after_reopen` in
-`local-development/tests/test_remove_oauth_debug.py`, which OB1-lite ran on the rebased head.
+`local-development/tests/test_remove_oauth_debug.py`. It writes one `source=pod-log` row, reopens the database, and
+asserts that `/api/clusters/c/logins` still returns that row, with its LDAP cause.
