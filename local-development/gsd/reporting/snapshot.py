@@ -32,14 +32,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED
-from ..store import Store, _MIGRATIONS, _harden
+from ..store import KNOWN_SCHEMA_VERSION, Store, _harden
 
 log = logging.getLogger(__name__)
 
 #: Store.backup / Store.snapshot name their files gsd-<%Y%m%dT%H%M%S.%fZ>.db.
 _STAMP = re.compile(r"^gsd-(\d{8}T\d{6}\.\d{6}Z)\.db$")
-#: The highest migration this build understands; a newer copy is refused (§4.4).
-KNOWN_SCHEMA_VERSION = max(t for t, _, _ in _MIGRATIONS)
 CLUSTER_SCOPE = Store.CLUSTER_SCOPE
 PRIVILEGE_RANK = "CASE role_name WHEN 'cluster-admin' THEN 4 WHEN 'admin' THEN 3 WHEN 'edit' THEN 2 ELSE 1 END"
 
@@ -110,6 +108,7 @@ class Snapshot:
             _harden(self._conn)
             self._conn.row_factory = sqlite3.Row
             self.schema_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            # A newer copy is refused (§4.4), against the store's own number: one source for both services.
             if self.schema_version > KNOWN_SCHEMA_VERSION:
                 raise SnapshotError(
                     f"snapshot schema {self.schema_version} is newer than this report service understands "

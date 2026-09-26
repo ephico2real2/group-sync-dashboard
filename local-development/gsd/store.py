@@ -1151,6 +1151,20 @@ _MIGRATIONS: list[tuple[int, str, list[str]]] = [
     ),
 ]
 
+#: The highest migration this build understands. The report service refuses a newer copy with it too.
+KNOWN_SCHEMA_VERSION = max(target for target, _, _ in _MIGRATIONS)
+
+
+class StoreSchemaTooNew(Exception):
+    """The database was migrated by a newer build; this one would write to it blind (#305)."""
+
+
+def _schema_state(conn: sqlite3.Connection) -> tuple[int, bool]:
+    """(PRAGMA user_version, fresh), read without writing. Fresh means no schema objects at all."""
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    fresh = conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone() is None
+    return version, fresh
+
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Apply every unapplied migration in numeric order, independent of source layout."""
@@ -1225,7 +1239,7 @@ def _safe_pragma_word(value: str, default: str) -> str:
 # caller that has not moved. Its definition lives in gsd/timeutil.py: it was never a storage
 # concern, and keeping it here meant a service split would need the SQLite module just to
 # stamp a timestamp.
-__all__ = ["Store", "now_iso"]
+__all__ = ["KNOWN_SCHEMA_VERSION", "Store", "StoreSchemaTooNew", "now_iso"]
 
 
 class Store:
@@ -1268,6 +1282,15 @@ class Store:
 
         self._conn = sqlite3.connect(path, check_same_thread=False)
         _harden(self._conn)
+        # Before anything below writes: the WAL switch rewrites the file header, SCHEMA creates
+        # objects and the seeds insert rows, all blind to what a newer build's migrations added.
+        version, _ = _schema_state(self._conn)
+        if version > KNOWN_SCHEMA_VERSION:
+            self._conn.close()
+            raise StoreSchemaTooNew(
+                f"database schema {version} is newer than this dashboard understands ({KNOWN_SCHEMA_VERSION}); "
+                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4), "
+                f"or deploy the image that understands {version}")
         self._conn.row_factory = sqlite3.Row
 
         # PRAGMA journal_mode returns the mode actually in force, which is NOT always the one
