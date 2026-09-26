@@ -7,12 +7,12 @@
 | Release | — (after #322 merges) |
 | Version on release | app 0.36.0, chart 0.58.0 |
 | Issue | [#321](https://github.com/ephico2real2/group-sync-dashboard/issues/321) |
-| Status | in progress |
+| Status | merged |
 | Source | Codex phase-1 research and specification, 2026-09-25, baseline 9584239; supplied ../tmp/issue-321.md |
 
 ## How to read this spec
 
-This is a proposed implementation, not shipped behavior. Baseline citations are repository-relative
+Shipped in #373 (merged 2026-09-25); the text below is the specification as it was applied. Baseline citations are repository-relative
 file:line evidence at 9584239, written as plain text to distinguish them from maintained symbol
 citations. The request explicitly requires point-in-time lines; no citation-test exemption is added.
 The block convention and checker are docs/specs/README.md:33 and
