@@ -435,8 +435,9 @@ class TestTheSchedule:
         import threading
         poller = self._poller(tmp_path, monkeypatch)
         poller.settings.clusters.append(ClusterConfig("east", "https://api.east:6443", token_env="X"))
-        poller._cluster_stops["rnd"] = threading.Event()
-        poller._cluster_stops["east"] = threading.Event()
+        # Every wanted cluster is seeded as running, `host` included, so no real poll thread starts.
+        for name in ("host", "rnd", "east"):
+            poller._cluster_stops[name] = threading.Event()
         poller._reconcile_threads()
         assert poller._cluster_stops["rnd"].is_set(), "the pending stanza kept polling"
         assert not poller._cluster_stops["east"].is_set(), "a values cluster with a credential was stopped"
