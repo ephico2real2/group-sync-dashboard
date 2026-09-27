@@ -44,3 +44,8 @@ def test_the_release_notes_describe_the_gate_epic_c_shipped():
     assert "recreating the Secret (a new uid) therefore allows one login once the pod restarts" in section
     spec = (REPO / "docs/specs/SPEC_S4c_credential_lifecycle.md").read_text()
     assert "same password (a new uid), and the pod restarted" in spec
+    new = text[text.index("## Application 1.1.0"):start]
+    new = " ".join(new.split())
+    assert "password is rotated or the pod restarts" not in section, "a restart alone no longer clears the Lease's refusal"
+    assert "refused Lease entry is cleared and the pod restarted" in section
+    assert "Three sentences of 1.0.0's notes" not in new and "SPEC_S4c §3.2 B2 and §8.2" in new
