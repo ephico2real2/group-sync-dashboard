@@ -127,7 +127,11 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
 3. **Deploy.** After those workflows are green, deploy the published release with
    `local-development/release-crc.sh --argocd main`. That mode uses the chart on GitHub at `main` and the published
    quay image (the mode table in the `release-crc.sh` header and in `local-development/README.md`). Bare
-   `--argocd` builds HEAD and pins that image, so it is not the published release. Walk it, and record the two PVC
+   `--argocd` builds HEAD and pins that image, so it is not the published release. The branch path refuses to hand Argo an image whose
+   `org.opencontainers.image.version` label is not the chart's appVersion, or that is not in the registry (#410): a
+   refusal means publish.yml has not moved the `:<appVersion>` aliases yet, or a chart-version label already occupied
+   that tag. Wait for the publish run; never retag by hand. The lab's Application auto-syncs `main`, so it can deploy
+   before this script runs; #410 tracks that race. Walk it, and record the two PVC
    UIDs before and after; they must be unchanged.
 
 Then:

@@ -285,6 +285,15 @@ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/ver
 Expected: `{"leader": true, "version": "0.15.0", …}` (with `oauthProxy.enabled` the app binds
 loopback; `curl` from inside the pod is the honest check).
 
+**The report pod stays NotReady until a new copy is written** after a restore from a newer image. The newest copy under
+`/data/report` is the one the previous image wrote, and the report service refuses a snapshot newer than it
+understands (`snapshot schema N is newer…`, `/report/readyz` 503). The leader's first poll after this start writes a
+new copy (`gsd/poller.py#_maybe_report_snapshot`: at once on the first cycle, then every
+`reporting.snapshot.intervalSeconds`), and when that write succeeds the report pod becomes Ready (measured by OB2's
+composition review of Epics A and B). If it is still NotReady after the leader's first poll, no copy was written:
+the leader's log says `report snapshot was not written` or `report snapshot failed`, and the next attempt waits a
+full interval. Fix what that names (the volume's space or permissions) rather than waiting.
+
 **A copy newer than the image is refused (#305).** When the restored file's `user_version` (§1) is
 above the highest migration the running image carries, the dashboard does not start: the container
 exits 1 before it binds its port, `oc rollout status` does not complete, and the last log line names
@@ -295,7 +304,7 @@ oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1
 ```
 
 ```
-gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4), or deploy the image that understands 21
+gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), or deploy the image that understands 21
 ```
 
 The refusal comes before this image runs any of its own schema, migrations or seeds, so the
@@ -380,3 +389,6 @@ start removes.
 **Using a copy.** Verify it with §1, reading `/data/pre-upgrade/<file>` instead of a backup; outside the
 cluster, run `sha256sum -c <file>.sha256` from the directory that holds both files (§3). To go back to the
 previous image, restore the copy with §4a from `/data/pre-upgrade/<file>` and deploy that image.
+If the previous image then runs on the restored database, move the earlier `-to-<to>-` copy and its `.sha256` out of
+`pre-upgrade/` before you upgrade again ("Once per upgrade" above), or the retry takes no copy of what that image
+wrote since.
