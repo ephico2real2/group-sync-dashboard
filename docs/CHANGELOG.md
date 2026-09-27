@@ -10,13 +10,28 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
-- **A values `apiUrl` carrying userinfo, a query or a fragment is refused (#415; chart 0.58.7).**
+- **A values `apiUrl` carrying userinfo, a query or a fragment is refused (#415; chart 0.58.8).**
   `https://user:password@host`, `…?x` and `…#x` in `clusters[].apiUrl` now fail `helm template` and the pod's
   loader, as the cluster Secret's `server` already did; the message names the entry and the key and never repeats
   the value. Measured before the fix (httpx 0.28.1): the userinfo was sent as `Authorization: Basic` in place of
   the poller's bearer token and on the fleet login's discovery request, printed on httpx's `HTTP Request:` line,
   and served in `api_url` by `/api/clusters` to a self-tier reader. A values file that relied on it is refused at
   upgrade: move the credential to `tokenEnv`/`tokenFile` or a connection mode. Every other URL parses as before.
+- **The credential gate is per account for every failed login (#315,
+  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.7 for `CLUSTER_CREDENTIALS.md`, the
+  application code with no version of its own).** When the fleet account's password is sent and no session comes
+  back — a 401, or the 500 a locked directory account answers — the dashboard no longer sends that password, as that
+  account, to any other cluster while it is the same password: at most one answered failed login per account
+  and password per process, across every cluster, where it was one per cluster. N clusters sharing the fleet
+  account, or one cluster entered under two URLs, now cost one failed login instead of N. "Account" is the
+  username exactly as the stanzas write it: two spellings of one directory identity are two accounts, so use
+  one. The other clusters' findings stay `login-refused` with `gave_up=true`, and their detail now names the
+  API URL that answered, without any credentials the URL carries. A successful ConfigMap onboarding still
+  spends only its own cluster (#293's budget, SPEC_S5 §3.3, unchanged). The price, the operator's choice at
+  the review of #325: one sick cluster's 500 stops the lookup on every cluster of that account until the
+  password is rotated or the pod restarts. A restart or a second replica still starts with an empty gate,
+  until #285's account Lease.
+
 - **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
   `secretsMint.image` is now `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22`, for OpenShift 4.18 and above;
   set the tag to your cluster's minor. The pull uses the cluster's registry.redhat.io pull secret, and the Job is a

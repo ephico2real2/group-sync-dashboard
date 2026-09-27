@@ -48,7 +48,7 @@ from .clusterconfig.writer import (
 )
 from .clusterconfig.events import is_transport_message, redact
 from .config import ClusterConfig, Settings
-from .fleetlogin import FleetLogin, LoginError
+from .fleetlogin import FleetLogin, LoginError, _without_userinfo
 from .kube import AUTH_FAILED, ClusterClient, ClusterError, redact_text
 
 log = logging.getLogger(__name__)
@@ -95,34 +95,70 @@ class LookupRefused(Exception):
 
 
 class CredentialGate:
-    """SPEC_S4 §6's in-memory half: a password a target evaluated — or may have — is never sent to
-    THAT target again while it is the same password. Keyed on (target, username, sha256(password)):
-    the target, because a 500 from one cluster must not stop a healthy one on the same account
-    (review of #295, second pass, R2-1); the digest, because the password is not in the declaration,
-    so the normal fix — rotating the Secret — changes no stanza and must re-arm this by itself.
-    Best-effort and per process; the durable, replica-shared gate is #285's."""
+    """SPEC_S4 §6's in-memory half: a password the directory evaluated — or may have — is not sent
+    again while it is the same password. Two kinds of entry (#315, SPEC_S4d):
+
+    REFUSED, keyed on (username, sha256(password)[:16]) — the ACCOUNT, never the target. Every
+    `LoginError.bound` answer writes it, a 401 and a 500 alike: a directory locks out per account,
+    and a locked account's 500 (LDAP code 19) cannot be told from a sick target's 500. The operator's
+    ruling at the review of #325 (SPEC_S4c, orchestrator's notes), reversing R2-1 of #295's second
+    pass; the price is that one sick target's 500 stops every target of the account until the
+    password rotates or the process restarts (SPEC_S4c §5, question 7). The target that answered is
+    kept as evidence and named in the gated refusal.
+
+    SPENT, keyed on (target, username, digest) — #293's success mark (SPEC_S5 §3.3): a successful
+    ConfigMap session spends THAT target's budget, so onboarding one cluster never gates another.
+
+    The digest, because the password is not in the declaration: rotating the Secret changes no
+    stanza and must re-arm both kinds by itself. It is 64 bits ON PURPOSE — a collision over-blocks,
+    never binds again; so does one username and password shared by two directories, the safe
+    direction, stated and not solved.
+
+    THE BUDGET, with its scope: at most one answered failed authorize per (account, password) per
+    process, across every target. "Account" is the exact configured username string, compared as
+    written: directory aliases and case variants are not resolved, so every stanza for one identity
+    must use one spelling. "Process" is the production Poller's one gate, used serially on its
+    discovery thread; a new gate starts a new budget. A restart or a second replica starts empty —
+    not covered until #285's account Lease, which this becomes the cache of (SPEC_S4c §3.3)."""
 
     def __init__(self) -> None:
-        self._refused: set[tuple[str, str, str]] = set()
+        self._refused: dict[tuple[str, str], str] = {}
+        self._spent: set[tuple[str, str, str]] = set()
 
     @staticmethod
-    def _key(target: str, username: str, password: str) -> tuple[str, str, str]:
+    def _target(target: str) -> str:
         # THE TARGET AS httpx CANONICALISES IT (third pass, R3-1): host case and IDNA, not a whole-string
         # lowercase that would mangle a path or a port. `api.example.com` and `API.example.com/` are one
-        # directory-backed target and one gate entry. A malformed URL falls back to the bare string:
-        # the gate must never raise. The digest is 64 bits ON PURPOSE — a collision over-blocks, never
-        # binds again.
+        # target. A malformed URL falls back to the bare string: the gate must never raise.
         try:
-            canonical = str(httpx.URL(target)).rstrip("/")
+            return str(httpx.URL(target)).rstrip("/")
         except httpx.InvalidURL:
-            canonical = target.rstrip("/")
-        return canonical, username, hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+            return target.rstrip("/")
+
+    @staticmethod
+    def _digest(password: str) -> str:
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+
+    def answered(self, target: str, username: str, password: str) -> str | None:
+        """The target whose answer gates this password for this account on `target`, or None: the
+        account's REFUSED entry from whichever target answered, else `target`'s own SPENT entry."""
+        digest = self._digest(password)
+        refused = self._refused.get((username, digest))
+        if refused is not None:
+            return refused
+        canonical = self._target(target)
+        return canonical if (canonical, username, digest) in self._spent else None
 
     def refused(self, target: str, username: str, password: str) -> bool:
-        return self._key(target, username, password) in self._refused
+        return self.answered(target, username, password) is not None
 
     def refuse(self, target: str, username: str, password: str) -> None:
-        self._refused.add(self._key(target, username, password))
+        """A bound failure: the account's entry, whatever target answered; the first answer stays the evidence."""
+        self._refused.setdefault((username, self._digest(password)), self._target(target))
+
+    def spend(self, target: str, username: str, password: str) -> None:
+        """#293's success mark: this target's entry only."""
+        self._spent.add((self._target(target), username, self._digest(password)))
 
 
 @dataclass(frozen=True)
@@ -357,20 +393,28 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     password = fleet_password(host_client, settings, own_namespace)
     secrets: list[str] = [password]
     try:
-        if gate.refused(cluster.api_url, account, password):
-            raise LookupRefused("login-refused", f"{cluster.name} evaluated this password for {account} already and it "
-                                                 f"has not changed",
-                                action=("not tried again until the fleet password Secret or the stanza changes — rotate the "
-                                        "Secret, or correct ldapConnectionBootstrap; the password is re-read each cycle at no "
-                                        "cost and the login resumes when it moves (SPEC_S4 §6)"), spent=False, gated=True)
+        answered = gate.answered(cluster.api_url, account, password)
+        if answered is not None:
+            # THE TARGET THAT ANSWERED IS NAMED (#315): the entry is the account's, so it may be another
+            # cluster's answer that stops this one, and the finding must say where to look. Shown without
+            # userinfo, query or fragment: a values `apiUrl` is not held to the Secret contract's
+            # no-credential URL rule, and the gate's evidence keeps whatever the stanza wrote.
+            shown = _without_userinfo(answered) or "the answering target (not shown: its URL is not https with a host)"
+            raise LookupRefused("login-refused", f"{shown} evaluated this password for {account} already and it "
+                                                 f"has not changed; {cluster.name} does not send it",
+                                action=("not tried again until the fleet password Secret or the account the stanza names "
+                                        "changes — rotate the Secret, or correct ldapConnectionBootstrap; the password is "
+                                        "re-read each cycle at no cost and the login resumes when it moves (SPEC_S4 §6)"),
+                                spent=False, gated=True)
         knobs = {"clock": clock} if clock is not None else {}
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
                 secrets.append(session.token)
                 if cluster.onboarding:
                     # #293's strict budget includes successful binds, even if the later read/write fails.
-                    # Keep the SAME process-lifetime gate used by every existing lookup caller.
-                    gate.refuse(cluster.api_url, account, password)
+                    # Keep the SAME process-lifetime gate used by every existing lookup caller — THIS
+                    # target's entry only: a success elsewhere must not gate another cluster (#315).
+                    gate.spend(cluster.api_url, account, password)
                 sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
         except LoginError as exc:
             which = f" against {exc.host}" if exc.host else ""
@@ -378,17 +422,20 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                 # THE PASSWORD WAS ON THE WIRE. The target evaluated it — refused it (401), answered
                 # 500 (what the oauth-server says for every directory result but 48/49, a LOCKED
                 # account's code 19 included), answered without a token — or may have: a read timeout
-                # after the GET was written. Never sent to THIS target again while it is this password
-                # (review of #295, P0-1 and second pass R2-1): re-entering #283's terminal answer from a
-                # schedule is the lockout walk one layer up, and an in-memory "final" that any shape
-                # change re-arms is not a stop. `AUTH_FAILED` is the refusal's word; the rest read as failed.
+                # after the GET was written. Never sent again as this account, to this target or ANY
+                # other, while it is this password (review of #295, P0-1; the operator's ruling on #325,
+                # SPEC_S4c's orchestrator's notes, which reversed R2-1's per-target key — a locked
+                # account's 500 cannot be told from a sick target's): re-entering #283's terminal answer
+                # from a schedule is the lockout walk one layer up, and an in-memory "final" that any
+                # shape change re-arms is not a stop. `AUTH_FAILED` is the refusal's word; the rest read
+                # as failed.
                 gate.refuse(cluster.api_url, account, password)
                 code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
                 raise LookupRefused(code, f"phase={exc.phase}{which}: {exc.message}",
                                     action=(f"the password for {account} was sent to {cluster.name} and no session came "
                                             f"back: rotate the fleet password Secret or correct ldapConnectionBootstrap, "
-                                            f"or check the account is not locked — it is not sent there again while it "
-                                            f"is the same password"), spent=True) from exc
+                                            f"or check the account is not locked — it is not sent again, to this or any "
+                                            f"other cluster, while it is the same password"), spent=True) from exc
             hint = ""
             if exc.phase == "tls":
                 hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "

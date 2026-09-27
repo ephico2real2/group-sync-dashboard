@@ -258,7 +258,7 @@ the remote once it does (D8). Dashed boxes are proposed and not built.*
  HOST    saTokenLookup: true (a values stanza or a Secret), automatic
            -> clusterConfig.secrets.writes.enabled off -> refused (fleet-write-disabled), no password read
            -> the leader, or the sole replica, reads the fleet password (one host Secret, get by name)
-           -> the credential gate: a password this target already refused is not sent again
+           -> the credential gate: a password the account was already refused, by any target, is not sent again (#315)
  HOST    Rejoin (#316, not built), a person on the tab
            -> clusterAdminSar on the host (D7): update clusterrolebindings?  no -> no Rejoin control
            -> the person's own username and password, typed now, never stored
@@ -287,7 +287,7 @@ Row by row:
 | Action | Who may start it today | After D7 (#322) | Asked where | Credential that crosses |
 |---|---|---|---|---|
 | Declare `saTokenLookup` | whoever writes the release's values, or a labelled Secret in its namespace (GitOps) | unchanged | nobody: it is configuration | none |
-| The lookup itself (the join) | the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused) | unchanged | the remote, as the fleet account | the fleet password; once refused, not re-sent to that target by this process (`local-development/gsd/fleetlookup.py#CredentialGate`) |
+| The lookup itself (the join) | the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused) | unchanged | the remote, as the fleet account | the fleet password; once refused, not re-sent as that account to any target by this process (#315) (`local-development/gsd/fleetlookup.py#CredentialGate`) |
 | Add a cluster on the tab | `clusterConfigManageSar`: `create secrets` in the dashboard's namespace, which a namespace admin passes | `clusterAdminSar`: `update clusterrolebindings` on the host | the host | a pasted bearer token |
 | Rotate, delete, test | the same namespace-level check | `clusterAdminSar` | the host | a pasted token, or none |
 | Rejoin (#316) | not built | `clusterAdminSar`, then D8 on the remote | the host, then the remote | the person's own username and password, once, never stored |

@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Twenty-eight specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Twenty-nine specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The twenty-eight specifications
+## The twenty-nine specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -90,6 +90,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | S4c | [`SPEC_S4c_credential_lifecycle.md`](SPEC_S4c_credential_lifecycle.md) — S4 step C: the credential lifecycle — the daily ping, `self-login` renewal at the fixed margin, and the per-credential gate on a fleet-account Lease, durable and replica-shared; the design of #285 | S — cluster configuration | — | app 0.38.0, chart 0.59.0 | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) | specified |
 | S5 | [`SPEC_S5_configmap_onboarding.md`](SPEC_S5_configmap_onboarding.md) — ConfigMap onboarding: credential-free cluster declarations, remote lookup and owned Secret reconciliation | S — cluster configuration | — | app 0.34.0, chart 0.55.0 | [#293](https://github.com/ephico2real2/group-sync-dashboard/issues/293) | released |
 | M1 | [`SPEC_M1_pre_upgrade_copy.md`](SPEC_M1_pre_upgrade_copy.md) — the pre-upgrade copy: before a migration, the database as it was is copied to `pre-upgrade/` beside it and verified, and the start is refused without it; once per upgrade, the newest three upgrades kept outside `config.backup.keep` | M — schema migrations | — | app 0.37.0, chart 0.58.5 | [#301](https://github.com/ephico2real2/group-sync-dashboard/issues/301) | released |
+| S4d | [`SPEC_S4d_credential_gate_per_account.md`](SPEC_S4d_credential_gate_per_account.md) — the credential gate is per account: every bound failure gates (account, password) on every target, the answering target kept as evidence; #293's success mark stays per target; the in-memory half of S4c's B2 | S — cluster configuration | — | chart 0.58.7 (docs only: `CLUSTER_CREDENTIALS.md`); the application code has no version of its own and rides the next application release, as #291 does | [#315](https://github.com/ephico2real2/group-sync-dashboard/issues/315) | merged |
 | L1 | [`SPEC_L1_remove_oauth_debug.md`](SPEC_L1_remove_oauth_debug.md) — Remove the OAuth Debug reader and authLogLevel Jobs; retain stored history and audit capture | L — login capture | — | app 0.36.0, chart 0.58.0 | [#321](https://github.com/ephico2real2/group-sync-dashboard/issues/321) | released |
 | T2 | [`SPEC_T2_cluster_admin_tier.md`](SPEC_T2_cluster_admin_tier.md) — the cluster-admin tier: `visibility.clusterAdminSar` (`update clusterrolebindings` on the host) gates the KPI page and the whole Cluster Configurations tab, and grants every host tier to whoever passes it; replaces #230's two-level pair | T — tiers | — | app 0.35.0, chart 0.57.0 | [#322](https://github.com/ephico2real2/group-sync-dashboard/issues/322) | released |
 | D2b | [`SPEC_D2b_remote_sar_for_every_join.md`](SPEC_D2b_remote_sar_for_every_join.md) — `remote-sar` for every way a cluster is joined, and `remote-sar` + `same-as-host` the default for a remote (design D1, D2) | D — architecture | — | app and chart minor bumps at the PR | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) | released |

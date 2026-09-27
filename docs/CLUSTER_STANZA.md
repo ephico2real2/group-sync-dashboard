@@ -47,9 +47,10 @@ label removal and UID replacement) repeatedly delete only outputs owned by this 
 stays. Failed cleanup remains a finding and is retried, including after restart. Invalid documents
 hold their outputs without polling or deleting them; a failed inventory read keeps the prior fleet.
 
-The ConfigMap trigger marks the existing process-lifetime CredentialGate on a bound
-login failure and on a successful session (before the token read). After that mark,
-the same canonical target/account/password is not sent again in this process, including
+The fleet lookup gates a password in memory (#315). A bound login failure (the password was sent and
+no session came back) gates it for that account on every target; the account is the exact username, so
+use one spelling per identity. The ConfigMap trigger also marks a successful session (before the token
+read), for that target only (#293). A gated password is not sent again in this process, including
 after a rename, policy edit, or a later read/write failure. A TLS or connect failure
 before the password is written may bind again. A restart or another replica binds
 again. There is no durable or replica-shared claim until #285. A missing output after that budget was spent stays pending with a finding; fix the
