@@ -1,0 +1,4 @@
+# oc exec … deploy/group-sync-dashboard -c dashboard -- python3.14 -c '…urlopen("http://127.0.0.1:8080/api/version")…'  (2026-09-27, after the sync)
+{"leader":true,"version":"0.37.0","commit":"b087c78f80","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+# the pod's imageID
+quay.io/ephico2real/group-sync-dashboard@sha256:62e231178a3a7c6f34fb138e7263dc0b0165def8e416dcbb565196eeff198ca5

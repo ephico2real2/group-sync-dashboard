@@ -6,11 +6,11 @@ walk = rd("walk.out")
 pick = lambda *keys: "\n".join(l for l in walk.splitlines() if l.startswith(("PASS", "FAIL")) and any(k in l for k in keys))
 render(str(E / "backup-pre-upgrade-copy-success.png"), "A successful pre-upgrade copy (#301)",
        "CRC lab, application 0.37.0 in a throwaway pod, on a copy of the newest backup, with a walk-only no-op migration 21; "
-       f"walk started {rd('walk-started.txt').strip()}. The output is the pod's, unedited.",
+       "the copy is stamped 2026-09-27T00:29:48Z. Lines are the pod's output; each block shows the lines for this picture.",
        [("python3.14 walk_epic_b.py /tmp/backup.db /tmp/work   # the #301 checks", pick("#301")),
         ("ls -l /tmp/work/301/pre-upgrade", rd("pre-ls.txt")),
         ("cat /tmp/work/301/pre-upgrade/*.sha256", rd("pre-sidecar.txt")),
-        ("python3.14 -c '<check the sidecar, integrity and schema>'", rd("pre-verify.txt"))])
+        ("python3.14 -c '<the sidecar, integrity and schema check; walk/pre-verify.py does the same>'", rd("pre-verify.txt"))])
 render(str(E / "backup-restore-check-success.png"), "A backup proven restorable (R1–R5)",
        "CRC lab, application 0.37.0 in a throwaway pod, on byte-verified copies (sha256 matched) of "
        f"{pathlib.Path(rd('backup-name.txt').strip()).name} and of #301's copy. The live database was never touched.",

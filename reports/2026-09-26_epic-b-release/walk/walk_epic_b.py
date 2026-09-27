@@ -118,6 +118,9 @@ def restorable(label: str, db: Path) -> None:
     group = c.execute(f"SELECT cluster_id, group_name, COUNT(*) n FROM membership_event WHERE cluster_id IN ({marks}) "
                       "GROUP BY 1, 2 HAVING n BETWEEN 2 AND 100 ORDER BY n DESC LIMIT 1", sorted(clusters)).fetchone()
     c.close()
+    if group is None:
+        check(f"{label} R4 the app serves it", False, f"no group on the {len(clusters)} enabled clusters has 2-100 stored changes")
+        return
     configured = [ClusterConfig(i, u, token_env="WALK_UNUSED") for i, u in enabled]
     with TestClient(build_app(Settings(db_path=str(db), clusters=configured, oauth_proxy_enabled=False),
                               run_poller=False)) as client:

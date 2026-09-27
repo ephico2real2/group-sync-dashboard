@@ -1,0 +1,6 @@
+# oc exec … deploy/group-sync-dashboard -c dashboard -- ls /data   (after the walk)
+backup
+gsd.db
+gsd.db-shm
+gsd.db-wal
+report
