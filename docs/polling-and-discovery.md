@@ -137,11 +137,12 @@ A per-cluster refresh endpoint is proposed in **issue #311** —
 `POST /api/clusters/{name}/refresh` — and a control in the UI that calls it. **Neither exists
 today.** When it is built, the constraint that governs it is not performance but safety.
 
-**Which modes bind, precisely.** `userSelfLogin` does **not** bind today — it sits in
-`gsd/config.py#CREDENTIAL_PENDING_REASONS` ("the self-login mode is S3b's #285, not built"), and a
-kind in that table is never handed to `ClusterClient`. The mode that binds today is
-**`saTokenLookup`**, whose fleet login puts the password on the wire; `userSelfLogin` joins it when
-#285 lands.
+**Which modes bind, precisely.** **`saTokenLookup`** binds to retrieve a cluster's token, and the daily
+ping binds once per fleet account per interval to confirm it (#285). **`userSelfLogin`** binds for its own
+session — at the first cycle and at each renewal, a fixed margin before the session expires
+(`gsd/selflogin.py#SelfLoginSessions`). Every one of those logins claims the fleet account's Lease first,
+reads the refusal recorded there, and records its own attempt before the password is sent
+(`gsd/fleetstate.py#FleetLease`).
 
 So a refresh on a `saTokenLookup` cluster *is a bind*, and it must honour
 `gsd/fleetlookup.py#CredentialGate` — returning a gated credential's standing refusal **without

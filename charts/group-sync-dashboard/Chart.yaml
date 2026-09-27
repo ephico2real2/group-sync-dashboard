@@ -258,7 +258,13 @@ type: application
 # CHART 0.58.8 (2026-09-26), PATCH: gsd.validateClusters refuses a clusters[].apiUrl carrying userinfo,
 # a query or a fragment, as the loader now does (#415), without repeating the value. Refuses only input the
 # pod already could not use safely; no value default, RBAC or appVersion change.
-version: 0.58.8
+# CHART 0.59.0 (2026-09-26), MINOR: the credential lifecycle (#285, SPEC_S4c) — clusterConfig.fleetAccount.ping
+# (enabled, intervalSeconds: on, daily) reaches the ConfigMap as fleetPingEnabled and fleetPingIntervalSeconds;
+# the `leases` rule renders under leaderElection.enabled OR a fleet account in use (the account's claim Lease);
+# a userSelfLogin stanza with replicaCount > 1 is refused. RBAC: the `leases` rule is added only where election
+# is off and a fleet account is in use; nothing is removed. appVersion unchanged: the application code rides
+# Epic C's release.
+version: 0.59.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

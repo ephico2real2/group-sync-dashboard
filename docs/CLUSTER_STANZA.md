@@ -52,8 +52,11 @@ no session came back) gates it for that account on every target; the account is 
 use one spelling per identity. The ConfigMap trigger also marks a successful session (before the token
 read), for that target only (#293). A gated password is not sent again in this process, including
 after a rename, policy edit, or a later read/write failure. A TLS or connect failure
-before the password is written may bind again. A restart or another replica binds
-again. There is no durable or replica-shared claim until #285. A missing output after that budget was spent stays pending with a finding; fix the
+before the password is written may bind again. Since #285 every login claims the fleet account's Lease
+first and records its attempt there before the password is sent; a session clears it and a refusal
+replaces it, so a restart, a crash or another replica does not send a refused password again; a
+successful session's mark is not on the Lease, so after a restart that trigger may bind once more.
+A missing output after that budget was spent stays pending with a finding; fix the
 cause and rotate the credential or deliberately restart after checking the account. Routine policy
 edits need neither. Do not delete an output as
 a way to remove the declaration; the source is the record. Turning discovery off suspends all cleanup;
@@ -101,13 +104,14 @@ truth for one credential is a stanza whose author meant one of them.
 | `tokenFile` = the SA path | `in-cluster` | yes |
 | `tokenEnv` or `tokenFile` | `file` | yes |
 | `saTokenLookup: true` | `remote-lookup` | **after the lookup** — the dashboard logs in as the fleet account, reads the poller SA's token on the target and writes `gsd-cluster-<name>`, which then polls (SPEC_S4b); needs `clusterConfig.secrets.writes.enabled` |
-| `userSelfLogin: true` | `self-login` | **no — pending** |
+| `userSelfLogin: true` | `self-login` | **on its own session** — the dashboard logs in as the fleet account on the target and polls with that session, renewed a fixed margin before it expires (SPEC_S4c §3.6); a refused password suspends every self-login cluster on the account. Refused above one replica |
 | a Secret's `bearerToken` | `bearer` | yes |
 | a Secret's `oauth {username, password}` | `oauth` | **no — pending (#119 P2)** |
 
 A *pending* cluster is listed on the Cluster Configurations tab with the reason, and is **not
 polled** — deliberately, so it is never reported as `auth_failed` for a credential that was never
-presented. The connection itself is S3b and is not built; S3a ships the keys.
+presented. A `self-login` cluster is never pending: with no session it skips the poll, and the finding
+says why.
 
 ## 3. TLS — how the API server is verified
 
@@ -133,7 +137,7 @@ Each rendered and loaded. All fourteen are accepted by both readers.
 | 4 | remote + `tokenEnv` + `caBundleFile` | polled, pinned CA |
 | 5 | remote + `tokenEnv` + `insecureSkipVerify` | polled, verification off |
 | 6 | remote + `saTokenLookup` | retrieved on the next discovery cycle, then polled through its written Secret; renders only with `clusterConfig.secrets.writes.enabled` |
-| 7 | remote + `userSelfLogin` | listed, pending, not polled |
+| 7 | remote + `userSelfLogin` | polled on its own session; renewed a fixed margin before expiry |
 | 8 | remote + `saTokenLookup` + `ldapConnectionBootstrap` | as 6, with a per-cluster bootstrap account |
 | 9 | remote + `visibility: self-only` | every viewer is the self tier there |
 | 10 | remote + `visibility: hidden` | polled, never served through `/api` |
@@ -178,6 +182,7 @@ after a green upgrade looks like an outage rather than a config error.
 | `saTokenLookup` without `clusterConfig.secrets.writes.enabled` | **refused** | starts; the tab reports `fleet-write-disabled` (a Secret-declared mode reaches this half) |
 | `saTokenLookup` without `clusterConfig.secrets.enabled` | **refused** | starts; the cluster stays pending |
 | `clusterConfig.secrets.writes.enabled` with `replicaCount > 1` — a lookup is possible, stanza or not | **refused** | starts; a lookup reports `fleet-write-disabled` (one retriever per estate, SPEC_S4 §6) |
+| `userSelfLogin` with `replicaCount > 1` | **refused** | starts; the cluster reports `self-login-suspended` (a session is per process, SPEC_S4c §3.8) |
 
 The chart's guard covers the connection-mode and host rules; the remaining four are the loader's
 alone, because `templates/configmap.yaml` passes `clusters` through with `toYaml` and the pod is

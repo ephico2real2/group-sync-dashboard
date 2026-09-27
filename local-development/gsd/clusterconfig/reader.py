@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import dataclasses
 
-from ..config import ClusterConfig
+from ..config import ClusterConfig, valid_bootstrap_username
 from . import LABEL_SELECTOR
 from .parser import Finding, parse_secret
-from .writer import TOKEN_SOURCE_ANNOTATION
+from .writer import LOOKUP_ACCOUNT_ANNOTATION, TOKEN_SOURCE_ANNOTATION
 
 #: What to do about each refusal, in the operator's terms rather than the parser's. `action=` is the
 #: fix, not the diagnosis (#245): a line that says only what broke leaves the reader to translate,
@@ -83,6 +83,7 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
     parsed_ok: list[ClusterConfig] = []
     findings: list[Finding] = []
     token_source: dict[str, str | None] = {}   # Secret name -> its token-source annotation, if any
+    lookup_account: dict[str, str | None] = {}  # Secret name -> the account a lookup wrote it as (SPEC_S4c §3.4)
     for obj in items:
         parsed = parse_secret(obj, host_name=host_name)
         if isinstance(parsed, Finding):
@@ -90,6 +91,8 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
             continue
         meta = obj.get("metadata") or {}
         token_source[str(meta.get("name") or "")] = (meta.get("annotations") or {}).get(TOKEN_SOURCE_ANNOTATION)
+        account = (meta.get("annotations") or {}).get(LOOKUP_ACCOUNT_ANNOTATION)
+        lookup_account[str(meta.get("name") or "")] = account if valid_bootstrap_username(account) else None
         parsed_ok.append(parsed)
     # FAIL CLOSED ON A DUPLICATE NAME (design review of #230, OB2). "The first by metadata.name wins"
     # let a Secret named to sort first — `aaa-anything` — replace the server and the token of a
@@ -114,7 +117,8 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
         secret_name = parsed.source.split(":", 1)[1]
         # The ownership the check below makes, recorded on the config itself (SPEC_D2b §3.4): the merge
         # serves a stanza's policy over the Secret the lookup wrote for it, and only that Secret.
-        parsed = dataclasses.replace(parsed, token_source=token_source.get(secret_name))
+        parsed = dataclasses.replace(parsed, token_source=token_source.get(secret_name),
+                                     lookup_account=lookup_account.get(secret_name))
         if parsed.name in values_names:
             # The retriever's own Secret over the stanza that asked for it is the design, not a
             # shadow (SPEC_S4 §1): the values entry declares the mode, the Secret says it came from it.

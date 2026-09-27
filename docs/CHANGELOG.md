@@ -10,6 +10,29 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The fleet account's credential lifecycle — a durable, replica-shared gate, the daily ping, and `userSelfLogin`
+  (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md`; chart 0.59.0; the application code rides Epic C's release).**
+  Every login as the fleet account first claims the account's Lease in the release namespace
+  (`gsd-fleet-<sha256(username)[:16]>`), binds nothing without it, and records its attempt there before the password
+  is sent; a session clears the record and the directory's answer replaces it. So a restart, a crash mid-login, a lost
+  write, a second replica and every other cluster on the account read it: one wrong or locked password costs one login
+  across two processes, three clusters, a restart, a crash and an irrelevant edit (measured, SPEC_S4c §8.2), where a
+  second process, a restart and an edit each sent it once more before. The Lease keeps a scrypt fingerprint of the
+  password salted with the account and the password Secret's uid — never the fast hash the process holds — because
+  `cluster-reader` can read Leases and not that Secret; recreating the Secret (a new uid) therefore allows one login.
+  A successful ConfigMap onboarding still spends only its own cluster (#293's budget, unchanged). **The daily ping**
+  (`clusterConfig.fleetAccount.ping`, on, `intervalSeconds: 86400`): once per account per interval, on the leader,
+  the dashboard logs in on ONE cluster the lookup retrieved (in rotation by name) and reads the poller token Secret
+  there, storing nothing; the instant it last succeeded is served on `GET /api/clusterconfigs` (`fleet`), the Cluster
+  Configurations tab and `gsd_fleet_account_last_ok_timestamp_seconds` (with `gsd_fleet_account_ping_enabled` and
+  `gsd_fleet_account_suspended`, all unlabelled). A refused entry stands it down, said once. **`userSelfLogin` is
+  built**: the cluster polls on its own session, renewed at `expires_at − min(2 h, ¼ × expires_in)` from the lifetime
+  the session states (a year on CRC renews two hours before it ends); a 401 before expiry logs in once more and a
+  second suspends the cluster; a refused password, whichever path or replica met it, suspends every self-login
+  cluster on the account within one discovery cadence (`fleet-credential-suspended … stopped=<n>`). The chart's
+  `leases` rule also renders when a fleet account is in use with election off, and a `userSelfLogin` stanza with
+  `replicaCount > 1` is refused. Clearing a refused entry by hand means removing its annotation and restarting the
+  pod, which keeps its own copy.
 - **A values `apiUrl` carrying userinfo, a query or a fragment is refused (#415; chart 0.58.8).**
   `https://user:password@host` (in any letter case, and with surrounding whitespace), `…?x` and `…#x` in
   `clusters[].apiUrl` now fail `helm template` and the pod's loader, as the cluster Secret's `server` already did;

@@ -30,6 +30,8 @@ from test_fleet_login import (
 )
 
 SA_TOKEN = "eyJhbGciOiJSUzI1NiJ9.sa-token-that-must-never-reach-a-log.sig"
+#: The fleet password Secret's uid, as an API server serves every object's: the Lease fingerprint's salt (#285, #419 D2).
+UID = "11111111-2222-4333-8444-555555555555"
 SOURCE = "/api/v1/namespaces/group-sync-operator/secrets/group-sync-dashboard-cluster-poller-token"
 
 
@@ -66,7 +68,8 @@ class FakeHost(ClusterClient):
     def __init__(self, secrets: dict[str, dict] | None = None):
         super().__init__(ClusterConfig("host", "https://kubernetes.default.svc", token_env="X"))
         self.secrets = {"/api/v1/namespaces/ns/secrets/gsd-fleet-account":
-                        {"data": {"password": base64.b64encode(PASSWORD.encode()).decode()}}, **(secrets or {})}
+                        {"metadata": {"uid": UID}, "data": {"password": base64.b64encode(PASSWORD.encode()).decode()}},
+                        **(secrets or {})}
         self.writes: list[tuple[str, str, dict]] = []
 
     class _Ctx:
@@ -84,6 +87,8 @@ class FakeHost(ClusterClient):
         self.writes.append((method, path, json))
         if method == "POST":
             self.secrets[f"{path}/{json['metadata']['name']}"] = json
+        elif method == "PUT" and "/leases/" in path:
+            self.secrets[path] = json          # the fleet account's Lease (#285) is kept as written, as the API server does
         return None
 
 
@@ -229,7 +234,7 @@ class TestARefusedPasswordIsGated:
             run(RND, host, gate=gate)
         assert second.value.code == "login-refused" and second.value.spent is False
         assert len(wire.authorize) == 1, "the refusal was retried — that is the lockout walk"
-        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"metadata": {"uid": UID}, "data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
         wire.secret = httpx.Response(200, json=sa_secret())
         result, _ = run(RND, host, gate=gate)
         assert result.written == "created" and len(wire.authorize) == 2
@@ -343,6 +348,7 @@ class TestTheSchedule:
         def failing(*a, **kw):
             raise LookupRefused("sa-token-secret-missing", "gone", action="create the token Secret on the target", spent=True)
         monkeypatch.setattr(fleetlookup, "lookup", failing)
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: FakeHost())   # the account Lease's API (#285)
         poller = self._poller(tmp_path, monkeypatch)
         interval = poller.settings.discovery_interval_seconds
         with caplog.at_level(logging.INFO, logger="gsd"):
@@ -407,7 +413,7 @@ class TestTheSchedule:
         assert len(lines) == 2 and "attempt=1/5" in lines[0] and "outcome=login-failed" in lines[0]
         assert "outcome=login-refused" in lines[1] and "gave_up=true" in lines[1] and "until the fleet password Secret" in lines[1]
         assert len(wire.authorize) == 1, "the gate held across the cycles"
-        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"metadata": {"uid": UID}, "data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
         with caplog.at_level(logging.INFO, logger="gsd"):
             poller._retrieve_pending()
         assert len(wire.authorize) == 2 and any(m.startswith("fleet-lookup ") for m in caplog.messages), "a rotated password resumed the login"
@@ -431,6 +437,7 @@ class TestTheSchedule:
     def test_success_clears_the_finding_and_wakes_discovery(self, tmp_path, monkeypatch, caplog):
         from gsd.fleetlookup import LookupResult, SaToken
         poller = self._poller(tmp_path, monkeypatch)
+        monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **kw: FakeHost())   # the account Lease's API (#285)
         poller.settings.cluster_registry.set_lookup_finding("rnd", Finding("gsd-cluster-rnd", "login-failed", "x"))
         monkeypatch.setattr(fleetlookup, "lookup", lambda *a, **kw: LookupResult(
             "rnd", USER, SaToken(token=SA_TOKEN, namespace="group-sync-operator", service_account="poller", secret_name="poller-token", last_used="2026-09-22"),

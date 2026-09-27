@@ -115,3 +115,48 @@ class TestTheLookupIsRefusedAtRenderWithoutWhatItNeeds:
         assert (settings["saTokenLookupSourceNamespace"], settings["saTokenLookupSourceServiceAccount"], settings["saTokenLookupTokenSecretName"]) \
             == ("group-sync-operator", "group-sync-dashboard-cluster-poller", "")
         assert settings["replicaCount"] == 1
+
+
+class TestTheCredentialLifecycleInTheChart:
+    """SPEC_S4c §3.8 (#285): the ping's two values reach the ConfigMap; a self-login stanza above one replica is
+    refused by name; the Lease rule renders wherever a fleet account is in use, election on or off — and a Lease
+    stays the one object the application writes."""
+
+    SL = {"name": "shared-rnd", "apiUrl": "https://api.crc.testing:6443", "userSelfLogin": True}
+    OFF = {"leaderElection": {"enabled": False}}
+
+    @staticmethod
+    def _rules(out: str) -> list[dict]:
+        return [r for d in yaml.safe_load_all(out) if d and d.get("kind") in ("ClusterRole", "Role")
+                and not d["metadata"]["name"].endswith("-secrets-mint") for r in d.get("rules") or []]
+
+    def test_the_ping_values_reach_the_configmap(self, tmp_path):
+        for values, expected in (({}, (True, 86400)),
+                                 ({"clusterConfig": {"fleetAccount": {"ping": {"enabled": False, "intervalSeconds": 3600}}}},
+                                  (False, 3600))):
+            ok, out = _render_values(tmp_path, [HOME], select="templates/configmap.yaml", values=values)
+            assert ok, out[-600:]
+            docs = [d for d in yaml.safe_load_all(out) if d and d.get("kind") == "ConfigMap"]
+            settings = yaml.safe_load(next(d for d in docs if "clusters.yaml" in d["data"])["data"]["clusters.yaml"])
+            assert (settings["fleetPingEnabled"], settings["fleetPingIntervalSeconds"]) == expected
+
+    def test_self_login_above_one_replica_is_refused_by_name(self, tmp_path):
+        ok, out = _render_values(tmp_path, [HOME, self.SL], values={"replicaCount": 2, **self.OFF, "reporting": {"enabled": False}})
+        assert not ok and "cluster shared-rnd declares userSelfLogin with replicaCount 2" in out, out[-600:]
+        ok, out = _render_values(tmp_path, [HOME, self.SL], values=self.OFF)
+        assert ok, out[-600:]
+
+    @pytest.mark.parametrize("clusters,values,renders", [
+        ([HOME, SL], OFF, True),                                                              # a mode in use, election off
+        ([HOME], {**OFF, "clusterConfig": {"fleetAccount": {"username": "svc-gsd"}}}, True),  # the chart names an account
+        ([HOME], OFF, False),                                                                 # no account, election off
+        ([HOME], {}, True),                                                                   # election on: as before
+    ], ids=["mode-in-use-election-off", "username-election-off", "no-account-election-off", "election-on"])
+    def test_the_lease_rule_renders_where_a_claim_is_needed_and_stays_the_only_write(self, tmp_path, clusters, values, renders):
+        ok, out = _render_values(tmp_path, clusters, values=values)
+        assert ok, out[-600:]
+        rules = self._rules(out)
+        leases = [r for r in rules if "leases" in (r.get("resources") or [])]
+        assert bool(leases) is renders and all(sorted(r["verbs"]) == ["create", "get", "update"] for r in leases)
+        writes = {"patch", "update", "create", "delete", "deletecollection", "*"}
+        assert all(set(r.get("resources") or []) == {"leases"} for r in rules if set(r.get("verbs") or []) & writes)

@@ -10,6 +10,7 @@ cluster's data hostage for the duration of the timeout.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import threading
@@ -18,7 +19,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-from .config import CREDENTIAL_LOOKUP, ClusterConfig, ConfigError, PlatformNamespaces, Settings, remote_policy
+from .config import (CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN, ClusterConfig, ConfigError, PlatformNamespaces, Settings,
+                     remote_policy)
 from .home import PLATFORM_CONTROLLER_BINDINGS
 from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACHABLE, USER_KIND, ClusterClient,
                    ClusterError, GroupSyncView, GroupView, dn_equal, is_platform_user)
@@ -968,6 +970,11 @@ class Poller:
         from .fleetlookup import CredentialGate
         self._lookups: dict[str, _LookupState] = {}
         self._credential_gate = CredentialGate()
+        # SPEC_S4c (#285): the self-login sessions, consulted by each self-login cluster's own poll thread; and
+        # the daily ping's stand-downs already announced, so a gated account is said once (§3.4).
+        from .selflogin import SelfLoginSessions
+        self.self_login = SelfLoginSessions(self)
+        self._ping_said: set[tuple[str, str]] = set()
 
     def _maybe_backup(self) -> None:
         """Snapshot the irreplaceable history on its own slower schedule.
@@ -1279,11 +1286,25 @@ class Poller:
                 log.debug("%s: not leader, skipping poll", cluster.name)
                 self._stop.wait(min(self.settings.poll_interval_seconds, STANDBY_RECHECK_SECONDS))
                 continue
+            if current.credential_kind == CREDENTIAL_SELF_LOGIN:
+                # SPEC_S4c §3.6: the session IS the credential — acquired, renewed or refused here, before the poll,
+                # and substituted as the token for this whole cycle; none this cycle skips the poll, never fails it.
+                try:
+                    polled = self.self_login.credential_for(current)
+                except Exception:  # noqa: BLE001 - a poll thread must never die silently
+                    log.exception("%s: self-login raised; the cluster is not polled this cycle", current.name)
+                    polled = None
+                if polled is None:
+                    self._wait_cycle(started, own_stop)
+                    continue
+                cluster = polled
             try:
                 poll_started = time.monotonic()
-                poll_once(self.store, cluster, self.settings.request_timeout_seconds,
-                          access_group_dn=self.settings.cluster_access_group,
-                          identities_read=self.settings.identities_read_enabled)
+                outcome = poll_once(self.store, cluster, self.settings.request_timeout_seconds,
+                                    access_group_dn=self.settings.cluster_access_group,
+                                    identities_read=self.settings.identities_read_enabled)
+                if current.credential_kind == CREDENTIAL_SELF_LOGIN:
+                    self.self_login.poll_answered(current, outcome)
                 if self.signals is not None:
                     # The whole poll, success or degraded — a poll that needs the full
                     # timeout to fail is the one worth seeing. Set only by the replica
@@ -1362,13 +1383,18 @@ class Poller:
                 "%s poll cycle took %.2fs; next binding refresh in %.0fs",
                 cluster.name, elapsed, max(0.0, next_binding_refresh - time.monotonic()),
             )
-            wait = max(1.0, self.settings.poll_interval_seconds - elapsed)
-            # Either event ends the wait: the poller's, or this cluster's own.
-            deadline = time.monotonic() + wait
-            while not self._stop.is_set() and not own_stop.is_set() and time.monotonic() < deadline:
-                self._stop.wait(min(1.0, max(0.0, deadline - time.monotonic())))
+            self._wait_cycle(started, own_stop)
+        # A self-login session is revoked on the thread's way out: disabled, retired or stopping (SPEC_S4c B5).
+        self.self_login.stop(cluster.name)
         if own_stop.is_set():
             log.info("%s: its Secret is gone; the poll thread stops (history kept)", cluster.name)
+
+    def _wait_cycle(self, started: datetime, own_stop: threading.Event) -> None:
+        """The rest of this cluster's poll interval. Either event ends the wait: the poller's, or this cluster's own."""
+        wait = max(1.0, self.settings.poll_interval_seconds - (datetime.now(UTC) - started).total_seconds())
+        deadline = time.monotonic() + wait
+        while not self._stop.is_set() and not own_stop.is_set() and time.monotonic() < deadline:
+            self._stop.wait(min(1.0, max(0.0, deadline - time.monotonic())))
 
     def _start_cluster_thread(self, cluster: ClusterConfig) -> None:
         with self._threads_lock:
@@ -1559,7 +1585,8 @@ class Poller:
         write wakes discovery so the cluster polls within seconds rather than at the next cadence."""
         from .clusterconfig.events import event
         from .clusterconfig.writer import secret_name_for
-        from .fleetlookup import LOOKUP_ATTEMPTS, LookupRefused, lookup
+        from .fleetlookup import LOOKUP_ATTEMPTS, LookupRefused, fleet_account, lookup
+        from .fleetstate import ClaimHeld, FleetStateUnavailable
         registry = self.settings.cluster_registry
         if registry.error:
             return  # An incomplete inventory cannot authorize a login from stale intent.
@@ -1574,6 +1601,7 @@ class Poller:
         host, namespace = self.settings.host_cluster(), own_namespace()
         if host is None or not namespace:
             return    # `_discover_once` announced it
+        client = ClusterClient(host, timeout=self.settings.request_timeout_seconds)
         # ONE RETRIEVER PER ESTATE (SPEC_S4 §6), the runtime half: above one replica election is off, so
         # `elector` is None and every replica would reach here — and a Secret-declared mode is invisible
         # to the render's refusal (review of #295, P0-2). The switch itself is checked inside `lookup`.
@@ -1594,10 +1622,20 @@ class Poller:
                     action="run one replica for a release that retrieves credentials (SPEC_S4 §6, one retriever per estate)",
                     spent=False), now)
                 continue
+            # THE ACCOUNT LEASE FIRST (SPEC_S4c §3.3): no claim, no bind. A live claim is someone else binding as
+            # this account now, and a claim taken before this attempt was recorded abandons it — silent, the next
+            # cycle tries; an unreadable or unwritable Lease is a free finding (fail closed).
             try:
-                result = lookup(cluster, self.settings, ClusterClient(host, timeout=self.settings.request_timeout_seconds),
-                                own_namespace=namespace, gate=self._credential_gate)
-            except LookupRefused as exc:
+                lease = self._fleet_lease(client, namespace, fleet_account(self.settings, cluster))
+                lease.claim()
+                try:
+                    result = lookup(cluster, self.settings, client, own_namespace=namespace,
+                                    gate=self._credential_gate, lease=lease)
+                finally:
+                    lease.release()
+            except ClaimHeld:
+                continue
+            except (LookupRefused, FleetStateUnavailable) as exc:
                 self._lookup_failed(state, name, secret, exc, now)
                 continue
             self._lookups.pop(name, None)
@@ -1639,6 +1677,156 @@ class Poller:
                 attempt=f"{state.attempts}/{LOOKUP_ATTEMPTS}", retry_in=None if wait is None else f"{wait:g}",
                 gave_up="true" if state.gave_up else None, action=action, detail=exc.detail, secrets=exc.secrets)
 
+    # ── SPEC_S4c (#285): the account Lease and the daily ping ────────────────────────────────────────
+
+    def _fleet_lease(self, client: ClusterClient, namespace: str, account: str):
+        from .fleetstate import FleetLease, claim_seconds
+        return FleetLease(client, namespace, account, claim_seconds=claim_seconds(self.settings))
+
+    def _host_client(self) -> tuple[ClusterClient, str] | None:
+        """The host cluster's client — the pod's own ServiceAccount — and the pod's namespace, or None."""
+        host, namespace = self.settings.host_cluster(), own_namespace()
+        if host is None or not namespace:
+            return None
+        return ClusterClient(host, timeout=self.settings.request_timeout_seconds), namespace
+
+    def _ping_accounts(self) -> None:
+        """One real read per fleet account per cadence (SPEC_S4c §3.4) — the daily ping, on the discovery thread,
+        after the lookups. Every account in use has its Lease read each cadence, on every replica, so the tab and
+        /metrics serve the same instants and the same gate on a standby. On the leader, an entry for the configured
+        password — whichever path or replica wrote it — seeds the gate and stops the account's self-login clusters
+        (#419, D3), and an account whose clusters the lookup retrieved is pinged against ONE of them — the
+        `lookup-account` their Secrets record, in rotation by name — through `lookup(write=False)` under the account
+        Lease's claim."""
+        from .clusterconfig.events import event, failure
+        from .clusterconfig.parser import Finding
+        from .clusterconfig.writer import secret_name_for
+        from .fleetlookup import LookupRefused, fleet_password, lookup
+        from .fleetstate import ClaimHeld, FleetStateUnavailable, lease_digest, lease_name, stamp
+        registry = self.settings.cluster_registry
+        if registry.error:
+            return
+        targets: dict[str, list[ClusterConfig]] = {}       # account -> the retrieved clusters its ping may read
+        members: dict[str, list[str]] = {}                 # account -> every enabled cluster in use on it (#419, F3)
+        for c in self.settings.effective_clusters():
+            named = c.ldap_connection_bootstrap or self.settings.fleet_account_username
+            if c.enabled and c.token_source == CREDENTIAL_LOOKUP and c.lookup_account:
+                targets.setdefault(c.lookup_account, []).append(c)
+                members.setdefault(c.lookup_account, []).append(c.name)
+            elif c.enabled and c.connection_mode is not None and named:
+                members.setdefault(named, []).append(c.name)
+        for slot in ("ping", "lease"):
+            registry.prune_standing(slot, {n for names in members.values() for n in names})
+        found = self._host_client()
+        if found is None:
+            return
+        client, namespace = found
+        views = dict(self.signals.fleet_accounts()) if self.signals is not None else {}
+        leader = self.elector is None or self.elector.is_leader
+        for account, names in sorted(members.items()):
+            lease = self._fleet_lease(client, namespace, account)
+            try:
+                record = lease.read()
+            except FleetStateUnavailable as exc:
+                for name in names:                         # every cluster on the account, a ping target or not (F3)
+                    self._ping_finding(name, exc, account, slot="lease")
+                continue                                   # the last view stands: never zeroed on a failed read
+            for name in names:
+                registry.set_standing_finding("lease", name, None)
+            if record.reservation_pending(datetime.now(UTC), lease.claim_seconds):
+                continue    # an attempt under way: its reservation is not yet an answer (#419, round 2)
+            views[account] = record.view()
+            # ROTATION BY NAME (§3.4): the first after the last target, wrapping — over N cadences every target is
+            # read once, so a grant revoked on one is found naming it.
+            clusters, last = sorted(targets.get(account, []), key=lambda c: c.name), record.ping_last_target
+            target = next((c for c in clusters if last is None or c.name > last), clusters[0] if clusters else None)
+            ping = leader and target is not None and self.settings.fleet_ping_enabled
+            if not (ping or (leader and record.refused is not None)):
+                continue
+            try:
+                password, salt = fleet_password(client, self.settings, namespace)
+            except LookupRefused as exc:
+                if ping:
+                    self._ping_finding(target.name, exc, account)
+                continue
+            digest, now = lease_digest(account, password, salt), datetime.now(UTC)
+            entry = record.gated(digest)
+            if entry is not None:
+                # ANY PATH'S ENTRY, OBSERVED (#419, D3): it seeds this process's gate and stops the account's self-login
+                # clusters now, not at their renewal — the same cycle for this replica's own refusal, one discovery
+                # cadence for another replica's.
+                self._credential_gate.refuse(entry.get("target") or "", account, password)
+                self.self_login.suspend_account(account, password, entry)
+                # THE PING STANDS DOWN on either kind of gated entry (§3.4): a 500 may be a locked account's code 19,
+                # and one more bind a day against it is the walk in a health check's clothing. Said once.
+                if ping and (account, digest) not in self._ping_said:
+                    self._ping_said.add((account, digest))
+                    action = (f"not pinged again until the fleet password Secret changes, or the entry on Lease "
+                              f"{lease_name(account)} is removed and the pod restarted; the gate is re-read every cycle "
+                              f"at no cost")
+                    said = (f"{entry.get('target') or 'an entry this dashboard cannot read'} answered {entry.get('code')} "
+                            f"at {entry.get('at') or 'an unrecorded instant'}")
+                    failure(discovery_log, "fleet-ping-failed", phase="credential", outcome=entry.get("code"),
+                            account=account, target=target.name, gave_up="true", suspended=account, scope="ping",
+                            action=action, detail=said)
+                    registry.set_standing_finding("ping", target.name, Finding(
+                        secret_name_for(target.name), entry.get("code"), f"the daily ping for {account} stands down: "
+                                                                          f"{said} — {action}"))
+                continue
+            if not ping:
+                continue
+            interval = timedelta(seconds=self.settings.fleet_ping_interval_seconds)
+            if (record.ping_last_attempt is not None and now - record.ping_last_attempt < interval
+                    and record.ping_digest == digest):
+                continue                                   # not due: once per (account, password) per interval (B3)
+            try:
+                # The attempt is recorded WITH the claim, on the read this decision rests on: a second replica, or
+                # a crash between the claim and the bind, cannot ping twice (B3).
+                lease.claim(record, ping_last_attempt=stamp(now), ping_last_target=target.name, ping_digest=digest)
+            except ClaimHeld:
+                continue
+            except FleetStateUnavailable as exc:
+                self._ping_finding(target.name, exc, account)
+                continue
+            changes: dict[str, str | None] = {}
+            try:
+                # `onboarding=()`: the ping must never write #293's per-target success mark (SPEC_S5 §3.3).
+                result = lookup(dataclasses.replace(target, ldap_connection_bootstrap=account, onboarding=()),
+                                self.settings, client, own_namespace=namespace, gate=self._credential_gate,
+                                write=False, lease=lease)
+            except ClaimHeld:
+                pass                    # taken before the attempt was recorded: abandoned; the stamp stands (B3)
+            except (LookupRefused, FleetStateUnavailable) as exc:
+                changes = {"ping_last_outcome": exc.code}
+                failure(discovery_log, "fleet-ping-failed", phase="credential", outcome=exc.code, account=account,
+                        target=target.name, attempt="1/1", gave_up="true" if exc.gated else None, action=exc.action,
+                        detail=exc.detail, secrets=exc.secrets)
+                registry.set_standing_finding("ping", target.name, Finding(secret_name_for(target.name), exc.code,
+                                                                            f"{exc.detail} — {exc.action}"))
+            else:
+                changes = {"ping_last_ok": stamp(now), "ping_last_outcome": "ok"}
+                self._ping_said = {k for k in self._ping_said if k[0] != account}
+                registry.set_standing_finding("ping", target.name, None)
+                event(discovery_log, logging.INFO, "fleet-ping", account=account, target=target.name,
+                      last_used=result.sa_token.last_used, last_ok=stamp(now), secrets=result.secrets)
+            finally:
+                views[account] = (lease.release(**changes) or record).view()
+        if self.signals is not None:
+            self.signals.note_fleet_accounts({a: v for a, v in views.items() if a in members})
+
+    def _ping_finding(self, target: str, exc, account: str, slot: str = "ping") -> None:
+        """A free failure of the sweep — no password Secret, an unreadable Lease (slot `lease`, cleared by the next
+        read) — announced when it appears."""
+        from .clusterconfig.events import failure
+        from .clusterconfig.parser import Finding
+        from .clusterconfig.writer import secret_name_for
+        registry = self.settings.cluster_registry
+        finding = Finding(secret_name_for(target), exc.code, f"{exc.detail} — {exc.action}")
+        if finding not in registry.findings():
+            failure(discovery_log, "fleet-ping-failed", phase="credential", outcome=exc.code, account=account,
+                    target=target, action=exc.action, detail=exc.detail)
+        registry.set_standing_finding(slot, target, finding)
+
     def _run_discovery(self) -> None:
         """The discovery stage on its own cadence, `discoveryIntervalSeconds` (SPEC_S1 C3; off the binding
         cadence since chart 0.56.0), after the synchronous one in start(); a write from the tab shortens
@@ -1652,6 +1840,7 @@ class Poller:
                 self._discover_once()
                 self._reconcile_threads()
                 self._retrieve_pending()
+                self._ping_accounts()
             except Exception:  # noqa: BLE001 - the discovery thread must never die silently
                 log.exception("unhandled error discovering cluster Secrets")
 
@@ -1700,9 +1889,10 @@ class Poller:
                 continue
             self._start_cluster_thread(cluster)
         if self.settings.cluster_secrets_enabled:
-            if any(c.enabled and c.credential_kind == CREDENTIAL_LOOKUP for c in effective):
-                # SPEC_S4b: a cluster awaiting its lookup does not wait a whole cadence for it. The
-                # lookup runs on the thread, never here — a target that is down must not hold up start.
+            if any(c.enabled and (c.connection_mode is not None or c.token_source == CREDENTIAL_LOOKUP) for c in effective):
+                # SPEC_S4b: a cluster awaiting its lookup does not wait a whole cadence for it; SPEC_S4c §3.4: every
+                # replica reads the fleet accounts' Leases within seconds of a restart, so /metrics and the tab do
+                # not start blank. Both run on the thread, never here — a target that is down must not hold up start.
                 self._discover_now.set()
             thread = threading.Thread(target=self._run_discovery, name="cluster-secrets", daemon=True)
             thread.start()

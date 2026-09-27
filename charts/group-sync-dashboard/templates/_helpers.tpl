@@ -1041,12 +1041,39 @@ them on the next start.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* SPEC_S4c §3.8: a self-login session is per process, so above one replica each would log in as the fleet
+       account for every cluster on every renewal — the lookup's rule below, for the same reason. */ -}}
+{{- range $name, $mode := $modeOf -}}
+{{- if and (eq $mode "userSelfLogin") (gt (int $.Values.replicaCount) 1) -}}
+{{- fail (printf "cluster %s declares userSelfLogin with replicaCount %d: a self-login session is per process, so each replica would log in as the fleet account for every cluster on every renewal. Use replicaCount 1 for a release that declares userSelfLogin." $name (int $.Values.replicaCount)) -}}
+{{- end -}}
+{{- end -}}
 {{- /* One retriever per estate (SPEC_S4 §6), held wherever a lookup is POSSIBLE and not only where a
        values stanza declares one (review of #295, P0-2): a Secret may declare the mode at any time,
        and above one replica election is off, so every replica would log in as the fleet account. */ -}}
 {{- if and $.Values.clusterConfig.secrets.writes.enabled (gt (int $.Values.replicaCount) 1) -}}
 {{- fail (printf "clusterConfig.secrets.writes.enabled with replicaCount %d: a cluster Secret may declare saTokenLookup at any time, and above one replica every pod polls for itself and each would log in as the fleet account (SPEC_S4 §6, one retriever per estate). Use replicaCount 1 for a release that writes cluster Secrets, or turn writes off." (int $.Values.replicaCount)) -}}
 {{- end -}}
+{{- end -}}
+
+{{- /*
+Whether a fleet account is in use (SPEC_S3 §3.1; SPEC_S4c §3.8): the chart names one, or any cluster stanza declares a
+connection mode — a stanza's ldapConnectionBootstrap names the username, but the password is still the chart's Secret.
+"true" or "false". Shared by fleet-account-rbac.yaml (the password grant) and rbac.yaml (the fleet account's Lease).
+*/ -}}
+{{- define "gsd.fleetAccountInUse" -}}
+{{- $fleet := (.Values.clusterConfig).fleetAccount | default dict -}}
+{{- $inUse := not (empty ($fleet.username | default "")) -}}
+{{- range .Values.clusters -}}
+  {{- /* SKIP A NON-ENTRY RATHER THAN DEREFERENCE IT. Helm pads a list index set beyond the list's
+         length with null, so `clusters[0]` can be nil; `gsd.validateClusters` refuses that BY NAME
+         ("clusters[0] is not a cluster entry"), and reaching into it here would abort the render
+         with a nil-pointer first — replacing a diagnosis with a stack trace. */ -}}
+  {{- if kindIs "map" . -}}
+    {{- if or .saTokenLookup .userSelfLogin -}}{{- $inUse = true -}}{{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $inUse -}}
 {{- end -}}
 
 {{- /*

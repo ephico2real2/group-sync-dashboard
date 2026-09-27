@@ -7,7 +7,7 @@
 | Release | — (post-programme; S4 step C, the issue's own label S3b-C) |
 | Version on release | app 0.38.0, chart 0.59.0 |
 | Issue | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) |
-| Status | specified |
+| Status | merged |
 | Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22. Brought to main `f82a065` on 2026-09-26 by OB3 (#285, the implementer's brief): the reference cluster re-measured read-only, the body corrected where it had stopped being true (Orchestrator's notes), and §8's implementation blocks cut from a copy of `f82a065` with the design implemented and applied back to a clean clone for the proof in §8.1. Rewritten on round 1 of the spec review (PR #419, 2026-09-27: Grok and Codex Astra; OB2's rulings D1–D4) by OB3: the rulings and the accepted findings written into the body and the notes, §8 re-cut and re-measured. Rewritten on round 2 (PR #419: Grok and Codex Astra; the orchestrator's decisions on the PR) by OB3: C5, F1, F2 and F3 written into the body and the notes, §8 re-cut from main `e975410` and re-measured |
 
 ## How to read this spec

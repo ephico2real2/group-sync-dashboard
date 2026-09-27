@@ -117,6 +117,10 @@ class RuntimeSignals:
         self._report_system_at: str | None = None
         self._console_url: str | None = None
         self._grafana_url: str | None = None
+        # SPEC_S4c (#285): every fleet account's Lease as the discovery thread last read it, and each self-login
+        # cluster's session — what the tab and /metrics serve, the same on a standby as on the leader.
+        self._fleet: dict[str, dict] = {}
+        self._self_login: dict[str, dict] = {}
 
     def membership_change_totals(self, store, cluster_ids) -> dict[tuple[str, str], int]:
         """Advance each cluster's watermark over the rows committed since the last call and return
@@ -157,6 +161,28 @@ class RuntimeSignals:
     def grafana_url(self) -> str | None:
         with self._lock:
             return self._grafana_url
+
+    def note_fleet_accounts(self, views: dict[str, dict]) -> None:
+        """Each fleet account's Lease view (`gsd/fleetstate.py#FleetRecord.view`), replaced once per discovery
+        cadence; an account whose read failed keeps its last view — never zeroed on a failure to read."""
+        with self._lock:
+            self._fleet = dict(views)
+
+    def fleet_accounts(self) -> dict[str, dict]:
+        with self._lock:
+            return dict(self._fleet)
+
+    def note_self_login(self, cluster: str, view: dict | None) -> None:
+        """A self-login cluster's session (`gsd/selflogin.py#SelfLoginSessions.view`); None forgets the cluster."""
+        with self._lock:
+            if view is None:
+                self._self_login.pop(cluster, None)
+            else:
+                self._self_login[cluster] = view
+
+    def self_login(self, cluster: str) -> dict | None:
+        with self._lock:
+            return self._self_login.get(cluster)
 
     def note_report_system(self, view: dict | None, at: str) -> None:
         """The report service's self-report as the usage feed carried it; None when the feed had
@@ -797,6 +823,39 @@ class DashboardCollector:
             if newest is not None:
                 backup_ts.add_metric([], newest)
         yield backup_ts
+
+        # SPEC_S4c §3.9: the fleet account, UNLABELLED — /metrics is public and the account is a username, the
+        # target adds nothing, and a digest of a guessable username is a name in a hat.
+        fleet_ok = GaugeMetricFamily(
+            "gsd_fleet_account_last_ok_timestamp_seconds",
+            "Unix time of the OLDEST last successful daily ping across the fleet accounts — the most stale account "
+            "is the one to alert on: (time() - this) > 2 * clusterConfig.fleetAccount.ping.intervalSeconds. Absent "
+            "until a ping has succeeded: absence means never, not zero. Read from the account Leases, the same on "
+            "every replica.",
+            labels=[],
+        )
+        ping_enabled = GaugeMetricFamily(
+            "gsd_fleet_account_ping_enabled",
+            "1 when the daily ping is configured on. While this is 1, absence of "
+            "gsd_fleet_account_last_ok_timestamp_seconds means no ping has ever succeeded.",
+            labels=[],
+        )
+        suspended = GaugeMetricFamily(
+            "gsd_fleet_account_suspended",
+            "1 when a fleet account's Lease holds a refused entry: a login was refused or answered without a "
+            "session, and nothing binds as that account with that password until it changes.",
+            labels=[],
+        )
+        enabled = getattr(self.settings, "fleet_ping_enabled", None)
+        if enabled is not None:
+            ping_enabled.add_metric([], 1 if enabled else 0)
+        if self.signals is not None:
+            views = list(self.signals.fleet_accounts().values())
+            oks = [ok for ok in (_epoch(v.get("last_ok")) for v in views) if ok is not None]
+            if oks:
+                fleet_ok.add_metric([], min(oks))
+            suspended.add_metric([], 1 if any(v.get("suspended") for v in views) else 0)
+        yield from (fleet_ok, ping_enabled, suspended)
 
 
 def build_registry(store: StorageBackend, grace: timedelta, elector=None,

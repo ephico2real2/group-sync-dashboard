@@ -22,6 +22,10 @@ class ClusterRegistry:
         # the lookup succeeds or the cluster stops being pending. Separate from `_findings`, which a
         # discovery replaces every cycle — a lookup finding must survive the cycles between attempts.
         self._lookups: dict[str, Finding] = {}
+        # SPEC_S4c: the standing findings of the daily ping (per target) and of self-login (per cluster), each
+        # in a slot of its own — `_retrieve_pending` clears the lookup slot every cycle for every cluster it
+        # stops tracking, so a finding another owner holds there would be erased by it. Two owners, one card.
+        self._standing: dict[tuple[str, str], Finding] = {}
         self._blocked: set[str] = set()
 
     def replace(self, clusters: list[ClusterConfig], findings: list[Finding], *, at: str,
@@ -47,6 +51,7 @@ class ClusterRegistry:
         with self._lock:
             out = list(self._findings)
             out.extend(self._lookups[name] for name in sorted(self._lookups))
+            out.extend(self._standing[key] for key in sorted(self._standing))
             if self.error:
                 out.append(Finding("-", "discovery-failed", self.error))
             return out
@@ -58,6 +63,20 @@ class ClusterRegistry:
                 self._lookups.pop(cluster, None)
             else:
                 self._lookups[cluster] = finding
+
+    def set_standing_finding(self, slot: str, cluster: str, finding: Finding | None) -> None:
+        """A finding its owner holds across cycles in its own slot — `ping`, `self-login` (SPEC_S4c); None clears it."""
+        with self._lock:
+            if finding is None:
+                self._standing.pop((slot, cluster), None)
+            else:
+                self._standing[(slot, cluster)] = finding
+
+    def prune_standing(self, slot: str, keep: set[str]) -> None:
+        """Drop the slot's findings for every cluster not in `keep` — one that left the fleet takes its finding along."""
+        with self._lock:
+            for key in [k for k in self._standing if k[0] == slot and k[1] not in keep]:
+                del self._standing[key]
 
     def merge(self, values: list[ClusterConfig]) -> list[ClusterConfig]:
         """The values list with the discovered clusters laid over it: a Secret shadows a values entry of the same

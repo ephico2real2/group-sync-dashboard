@@ -31,6 +31,9 @@ FINDING_CODES = (
     # every other finding.
     "fleet-credential-missing", "fleet-write-disabled", "login-refused", "login-failed",
     "sa-token-secret-missing", "sa-token-unreadable", "sa-token-invalidated", "lookup-write-failed",
+    # SPEC_S4c (#285): the fleet account's Lease could not be read or written (nothing binds); a self-login
+    # cluster suspended with its account's credential, or whose target states a session too short to renew.
+    "fleet-state-unavailable", "self-login-suspended", "self-login-lifetime-too-short",
 )
 
 from .parser import Finding, parse_secret  # noqa: E402

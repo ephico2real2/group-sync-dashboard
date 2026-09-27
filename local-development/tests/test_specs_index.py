@@ -114,24 +114,22 @@ def test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reac
     pyproject.toml's current rungs. S4c said `chart 0.51.0` on a main at 0.52.1, and 0.51.0 had already
     shipped (review of #325, all three seats; the test is OB1-lite's). S3 and S4b are recorded by name
     and, since the index took the four-word lifecycle, are `in progress` and `merged` — this rule reads
-    `specified` rows only."""
+    `specified` rows only. S4c was the row it was written for; its implementation (#285) takes the chart
+    rung it names and records it by name, so the rule may have no row to read until the next spec."""
     chart = re.search(r"^version: (\d+\.\d+\.\d+)$",
                       (REPO / "charts/group-sync-dashboard/Chart.yaml").read_text(), re.M).group(1)
     app = re.search(r'^version = "(\d+\.\d+\.\d+)"$', (REPO / "local-development/pyproject.toml").read_text(), re.M).group(1)
     changelog = (REPO / "docs/CHANGELOG.md").read_text()
     as_tuple = lambda v: tuple(int(x) for x in v.split("."))  # noqa: E731
-    checked = []
     for fid, row in ROWS.items():
         if row["status"] != "specified" or re.search(rf"SPEC_{fid}[_ §.:,)]", changelog):
             continue
         m_chart = re.search(r"chart (\d+\.\d+\.\d+)", row["version"])
         m_app = re.search(r"app (\d+\.\d+\.\d+)", row["version"])
         if m_chart:
-            checked.append(fid)
             assert as_tuple(m_chart.group(1)) > as_tuple(chart), (fid, row["version"], f"Chart.yaml is already {chart}")
         if m_app:
             assert as_tuple(m_app.group(1)) > as_tuple(app), (fid, row["version"], f"pyproject.toml is already {app}")
-    assert "S4c" in checked, checked
 
 
 def test_s4c_gates_every_bound_failure_per_account() -> None:

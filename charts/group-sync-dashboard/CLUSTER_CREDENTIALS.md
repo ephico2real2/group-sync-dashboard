@@ -38,8 +38,11 @@ pending, with a finding; correct the cause before rotating the password or delib
 Since #315, every bound login failure gates that account and password on every target in this
 process, for values, Secret and ConfigMap triggers alike. Successful ConfigMap sessions still spend only
 their own target's budget; successful values/Secret logins are not globally one-shot. Account means the
-exact configured username string: use one spelling for one directory identity. A restart or another
-replica starts with an empty gate; durable, replica-shared protection remains #285's work. Keep one replica.
+exact configured username string: use one spelling for one directory identity. Since #285 every login claims
+the fleet account's Lease (`gsd-fleet-<sha256(username)[:16]>` in the release namespace) and records its attempt
+there before the password is sent; a session clears it and a refusal replaces it, so a restart, a crash or
+another replica reads it and does not send the password again; a success is still not recorded there. Keep one
+replica.
 
 Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
@@ -57,13 +60,16 @@ That is deliberate, and it is why the two credentials have opposite lifetimes:
 | | the fleet LDAP account | the retrieved ServiceAccount token |
 |---|---|---|
 | used for | one retrieval, at onboarding | every poll, forever |
-| how often it authenticates | once per cluster, while that cluster is awaiting a credential | never re-authenticates; the token is presented |
+| how often it authenticates | once per cluster, while that cluster is awaiting a credential; and once a day for the whole fleet, the daily ping (#285) | never re-authenticates; the token is presented |
 | lifetime | a directory password, rotated by policy | **no `exp` claim at all** |
 | stored where | one Secret, named by `clusterConfig.fleetAccount.passwordSecret` | `gsd-cluster-<name>`, written by the retrieval |
 
-The bind happens only while a cluster is *pending* a credential
+The retrieval binds only while a cluster is *pending* a credential
 (`gsd/poller.py#Poller._retrieve_pending` selects `credential_kind == CREDENTIAL_LOOKUP`). Once the
-token is written, the cluster leaves that set and the LDAP account is not used for it again.
+token is written, the cluster leaves that set and is not retrieved again. The one later use of the LDAP
+account is the daily ping (`gsd/poller.py#Poller._ping_accounts`, `clusterConfig.fleetAccount.ping`): once
+per account per interval it logs in on ONE retrieved cluster, reads the token Secret there to confirm the
+account still works, and stores nothing — confirming is not renewing.
 
 **Why the polling token carries no expiry.** A token that expires needs something to renew it, and
 renewal means re-authenticating — which would turn a once-per-onboarding bind into a recurring one
@@ -80,7 +86,7 @@ a cluster using one stops polling when it lapses. See §5.
 |---|---|---|
 | static bearer token | the token, written by whoever created the Secret | the token |
 | `saTokenLookup` | the token the retrieval fetched, plus provenance annotations | the token; the fleet account bound once to fetch it |
-| `userSelfLogin` | — | **not built** — `gsd/config.py#CREDENTIAL_PENDING_REASONS` records it as #285's work |
+| `userSelfLogin` | — (nothing at rest) | the fleet account's own session, held in memory and renewed a fixed margin before it expires, `expires_at − min(2 h, ¼ × expires_in)` (#285, `gsd/selflogin.py#SelfLoginSessions`); a refused password suspends every self-login cluster on the account |
 | `oauth` (username/password) | — | **not built** — refused as `oauth-exchange-not-built` |
 
 A retrieval-written Secret is recognisable by its annotations, which a hand-written one lacks:
