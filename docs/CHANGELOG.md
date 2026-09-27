@@ -8,7 +8,9 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 1.1.0 — chart 0.59.3 — 2026-09-27
+
+- **Epic C composition review fixes (#383).**
 
 - **Epic C's composition review, applied (OB2, Fable; #383).** The daily ping's login now scrubs the poller token this
   dashboard stores for the cluster it pings, and every self-login session it holds, from every line, refusal and the
