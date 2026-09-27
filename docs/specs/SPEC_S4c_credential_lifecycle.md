@@ -43,6 +43,12 @@ Decisions taken at review, recorded first and then applied:
   price is that one sick target's 500 stops binds on every target of the account until the password
   rotates or the entry is cleared (§5, question 7). §3.4's ping already stood down on either kind for the
   same reason; every other path now does too.
+- **#315 ships B2's in-memory half first** (`docs/specs/SPEC_S4d_credential_gate_per_account.md`):
+  `CredentialGate` holds a refused kind, keyed on (account, digest) and written by every bound answer with
+  the answering target as evidence, and a spent kind, #293's per-target success mark (SPEC_S5 §3.3). §3.3's
+  cache paragraph now names the refused kind as what `FleetRecord.refused` seeds, leaves the spent kind
+  off the Lease, and quotes the docstring sentence #315 wrote, which is the one this spec replaces.
+  "Account" there is the exact configured username string (SPEC_S4d §3.3); the Lease inherits that key.
 - **The release versions** are app 0.32.0, chart 0.53.0 (all three reviewers): the draft's chart 0.51.0
   had already shipped (#307), and main is at 0.52.1 (#317). SPEC_D2b's implementation (#338) took those two
   rungs first, then SPEC_U1 (#353) took app 0.33.0 and chart 0.54.0, so this spec now carries app 0.34.0, chart 0.55.0.
@@ -492,10 +498,14 @@ def claim_seconds(settings) -> int:
    between the two loses the cheap copy, never the durable one.
 6. `lease.release(record)` in a `finally`.
 
-`gsd/fleetlookup.py#CredentialGate` stays as the **cache**: seeded from `FleetRecord.refused` at every
-read, consulted where it is today. Its docstring's sentence *"Best-effort and per process; the
-durable, replica-shared gate is #285's"* is replaced by "the cache of the account Lease's gate
-(SPEC_S4c §3.3); seeded on every read, and never the only copy while the Lease is writable."
+`gsd/fleetlookup.py#CredentialGate` stays as the **cache**: its refused kind — the account's entry,
+keyed on (account, digest), which #315 made per account in memory
+(`docs/specs/SPEC_S4d_credential_gate_per_account.md`) — is seeded from `FleetRecord.refused` at every
+read and consulted where it is today; its spent kind, #293's per-target success mark (SPEC_S5 §3.3), is
+not on the Lease and stays as it is. Its docstring's sentence *"A restart or a second replica starts
+empty — not covered until #285's account Lease, which this becomes the cache of (SPEC_S4c §3.3)"* is
+replaced by "the cache of the account Lease's gate (SPEC_S4c §3.3); seeded on every read, and never the
+only copy while the Lease is writable."
 
 **Fail closed, and what it looks like.** `FleetStateUnavailable` on `claim()` or `refuse()` is the
 finding `fleet-state-unavailable` (free, announced on transition, rechecked every cycle), with

@@ -171,6 +171,13 @@ re-applied from these blocks):
     sha256(password))** and **every `bound` answer gates** — the target evaluated the password or
     may have. `final` is gone. The business owner retracted the earlier "keep two tiers" decision
     on the measurement; the stored code stays `login-refused` for a 401 and `login-failed` otherwise.
+    **Superseded in part (#315, `docs/specs/SPEC_S4d_credential_gate_per_account.md`):** the target
+    half of this key, and R2-2's "a different target on the same account still may", were reversed by
+    the operator's ruling at the review of #325 (`docs/specs/SPEC_S4c_credential_lifecycle.md`,
+    orchestrator's notes): a lockout is per directory account and a locked account's 500 cannot be told
+    from a sick target's, so every `bound` answer now gates the ACCOUNT on every target, keyed on
+    (username, sha256(password)), with the answering target kept as evidence. The per-target key
+    stated here and in §3.12's `CredentialGate` is #284's history, not the code.
   - **R2-2 — the test that blessed the regression is inverted:** after a read timeout the same
     credential must not reach that target again; a different target on the same account still may.
   - **R2-3 — moving the decode first put a new failure in front of the error handling:** a
