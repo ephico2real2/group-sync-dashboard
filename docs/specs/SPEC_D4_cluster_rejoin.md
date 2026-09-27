@@ -27,7 +27,7 @@ The implementer applies Appendix E with:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_D4_cluster_rejoin.md . --apply
 
-Line citations are plain `file:line` text at `3cbc4e3`, the branch head the blocks apply to. `path#anchor` citations
+Line citations are plain `file:line` text at `3cbc4e3`, whose code the blocks apply to. `path#anchor` citations
 are the maintained kind. An upstream source is cited at the commit it was read at, from the raw file with line numbers.
 
 **The constraint over everything here:** nothing in this spec, its tests or its walk logs in as any account, and
@@ -90,6 +90,19 @@ never as the fleet account. The tests use made-up names against a fake remote.
   | Codex's reworded test assertions for the before-run (C7) | Appendix C states each before-failure as measured instead |
   | Grok's belt-and-braces newline check | the orchestrator's decision (C4): removed, the shared grammar refuses it |
   | Grok's and Codex's tests over source and spec text (`test_d4_7_states_the_scope…`, `test_the_shared_grammar_already_refuses…`) | they pin comments and prose, not behaviour; the dialog test pins the dialog's scope sentence |
+- **The confirmation review, round 1** (Grok and Codex on `2c227d9`). Grok: ready for phase 2. Codex: three
+  minimum changes, all taken; the first two each with its red and green test (Appendix C):
+
+  | finding | what changed |
+  |---|---|
+  | Codex P1: a short password JSON-escaped by the remote (`x"Z` as `x\"Z`, `éZ` as `\u00e9Z`) escaped every scrub, because the shared escaped forms stop at eight characters | `gsd/rejoin.py#_scrub` hands the fleet's scrub each secret also escaped once and twice, ASCII and not; `RejoinLogin._scrub` routes the login's own remote text through it. The fleet's scrub is unchanged |
+  | Codex P2: an unexpected error after the login existed answered only "press Refresh", losing how the login ended | `rejoin` holds the login while `_exchange` runs, and on an unexpected error answers fixed words, then how the login ended; the route keeps its fallback for an error before a login exists |
+  | Codex C3: the docstring said a password the directory "answered" is not sent again | it says "refused", for this exact username, by this pod; a success is not held, and §2, §3.3, `API.md` and the changelog say the same |
+
+  Codex's Chromium check was blocked by its sandbox; `test_fetch_refuses_redirects_and_submits_once` passed here in
+  Chromium on the applied tree, as it did for Grok. Taken in a smaller form: Codex's scrubber copied the escaped-form
+  loop of `gsd/kube.py#redact_text` and replaced the fleet's scrub; this one keeps the fleet's scrub and hands it the
+  escaped forms.
 
 ## 1. The point
 
@@ -115,7 +128,8 @@ The property, with its scope:
 
 - A press sends the password in at most one authorize request, as the account that request names.
 - The application never retries it.
-- The pod that sent a password the directory answered does not send it again until that pod restarts.
+- The pod that sent a password the directory refused for that username does not send it again until that pod
+  restarts. A success is not held: two right presses send twice.
 - Nothing stores the password.
 - No fleet path presents the fleet password as the person, and the person is never presented as a fleet account.
 
@@ -178,14 +192,16 @@ The route is `rejoin_cluster_config` inside `gsd/api.py#build_app`, beside Refre
 | 6 | this process runs a poller, whose credential gate Rejoin uses | `409` | no |
 | 7 | no other Rejoin is running in this process | `409`, never queued | no |
 | 8 | `gsd/rejoin.py#rejoin` (§3.3) | `200` with an outcome (§3.4) | at most one login |
-| 9 | any error step 8 did not expect | `200 rejoin-failed` in fixed words (`gsd/rejoin.py#stopped_unexpectedly`) | at most the one login |
+| 9 | any error step 8 did not expect | `200 rejoin-failed` in fixed words, then how the login ended (`gsd/rejoin.py#stopped_unexpectedly`) | at most the one login |
 
 Why `body: Any = Body(None)`: a body typed `dict` lets FastAPI answer a non-object body with a 422 that quotes it
 whole, password included (measured, Appendix A.4). With `Any`, FastAPI passes the body on unvalidated, and step 3
 refuses it in fixed words.
 
 Why step 9: an error's own text may quote the password, and an error that leaves the route is printed with its text
-by Uvicorn. So it never leaves: the answer and the line are fixed words.
+by Uvicorn. So it never leaves. `rejoin` catches it while it still holds the login, so the answer and the line say,
+after the fixed words, how the login ended: signed out, or the token to delete. The route catches anything raised
+before a login exists.
 
 A success wakes discovery, as every write on the tab does, so the card polls within seconds.
 
@@ -213,7 +229,7 @@ holds a process-wide lock across all of them, so the gate's check and the login 
 
 | step | what | on failure | the credential gate |
 |---|---|---|---|
-| 1 | `gate.account_refusal(username, password)`: has the directory answered this password for this account in this pod? | `login-refused`; **nothing sent** | read |
+| 1 | `gate.account_refusal(username, password)`: has the directory refused this password for this username, in this pod? | `login-refused`; **nothing sent** | read |
 | 2 | `RejoinLogin(..., policy=ONE_TRY)`: #283's login, as the person | a bound failure (401, 500, a timeout after the write, a 302 without a token): `login-refused` or `login-failed`. A failure before the write: `login-failed`, not sent | `refuse` after a **bound** failure only, as the lookup does (#315) |
 | 3 | inside the session, D8: `remote_says_cluster_admin`, then the `cluster-rejoin-review` line with the remote's answer | `not-cluster-admin` (a no) or `access-review-failed` (no clean answer); nothing read or written | — |
 | 4 | inside the session: `read_sa_token`; its token, or a refused read's, goes to `login.add_secrets` before the session ends | `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated`; nothing written | — |
@@ -241,7 +257,7 @@ is the retry.
 | `access-review-failed` | the remote could not answer: 403, 500, a timeout, no boolean `allowed` | once | no | no |
 | `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated` | the token Secret could not be used | once | no | no |
 | `lookup-write-failed` | the token was read and the host refused the write | once | no | no |
-| `rejoin-failed` | an error the design did not expect (§3.1 step 9) | unknown: press Refresh first | no | unknown |
+| `rejoin-failed` | an error the design did not expect (§3.1 step 9); the message ends with how the login ended | unknown: press Refresh first | no | unknown |
 
 Every answer after a session existed says how the login ended: "the login was signed out", or the object to delete
 and the command (a token's name is not a secret). Refusals before anything is sent are HTTP errors (§3.1).
@@ -303,8 +319,8 @@ store, answer or browser storage the dashboard controls.**
 | a redirect | the credential fetch uses `redirect: "error"` |
 | the request logs | oauth-proxy's request log and Uvicorn's access log write the request line, never the body |
 | a 422 | `body: Any`, and the shape refused in fixed words |
-| an unexpected error | caught in the route: fixed words out, nothing of the error logged |
-| the app's lines and answers | every line and answer is scrubbed of the password, its Basic form, the login's token and the token read; free remote text at any length, because the emit helper skips values under four characters |
+| an unexpected error | caught by `rejoin` while it holds the login, and by the route before one exists: fixed words and how the login ended, nothing of the error |
+| the app's lines and answers | every line and answer is scrubbed of the password, its Basic form, the login's token and the token read, in every spelling — as written, and JSON-escaped once and twice, ASCII and not — at any length: the emit helper skips values under four characters, and the shared escaped forms stop at eight |
 | a failed revoke | the token read, or a refused read's, is handed to the login before the revoke runs |
 | the audit logs | the password is in a header, never the URI; the audit log is written at Metadata level |
 | the database, the Secret, the gate | Rejoin writes no row; the Secret holds the token read and the provenance; the gate holds 64 bits of SHA-256, in memory |
@@ -374,7 +390,7 @@ whole database, and on the wire outside the one authorize's `Authorization` head
 
 | file | change | added | removed |
 |---|---|---|---|
-| `local-development/gsd/rejoin.py` | new: `RejoinLogin`, `refusal`, `fleet_accounts`, `check`, `question`, `question_words`, `remote_says_cluster_admin`, `rejoin`, `stopped_unexpectedly` | +257 | −0 |
+| `local-development/gsd/rejoin.py` | new: `_scrub`, `RejoinLogin`, `refusal`, `fleet_accounts`, `check`, `question`, `question_words`, `remote_says_cluster_admin`, `rejoin`, `_exchange`, `stopped_unexpectedly` | +291 | −0 |
 | `local-development/gsd/fleetlogin.py` | `FleetLogin.REFUSED_ACTION` and `FleetLogin.NEXT_TRY`: the refusal and next-try words as class attributes, byte-identical for the fleet | +11 | −8 |
 | `local-development/gsd/clusterconfig/writer.py` | `TOKEN_SOURCE_REJOIN`, the three Rejoin annotations, `owned_by_mode`, `CreateRequest.rejoin`; `store_lookup` takes `rejoin` | +36 | −8 |
 | `local-development/gsd/clusterconfig/reader.py` | the "ours" rule through `owned_by_mode` | +2 | −3 |
@@ -383,7 +399,7 @@ whole database, and on the wire outside the one authorize's `Authorization` head
 | `local-development/gsd/api.py` | the route `rejoin_cluster_config`, its one-at-a-time lock and its catch for the unexpected; `rejoinable` on each live row | +48 | −1 |
 | `local-development/gsd/static/index.html` | the dialog; the card's Rejoin button and line; the Refresh line's next step; `openRejoin`, `closeRejoin`, `clearRejoin`, `sendRejoin`; `apiSend`'s `redirect` argument; the `pagehide` listener; `idleExpire` closes the dialog | +120 | −5 |
 | `local-development/gsd/static/app.css` | the dialog's width and its gates list | +6 | −0 |
-| `local-development/tests/test_cluster_rejoin.py` | new: Appendix C | +645 | −0 |
+| `local-development/tests/test_cluster_rejoin.py` | new: Appendix C | +697 | −0 |
 | `local-development/tests/test_api_contract.py` | the carve-out gains the route | +3 | −2 |
 | `local-development/tests/test_clusterconfig.py` | the pinned row gains `rejoinable` | +1 | −1 |
 | `local-development/tests/test_ui.py` | Refresh's `auth_failed` assertion names Rejoin; three Rejoin tests | +160 | −2 |
@@ -392,12 +408,12 @@ whole database, and on the wire outside the one authorize's `Authorization` head
 | `charts/group-sync-dashboard/README.md` | links the runbook | +2 | −1 |
 | `charts/group-sync-dashboard/values.yaml` | the `clusterAdminSar` comment: the remote asks the same question (a comment only) | +2 | −1 |
 | `docs/README.md` | lists the runbook | +1 | −0 |
-| `local-development/API.md` | `rejoinable`; the route; six write routes | +29 | −2 |
+| `local-development/API.md` | `rejoinable`; the route; six write routes | +30 | −2 |
 | `docs/DESIGN_remote_cluster_access.md` | D7 built, D8 directed and built; §7's text and twin | +17 | −16 |
 | `docs/diagrams/remote-cluster-access/source.html` | Figure 4 and the D8 card drawn as built | +14 | −13 |
 | `docs/specs/SPEC_D3_cluster_refresh.md` | a note: #316 builds the next step §4 names | +4 | −0 |
 | `docs/CHANGELOG.md` | the `## Unreleased` entry | +15 | −0 |
-| **total** | 23 files | **+1574** | **−85** |
+| **total** | 23 files | **+1661** | **−85** |
 
 Measured with `git diff --numstat` on the tree the blocks produce. Two steps the blocks cannot carry, both in the
 implementing commit:
@@ -456,8 +472,9 @@ The question is built as the host's `TierResolver` builds it (kube.py:1481-1495)
 |---|---|
 | a typed body's 422 | measured with FastAPI 0.141.1 and pydantic 2.13.5: a typed `dict` echoed `"input": "<the password>"` for a JSON string and a list; `Any` does not (also Grok C3, Codex C3) |
 | a key equal to the password | measured on the implemented copy before the fix: `_reject_unknown` named the key in the 422 (Codex C3) |
-| an unexpected error | Uvicorn 0.53.0 logs an exception that leaves the app with its traceback: `self.logger.error(msg, exc_info=exc)` in `run_asgi` (uvicorn/protocols/http/h11_impl.py lines 414-416); measured: before the fix the route answered 500 |
+| an unexpected error | Uvicorn 0.53.0 logs an exception that leaves the app with its traceback: `self.logger.error(msg, exc_info=exc)` in `run_asgi` (uvicorn/protocols/http/h11_impl.py lines 414-416); measured: before the fix the route answered 500, and before round 1's fix an error after the login existed lost how the login ended (4 cases) |
 | a short password | `gsd/clusterconfig/events.py#redact` skips a secret shorter than `_MIN_SECRET` (4); measured before the fix: a three-character password in D8's reason or error reached the review and failure lines |
+| a short password, JSON-escaped | `gsd/kube.py#redact_text` makes the escaped forms only for values of eight characters or more; measured before round 1's fix: `x"Z` and `éZ`, escaped once or twice, reached the review, failure, login and revoke lines and the answer (20 cases, Codex round 1) |
 | a refused read, then a failed revoke | measured before the fix: the token read reached `fleet-logout-failed` |
 | the request logs | oauth-proxy's `-request-logging` (`values.yaml`, `requestLogging`) and Uvicorn's access format (uvicorn 0.53.0, config.py:94) write the request line only |
 | the usage record | the activity middleware records the user and the email (api.py:939-942) |
@@ -527,8 +544,8 @@ the page runs in Chromium through Playwright; nothing touched a cluster.
 
 | tree | what it is |
 |---|---|
-| **before** | `3cbc4e3` plus Appendix E's blocks for the four test files only |
-| **after** | `3cbc4e3` with every block applied |
+| **before** | the branch head (its code is `3cbc4e3`'s) plus Appendix E's blocks for the four test files only |
+| **after** | the branch head with every block applied |
 | **implemented, without a fix** | the after tree with one fix reverted: the review's red runs and the mutants |
 
 **The new and changed tests.** "Before" is the first error each raised on the before tree, as measured; "after" is
@@ -556,7 +573,9 @@ the after tree.
 | one Rejoin at a time in a process | `…::test_one_rejoin_at_a_time_in_this_process` | `AssertionError`: the first login never started | passed |
 | the redaction pin, fourteen scenarios, a refused read followed by a failed revoke among them | `…::test_the_password_appears_on_one_header_and_nowhere_else` | ×14 `AssertionError` `Not Found` | ×14 passed |
 | a three-character password echoed by D8 (allowed, denied, a 500) reaches no line | `…::test_short_password_echo_in_review_is_not_logged` | ×3 `assert 404 == 200` | ×3 passed |
-| an unexpected error inside the exchange: fixed words out, nothing of it logged, the login still revoked | `…::test_unexpected_exception_cannot_escape_with_secrets` | `ModuleNotFoundError: gsd.rejoin` | passed |
+| an unexpected error, inside the exchange and before a login exists: fixed words out, nothing of it logged, the login still revoked when there was one | `…::test_unexpected_exception_cannot_escape_with_secrets` | ×2 `ModuleNotFoundError: gsd.rejoin` | ×2 passed |
+| a short password JSON-escaped once or twice (`x"Z`, `éZ`) in an allowed or denied review, a review 500, a login 500 or a revoke 500 reaches no line and no answer | `…::test_short_escaped_password_never_reaches_evidence` | ×20 `assert 404 == 200` | ×20 passed |
+| an unexpected D8 or store error still says how the login ended, whether its revoke answered 200 or 500 | `…::test_unexpected_error_still_reports_cleanup` | ×4 `ModuleNotFoundError: gsd.rejoin` | ×4 passed |
 | the dialog promises only what the dashboard controls, and states the gate's scope | `…::test_dialog_does_not_promise_to_control_password_managers` | `ValueError`: no dialog in the page | passed |
 | the budget over the system (§2), twelve shapes | `…::test_the_budget_over_the_system` | `KeyError: 'outcome'` | passed |
 | the runbook beside the values, six sections, linked | `…::test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it` | `FileNotFoundError` | passed |
@@ -574,33 +593,33 @@ fix and passed with it, and the mutant that reverts it is caught.
 | fix | the test's failure without the fix (measured) | mutant |
 |---|---|---|
 | (a) the shape refused in fixed words | `test_the_body_is_username_and_password_and_nothing_else[password-as-key]`: the 422 named the key, the password | caught |
-| (b) the route's catch for the unexpected | `test_unexpected_exception_cannot_escape_with_secrets`: `assert 500 == 200` | caught |
+| (b) the route's catch for the unexpected | `test_unexpected_exception_cannot_escape_with_secrets`: `assert 500 == 200`; since round 1 held by its `[RejoinLogin]` case, an error before a login exists | caught |
 | (c) D8's text scrubbed at any length | `test_short_password_echo_in_review_is_not_logged[allowed, denied, review-500]`: `xyZ` in the review and failure lines | caught, one mutant per line (c1, c2) |
 | (d) the refused read's secrets handed to the login | `test_the_password_appears_on_one_header_and_nowhere_else[read-refused-revoke-500]`: the token read in `fleet-logout-failed` | caught |
 | (e) `redirect: "error"` | `test_fetch_refuses_redirects_and_submits_once`: "the 307 carried the password on" | caught |
 | the honest dialog words | `test_dialog_does_not_promise_to_control_password_managers`: `password managers may ignore` absent | — |
+| (P1) every spelling scrubbed, at any length (round 1) | `test_short_escaped_password_never_reaches_evidence`: 20 of 20 failed, the escaped password in the review, failure, login or revoke line or in the answer | caught, one mutant per part (P1a, P1b) |
+| (P2) `rejoin`'s boundary keeps how the login ended (round 1) | `test_unexpected_error_still_reports_cleanup`: 4 of 4 failed, the answer said only to press Refresh | caught |
 
 **The totals.**
 
 | run | before | after |
 |---|---|---|
-| the new and changed tests alone | `72 failed, 84 passed in 79.82s`: the 84 are those files' other cases and the writes-off guard | `156 passed in 10.53s` |
-| the whole suite, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included | `72 failed, 6175 passed, 25 skipped, 4 deselected in 565.59s` | `6260 passed, 19 skipped, 4 deselected in 494.81s` |
+| the new and changed tests alone | `97 failed, 84 passed in 80.85s`: the 84 are those files' other cases and the writes-off guard | `181 passed in 11.14s` |
+| the whole suite, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included | `97 failed, 6172 passed, 27 skipped, 4 deselected in 565.60s` | `6284 passed, 19 skipped, 4 deselected in 492.31s` |
 
-The whole before-suite fails exactly the 72 of the table: the two lists of `FAILED` lines compare equal. The after
+The whole before-suite fails exactly the 97 of the table: the two lists of `FAILED` lines compare equal. The after
 tree collects seven cases more, each parametrized over something the other blocks add: `rejoin.py` in three module
-scans, `RUNBOOK.md` in the fence check, and three citations the documents gain. The before tree skips six citations
-more: the spec as committed at `3cbc4e3` cites `gsd/rejoin.py` six times, and the before tree lacks the file. Both
-measured, by diffing the two trees' `--collect-only` lists and the citation test's skip reasons. The whole-suite runs
-carried that spec. This revision's own citations and index row pass on the branch with this spec alone
-(`1629 passed, 23 skipped`, the five documentation test files) and on the after tree (`test_docs_citations.py` and
-`test_specs_index.py`: `1267 passed, 15 skipped`).
+scans, `RUNBOOK.md` in the fence check, and three citations the documents gain. The before tree skips eight citations
+more: this spec cites `gsd/rejoin.py` eight times, and the before tree lacks the file. Both trees carried this spec;
+both differences were measured, by diffing the two trees' `--collect-only` lists and the citation test's skip
+reasons.
 
-**The blocks.** On a clean clone of `3cbc4e3`, `apply-spec-blocks.py` reports "70 blocks check out across 23 files",
+**The blocks.** On a clean clone of the branch head, `apply-spec-blocks.py` reports "70 blocks check out across 23 files",
 and the applied tree equals the implemented copy byte for byte in all 23 files.
 
 **Every design decision and every fix is held by a test.** Each was reverted in its own copy of the implemented tree
-and its tests run against the mutant: all nineteen were caught.
+and its tests run against the mutant: all twenty-two were caught.
 
 | reverted | caught by |
 |---|---|
@@ -615,21 +634,24 @@ and its tests run against the mutant: all nineteen were caught.
 | a fleet account's name accepted | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value[…SVC-GSD-Fleet…]` |
 | the fleet names compared unstripped | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value[…padded-account…]` |
 | (a) an unknown key named in the 422 | `test_the_body_is_username_and_password_and_nothing_else[password-as-key]` |
-| (b) an unexpected error leaves the route | `test_unexpected_exception_cannot_escape_with_secrets` |
+| (b) an unexpected error leaves the route | `test_unexpected_exception_cannot_escape_with_secrets[RejoinLogin]` |
 | (c1) D8's reason logged as the remote wrote it | `test_short_password_echo_in_review_is_not_logged[allowed]` |
 | (c2) a failure's evidence logged as the remote wrote it | `test_short_password_echo_in_review_is_not_logged[denied]` |
 | (d) a refused read's token not handed to the login | `test_the_password_appears_on_one_header_and_nowhere_else[read-refused-revoke-500]` |
 | (e) the credential fetch follows redirects | `test_fetch_refuses_redirects_and_submits_once` |
+| (P1a) the login's own remote text scrubbed by the fleet's scrub alone | `test_short_escaped_password_never_reaches_evidence[…login-500]` |
+| (P1b) the escaped spellings not handed to the scrub | `test_short_escaped_password_never_reaches_evidence[…allowed]` |
+| (P2) no boundary in `rejoin`: the route's fallback answers | `test_unexpected_error_still_reports_cleanup` |
 | the token read not handed to the login's scrub | `test_the_password_appears_on_one_header_and_nowhere_else[revoke-500]` |
 | the password field kept after the press | `test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` |
 | no clearing on `pagehide` | the same |
 
-**RBAC.** Rendered from `3cbc4e3` and from the after tree, for the default values, `environments/crc.yaml`,
+**RBAC.** Rendered from the branch head and from the after tree, for the default values, `environments/crc.yaml`,
 `environments/example-production.yaml` and `charts/group-sync-dashboard/example-production.yaml`, each with leader
 election on and off: REMOVED 0, ADDED 0 in all eight (63 to 73 atoms each).
 
 **`FleetLogin`'s fleet words are byte-identical.** One driver emits its three caller-facing texts (a refusal, a
-terminal answer, a give-up after five attempts) against `3cbc4e3` and against the after tree: seven lines, 855 bytes
+terminal answer, a give-up after five attempts) against the branch head and against the after tree: seven lines, 855 bytes
 each, and `cmp` finds them equal.
 
 **Not measured:** the browser's resend of a written request (§2); a real back/forward restore; what a password manager
@@ -955,8 +977,9 @@ password safe, in the order it runs:
   1. the route's host gate (the cluster-admin tier, #322), then `check`: a rejoinable row, a valid username, and
      never a fleet account;
   2. `ONE_TRY`: one authorize per press, and nothing retried;
-  3. the poller's `CredentialGate` (#315): a password the directory answered is not sent again BY THIS POD. It lives
-     in memory; a durable account hold was declined for its operating cost (SPEC_D4, D4-7);
+  3. the poller's `CredentialGate` (#315): a password the directory REFUSED for this exact username is not sent
+     again BY THIS POD. A success is not held: two right presses send twice. The gate lives in memory; a durable
+     account hold was declined for its operating cost (SPEC_D4, D4-7);
   4. D8: the remote says whether the person is its cluster administrator, and a no reads and writes nothing;
   5. every answer and line is scrubbed of the password, its Basic form, the login's token and the token read.
 """
@@ -965,13 +988,15 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import json
 import logging
 
 from .clusterconfig.events import event, failure
 from .clusterconfig.writer import WriteRefused, secret_name_for
 from .config import CREDENTIAL_SELF_LOGIN, ClusterConfig, Settings, valid_bootstrap_username
 from .fleetlogin import TOKEN_PREFIX, FleetLogin, LoginError, RetryPolicy, _without_userinfo
-from .fleetlookup import CredentialGate, LookupRefused, LookupSource, _scrub, read_sa_token, store
+from .fleetlookup import CredentialGate, LookupRefused, LookupSource, read_sa_token, store
+from .fleetlookup import _scrub as _fleet_scrub
 from .kube import AUTH_FAILED, UNREACHABLE, ClusterClient, ClusterError
 from .timeutil import now_iso
 
@@ -994,6 +1019,19 @@ READ_SAYS = {
 }
 
 
+def _scrub(text: str, secrets) -> str:
+    """The fleet's scrub, handed each secret also JSON-escaped once and twice, ASCII and not. A remote may quote a JSON
+    document inside another, and the shared escaped forms stop at eight characters; a person's password may be three."""
+    forms = set()
+    for secret in filter(None, secrets):
+        layer = {secret}
+        forms |= layer
+        for _ in range(2):
+            layer = {json.dumps(value, ensure_ascii=ascii_)[1:-1] for value in layer for ascii_ in (True, False)}
+            forms |= layer
+    return _fleet_scrub(text, list(forms))
+
+
 class RejoinLogin(FleetLogin):
     """#283's login as the person who pressed Rejoin: the same wire, events and rules, in a person's words."""
 
@@ -1004,6 +1042,10 @@ class RejoinLogin(FleetLogin):
     def __init__(self, cluster: ClusterConfig, username: str, password: str, *, person: str, **knobs):
         super().__init__(cluster, username, password, **knobs)
         self.person = person
+
+    def _scrub(self, text: str, *more: str | None) -> str:
+        # FleetLogin scrubs every remote text with this before cutting it; the fleet's own scrub stays as it is.
+        return _scrub(text, (self._password, *self._secrets, *more))
 
     def _fields(self) -> dict[str, str]:
         return {**super()._fields(), "rejoin_by": self.person}
@@ -1097,12 +1139,24 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     """One Rejoin, after `check`: the gate, the login, D8, the read, the revoke, the write. Answers `{outcome, message,
     at}`: `rejoined`, or a refusal's code with the person's sentence. The caller holds the one-at-a-time lock, so the
     gate's check and the login it guards are one step in this process."""
-    timeout = settings.request_timeout_seconds
-    asked = question_words(settings)
     # The password as the Basic header carries it (RFC 7617): a remote that quotes the header quotes this.
     secrets = [password, base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")]
+    login = RejoinLogin(cluster, username, password, person=viewer, timeout=settings.request_timeout_seconds,
+                        policy=ONE_TRY)
+    try:
+        return _exchange(cluster, settings, host_client, own_namespace=own_namespace, gate=gate, username=username,
+                         password=password, viewer=viewer, login=login, secrets=secrets)
+    except Exception:  # noqa: BLE001 - its text may quote the password: fixed words, then how the login ended
+        return stopped_unexpectedly(cluster.name, viewer, cleanup=_logged_out(login, cluster), secrets=secrets)
+
+
+def _exchange(cluster: ClusterConfig, settings: Settings, host_client: ClusterClient, *, own_namespace: str,
+              gate: CredentialGate, username: str, password: str, viewer: str, login: RejoinLogin,
+              secrets: list[str]) -> dict:
+    """`rejoin`'s steps, inside its boundary, which keeps the login to say how it ended."""
+    timeout = settings.request_timeout_seconds
+    asked = question_words(settings)
     who = dict(cluster=cluster.name, by=viewer, account=username)
-    login = RejoinLogin(cluster, username, password, person=viewer, timeout=timeout, policy=ONE_TRY)
 
     def refused(code: str, said: str, detail: str | None = None, *, phase: str = "credential") -> dict:
         """One failure line and the answer: the person's sentence, then the evidence; both scrubbed."""
@@ -1180,11 +1234,13 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     return {"outcome": REJOINED, "message": _scrub(message, secrets), "at": at}
 
 
-def stopped_unexpectedly(cluster: str, viewer: str) -> dict:
-    """The route's answer to an error the design did not expect: fixed words, because the error's own may quote the
-    password. The line records only that it happened."""
-    said = "Rejoin stopped unexpectedly, and nothing of the error is shown or logged: press Refresh before Rejoin again"
-    failure(log, "cluster-rejoin-failed", phase="credential", outcome=STOPPED, cluster=cluster, by=viewer, action=said)
+def stopped_unexpectedly(cluster: str, viewer: str, *, cleanup: str = "", secrets=()) -> dict:
+    """The answer to an error the design did not expect: fixed words, because the error's own may quote the password,
+    then how the login ended when there was one. The line records only that it happened."""
+    said = _scrub("Rejoin stopped unexpectedly, and nothing of the error is shown or logged: press Refresh before "
+                  f"Rejoin again{cleanup}", secrets)
+    failure(log, "cluster-rejoin-failed", phase="credential", outcome=STOPPED, cluster=cluster, by=viewer, action=said,
+            secrets=secrets)
     return {"outcome": STOPPED, "message": said, "at": now_iso()}
 
 
@@ -2067,20 +2123,72 @@ def test_short_password_echo_in_review_is_not_logged(rig, caplog, answer):
     assert r.status_code == 200 and "xyZ" not in caplog.text + r.text
 
 
-def test_unexpected_exception_cannot_escape_with_secrets(rig, monkeypatch, caplog):
+@pytest.mark.parametrize("phase", ["allowed", "denied", "review-500", "login-500", "revoke-500"])
+@pytest.mark.parametrize("password", ['x"Z', "éZ"])
+@pytest.mark.parametrize("layers", [1, 2])
+def test_short_escaped_password_never_reaches_evidence(rig, caplog, phase, password, layers):
+    """A remote may quote the password JSON-escaped, once or twice, so a quote or a non-ASCII letter changes its
+    spelling. The shared escaped-form scrub stops at eight characters; Rejoin removes every spelling at any length
+    (review round 1, P1)."""
+    c, app, settings, host, remote = rig
+    escaped = password
+    for _ in range(layers):
+        escaped = json.dumps(escaped)[1:-1]
+    echo = "remote echo: " + escaped
+    if phase in ("allowed", "denied"):
+        remote.review = review(allowed=phase == "allowed", reason=echo)
+    elif phase == "review-500":
+        remote.review = httpx.Response(500, text=echo)
+    elif phase == "login-500":
+        remote.answers = [httpx.Response(500, text=echo)]
+    else:
+        remote.revoke = httpx.Response(500, text=echo)
+    with caplog.at_level(logging.DEBUG):
+        r = _rejoin(c, password=password)
+    assert r.status_code == 200
+    shown = caplog.text + r.json()["message"]
+    assert escaped not in shown and password not in shown
+    assert escaped.replace('"', "'") not in caplog.text   # a line's value has its double quotes turned single
+
+
+@pytest.mark.parametrize("phase", ["review", "store"])
+@pytest.mark.parametrize("revoke_status", [200, 500])
+def test_unexpected_error_still_reports_cleanup(rig, monkeypatch, caplog, phase, revoke_status):
+    """An unexpected error after the login exists still says how the login ended: signed out, or the token to delete
+    (review round 1, P2). The error's own words never appear."""
+    c, app, settings, host, remote = rig
+
+    def explode(*args, **kwargs):
+        raise RuntimeError(ADMIN_PASSWORD)
+    monkeypatch.setattr("gsd.rejoin." + ("remote_says_cluster_admin" if phase == "review" else "store"), explode)
+    remote.revoke = httpx.Response(revoke_status, text="answer")
+    with caplog.at_level(logging.DEBUG):
+        r = _rejoin(c)
+    message = r.json()["message"]
+    assert r.json()["outcome"] == "rejoin-failed" and len(remote.revokes) == 1
+    if revoke_status == 500:
+        assert "could NOT be signed out" in message and "oc delete useroauthaccesstokens" in message
+    else:
+        assert "the login was signed out" in message
+    assert ADMIN_PASSWORD not in r.text + caplog.text
+
+
+@pytest.mark.parametrize("where", ["remote_says_cluster_admin", "RejoinLogin"])
+def test_unexpected_exception_cannot_escape_with_secrets(rig, monkeypatch, caplog, where):
     """An error the design did not expect may quote the password. It never leaves the route, so the server has no
-    traceback to print: the answer and the line are fixed text, and the login is still revoked (review, C3)."""
+    traceback to print: the answer and the line are fixed text. Inside the exchange Rejoin answers it and the login is
+    still revoked; before a login exists the route does (review, C3; round 1, P2)."""
     c, app, settings, host, remote = rig
 
     def explode(*args, **kwargs):
         raise RuntimeError(f"{ADMIN_PASSWORD} {BASIC} {TOKEN}")
-    monkeypatch.setattr("gsd.rejoin.remote_says_cluster_admin", explode)
+    monkeypatch.setattr(f"gsd.rejoin.{where}", explode)
     with caplog.at_level(logging.DEBUG):
         r = TestClient(app, raise_server_exceptions=False).post(
             "/api/clusterconfigs/east/rejoin", headers=H("root"), json={"username": ADMIN, "password": ADMIN_PASSWORD})
     assert r.status_code == 200 and r.json()["outcome"] == "rejoin-failed", r.text
     assert all(secret not in r.text + caplog.text for secret in (ADMIN_PASSWORD, BASIC, TOKEN))
-    assert len(remote.revokes) == 1 and _writes(host) == []
+    assert len(remote.revokes) == (where == "remote_says_cluster_admin") and _writes(host) == []
 
 
 def test_dialog_does_not_promise_to_control_password_managers():
@@ -2696,17 +2804,18 @@ the person may `update clusterrolebindings` there (the host's `visibility.cluste
 writes nothing), reads `group-sync-operator/group-sync-dashboard-cluster-poller-token`, signs the login out, and writes
 the token to `gsd-cluster-<name>` with `token-source: rejoin`, `rejoined-by`, `rejoin-account` and `rejoined-at` — never
 `lookup-account`. **The password is never stored, logged or echoed.** It is sent at most once per request and never
-retried, and a password the directory answered is not sent again by this process while it is the same password (the
-poller's credential gate, #315). `outcome` is `rejoined` or a refusal's code: `login-refused`, `login-failed`,
-`not-cluster-admin`, `access-review-failed`, `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated`,
-`lookup-write-failed`, or `rejoin-failed` for an error the design did not expect (fixed words: that error's own text may
-quote the password). Refused before anything is sent: `403` below the cluster-admin tier or without an identity; `404`
-for an unknown or retired name, and with writes off (the route does not exist); `409 not-rejoinable` where `rejoinable`
-is false; `409` while another Rejoin is in flight in this process, or when the process runs no poller; `422` for a body
-that is not exactly `{username, password}` as strings (fixed words: no key or value is repeated, because a key can be
-the password), `rejoin-username-invalid` (outside the bootstrap grammar), `rejoin-fleet-account` (a name a fleet path
-logs in as, compared stripped and casefolded), `rejoin-password-missing` and `rejoin-password-invalid` (a control
-character, which RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry). A success wakes discovery. One
+retried, and a password the directory refused for this exact username is not sent again by this process while it is the
+same password (the poller's credential gate, #315). `outcome` is `rejoined` or a refusal's code: `login-refused`,
+`login-failed`, `not-cluster-admin`, `access-review-failed`, `sa-token-secret-missing`, `sa-token-unreadable`,
+`sa-token-invalidated`, `lookup-write-failed`, or `rejoin-failed` for an error the design did not expect (fixed words,
+because that error's own text may quote the password, then how the login ended when there was one). Refused before
+anything is sent: `403` below the cluster-admin tier or without an identity; `404` for an unknown or retired name, and
+with writes off (the route does not exist); `409 not-rejoinable` where `rejoinable` is false; `409` while another Rejoin
+is in flight in this process, or when the process runs no poller; `422` for a body that is not exactly `{username,
+password}` as strings (fixed words: no key or value is repeated, because a key can be the password),
+`rejoin-username-invalid` (outside the bootstrap grammar), `rejoin-fleet-account` (a name a fleet path logs in as,
+compared stripped and casefolded), `rejoin-password-missing` and `rejoin-password-invalid` (a control character, which
+RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry). A success wakes discovery. One
 `cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
 the person and the account and carries no credential.
 ```
@@ -2922,14 +3031,14 @@ and D8 lets the remote refuse a credential that does not pass the same question 
 
 - **Rejoin: an administrator signs in to a remote cluster as themselves, once, and the dashboard fetches a fresh
   poller token (#316, Epic D #384, `docs/specs/SPEC_D4_cluster_rejoin.md`).** When Refresh answers `auth_failed`, or
-  `pending` for a token that was never fetched, a Secret-sourced card or a `saTokenLookup` stanza offers
-  **Rejoin…**. Its dialog takes the administrator's own username and password for that cluster. The new
+  `pending` for a token that was never fetched, a Secret-sourced card or a `saTokenLookup` stanza offers **Rejoin…**.
+  Its dialog takes the administrator's own username and password for that cluster. The new
   `POST /api/clusterconfigs/{name}/rejoin` logs in once as that person and asks the remote, with that login's own
-  token, whether the person may `update clusterrolebindings` there (D8: the answer is logged, and a no reads and
-  writes nothing). It reads the poller's token Secret, signs the login out, and writes `gsd-cluster-<name>` with
-  `token-source: rejoin`, `rejoined-by`, `rejoin-account` and `rejoined-at`. **The password is used for that one
-  login and is never stored, logged or echoed.** One press presents it at most once, nothing is retried, and a
-  password the directory answered is not sent again by that pod while it is the same password (the poller's
+  token, whether the person may `update clusterrolebindings` there (D8: the answer is logged, and a no reads and writes
+  nothing). It reads the poller's token Secret, signs the login out, and writes `gsd-cluster-<name>` with
+  `token-source: rejoin`, `rejoined-by`, `rejoin-account` and `rejoined-at`. **The password is used for that one login
+  and is never stored, logged or echoed.** One press presents it at most once, nothing is retried, and a password the
+  directory refused for that username is not sent again by that pod while it is the same password (the poller's
   credential gate, #315). The fleet account's name is refused. The route sits in the writes carve-out, so a default
   install has no Rejoin. `GET /api/clusterconfigs` rows gain `rejoinable`, and discovery counts a Rejoin over a
   `saTokenLookup` stanza as that stanza's own Secret. `charts/group-sync-dashboard/RUNBOOK.md` walks the repair:
