@@ -1,0 +1,9 @@
+# oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --timestamps  (pod group-sync-dashboard-5ff4d6cc87-kp5kw, 1.0.0 from quay, started 2026-09-27T10:21:54Z), captured 2026-09-27T13:00:16Z before the walk changed anything
+# every fleet-* and self-login line in the pod's life, token object names redacted:
+2026-09-27T10:27:06.054455292Z 2026-09-27 06:27:06,054-0400 INFO    gsd.fleetlogin fleet-login cluster=shared-rnd account=ocp-oauth-bind-serviceid tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T10:27:06Z
+2026-09-27T10:27:06.116176136Z 2026-09-27 06:27:06,115-0400 INFO    gsd.fleetlogin fleet-logout cluster=shared-rnd account=ocp-oauth-bind-serviceid tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T10:27:06.117038139Z 2026-09-27 06:27:06,116-0400 INFO    gsd.clusterconfig fleet-ping account=ocp-oauth-bind-serviceid target=shared-rnd last_used=2026-09-27 last_ok=2026-09-27T10:27:05Z
+# count of 'shared-rnd poll cycle' lines: 158
+# first and last of them:
+2026-09-27T10:22:35.796587366Z 2026-09-27 06:22:35,796-0400 DEBUG   gsd.poller shared-rnd poll cycle took 7.35s; next binding refresh in 3596s
+2026-09-27T12:59:30.401690870Z 2026-09-27 08:59:30,401-0400 DEBUG   gsd.poller shared-rnd poll cycle took 1.84s; next binding refresh in 1440s

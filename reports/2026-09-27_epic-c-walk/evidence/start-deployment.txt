@@ -1,0 +1,19 @@
+# oc get deployments.apps -n group-sync-dashboard group-sync-dashboard -o json | jq '{replicas: .spec.replicas, strategy: .spec.strategy.type, images: [.spec.template.spec.containers[] | {name, image}], observedGeneration: .status.observedGeneration}'; oc get pods -n group-sync-dashboard -l app.kubernetes.io/name=group-sync-dashboard -o custom-columns='NAME:.metadata.name,START:.status.startTime,IMAGEID:.status.containerStatuses[*].imageID'
+# at 2026-09-27T12:50:06Z
+{
+  "replicas": 1,
+  "strategy": "Recreate",
+  "images": [
+    {
+      "name": "dashboard",
+      "image": "quay.io/ephico2real/group-sync-dashboard:1.0.0"
+    },
+    {
+      "name": "oauth-proxy",
+      "image": "registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15"
+    }
+  ],
+  "observedGeneration": 20
+}
+NAME                                    START                  IMAGEID
+group-sync-dashboard-5ff4d6cc87-kp5kw   2026-09-27T10:21:54Z   quay.io/ephico2real/group-sync-dashboard@sha256:b08c0e8f956f39a0945b98620fe287ae14a7e08f60fd1601f11c782c3b36cdcd,registry.redhat.io/openshift4/ose-oauth-proxy-rhel9@sha256:74a596acfa95876bb8285ffacb068b4d429706d1e8f29fa4655192d61266dd00

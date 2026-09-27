@@ -1,0 +1,8 @@
+# oc auth can-i — the ServiceAccount's read of the fleet password Secret, and developer's reads, before the walk (2026-09-27T13:08:22Z)
+SA get secret/ldap-oauth-bind-secret -n openshift-config: yes
+developer list groups.user.openshift.io: Warning: resource 'groups' is not namespace scoped in group 'user.openshift.io'
+
+no
+developer list clusterrolebindings: Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+no

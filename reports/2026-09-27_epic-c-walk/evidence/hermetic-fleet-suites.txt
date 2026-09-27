@@ -1,0 +1,11 @@
+# cd <worktree>/local-development && PYTHONPATH=<worktree>/local-development PYTHONDONTWRITEBYTECODE=1 .venv python -m pytest -p no:cacheprovider -q tests/test_fleet_lifecycle.py tests/test_fleet_login.py tests/test_fleet_lookup.py tests/test_lookup_owned_secret.py tests/test_configmap_onboarding.py tests/test_live_fleet_login.py
+# at 2026-09-27T13:00:25Z, worktree HEAD 22a485c66a7fe1b93983546374b1fd1a93e1549e
+# gsd imported from /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/77d32da9-736f-4cfc-b61c-10c627692308/scratchpad/walk-c/repo/local-development/gsd/__init__.py version 1.0.0
+../../../../../../../../../Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/lib/python3.14/site-packages/starlette/testclient.py:53
+  /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/lib/python3.14/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_live_fleet_login.py:79: set GSD_LIVE_LOGIN_API, GSD_LIVE_LOGIN_USER and GSD_LIVE_LOGIN_PASSWORD to run the live fleet-login test
+278 passed, 1 skipped, 2 warnings in 5.11s
