@@ -68,6 +68,10 @@ Phase 2 applies reviewed blocks and runs tests. No phase-1 test result or live v
 - There is no `.codegraph/` in `wt/`; CodeGraph was therefore skipped under the supplied AGENTS rule.
   No git write command is part of phase 2. The reviewed blocks are applied and verified as recorded
   in the workspace `phase2-report.md`; baseline research citations remain pinned to phase 1.
+- #315 (`docs/specs/SPEC_S4d_credential_gate_per_account.md`, 2026-09-26): §3.3's sentence "Different
+  targets still have different #284 gate keys" is replaced in place. A bound failure now gates the account
+  on every target (the operator's ruling at the review of #325); the success mark this spec added stays per
+  target, and every row of §3.3's table, stated per canonical target, is unchanged.
 
 ## 1. Research ledger — evidence before design
 
@@ -228,8 +232,11 @@ retry loop, gate instance per map or on-demand login path is introduced
 This deliberately prefers an explicit pending finding over a repeat bind if the output is missing
 and the budget is spent. The operator fixes the cause, then rotates the password or deliberately
 restarts after checking account state; routine policy edits need neither. A changed password is
-noticed by the existing cheap re-read. Different targets still have different #284 gate keys;
-account-wide durable/replica-shared fencing belongs to #285. This spec does **not** imply one total
+noticed by the existing cheap re-read. Since #315 (`docs/specs/SPEC_S4d_credential_gate_per_account.md`),
+a bound failure gates its account and password on every target in the process; a successful ConfigMap
+session still spends only its own canonical target/account/password entry. Account is the exact
+configured username string: use one spelling for one directory identity. Durable, replica-shared
+fencing belongs to #285. This spec does **not** imply one total
 successful bind across pre-existing values triggers, all targets, replicas or restarts
 (`local-development/gsd/fleetlookup.py:108`, `:356`; `docs/specs/SPEC_S4b_sa_token_lookup.md:2942`).
 
