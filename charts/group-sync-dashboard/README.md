@@ -47,7 +47,7 @@ Every accepted `clusters[]` combination, and **where each refusal fires**, is in
 each row is the outcome of rendering the chart and of loading the same stanza in the pod's loader,
 held by `local-development/tests/test_cluster_stanza_matrix.py`.
 
-Read §5 before a rollout. Fourteen bad stanzas fail `helm template` and never reach a cluster. **Four
+Read §5 before a rollout. Seventeen bad stanzas fail `helm template` and never reach a cluster. **Four
 render cleanly and are refused by the pod at startup** — an unknown key, a duplicate `name`, an
 `apiUrl` with no scheme, and `insecureSkipVerify` together with `caBundleFile` — so a green
 `helm template` is not proof the stanza loads.

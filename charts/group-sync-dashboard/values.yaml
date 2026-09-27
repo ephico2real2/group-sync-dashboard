@@ -718,7 +718,7 @@ session:
 clusters:
   # EVERY ACCEPTED COMBINATION, AND WHERE EACH REFUSAL FIRES: docs/CLUSTER_STANZA.md — measured, not
   # described, and held by tests/test_cluster_stanza_matrix.py. Worth reading §5 before a rollout:
-  # fourteen bad stanzas fail `helm template`, but FOUR render cleanly and are refused by the pod at
+  # seventeen bad stanzas fail `helm template`, but FOUR render cleanly and are refused by the pod at
   # startup (an unknown key, a duplicate name, an apiUrl with no scheme, insecureSkipVerify together
   # with caBundleFile) — those fail after a green upgrade. A worked file: example-production.yaml.
   #

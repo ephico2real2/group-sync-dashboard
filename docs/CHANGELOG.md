@@ -10,6 +10,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A values `apiUrl` carrying userinfo, a query or a fragment is refused (#415; chart 0.58.7).**
+  `https://user:password@host`, `…?x` and `…#x` in `clusters[].apiUrl` now fail `helm template` and the pod's
+  loader, as the cluster Secret's `server` already did; the message names the entry and the key and never repeats
+  the value. Measured before the fix (httpx 0.28.1): the userinfo was sent as `Authorization: Basic` in place of
+  the poller's bearer token and on the fleet login's discovery request, printed on httpx's `HTTP Request:` line,
+  and served in `api_url` by `/api/clusters` to a self-tier reader. A values file that relied on it is refused at
+  upgrade: move the credential to `tokenEnv`/`tokenFile` or a connection mode. Every other URL parses as before.
 - **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
   `secretsMint.image` is now `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22`, for OpenShift 4.18 and above;
   set the tag to your cluster's minor. The pull uses the cluster's registry.redhat.io pull secret, and the Job is a

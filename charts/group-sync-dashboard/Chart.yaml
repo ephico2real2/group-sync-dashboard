@@ -253,7 +253,10 @@ type: application
 # CHART 0.58.6 (2026-09-26), PATCH: the secrets-mint Job's default image is registry.redhat.io's
 # ose-cli-rhel9:v4.22 instead of the in-cluster openshift/cli imagestream (the operator's choice; 4.18 and
 # above). A value default; no template or RBAC change; appVersion unchanged.
-version: 0.58.6
+# CHART 0.58.7 (2026-09-26), PATCH: gsd.validateClusters refuses a clusters[].apiUrl carrying userinfo,
+# a query or a fragment, as the loader now does (#415), without repeating the value. Refuses only input the
+# pod already could not use safely; no value default, RBAC or appVersion change.
+version: 0.58.7
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
