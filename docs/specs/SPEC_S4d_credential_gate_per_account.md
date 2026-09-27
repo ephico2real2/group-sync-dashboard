@@ -5,10 +5,10 @@
 | Programme | Epic C (#383), keep the shared fleet login account safe. The in-memory half of SPEC_S4c's B2, landed before #285, which seeds it from the account Lease |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; S4's fourth step, landing ahead of S4c) |
-| Version on release | no version of its own (application code only; the next application release carries it, as it carries #291) |
+| Version on release | chart 0.58.6 (docs only: `CLUSTER_CREDENTIALS.md`); the application code has no version of its own and rides the next application release, as #291 does |
 | Issue | [#315](https://github.com/ephico2real2/group-sync-dashboard/issues/315) |
 | Status | specified |
-| Source | OB1-lite's specification of 2026-09-26, written before any code from issue #315 in full (its "Where this stands", "The change", "Must not change" and Definition of Done), the operator's ruling in `docs/specs/SPEC_S4c_credential_lifecycle.md` (orchestrator's notes, and §5 question 7), #293's budget in `docs/specs/SPEC_S5_configmap_onboarding.md` §3.3, and main `cbe828b`, measured on this machine. §6's blocks were cut from a copy of `cbe828b` with the design implemented, and applied back to a clean clone for the proof in §4. No cluster was touched |
+| Source | OB1-lite's specification of 2026-09-26, written before any code from issue #315 in full (its "Where this stands", "The change", "Must not change" and Definition of Done), the operator's ruling in `docs/specs/SPEC_S4c_credential_lifecycle.md` (orchestrator's notes, and §5 question 7), #293's budget in `docs/specs/SPEC_S5_configmap_onboarding.md` §3.3, and main `cbe828b`, measured on this machine. §6's blocks were cut from a copy of `cbe828b` with the design implemented, and applied back to a clean clone for the proof in §4. No cluster was touched. Revised the same day on the review of `555a7e2` by Grok and Codex Astra, on the orchestrator's decisions (Orchestrator's notes), on a branch that merged main `3d1c237`; §6's blocks were cut again from a copy of that merge with the revised design implemented |
 
 ## How to read this spec
 
@@ -20,8 +20,9 @@ blocks (`docs/specs/README.md`, "Implementation blocks"), in apply order, applie
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_S4d_credential_gate_per_account.md . --apply
 
 Line citations into the code at `cbe828b` are plain text, file:line, to keep them apart from the maintained
-`path#anchor` citations. This spec's own row in the index moves through the lifecycle by the orchestrator's
-hand, as M1's did; no block touches it.
+`path#anchor` citations. This spec's own row in the index, and its header's Status, move through the lifecycle
+by hand: the implementing commit moves both to `merged` beside the applied blocks (a block cannot, because its
+Old text would also match inside its own fence), so that `local-development/prepare-release.py` can promote them.
 
 **The id.** S4's steps carry the design's id and a letter in the order they are specified (S4a #283, S4b #284,
 S4c #285; `local-development/tests/test_specs_index.py` admits one letter). This change is the in-memory half of
@@ -31,6 +32,31 @@ admits. S4d is the next free step letter. It is specified after S4c and lands be
 issue-number order already shows (#315 sits between #301 and #321).
 
 ## Orchestrator's notes
+
+Decisions on the review of `555a7e2` (Grok, Codex Astra; 2026-09-26), recorded first and then applied:
+
+- **F1 (Codex, P1): accepted, with a smaller fix.** The gated detail copied URL credentials: a values stanza's
+  `apiUrl` of `https://user:secret@host` is accepted by the values parser (the Secret contract's no-userinfo rule
+  does not cover values), httpx's canonical form keeps the userinfo, and the detail would have written it to the
+  `fleet-lookup-failed` line and served it in the finding. The displayed target goes through the existing seam
+  `gsd/fleetlogin.py#_without_userinfo` instead of Codex's new origin-rebuilding code; the gate's keys and stored
+  evidence are unchanged. Verified before use (§3.2): it drops userinfo, query and fragment, keeps the path, and
+  returns None — never raises — for an invalid URL, a port that is not a number, a missing host and any non-https
+  scheme; None is shown as a fixed phrase. Codex's regression is §6's `test_credential_gate_diagnostics.py`,
+  adapted to one URL, the reachable case (§4).
+- **F2 (both reviewers): accepted.** Three maintained documents still stated the superseded per-target failure
+  rule, and all three are corrected here: SPEC_S5 §3.3's "Different targets still have different #284 gate keys"
+  (replaced in place, recorded in S5's notes), `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`'s paragraph
+  that left cross-target lockout to #285 (a chart PATCH, 0.58.5 → 0.58.6, with its history line; 0.59.0 stays
+  S4c's reservation), and `docs/diagrams/remote-cluster-access/source.html`'s join-figure aria-label and join-table
+  row (text only). Codex's document-contract test is §6's `test_credential_gate_docs.py`. §3.5 no longer says the
+  chart file is not edited.
+- **F3 (Codex): accepted.** The guarantee now states its scope beside it, in the docstring and §3.3: "account" is
+  the exact configured username string (one spelling per identity) and "process" is the production Poller's one
+  shared gate. The username-case residual stays documented, not solved, and Codex's `test_username_case_residual`
+  pins it (two spellings, two authorizes).
+- **Main moved** from `cbe828b` to `3d1c237` (#412, reports and a runbook only); it was merged first and every block
+  re-cut against it. `## Unreleased` holds #291's entry only; this change's entry goes first under it.
 
 ## 1. The mandate
 
@@ -46,7 +72,8 @@ directories that share a username and password over-block each other.
 
 "Must not change": #293's budget table (SPEC_S5 §3.3), every row; the finding codes (`fleetlookup.CODES`) and the
 `fleet-lookup` and `fleet-lookup-failed` events with their fields (poller.py:1605, :1625, :1638); password
-rotation re-arms the gate by itself; `gsd/fleetlogin.py` untouched (#291's file); no chart and no RBAC change.
+rotation re-arms the gate by itself; `gsd/fleetlogin.py` untouched (#291's file); no chart template, value or
+RBAC change (the chart moves by a docs-only PATCH for `CLUSTER_CREDENTIALS.md`, orchestrator's notes, F2).
 
 ## 2. Read and measured
 
@@ -101,11 +128,24 @@ the finding has to say where to look. It is named whichever kind gated, so there
 The action's "until the fleet password Secret or the stanza changes" becomes "or the account the stanza names
 changes": an `apiUrl` edit no longer re-arms a refused entry, only the password or the account does. The bound
 failure's action "it is not sent there again" becomes "not sent again, to this or any other cluster". Code,
-`spent`, `gated`, and the event names and fields are unchanged. The target is the stanza's `apiUrl` as httpx
-canonicalises it, which the clusters API already serves (its `api_url` field), so naming it discloses
-nothing new; the refusal still crosses `exc.scrub(secrets)`.
+`spent`, `gated`, and the event names and fields are unchanged.
+
+The target is displayed through `gsd/fleetlogin.py#_without_userinfo` (orchestrator's notes, F1): a values `apiUrl`
+may carry userinfo, and httpx's canonical form keeps it. Measured on the canonical forms the gate stores:
+`https://url-user:url-secret@api.a.example.com:6443` shows as `https://api.a.example.com:6443`;
+`https://u:p@h:6443/path?q=…#…` as `https://h:6443/path`; `https://api.crc.testing:6443` unchanged; and
+`http://…`, `https://[::1/broken`, `https://host:bad/x` and the empty string all return None, shown as "the
+answering target (not shown: its URL is not https with a host)". The gate's keys and the stored evidence are
+unchanged; only the display narrows. The refusal still crosses `exc.scrub(secrets)`.
 
 ### 3.3 The budget over the system
+
+**The scope of the words** (review F3). *Account* is the exact configured username string, compared as written:
+directory aliases and case variants are not resolved, so every stanza for one directory identity must use one
+spelling; two spellings are two entries and two answered failures (`test_username_case_residual`). *Process* is
+the production Poller's one gate (poller.py:968-970), used serially on its discovery thread; a newly constructed
+gate starts a new budget, which is exactly what a restart or a second replica is. Digest collisions and two
+directories sharing an exact username and password over-block, the safe direction.
 
 For one wrong or locked password on one account, in one process, measured in authorize requests by §4's harness
 (a wire mock counts authorize requests, not directory binds):
@@ -125,8 +165,8 @@ still spends only its own target, and a bound failure still stops its own target
 
 A failure before the password is written (`ConnectError`, `ConnectTimeout`, TLS) never reaches `refuse()`
 (`test_pre_write_failure_can_retry`). Rotation re-arms both kinds: a new password is a new digest
-(`test_password_rotation_rearms_the_existing_gate`). `poller.py`, `fleetlogin.py`, the chart and RBAC are not
-touched. Residuals, stated: two directories sharing a username and password over-block each other (the safe
+(`test_password_rotation_rearms_the_existing_gate`). `poller.py`, `fleetlogin.py`, the chart's templates and
+values, and RBAC are not touched. Residuals, stated: two directories sharing a username and password over-block each other (the safe
 direction); the username is compared as written, so two stanzas naming one directory account in different case
 are two entries (not measured: whether the estate's LDAP identity provider folds case); a restart or a second
 replica starts empty until #285.
@@ -137,14 +177,20 @@ SPEC_S4b's R2-1 (orchestrator's notes, and R2-2's second clause) is marked super
 code is the verbatim design body and keeps its history. SPEC_S4c's §3.3 cache paragraph names the refused kind
 as what `FleetRecord.refused` seeds and quotes the docstring sentence this change writes, recorded in its notes.
 `docs/DESIGN_remote_cluster_access.md` states the gate per target twice (the join flow and the table row); both
-are corrected. The CHANGELOG entry goes first under `## Unreleased`. `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`
-is not edited: it scopes its sentence to #293's feature, and a chart file would need a chart version.
+are corrected, and so are the same two statements in `docs/diagrams/remote-cluster-access/source.html` (the
+join figure's aria-label and the join table's row). The rendered `joining-a-cluster.*.png` needs no re-render: its
+visible SVG text says only "gate: not re-sent once refused", an aria-label is not painted, and the table sits after
+the figure's `</figure>`. SPEC_S5 §3.3's "Different targets still have different #284 gate keys" is replaced in
+place and recorded in S5's notes; its table is unchanged. `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`'s
+paragraph that left cross-target lockout to #285 is rewritten, with a chart PATCH (0.58.6) and its `Chart.yaml`
+history line — no template, value or RBAC change. The CHANGELOG entry goes first under `## Unreleased`.
 
 ## 4. Tests, before and after
 
-All in `local-development/tests/test_credential_gate_account.py` (new) except the two rewritten in
-`test_fleet_lookup.py`; no other existing test is edited. "Before" is `cbe828b`'s code with §6's test blocks
-only; "after" is `cbe828b` with every block applied.
+In three new files — `test_credential_gate_account.py`, `test_credential_gate_diagnostics.py` and
+`test_credential_gate_docs.py` — and the two rewritten in `test_fleet_lookup.py`; no other existing test is
+edited. "Before" is main `3d1c237` (with this spec) plus §6's test blocks only; "after" is the same tree with
+every block applied.
 
 | Definition of Done | test | before | after |
 |---|---|---|---|
@@ -155,6 +201,10 @@ only; "after" is `cbe828b` with every block applied.
 | the harness: two URLs, two clusters, state reset (+1), irrelevant edit (+0) | `test_the_budget_over_the_system[401]`, `[500]` | FAILED `(1, 1) != (1, 0)` on the first two rows | passed |
 | line 280, rewritten to the ruling | `test_one_target_spelled_three_ways_is_one_gate_entry` | FAILED `https://api.example.com:6444` | passed |
 | :284, rewritten to the ruling | `test_the_gate_is_per_account_so_a_sick_clusters_500_stops_a_healthy_one_too` | FAILED `DID NOT RAISE LookupRefused` (the second target bound and was written) | passed |
+| F1: the gated detail, finding and log line carry no URL credentials | `test_gated_target_never_exports_url_credentials` | FAILED `IndexError: pop from empty list` (not gated: the second target bound); against the first revision's code, without the display seam: FAILED `AssertionError: url-user` | passed |
+| F2: five stale per-target statements are gone, each file names #315 | `test_current_docs_do_not_claim_failure_is_target_scoped` (5 cases) | FAILED, 5 of 5 | passed |
+| F3: the docstring defines "account" and "process" | `test_the_gate_states_the_scope_of_account_and_process` | FAILED | passed |
+| F3: two spellings of one username are two authorizes (a pinned residual) | `test_username_case_residual` | passed | passed |
 
 ## 5. On the lab, for the implementing pull request
 
@@ -166,7 +216,16 @@ pinned to the merge sha, as the issue's Definition of Done says.
 
 ## 6. Implementation blocks
 
-Thirteen blocks over seven files, in apply order.
+Twenty-two blocks over thirteen files, in apply order.
+
+<!-- block: local-development/gsd/fleetlookup.py | edit -->
+```python
+from .fleetlogin import FleetLogin, LoginError
+```
+
+```python
+from .fleetlogin import FleetLogin, LoginError, _without_userinfo
+```
 
 <!-- block: local-development/gsd/fleetlookup.py | edit -->
 ```python
@@ -224,8 +283,11 @@ class CredentialGate:
     direction, stated and not solved.
 
     THE BUDGET, with its scope: at most one answered failed authorize per (account, password) per
-    process, across every target. A restart or a second replica starts empty — not covered until
-    #285's account Lease, which this becomes the cache of (SPEC_S4c §3.3)."""
+    process, across every target. "Account" is the exact configured username string, compared as
+    written: directory aliases and case variants are not resolved, so every stanza for one identity
+    must use one spelling. "Process" is the production Poller's one gate, used serially on its
+    discovery thread; a new gate starts a new budget. A restart or a second replica starts empty —
+    not covered until #285's account Lease, which this becomes the cache of (SPEC_S4c §3.3)."""
 
     def __init__(self) -> None:
         self._refused: dict[tuple[str, str], str] = {}
@@ -282,8 +344,11 @@ class CredentialGate:
         answered = gate.answered(cluster.api_url, account, password)
         if answered is not None:
             # THE TARGET THAT ANSWERED IS NAMED (#315): the entry is the account's, so it may be another
-            # cluster's answer that stops this one, and the finding must say where to look.
-            raise LookupRefused("login-refused", f"{answered} evaluated this password for {account} already and it "
+            # cluster's answer that stops this one, and the finding must say where to look. Shown without
+            # userinfo, query or fragment: a values `apiUrl` is not held to the Secret contract's
+            # no-credential URL rule, and the gate's evidence keeps whatever the stanza wrote.
+            shown = _without_userinfo(answered) or "the answering target (not shown: its URL is not https with a host)"
+            raise LookupRefused("login-refused", f"{shown} evaluated this password for {account} already and it "
                                                  f"has not changed; {cluster.name} does not send it",
                                 action=("not tried again until the fleet password Secret or the account the stanza names "
                                         "changes — rotate the Secret, or correct ldapConnectionBootstrap; the password is "
@@ -512,6 +577,105 @@ def test_the_budget_over_the_system(wire, answer):
         "state reset (a new gate)": (1, 1),
         "irrelevant config edit (visibility)": (1, 0),
     }
+
+
+def test_username_case_residual(wire):
+    """PINS A RESIDUAL, not a guarantee (review of SPEC_S4d, Codex F3): "account" is the exact configured
+    username string, so two spellings of one directory identity are two entries and two answered failures.
+    Folding case would over-block distinct accounts on a case-sensitive provider; every stanza for one
+    identity must use one spelling."""
+    wire.answers = [ANSWERS["401"](), ANSWERS["401"]()]
+    gate = CredentialGate()
+    attempt(target("rnd", "https://api.rnd.example.com:6443"), gate)
+    upper = dataclasses.replace(target("east", "https://api.east.example.com:6443"), ldap_connection_bootstrap=USER.upper())
+    attempt(upper, gate)
+    assert len(wire.authorize) == 2
+```
+
+<!-- block: local-development/tests/test_credential_gate_diagnostics.py | create -->
+```python
+"""#315 (SPEC_S4d, review F1): the gated refusal names the target that answered, and must not copy the
+credentials a values `apiUrl` may carry — the Secret contract's no-credential URL rule does not cover
+values — into the exception, the public finding or the `fleet-lookup-failed` line."""
+
+from __future__ import annotations
+
+import json
+import logging
+
+import pytest
+
+from gsd.config import ClusterConfig, parse_cluster_entries
+from gsd.fleetlookup import CredentialGate, LookupRefused
+from gsd.poller import Poller, _LookupState
+from gsd.store import Store
+from test_fleet_login import refused_401
+from test_fleet_lookup import PASSWORD, USER, run, settings, wire  # noqa: F401
+
+
+def fail(cluster: ClusterConfig, gate: CredentialGate) -> LookupRefused:
+    with pytest.raises(LookupRefused) as caught:
+        run(cluster, gate=gate, s=settings(cluster))
+    return caught.value
+
+
+def test_gated_target_never_exports_url_credentials(wire, tmp_path, caplog):
+    # A REAL values stanza: the values parser accepts userinfo in apiUrl.
+    url = "https://url-user:url-secret@api.a.example.com:6443"
+    _, first = parse_cluster_entries([{"name": "home", "apiUrl": "https://kubernetes.default.svc", "tokenEnv": "X"},
+                                      {"name": "a", "apiUrl": url, "saTokenLookup": True,
+                                       "ldapConnectionBootstrap": USER}], "values")
+    wire.answers = [refused_401()]
+    gate = CredentialGate()
+    fail(first, gate)
+    second = ClusterConfig("b", "https://api.b.example.com:6443", sa_token_lookup=True, ldap_connection_bootstrap=USER)
+    exc = fail(second, gate)
+    s = settings(second)
+    poller = Poller(Store(str(tmp_path / "detail.db")), s)
+    with caplog.at_level(logging.INFO):
+        poller._lookup_failed(_LookupState(), "b", "gsd-cluster-b", exc, 0)
+    public = json.dumps([f.public() for f in s.cluster_registry.findings()])
+    combined = f"{exc}\n{exc.detail}\n{public}\n{caplog.text}"
+    assert (exc.code, exc.gated, exc.spent) == ("login-refused", True, False) and len(wire.authorize) == 1
+    for secret in ("url-user", "url-secret", PASSWORD):
+        assert secret not in combined, secret
+    assert exc.detail.startswith("https://api.a.example.com:6443"), exc.detail
+```
+
+<!-- block: local-development/tests/test_credential_gate_docs.py | create -->
+```python
+"""#315 (SPEC_S4d, review F2 and F3): the maintained documents that stated the superseded per-target
+failure rule say the per-account one, and the gate states what "account" and "process" mean."""
+
+from __future__ import annotations
+
+import pathlib
+
+import pytest
+
+from gsd.fleetlookup import CredentialGate
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("path,stale", [
+    ("docs/specs/SPEC_S5_configmap_onboarding.md", "Different targets still have different #284 gate keys;"),
+    ("charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md", "Cross-process and cross-target account-wide\nlockout protection is #285"),
+    ("docs/diagrams/remote-cluster-access/source.html", "once refused, not re-sent to that target by this process"),
+    ("docs/diagrams/remote-cluster-access/source.html", "a password the target already refused is not sent again"),
+    ("docs/DESIGN_remote_cluster_access.md", "a password this target already refused is not sent again"),
+])
+def test_current_docs_do_not_claim_failure_is_target_scoped(path, stale):
+    text = (REPO / path).read_text()
+    assert stale not in text
+    assert "#315" in text
+
+
+def test_the_gate_states_the_scope_of_account_and_process():
+    doc = " ".join((CredentialGate.__doc__ or "").split())
+    assert '"Account" is the exact configured username string' in doc
+    assert "must use one spelling" in doc
+    assert "\"Process\" is the production Poller's one gate" in doc
 ```
 
 <!-- block: docs/specs/SPEC_S4b_sa_token_lookup.md | edit -->
@@ -546,6 +710,7 @@ def test_the_budget_over_the_system(wire, answer):
   the answering target as evidence, and a spent kind, #293's per-target success mark (SPEC_S5 §3.3). §3.3's
   cache paragraph now names the refused kind as what `FleetRecord.refused` seeds, leaves the spent kind
   off the Lease, and quotes the docstring sentence #315 wrote, which is the one this spec replaces.
+  "Account" there is the exact configured username string (SPEC_S4d §3.3); the Lease inherits that key.
 ```
 
 <!-- block: docs/specs/SPEC_S4c_credential_lifecycle.md | edit -->
@@ -567,13 +732,70 @@ replaced by "the cache of the account Lease's gate (SPEC_S4c §3.3); seeded on e
 only copy while the Lease is writable."
 ```
 
+<!-- block: docs/specs/SPEC_S5_configmap_onboarding.md | edit -->
+```markdown
+noticed by the existing cheap re-read. Different targets still have different #284 gate keys;
+account-wide durable/replica-shared fencing belongs to #285. This spec does **not** imply one total
+```
+
+```markdown
+noticed by the existing cheap re-read. Since #315 (`docs/specs/SPEC_S4d_credential_gate_per_account.md`),
+a bound failure gates its account and password on every target in the process; a successful ConfigMap
+session still spends only its own canonical target/account/password entry. Account is the exact
+configured username string: use one spelling for one directory identity. Durable, replica-shared
+fencing belongs to #285. This spec does **not** imply one total
+```
+
+<!-- block: docs/specs/SPEC_S5_configmap_onboarding.md | edit -->
+```markdown
+  in the workspace `phase2-report.md`; baseline research citations remain pinned to phase 1.
+```
+
+```markdown
+  in the workspace `phase2-report.md`; baseline research citations remain pinned to phase 1.
+- #315 (`docs/specs/SPEC_S4d_credential_gate_per_account.md`, 2026-09-26): §3.3's sentence "Different
+  targets still have different #284 gate keys" is replaced in place. A bound failure now gates the account
+  on every target (the operator's ruling at the review of #325); the success mark this spec added stays per
+  target, and every row of §3.3's table, stated per canonical target, is unchanged.
+```
+
+<!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
+```markdown
+The baseline values/Secret trigger still gates bound login failures as #284 specifies; this does not
+claim that its successful logins were globally one-shot. Cross-process and cross-target account-wide
+lockout protection is #285's work, not measured or implemented by this feature. Keep one replica.
+```
+
+```markdown
+Since #315, every bound login failure gates that account and password on every target in this
+process, for values, Secret and ConfigMap triggers alike. Successful ConfigMap sessions still spend only
+their own target's budget; successful values/Secret logins are not globally one-shot. Account means the
+exact configured username string: use one spelling for one directory identity. A restart or another
+replica starts with an empty gate; durable, replica-shared protection remains #285's work. Keep one replica.
+```
+
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
+```yaml
+# CHART 0.58.5 (2026-09-26), PATCH: appVersion moves to application 0.37.0 (below); Epic B: protect
+# the data during upgrades (#382).
+version: 0.58.5
+```
+
+```yaml
+# CHART 0.58.5 (2026-09-26), PATCH: appVersion moves to application 0.37.0 (below); Epic B: protect
+# the data during upgrades (#382).
+# CHART 0.58.6 (2026-09-26), PATCH: docs only — CLUSTER_CREDENTIALS.md states the credential gate per
+# account (#315, SPEC_S4d). No template, value or RBAC change; appVersion unchanged.
+version: 0.58.6
+```
+
 <!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
 ```markdown
            -> the credential gate: a password this target already refused is not sent again
 ```
 
 ```markdown
-           -> the credential gate: a password the account was already refused, by any target, is not sent again
+           -> the credential gate: a password the account was already refused, by any target, is not sent again (#315)
 ```
 
 <!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
@@ -582,7 +804,25 @@ only copy while the Lease is writable."
 ```
 
 ```markdown
-| The lookup itself (the join) | the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused) | unchanged | the remote, as the fleet account | the fleet password; once refused, not re-sent as that account to any target by this process (`local-development/gsd/fleetlookup.py#CredentialGate`) |
+| The lookup itself (the join) | the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused) | unchanged | the remote, as the fleet account | the fleet password; once refused, not re-sent as that account to any target by this process (#315) (`local-development/gsd/fleetlookup.py#CredentialGate`) |
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+```html
+        <svg viewBox="0 0 980 870" role="img" aria-label="How a cluster is joined. On the host, saTokenLookup starts automatically: it stops first if cluster-Secret writes are off, then the leader or sole replica reads the fleet account's password from one host Secret, and a password the target already refused is not sent again. Rejoin, proposed, starts with a person who must pass clusterAdminSar on the host, update clusterrolebindings, and types their own username and password. On the remote, the dashboard logs in as that account, a proposed SelfSubjectAccessReview asks #322's cluster-admin question of a Rejoin credential there, it reads the poller's token Secret by name in group-sync-operator, and tries once to revoke the login's own token. Back on the host it writes gsd-cluster-shared-rnd. Once joined, the poller's token authenticates every later call; its rights on the remote are the ClusterRole group-sync-dashboard-cluster-poller, and under remote-sar the same token asks the remote about each reader.">
+```
+
+```html
+        <svg viewBox="0 0 980 870" role="img" aria-label="How a cluster is joined. On the host, saTokenLookup starts automatically: it stops first if cluster-Secret writes are off, then the leader or sole replica reads the fleet account's password from one host Secret, and a password the account was already refused, by any target, is not sent again. Rejoin, proposed, starts with a person who must pass clusterAdminSar on the host, update clusterrolebindings, and types their own username and password. On the remote, the dashboard logs in as that account, a proposed SelfSubjectAccessReview asks #322's cluster-admin question of a Rejoin credential there, it reads the poller's token Secret by name in group-sync-operator, and tries once to revoke the login's own token. Back on the host it writes gsd-cluster-shared-rnd. Once joined, the poller's token authenticates every later call; its rights on the remote are the ClusterRole group-sync-dashboard-cluster-poller, and under remote-sar the same token asks the remote about each reader.">
+```
+
+<!-- block: docs/diagrams/remote-cluster-access/source.html | edit -->
+```html
+          <tr><td>The lookup itself (join)</td><td>the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused)</td><td>unchanged</td><td>remote: the fleet account's login</td><td>the fleet password; once refused, not re-sent to that target by this process</td></tr>
+```
+
+```html
+          <tr><td>The lookup itself (join)</td><td>the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused)</td><td>unchanged</td><td>remote: the fleet account's login</td><td>the fleet password; once refused, not re-sent as that account to any target by this process (#315)</td></tr>
 ```
 
 <!-- block: docs/CHANGELOG.md | edit -->
@@ -596,15 +836,17 @@ only copy while the Lease is writable."
 ## Unreleased
 
 - **The credential gate is per account for every failed login (#315,
-  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; application code only, no version of its own).** When
-  the fleet account's password is sent and no session comes back — a 401, or the 500 a locked directory account
-  answers — the dashboard no longer sends that password, as that account, to any other cluster while it is the
-  same password: at most one answered failed login per account and password per process, across every
-  cluster, where it was one per cluster. N clusters sharing the fleet account, or one cluster entered under two
-  URLs, now cost one failed login instead of N. The other clusters' findings stay `login-refused` with
-  `gave_up=true`, and their detail now names the API URL that answered. A successful ConfigMap onboarding
-  still spends only its own cluster (#293's budget, SPEC_S5 §3.3, unchanged). The price, the operator's choice
-  at the review of #325: one sick cluster's 500 stops the lookup on every cluster of that account until the
+  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; application code with no version of its own, chart
+  0.58.6 for `CLUSTER_CREDENTIALS.md`).** When the fleet account's password is sent and no session comes back —
+  a 401, or the 500 a locked directory account answers — the dashboard no longer sends that password, as that
+  account, to any other cluster while it is the same password: at most one answered failed login per account
+  and password per process, across every cluster, where it was one per cluster. N clusters sharing the fleet
+  account, or one cluster entered under two URLs, now cost one failed login instead of N. "Account" is the
+  username exactly as the stanzas write it: two spellings of one directory identity are two accounts, so use
+  one. The other clusters' findings stay `login-refused` with `gave_up=true`, and their detail now names the
+  API URL that answered, without any credentials the URL carries. A successful ConfigMap onboarding still
+  spends only its own cluster (#293's budget, SPEC_S5 §3.3, unchanged). The price, the operator's choice at
+  the review of #325: one sick cluster's 500 stops the lookup on every cluster of that account until the
   password is rotated or the pod restarts. A restart or a second replica still starts with an empty gate,
   until #285's account Lease.
 
