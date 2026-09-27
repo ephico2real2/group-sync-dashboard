@@ -58,7 +58,8 @@ A worked production file using these combinations:
 **What happens to the credential afterwards** — which account bootstraps and which token polls, what
 `auth_failed` / `forbidden` / `unreachable` mean, and how an administrator recovers a cluster whose
 credential has gone bad — is in
-[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file.
+[`CLUSTER_CREDENTIALS.md`](CLUSTER_CREDENTIALS.md), beside this file. The repair itself, step by step (Refresh,
+then Rejoin, then the manual fallback), is [`RUNBOOK.md`](RUNBOOK.md).
 
 **Silencing a legitimate grant** that the dashboard reports as unmanaged: the label and the annotation to put
 on the binding, and what the platform rule silences without either, are in

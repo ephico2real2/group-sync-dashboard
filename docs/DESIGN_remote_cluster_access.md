@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 directed, not built (#322); D8 open (§8) |
+| Status | D1, D2 (`remote-sar` + `same-as-host`, the standard for every way a cluster is joined) and D5 built in SPEC_D2b (#338), the remote failure hold with them; D3 needs no code; D6's lab policy applied there; D4's fail-closed fallback built, its named finding recommended, not built; D7 built (#322); D8 directed 2026-09-26 and built with Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`) |
 | Date | 2026-09-23 |
 | Scope | the per-cluster visibility policy (`clusters[].visibility`, `clusters[].identity`) for every cluster the dashboard polls that is not its host, and who may join or rejoin such a cluster |
 | Relates to | `docs/ACCESS_CONTROL.md` §11 (per-cluster authorisation, D2 of the 2026-09 programme), #307, #322 (the cluster-admin tier), #316 (Rejoin) |
@@ -21,9 +21,9 @@ remote that states no policy defaults to it.
 
 This document defines the two policies that grant a wide view on a remote, `inherit` and `remote-sar`, shows how
 each decides, and records the decisions that make `remote-sar` + `same-as-host` the standard for every way a cluster
-is joined. It also defines who may join or rejoin a cluster (§7): D7 (directed, not built) makes a person's join or
-Rejoin a cluster-admin action checked on the host. Today the tab's writes ask only `create secrets` in the dashboard's
-namespace, and the automatic lookup is started by configuration, not by a person.
+is joined. It also defines who may join or rejoin a cluster (§7): D7 (built with #322) makes a person's join or Rejoin a
+cluster-admin action checked on the host, and D8 (built with #316) has the remote confirm it with the person's own
+login. The automatic lookup is started by configuration, not by a person.
 
 ## 2. The three answers the dashboard can give today
 
@@ -237,9 +237,9 @@ that token authenticates every call the dashboard makes to the remote, with the 
 fleet account performs it, automatically, when a stanza or a Secret declares `saTokenLookup: true`
 (`local-development/gsd/fleetlookup.py#lookup`, run by the poller on the leader, or on the sole replica when election
 is off; more replicas without election are refused). Rejoin (#316) is the same
-exchange started by a person with their own credentials. It is not built: the tab accepts only a pasted bearer token
-and refuses a username and password with `oauth-exchange-not-built`
-(`local-development/gsd/clusterconfig/writer.py#validate`).
+exchange started by a person with their own credentials (`local-development/gsd/rejoin.py#rejoin`,
+`docs/specs/SPEC_D4_cluster_rejoin.md`). The Add form still takes only a pasted bearer token: a username and password
+there is refused with `oauth-exchange-not-built` (`local-development/gsd/clusterconfig/writer.py#validate`).
 
 <!-- markdownlint-disable MD033 -->
 <picture>
@@ -251,21 +251,22 @@ and refuses a username and password with `oauth-exchange-not-built`
 
 *Figure 4. Both ways in converge on the same remote steps. Step 3 reads the token the Secret already holds (#284);
 minting a fresh one with the TokenRequest API, which the same Role allows, is #238. The fleet account is configuration, not a person, and is
-not cluster admin (§5). A person's Rejoin would be gated twice: on the host before the password exists (D7), and on
-the remote once it does (D8). Dashed boxes are proposed and not built.*
+not cluster admin (§5). A person's Rejoin is gated twice: on the host before the password exists (D7), and on
+the remote once it does (D8).*
 
 ```text
  HOST    saTokenLookup: true (a values stanza or a Secret), automatic
            -> clusterConfig.secrets.writes.enabled off -> refused (fleet-write-disabled), no password read
            -> the leader, or the sole replica, reads the fleet password (one host Secret, get by name)
            -> the credential gate: a password the account was already refused, by any target, is not sent again (#315)
- HOST    Rejoin (#316, not built), a person on the tab
+ HOST    Rejoin (#316), a person on the tab
            -> clusterAdminSar on the host (D7): update clusterrolebindings?  no -> no Rejoin control
            -> the person's own username and password, typed now, never stored
  REMOTE  1 log in as that account: discovery -> /oauth/authorize (basic auth) -> 302 with a token
              refused once the password is on the wire -> terminal, not retried
- REMOTE  2 (D8, proposed, Rejoin only) SelfSubjectAccessReview: update clusterrolebindings?
-             no -> refuse and revoke; the fleet account skips this step
+ REMOTE  2 (D8, Rejoin only) SelfSubjectAccessReview: update clusterrolebindings?
+             the answer is logged; no -> nothing is read or written, and the login is revoked;
+             the fleet account skips this step
  REMOTE  3 GET group-sync-operator/group-sync-dashboard-cluster-poller-token, by name
              absent, wrong type, wrong owner annotation, invalidated or empty -> a named finding
  REMOTE  4 revoke the login's own token: tried once on every path; a failed revoke is logged, not fatal
@@ -290,7 +291,7 @@ Row by row:
 | The lookup itself (the join) | the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused) | unchanged | the remote, as the fleet account | the fleet password; once refused, not re-sent as that account to any target by this process (#315) (`local-development/gsd/fleetlookup.py#CredentialGate`) |
 | Add a cluster on the tab | `clusterConfigManageSar`: `create secrets` in the dashboard's namespace, which a namespace admin passes | `clusterAdminSar`: `update clusterrolebindings` on the host | the host | a pasted bearer token |
 | Rotate, delete, test | the same namespace-level check | `clusterAdminSar` | the host | a pasted token, or none |
-| Rejoin (#316) | not built | `clusterAdminSar`, then D8 on the remote | the host, then the remote | the person's own username and password, once, never stored |
+| Rejoin (#316) | `clusterAdminSar` on the host, then D8 on the remote | unchanged | the host, then the remote | the person's own username and password, once, never stored |
 | See a joined remote wide | the cluster's policy: `remote-sar` + `same-as-host`, the standard (D2), on both lab remotes since SPEC_D2b (`self-only` before it) | unchanged | the remote, with the poller's token | none: the token is already held |
 
 ## 8. Decisions
@@ -304,7 +305,7 @@ Row by row:
 | **D5** | Say which rule decided the reader's view of a cluster | one line under the cluster selector: *the host decides* · *this cluster says you may see everything* · *this cluster says: your own rows* · *this cluster cannot check access* · *this cluster is self-only* | **Directed** (2026-09-23), built in D2b (`docs/specs/SPEC_D2b_remote_sar_for_every_join.md` §3.11): one line beside the selector, read from `/api/whoami` alone. *this cluster cannot check access* needs D4's field and is not built, so a `remote-sar` cluster's self line says the cluster either answered "your own rows" or could not be asked. |
 | **D6** | The lab until D1 shipped | `inherit` + `same-as-host` on `shared-rnd` then, or `self-only` until D1 landed and `remote-sar` after | **Directed**: no `inherit` stopgap. `inherit` would copy the host's answer to the remote rather than ask it, which is the model the mandate replaces (D1). `shared-rnd` and `shared-qa` stayed `self-only` until D1 shipped in SPEC_D2b, and now take `remote-sar` + `same-as-host`. |
 | **D7** | Who may join or rejoin a cluster with a username and password | the host's `clusterAdminSar` (`update clusterrolebindings`, #322), or today's `create secrets` in the dashboard's namespace | **Directed**: cluster admin on the host. The operator: *"This is a strictly cluster admin role. We can only check for who has cluster admin on dashboard … because we cannot determine or infer if a user is a cluster admin on a remote cluster if the cluster is not joined."* |
-| **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Open**, recommended for Rejoin only. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
+| **D8** | Confirm a Rejoin credential on the remote | none; or one `SelfSubjectAccessReview` with the login's own token (`update clusterrolebindings`, #322's cluster-admin question), refusing and revoking on no | **Directed** (the operator, 2026-09-26: *"we log the response from the remote cluster but don't make things very complicated. We can check if the person joining the cluster is also a cluster admin on the remote cluster."*), in its simple form, and built with Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`): one review, the remote's answer logged, a no reads and writes nothing. It enforces D7's rule with the remote's own RBAC once a credential exists and needs no new grant (`system:basic-user`). The login's token is `user:full` (`docs/DESIGN_session_and_signout.md`), so the review answers with the person's own RBAC and groups, with no group lookup. It refuses a namespace admin of `group-sync-operator`, whom the `admin` role lets read the token Secret (§5). Like #322's, the question is a threshold: `cluster-admin` passes it, and so would any other role that grants the verb. The fleet account skips it. |
 
 ## 9. Consequences of the directed decisions
 
@@ -336,8 +337,8 @@ Row by row:
 Passing `clusterAdminSar` will grant every tier **the host decides**, and per-cluster policies still apply (the
 operator, 2026-09-23; #322 is directed and not built). Under this design: on `inherit` clusters a host cluster-admin is wide; on `remote-sar` clusters the
 remote's own answer about the reader stands, because being admin on the host is not proof on another cluster; on
-`self-only` and `hidden` clusters nothing changes. #322's Rejoin row is D7: the host will decide who may start one,
-and D8, if accepted, lets the remote refuse a credential that does not pass the same question there.
+`self-only` and `hidden` clusters nothing changes. #322's Rejoin row is D7: the host decides who may start one,
+and D8 lets the remote refuse a credential that does not pass the same question there (#316).
 
 The name `clusterAdminSar` in this document is #322's: `update clusterrolebindings` on the host.
 `docs/specs/SPEC_T1_tier_model.md` used the same name for the Cluster Configurations tab's two namespace-level checks

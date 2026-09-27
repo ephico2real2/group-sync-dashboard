@@ -27,6 +27,7 @@ records follow separately; their status and measurements belong to the work they
 
 - [TROUBLESHOOTING_auditor_groups.md](TROUBLESHOOTING_auditor_groups.md) — auditor groups, `createLocal` and LDAP GroupSync collisions.
 - [RUNBOOK_backup_restore.md](RUNBOOK_backup_restore.md) — back up and restore the dashboard's history.
+- [RUNBOOK.md](../charts/group-sync-dashboard/RUNBOOK.md) — a remote cluster's connection is broken: find out why, then Refresh and Rejoin; kept beside the chart's values.
 
 ### Understand the deployment and its releases
 

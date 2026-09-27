@@ -70,6 +70,15 @@ LOOKUP_ACCOUNT_ANNOTATION = "groupsync-dashboard.io/lookup-account"
 #:                renewal is not optional. It is also the mode where nothing long-lived is at rest.
 TOKEN_SOURCE_LOOKUP = CREDENTIAL_LOOKUP          # saTokenLookup
 TOKEN_SOURCE_SELF_LOGIN = CREDENTIAL_SELF_LOGIN  # userSelfLogin
+#: Rejoin (#316, SPEC_D4): the lookup's read, started by a person with their own login. The one `token-source` that
+#: is not a mode's word, because no declaration resolves to it; `owned_by_mode` says which stanza it may serve.
+TOKEN_SOURCE_REJOIN = "rejoin"
+#: Who pressed Rejoin (the host identity), the account the remote authenticated, and when. Never `lookup-account`:
+#: the daily ping logs in as whatever account that annotation names, with the fleet password (#432).
+REJOINED_BY_ANNOTATION = "groupsync-dashboard.io/rejoined-by"
+REJOIN_ACCOUNT_ANNOTATION = "groupsync-dashboard.io/rejoin-account"
+REJOINED_AT_ANNOTATION = "groupsync-dashboard.io/rejoined-at"
+REJOIN_ANNOTATIONS = (REJOINED_BY_ANNOTATION, REJOIN_ACCOUNT_ANNOTATION, REJOINED_AT_ANNOTATION)
 LABEL_DOMAIN = "groupsync-dashboard.io/"
 TLS_MODES = ("caData", "trustedBundle", "insecure")
 # Kubernetes' label syntax (metav1 validation): a key is an optional DNS-subdomain prefix (≤ 253) and a
@@ -125,10 +134,21 @@ class CreateRequest:
     source_service_account: str | None = None
     lookup_account: str | None = None
     onboarding: tuple[str, str, str] = ()
+    #: (who pressed Rejoin, the account, the instant) — REJOIN_ANNOTATIONS, in that order (SPEC_D4).
+    rejoin: tuple[str, str, str] = ()
 
 
 def secret_name_for(cluster: str) -> str:
     return f"{SECRET_NAME_PREFIX}{cluster}"
+
+
+def owned_by_mode(token_source: str | None, mode: str | None) -> bool:
+    """Whether a Secret with this `token-source` is the retriever's own write for a values stanza whose mode resolves
+    to `mode` (SPEC_S4 §1, SPEC_D2b §3.4): the mode's own word, or a Rejoin over a `saTokenLookup` stanza, which read
+    the same token Secret the lookup reads (SPEC_D4). Such a Secret serves the stanza's policy and is no shadow."""
+    if mode is None:
+        return False
+    return token_source == mode or (mode == TOKEN_SOURCE_LOOKUP and token_source == TOKEN_SOURCE_REJOIN)
 
 
 def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -> dict:
@@ -161,6 +181,8 @@ def secret_object(req: CreateRequest, namespace: str, *, redact: bool = False) -
     if req.onboarding:
         annotations.update(zip((CONFIGMAP_ANNOTATION, CONFIGMAP_UID_ANNOTATION,
                                 CONNECTION_HASH_ANNOTATION), req.onboarding))
+    if req.rejoin:
+        annotations.update(zip(REJOIN_ANNOTATIONS, req.rejoin))
     return {
         "apiVersion": "v1", "kind": "Secret",
         "metadata": {"name": secret_name_for(req.name), "namespace": namespace, "labels": labels,
@@ -329,8 +351,10 @@ def rotate(host_client: ClusterClient, namespace: str, name: str, token: str, *,
 
 
 def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token: str, cluster: str,
-                 source_namespace: str, source_service_account: str, lookup_account: str) -> None:
+                 source_namespace: str, source_service_account: str, lookup_account: str | None,
+                 rejoin: tuple[str, str, str] = ()) -> None:
     """SPEC_S4b: a Secret that DECLARED `saTokenLookup` becomes the credential it asked for, in place.
+    With `rejoin` (SPEC_D4) it is a person's Rejoin of any Secret row: the same write, the person's provenance.
 
     Why in place and not a second Secret (SPEC_S4 §1): a Secret is named for its cluster and the
     reader fails closed on two Secrets for one cluster, so a `create` beside the declaring Secret is
@@ -359,11 +383,14 @@ def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token
         obj["data"] = data
         obj.pop("stringData", None)
         meta = obj.setdefault("metadata", {})
-        meta["annotations"] = {**(meta.get("annotations") or {}),
-                               TOKEN_SOURCE_ANNOTATION: TOKEN_SOURCE_LOOKUP,
+        # ONE PATH'S PROVENANCE REPLACES THE OTHER'S (SPEC_D4): a Rejoin leaves no `lookup-account`, which the daily
+        # ping would log in as with the fleet password (#432), and a lookup leaves no stale Rejoin behind.
+        stale = (LOOKUP_ACCOUNT_ANNOTATION,) if rejoin else REJOIN_ANNOTATIONS
+        provenance = dict(zip(REJOIN_ANNOTATIONS, rejoin)) if rejoin else {LOOKUP_ACCOUNT_ANNOTATION: lookup_account}
+        meta["annotations"] = {**{k: v for k, v in (meta.get("annotations") or {}).items() if k not in stale},
+                               TOKEN_SOURCE_ANNOTATION: TOKEN_SOURCE_REJOIN if rejoin else TOKEN_SOURCE_LOOKUP,
                                SOURCE_NAMESPACE_ANNOTATION: source_namespace,
-                               SOURCE_SERVICE_ACCOUNT_ANNOTATION: source_service_account,
-                               LOOKUP_ACCOUNT_ANNOTATION: lookup_account}
+                               SOURCE_SERVICE_ACCOUNT_ANNOTATION: source_service_account, **provenance}
         try:
             host_client._send(client, "PUT", _path(namespace, name), json=obj, secrets=(token, data["config"]))
         except ClusterError as exc:
@@ -372,7 +399,7 @@ def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token
                                                      "writer got there first; the next attempt reads it again", conflict=True) from exc
             raise _failed(exc, token, data["config"]) from exc
     event(log, logging.INFO, "cluster-secret-rotated", secret=name, namespace=namespace, cluster=cluster,
-          by=MANAGED_BY_LOOKUP, secrets=(token,))
+          by=rejoin[0] if rejoin else MANAGED_BY_LOOKUP, secrets=(token,))
 
 
 def onboarding_owner(obj: dict) -> tuple[str, str, str] | None:
@@ -538,6 +565,7 @@ def refresh(cluster: ClusterConfig, *, timeout: float, viewer: str) -> dict:
 __all__ = ["CreateRequest", "WriteRefused", "WriteFailed", "SECRET_NAME_PREFIX", "MANAGED_BY_ANNOTATION",
            "MANAGED_BY_UI", "MANAGED_BY_LOOKUP",
            "TOKEN_SOURCE_ANNOTATION", "SOURCE_NAMESPACE_ANNOTATION", "SOURCE_SERVICE_ACCOUNT_ANNOTATION",
-           "LOOKUP_ACCOUNT_ANNOTATION", "TOKEN_SOURCE_LOOKUP", "TOKEN_SOURCE_SELF_LOGIN",
-           "TLS_MODES", "OAUTH_NOT_BUILT", "secret_object", "secret_name_for", "validate", "create", "rotate",
+           "LOOKUP_ACCOUNT_ANNOTATION", "TOKEN_SOURCE_LOOKUP", "TOKEN_SOURCE_SELF_LOGIN", "TOKEN_SOURCE_REJOIN",
+           "REJOIN_ANNOTATIONS", "TLS_MODES", "OAUTH_NOT_BUILT", "secret_object", "secret_name_for", "owned_by_mode",
+           "validate", "create", "rotate",
            "store_lookup", "delete", "test_connection", "refresh", "AUTH_FAILED", "UNREACHABLE"]
