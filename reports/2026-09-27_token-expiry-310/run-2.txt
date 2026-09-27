@@ -1,0 +1,7 @@
+01:22:38   token minted, exp=01:42:38; Secret rotated in place
+01:26:20   discovery noticed: `discovery cycle=81 ... changed=shared-qa`   <- 3m42s to notice
+01:27:20   polling resumes
+...        17 minutes of healthy polls
+01:42:20   poll OK                                                          (18s BEFORE exp)
+01:43:20   poll OK                                                          (42s AFTER exp)
+01:44:20   401 Unauthorized

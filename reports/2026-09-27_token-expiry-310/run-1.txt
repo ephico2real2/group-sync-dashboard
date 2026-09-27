@@ -1,0 +1,6 @@
+00:08:44   token minted, exp=00:18:44
+00:08:50   Secret created
+00:17:20   discovered, first poll OK: 106 namespaces, 199 group bindings   <- 8m30s after creation
+00:18:20   poll OK                                                          (24s BEFORE exp)
+00:19:20   poll OK                                                          (36s AFTER exp)
+00:20:20   401 Unauthorized

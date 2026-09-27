@@ -1,0 +1,4 @@
+WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=shared-qa
+  source=secret:gsd-cluster-shared-qa tls=trusted-bundle credential=bearer
+  action="the token is invalid or expired: rotate it in this cluster's Secret"
+  detail="401 Unauthorized — token invalid or expired"
