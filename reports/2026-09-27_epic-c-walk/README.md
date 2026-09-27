@@ -34,6 +34,8 @@
     this workstation at 13:31:31Z.
   - A pause someone else made is theirs to end: re-enabling `selfHeal` under a deliberate pause would undo their
     work.
+  - **Identified afterwards:** the pause was the orchestrator's, for #431's release (application 1.1.0). It was
+    lifted by that release's `release-crc.sh --argocd main`, which re-applies the Application with `automated`.
 
 ## Definition of Done, lab items
 
@@ -107,6 +109,8 @@ The next ping is due 24 h after that attempt, and this walk did not move it (`ev
   `lookup_account`. It pings each of them with that one password, and it is due whenever the password's digest
   differs from the Lease's `ping-digest`.
 - So `ldapConnectionBootstrap` changes the username, but never the password.
+- Filed as #432 under Epic C. It is a product defect as well as a walk hazard: any estate using two accounts with
+  different passwords gets a wrong-password bind on each extra account per password change.
 
 **What the lab holds:**
 - `gsd-cluster-shared-rnd` carries `groupsync-dashboard.io/lookup-account: ocp-oauth-bind-serviceid`
