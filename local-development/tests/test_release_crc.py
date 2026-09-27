@@ -41,11 +41,12 @@ case "$(basename "$0") $*" in
         *) echo 'error: You must be logged in to the server (Unauthorized)' >&2; exit 1 ;;
       esac ;;
   "oc get application "*) exit 0 ;;
-  "oc image info "*)     # the registry: STUB_IMAGES is "<ref>=<org.opencontainers.image.version> ..."; an unlisted ref is absent
+  "oc image info "*)     # the registry: STUB_IMAGES is "<ref>=<version>[/<revision>] ..."; an unlisted ref is absent
       # STUB_OCI_DIR: the real oc reads a manifest list from its on-disk registry instead, same flags.
       [ -n "${STUB_OCI_DIR:-}" ] && exec "$STUB_REAL_OC" image info --dir "$STUB_OCI_DIR" file://review/multi:good "${@:4}"
       for entry in $STUB_IMAGES; do
-        case "$entry" in "${3}="*) printf '{"digest":"sha256:stub","config":{"config":{"Labels":{"org.opencontainers.image.version":"%s"}}}}\n' "${entry#*=}"; exit 0 ;; esac
+        case "$entry" in "${3}="*) v="${entry#*=}"; r=""; [ "$v" != "${v%/*}" ] && r="${v#*/}"
+          printf '{"digest":"sha256:stub","config":{"config":{"Labels":{"org.opencontainers.image.version":"%s","org.opencontainers.image.revision":"%s"}}}}\n' "${v%%/*}" "$r"; exit 0 ;; esac
       done
       echo "error: unable to read image ${3}: manifest unknown" >&2; exit 1 ;;
   "helm status "*)       exit "${STUB_HELM_EXISTS:-1}" ;;
@@ -80,7 +81,7 @@ def lab(tmp_path: Path):
     (repo / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
         "image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: \"\"\n"
         "reporting:\n  image:\n    repository: quay.io/example/group-sync-dashboard-report\n    tag: \"\"\n")
-    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "init", "-q", "-b", "pr-test")
     _git(repo, "config", "user.email", "t@example.invalid")
     _git(repo, "config", "user.name", "t")
     _git(repo, "add", "-A")
@@ -88,7 +89,7 @@ def lab(tmp_path: Path):
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "-q", "--bare", str(origin))
     _git(repo, "remote", "add", "origin", str(origin))
-    _git(repo, "push", "-q", "-u", "origin", "main")
+    _git(repo, "push", "-q", "-u", "origin", "pr-test")
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for tool in ("oc", "podman", "helm"):
@@ -127,7 +128,7 @@ def calls(lab) -> str:
 
 def synced_status(lab, revision: str) -> None:
     """An Application whose status was computed for its current spec, Synced/Healthy at `revision`."""
-    src = {"repoURL": "x", "path": "charts/group-sync-dashboard", "targetRevision": "main"}
+    src = {"repoURL": "x", "path": "charts/group-sync-dashboard", "targetRevision": "pr-test"}
     (lab["tmp"] / "app-status.json").write_text(json.dumps({
         "spec": {"source": src},
         "status": {"sync": {"status": "Synced", "revision": revision, "comparedTo": {"source": src}},
@@ -177,7 +178,7 @@ def test_a_missing_helm_values_file_is_refused_before_any_build(lab):
 
 
 def test_build_only_refuses_argocd_and_values_and_a_dash_revision_is_not_one(lab):
-    for args in (("--argocd", "main", "--build-only"), ("--build-only", "--argocd"), ("--values", "environments/crc.yaml", "--build-only")):
+    for args in (("--argocd", "pr-test", "--build-only"), ("--build-only", "--argocd"), ("--values", "environments/crc.yaml", "--build-only")):
         r = run(lab, *args)
         assert r.returncode == 2 and "do not apply to a build" in r.stderr, args
     r = run(lab, "--argocd", "-x")
@@ -207,14 +208,14 @@ def test_helm_mode_takes_the_fields_argo_left_on_the_surviving_objects(lab):
 
 def test_argocd_branch_fetch_failure_is_fatal(lab):
     _git(lab["repo"], "remote", "set-url", "origin", str(lab["tmp"] / "gone.git"))
-    r = run(lab, "--argocd", "main", "--values", "environments/crc.yaml")
+    r = run(lab, "--argocd", "pr-test", "--values", "environments/crc.yaml")
     assert r.returncode == 1, r.stdout + r.stderr
-    assert "branch main is not on origin, or origin is unreachable" in r.stderr
+    assert "branch pr-test is not on origin, or origin is unreachable" in r.stderr
     assert "helm" not in calls(lab) and "oc" not in calls(lab)
 
 
 def test_argocd_branch_works_in_a_single_branch_clone(lab):
-    _git(lab["repo"], "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+    _git(lab["repo"], "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/pr-test")
     _git(lab["repo"], "checkout", "-qb", "topic")
     (lab["repo"] / "environments" / "topic.yaml").write_text("x: 1\n")
     _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", "topic"); _git(lab["repo"], "push", "-q", "origin", "topic")
@@ -226,8 +227,8 @@ def test_argocd_branch_works_in_a_single_branch_clone(lab):
 def test_argocd_branch_values_must_exist_on_origin(lab):
     (lab["repo"] / "environments" / "other.yaml").write_text("x: 1\n")
     _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", "other")   # committed, NOT pushed
-    r = run(lab, "--argocd", "main", "--values", "environments/other.yaml")
-    assert r.returncode == 1 and "does not exist on origin/main" in r.stderr
+    r = run(lab, "--argocd", "pr-test", "--values", "environments/other.yaml")
+    assert r.returncode == 1 and "does not exist on origin/pr-test" in r.stderr
 
 
 def test_argocd_head_values_must_be_committed_and_clean(lab):
@@ -293,17 +294,17 @@ def test_argocd_writes_the_application_once_with_everything_in_it(lab):
 
 def test_argocd_branch_clears_the_image_parameters_and_waits_for_its_commit(lab):
     synced_status(lab, lab["full"])
-    r = run(lab, "--argocd", "main")
+    r = run(lab, "--argocd", "pr-test")
     assert r.returncode == 0, r.stdout + r.stderr
     log = calls(lab)
     assert "podman" not in log
     patch_line = next(l for l in log.splitlines() if l.startswith("oc patch --local"))
     patch = json.loads(patch_line.split(" -p ", 1)[1].split(" -o json")[0])
-    assert patch["spec"]["source"] == {"targetRevision": "main", "helm": {"parameters": []}}
+    assert patch["spec"]["source"] == {"targetRevision": "pr-test", "helm": {"parameters": [], "valueFiles": ["../../environments/crc.yaml"]}}
     # the branch moved on origin but the Application's `main` did not: the old status must not satisfy the waiter
     synced_status(lab, "0" * 40)
-    r = run(lab, "--argocd", "main", ARGOCD_WAIT_INTERVAL="1")
-    assert r.returncode == 1, "the waiter accepted a status for a commit that is not origin/main"
+    r = run(lab, "--argocd", "pr-test", ARGOCD_WAIT_INTERVAL="1")
+    assert r.returncode == 1, "the waiter accepted a status for a commit that is not origin/pr-test"
 
 
 # --- the published image the branch path hands to Argo (#410) -----------------------------------
@@ -319,7 +320,7 @@ def test_argocd_branch_refuses_an_alias_that_is_another_application_version(lab)
     """#410 as measured on quay: `:0.39.0` existed before application 0.39.0 and was application 0.24.0."""
     synced_status(lab, lab["full"])
     _stale_alias(lab, "group-sync-dashboard", "0.24.0")
-    r = run(lab, "--argocd", "main")
+    r = run(lab, "--argocd", "pr-test")
     assert r.returncode == 1, r.stdout + r.stderr
     assert f"quay.io/example/group-sync-dashboard:{_version()} is application 0.24.0, not {_version()} (#410)" in r.stderr
     log = calls(lab)
@@ -330,7 +331,7 @@ def test_argocd_branch_refuses_a_stale_report_alias_too(lab):
     """The chart resolves both images at appVersion; the report pod refuses a newer snapshot, so an old one 503s."""
     synced_status(lab, lab["full"])
     _stale_alias(lab, "group-sync-dashboard-report", "0.24.0")
-    r = run(lab, "--argocd", "main")
+    r = run(lab, "--argocd", "pr-test")
     assert r.returncode == 1, r.stdout + r.stderr
     assert f"group-sync-dashboard-report:{_version()} is application 0.24.0" in r.stderr
     assert "oc apply" not in calls(lab)
@@ -338,7 +339,7 @@ def test_argocd_branch_refuses_a_stale_report_alias_too(lab):
 
 def test_argocd_branch_refuses_an_alias_publish_has_not_pushed_yet(lab):
     synced_status(lab, lab["full"])
-    r = run(lab, "--argocd", "main", STUB_IMAGES="")
+    r = run(lab, "--argocd", "pr-test", STUB_IMAGES="")
     assert r.returncode == 1, r.stdout + r.stderr
     assert f"quay.io/example/group-sync-dashboard:{_version()} is not in the registry" in r.stderr
     assert "--release-tags" in r.stderr
@@ -352,7 +353,7 @@ def _pin_on_branch(lab, branch: str, dashboard_tag: str, report_tag: str) -> Non
         f'image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: "{dashboard_tag}"\n'
         f'reporting:\n  image:\n    repository: quay.io/example/group-sync-dashboard-report\n    tag: "{report_tag}"\n')
     _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", branch); _git(lab["repo"], "push", "-q", "origin", branch)
-    _git(lab["repo"], "checkout", "-q", "main")
+    _git(lab["repo"], "checkout", "-q", "pr-test")
     synced_status(lab, _git(lab["repo"], "rev-parse", branch))
 
 
@@ -367,7 +368,7 @@ def test_argocd_branch_reads_the_chart_at_the_branch_not_the_checkout(lab):
 
 def test_argocd_branch_deploys_when_both_aliases_are_the_release(lab):
     synced_status(lab, lab["full"])
-    r = run(lab, "--argocd", "main")
+    r = run(lab, "--argocd", "pr-test")
     assert r.returncode == 0, r.stdout + r.stderr
     log = calls(lab)
     assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} {LINUX_IMAGES}" in log
@@ -400,9 +401,9 @@ def test_argocd_branch_reads_the_shipped_values_file(lab):
     """The real values.yaml (150 KB, reporting.image.tag commented, secretsMint's tag first): both aliases checked."""
     shipped = (REPO / "charts" / "group-sync-dashboard" / "values.yaml").read_text()
     (lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml").write_text(shipped.replace("quay.io/ephico2real/", "quay.io/example/"))
-    _git(lab["repo"], "commit", "-qam", "shipped values"); _git(lab["repo"], "push", "-q", "origin", "main")
+    _git(lab["repo"], "commit", "-qam", "shipped values"); _git(lab["repo"], "push", "-q", "origin", "pr-test")
     synced_status(lab, _git(lab["repo"], "rev-parse", "HEAD"))
-    r = run(lab, "--argocd", "main")
+    r = run(lab, "--argocd", "pr-test")
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"group-sync-dashboard-report:{_version()} is application {_version()}" in r.stdout
 
@@ -439,11 +440,74 @@ def test_argocd_branch_reads_every_linux_image_of_a_manifest_list(lab, arm64_ver
     """The real oc refuses a manifest list without --filter-by-os, and a workstation is not the node's OS."""
     synced_status(lab, lab["full"])
     oci = _manifest_list(lab["tmp"] / "oci", arm64_version or _version())
-    r = run(lab, "--argocd", "main", STUB_OCI_DIR=str(oci), STUB_REAL_OC=REAL_OC)
+    r = run(lab, "--argocd", "pr-test", STUB_OCI_DIR=str(oci), STUB_REAL_OC=REAL_OC)
     assert (r.returncode == 0) is deploys, r.stdout + r.stderr
     if not deploys:
         assert "0.24.0" in next(line for line in r.stderr.splitlines() if "is application" in line)
         assert "oc apply" not in calls(lab)
+
+
+# --- the release branch promote.yml writes (#410) ------------------------------------------------
+
+@pytest.mark.parametrize("branch", ["main", "refs/heads/main"])
+def test_main_is_refused_before_anything_is_fetched_or_written(lab, branch):
+    r = run(lab, "--argocd", branch)
+    assert r.returncode == 2 and "main is not a deployment branch" in r.stderr, r.stdout + r.stderr
+    assert calls(lab) == ""
+
+
+def test_release_without_a_pin_is_refused_before_anything_is_written(lab):
+    """A release tree nobody promoted must not fall back to the :<appVersion> aliases."""
+    _git(lab["repo"], "push", "-q", "origin", "pr-test:release")
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "release")
+    assert r.returncode == 1 and "origin/release has no promotion.yaml" in r.stderr, r.stdout + r.stderr
+    assert "oc apply" not in calls(lab) and "helm uninstall" not in calls(lab) and "oc image info" not in calls(lab)
+
+def _promotion(lab, dashboard: str, report: str) -> str:
+    """origin/release as promote.py leaves it: the chart, environments/ and promotion.yaml; `dashboard` and
+    `report` are the labels the registry reports for the two pinned digests (`<version>/<revision>`)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("promote", LOCAL_DEV / "promote.py")
+    promote = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(promote)
+    tag = f"{_version()}-{lab['full'][:10]}"
+    pins = [(f"quay.io/example/{name}", tag, "sha256:" + f"{n}" * 64) for n, name in enumerate(("group-sync-dashboard", "group-sync-dashboard-report"), 1)]
+    _git(lab["repo"], "checkout", "-q", "--orphan", "release")
+    (lab["repo"] / "promotion.yaml").write_text(promote.render_pin(lab["full"], lab["full"], 1, pins))
+    _git(lab["repo"], "add", "promotion.yaml", "charts", "environments")
+    _git(lab["repo"], "commit", "-qm", "promote"); _git(lab["repo"], "push", "-q", "origin", "release")
+    release = _git(lab["repo"], "rev-parse", "HEAD")
+    _git(lab["repo"], "checkout", "-qf", "pr-test")
+    lab["env"]["STUB_IMAGES"] = f"{pins[0][0]}@{pins[0][2]}={dashboard} {pins[1][0]}@{pins[1][2]}={report}"
+    synced_status(lab, release)
+    return release
+
+
+def test_argocd_release_reads_the_pinned_digests_back_and_adds_the_pin_last(lab):
+    good = f"{_version()}/{lab['full'][:10]}"
+    _promotion(lab, good, good)
+    r = run(lab, "--argocd", "release")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "the digests in promotion.yaml" in r.stdout and "the chart's default image" not in r.stdout
+    log = calls(lab)
+    assert "oc image info quay.io/example/group-sync-dashboard@sha256:1111" in log
+    assert "oc image info quay.io/example/group-sync-dashboard-report@sha256:2222" in log
+    patch_line = next(l for l in log.splitlines() if l.startswith("oc patch --local"))
+    source = json.loads(patch_line.split(" -p ", 1)[1].split(" -o json")[0])["spec"]["source"]
+    assert source == {"targetRevision": "release",
+                      "helm": {"parameters": [], "valueFiles": ["../../environments/crc.yaml", "../../promotion.yaml"]}}
+
+
+@pytest.mark.parametrize("report", ["0.24.0/0123456789", "", "absent"], ids=["other-build", "unlabelled", "absent"])
+def test_argocd_release_refuses_a_pinned_digest_that_is_not_the_release(lab, report):
+    _promotion(lab, f"{_version()}/{lab['full'][:10]}", report)
+    if report == "absent":
+        lab["env"]["STUB_IMAGES"] = lab["env"]["STUB_IMAGES"].split()[0]
+    r = run(lab, "--argocd", "release")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "group-sync-dashboard-report@sha256:2222" in r.stderr
+    assert "oc apply" not in calls(lab) and "helm uninstall" not in calls(lab)
 
 
 # --- the waiter on its own ----------------------------------------------------------------------

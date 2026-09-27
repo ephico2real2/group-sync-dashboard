@@ -60,7 +60,7 @@ no feature is removed or deprecated unless an issue says so and the operator agr
 - [ ] Released: `prepare-release.py` cut, with the epic as the first bullet under the new `docs/CHANGELOG.md`
       heading; the release PR merged; `.github/workflows/helm.yaml` published the chart;
       `.github/workflows/publish.yml` published the application image when `--app` was used.
-- [ ] The published release deployed to CRC through `release-crc.sh --argocd main`, walked, PVC UIDs unchanged.
+- [ ] The published release deployed to CRC through `release-crc.sh --argocd release`, walked, PVC UIDs unchanged.
 - [ ] The branches this epic used are deleted, each proven merged first.
 - [ ] The session changelog records the epic.
 
@@ -133,13 +133,15 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    merge shas, the lab evidence) into that release's body. The tag is the **chart** version just cut, not the
    application version: `gh release edit group-sync-dashboard-<chart-version> --notes-file <file>`.
 3. **Deploy.** After those workflows are green, deploy the published release with
-   `local-development/release-crc.sh --argocd main`. That mode uses the chart on GitHub at `main` and the published
-   quay image (the mode table in the `release-crc.sh` header and in `local-development/README.md`). Bare
-   `--argocd` builds HEAD and pins that image, so it is not the published release. The branch path refuses to hand Argo an image whose
-   `org.opencontainers.image.version` label is not the chart's appVersion, or that is not in the registry (#410): a
-   refusal means publish.yml has not moved the `:<appVersion>` aliases yet, or a chart-version label already occupied
-   that tag. Wait for the publish run; never retag by hand. The lab's Application auto-syncs `main`, so it can deploy
-   before this script runs; #410 tracks that race. Walk it, and record the two PVC
+   `local-development/release-crc.sh --argocd release`, once `promote.yml` has promoted the release merge
+   (`docs/CICD.md`). For the first deployment, before `release` exists, ask the operator to create the orphan
+   branch with one empty commit and its ruleset, following `docs/CICD.md`, **Rollback and setup**. Then re-run
+   `promote.yml` on main and wait for a successful promotion before deploying. That mode uses the chart and
+   the digests `promote.yml` read back and pinned on `release`, and reads
+   both digests back again; `--argocd main` is refused (#410). Bare `--argocd` builds HEAD and pins that image, so it
+   is not the published release. An `origin/release has no promotion.yaml` refusal means no pin is present:
+   wait for a successful `promote.yml` run. For a digest or label mismatch, investigate the failed read-back;
+   waiting alone does not repair it. Never retag by hand. Walk it, and record the two PVC
    UIDs before and after; they must be unchanged.
 
 Then:

@@ -59,6 +59,7 @@ records follow separately; their status and measurements belong to the work they
 ### Development guides and design records
 
 - [RELEASING.md](RELEASING.md) — application and chart release procedures and version ownership.
+- [CICD.md](CICD.md) — the pipeline from a pull request to the cluster: checks, publish, promotion to `release`, rollback.
 - [api-contract.md](api-contract.md) — documentation and schema rules for new API endpoints.
 - [storage-coupling.md](storage-coupling.md) — the SQLite storage seam and requirements for another backend.
 - [unmanaged-audit-design.md](unmanaged-audit-design.md) — unmanaged-grant discovery design and invariants.

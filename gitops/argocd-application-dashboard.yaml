@@ -1,5 +1,5 @@
 # The dashboard chart installed by OpenShift GitOps from THIS git repository — charts/group-sync-dashboard
-# on main with environments/crc.yaml — as release `group-sync-dashboard` into group-sync-dashboard, the
+# on `release` with environments/crc.yaml — as release `group-sync-dashboard` into group-sync-dashboard, the
 # same namespace and release name the Helm loop used. One instance, not two: the chart's ClusterRoles
 # and ClusterRoleBindings are named by the release, so a second release of the same name elsewhere
 # would take those bindings over and cut the first one off (rendered and read on 2026-09-20).
@@ -12,9 +12,10 @@
 # the data and artefacts PVCs (helm.sh/resource-policy: keep) and the two minted Secrets (Helm never
 # owned them), so history, sessions and tickets carry over; the first sync adopts the rest.
 #
-# Iterating on a branch: point targetRevision at it, or pause (`argocd app set group-sync-dashboard
-# --sync-policy none`) and use release-crc.sh — never both at once, Argo's prune and selfHeal would
-# undo a hand-installed release.
+# promotion.yaml comes last so no environment value can replace the read-back digests (docs/CICD.md).
+#
+# Pause auto-sync before a Helm test (`argocd app set group-sync-dashboard --sync-policy none`): selfHeal
+# would undo it.
 #
 # What this instance does NOT have: the lab's mock cluster — crc.yaml lists it, but its credentials
 # Secret and volume were patched onto the Helm release's Deployment by hand; Argo would strip the
@@ -32,12 +33,13 @@ spec:
   project: default
   source:
     repoURL: https://github.com/ephico2real2/group-sync-dashboard.git
-    targetRevision: main
+    targetRevision: release
     path: charts/group-sync-dashboard
     helm:
       releaseName: group-sync-dashboard
       valueFiles:
         - ../../environments/crc.yaml
+        - ../../promotion.yaml
       valuesObject:
         clusters:
           - name: dashboard

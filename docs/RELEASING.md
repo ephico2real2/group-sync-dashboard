@@ -127,6 +127,13 @@ The alias the chart actually resolves moves only when the application version ch
 carry a MINOR bump, so their merges publish both the immutable tag and the version alias. The
 publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme are unchanged.
 
+## Promotion: what the lab deploys
+
+The lab does not deploy `main`. After `publish.yml` succeeds, `promote.yml` reads both images back and commits
+the chart with the images pinned by digest to the `release` branch, which the lab's Argo CD tracks. A chart-only
+merge is promoted with the image of the last commit that changed an image input; a failed publish is never
+promoted. [CICD.md](CICD.md) is the walk-through, with the picture, the rollback and the one-time setup.
+
 ---
 
 ## Three tags, and why there are three
@@ -253,6 +260,8 @@ A docs-only or tooling PR outside `publish.yml`'s image-input paths, with no cha
 needs neither version bump. An image-changing issue takes the next MINOR in its PR; on its branch,
 `./prepare-release.py --app X.Y.Z "Issue summary" --no-commit` prepares the matching version fields
 and release notes for review alongside the change.
+
+The lab tracks `release`, not `main`: [CICD.md](CICD.md) says what each kind of merge deploys there.
 
 **A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
 without an application release leaves the chart's default image one schema behind `main`, and that image

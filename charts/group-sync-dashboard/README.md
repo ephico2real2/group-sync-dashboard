@@ -1153,6 +1153,24 @@ strategy. Keep both until you have watched a sync on your own cluster.
 > but no controller running, so the annotations were checked by rendering and applying, not
 > by observing a sync.
 
+### Track a promoted branch, not `main`
+
+This repository's lab Application (`gitops/argocd-application-dashboard.yaml`) sets `targetRevision: release`, not
+`main`. `release` is written only by the `promote` workflow, after both images are read back from the registry. It
+carries this chart, `environments/`, and `promotion.yaml`, which sets `image.digest` and `reporting.image.digest`.
+List it last in `valueFiles`, because the last file wins:
+
+````yaml
+    targetRevision: release
+    helm:
+      valueFiles:
+        - ../../environments/crc.yaml
+        - ../../promotion.yaml
+````
+
+Tracking `main` lets Argo CD sync a chart whose `:<appVersion>` image is not pushed yet (#410 measured a sync only 95 s
+after the image was pushed). The whole pipeline is in [docs/CICD.md](../../docs/CICD.md).
+
 ## Deploying with Flux or Kustomize
 
 Two more shapes, both from the published chart repository, under `examples/` (#212):
