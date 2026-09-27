@@ -69,7 +69,11 @@ The retrieval binds only while a cluster is *pending* a credential
 token is written, the cluster leaves that set and is not retrieved again. The one later use of the LDAP
 account is the daily ping (`gsd/poller.py#Poller._ping_accounts`, `clusterConfig.fleetAccount.ping`): once
 per account per interval it logs in on ONE retrieved cluster, reads the token Secret there to confirm the
-account still works, and stores nothing — confirming is not renewing.
+account still works, and stores nothing — confirming is not renewing. It logs in only as an account the
+configuration names now — `clusterConfig.fleetAccount.username`, or a declaration's `ldapConnectionBootstrap`
+(`gsd/poller.py#Poller._declared_accounts`, #432). A retrieved Secret's `lookup-account` says who fetched its
+token; once the configuration stops naming that account, the one password Secret may hold another account's
+password, so the ping does not log in as it. Its row and its share of the metrics stay, read from its Lease.
 
 **Why the polling token carries no expiry.** A token that expires needs something to renew it, and
 renewal means re-authenticating — which would turn a once-per-onboarding bind into a recurring one

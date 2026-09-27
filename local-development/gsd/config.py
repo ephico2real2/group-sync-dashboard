@@ -245,7 +245,7 @@ _BOOTSTRAP_USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,254}$")
 
 
 def valid_bootstrap_username(value: object) -> bool:
-    return isinstance(value, str) and bool(_BOOTSTRAP_USERNAME.match(value))
+    return isinstance(value, str) and bool(_BOOTSTRAP_USERNAME.fullmatch(value))
 
 
 @dataclass(frozen=True)

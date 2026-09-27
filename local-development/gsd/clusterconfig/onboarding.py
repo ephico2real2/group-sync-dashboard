@@ -199,9 +199,11 @@ def discover_onboarding(host_client, namespace: str, *, settings, mutate: bool):
     for i, cluster in enumerate(clusters):
         declaration = desired.get(cluster.name)
         if declaration is not None and cluster.source.split(":", 1)[-1] in outputs:
+            # The account comes from the accepted declaration, never from the output's annotation (#432).
             clusters[i] = dataclasses.replace(cluster, enabled=declaration.enabled,
                                               visibility=declaration.visibility, identity=declaration.identity,
-                                              onboarding=declaration.onboarding)
+                                              onboarding=declaration.onboarding,
+                                              ldap_connection_bootstrap=declaration.ldap_connection_bootstrap)
     # Detect a physical-name collision, including an unlabelled Secret, before spending a login.
     for name, cluster in list(pending.items()):
         with host_client._client() as client:

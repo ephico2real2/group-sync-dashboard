@@ -1704,6 +1704,14 @@ class Poller:
             return None
         return ClusterClient(host, timeout=self.settings.request_timeout_seconds), namespace
 
+    def _declared_accounts(self, effective: list[ClusterConfig]) -> set[str]:
+        """Only declarations authorize an account: retrieval history cannot vouch for today's password (#432)."""
+        s = self.settings
+        accounts = {s.fleet_account_username}
+        accounts.update(c.ldap_connection_bootstrap for c in (*s.clusters, *effective)
+                        if c.enabled and (c.connection_mode or c.token_source == CREDENTIAL_LOOKUP))
+        return accounts - {"", None}
+
     def _ping_accounts(self) -> None:
         """One real read per fleet account per cadence (SPEC_S4c §3.4) — the daily ping, on the discovery thread,
         after the lookups. Every account in use has its Lease read each cadence, on every replica, so the tab and
@@ -1711,7 +1719,7 @@ class Poller:
         password — whichever path or replica wrote it — seeds the gate and stops the account's self-login clusters
         (#419, D3), and an account whose clusters the lookup retrieved is pinged against ONE of them — the
         `lookup-account` their Secrets record, in rotation by name — through `lookup(write=False)` under the account
-        Lease's claim."""
+        Lease's claim. Historical accounts remain visible, but only declared accounts may authenticate (#432)."""
         from .clusterconfig.events import event, failure
         from .clusterconfig.parser import Finding
         from .clusterconfig.writer import secret_name_for
@@ -1722,7 +1730,9 @@ class Poller:
             return
         targets: dict[str, list[ClusterConfig]] = {}       # account -> the retrieved clusters its ping may read
         members: dict[str, list[str]] = {}                 # account -> every enabled cluster in use on it (#419, F3)
-        for c in self.settings.effective_clusters():
+        effective = self.settings.effective_clusters()
+        declared = self._declared_accounts(effective)      # the only accounts the password is presented as (#432)
+        for c in effective:
             named = c.ldap_connection_bootstrap or self.settings.fleet_account_username
             if c.enabled and c.token_source == CREDENTIAL_LOOKUP and c.lookup_account:
                 targets.setdefault(c.lookup_account, []).append(c)
@@ -1750,6 +1760,8 @@ class Poller:
             if record.reservation_pending(datetime.now(UTC), lease.claim_seconds):
                 continue    # an attempt under way: its reservation is not yet an answer (#419, round 2)
             views[account] = record.view()
+            if account not in declared:
+                continue    # history stays visible without reading or presenting a password (#432)
             # ROTATION BY NAME (§3.4): the first after the last target, wrapping — over N cadences every target is
             # read once, so a grant revoked on one is found naming it.
             clusters, last = sorted(targets.get(account, []), key=lambda c: c.name), record.ping_last_target

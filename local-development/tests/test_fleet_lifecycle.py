@@ -119,11 +119,12 @@ def self_login(name: str) -> ClusterConfig:
 
 
 def process(tmp_path, monkeypatch, host: LeaseHost, *clusters: ClusterConfig, discovered=(), name="p", **kw) -> Poller:
-    """One dashboard process over `host`: its own store and its own in-memory gate."""
+    """One process over `host`; USER is named on the chart, since only declared accounts are pinged (#432)."""
     monkeypatch.setattr("gsd.poller.own_namespace", lambda: "ns")
     monkeypatch.setattr("gsd.poller.ClusterClient", lambda *a, **k: host)
     s = Settings(clusters=[ClusterConfig("host", "https://kubernetes.default.svc", token_env="X"), *clusters],
-                 db_path=str(tmp_path / f"{name}.db"), cluster_secrets_writes_enabled=True, **kw)
+                 db_path=str(tmp_path / f"{name}.db"), cluster_secrets_writes_enabled=True,
+                 **{"fleet_account_username": USER, **kw})
     s.cluster_registry.replace(list(discovered), [], at="2026-09-26T00:00:00Z")
     return Poller(Store(str(tmp_path / f"{name}.db")), s, signals=RuntimeSignals())
 

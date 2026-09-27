@@ -10,6 +10,22 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The daily ping presents the fleet password only as an account the configuration names (#432,
+  `docs/specs/SPEC_S4e_ping_account_scope.md`).** The ping took its account from a retrieved cluster's
+  `lookup-account` annotation — who fetched that cluster's token, under the configuration of that day — and its
+  password from the one Secret the configuration names today. After a username change, a removed stanza or a
+  repointed Secret, it sent one account's password as another's: a refused login counted against that account's
+  directory entry. On the reference cluster's arrangement, SPEC_S4c §3.12's walk would have sent the fleet account
+  `developer`'s password and then a wrong one — 2 refused logins, 3 with a restart (the Epic C walk, PR #433;
+  measured hermetically, not run); now 0. The ping's account now comes only from a declaration: the chart's
+  `fleetAccount.username`, or an `ldapConnectionBootstrap` — a stanza's, a retrieved Secret's own (retrieval now keeps
+  an explicit one), or an accepted ConfigMap declaration's, never its output's annotation. An account nothing names
+  any more is still listed on the tab and counted in `/metrics`, from its Lease, and no password is read for it. A
+  username with a trailing newline is now refused. The lookup and self-login are unchanged: a stanza naming an
+  account whose password the Secret does not hold is refused, and every path stands down while that password is the
+  latest one refused. SPEC_S4c §3.12's walk now names only `developer` and re-checks the lab, read-only, before it
+  places any password. Application **1.4.0**, chart 0.59.6.
+
 - **Warn when cluster entries share an API URL (#314, Epic D).** Discovery compares effective values,
   Secret and ConfigMap entries using the credential gate's URL rule. A group is logged once when it
   appears and once when it clears. `GET /api/clusterconfigs` gains `warnings`, separate from findings;
