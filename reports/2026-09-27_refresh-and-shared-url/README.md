@@ -8,8 +8,8 @@ walked the Cluster Configurations tab in Chromium at 1280, 768 and 375 px. `scri
   carried the chip.
 - #311: Refresh on `shared-rnd` went from idle, to in flight, to `connected · <ISO-8601 UTC>`. The answer was still
   shown after the 60-second repaint had redrawn the card.
-- The three enabled mock entries each answered `unreachable`: the mock has no `/version`. That is the lab's only
-  refused Refresh.
+- The three enabled mock entries each answered `unreachable`: the mock has no `/version`. That was the only failed
+  Refresh outcome observed in this walk.
 - The pod log for the walk window has 12 `cluster-refreshed` lines, all `by=developer`, and 0 `fleet-login` lines.
 
 The walk needed one temporary change to the lab, a grant, which was removed afterwards. A fresh login after the
@@ -28,7 +28,7 @@ and after the walk.
 | #311 | Refresh in flight, labelled | PASS | `"button": {"text": "Refreshing…", "disabled": true, "aria_busy": "true"}`, with the line `Refresh: probing /version and users/~ with the stored credential…`; `08`, `21`, `34-*-refresh-in-flight.png` |
 | #311 | Refresh succeeded: `connected · <ISO-8601 UTC>` | PASS | `Refresh: connected · 2026-09-27T20:20:24Z — authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6` (then `…20:21:38Z`, `…20:22:52Z`); `09`, `22`, `35-*-refresh-succeeded.png` |
 | #311 | The same state after the 60-second repaint | PASS | after 65 s at each width: one `GET /api/clusterconfigs` (`[200]`), the result line's node replaced (`marker … null`), the text unchanged (`"same": true, "repainted": true, "polls": 1`); `10`, `23`, `36-*-refresh-after-repaint.png` |
-| #311 | A refused Refresh, only one the lab really has | PASS | `mock-privateca`, `mock-selfsigned`, `mock-trusted` each: `Refresh: unreachable · … — HTTP 404 on /version: {"detail":"Not Found"}`, with the red badge; `11–13`, `24–26`, `37–39-*-refresh-mock-*.png`. The `auth_failed` branch, which adds the Rejoin hint, was not reached: no entry on the lab refuses its credential. |
+| #311 | A failed Refresh on each of the three enabled mocks | PASS | `mock-privateca`, `mock-selfsigned`, `mock-trusted` each: `Refresh: unreachable · … — HTTP 404 on /version: {"detail":"Not Found"}`, with the red badge; `11–13`, `24–26`, `37–39-*-refresh-mock-*.png`. The `auth_failed` branch, which adds the Rejoin hint, was not exercised in this walk: Refresh was pressed on `shared-rnd` and the three mocks only, so the walk does not establish that no lab entry could return it. |
 | #311 | The pod log: `cluster-refreshed` lines `by=developer`, no `fleet-login` | PASS | `evidence/walk-podlog.txt`: `cluster-refreshed lines: 12, of them by=developer: 12` (3 × `shared-rnd outcome=ok`, 9 × mock `outcome=unreachable`); `fleet-login lines: 0`; `ERROR or Traceback lines: 0` |
 | both | No page error, no sideways scroll | PASS | `no uncaught page errors: []`, `no 'Dashboard API error'` and `scrollWidth / innerWidth` `[1280, 1280]`, `[768, 768]`, `[375, 375]` |
 
