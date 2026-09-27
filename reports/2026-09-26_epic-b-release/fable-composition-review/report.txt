@@ -1,0 +1,355 @@
+OB2 (Fable 5.1, high) — composition review of Epic A (#381, chart 0.58.3) and Epic B (#382, app 0.37.0), main cbe828b
+Worktree: scratchpad/review_fable_ab (detached at cbe828b, untouched). gsd imported from the worktree (printed:
+review_fable_ab/local-development/gsd/__init__.py, KNOWN_SCHEMA_VERSION 20).
+Depth: K1, K2, K4 deep (real Store runs under simulated image versions: drive_k1_k2.py, drive_k4.py); K6 deep (run
+timings, quay tag reads, oc image info, a harness fix proved before/after); K3 medium (the check run on six real
+commits and three synthetic merge shapes); K5 medium (the suite); K7 shallow.
+
+VERDICTS
+
+K1: CONFIRMED — #305 and #301 share one read (store.py:1166-1170 `_schema_state`: user_version + "any object in
+sqlite_master", on the connection that has run nothing) and never disagree. Measured table (drive_k1_k2.log; image = this
+build, N=20; se = sync_event rows, me = membership_event rows):
+  absent file            -> opened, v20, no copy, no refusal
+  zero-byte file         -> v0 fresh -> opened, v20, no copy (fresh = no schema objects, store.py:1406)
+  file at N              -> opened, no copy, no migration
+  file at N-1            -> copy pre-upgrade-…-schema-19-to-20-<pod>.db, then migrated to 20
+  file at N+1            -> REFUSED StoreSchemaTooNew, no pre-upgrade dir created, file still v21 se=1
+  N-1 + hot WAL (23 rows only in -wal) -> copy holds v19 me=23 (VACUUM INTO reads through the WAL), wal 24752 -> 0
+  N+1 + hot WAL          -> REFUSED; content kept (v21 me=23); the WAL was folded on close (24752 -> 0 bytes), the
+                            byte-level change RUNBOOK §4c already documents
+  crash after copy, before migration (first start) -> the copy is on disk, db still v19; NEXT start: "not taken again"
+                            skip (store.py:1209-1214, keyed on -to-20-), migrates to 20 — no second copy
+  kill mid-copy (.tmp + orphan .sha256 left)        -> both removed (store.py:1233-1237), fresh copy taken, migrated
+  The refusal precedes the copy, the copy precedes journal_mode/SCHEMA/_migrate (store.py:1399-1442).
+
+K2: CONFIRMED (as designed and as documented) — measured: upgrade 19->20 (copy A), rollback to image 19 REFUSED, restore A
+per §4a, image 19 opens and writes one row (se 1 -> 2), upgrade to 20 again: "K2.4 … copies=[A] copy holds se=1": the
+retry took NO copy, so the row image 19 wrote after the restore has no way back. After moving A and its .sha256 out
+(RUNBOOK §6 "Once per upgrade" bullet, lines "If the previous image ran on the restored database…"), the retry took a new
+copy holding se=2. The runbook's instruction is correct and necessary. Residual: that instruction lives in the "Once per
+upgrade" bullet; the "Using a copy" paragraph an operator follows to go back, and §4c, do not point at it — doc line
+below (no test possible).
+
+K3: CONFIRMED for the flow the repository uses (merge commits: merge-safe.sh:50 `gh pr merge "$pr" --merge`), PLAUSIBLE
+risk for a rebase merge. Measured on real history in a scratch clone (prepare-release.schema_since_app_release):
+  cbe828b (main)       release=b087c78f80 schema 20/20 PASS
+  b087c78 (#409 merge) release=b087c78f80 20/20 PASS   <- the merge commit IS the release, as publish.yml's before/HEAD rule
+  673654f (#409 head)  release=fcede08a89 20/20 PASS   (the branch's own bump commit; a migration after it would fail
+                                                        here but pass on the merge ref CI checks out — ci.yml:149-154,
+                                                        fetch-depth 0, no ref: -> refs/pull/N/merge)
+  49da3fe, 50ec1b5 (#407), 0f7777b: PASS (schema 20 at every release since 667b3c4a62)
+  Synthetic (tests/test_migration_needs_app_release.py helpers): squash PASS; rebase migration-then-bump PASS; rebase
+  bump-then-migration FAILS on main after the merge ("reaches 3 at HEAD but 2 at …") although publish.yml built the push's
+  HEAD with the migration — a false block, only via the GitHub UI's rebase button (repo allows merge+squash+rebase:
+  gh api -> {"merge":true,"rebase":true,"squash":true}). Can #298 pass a migration shipped without a release? Only when
+  the release commit exists but its publish did not move the alias: publish.yml:142-157 skips the build steps when the
+  credentials are unset and the run stays GREEN; the check reads git, not the registry. That is K6's hazard, not a flaw
+  in the git rule. Recommendation (no code): disable rebase merging in the repository settings; the test file's docstring
+  already states the first-parent model.
+
+K4: CONFIRMED consistent in both refusal states, with a bounded window after a restore. Measured (drive_k4.log):
+  1 image N+1 ran (db 21, newest snapshot 21): report pod REFUSES "snapshot schema 21 is newer…"
+  2 rollback to N, db still 21: dashboard REFUSES StoreSchemaTooNew, report REFUSES  (both down — consistent)
+  3 restored copy at 20, image N up, before its first snapshot: dashboard serves, report REFUSES (readyz 503,
+    server.py:185-188) — the newest file on /data/report is still the N+1 copy
+  4 after the leader's next Store.snapshot(keep=2): report SERVES schema 20 (newest_snapshot picks by stamp,
+    snapshot.py:73-85)
+  The window is the first poll cycle: poller.py:955 `_next_report_snapshot = 0.0`, called at poller.py:1113 after the
+  cycle, then every reporting_snapshot_interval_seconds (config.py:817, 300). Same KNOWN_SCHEMA_VERSION on both sides
+  (snapshot.py:35,112). Doc line for §4c below.
+
+K5: CONFIRMED — no default gsd.db and no pre-upgrade/ written into the tree. Command (from review_fable_ab/local-development):
+  PYTHONPATH=$PWD PYTHONDONTWRITEBYTECODE=1 .venv python -m pytest tests/ -q -p no:cacheprovider --basetemp=<scratch>/bt
+  --deselect tests/test_ui.py --deselect tests/test_live_smoke.py -> "5248 passed, 19 skipped, 608 deselected in 247.02s",
+  exit 0. `find local-development -type f` before/after: the only additions were 18 .pyc files under
+  gsd/__pycache__, gsd/kyverno/__pycache__, gsd/reporting/__pycache__ (gitignored; some subprocess of the suite runs an
+  interpreter that ignores PYTHONDONTWRITEBYTECODE — every `env=` in tests inherits os.environ and no `-E`/`-I` was found,
+  so the writer is NOT pinned; it is not a database). Deleted by me. `git status --short --ignored` after: empty.
+  The #371 guard (conftest.py:60-92) is a per-test delta on cwd's gsd.db/-wal/-shm; #407's tests use tmp_path only
+  (test_pre_upgrade_copy.py:31-40, 69-83), #403's test_migrations.py uses tmp_path only (lines 47-258).
+
+K6: REFUTED ("the /epic skill's release step is sufficient") — it is not; the digest gate the orchestrator ran by hand is
+required and belongs in the script, not the skill. Evidence:
+  - Both workflows start on the same push and nothing orders them: publish.yml run 36281230543 "Build and push the image"
+    00:01:45-00:02:45Z; helm.yaml run 36281230646 "Label the image this chart version deploys" 00:09:56Z — later only
+    because helm.yaml's release job waits for `validate` (tests 00:01:36-00:09:47Z). A faster validate or a slower
+    publish reverses them.
+  - The tag namespace is shared and already poisoned (read-only quay tag API): group-sync-dashboard:0.39.0 =
+    b53347cf9421 (2026-09-20); `oc image info quay.io/ephico2real/group-sync-dashboard:0.39.0 -o json` -> label
+    org.opencontainers.image.version 0.24.0, revision a0743ef3b0. :0.38.0 absent. :0.37.0 = 62e231178a3a = :0.37.0-b087c78f80
+    (labels 0.37.0 / b087c78f80), :0.58.5 (chart) = the same digest. The report repository has no chart labels at all.
+  - The exact order that deploys an image older than the database: (1) merge `--app 0.39.0`; (2) publish.yml's alias
+    move has not happened yet — its run is slower than validate+release, fails at `--release-tags`, or its credential gate
+    (publish.yml:142-157) skips the build steps with a green run; (3) helm.yaml's existence gate (helm.yaml:171) finds
+    :0.39.0 (the 0.24.0 image), labels :<chart> with it and releases the chart; (4) `release-crc.sh --argocd main` — the
+    skill's step 3 says only "after those workflows are green" — points the Application at main with parameters cleared
+    (release-crc.sh:204-212), Argo pulls :0.39.0 = application 0.24.0, whose store has no #305 refusal, onto the volume
+    that 0.37.0 migrated to schema 20 (the lab runs `…:0.37.0` by TAG, not digest: oc get deploy -n group-sync-dashboard).
+    Even after #410 fixes helm.yaml, step (4) is unprotected: Argo reads the chart from git at main, not from the chart
+    release, so a helm.yaml refusal does not stop the deploy.
+  - #406 made it worse in words: release-crc.sh:50-51 and 65-66 now say the published image's "schema no longer lags
+    (#298)". #298 is a statement about the release COMMIT; the TAG can still be 0.24.0.
+  - The branch path does nothing in-pod (header row "--argocd <branch> … no in-pod check"; argocd-wait.sh checks
+    revision/Synced/Healthy only). The gate the orchestrator ran (gate.txt on PR #412: ":0.37.0=… :0.37.0-b087c78f80=… MATCH"
+    for both repositories) is exactly what is missing. Fix + tests below (5 tests fail on cbe828b's script, 26 pass on
+    the patched one).
+
+K7: PLAUSIBLE (nothing REFUTED beyond K6). Checked and clean: store.py and reporting/snapshot.py are the only openers of
+gsd.db (grep sqlite3.connect in gsd/: no other hit); the copy dir is outside every backup glob (test_pre_upgrade_copy.py's
+offsite tests, values.yaml:306-311); replicaCount>1 copies live under /data/<pod>/pre-upgrade, the snapshot dir stays
+/data/report; #396's index test and #398's examples test pass at HEAD with #407's SPEC_M1 (the suite). Two design notes,
+not defects: (a) the skip at store.py:1209-1210 keys on the TARGET only, so restoring a DIFFERENT older backup (six-hourly,
+schema 18) under an image whose -to-20- copy exists migrates it without a copy — bounded, because that backup file still
+exists in /data/backup; keying on <from> too would let a CrashLoop at an intermediate version take one copy per version
+reached and prune the clean one at KEEP=3, which is why the target-only key is right. (b) the #305 message names §4 only;
+the pre-upgrade copy (§6) is the natural restore source after an upgrade — one word in the message, no test.
+The lab (read-only, KUBECONFIG kc-crc): dashboard and report at quay …:0.37.0, both Ready; PVC UIDs unchanged by this
+review: data f065b7a4-535c-4ef1-868c-58f5afee4953, report-artifacts 08c7d45c-a3eb-47be-8506-f24ea7a3e0e3; the 0.37.0
+start logged no pre-upgrade line (db already at 20) and writes /data/report snapshots every 5 min.
+
+NOT ASKED
+- The `__pycache__` writer (K5): not pinned; gitignored; harmless. Left as a note.
+- `oc image info` picked the manifest without --filter-by-os on today's single-arch images; if the images ever become
+  manifest lists the gate needs `--filter-by-os linux/amd64` (would fail closed, not open).
+
+FIXES
+
+1. K6 — the branch path of release-crc.sh reads the published images back before touching anything. Patch below
+   (local-development/release-crc.sh, local-development/tests/test_release_crc.py), verbatim, proved:
+   BEFORE (RELEASE_CRC_UNDER_TEST=<cbe828b script>, -k "alias or reads_the_chart"): 5 failed — e.g.
+   test_argocd_branch_refuses_an_alias_that_is_another_application_version: "assert 0 == 1", stdout shows the original
+   script handing the stale image to Argo and reaching Synced/Healthy.
+   AFTER (patched script + fixture): tests/test_release_crc.py 26 passed in 48.95s.
+   And one sentence for .claude/skills/epic/SKILL.md §6 step 3, after "Bare `--argocd` builds HEAD and pins that image,
+   so it is not the published release.":
+     The branch path refuses to hand Argo an image whose `org.opencontainers.image.version` label is not the chart's
+     appVersion, or that is not in the registry (#410): a refusal means publish.yml has not moved the `:<appVersion>`
+     aliases yet, or a chart-version label already occupied that tag — wait for the publish run, never retag by hand.
+
+2. K4 — docs/RUNBOOK_backup_restore.md §4c, after the `oc exec … /api/version` block, one paragraph:
+     **The report pod stays NotReady for one poll cycle.** The newest copy under `/data/report` is the one the previous
+     image wrote; when that image was newer, the report service refuses it (`snapshot schema N+1 is newer…`, readyz 503)
+     until the leader's first poll after this start writes a new copy (`poller.py#_maybe_report_snapshot`, immediately
+     on the first cycle, then every `reporting.snapshot.intervalSeconds`). Nothing to do; it clears itself.
+
+3. K2 — docs/RUNBOOK_backup_restore.md §6 "Using a copy", append:
+     Before you upgrade again after the previous image has run on the restored database, move the earlier `-to-<to>-`
+     copy and its `.sha256` out of `pre-upgrade/` (the "Once per upgrade" bullet above), or the retry takes no copy.
+
+OVERALL: Epic A and Epic B compose correctly on the database (K1, K2, K4 measured), the CI guard is sound for merge
+commits (K3), the tree stays clean (K5). One real composition defect: the release/deploy path — helm.yaml's label,
+publish.yml's alias, #406's reassurance and the skill's "after green, --argocd main" — has no gate on the tag Argo will
+pull, and quay already holds future application versions as labels on a 0.24.0 image. Apply fix 1 before the next --app
+release (0.38.0 is absent on quay and would fail loudly; 0.39.0 would deploy 0.24.0 silently).
+
+HOUSEKEEPING
+git status --short (worktree) before: clean. After: clean (`git status --short --ignored` empty) — I removed the three
+__pycache__ directories my suite run created (they did not exist before; files_before listing). No tracked file
+modified; no git write; no cluster/GitHub write (gh read-only; oc get/logs; quay tag API GET; oc image info GET).
+Scratch kept in fable_ab_scratch/: drive_k1_k2.py + .log, drive_k4.py + .log, suite.log, fixes.patch, out.txt. Deleted:
+the clone, every basetemp, the k1k2-*/k4-* run dirs, the k3 synthetic test, the file listings.
+
+FIXES PATCH (verbatim, from the scratch clone at cbe828b)
+diff --git a/local-development/release-crc.sh b/local-development/release-crc.sh
+index 5bd1c1b..1c8d571 100755
+--- a/local-development/release-crc.sh
++++ b/local-development/release-crc.sh
+@@ -48,7 +48,8 @@
+ #
+ # Typical loop: iterate with the bare script (or --values for a local variant); before merging,
+ # --argocd on the pushed head; after a merge, --argocd main. The published images may lag main's
+-# code, not its schema: CI fails a migration merged without an app release (#298).
++# code, not its schema: CI fails a migration merged without an app release (#298) — a guarantee
++# about the RELEASE COMMIT, not about the tag on quay, which the branch path reads back (below).
+ #
+ # TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
+ # Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
+@@ -62,9 +63,13 @@
+ # --argocd NEEDS THE COMMIT ON GITHUB: Argo pulls the chart from the repository, not from this
+ # tree, so an unpushed commit cannot be synced — the script refuses with the push to run. It also
+ # needs the image PASSED to the Application: the chart's default is the last PUBLISHED image
+-# (quay.io …:<appVersion>), which lags main's code whenever the app version is not bumped. Its
+-# schema no longer lags (#298); before that guard, the first Argo sync of the dashboard met a report
+-# image that understood snapshot schema 12 against main's 17 and answered readyz 503.
++# (quay.io …:<appVersion>), which lags main's code whenever the app version is not bumped. The
++# release commit's schema no longer lags (#298); before that guard, the first Argo sync of the
++# dashboard met a report image that understood snapshot schema 12 against main's 17 and answered
++# readyz 503. The TAG can still lag or lie: `:<appVersion>` is a name publish.yml moves in a run
++# nothing here waits for, and helm.yaml labels the same repository with every CHART version, so a
++# future application version can already be a tag on an old image (#410, measured: `:0.39.0` was
++# application 0.24.0). The branch path therefore reads the tag back before handing it to Argo.
+ #
+ # Immutability rule: a given <version>-<sha> tag always means the same source. Pushing a
+ # different image under an existing tag is refused rather than silently overwritten.
+@@ -194,10 +199,60 @@ if [ "$ARGOCD" != true ] && [ ! -f "$RELEASE_VALUES" ]; then
+   exit 1
+ fi
+ 
++# The image the chart at <branch> resolves, read back from the registry before anything is touched.
++# `:<appVersion>` is a tag, and a tag is a name: publish.yml moves it in a run this script does not
++# wait for, and helm.yaml labels the SAME repository with every chart version, so an application
++# version that does not exist yet can already be a tag on an old image (#410: `:0.39.0` resolved to
++# application 0.24.0, whose store has no newer-schema refusal — #305 is new in 0.37.0 — and would
++# write blind to the database the last release migrated). helm.yaml's own existence gate passes on
++# such a tag, and Argo would pull it. So both images are inspected with the `oc` this script needs
++# anyway (`oc image info` reads a public tag with no login), and each must carry the chart's
++# appVersion as its org.opencontainers.image.version label — the label every build stamps — or
++# nothing is deployed. The chart is read at the revision Argo will read it from, with the same sed
++# forms helm.yaml uses on the same files; a pinned image.tag is the operator's choice and is deployed
++# as pinned.
++published_image_is_the_release() {
++  local revision="$1" chart values app_version pinned repo ref version
++  chart=$(git show "${revision}:charts/group-sync-dashboard/Chart.yaml") || return 1
++  values=$(git show "${revision}:charts/group-sync-dashboard/values.yaml") || return 1
++  app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
++  pinned=$(printf '%s\n' "$values" | sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' | head -1)
++  repo=$(printf '%s\n' "$values" | sed -n 's/^  repository: \([^[:blank:]]*\)[[:blank:]]*$/\1/p' | head -1)
++  if [ -z "$app_version" ] || [ -z "$repo" ]; then
++    echo "ERROR: cannot read appVersion and image.repository from the chart at origin/${revision}." >&2
++    return 1
++  fi
++  if [ -n "$pinned" ]; then
++    echo "image   : ${repo}:${pinned} (pinned in values.yaml; not checked against appVersion)"
++    return 0
++  fi
++  for ref in "${repo}:${app_version}" "${repo}-report:${app_version}"; do
++    if ! version=$(oc image info "$ref" -o json 2>/dev/null | python3 -c '
++import json, sys
++labels = json.load(sys.stdin).get("config", {}).get("config", {}).get("Labels") or {}
++print(labels.get("org.opencontainers.image.version", ""))'); then
++      echo "ERROR: ${ref} is not in the registry, or cannot be read. Argo CD would pull it." >&2
++      echo "       publish.yml pushes the :${app_version} aliases on the merge that moved pyproject's version;" >&2
++      echo "       wait for that run, or publish them by hand: ./build-and-push-external.sh --release-tags" >&2
++      echo "       and ./build-and-push-report.sh --release-tags at the release commit." >&2
++      return 1
++    fi
++    if [ "$version" != "$app_version" ]; then
++      echo "ERROR: ${ref} is application ${version:-unknown}, not ${app_version} (#410)." >&2
++      echo "       The tag exists but names another build: a chart-version label on an old image, or an" >&2
++      echo "       alias publish.yml has not moved yet. Deploying it would run that build against the" >&2
++      echo "       database on the volume. Wait for publish.yml on the release merge, then re-run." >&2
++      return 1
++    fi
++    echo "image   : ${ref} is application ${version}"
++  done
++}
++
+ # --argocd <branch> with no build: point the Application at that branch and its chart's default
+ # image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
+ if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
+   echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
++  published_image_is_the_release "$EXPECTED_REVISION" || exit 1
+   if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+     echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
+     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
+diff --git a/local-development/tests/test_release_crc.py b/local-development/tests/test_release_crc.py
+index 745ee47..31e0b5b 100644
+--- a/local-development/tests/test_release_crc.py
++++ b/local-development/tests/test_release_crc.py
+@@ -38,6 +38,11 @@ case "$(basename "$0") $*" in
+         *) echo 'error: You must be logged in to the server (Unauthorized)' >&2; exit 1 ;;
+       esac ;;
+   "oc get application "*) exit 0 ;;
++  "oc image info "*)     # the registry: STUB_IMAGES is "<ref>=<org.opencontainers.image.version> ..."; an unlisted ref is absent
++      for entry in $STUB_IMAGES; do
++        case "$entry" in "${3}="*) printf '{"digest":"sha256:stub","config":{"config":{"Labels":{"org.opencontainers.image.version":"%s"}}}}\n' "${entry#*=}"; exit 0 ;; esac
++      done
++      echo "error: unable to read image ${3}: manifest unknown" >&2; exit 1 ;;
+   "helm status "*)       exit "${STUB_HELM_EXISTS:-1}" ;;
+   "podman run "*)        echo "$STUB_COMMIT" ;;
+ esac
+@@ -63,6 +68,13 @@ def lab(tmp_path: Path):
+         (repo / "local-development" / name).write_text("FROM scratch\n")
+     (repo / "environments" / "crc.yaml").write_text("logLevel: DEBUG\n")
+     shutil.copy(REPO / "gitops" / "argocd-application-dashboard.yaml", repo / "gitops" / "argocd-application-dashboard.yaml")
++    # The chart the branch path reads at origin/<branch>: the same lines helm.yaml reads from the same files.
++    (repo / "charts" / "group-sync-dashboard").mkdir(parents=True)
++    (repo / "charts" / "group-sync-dashboard" / "Chart.yaml").write_text(
++        f'apiVersion: v2\nname: group-sync-dashboard\nversion: 0.1.0\nappVersion: "{_version()}"\n')
++    (repo / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
++        "image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: \"\"\n"
++        "reporting:\n  image:\n    repository: quay.io/example/group-sync-dashboard-report\n    tag: \"\"\n")
+     _git(repo, "init", "-q", "-b", "main")
+     _git(repo, "config", "user.email", "t@example.invalid")
+     _git(repo, "config", "user.name", "t")
+@@ -88,6 +100,9 @@ def lab(tmp_path: Path):
+         "STUB_APP_FILE": str(tmp_path / "app-merged.json"),
+         "STUB_APPLIED": str(tmp_path / "applied.json"),
+         "STUB_APP_JSON": str(tmp_path / "app-status.json"),
++        # The registry as publish.yml leaves it after the release merge: both aliases carry this version.
++        "STUB_IMAGES": f"quay.io/example/group-sync-dashboard:{_version()}={_version()} "
++                       f"quay.io/example/group-sync-dashboard-report:{_version()}={_version()}",
+         "ARGOCD_WAIT_INTERVAL": "1",
+         "ARGOCD_WAIT_TIMEOUT": "3",
+     }
+@@ -286,6 +301,69 @@ def test_argocd_branch_clears_the_image_parameters_and_waits_for_its_commit(lab)
+     assert r.returncode == 1, "the waiter accepted a status for a commit that is not origin/main"
+ 
+ 
++# --- the published image the branch path hands to Argo (#410) -----------------------------------
++
++def _stale_alias(lab, image: str, version: str) -> None:
++    """`:<appVersion>` of `image` exists but is another build: a chart-version label on an old image."""
++    ref = f"quay.io/example/{image}:{_version()}"
++    entries = [e for e in lab["env"]["STUB_IMAGES"].split() if not e.startswith(f"{ref}=")]
++    lab["env"]["STUB_IMAGES"] = " ".join(entries + [f"{ref}={version}"])
++
++
++def test_argocd_branch_refuses_an_alias_that_is_another_application_version(lab):
++    """#410 as measured on quay: `:0.39.0` existed before application 0.39.0 and was application 0.24.0."""
++    synced_status(lab, lab["full"])
++    _stale_alias(lab, "group-sync-dashboard", "0.24.0")
++    r = run(lab, "--argocd", "main")
++    assert r.returncode == 1, r.stdout + r.stderr
++    assert f"quay.io/example/group-sync-dashboard:{_version()} is application 0.24.0, not {_version()} (#410)" in r.stderr
++    log = calls(lab)
++    assert "helm uninstall" not in log and "oc patch" not in log and "oc apply" not in log, log
++
++
++def test_argocd_branch_refuses_a_stale_report_alias_too(lab):
++    """The chart resolves both images at appVersion; the report pod refuses a newer snapshot, so an old one 503s."""
++    synced_status(lab, lab["full"])
++    _stale_alias(lab, "group-sync-dashboard-report", "0.24.0")
++    r = run(lab, "--argocd", "main")
++    assert r.returncode == 1, r.stdout + r.stderr
++    assert f"group-sync-dashboard-report:{_version()} is application 0.24.0" in r.stderr
++    assert "oc apply" not in calls(lab)
++
++
++def test_argocd_branch_refuses_an_alias_publish_has_not_pushed_yet(lab):
++    synced_status(lab, lab["full"])
++    r = run(lab, "--argocd", "main", STUB_IMAGES="")
++    assert r.returncode == 1, r.stdout + r.stderr
++    assert f"quay.io/example/group-sync-dashboard:{_version()} is not in the registry" in r.stderr
++    assert "--release-tags" in r.stderr
++    assert "oc apply" not in calls(lab)
++
++
++def test_argocd_branch_reads_the_chart_at_the_branch_not_the_checkout(lab):
++    """A pin on origin/<branch> is the operator's choice: deployed as pinned, whatever the local tree says."""
++    _git(lab["repo"], "checkout", "-qb", "pin")
++    (lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
++        'image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: "0.9.9-abcdef1234"\n')
++    _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", "pin"); _git(lab["repo"], "push", "-q", "origin", "pin")
++    _git(lab["repo"], "checkout", "-q", "main")
++    synced_status(lab, _git(lab["repo"], "rev-parse", "pin"))
++    r = run(lab, "--argocd", "pin", STUB_IMAGES="")
++    assert r.returncode == 0, r.stdout + r.stderr
++    assert "pinned in values.yaml" in r.stdout
++    assert "oc image info" not in calls(lab)
++
++
++def test_argocd_branch_deploys_when_both_aliases_are_the_release(lab):
++    synced_status(lab, lab["full"])
++    r = run(lab, "--argocd", "main")
++    assert r.returncode == 0, r.stdout + r.stderr
++    log = calls(lab)
++    assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} -o json" in log
++    assert f"oc image info quay.io/example/group-sync-dashboard-report:{_version()} -o json" in log
++    assert log.index("oc image info") < log.index("oc patch --local"), "the registry is read before the Application is written"
++
++
+ # --- the waiter on its own ----------------------------------------------------------------------
+ 
+ def wait(lab, *args: str, **env_over: str) -> subprocess.CompletedProcess:

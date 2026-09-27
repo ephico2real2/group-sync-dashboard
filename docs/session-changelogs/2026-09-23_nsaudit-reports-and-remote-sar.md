@@ -1282,7 +1282,9 @@ The orchestrator's summary, with what was measured for this log:
 - **My error, found by OB1-lite:** my draft credited the deploy gate for 0.37.0's deploy. Argo CD's auto-sync
   deployed `b087c78` at 00:05:54–00:06:11Z, 95 s after `publish.yml` finished and before the gate was checked. The
   report says so, from Argo's own history (`reports/2026-09-26_epic-b-release/walk/argo-history.txt`).
-- **13 of 13 checks** on copies in a throwaway pod on the released image: #305's refusal, #301's copy, and R1–R6.
+- **13 of 13 checks** on copies in a throwaway pod on the released image (`walk/walk.out`): #305's refusal, #301's
+  copy, R1–R4 on the backup and R5 on #301's copy. R6, the live side, is not one of them: the review demoted it to
+  "untouched by construction, not by measurement".
   The runbook's restore recipe was then run verbatim on the lab: 13 of 13.
 - **The operator's request** (*"Pls put this screenshot in one the doc showing what successful backup looks
   like"*): `docs/RUNBOOK_backup_restore.md` gains "What a successful backup looks like", with three screenshots
@@ -1290,9 +1292,11 @@ The orchestrator's summary, with what was measured for this log:
 - **Accepted from both reviewers:** every fact the README quoted is now a file under `walk/`; picture 2's caption
   gives the copy's own stamp; the runbook says which picture is the live pod. **Accepted (OB1-lite):** what the
   checks do not prove, and F1 (the walk script prints FAIL instead of crashing when no group qualifies).
-- **My slips, fixed before the merge:** R6 was first measured on `gsd.db`, which WAL mode leaves still; it was
-  re-measured on `gsd.db-wal`. The walk queried a `cluster_id` column that does not exist (`id`). The hardened image
-  has no `sleep`, `tail` or `sha256sum`, so the walk uses `python3.14`.
+- **My slips, fixed before the merge:** R6 was first read on `gsd.db`, whose size WAL mode leaves unchanged
+  (9,842,688 bytes in both readings, `walk/live-wal-*.txt`); it was re-read on `gsd.db-wal`, and the review then
+  demoted R6 to "untouched by construction, not by measurement". The first walk pod failed because the hardened
+  image has no `sleep`; it has no `sha256sum` (#382's summary), `grep` or `tail` either, and the walk and the
+  runbook use `python3.14`, the pod's own interpreter (the runbook's list of what the pod has).
 - The PVC UIDs were unchanged.
 
 ### #291, the fleet login consolidated — PR #411 (merge `cbe828b`, 19:20)
@@ -1324,12 +1328,15 @@ The orchestrator's summary, with what was measured for this log:
 
 - **The operator:** *"We can review both epic A and B with fable when done … But continue other epics before we
   review them."* OB2 (Fable 5.1, high) ran in the background on the two epics' merged diff while Epic C started.
-- **Verdicts:** K1, K2, K4 and K5 CONFIRMED, measured with real `Store` runs under simulated image versions; K3
-  CONFIRMED for the merge-commit flow `merge-safe.sh` uses; **K6 REFUTED**, the one composition defect: nothing
-  checked which application an image tag held before a deploy. K7 PLAUSIBLE.
+- **Verdicts** (OB2's report as delivered, committed with #418 as
+  `reports/2026-09-26_epic-b-release/fable-composition-review/report.txt`, with its drive scripts and logs): K1, K2
+  and K4 CONFIRMED, measured with real `Store` runs under simulated image versions; K5 CONFIRMED by a hermetic suite
+  run that left no `gsd.db` or `pre-upgrade/` in the tree; K3 CONFIRMED for the merge-commit flow `merge-safe.sh`
+  uses, a rebase merge being the risk; **K6 REFUTED**, the one composition defect: nothing checked which application
+  an image tag held before a deploy. K7 PLAUSIBLE.
 - **The operator:** *"Apply those you accept only and tell fable why you refute some."* Every recommendation was
   accepted: K6's guard (#414), K4's and K2's runbook paragraphs (#414), and K7(b), #305's refusal naming the
-  pre-upgrade copy (#414). K7(a) and a `.pyc` note needed no action. OB2 was told the dispositions and agreed.
+  pre-upgrade copy (#414). K7(a) and a `.pyc` note needed no action. OB2 was told the dispositions.
 - **K3 is the operator's decision:** disabling rebase merging is a repository setting, and has been asked.
 - **Design input to #410:** a digest pin cannot close the auto-sync race, since the digest exists only after the
   merge; the check has to run on Argo's side, for example as a PreSync hook. Posted on #410.
@@ -1355,10 +1362,12 @@ The orchestrator's summary, with what was measured for this log:
   were reviewed by Grok and Codex Astra before any code. Chart 0.58.7 (docs only).
 - **The budget, measured by the implementer and re-measured by both reviewers:** 4 targets answering 401 or 500
   give **1** authorize, where it was 4; two URLs for one cluster give 1; #293's two successful onboardings still
-  give 2. The code equals the spec's blocks, byte for byte.
+  give 2. The code equals the spec's blocks, byte for byte, apart from the spec's two status cells.
 - **Accepted (Grok C5):** `docs/CLUSTER_STANZA.md` still stated the per-target key; fixed by S4d block 23, with a
   document-contract case that fails before. Hermetic suite: `5276 passed, 19 skipped`.
-- **Found by Codex on the spec (F1), filed as #415:** a values `apiUrl` could carry userinfo.
+- **Found by Codex in the spec review and by OB1-lite while implementing, filed as #415:** a values `apiUrl` could
+  carry userinfo. Codex's F1 on the spec found it; F1's accepted fix stripped userinfo from the gated detail, and the
+  values parser's acceptance was left as the residual #415.
 - #315 stays open for its lab walk at Epic C's release.
 
 ### Epic C: #415, userinfo refused in a values `apiUrl` — PR #417 (merge `f82a065`, 21:54)
@@ -1373,8 +1382,9 @@ The orchestrator's summary, with what was measured for this log:
 - Full suite on the head, browser tests included: `5914 passed, 23 skipped`.
 - **My slip, corrected:** I first posted that run on #417 as the hermetic suite; it had no deselection, so it
   includes `test_ui.py`. The comment was edited to say so.
-- The merge's `Fixes` line closed #415, but its Definition of Done still owes the release and deploy with its epic.
-  It was reopened with its first two boxes ticked, like #315 and #291.
+- #417's `Closes #415` line closed #415 on the merge, but its Definition of Done still owes the release and deploy
+  with its epic. It was reopened at 02:55Z with its first two boxes ticked. #315 and #291 were never closed (their
+  PRs say "Part of"), and every box on both is still unticked.
 
 ### Epic B closed
 
@@ -1423,6 +1433,11 @@ The orchestrator's summary, with what was measured for this log:
   deferral) and #338 (the evidence). #210 lists OB3's two passes on #339 as owed a Fable re-review.
 - `docs/HANDOVER_2026-09-20.md`: the living state document, brought up to this state.
 - The tag `checkpoint-2026-09-23`.
+- Part 14: `reports/2026-09-26_epic-b-release/` (the image gate, Argo's auto-sync history, the 13 checks and the
+  scripts); review decisions on #409, #411, #412, #413, #414, #416 and #417; #382's Epic B summary; #410 (the race
+  and OB2's PreSync input); #415 (the reopen).
+- `reports/2026-09-26_epic-b-release/fable-composition-review/`: OB2's composition review of Epics A and B, K1–K7,
+  as delivered, with its drive scripts, logs and the patch that became #414.
 
 ## State left behind
 
@@ -1432,13 +1447,16 @@ Written at the end of Part 14, 2026-09-26 21:55 CDT.
 - **Deployed** on the lab: at 21:55 the Application was Synced/Healthy at `fc54f02` (#414), and the Deployment's
   chart label was 0.58.7 with image `quay.io/ephico2real/group-sync-dashboard:0.37.0`. The Application auto-syncs
   `main`, so #417's chart 0.58.8 follows on Argo's next poll; that change is a render-time refusal only.
+  It did: Argo synced `f82a065` at 21:57 CDT (02:56:47–02:57:04Z), and both Deployments now carry the chart
+  0.58.8 label with the 0.37.0 images (OB1-lite's read-only read at 03:00Z).
 - **The kept PVCs** are unchanged: data `f065b7a4-535c-4ef1-868c-58f5afee4953`, report-artifacts
   `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`.
 - **Open PRs:** none once this log's PR merges. The worktrees and local branches of #413, #414, #416 and #417 are
   removed, each proven merged and clean first.
 - **Epics:**
   - Epic A (#381) is closed.
-  - Epic B (#382) is released, deployed and walked; #298, #301 and #305 are closed. It closes with this log.
+  - Epic B (#382) is released, deployed and walked; #298, #301 and #305 are closed. Its last box is this log; it
+    is closed by hand after #418 merges (#418 carries no `Closes`).
   - Epic C (#383): #315 (#416), #291 (#411) and #415 (#417) are merged and stay open until Epic C's release and
     lab checks. Next: #285 (SPEC_S4c's implementation blocks, spec review first), then #286, #310 (needs the
     operator's go-ahead for the OAuth restart) and #288.

@@ -66,3 +66,11 @@ They are in `docs/RUNBOOK_backup_restore.md`, in "What a successful backup looks
 and under `docs/screenshots/`. Each picture shows real output; lines not relevant to it are left out.
 - **The six-hourly backup:** captured at 23:02:25Z (`capture/`, `capture/render.py`).
 - **The pre-upgrade copy and the restore check:** from this walk (`walk/render2.py`, `walk/pre-verify.py`).
+
+## Fable's composition review of Epics A and B
+
+`fable-composition-review/` is OB2's (Fable 5.1, high) review of how Epic A's and Epic B's PRs compose, run on main
+`cbe828b` after this release. It holds the report as delivered (`fable-composition-review/report.txt`), the scripts
+that drove its deep claims with their logs (`drive_k1_k2.py`, `drive_k4.py`), its suite run (`suite.log`) and the fix
+it handed back (`fixes.patch`), which became #414. Its paths name the reviewer's scratch directory, which no longer
+exists.
