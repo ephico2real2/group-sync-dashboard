@@ -8,6 +8,8 @@ from ..fleetlookup import CredentialGate
 def shared_api_urls(clusters: list[ClusterConfig]) -> dict[str, tuple[str, ...]]:
     groups: dict[str, list[str]] = {}
     for cluster in clusters:
+        if not cluster.enabled:
+            continue    # not polled, so it doubles nothing — the reason refused Secrets are left out (#314)
         url = CredentialGate._target(cluster.api_url)
         groups.setdefault(url, []).append(cluster.name)
     return {url: tuple(sorted(names)) for url, names in sorted(groups.items()) if len(names) > 1}

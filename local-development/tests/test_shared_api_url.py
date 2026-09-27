@@ -164,3 +164,11 @@ def test_failed_inventory_keeps_the_warning_without_logging_a_clear(rig, caplog)
     assert not any(m.startswith("shared-api-url ") for m in caplog.messages)
     assert api_client(poller).get("/api/clusterconfigs").json()["warnings"][0]["clusters"] == [
         "generated", "secret", "values"]
+
+
+def test_a_disabled_entry_is_not_a_shared_target():
+    """A disabled entry is not polled, so it doubles nothing: the issue's reason for leaving refused Secrets out."""
+    from gsd.clusterconfig.warnings import shared_api_urls, shared_api_warnings
+    old, new = ClusterConfig("old", URL, enabled=False), ClusterConfig("new", URL + "/")
+    assert shared_api_warnings([old, new]) == []
+    assert shared_api_urls([old, new, ClusterConfig("alias", URL)]) == {URL: ("alias", "new")}

@@ -11,8 +11,8 @@ The tab names configuration problems and warnings separately. Only cluster admin
 
 A shared URL refuses nothing. Each enabled, ready entry still polls and contributes its own counts;
 a finding on that server can therefore appear once per entry. Existing Rotate, Delete and Add controls
-keep their behaviour. Refused Secrets do not contribute to the warning. Disabled and pending entries
-still declare a URL and can be named. Values, discovered Secrets and ConfigMap-generated entries all
+keep their behaviour. Refused Secrets do not contribute to the warning. Pending entries count and can
+be named; a disabled entry is not polled and joins no group. Values, discovered Secrets and ConfigMap-generated entries all
 participate after name precedence is resolved.
 
 Host case, default ports and trailing slashes are normalised by the credential gate's existing URL

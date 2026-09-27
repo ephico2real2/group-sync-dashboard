@@ -231,7 +231,7 @@ Existing response fields and `findings` keep their meaning. Each warning has exa
 One warning names all effective entries sharing a normalised URL, sorted by name. Values, discovered
 Secrets and ConfigMap entries participate; refused Secrets and retired rows do not. The credential gate's
 `httpx.URL` rule normalises host case, IDNA and default ports, then strips trailing slashes. Different
-non-default ports stay different. Disabled and pending declarations still count as effective entries.
+non-default ports stay different. Pending declarations count; a disabled entry is not polled, so it joins no group.
 This warning changes no polling, counts, binding findings, alerts or metrics. Different URLs reaching
 one physical cluster are not detected.
 
