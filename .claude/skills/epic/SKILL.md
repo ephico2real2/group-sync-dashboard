@@ -32,7 +32,7 @@ operator** and asked when that child is reached, never guessed.
 ## 2. The epic body
 
 ```
-**Epic <letter>: <title>** · status: planned · checkpoint: `<tag>`
+**Epic <letter>: <title>** · status: planned · target release: <X.0.0> (milestone) · checkpoint: `<tag>`
 
 ## Goal
 One paragraph, plain English: what the user, operator or lab gets, and why it matters.
@@ -44,7 +44,7 @@ Two to four measured facts, each with its source.
 **In:** the children, one line each. **Out:** what this epic does not do, and where that lives.
 
 ## Build order
-| # | Issue | What it delivers | Depends on | Implementer | Size |
+| # | Issue | What it delivers | Depends on | Implementer | Size | Target version (the child's MINOR, or "none") |
 
 ## Picture
 A committed mockup PNG (screen work) or a fenced mermaid flow (back-end work), with a caption. Current vs proposed
@@ -84,11 +84,15 @@ no feature is removed or deprecated unless an issue says so and the operator agr
 ## 4. Post and link
 1. Create the epics (label `epic` + `epic/<letter>`), then the new issues, then write every body once all numbers
    exist.
-2. **Replace placeholders longest first:** `EPIC_A` is a prefix of `EPIC_A_CLUSTER_SECRET_EXAMPLES`.
-3. Refine each child with `/issue`: new body, original kept collapsed, the label, and `addSubIssue`.
-4. Read it all back from GitHub: sub-issue counts, every child's first line naming the epic, no placeholder left, the
+2. **Create the epic's release milestone and assign the epic and every child to it.** Its title is the planned
+   MAJOR and the epic, for example `2.0.0 — Epic D: reconnect a cluster from the screen`; epics take the next majors
+   in their planned order. `gh api -X POST repos/<owner>/<repo>/milestones -f title="<X.0.0 — Epic …>"`, then
+   `gh issue edit <n> --milestone "<title>"` for each.
+3. **Replace placeholders longest first:** `EPIC_A` is a prefix of `EPIC_A_CLUSTER_SECRET_EXAMPLES`.
+4. Refine each child with `/issue`: new body, original kept collapsed, the label, and `addSubIssue`.
+5. Read it all back from GitHub: milestone counts, sub-issue counts, every child's first line naming the epic, no placeholder left, the
    originals kept, images returning HTTP 200.
-5. Close the CLOSE-CANDIDATES with evidence, each remainder filed and named first.
+6. Close the CLOSE-CANDIDATES with evidence, each remainder filed and named first.
 
 A state file makes the posting idempotent: record every created number, and skip what exists on a re-run.
 
@@ -104,6 +108,8 @@ Grok can help with a hard problem as an advisor, but its proposals are checked l
 ## 6. Close the epic
 
 - **Application bump:** cut the next MAJOR per closed epic with `local-development/prepare-release.py --app X.0.0 "Epic summary"` (`docs/RELEASING.md`).
+  It must equal the epic's milestone. If an epic closed out of its planned order, retitle the later milestones
+  first. Close the milestone when the epic closes.
 
 **Every epic is released and deployed, a docs-only one included.** The operator, 2026-09-26: *"In agile. You have
 deploy or redeploy every epic and cut a release note. So we are remaining true."* Never offer to skip either.
