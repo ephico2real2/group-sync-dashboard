@@ -16,7 +16,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   and `userSelfLogin`. The gate per account (#315, PR #416, `ed3edda`); the fleet login consolidated (#291, PR #411,
   `cbe828b`); a values `apiUrl` carrying userinfo refused (#415, PR #417, `f82a065`); the `OAuthAccessToken` policy
   (#286, PR #422, `b679701`); and Case G, a retrieved token expiring (#310 Part B, PR #421, `44271d8`). The entries
-  follow.
+  follow; two of them are outside the epic and ship in this release too: `release-crc.sh --argocd` reading
+  the images back (#410, Epic E, PR #414) and the secrets-mint Job's Red Hat image (chart 0.58.6, PR #413).
 
 - **The policy on the `OAuthAccessToken` objects a login leaves on a cluster (#286; chart 0.59.1, docs only).**
   `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` §6, linked from SPEC_S4's orchestrator's notes, describes

@@ -160,3 +160,13 @@ def test_every_index_status_is_in_the_lifecycle() -> None:
     the index, 2026-09-24, Grok)."""
     bad = {fid: row["status"] for fid, row in ROWS.items() if row["status"] not in STATUSES}
     assert not bad, f"status is not one of {STATUSES}: {bad}"
+
+
+def test_a_released_spec_with_application_code_names_its_app_version() -> None:
+    """A spec whose code "rides the next application release" is written before that release exists;
+    once the row is `released`, the release is known and the cell must name it (review of #423: S4d
+    was promoted still reading "rides the next application release", naming no app version)."""
+    for fid, row in ROWS.items():
+        if row["status"] == "released" and "application code" in row["version"]:
+            assert re.search(r"\bapp \d+\.\d+\.\d+", row["version"]), (fid, row["version"])
+
