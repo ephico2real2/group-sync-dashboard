@@ -672,7 +672,8 @@ read: absence means never, not zero"* — and `gsd_backup_last_success_timestamp
   a crash between the reservation and the answer leaves the account GATED (an over-block) until §5 Q7's
   clear or a rotation — the safe direction; the entry removed by hand, or the Lease deleted, is **+1 per
   act**, an operator's act by a principal that can already read the password Secret (OB2, measured on the
-  lab); and the password Secret deleted and recreated (a new uid, D2) is **+1**. A stale answer never
+  lab); and the password Secret deleted and recreated (a new uid, D2) is **+1**, after the restart a running pod's own
+  copy of the gate needs, as for the entry removed by hand (OB2, Epic C review). A stale answer never
   overwrites another attempt's entry (round 2, F1): the rotation residual OB2's ruling D1 stated — a
   paused holder's refusal of the old password landing over the rotated password's reservation, then a
   crash, and the new password bound again — is closed, measured 2 → 1 (§8.2).
@@ -1529,7 +1530,7 @@ from the gated state the rows above them leave:
 | + the Lease unreadable (403) | +0 | +0 | **+0** — fail closed |
 | + the entry removed by hand and the pod restarted (§5 Q7) | +1 | +1 | **+1** — an operator's act |
 | + the Lease deleted and the pod restarted | +1 | +1 | **+1** — an operator's act |
-| + the password Secret deleted and recreated, same password (a new uid) | +0 | +1 | **+1** — D2's price |
+| + the password Secret deleted and recreated, same password (a new uid), and the pod restarted | +0 | +1 | **+1** — D2's price; the running pod keeps its copy of the gate, like the hand-clear above (OB2, Epic C review) |
 | a crash after the authorize GET, the claim expired, a restart | 2 | 1 | **1** |
 | the refusal write rejected, a restart | 2 | 1 | **1** |
 | clock skew: a takeover while the authorize is in flight | 2 | 1 | **1** |
