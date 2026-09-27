@@ -1,0 +1,214 @@
+{
+  "fetched_at": "2026-09-27T20:20:21Z",
+  "as": "developer",
+  "warnings": [
+    {
+      "code": "shared-api-url",
+      "clusters": [
+        "shared-qa",
+        "shared-rnd"
+      ],
+      "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."
+    }
+  ],
+  "clusters": [
+    {
+      "id": "dashboard",
+      "enabled": true,
+      "retired": false,
+      "api_url": "https://kubernetes.default.svc",
+      "source": "values",
+      "credential": "in-cluster",
+      "status": "ok"
+    },
+    {
+      "id": "mock-privateca",
+      "enabled": true,
+      "retired": false,
+      "api_url": "https://mock-privateca:6443",
+      "source": "secret:gsd-cluster-mock-privateca",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "mock-selfsigned",
+      "enabled": true,
+      "retired": false,
+      "api_url": "https://mock-selfsigned:6443",
+      "source": "secret:gsd-cluster-mock-selfsigned",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "mock-trusted",
+      "enabled": true,
+      "retired": false,
+      "api_url": "https://mock-trusted:6443",
+      "source": "secret:gsd-cluster-mock-trusted",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "shared-qa",
+      "enabled": true,
+      "retired": false,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-shared-qa",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "shared-rnd",
+      "enabled": true,
+      "retired": false,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "cm-demo-a",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-cm-demo-a",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "cm-demo-b",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://192.168.127.2:6443",
+      "source": "secret:gsd-cluster-cm-demo-b",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "crc-local",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://kubernetes.default.svc",
+      "source": "values",
+      "credential": "in-cluster",
+      "status": "ok"
+    },
+    {
+      "id": "crc-tls-cadata",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-tls-cadata",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "crc-tls-default",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-tls-default",
+      "credential": "bearer",
+      "status": "unreachable"
+    },
+    {
+      "id": "crc-tls-insecure",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-tls-insecure",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "d2b-no-groups",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-d2b-no-groups",
+      "credential": "bearer",
+      "status": "forbidden"
+    },
+    {
+      "id": "d2b-no-sar",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-d2b-no-sar",
+      "credential": "bearer",
+      "status": "forbidden"
+    },
+    {
+      "id": "dashboard-rnd",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://kubernetes.default.svc",
+      "source": "values",
+      "credential": "in-cluster",
+      "status": "ok"
+    },
+    {
+      "id": "gitops-example-389",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-gitops-example-389",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "mock",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://mock-openshift:6443",
+      "source": "values",
+      "credential": "file",
+      "status": "ok"
+    },
+    {
+      "id": "mock-none",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://mock-openshift:6443",
+      "source": "secret:gsd-cluster-mock-none",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "mock-sar",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://mock-openshift:6443",
+      "source": "secret:gsd-cluster-mock-sar",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "rnd-lookup",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-rnd-lookup",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "rnd-lookup2",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-rnd-lookup2",
+      "credential": "bearer",
+      "status": "ok"
+    },
+    {
+      "id": "verify-lookup",
+      "enabled": false,
+      "retired": true,
+      "api_url": "https://api.crc.testing:6443",
+      "source": "secret:gsd-cluster-verify-lookup",
+      "credential": "bearer",
+      "status": "ok"
+    }
+  ]
+}

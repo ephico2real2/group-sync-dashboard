@@ -1,0 +1,7 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=refresh-shared-url-2026-09-27 -o wide
+# at 2026-09-27T20:19:01Z
+NAME                                                        CREATED AT
+clusterrole.rbac.authorization.k8s.io/gsd-walk-crb-update   2026-09-27T20:19:01Z
+
+NAME                                                                         ROLE                              AGE   USERS       GROUPS   SERVICEACCOUNTS
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-crb-update-developer   ClusterRole/gsd-walk-crb-update   1s    developer            
