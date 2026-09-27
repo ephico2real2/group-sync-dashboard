@@ -272,25 +272,38 @@ class TestARefusedPasswordIsGated:
     def test_one_target_spelled_three_ways_is_one_gate_entry(self):
         """Third pass, R3-1: a stanza edited from api.example.com to API.example.com was a new key and
         the password went to the same target again. httpx canonicalises the host; a malformed URL
-        must not raise inside the gate."""
+        must not raise inside the gate. REWRITTEN to the operator's ruling on #325 (SPEC_S4c,
+        orchestrator's notes; #315): a bound failure's entry is the ACCOUNT's, so every spelling and
+        every port is gated by it; the canonical target still keys #293's success mark, where a
+        different port is a different target."""
         gate = CredentialGate()
         gate.refuse("https://api.example.com:6443", USER, PASSWORD)
-        for spelling in ("https://api.example.com:6443/", "https://API.Example.COM:6443", "https://API.example.com:6443/"):
+        for spelling in ("https://api.example.com:6443/", "https://API.Example.COM:6443", "https://api.example.com:6444"):
             assert gate.refused(spelling, USER, PASSWORD), spelling
-        assert not gate.refused("https://api.example.com:6444", USER, PASSWORD), "a different port is a different target"
-        gate.refuse("https://[::1/broken", USER, PASSWORD)
-        assert gate.refused("https://[::1/broken/", USER, PASSWORD), "the fallback key, not an exception"
+        spent = CredentialGate()
+        spent.spend("https://api.example.com:6443", USER, PASSWORD)
+        for spelling in ("https://api.example.com:6443/", "https://API.Example.COM:6443", "https://API.example.com:6443/"):
+            assert spent.refused(spelling, USER, PASSWORD), spelling
+        assert not spent.refused("https://api.example.com:6444", USER, PASSWORD), "a success spends its own target only"
+        spent.spend("https://[::1/broken", USER, PASSWORD)
+        assert spent.refused("https://[::1/broken/", USER, PASSWORD), "the fallback key, not an exception"
 
-    def test_the_gate_is_per_target_so_a_sick_cluster_does_not_stop_a_healthy_one(self, wire):
-        """Review of #295, second pass, R2-1: keyed without the target, a 500 from A blocked B."""
+    def test_the_gate_is_per_account_so_a_sick_clusters_500_stops_a_healthy_one_too(self, wire):
+        """REVERSED by the operator's ruling on #325 (SPEC_S4c, orchestrator's notes; #315). R2-1 of
+        #295's second pass keyed the gate on the target so a 500 from A would not block B; but a
+        locked account's 500 (LDAP code 19) cannot be told from a sick target's, and a lockout is per
+        directory account. The price, stated in SPEC_S4c §5 question 7: B waits for the password to
+        rotate."""
         wire.answers = [httpx.Response(500, text="Internal Server Error"), login_302()]
         gate = CredentialGate()
         with pytest.raises(LookupRefused):
             run(RND, gate=gate)
         other = ClusterConfig("east", "https://api.east.example.com:6443", sa_token_lookup=True, ldap_connection_bootstrap=USER)
-        result, _ = run(other, gate=gate, s=settings(other))
-        assert result.written == "created" and len(wire.authorize) == 2
-        assert gate.refused(API, USER, PASSWORD) and not gate.refused(other.api_url, USER, PASSWORD)
+        with pytest.raises(LookupRefused) as exc:
+            run(other, gate=gate, s=settings(other))
+        assert exc.value.gated and exc.value.spent is False and len(wire.authorize) == 1
+        assert exc.value.detail.startswith(f"{API} evaluated this password"), exc.value.detail
+        assert gate.refused(API, USER, PASSWORD) and gate.refused(other.api_url, USER, PASSWORD)
 
 
 # ── R5 ─────────────────────────────────────────────────────────────────────────────────────────

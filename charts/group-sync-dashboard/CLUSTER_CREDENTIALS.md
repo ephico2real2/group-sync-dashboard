@@ -35,9 +35,11 @@ success before the token read: a later failed read/write cannot trigger a second
 canonical target/account/password. Renaming or relabelling a ConfigMap, changing policy or removing
 and re-adding an entry does not reset it. A missing token output after that budget was spent remains
 pending, with a finding; correct the cause before rotating the password or deliberately restarting.
-The baseline values/Secret trigger still gates bound login failures as #284 specifies; this does not
-claim that its successful logins were globally one-shot. Cross-process and cross-target account-wide
-lockout protection is #285's work, not measured or implemented by this feature. Keep one replica.
+Since #315, every bound login failure gates that account and password on every target in this
+process, for values, Secret and ConfigMap triggers alike. Successful ConfigMap sessions still spend only
+their own target's budget; successful values/Secret logins are not globally one-shot. Account means the
+exact configured username string: use one spelling for one directory identity. A restart or another
+replica starts with an empty gate; durable, replica-shared protection remains #285's work. Keep one replica.
 
 Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
