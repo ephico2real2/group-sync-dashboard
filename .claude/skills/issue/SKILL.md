@@ -18,6 +18,12 @@ operator chart's #70).
   is a separate proposal, never folded into a fix (the operator, 2026-09-26, about #291).
 - **Keep the original.** The refined body replaces the old one, and the old one is appended, collapsed:
   `<details><summary>Original description (filed <date>)</summary> … </details>`. Nothing the operator wrote is lost.
+- **Target versions, as a DevOps shop plans them** (the operator, 2026-09-27). The milestone is the epic's major
+  release, the one this issue ships in. The target version is the MINOR this issue's own PR will take. Set it when
+  work starts: the next free minor after `main`'s version, and only if the issue changes what goes into the image
+  (`publish.yml`'s `on.push.paths`). A docs- or CI-only issue writes "none". If the merge order moves, update the
+  target on the issue, never the rule. CI's required check "App image changes bump the app version" holds the actual
+  number.
 - **Already done?** Say so in "Where this stands", with the evidence (the PR, the merge sha, the file:line, a lab
   read), and close it with a comment pinned to main's full sha. File any remainder as its own issue first, and name
   it in the closing comment.
@@ -25,7 +31,7 @@ operator chart's #70).
 ## The body
 
 ```
-**Epic:** #<epic> — <epic title>
+**Epic:** #<epic> — <epic title> · **Milestone:** <X.0.0> · **Target version:** <1.Y.0, or "none — docs/CI only, ships in X.0.0">
 
 ## Where this stands (<date>)
 Measured bullets: what shipped since the issue was filed, what is still true, what changed.
@@ -64,7 +70,8 @@ The reviewers are the seats that did not write the change; Grok is always one of
 ```sh
 # refine: the new body, then the original kept, collapsed
 orig=$(gh issue view <n> --json body,createdAt)
-gh issue edit <n> --body-file <new-body-with-original.md> --add-label "epic/<letter>"
+gh issue edit <n> --body-file <new-body-with-original.md> --add-label "epic/<letter>" \
+  --milestone "<X.0.0 — Epic <letter>: <title>>"
 
 # link to the epic as a sub-issue (GitHub keeps the link both ways)
 q='{ repository(owner:"ephico2real2", name:"group-sync-dashboard") { e: issue(number:<epic>) { id } c: issue(number:<n>) { id } } }'
