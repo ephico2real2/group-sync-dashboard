@@ -189,10 +189,12 @@ cluster. It stays until it expires or is deleted. `oauths.config.openshift.io/cl
 lifetime and an `OAuthClient` can override it; on the reference lab the default is a year
 (`{"accessTokenMaxAgeSeconds":31536000}`, read 2026-09-27T08:52:23Z). The dashboard's policy, point by point:
 
-1. **Every fleet login attempts to revoke every token the login received.** The login is a context manager:
-   `gsd/fleetlogin.py#FleetLogin.__exit__` sends the revoke when the caller is done, whether the work returned
-   or raised, and the login itself sends it for a token that arrived in a response it could not turn into a
-   session. The lookup and the daily ping run inside that session (`gsd/fleetlookup.py#lookup`; the ping calls
+1. **Fleet logins attempt to revoke their session token and extracted response candidates.** The login is a
+   context manager: `gsd/fleetlogin.py#FleetLogin.__exit__` attempts cleanup when the caller is done, whether
+   the work returned or raised. If session construction fails, the login attempts cleanup of the candidates
+   extracted from the received 302. Extraction takes the first `access_token` value from the fragment of
+   each separate `Location` header; it does not enumerate repeated values or scan multiple URLs joined into
+   one header value. The lookup and the daily ping run inside that session (`gsd/fleetlookup.py#lookup`; the ping calls
    it with `write=False`). A `userSelfLogin` session goes through the same exit
    (`gsd/selflogin.py#SelfLoginSessions._exit`) when a renewal replaces it, when the account is suspended, when
    a login succeeds while the account is suspended, when the cluster's URL moves (the revoke goes to the URL
@@ -207,8 +209,9 @@ lifetime and an `OAuthClient` can override it; on the reference lab the default 
    own scope authorises the call, so the chart grants nothing for it. The intent is `oc logout`'s, removing
    your own token, but `oc logout` deletes through `oauthaccesstokens` instead
    ([`RunLogout`](https://github.com/openshift/oc/blob/release-4.20/pkg/cli/logout/logout.go)). This revoke
-   is the dashboard's cleanup on the target, of an object that exists only because its login created it;
-   leaving it for a year on a cluster the dashboard does not own is the larger intrusion. The account's Lease
+   is the dashboard's cleanup on the target, using a token candidate supplied by the login response.
+   For a valid issued session, leaving its object for the lab's reported one-year lifetime on a cluster the
+   dashboard does not own is the larger intrusion; malformed-response candidates are not proof of minting. The account's Lease
    is a separate write, on the dashboard's own cluster.
 
    `tests/test_fleet_login.py#TestScopeIsLoginOnly.test_a_delete_only_ever_names_the_object_of_the_token_that_authorises_it`
@@ -223,13 +226,15 @@ lifetime and an `OAuthClient` can override it; on the reference lab the default 
 2. **A failed revoke is reported, and not retried.** Only a 200 or a 404 counts as gone
    (`gsd/fleetlogin.py#FleetLogin._revoke`). Anything else (a 401, a 5xx, no answer) is one
    `fleet-logout-failed` line that names the object by its `sha256~` name, never the token, and tells a
-   cluster-admin to delete it. The name is left out in two cases: a cluster older than OpenShift 4.6, where
-   the object's name is the token itself, and a fault in this process before the name was derived. If that
+   cluster-admin to delete it. The name is left out for legacy unprefixed tokens, whose object name is the token itself,
+   and when an unexpected exception escapes `_delete_token`: that handler discards the name even if
+   derivation already succeeded. If that
    line cannot be written, a plain warning (`fleet-logout line could not be written`) takes its place; if
    that fails too, the failure is dropped, so that cleanup never replaces the caller's exception.
 3. **No sweep of objects already there.** The dashboard revokes only tokens its own login's response
-   carried, read off that response (`gsd/fleetlogin.py#FleetLogin._login`). A malformed 302 carrying more than
-   one token has each revoked best-effort, because whether the target minted it is not known. The dashboard
+   carried, read off that response (`gsd/fleetlogin.py#FleetLogin._login`). A malformed 302 with multiple `Location` headers has each extracted
+   token candidate revoked best-effort, because whether the target minted it is not known; extraction
+   has the limits described in point 1. The dashboard
    never lists tokens and deletes by filter: a filter on user and client cannot tell a dashboard login from a
    person's `oc login`, and issue #286 records four `developer` sessions deleted by such a filter when only
    one was the dashboard's. There is no cleanup Job and no RBAC for one. The fleet account had two objects on

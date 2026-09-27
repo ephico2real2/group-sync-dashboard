@@ -11,15 +11,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 ## Unreleased
 
 - **The policy on the `OAuthAccessToken` objects a login leaves on a cluster (#286; chart 0.59.1, docs only).**
-  `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` §6, linked from SPEC_S4's orchestrator's notes, states it:
-  every fleet login, lookup, ping and `userSelfLogin` session attempts to revoke every token its login received,
-  and the section names the limits (a token the process never saw cannot be revoked); a failed revoke is a
-  `fleet-logout-failed` line naming the object, not retried; nothing sweeps the objects already there; the
-  oauth-proxy's browser sessions (131 of 189 on the lab, 2026-09-27) cannot be revoked by the dashboard, measured
-  as a 403; and token lifetime and inactivity defaults are the cluster owner's. A new test checks, in five mocked
-  logins, one DELETE per received token, authorised by it and naming the object an independent derivation
-  expects, and no token listing; its source check fails if another module uses the token API. No code, value or
-  RBAC change.
+  `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` §6, linked from SPEC_S4's orchestrator's notes, describes
+  fleet-session and extracted-candidate cleanup attempts, their parsing and process limits, failed-revoke
+  logging and its exceptions, and the absence of retries or an inventory sweep. It records the restricted
+  browser-token scopes and measured sign-out 403, and leaves token-policy defaults to the cluster owner.
+  A new test checks, in five mocked logins, one DELETE per supplied token, its bearer and independently
+  derived object name, and no token listing. Its source guard checks explicit token API references and
+  DELETE call syntax, not every possible spelling. No production code, value or RBAC change.
 - **The fleet account's credential lifecycle — a durable, replica-shared gate, the daily ping, and `userSelfLogin`
   (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md`; chart 0.59.0; the application code rides Epic C's release).**
   Every login as the fleet account first claims the account's Lease in the release namespace
