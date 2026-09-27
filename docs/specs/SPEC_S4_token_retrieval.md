@@ -23,9 +23,10 @@ measurement. Where I am not, §10 says so plainly rather than smoothing it over.
   [`CLUSTER_CREDENTIALS.md` §6](../../charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md#6-the-oauthaccesstoken-objects-a-login-leaves-286),
   point by point, and
   `tests/test_fleet_login.py#TestScopeIsLoginOnly.test_a_delete_only_ever_names_the_object_of_the_token_that_authorises_it`
-  pins the one deletion to the session's own token. The bullet's count ("of 140 on the lab, 95", 2026-09-22) is
-  superseded by the section's: 131 of 189 on 2026-09-27. §10's question 4 is answered there too: the ping
-  revokes its own token through `gsd/fleetlogin.py#FleetLogin.__exit__`.
+  checks, in five mocked logins, one DELETE per received token, naming the object that token derives. The
+  bullet's count ("of 140 on the lab, 95", 2026-09-22) is superseded by the section's: 131 of 189 on 2026-09-27.
+  §10's question 4 is answered there too: the ping attempts to revoke its own token through
+  `gsd/fleetlogin.py#FleetLogin.__exit__`.
 
 ---
 

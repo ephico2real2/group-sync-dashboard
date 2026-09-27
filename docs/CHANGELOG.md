@@ -12,12 +12,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 - **The policy on the `OAuthAccessToken` objects a login leaves on a cluster (#286; chart 0.59.1, docs only).**
   `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` §6, linked from SPEC_S4's orchestrator's notes, states it:
-  every fleet login, lookup, ping and `userSelfLogin` session deletes its own object on every exit path; a failed
-  delete is a `fleet-logout-failed` line naming the object; nothing sweeps the objects already there; the
+  every fleet login, lookup, ping and `userSelfLogin` session attempts to revoke every token its login received,
+  and the section names the limits (a token the process never saw cannot be revoked); a failed revoke is a
+  `fleet-logout-failed` line naming the object, not retried; nothing sweeps the objects already there; the
   oauth-proxy's browser sessions (131 of 189 on the lab, 2026-09-27) cannot be revoked by the dashboard, measured
-  as a 403; and token lifetime and inactivity settings are the cluster owner's. A new test fails if any DELETE
-  names an object other than the one its own token derives, or if another module names the token API. No code,
-  value or RBAC change.
+  as a 403; and token lifetime and inactivity defaults are the cluster owner's. A new test checks, in five mocked
+  logins, one DELETE per received token, authorised by it and naming the object an independent derivation
+  expects, and no token listing; its source check fails if another module uses the token API. No code, value or
+  RBAC change.
 - **The fleet account's credential lifecycle — a durable, replica-shared gate, the daily ping, and `userSelfLogin`
   (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md`; chart 0.59.0; the application code rides Epic C's release).**
   Every login as the fleet account first claims the account's Lease in the release namespace
