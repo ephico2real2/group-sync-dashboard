@@ -10,8 +10,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
-- **Refresh: check a cluster now with the credential the dashboard already holds (application 1.2.0, chart
-  0.59.4; #311, Epic D #384, `docs/specs/SPEC_D3_cluster_refresh.md`).** Each live card on the Cluster
+- **Refresh: check a cluster now with the credential the dashboard already holds (application 1.2.0,
+  chart 0.59.4; #311, Epic D #384, `docs/specs/SPEC_D3_cluster_refresh.md`).** Each live card on the Cluster
   Configurations tab gains a **Refresh** button, beside Delete on a Secret row. It calls the new
   `POST /api/clusterconfigs/{name}/refresh`, which runs the connection test's probe (`/version`, then `users/~`)
   on the stored configuration and answers `{outcome, message, at}` in the poller's words: `ok` (shown as
