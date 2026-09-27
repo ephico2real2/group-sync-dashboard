@@ -165,5 +165,5 @@ repainted one. The server's `409` (note D3-2) is the second guard.
 |---|---|
 | `local-development/gsd/clusterconfig/writer.py` | `_probe` (the probe, moved out of `test_connection` unchanged); `test_connection` calls it; `refresh` (new) |
 | `local-development/gsd/api.py` | the route `refresh_cluster_config`, inside `if writes_on:` beside `/test`, with a per-process in-flight set |
-| `local-development/gsd/static/index.html` | `view.clusterRefresh`; `ccRefreshButton`, `ccRefreshLine`; the card's `.cc-acts`; the click handler in `wireClusterConfig` |
-| `local-development/gsd/static/app.css` | `.cc-refresh` for the result line |
+| `local-development/gsd/static/index.html` | `view.clusterRefresh`; `ccRefreshButton`, `ccRefreshLine` (the line reuses `.cc-consq`); the card's `.cc-acts`; the click handler in `wireClusterConfig` |
+| `local-development/gsd/static/app.css` | one rule: a disabled button in `.cc-acts` reads muted, with the progress cursor |
