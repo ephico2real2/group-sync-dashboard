@@ -802,12 +802,15 @@ clusters:
 # -----------------------------------------------------------------------------
 secretsMint:
   enabled: true
-  # `oc` is all the Job needs: the in-cluster imagestream every OpenShift cluster ships (the
-  # release payload avoids a separate registry.redhat.io pull). Override on a cluster that mirrors
-  # elsewhere, or on plain Kubernetes.
+  # `oc` is all the Job needs: Red Hat's published OpenShift CLI image. Supported on OpenShift 4.18 and
+  # above: set `tag` to your cluster's minor (v4.18 … v4.22; both ends pulled and ran `oc version --client`
+  # on the lab, 2026-09-26). The pull uses the cluster's global pull secret for registry.redhat.io; a
+  # disconnected cluster mirrors it. The in-cluster imagestream
+  # (image-registry.openshift-image-registry.svc:5000/openshift/cli) needs no pull secret and follows
+  # cluster upgrades by itself, and remains a valid override.
   image:
-    repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
-    tag: latest
+    repository: registry.redhat.io/openshift4/ose-cli-rhel9
+    tag: v4.22
     pullPolicy: IfNotPresent
   resources:
     requests: {cpu: 25m, memory: 64Mi}

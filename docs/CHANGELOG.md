@@ -10,6 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
+  `secretsMint.image` is now `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22`, for OpenShift 4.18 and above;
+  set the tag to your cluster's minor. The pull uses the cluster's registry.redhat.io pull secret. The in-cluster
+  `openshift/cli` imagestream, the previous default, remains a valid override.
 - **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
   its own).** `gsd/fleetlogin.py` writes its login-failure lines (`fleet-login-failed` for a retry, a give-up
   or a stop, and `fleet-login-refused`) from one method instead of two, and names an exception's type inline
