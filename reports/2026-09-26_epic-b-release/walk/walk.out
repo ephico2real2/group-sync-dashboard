@@ -1,0 +1,17 @@
+PASS  #305 refuses a newer database: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4), or deploy the image that understands 21
+PASS  #305 leaves the file byte-identical: sha256 d46d6a33627ac54f… before and after
+PASS  backup R1 integrity and schema: integrity_check=ok, user_version=20, build=20
+PASS  backup R2 the release opens it: migration/copy log lines: 0, pre-upgrade copies: 0
+PASS  backup R3 nothing changes on open: membership_event=1169, sync_event=1471, login_event=4207, binding_event=3295, cluster=22
+view restrictions are configured on but the oauth proxy is not enabled, so there is no trusted identity to scope views to and every reader sees everything — exactly today's proxy-less behaviour. Enable the oauth proxy to make the restriction real, or set GSD_ENABLE_VIEW_RESTRICTIONS=false to record that the wide view is a deliberate choice.
+PASS  backup R4 the app serves it: /healthz 200; /api/clusters 6 = enabled cluster rows 6: True; group 'app-ssb-autobahnusers' on dashboard: 8 changes served, 8 stored
+PASS  #301 the copy is taken before the migration: copy line #0: pre-upgrade copy written before migrating schema 20 -> 21: /tmp/work/301/pre-upgrade/pre-upgrade-20260927T002948.159991Z-schema-20-to-21-gsd-walk-epic-b.db (8876032 bytes, 0.40 s) | migration line #1
+PASS  #301 one copy, verified by its sidecar, at the old schema: copies=['pre-upgrade-20260927T002948.159991Z-schema-20-to-21-gsd-walk-epic-b.db'], sidecar matches=True, copy user_version=20
+PASS  #301 five more starts keep exactly that copy: 1 copy after five starts
+PASS  pre-upgrade copy R1 integrity and schema: integrity_check=ok, user_version=20, build=20
+PASS  pre-upgrade copy R2 the release opens it: migration/copy log lines: 0, pre-upgrade copies: 0
+PASS  pre-upgrade copy R3 nothing changes on open: membership_event=1169, sync_event=1471, login_event=4207, binding_event=3295, cluster=22
+view restrictions are configured on but the oauth proxy is not enabled, so there is no trusted identity to scope views to and every reader sees everything — exactly today's proxy-less behaviour. Enable the oauth proxy to make the restriction real, or set GSD_ENABLE_VIEW_RESTRICTIONS=false to record that the wide view is a deliberate choice.
+PASS  pre-upgrade copy R4 the app serves it: /healthz 200; /api/clusters 6 = enabled cluster rows 6: True; group 'app-ssb-autobahnusers' on dashboard: 8 changes served, 8 stored
+
+13 of 13 checks passed

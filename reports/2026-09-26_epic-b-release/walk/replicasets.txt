@@ -1,0 +1,9 @@
+group-sync-dashboard-58bf7b9cb7 2026-09-26T04:48:05Z image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.36.0-667b3c4a62
+group-sync-dashboard-7747c7f7df 2026-09-26T04:24:43Z image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:0.36.0-1178e03eb4
+group-sync-dashboard-7fc596857f 2026-09-26T23:12:45Z quay.io/ephico2real/group-sync-dashboard:0.36.0
+group-sync-dashboard-854596f694 2026-09-27T00:06:12Z quay.io/ephico2real/group-sync-dashboard:0.37.0
+group-sync-dashboard-d568cf97b 2026-09-26T19:14:03Z quay.io/ephico2real/group-sync-dashboard:0.36.0
+group-sync-dashboard-report-5fdbc8fcf9 2026-09-26T04:24:43Z image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard-report:0.36.0-1178e03eb4
+group-sync-dashboard-report-66574687d8 2026-09-26T19:14:03Z quay.io/ephico2real/group-sync-dashboard-report:0.36.0
+group-sync-dashboard-report-6cdd868989 2026-09-27T00:06:12Z quay.io/ephico2real/group-sync-dashboard-report:0.37.0
+group-sync-dashboard-report-6d68d5d496 2026-09-26T04:48:05Z image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard-report:0.36.0-667b3c4a62

@@ -1,0 +1,3 @@
+# sha256 of the newest six-hourly backup, read in the dashboard pod (source) and in the walk pod (the copy streamed in with cat)
+source b8c87250ced27aaf558411a8160ef2669dcccb1ecb500395d3888eac646df104  /data/backup/gsd-20260927T000637.303159Z.db
+copy   b8c87250ced27aaf558411a8160ef2669dcccb1ecb500395d3888eac646df104  /tmp/backup.db
