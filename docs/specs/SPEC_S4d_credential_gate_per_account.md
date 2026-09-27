@@ -57,6 +57,10 @@ Decisions on the review of `555a7e2` (Grok, Codex Astra; 2026-09-26), recorded f
   pins it (two spellings, two authorizes).
 - **Main moved** from `cbe828b` to `3d1c237` (#412, reports and a runbook only); it was merged first and every block
   re-cut against it. `## Unreleased` holds #291's entry only; this change's entry goes first under it.
+- **Implementation deviation: the CHANGELOG block wrapped "chart 0.58.6" across two lines.** Applied, the
+  hermetic suite failed `test_kyverno.py::test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+  ("Chart.yaml is 0.58.6 (last released 0.58.5) and no Unreleased entry names it"): the check reads the words
+  `chart 0.58.6` on one line. The block's first lines are re-wrapped to keep them together; no wording changes.
 
 ## 1. The mandate
 
@@ -836,9 +840,9 @@ version: 0.58.6
 ## Unreleased
 
 - **The credential gate is per account for every failed login (#315,
-  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; application code with no version of its own, chart
-  0.58.6 for `CLUSTER_CREDENTIALS.md`).** When the fleet account's password is sent and no session comes back —
-  a 401, or the 500 a locked directory account answers — the dashboard no longer sends that password, as that
+  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.6 for `CLUSTER_CREDENTIALS.md`, the
+  application code with no version of its own).** When the fleet account's password is sent and no session comes
+  back — a 401, or the 500 a locked directory account answers — the dashboard no longer sends that password, as that
   account, to any other cluster while it is the same password: at most one answered failed login per account
   and password per process, across every cluster, where it was one per cluster. N clusters sharing the fleet
   account, or one cluster entered under two URLs, now cost one failed login instead of N. "Account" is the
