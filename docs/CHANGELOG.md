@@ -15,7 +15,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   must carry the chart's appVersion as the `org.opencontainers.image.version` label of every Linux image under its
   `:<appVersion>` tag, or nothing is deployed. Measured on quay: `:0.37.0` is application 0.37.0 and passes;
   `:0.39.0` is application 0.24.0 and is refused. The backup runbook adds the report pod's wait for a new copy after
-  a restore (and what to check when the copy fails), and when to move an old pre-upgrade copy aside.
+  a restore (and what to check when the copy fails), and when to move an old pre-upgrade copy aside. The refusal of a newer database
+  (#305) now also points to the pre-upgrade copy (§6) after an upgrade, besides §4's backups.
 - **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
   `secretsMint.image` is now `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22`, for OpenShift 4.18 and above;
   set the tag to your cluster's minor. The pull uses the cluster's registry.redhat.io pull secret, and the Job is a

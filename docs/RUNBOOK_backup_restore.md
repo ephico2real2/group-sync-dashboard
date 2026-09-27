@@ -304,7 +304,7 @@ oc logs -n $NS -l app=$REL -c dashboard --previous --tail=1
 ```
 
 ```
-gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4), or deploy the image that understands 21
+gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard understands (20); restore a backup at or below schema 20 (docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), or deploy the image that understands 21
 ```
 
 The refusal comes before this image runs any of its own schema, migrations or seeds, so the

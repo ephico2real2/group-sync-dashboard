@@ -1400,7 +1400,7 @@ class Store:
             self._conn.close()
             raise StoreSchemaTooNew(
                 f"database schema {version} is newer than this dashboard understands ({KNOWN_SCHEMA_VERSION}); "
-                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4), "
+                f"restore a backup at or below schema {KNOWN_SCHEMA_VERSION} (docs/RUNBOOK_backup_restore.md §4; after an upgrade, the pre-upgrade copy in §6), "
                 f"or deploy the image that understands {version}")
         # Older and not fresh: this open is about to migrate, so the copy comes first, or nothing does (#301).
         if version < KNOWN_SCHEMA_VERSION and not fresh:
