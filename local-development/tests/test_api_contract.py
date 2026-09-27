@@ -253,13 +253,14 @@ CLUSTER_SECRET_WRITES = [
     "DELETE /api/clusterconfigs/{name}",
     "POST /api/clusterconfigs",
     "POST /api/clusterconfigs/test",
+    "POST /api/clusterconfigs/{name}/refresh",     # SPEC_D3 (#311): a probe that writes nothing, carved out like /test
     "PUT /api/clusterconfigs/{name}/credential",
 ]
 
 
 def test_r6_the_only_writes_are_the_cluster_secret_routes_and_only_when_switched_on(tmp_path):
-    """The carve-out, exact: with the switch on the schema carries these four write routes and no
-    other; any fifth write, on or off, fails here or above."""
+    """The carve-out, exact: with the switch on the schema carries these five non-GET routes and no
+    other; any sixth, on or off, fails here or above."""
     import dataclasses
     from gsd.api import build_app
     from gsd.config import ClusterConfig, Settings

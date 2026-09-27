@@ -7408,6 +7408,84 @@ class TestClusterConfigPage:
         assert beyond == [], beyond
 
 
+    def test_refresh_shows_four_states_that_survive_a_repaint_with_one_probe_in_flight(self, page, cc_rig, monkeypatch):
+        """#311 (SPEC_D3 §4): idle, in flight, refused and succeeded, each a word; the state lives in
+        view.clusterRefresh, so a poll's repaint keeps it; a click on the old or the repainted button while the
+        probe is out sends nothing. A real repaint is proved by a marker the old node carries and the new one lacks."""
+        import re
+        import threading
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+        gate, answer, dialled = threading.Event(), {"v": ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")}, []
+
+        class _Probe(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                dialled.append((self.cluster.name, path))
+                if path == "/version":
+                    gate.wait(10)
+                    if isinstance(answer["v"], ClusterError):
+                        raise answer["v"]
+                    return {"gitVersion": "v1.31.6"}
+                return {"metadata": {"name": "system:serviceaccount:gso:poller"}}
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Probe)
+        posts: list[str] = []
+        page.on("request", lambda r: posts.append(r.url) if r.method == "POST" and r.url.endswith("/refresh") else None)
+        repaint = """() => { const b = document.getElementById('cc-refresh-east'); b.dataset.old = '1'; window.__old = b;
+                             lastFingerprint = null; return refresh({ auto: true }); }"""
+        fresh = "() => !document.getElementById('cc-refresh-east').dataset.old"
+        line = lambda: page.locator("#cc-refresh-result-east").inner_text().replace("\n", " ")   # noqa: E731
+        try:
+            _open_as(page, base, "root")
+            page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+            # idle, on every live row: the Secret row beside Delete, the host and the values rows on their own
+            assert page.locator("#cc-refresh-east").inner_text() == "Refresh" and page.locator("#cc-refresh-result-east").count() == 0
+            assert page.locator("#cc-cluster-east .cc-acts #cc-refresh-east + #cc-delete-east").count() == 1
+            assert page.locator("#cc-refresh-crc-local, #cc-refresh-prod-east").count() == 2
+            # in flight: labelled and disabled, and it survives a repaint
+            page.click("#cc-refresh-east")
+            page.wait_for_selector("#cc-refresh-east[disabled][aria-busy='true']")
+            page.evaluate(repaint); page.wait_for_function(fresh)
+            assert page.locator("#cc-refresh-east").inner_text() == "Refreshing…" and page.locator("#cc-refresh-east").is_disabled()
+            assert "probing /version and users/~" in line()
+            # one in flight: the old button's handler and the repainted one's both do nothing
+            page.evaluate("() => { window.__old.onclick(); document.getElementById('cc-refresh-east').onclick(); }")
+            page.wait_for_timeout(300)
+            assert len(posts) == 1, posts
+            # refused: the poller's word, the instant as stamped, the message and the next step as text
+            gate.set()
+            page.wait_for_function("() => (document.getElementById('cc-refresh-result-east') || {innerText: ''}).innerText.includes('auth_failed')")
+            refused = line()
+            assert re.search(r"auth_failed · \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ — 401 Unauthorized", refused), refused
+            assert "Rejoin (#316), not built yet" in refused and page.locator("#cc-cluster-east [data-cc-rejoin]").count() == 0
+            assert page.locator("#cc-refresh-result-east .badge.critical").count() == 1
+            assert page.locator("#cc-refresh-east").inner_text() == "Refresh" and not page.locator("#cc-refresh-east").is_disabled()
+            page.evaluate(repaint); page.wait_for_function(fresh)
+            assert line() == refused, "the refused state survives the repaint"
+            # succeeded: `ok` reads connected, with the instant, and survives the repaint too
+            answer["v"] = None
+            page.click("#cc-refresh-east")
+            page.wait_for_function("() => (document.getElementById('cc-refresh-result-east') || {innerText: ''}).innerText.includes('connected')")
+            ok = line()
+            assert re.search(r"connected · \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ — authenticated as system:serviceaccount:gso:poller", ok), ok
+            assert "Rejoin" not in ok and page.locator("#cc-refresh-result-east .badge.ok").count() == 1
+            page.evaluate(repaint); page.wait_for_function(fresh)
+            assert line() == ok
+            assert [p for _, p in dialled].count("/version") == 2 and len(posts) == 2, (dialled, posts)
+            # 375 px: the row with Refresh beside Delete still fits
+            page.set_viewport_size({"width": 375, "height": 812}); page.wait_for_timeout(200)
+            assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
+            # absent, not disabled, where the writes are off
+            page.evaluate("() => { data.clusterconfigs.secrets.writes = false; render(); }")
+            assert page.locator("[data-cc-refresh]").count() == 0
+        finally:
+            gate.set()
+
+
 class TestKyvernoPage:
     """#170: the Kyverno page's three states, the deprecated-family and breaker notes, the visible
     controlled-kind filter, the policy narrowing and the history — every number from the wire."""

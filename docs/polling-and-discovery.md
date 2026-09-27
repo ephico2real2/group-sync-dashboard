@@ -133,9 +133,16 @@ fleet-wide; it does not make any particular cluster poll.
 That is the gap behind the "I just fixed it — did it work?" case: after rotating a credential
 outside the API, the only thing to do is wait for the cadence.
 
-A per-cluster refresh endpoint is proposed in **issue #311** —
-`POST /api/clusters/{name}/refresh` — and a control in the UI that calls it. **Neither exists
-today.** When it is built, the constraint that governs it is not performance but safety.
+**Refresh (#311, application 1.2.0) answers the question without forcing a read.** The card's Refresh
+button calls `POST /api/clusterconfigs/{name}/refresh`, which probes that one cluster now with the
+credential it already holds (`/version`, then `users/~`) and shows the outcome in the poller's words. It
+is a diagnosis, not a poll: it records nothing, so the card's poll status changes only on the next
+cycle, and it wakes neither the discovery thread nor the cluster's poll thread. It probes the
+credential the dashboard holds **now**: a Secret rotated with `oc` or GitOps is not in that set until
+the next discovery (§3), so Refresh right after such a rotation still presents the old token. It needs
+`clusterConfig.secrets.writes.enabled` and the cluster-admin tier (`docs/specs/SPEC_D3_cluster_refresh.md`).
+A forced poll still has no mechanism, by decision (#311's reopening comment): the constraint that
+governs anything that reads a cluster on demand is not performance but safety.
 
 **Which modes bind, precisely.** **`saTokenLookup`** binds to retrieve a cluster's token, and the daily
 ping binds once per fleet account per interval to confirm it (#285). **`userSelfLogin`** binds for its own
@@ -144,10 +151,12 @@ session — at the first cycle and at each renewal, a fixed margin before the se
 reads the refusal recorded there, and records its own attempt before the password is sent
 (`gsd/fleetstate.py#FleetLease`).
 
-So a refresh on a `saTokenLookup` cluster *is a bind*, and it must honour
+So a refresh that *retrieved* a `saTokenLookup` credential would be a bind, and would have to honour
 `gsd/fleetlookup.py#CredentialGate` — returning a gated credential's standing refusal **without
 binding**. An on-demand re-bind that ignores the gate is the most convenient way to lock out the
-account the whole estate authenticates with.
+account the whole estate authenticates with. That is why Refresh never retrieves: it presents only the
+token already stored, answers a lookup that has not retrieved one yet with its pending reason, and
+answers a `userSelfLogin` cluster, whose credential is a login, without contacting it.
 
 ## 5. What a poll does when the credential has expired
 

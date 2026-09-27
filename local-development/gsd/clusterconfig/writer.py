@@ -23,9 +23,10 @@ from dataclasses import dataclass, field
 
 from ..config import ClusterConfig
 from ..config import CONNECTION_KEYS, CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
-from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
+from ..kube import AUTH_FAILED, FORBIDDEN, OK, UNREACHABLE, ClusterClient, ClusterError, redact_text
+from ..timeutil import now_iso
 from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
-from .events import event
+from .events import event, is_verify_failure
 from .parser import Finding, parse_secret
 
 log = logging.getLogger(__name__)
@@ -452,12 +453,11 @@ def delete(host_client: ClusterClient, namespace: str, name: str, *, viewer: str
     event(log, logging.INFO, "cluster-secret-deleted", secret=name, namespace=namespace, cluster=cluster, by=viewer)
 
 
-def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None, timeout: float, viewer: str) -> dict:
-    """C5: the request through the parser, then `/version` and `users/~` with that client. Nothing is
-    stored; the log line names the person and the server, never a field of the request."""
-    parsed = validate(req, namespace, host_name=host_name, taken={})
-    probe = ClusterClient(parsed, timeout=timeout)
-    out: dict = {"reachable": False, "server_version": None, "identity": None, "error": None}
+def _probe(cluster: ClusterConfig, timeout: float) -> tuple[dict, ClusterError | None]:
+    """`/version`, then `users/~`, with this cluster's own credential and trust: what was learned, and the
+    failure that stopped it (None when the credential was accepted). Nothing is stored or retried."""
+    probe = ClusterClient(cluster, timeout=timeout)
+    out: dict = {"reachable": False, "server_version": None, "identity": None}
     try:
         with probe._client() as client:
             version = probe._get(client, "/version", {})
@@ -477,12 +477,61 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
             # Grok). The order is the assertion.
             out["reachable"] = True
     except ClusterError as exc:
-        # The probe client redacts its own token from what the remote echoes; scrubbed again here so the
-        # sentence that reaches the page never depends on which client raised it.
-        out["error"] = _scrub(f"{exc.outcome}: {exc.message}", req.token)
+        return out, exc
+    return out, None
+
+
+def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None, timeout: float, viewer: str) -> dict:
+    """C5: the request through the parser, then `/version` and `users/~` with that client. Nothing is
+    stored; the log line names the person and the server, never a field of the request."""
+    parsed = validate(req, namespace, host_name=host_name, taken={})
+    out, exc = _probe(parsed, timeout)
+    # The probe client redacts its own token from what the remote echoes; scrubbed again here so the
+    # sentence that reaches the page never depends on which client raised it.
+    out["error"] = None if exc is None else _scrub(f"{exc.outcome}: {exc.message}", req.token)
     event(log, logging.INFO, "connection-tested", cluster=req.name, server=req.server, by=viewer,
           outcome="reachable" if out["reachable"] else "unreachable", secrets=(req.token,))
     return out
+
+
+#: Refresh's answer for a cluster with no stored credential to present (SPEC_D3 §2): no network call.
+REFRESH_PENDING = "pending"
+REFRESH_NOT_PROBED = "not-probed"
+SELF_LOGIN_NOT_PROBED = ("declares userSelfLogin — its credential is the poll thread's own session, and Refresh "
+                         "never logs in; the credential row shows the session's state")
+
+
+def refresh(cluster: ClusterConfig, *, timeout: float, viewer: str) -> dict:
+    """SPEC_D3 (#311): probe an existing cluster with the credential it already holds, and answer
+    `{outcome, message, at}` in the poller's words.
+
+    IT NEVER LOGS IN. No FleetLogin, no lookup, no self-login session, no CredentialGate: a pending
+    kind and a self-login cluster are answered without any network call, because the only way to get
+    their credential is a bind. It stores nothing, rotates nothing and forces no poll or discovery."""
+    from ..poller import _credentials   # the one list of a cluster's secrets; late, so importing the writer loads no poller
+    secrets: tuple[str, ...] = ()
+    if cluster.credential_pending is not None:
+        outcome, message = REFRESH_PENDING, cluster.credential_pending
+    elif cluster.credential_kind == CREDENTIAL_SELF_LOGIN:
+        outcome, message = REFRESH_NOT_PROBED, SELF_LOGIN_NOT_PROBED
+    else:
+        secrets = _credentials(cluster)
+        out, exc = _probe(cluster, timeout)
+        if exc is None:
+            outcome = OK
+            message = ", ".join(part for part in (
+                f"authenticated as {out['identity']}" if out["identity"] else "authenticated",
+                f"server {out['server_version']}" if out["server_version"] else None) if part)
+        else:
+            # The poller's TLS branch: a transport message naming a refused certificate, unless verification is off.
+            verify_failed = is_verify_failure(exc.message) and not cluster.insecure_skip_verify
+            outcome = "cert-verify-failed" if verify_failed else exc.outcome
+            message = exc.message
+    # Every answer is scrubbed, `ok` included: /version and users/~ are the remote's own JSON.
+    message = _scrub(message, *secrets)
+    event(log, logging.INFO, "cluster-refreshed", cluster=cluster.name, credential=cluster.credential_kind,
+          by=viewer, outcome=outcome, secrets=secrets)
+    return {"outcome": outcome, "message": message, "at": now_iso()}
 
 
 __all__ = ["CreateRequest", "WriteRefused", "WriteFailed", "SECRET_NAME_PREFIX", "MANAGED_BY_ANNOTATION",
@@ -490,4 +539,4 @@ __all__ = ["CreateRequest", "WriteRefused", "WriteFailed", "SECRET_NAME_PREFIX",
            "TOKEN_SOURCE_ANNOTATION", "SOURCE_NAMESPACE_ANNOTATION", "SOURCE_SERVICE_ACCOUNT_ANNOTATION",
            "LOOKUP_ACCOUNT_ANNOTATION", "TOKEN_SOURCE_LOOKUP", "TOKEN_SOURCE_SELF_LOGIN",
            "TLS_MODES", "OAUTH_NOT_BUILT", "secret_object", "secret_name_for", "validate", "create", "rotate",
-           "store_lookup", "delete", "test_connection", "AUTH_FAILED", "UNREACHABLE"]
+           "store_lookup", "delete", "test_connection", "refresh", "AUTH_FAILED", "UNREACHABLE"]

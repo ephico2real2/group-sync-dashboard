@@ -1,0 +1,10 @@
+# oc adm node-logs --role=master --path=oauth-server/audit.log  (captured 2026-09-27T13:06:33Z), DERIVED:
+# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client records since 2026-09-27T00:00:00Z,
+# for developer and ocp-oauth-bind-serviceid only (another user's name is never printed)
+2026-09-27T10:27:06.048370Z user=ocp-oauth-bind-serviceid decision=allow code=302
+# counts since 2026-09-27T00:00:00Z:
+#   developer allow: 0
+#   developer deny: 0
+#   ocp-oauth-bind-serviceid allow: 1
+#   ocp-oauth-bind-serviceid deny: 0
+# unnamed denies since 2026-09-27T00:00:00Z (the unauthenticated challenge a client may send first): 1

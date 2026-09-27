@@ -28,14 +28,16 @@ INDEX_ROW = re.compile(
     r"(?P<release>R\d|—) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
     re.M,
 )
+#: The 2026-09 programme's thirteen modules, on the R1–R7 ladder.
+PROGRAMME = frozenset({"A1", "A2", "A3", "B1", "B2", "B3", "B4", "C1", "C2", "C3", "C4", "D1", "D2"})
 HEADER_ROW = re.compile(r"^\| (?P<key>Release|Version on release|Issue|Status) \| (?P<value>.+?) \|$", re.M)
 
 
 def _index_rows() -> dict[str, dict[str, str]]:
     rows = {m["id"]: m.groupdict() for m in INDEX_ROW.finditer(INDEX.read_text())}
-    # A programme id is a batch letter A-D and a number, nothing more: a step of a programme design that lands
-    # after R7 (D2b, #338) carries the design's id and a letter, and rides a later release like E1.
-    programme = sorted(fid for fid in rows if re.fullmatch(r"[A-D]\d", fid))
+    # The programme's thirteen, by name: a later spec may reuse a batch letter (D2b, #338; D3, #311, Epic D)
+    # and rides a later release like E1.
+    programme = sorted(fid for fid in rows if fid in PROGRAMME)
     post = sorted(fid for fid in rows if fid not in programme)
     assert len(programme) == 13, f"expected the programme's thirteen index rows, matched {programme}"
     # the alternation admits `—` for the post-programme batches only; a programme row must still carry its
@@ -45,7 +47,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 29, f"expected twenty-nine index rows, including S4d (#315); matched {sorted(rows)}"
+    assert len(rows) == 30, f"expected thirty index rows, including D3 (#311); matched {sorted(rows)}"
     return rows
 
 

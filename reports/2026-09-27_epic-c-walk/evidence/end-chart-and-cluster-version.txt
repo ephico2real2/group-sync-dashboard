@@ -1,0 +1,3 @@
+# oc get deployments.apps -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.metadata.labels.helm\.sh/chart} {.metadata.labels.app\.kubernetes\.io/version}'; oc version  (2026-09-27T13:28:02Z)
+group-sync-dashboard-0.59.2 1.0.0
+Server Version: 4.22.7

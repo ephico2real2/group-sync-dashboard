@@ -1,0 +1,2 @@
+# objects labelled walk.gsd.lab/run (roles and rolebindings in every namespace, clusterrolebindings, Secrets in group-sync-dashboard) at 2026-09-27T13:21:10Z — expected none: the walk's manifests were prepared and server-side dry-run only
+objects found: 0
