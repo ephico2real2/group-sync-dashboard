@@ -323,6 +323,20 @@ Decisions taken at review, recorded first and then applied:
   - **Measured on the applied tree:** round 2's ten tests error at collection on main plus the test blocks, nine fail on
     round 1's blocks — each on its behaviour; the companion passes by design — and all ten pass here. Nine more design
     decisions were each reverted and caught by these tests: 35 in all (§8.1).
+- **Round 3 of the spec review, on `64e84d8` (PR #419, 2026-09-27): a confirmation pass by Grok and Codex Astra.**
+  - **Grok:** C1–C6 confirmed; ship the blocks as cut. No round-2 fix reopened under one new interleaving each. OB3's
+    narrower F2 window, the stated prices of F1 (+1 on a rotation back) and the conflicted `release()` are not defects.
+  - **R3-1 (Codex, P2), accepted with Codex's block:** a late self-login success resurrected a suspended credential. The
+    sweep observed the unanswered reservation after its window while this process's authorize was still in flight,
+    parked the cluster and seeded the gate; the late 302 then installed its session, cleared the finding and returned
+    a credential, and `credential_for()`'s fast path kept polling until renewal, contradicting §4's statement that a
+    parked session stays parked. No extra bind; the state was inconsistent. The fix checks the parked key under the
+    suspension's lock at installation and, if parked, exits the new session once and returns None (+7 lines in
+    `selflogin.py`). Measured by the orchestrator: `test_late_success_cannot_install_over_a_sweep_suspension`
+    [initial, renewal] fails on `64e84d8`'s blocks (2 failed) and passes with this block; the fleet test files give 264
+    passed with 2 failed before, and 266 passed after.
+  - Codex's C5 was PLAUSIBLE only because its sandbox blocks local sockets and Chromium; the full suite is run outside
+    it on the applied tree.
 
 ## 0. The requirement, in business terms
 
@@ -972,7 +986,10 @@ every token held at that moment — the new one among them — to its redaction 
 F3), so the superseded token is revoked *after* its replacement exists; the poll never runs without a
 credential, and the token cache
 window #283 measured (a revoked token authenticates for ~121 s) is irrelevant because the old token
-is no longer presented.
+is no longer presented. Installation checks, under the same lock as suspension, whether this
+credential was parked while its authorize was in flight. If so, the newly minted token exits once
+through `_exit` and is never installed or returned for a poll; the gate, parked state and suspension
+finding remain. This applies to both an initial acquisition and a renewal.
 
 **The poll** runs `poll_once(store, dataclasses.replace(cluster, token_value=token,
 user_self_login=False, ldap_connection_bootstrap=None), …)` — the substitution `read_sa_token` already
@@ -2996,8 +3013,16 @@ class SelfLoginSessions:
         fresh = _Session(login, session, account, key, renew_at(session),
                          reauth_logins=held.reauth_logins + 1 if held is not None and held.reauth else 0)
         with self._lock:
+            # The sweep can park this credential while its authorize is in flight. The parked
+            # check and installation share the suspension's lock: a late success must not
+            # resurrect a session after the process has gated it (round 3, #419).
+            parked = self._parked.get(cluster.name) == key
             old = self._sessions.get(cluster.name)
-            self._sessions[cluster.name] = fresh
+            if not parked:
+                self._sessions[cluster.name] = fresh
+        if parked:
+            self._exit(login)                         # the late token was minted, so revoke it once
+            return None                              # keep the suspension and its standing finding
         if old is not None:
             self._exit(old.login)                        # the superseded token, revoked after its replacement exists
             event(log, logging.INFO, "self-login-renewed", cluster=cluster.name, account=account,
@@ -5790,4 +5815,62 @@ def test_s4c_gates_every_bound_failure_per_account() -> None:
 
 
 def test_s4c_gates_every_bound_failure_per_account() -> None:
+```
+
+<!-- block: local-development/tests/test_fleet_lifecycle_round3.py | create -->
+```python
+"""Round 3 (#419): a late self-login success must respect an intervening suspension."""
+from datetime import datetime, timedelta
+
+import pytest
+
+from gsd.fleetstate import PREFIX, claim_seconds
+from test_fleet_lifecycle import (
+    PASSWORD, T0, TOKEN_2, TOKEN_3, USER, LeaseHost, login_302,
+    process, self_login, sessions,
+)
+from test_fleet_lookup import wire  # noqa: F401
+
+
+@pytest.mark.parametrize("renewal", [False, True], ids=["initial", "renewal"])
+def test_late_success_cannot_install_over_a_sweep_suspension(tmp_path, monkeypatch, wire, renewal):
+    """C3: the discovery thread parks A while A's authorize is still in flight."""
+    host = LeaseHost()
+    p = process(tmp_path, monkeypatch, host, self_login("a"))
+    now = [T0]
+    s = sessions(p, now)
+    cluster = p.settings.cluster("a")
+    if renewal:
+        wire.answers = [login_302(token=TOKEN_3, expires_in="3600")]
+        assert s.credential_for(cluster) is not None
+        now[0] += timedelta(seconds=2700)
+
+    def sweep_during_authorize(request):
+        # The authorize is paused beyond its own window while discovery keeps running.
+        now[0] += timedelta(seconds=claim_seconds(p.settings) + 2)
+
+        class SweepClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now[0]
+
+        monkeypatch.setattr("gsd.poller.datetime", SweepClock)
+        p._ping_accounts()
+        assert s.view("a")["state"] == "suspended"
+        assert p._credential_gate.account_refusal(USER, PASSWORD) is not None
+        return login_302(token=TOKEN_2)
+
+    wire.answers = [sweep_during_authorize]
+    credential = s.credential_for(cluster)
+    following = s.credential_for(cluster)
+    print(f"LATE-SUCCESS renewal={renewal}: usable={credential is not None}, "
+          f"next_cycle_usable={following is not None}, state={s.view('a')['state']}, "
+          f"authorizes={len(wire.authorize)}, revokes={len(wire.revokes)}")
+    assert credential is None, "late success installed a token after the account was parked"
+    assert s.view("a")["state"] == "suspended"
+    assert following is None
+    assert any(f.code == "self-login-suspended" for f in p.settings.cluster_registry.findings())
+    assert PREFIX + "refused" not in host.leases.annotations()
+    assert len(wire.authorize) == 1 + int(renewal)
+    assert len(wire.revokes) == 1 + int(renewal), "the rejected late token still needs its one revoke"
 ```
