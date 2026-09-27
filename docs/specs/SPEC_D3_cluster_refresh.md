@@ -105,7 +105,7 @@ The first five words are the poller's own (`gsd/kube.py#AUTH_FAILED`, `FORBIDDEN
 |---|---|
 | call `FleetLogin`, the lookup (`gsd/fleetlookup.py#lookup`), or `SelfLoginSessions.credential_for` | Each of those can send a password to a directory. A button that binds on demand is the fastest way to lock out the fleet account (#283, #284). If the stored credential is refused, the fix is Rejoin (#316), where a person supplies their own credential once. |
 | touch `CredentialGate` or a fleet account's Lease | The gate records bound failures. Refresh presents no password, so it has nothing to record and nothing to consult. |
-| store anything | No Secret write, no poll outcome, no database row, no metric. The card's `connection` row still shows the last poll, unchanged. |
+| store anything | No Secret write, no poll outcome, no Lease, and no row or metric of its own. The ordinary accounting every request gets (the usage row for a click, the authorization counters) still applies, as it does for `/test` (review of #434). The card's `connection` row still shows the last poll, unchanged. |
 | rotate anything | The token it presents is the one already stored. |
 | force a poll or a discovery | It does not call `Poller.request_discovery` or wake a poll thread. The next poll comes at its usual time. |
 | retry | One probe per press. The next press is the retry. |

@@ -526,7 +526,9 @@ def refresh(cluster: ClusterConfig, *, timeout: float, viewer: str) -> dict:
             # The poller's TLS branch: a transport message naming a refused certificate, unless verification is off.
             verify_failed = is_verify_failure(exc.message) and not cluster.insecure_skip_verify
             outcome = "cert-verify-failed" if verify_failed else exc.outcome
-            message = _scrub(exc.message, *secrets)
+            message = exc.message
+    # Every answer is scrubbed, `ok` included: /version and users/~ are the remote's own JSON.
+    message = _scrub(message, *secrets)
     event(log, logging.INFO, "cluster-refreshed", cluster=cluster.name, credential=cluster.credential_kind,
           by=viewer, outcome=outcome, secrets=secrets)
     return {"outcome": outcome, "message": message, "at": now_iso()}

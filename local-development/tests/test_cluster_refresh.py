@@ -220,6 +220,17 @@ def test_a_remote_that_echoes_the_bearer_never_puts_it_in_the_answer_or_the_log(
     assert TOKEN not in r.text and TOKEN not in caplog.text
 
 
+def test_a_200_that_echoes_the_bearer_in_version_or_identity_never_puts_it_in_the_answer_or_the_log(rig, caplog):
+    """SPEC_D3 §2/§3: the remote owns gitVersion and the users/~ name, so `ok` is scrubbed too (review of #434)."""
+    c, *_ = rig
+    _Probe.answers = {VERSION: {"gitVersion": TOKEN}, WHOAMI: {"metadata": {"name": TOKEN}}}
+    with caplog.at_level(logging.DEBUG):
+        r = _refresh(c)
+    assert r.status_code == 200 and r.json()["outcome"] == "ok", r.text
+    assert TOKEN not in r.text and TOKEN not in caplog.text
+    assert "<redacted>" in r.json()["message"]
+
+
 def test_with_the_writes_switch_off_the_route_does_not_exist(tmp_path):
     db = str(tmp_path / "off.db"); _seed(db)
     app = build_app(_settings(db), run_poller=False)
