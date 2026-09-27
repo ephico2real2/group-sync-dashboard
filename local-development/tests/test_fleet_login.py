@@ -1198,6 +1198,72 @@ class TestScopeIsLoginOnly:
         assert {r.method for r in target.requests} == {"GET", "DELETE"}
         assert all(r.url.path.startswith(USER_TOKEN_API + "/") for r in target.revokes)
 
+    def test_a_delete_only_ever_names_the_object_of_the_token_that_authorises_it(self):
+        """#286: the only OAuthAccessToken the dashboard deletes is a session's own. The test above
+        checks the path's prefix, so a DELETE of any other name would pass it; this one checks the
+        NAME. On every exit path that reaches the wire (the body returned, raised an Exception or a
+        BaseException, the guard after a mint, a malformed 302 carrying two tokens), each DELETE must
+        target `token_object_name(<its own bearer>)`, and that bearer must be a token the target minted
+        in this run. Self-login's renewal, suspension and URL move all exit through `__exit__`, the first
+        case. Then the source: no other `gsd` module names the token API, and `_delete_token` holds this
+        module's only `.delete(` call. A sweep, or a name taken from a listing, fails one half or the other."""
+        class Abort(BaseException):
+            pass
+
+        other = "sha256~AnotherTokenTheTargetChose0000000000"
+        implicit = f"{OAUTH}/oauth/token/implicit"
+        two = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"),
+               ("Location", f"{implicit}#access_token={other}&expires_in=60")]
+
+        def body_returns():
+            pass
+
+        def body_raises(kind):
+            def run():
+                raise kind()
+            return run
+
+        runs = [(Target(down, login_302()), body_returns, None),
+                (Target(login_302()), body_raises(RuntimeError), RuntimeError),
+                (Target(login_302()), body_raises(Abort), Abort),
+                (Target(login_302(expires_in="soon")), body_returns, LoginError),
+                (Target(httpx.Response(302, headers=two)), body_returns, LoginError)]
+        for target, body, raised in runs:
+            fl, _ = make(target)
+            try:
+                with fl:
+                    body()
+            except BaseException as exc:  # noqa: BLE001 - each run's own exception is asserted below
+                assert raised is not None and isinstance(exc, raised), exc
+            else:
+                assert raised is None
+            assert target.revokes, "every run minted a token, so every run must revoke one"
+            for request in target.revokes:
+                bearer = request.headers["authorization"].removeprefix("Bearer ")
+                assert bearer in (TOKEN, other), "the DELETE is authorised by a token this target minted"
+                assert request.url.path == f"{USER_TOKEN_API}/{token_object_name(bearer)}", request.url.path
+
+        source = pathlib.Path(fleetlogin.__file__)
+        naming = set()
+        for path in source.parent.rglob("*.py"):
+            tree = ast.parse(path.read_text())
+            docstrings = {id(n.body[0].value) for n in ast.walk(tree)
+                          if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                          and n.body and isinstance(n.body[0], ast.Expr)}
+            for node in ast.walk(tree):
+                if ((isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+                     and "oauthaccesstoken" in node.value.lower())
+                        or (isinstance(node, ast.Name) and node.id == "USER_TOKEN_API")
+                        or (isinstance(node, ast.Attribute) and node.attr == "USER_TOKEN_API")
+                        or (isinstance(node, ast.alias) and node.name == "USER_TOKEN_API")):
+                    naming.add(path.relative_to(source.parent).as_posix())
+        assert naming == {"fleetlogin.py"}, naming
+        tree = ast.parse(source.read_text())
+        deleting = [fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+                    for call in ast.walk(fn) if isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute) and call.func.attr == "delete"]
+        assert deleting == ["_delete_token"], deleting
+
     def test_the_source_neither_writes_a_secret_nor_starts_a_timer(self):
         """Parsed, not grepped: the docstring says "schedules" and "Secret" while saying the module
         does neither. What is asserted is what the code IMPORTS and which methods it calls on its

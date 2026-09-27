@@ -181,3 +181,58 @@ connection can always authenticate.
   389-ds account answers LDAP code 19, which OpenShift surfaces as a 500, so "it failed, try again"
   is wrong precisely when the account is already locked.
 - Both are admin-tier only.
+
+## 6. The `OAuthAccessToken` objects a login leaves (#286)
+
+Every login through a cluster's OAuth server creates a cluster-scoped `OAuthAccessToken` object there. It
+stays until it expires or is deleted, and the cluster sets the lifetime: a year on the reference lab
+(`{"accessTokenMaxAgeSeconds":31536000}` on `oauths.config.openshift.io/cluster`, read 2026-09-27). The
+dashboard's policy, point by point:
+
+1. **Every fleet login revokes its own token, on every exit path.** The login is a context manager:
+   `gsd/fleetlogin.py#FleetLogin.__exit__` deletes the session's object when the caller is done, whether the
+   work returned or raised, and the login itself revokes a token it minted but could not turn into a session.
+   The lookup and the daily ping run inside that session (`gsd/fleetlookup.py#lookup`; the ping calls it with
+   `write=False`). A `userSelfLogin` session goes through the same exit (`gsd/selflogin.py#SelfLoginSessions._exit`)
+   when a renewal replaces it, when the account is suspended, when a login succeeds after the suspension, when
+   the cluster's URL moves (the token is revoked at the URL that minted it and never sent to the new one), and
+   when the cluster is disabled or removed. The request is `oc logout`'s:
+   `DELETE /apis/oauth.openshift.io/v1/useroauthaccesstokens/<name>`, authorised by the token itself, so it
+   needs no RBAC. `<name>` is derived from that token (`gsd/fleetlogin.py#token_object_name`), and
+   `tests/test_fleet_login.py#TestScopeIsLoginOnly.test_a_delete_only_ever_names_the_object_of_the_token_that_authorises_it`
+   fails if a DELETE names any other object, if another `gsd` module names the token API, or if
+   `fleetlogin.py` gains a second delete call. Measured on the lab by #283's live test
+   (`tests/test_live_fleet_login.py#test_the_session_is_obtained_and_revoked`, recorded on #286): the
+   account's count went 0 → 1 → 0. It is the one write a reader makes here, because the object exists only
+   because this login created it, and leaving it for a year on a cluster the dashboard does not own is the
+   larger intrusion.
+2. **A failed revoke is logged, never silent.** Only a 200 or a 404 counts as gone. Anything else (a 401, a
+   5xx, no answer) is one `fleet-logout-failed` line that names the object by its `sha256~` name, the name
+   `oc get oauthaccesstokens` lists and never the token, and tells a cluster-admin to delete it
+   (`gsd/fleetlogin.py#FleetLogin._revoke`). Nothing retries it; the line is the record. A cluster older than
+   OpenShift 4.6 names the object by the token itself, so there the line leaves the name out.
+3. **No sweep of objects already there.** The dashboard deletes only what it provably minted, inside the
+   session that minted it. It never lists tokens and deletes by filter: a filter on user and client cannot
+   tell a dashboard login from a person's `oc login`, and #286's history records four `developer`
+   sessions deleted by exactly that filter when only one was the dashboard's. There is no cleanup Job and no
+   RBAC for one. The fleet account's two objects on the lab, created 2026-09-19 before #283 was merged, stay.
+4. **Browser sessions through the dashboard's oauth-proxy are the largest group, and the dashboard cannot
+   revoke them.** Each sign-in creates an object whose client is the release's ServiceAccount: 131 of 189 on
+   the lab on 2026-09-27. Their tokens carry the scopes `user:info` and `user:check-access`, which permit no
+   delete. A sign-out that revoked them was built, deployed and measured returning 403
+   (`docs/DESIGN_session_and_signout.md#Token revocation is refused by the token's own scope`). Widening the
+   scope to `user:full` would fix that by handing the dashboard a token that can act as the user anywhere on
+   the cluster, so the chart does not. Sign-out clears the proxy's cookie and leaves the object to expire.
+5. **Cluster hygiene belongs to the cluster owner.** `accessTokenMaxAgeSeconds` and
+   `accessTokenInactivityTimeout` on `oauths.config.openshift.io/cluster` apply to every client on the
+   cluster, so a namespaced chart does not set them (`docs/DESIGN_session_and_signout.md#Cluster token policy is not ours to set`),
+   and the dashboard never does. An inactivity timeout limits whether a token can still be used, not how
+   many objects exist: an unused token stops working and its object stays. Removing old objects, or
+   shortening their lifetime, is the cluster owner's decision.
+
+To see what a cluster holds, by client (read-only):
+
+```sh
+oc get oauthaccesstokens.oauth.openshift.io \
+  -o jsonpath='{range .items[*]}{.clientName}{"\n"}{end}' | sort | uniq -c | sort -rn
+```
