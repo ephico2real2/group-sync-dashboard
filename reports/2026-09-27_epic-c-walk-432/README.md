@@ -13,7 +13,8 @@
   - The lab check (SPEC_S4e §5) printed `0 0 0` before every step that placed a password. It ran 6 times, each within
     seconds of the step it guarded. The run as found printed `1 0 0`, as SPEC_S4e measured.
 - **The fleet account `ocp-oauth-bind-serviceid`:**
-  - 0 authorizes in the oauth-server audit log from the walk's start, 21:39:46Z, to its end, 22:57:02Z;
+  - 0 authorizes in the oauth-server audit log since the walk's start, 21:39:46Z, in the log as captured at its end,
+    22:57:02Z;
   - 2 `openshift-challenging-client` tokens (created 2026-09-19T00:48:44Z and 00:50:11Z) at the start, at every
     capture and at the end;
   - its Lease `gsd-fleet-666f1ba7f2fdead0` byte-identical at the start, at every step and at the end: resourceVersion
@@ -28,7 +29,7 @@
   - the lookup, and 7 successful pings;
   - 1 refused ping (step 3);
   - 2 self-login logins (steps 4 and 5a), and 1 refused self-login re-authentication (step 5b).
-  - Its challenging-client tokens ended as they started: the same three objects.
+  - Its challenging-client tokens ended as they started: the count and the creation times match.
 - **Step 3, the wrong password:**
   - one refused authorize at 22:08:00.609Z, and none across the three cadences after it (22:13, 22:18, 22:23Z);
   - the ping stood down once (`fleet-ping-failed … gave_up=true suspended=developer scope=ping`);
@@ -42,7 +43,8 @@
   - Argo is `Synced`/`Healthy` at `6fe404c3…`, and its `syncPolicy` is byte-identical to the one recorded before the
     pause (`automated {prune, selfHeal}`);
   - `/api/version` reads `1.4.0` (`6a83e3edda`) on the published image, at the digest the walk started with;
-  - the PVC UIDs are unchanged, and no walk object remains;
+  - the PVC UIDs are unchanged, and no walk object remains in the cluster's API. The retired database rows and the
+    registry images are noted below.
   - the dashboard ServiceAccount's `get` on `ldap-oauth-bind-secret` answered `yes` at every capture.
 
 ## Definition of Done
@@ -57,22 +59,22 @@ NOT RUN means the walk did not perform the item, and says why.
 | Issue | Definition of Done item | Result | Evidence |
 |---|---|---|---|
 | #432 | "SPEC_S4c §3.12 corrected, reviewed, and walked on the lab as `developer` only" — the walk | **PARTIAL.** Steps 0–5 and 7 walked, as `developer` only. Step 6 not run ("What was not run"). The correction and its review are #438's. | this README; `evidence/step*` |
-| #432 | "The fleet account's token count stays 2" | **PASS.** 2 → 2, the same two objects. | `evidence/start-tokens.txt`, `evidence/end-tokens.txt` |
-| #432 | "…and its audit-log authorizes stay 0" | **PASS.** 0 in [21:39:46Z, 22:57:02Z). | `evidence/end-walk-window-audit.txt` |
-| #383 | "On the lab, #285's walk step 3 (as `developer`) counts one authorize on the oauth-server across three cadences." | **PASS.** 1 in [22:03:41Z, 22:24:05Z): the deny at 22:08:00.609Z. None at the 22:13, 22:18 and 22:23Z cadences. | `evidence/step3-three-cadences-audit.txt`, `evidence/step3-podlog.txt` |
+| #432 | "The fleet account's token count stays 2" | **PASS.** 2 → 2; the count and the creation times match. Token names and UIDs were not captured. | `evidence/start-tokens.txt`, `evidence/end-tokens.txt` |
+| #432 | "…and its audit-log authorizes stay 0" | **PASS.** 0 since 21:39:46Z, in the log as captured at 22:57:02Z. | `evidence/end-walk-window-audit.txt` |
+| #383 | "On the lab, #285's walk step 3 (as `developer`) counts one authorize on the oauth-server across three cadences." | **PASS.** 1 since 22:03:41Z, in the log as captured at 22:24:05Z: the deny at 22:08:00.609Z. None at the 22:13, 22:18 and 22:23Z cadences. | `evidence/step3-three-cadences-audit.txt`, `evidence/step3-podlog.txt` |
 | #383 | "`… select(.userName=="ocp-oauth-bind-serviceid") …` still returns 2" | **PASS.** | `evidence/end-tokens.txt` |
 | #383 | "Deployed to CRC through `release-crc.sh --argocd`, walked, PVC UIDs unchanged." | **Deployed: PASS**, by the restore's `release-crc.sh --argocd main`. **Walked: PARTIAL** (step 6). **PVC UIDs: PASS.** | `evidence/step7-release-crc-argocd-main.log`, `evidence/end-argo.txt`, `evidence/start-pvcs.txt`, `evidence/end-pvcs.txt` |
 | #285 | "Deployed to CRC through `release-crc.sh --argocd`" | **PASS.** | same |
 | #285 | "…and walked per SPEC_S4c §3.12, as `developer` only" | **PARTIAL.** Steps 0–5 and 7; step 6 not run. | this README |
 | #285 | "Step 3, the deliberately wrong password, counts exactly one authorize across three cadences." | **PASS.** | `evidence/step3-three-cadences-audit.txt` |
-| #285 | "The `developer` `OAuthAccessToken` count ends where it started" | **PASS.** 3 → 3: the objects created 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z and 2026-09-26T14:35:41Z. | `evidence/start-tokens.txt`, `evidence/end-tokens.txt` |
+| #285 | "The `developer` `OAuthAccessToken` count ends where it started" | **PASS.** 3 → 3; the count and the creation times match: 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z and 2026-09-26T14:35:41Z. | `evidence/start-tokens.txt`, `evidence/end-tokens.txt` |
 | #285 | "…and the fleet account's count is still 2." | **PASS.** | same |
-| #285 | "The Secret `gsd-cluster-shared-rnd`'s `resourceVersion` is unchanged across a ping." | **PASS**, across `developer`'s pings. `2835139` at all 12 Secret captures, across 8 pings and the lookup. The pings' own target, `gsd-cluster-walk-lookup`, kept `5504203` from its creation through every ping. The fleet account's own ping was not due during the walk: its last was 10:27:05Z, its interval 86400 s. | `evidence/*-secrets.txt` |
+| #285 | "The Secret `gsd-cluster-shared-rnd`'s `resourceVersion` is unchanged across a ping." | **PASS**, across `developer`'s pings. `2835139` at all 12 Secret captures, across 7 successful pings, 1 refused ping (22:08:00Z) and the lookup. The pings' own target, `gsd-cluster-walk-lookup`, kept `5504203` from its creation through every ping. The fleet account's own ping was not due during the walk: its last was 10:27:05Z, its interval 86400 s. | `evidence/*-secrets.txt`; the pings: `evidence/step2-podlog.txt`, `evidence/step3-podlog.txt`, `evidence/step3-rotate-back-podlog.txt`, `evidence/step4-5-pod-podlog.txt` |
 | #285 | "PVC UIDs are recorded before and after and unchanged." | **PASS.** `f065b7a4-…` and `08c7d45c-…`. | `evidence/start-pvcs.txt`, `evidence/end-pvcs.txt` |
-| #285 | "Screenshots of the tab's two rows." | **NOT RUN.** The tab needs the dashboard's cluster-admin tier (`update clusterrolebindings`), and `developer` does not hold it (`can-i`: `no`). The brief grants no tier, and `kubeadmin` is never used. The rows' data was read from the Leases and `/metrics` instead. | `evidence/start-cani.txt`, `evidence/*-leases.txt`, `evidence/*-metrics.txt` |
+| #285 | "Screenshots of the tab's two rows." | **NOT RUN.** The tab needs the dashboard's cluster-admin tier (`update clusterrolebindings`), and `developer` does not hold it (`can-i`: `no`). The brief grants no tier and rules out `kubeadmin`. No script here logs in or calls the dashboard's route: they read `/api/version` and `/metrics` on the pod's loopback. The artefacts do not record which identity the lab's kubeconfig carries. The rows' data was read from the Leases and `/metrics` instead. | `evidence/start-cani.txt`, `evidence/*-leases.txt`, `evidence/*-metrics.txt` |
 | #285 | "Evidence committed under `reports/<date>_<slug>/` and posted here, pinned to the full merge sha." | **PARTIAL.** Committed in this folder, not pushed, per the brief. Posting on the issue is the orchestrator's. | this folder |
 | #286 | "After #285's deploy: the counts table above re-measured" | **PASS.** The table below. | `evidence/start-tokens.txt`, `evidence/end-tokens.txt` |
-| #286 | "…and the ping's account's challenging-client count unchanged across ≥ 3 cadences" — `developer`, per §3.12 | **PASS.** 3 before the first ping, 3 after four cadences (21:47:59–22:03:00Z), 3 after the confirming ping (22:28:00Z), and 3 at the end. Each of the 7 successful pings logged `fleet-logout … outcome=revoked`. | `evidence/step2-end-tokens.txt`, `evidence/step3-end-tokens.txt`, `evidence/end-tokens.txt`, `evidence/step2-podlog.txt` |
+| #286 | "…and the ping's account's challenging-client count unchanged across ≥ 3 cadences" — `developer`, per §3.12 | **PASS.** 3 before the first ping, 3 after four cadences (21:47:59–22:03:00Z), 3 after the confirming ping (22:28:00Z), and 3 at the end. Each of the 7 successful pings logged `fleet-logout … outcome=revoked`. | `evidence/start-tokens.txt`, `evidence/step2-end-tokens.txt`, `evidence/step3-end-tokens.txt`, `evidence/end-tokens.txt`, `evidence/step2-podlog.txt`, `evidence/step3-rotate-back-podlog.txt`, `evidence/step4-5-pod-podlog.txt` |
 | #286 | "The fleet account `ocp-oauth-bind-serviceid` is still at 2." | **PASS.** | `evidence/end-tokens.txt` |
 | #310 | "Part A, after #285: a renewal **observed**…" | **NOT RUN.** It is not part of §3.12. It needs `oauth/cluster`'s `accessTokenMaxAgeSeconds` lowered to 600: a cluster-wide change that restarts the oauth-openshift pods, and this walk's brief does not name it. The walk shows the schedule and the reactive path only. `self-login-renewed … renew_at=2027-09-27T20:33:28Z` is two hours before `expires_at` (22:33:28Z). | `evidence/step4-5-pod-podlog.txt` |
 | #310 | "Part A: `accessTokenMaxAgeSeconds` is restored to `31536000`. The lab is left as found…" | **NOT RUN.** Nothing was lowered, so there was nothing to restore. `{"accessTokenMaxAgeSeconds":31536000}` at the start and at the end. Entries, Secrets and PVC UIDs are recorded at both ends. | `evidence/start-oauth.txt`, `evidence/end-oauth.txt`, `evidence/start-secrets.txt`, `evidence/end-secrets.txt` |
@@ -94,14 +96,14 @@ counts as `0`. Each file names the objects it counted over.
 
 ## The fleet account's evidence, before and after
 
-| Measure | Start (21:39:46Z) | End (22:57:02Z) |
+| Measure | Start (captures 21:39:46Z–21:40:09Z) | End (captures 22:56:55Z–22:57:02Z) |
 |---|---|---|
-| `openshift-challenging-client` `OAuthAccessToken`s for `ocp-oauth-bind-serviceid` | 2 (2026-09-19T00:48:44Z, 00:50:11Z) | 2 (the same) |
+| `openshift-challenging-client` `OAuthAccessToken`s for `ocp-oauth-bind-serviceid` | 2 (2026-09-19T00:48:44Z, 00:50:11Z) | 2; the count and the creation times match |
 | Its Lease `gsd-fleet-666f1ba7f2fdead0` | resourceVersion `5127386`, sha256 `96e3727807355ca16f9299e067bada4e3a1e83f3a335410ac432f78f85ea9d45`, `ping-last-ok` 2026-09-27T10:27:05Z | the same, at every capture between |
 | Its view in `/api/clusterconfigs` `.fleet` | not read: the route needs the cluster-admin tier (above) | not read |
 | `gsd_fleet_account_last_ok_timestamp_seconds`, the oldest `last_ok` across the served accounts | `1.790504825e+09` = 10:27:05Z | the same. It held at every capture while `developer`'s Lease recorded newer successes, so the fleet account's row stayed served, as history (SPEC_S4e §3.5 item 5) |
-| Audit-log authorizes | today before the walk: 1 allow at 10:27:06.048Z, the product's daily ping | **0** in [21:39:46Z, 22:57:02Z) |
-| `developer`'s challenging-client tokens | 3 | 3 (the same three objects) |
+| Audit-log authorizes | today before the walk: 1 allow at 10:27:06.048Z, the product's daily ping | **0** since 21:39:46Z, in the log as captured at 22:57:02Z |
+| `developer`'s challenging-client tokens | 3 | 3; the count and the creation times match |
 
 ## The walk, step by step
 
@@ -192,7 +194,8 @@ and `…-c9664c7c4-cxs9b` (Argo, restored).
     - `gsd_cluster_up{cluster="walk-self-login"} 0`, the card critical.
   - At the next cadence, 22:43:53Z, the ping stood down once (`… scope=ping`), and `gsd_fleet_account_suspended`
     read `1`.
-  - The audit log holds one authorize from 22:39:18Z to 22:49:36Z, the deny. The parked cluster made no further login
+  - The audit log, as captured at 22:49:36Z, holds one authorize since 22:39:18Z: the deny. The parked cluster made
+    no further login
     (`evidence/step5b-*`).
 
 **Step 6 — two processes.** Not run. See "What was not run".
@@ -275,26 +278,33 @@ No record carried no username in the window.
 
 ## What was not run, and why
 
-- **§3.12 step 6, a second copy of the app out of cluster.** Stopped as ambiguous, per the brief; three reasons, each
-  read in the code:
-  1. **A second process is a standby here, and a standby never calls `claim()`.** The walk values run leader election
-     (`leaderElection: true` in every deployed `clusters.yaml`).
-     - Its poll threads skip: `local-development/gsd/poller.py#Poller._run_cluster`'s standby branch, "not leader,
-       skipping poll". The line was read in both walk pods' logs after their deploys (not kept; the pods are gone).
+- **§3.12 step 6, a second copy of the app out of cluster.** Stopped as ambiguous, per the brief. Four reasons,
+  the first three read in the code and the fourth in `prepared/walk-rbac.yaml`:
+  1. **A process that remains a leader-election standby cannot demonstrate `ClaimHeld`.** It skips self-login
+     acquisition, pending lookups and pings before any fleet-account claim.
+     - `local-development/gsd/poller.py#Poller._run_cluster`'s standby branch skips the poll: "not leader, skipping
+       poll". The line was read in both walk pods' logs after their deploys (not kept; the pods are gone).
      - `local-development/gsd/poller.py#Poller._retrieve_pending` returns before any lookup.
      - `local-development/gsd/poller.py#Poller._ping_accounts` pings only as leader.
-     - So the step's observation, "the second `claim()` on a held Lease is `ClaimHeld`", cannot occur in that shape.
-  2. **With election off, the second process is a second leader.** It would log in for its own self-login session, and
-     ping on its own. Those are binds the step's other expectation says do not happen.
-  3. **The pod's ServiceAccount token, copied out of the cluster, could read the fleet account's password** through
+  2. **An out-of-cluster copy is not a standby by default.**
+     - A process without the standard ServiceAccount token file assumes leadership, even when `leaderElection` is
+       `true`: `local-development/gsd/leader.py#LeaderElector.start`, and `local-development/gsd/leader.py#_in_cluster`.
+     - The spec does not define the external token and election setup.
+     - Nor does it say how an overlapping claim on a held account Lease is made.
+  3. **A second active process may bind.** It may acquire a session, or a due ping, subject to the shared claim and to
+     the refusal and cadence gates: `local-development/gsd/selflogin.py#SelfLoginSessions._acquire` and
+     `local-development/gsd/poller.py#Poller._ping_accounts`.
+  4. **The pod's ServiceAccount token, copied out of the cluster, could read the fleet account's password** through
      the keep-grant, from a workstation process. Neither the brief nor the spec says how that token is to be held.
+  - Step 6 remains NOT RUN, pending a clarified procedure and acceptance criterion.
   - Stand-ins, re-run on 1.4.0's code:
     - R1, two processes cannot both win one claim, and no claim is no bind;
     - R2, 1 authorize across two processes, three targets, a restart and an edit;
     - with R3–R7: 16 passed;
     - SPEC_S4e's suite, the walk tests included: 24 passed (`evidence/hermetic-stand-ins.txt`).
 - **The tab's rows, as screenshots, and the `/api/clusterconfigs` `.fleet` view.**
-  - Both need the dashboard's cluster-admin tier. `developer` does not hold it, and `kubeadmin` is never used.
+  - Both need the dashboard's cluster-admin tier. `developer` does not hold it, the brief rules out `kubeadmin`, and no
+    script here calls the dashboard's route.
   - The tier grant a walk could use is PR #442's temporary `update clusterrolebindings` for `developer` (its
     `scripts/grant.yaml`). This brief does not list it, so it was not applied.
 - **#310 Part A**, above.
@@ -363,20 +373,49 @@ Proof of the end state:
   - the two walk values files (each `environments/crc.yaml` at 6a83e3e with two marked blocks);
   - the three grants;
   - the Argo `valuesObject`, for rendering the Argo shape.
-- `scripts/`: no password or token in any of them.
-  - `labcheck.sh`: SPEC_S4e §5, fail-closed.
-  - `snapshot.sh`: the invariants, read-only.
-  - `capture.sh`: the pod log, `/metrics`, and the audit log derived.
-  - `render_check.sh`: step 0.
-  - `rbac_grants.py`: effective grants per subject.
-  - `walk_secret.sh`: the walk Secret, with `developer`'s password read from `crc console --credentials` inside the
-    command and never echoed.
-  - `delete_session_token.sh`: step 5, exactly one object or none.
-  - `wait_for_log.sh`: one waiter per wait.
+- `scripts/`: no password or token in any of them. What each one does:
+  - `labcheck.sh` runs SPEC_S4e §5's three `oc … | jq` counts. It prints them only after every read has succeeded,
+    and exits `0` only on `0 0 0`, `1` on any other counts, and `2` on a failed read.
+  - `snapshot.sh` makes ten read-only captures:
+    - `OAuthAccessToken` counts and creation times, never names;
+    - the PVCs and the Argo Application;
+    - `/api/version` on the pod's loopback, with the Deployment's images and the pod's image digests;
+    - the fleet-account Leases, with digests shown as `<redacted>` beside a sha256 of each whole unredacted object;
+    - the cluster Secrets' metadata, and the ConfigMap's fleet keys and clusters list;
+    - `oc auth can-i`, with the names of the openshift-config Roles and RoleBindings;
+    - `oauth/cluster`'s token config, and the walk's objects.
+  - `capture.sh` makes three captures:
+    - `podlog`: `oc logs`, filtered, with `sha256~` names redacted;
+    - `metrics`: `/metrics` on the pod's loopback;
+    - `audit`: every `oauth-server/audit*.log` read with `oc adm node-logs` into a `mktemp -d` directory that a trap
+      removes on exit. It keeps only the derived rows for `developer` and the fleet account, and a count of the
+      records that carry no username.
+  - `render_check.sh` runs `helm template`, offline, on each walk file and on the Argo shape:
+    - for each walk file, it reads the rendered ConfigMap's `fleetAccountUsername`, every `ldapConnectionBootstrap`,
+      and the count of the fleet account's name;
+    - for the Argo shape, it reads `fleetAccountUsername` and that count.
+  - `rbac_grants.py` expands the bindings and rules of rendered manifests into per-subject grants, and prints REMOVED
+    and ADDED. It runs offline.
+  - `walk_secret.sh` creates or rotates the walk Secret:
+    - `create` and `right` read `developer`'s password with `crc console --credentials -o json | jq -r
+      '.clusterConfig.developerCredentials.password'`; `wrong` generates one with `openssl rand -hex 16`;
+    - the value is held in a shell variable inside the script's own process;
+    - it reaches `oc` as `--from-literal=password=…` on the command line of `oc create secret generic
+      … --dry-run=client -o json`, whose output is piped through `jq`, which adds the walk label, into `oc create -f -`
+      or `oc replace -f -`;
+    - the script prints only the Secret's name, resourceVersion, uid and last-applied annotation, which is empty,
+      then unsets the variable.
+  - `delete_session_token.sh` finds the session to delete and deletes it only if exactly one token matches:
+    - it takes `expires_at` from the pod log's last `fleet-login cluster=walk-self-login` line;
+    - it keeps `developer`'s `openshift-challenging-client` tokens created since the walk's start whose
+      `creationTimestamp + expiresIn` is within 3 s of that instant;
+    - it deletes the match only when exactly one matches, by a name it never prints, and otherwise refuses.
+  - `wait_for_log.sh` reads the dashboard container's log every 20 s until a pattern has matched `n` times, or its
+    timeout passes.
 - `evidence/`: every capture, named `<when>-<what>.txt`, with its command and instant as the header.
   - `sha256~` names are redacted.
   - Lease digests are `<redacted>`; their byte-identity is the sha256 of the whole unredacted object.
-  - The raw audit log is never kept: `capture.sh` holds it in a `mktemp` file and removes it.
+  - No raw audit log is in this folder, only the derived rows (`capture.sh audit`, above).
 
 ## How to re-run
 
