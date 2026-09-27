@@ -1,0 +1,2 @@
+gsd_backup_failures_total 0.0
+gsd_backup_last_success_timestamp_seconds 1.7904500667085032e+09

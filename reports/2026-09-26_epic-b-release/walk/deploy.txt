@@ -1,0 +1,5 @@
+# release-crc.sh --argocd main, started 00:11:30Z (the first line of release-tail.log)
+exit=1   # its wait for revision b087c78 timed out: Argo had followed main to cbe828b (#411, merged 00:20:14Z)
+PVC UIDs unchanged
+# oc get deployment group-sync-dashboard -o jsonpath='{.metadata.labels.helm\.sh/chart} {…image}'
+group-sync-dashboard-0.58.5 quay.io/ephico2real/group-sync-dashboard:0.37.0
