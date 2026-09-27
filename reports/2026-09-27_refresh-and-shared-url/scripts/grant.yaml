@@ -1,0 +1,30 @@
+# The walk's only change to the lab: `developer` passes the cluster-admin tier (`visibility.clusterAdminSar`,
+# `update clusterrolebindings` on the host) for the length of the walk, so the Cluster Configurations tab and its
+# Refresh button are served to it. Created before the walk; removed after it by the label, never by hand-picked name:
+#   oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io \
+#     -l walk.gsd.lab/run=refresh-shared-url-2026-09-27
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-crb-update
+  labels:
+    walk.gsd.lab/run: refresh-shared-url-2026-09-27
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-crb-update-developer
+  labels:
+    walk.gsd.lab/run: refresh-shared-url-2026-09-27
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

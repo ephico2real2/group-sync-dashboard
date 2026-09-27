@@ -1,0 +1,135 @@
+2026-09-27T20:20:18Z whoami                            : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:20:18Z status                            : {"/api/whoami": 200, "/api/clusterconfigs": 200}
+2026-09-27T20:20:18Z PASS developer holds the cluster-admin tier for the walk: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:20:21Z [1280] whoami                     : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:20:21Z [1280] page scrollWidth / innerWidth: [1280, 1280]
+2026-09-27T20:20:21Z PASS [1280] no sideways page scroll: false
+2026-09-27T20:20:21Z PASS no 'Dashboard API error' (1280 open): 0
+2026-09-27T20:20:21Z [1280] api warnings               : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"], "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-27T20:20:21Z [1280] banner text                : ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:20:21Z PASS [1280] banner names shared-qa, shared-rnd and https://api.crc.testing:6443: ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:20:21Z wrote                             : evidence/api-clusterconfigs.json
+2026-09-27T20:20:21Z [1280] entries at https://api.crc.testing:6443: ["shared-qa:enabled", "shared-rnd:enabled", "cm-demo-a:disabled:retired", "crc-tls-cadata:disabled:retired", "crc-tls-default:disabled:retired", "crc-tls-insecure:disabled:retired", "d2b-no-groups:disabled:retired", "d2b-no-sar:disabled:retired", "gitops-example-389:disabled:retired", "rnd-lookup:disabled:retired", "rnd-lookup2:disabled:retired", "verify-lookup:disabled:retired"]
+2026-09-27T20:20:21Z [1280] shared-qa card             : {"heading": "shared-qa Secret gsd-cluster-shared-qa enabled shared API URL", "chip": true, "hint": "Also declared by shared-rnd \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:20:21Z PASS [1280] shared-qa: chip and hint naming shared-rnd: [true, "Also declared by shared-rnd \u2014 each entry is polled and counted on its own."]
+2026-09-27T20:20:21Z [1280] shared-rnd card            : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:20:21Z PASS [1280] shared-rnd: chip and hint naming shared-qa: [true, "Also declared by shared-qa \u2014 each entry is polled and counted on its own."]
+2026-09-27T20:20:22Z shot                              : 01-1280-banner.png
+2026-09-27T20:20:22Z shot                              : 02-1280-shared-qa-chip.png
+2026-09-27T20:20:22Z shot                              : 03-1280-shared-rnd-chip.png
+2026-09-27T20:20:22Z [1280] disabled entries at the shared URL (10), chip shown: {"cm-demo-a": false, "crc-tls-cadata": false, "crc-tls-default": false, "crc-tls-insecure": false, "d2b-no-groups": false, "d2b-no-sar": false, "gitops-example-389": false, "rnd-lookup": false, "rnd-lookup2": false, "verify-lookup": false}
+2026-09-27T20:20:22Z PASS [1280] no chip on any disabled entry at the shared URL: {"disabled": 10, "with chip": 0}
+2026-09-27T20:20:23Z shot                              : 04-1280-disabled-cm-demo-a.png
+2026-09-27T20:20:23Z shot                              : 05-1280-disabled-crc-tls-cadata.png
+2026-09-27T20:20:24Z shot                              : 06-1280-disabled-crc-tls-default.png
+2026-09-27T20:20:24Z [1280] shared-rnd idle            : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:20:24Z PASS [1280] idle button reads Refresh, enabled, no result line: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:20:24Z shot                              : 07-1280-refresh-idle.png
+2026-09-27T20:20:25Z [1280] shared-rnd in flight (clicked 2026-09-27T20:20:24Z): {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refreshing\u2026", "disabled": true, "aria_busy": "true"}, "result": "Refresh: probing /version and users/~ with the stored credential\u2026"}
+2026-09-27T20:20:25Z PASS [1280] in flight: Refreshing…, disabled, aria-busy, probing line: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refreshing\u2026", "disabled": true, "aria_busy": "true"}, "result": "Refresh: probing /version and users/~ with the stored credential\u2026"}
+2026-09-27T20:20:25Z shot                              : 08-1280-refresh-in-flight.png
+2026-09-27T20:20:25Z [1280] shared-rnd answered        : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": "Refresh: connected \u00b7 2026-09-27T20:20:24Z \u2014 authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6"}
+2026-09-27T20:20:25Z PASS [1280] succeeded: 'connected · <ISO-8601 UTC>', button back to Refresh: Refresh: connected · 2026-09-27T20:20:24Z — authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6
+2026-09-27T20:20:25Z shot                              : 09-1280-refresh-succeeded.png
+2026-09-27T20:20:25Z [1280] waiting 65 s for the repaint: from 2026-09-27T20:20:25Z
+2026-09-27T20:21:30Z [1280] after 65 s: GET /api/clusterconfigs during the wait: [200]
+2026-09-27T20:21:30Z [1280] after 65 s: result line node marker (null = the node was repainted): null
+2026-09-27T20:21:30Z [1280] shared-rnd after the repaint: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": "Refresh: connected \u00b7 2026-09-27T20:20:24Z \u2014 authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6"}
+2026-09-27T20:21:30Z PASS [1280] after the 60 s repaint: the same answer still shown on a repainted node: {"same": true, "repainted": true, "polls": 1}
+2026-09-27T20:21:31Z shot                              : 10-1280-refresh-after-repaint.png
+2026-09-27T20:21:31Z [1280] mock-privateca refresh answered: Refresh: unreachable · 2026-09-27T20:21:31Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:21:31Z shot                              : 11-1280-refresh-mock-privateca.png
+2026-09-27T20:21:31Z [1280] mock-selfsigned refresh answered: Refresh: unreachable · 2026-09-27T20:21:31Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:21:32Z shot                              : 12-1280-refresh-mock-selfsigned.png
+2026-09-27T20:21:32Z [1280] mock-trusted refresh answered: Refresh: unreachable · 2026-09-27T20:21:32Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:21:32Z shot                              : 13-1280-refresh-mock-trusted.png
+2026-09-27T20:21:32Z PASS no 'Dashboard API error' (1280 end): 0
+2026-09-27T20:21:32Z PASS [1280] no uncaught page errors: []
+2026-09-27T20:21:35Z [768] whoami                      : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:21:35Z [768] page scrollWidth / innerWidth: [768, 768]
+2026-09-27T20:21:35Z PASS [768] no sideways page scroll: false
+2026-09-27T20:21:35Z PASS no 'Dashboard API error' (768 open): 0
+2026-09-27T20:21:35Z [768] api warnings                : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"], "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-27T20:21:35Z [768] banner text                 : ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:21:35Z PASS [768] banner names shared-qa, shared-rnd and https://api.crc.testing:6443: ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:21:35Z [768] entries at https://api.crc.testing:6443: ["shared-qa:enabled", "shared-rnd:enabled", "cm-demo-a:disabled:retired", "crc-tls-cadata:disabled:retired", "crc-tls-default:disabled:retired", "crc-tls-insecure:disabled:retired", "d2b-no-groups:disabled:retired", "d2b-no-sar:disabled:retired", "gitops-example-389:disabled:retired", "rnd-lookup:disabled:retired", "rnd-lookup2:disabled:retired", "verify-lookup:disabled:retired"]
+2026-09-27T20:21:35Z [768] shared-qa card              : {"heading": "shared-qa Secret gsd-cluster-shared-qa enabled shared API URL", "chip": true, "hint": "Also declared by shared-rnd \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:21:35Z PASS [768] shared-qa: chip and hint naming shared-rnd: [true, "Also declared by shared-rnd \u2014 each entry is polled and counted on its own."]
+2026-09-27T20:21:35Z [768] shared-rnd card             : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:21:35Z PASS [768] shared-rnd: chip and hint naming shared-qa: [true, "Also declared by shared-qa \u2014 each entry is polled and counted on its own."]
+2026-09-27T20:21:35Z shot                              : 14-768-banner.png
+2026-09-27T20:21:36Z shot                              : 15-768-shared-qa-chip.png
+2026-09-27T20:21:36Z shot                              : 16-768-shared-rnd-chip.png
+2026-09-27T20:21:36Z [768] disabled entries at the shared URL (10), chip shown: {"cm-demo-a": false, "crc-tls-cadata": false, "crc-tls-default": false, "crc-tls-insecure": false, "d2b-no-groups": false, "d2b-no-sar": false, "gitops-example-389": false, "rnd-lookup": false, "rnd-lookup2": false, "verify-lookup": false}
+2026-09-27T20:21:36Z PASS [768] no chip on any disabled entry at the shared URL: {"disabled": 10, "with chip": 0}
+2026-09-27T20:21:37Z shot                              : 17-768-disabled-cm-demo-a.png
+2026-09-27T20:21:37Z shot                              : 18-768-disabled-crc-tls-cadata.png
+2026-09-27T20:21:37Z shot                              : 19-768-disabled-crc-tls-default.png
+2026-09-27T20:21:37Z [768] shared-rnd idle             : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:21:37Z PASS [768] idle button reads Refresh, enabled, no result line: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:21:38Z shot                              : 20-768-refresh-idle.png
+2026-09-27T20:21:38Z [768] shared-rnd in flight (clicked 2026-09-27T20:21:38Z): {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refreshing\u2026", "disabled": true, "aria_busy": "true"}, "result": "Refresh: probing /version and users/~ with the stored credential\u2026"}
+2026-09-27T20:21:38Z PASS [768] in flight: Refreshing…, disabled, aria-busy, probing line: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refreshing\u2026", "disabled": true, "aria_busy": "true"}, "result": "Refresh: probing /version and users/~ with the stored credential\u2026"}
+2026-09-27T20:21:39Z shot                              : 21-768-refresh-in-flight.png
+2026-09-27T20:21:39Z [768] shared-rnd answered         : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": "Refresh: connected \u00b7 2026-09-27T20:21:38Z \u2014 authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6"}
+2026-09-27T20:21:39Z PASS [768] succeeded: 'connected · <ISO-8601 UTC>', button back to Refresh: Refresh: connected · 2026-09-27T20:21:38Z — authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6
+2026-09-27T20:21:39Z shot                              : 22-768-refresh-succeeded.png
+2026-09-27T20:21:39Z [768] waiting 65 s for the repaint: from 2026-09-27T20:21:39Z
+2026-09-27T20:22:44Z [768] after 65 s: GET /api/clusterconfigs during the wait: [200]
+2026-09-27T20:22:44Z [768] after 65 s: result line node marker (null = the node was repainted): null
+2026-09-27T20:22:44Z [768] shared-rnd after the repaint: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": "Refresh: connected \u00b7 2026-09-27T20:21:38Z \u2014 authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6"}
+2026-09-27T20:22:44Z PASS [768] after the 60 s repaint: the same answer still shown on a repainted node: {"same": true, "repainted": true, "polls": 1}
+2026-09-27T20:22:45Z shot                              : 23-768-refresh-after-repaint.png
+2026-09-27T20:22:45Z [768] mock-privateca refresh answered: Refresh: unreachable · 2026-09-27T20:22:45Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:22:45Z shot                              : 24-768-refresh-mock-privateca.png
+2026-09-27T20:22:45Z [768] mock-selfsigned refresh answered: Refresh: unreachable · 2026-09-27T20:22:45Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:22:46Z shot                              : 25-768-refresh-mock-selfsigned.png
+2026-09-27T20:22:46Z [768] mock-trusted refresh answered: Refresh: unreachable · 2026-09-27T20:22:46Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:22:46Z shot                              : 26-768-refresh-mock-trusted.png
+2026-09-27T20:22:46Z PASS no 'Dashboard API error' (768 end): 0
+2026-09-27T20:22:46Z PASS [768] no uncaught page errors: []
+2026-09-27T20:22:49Z [375] whoami                      : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:22:49Z [375] page scrollWidth / innerWidth: [375, 375]
+2026-09-27T20:22:49Z PASS [375] no sideways page scroll: false
+2026-09-27T20:22:49Z PASS no 'Dashboard API error' (375 open): 0
+2026-09-27T20:22:49Z [375] api warnings                : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"], "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-27T20:22:49Z [375] banner text                 : ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:22:49Z PASS [375] banner names shared-qa, shared-rnd and https://api.crc.testing:6443: ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:22:49Z [375] entries at https://api.crc.testing:6443: ["shared-qa:enabled", "shared-rnd:enabled", "cm-demo-a:disabled:retired", "crc-tls-cadata:disabled:retired", "crc-tls-default:disabled:retired", "crc-tls-insecure:disabled:retired", "d2b-no-groups:disabled:retired", "d2b-no-sar:disabled:retired", "gitops-example-389:disabled:retired", "rnd-lookup:disabled:retired", "rnd-lookup2:disabled:retired", "verify-lookup:disabled:retired"]
+2026-09-27T20:22:49Z [375] shared-qa card              : {"heading": "shared-qa Secret gsd-cluster-shared-qa enabled shared API URL", "chip": true, "hint": "Also declared by shared-rnd \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:22:49Z PASS [375] shared-qa: chip and hint naming shared-rnd: [true, "Also declared by shared-rnd \u2014 each entry is polled and counted on its own."]
+2026-09-27T20:22:49Z [375] shared-rnd card             : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:22:49Z PASS [375] shared-rnd: chip and hint naming shared-qa: [true, "Also declared by shared-qa \u2014 each entry is polled and counted on its own."]
+2026-09-27T20:22:49Z shot                              : 27-375-banner.png
+2026-09-27T20:22:50Z shot                              : 28-375-shared-qa-chip.png
+2026-09-27T20:22:50Z shot                              : 29-375-shared-rnd-chip.png
+2026-09-27T20:22:50Z [375] disabled entries at the shared URL (10), chip shown: {"cm-demo-a": false, "crc-tls-cadata": false, "crc-tls-default": false, "crc-tls-insecure": false, "d2b-no-groups": false, "d2b-no-sar": false, "gitops-example-389": false, "rnd-lookup": false, "rnd-lookup2": false, "verify-lookup": false}
+2026-09-27T20:22:50Z PASS [375] no chip on any disabled entry at the shared URL: {"disabled": 10, "with chip": 0}
+2026-09-27T20:22:51Z shot                              : 30-375-disabled-cm-demo-a.png
+2026-09-27T20:22:51Z shot                              : 31-375-disabled-crc-tls-cadata.png
+2026-09-27T20:22:51Z shot                              : 32-375-disabled-crc-tls-default.png
+2026-09-27T20:22:51Z [375] shared-rnd idle             : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:22:51Z PASS [375] idle button reads Refresh, enabled, no result line: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:22:52Z shot                              : 33-375-refresh-idle.png
+2026-09-27T20:22:52Z [375] shared-rnd in flight (clicked 2026-09-27T20:22:52Z): {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refreshing\u2026", "disabled": true, "aria_busy": "true"}, "result": "Refresh: probing /version and users/~ with the stored credential\u2026"}
+2026-09-27T20:22:52Z PASS [375] in flight: Refreshing…, disabled, aria-busy, probing line: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refreshing\u2026", "disabled": true, "aria_busy": "true"}, "result": "Refresh: probing /version and users/~ with the stored credential\u2026"}
+2026-09-27T20:22:53Z shot                              : 34-375-refresh-in-flight.png
+2026-09-27T20:22:53Z [375] shared-rnd answered         : {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": "Refresh: connected \u00b7 2026-09-27T20:22:52Z \u2014 authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6"}
+2026-09-27T20:22:53Z PASS [375] succeeded: 'connected · <ISO-8601 UTC>', button back to Refresh: Refresh: connected · 2026-09-27T20:22:52Z — authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6
+2026-09-27T20:22:53Z shot                              : 35-375-refresh-succeeded.png
+2026-09-27T20:22:53Z [375] waiting 65 s for the repaint: from 2026-09-27T20:22:53Z
+2026-09-27T20:23:58Z [375] after 65 s: GET /api/clusterconfigs during the wait: [200]
+2026-09-27T20:23:58Z [375] after 65 s: result line node marker (null = the node was repainted): null
+2026-09-27T20:23:58Z [375] shared-rnd after the repaint: {"heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": "Refresh: connected \u00b7 2026-09-27T20:22:52Z \u2014 authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6"}
+2026-09-27T20:23:58Z PASS [375] after the 60 s repaint: the same answer still shown on a repainted node: {"same": true, "repainted": true, "polls": 1}
+2026-09-27T20:23:59Z shot                              : 36-375-refresh-after-repaint.png
+2026-09-27T20:23:59Z [375] mock-privateca refresh answered: Refresh: unreachable · 2026-09-27T20:23:59Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:23:59Z shot                              : 37-375-refresh-mock-privateca.png
+2026-09-27T20:23:59Z [375] mock-selfsigned refresh answered: Refresh: unreachable · 2026-09-27T20:23:59Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:24:00Z shot                              : 38-375-refresh-mock-selfsigned.png
+2026-09-27T20:24:00Z [375] mock-trusted refresh answered: Refresh: unreachable · 2026-09-27T20:24:00Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-27T20:24:00Z shot                              : 39-375-refresh-mock-trusted.png
+2026-09-27T20:24:00Z PASS no 'Dashboard API error' (375 end): 0
+2026-09-27T20:24:00Z PASS [375] no uncaught page errors: []
+2026-09-27T20:24:00Z failures                          : []
+walk exit=0
