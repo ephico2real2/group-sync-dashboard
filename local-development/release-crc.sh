@@ -48,7 +48,8 @@
 #
 # Typical loop: iterate with the bare script (or --values for a local variant); before merging,
 # --argocd on the pushed head; after a merge, --argocd main. The published images may lag main's
-# code, not its schema: CI fails a migration merged without an app release (#298).
+# code, not its schema: CI fails a migration merged without an app release (#298) — a guarantee
+# about the RELEASE COMMIT, not about the tag on quay, which the branch path reads back (below).
 #
 # TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
 # Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
@@ -62,9 +63,13 @@
 # --argocd NEEDS THE COMMIT ON GITHUB: Argo pulls the chart from the repository, not from this
 # tree, so an unpushed commit cannot be synced — the script refuses with the push to run. It also
 # needs the image PASSED to the Application: the chart's default is the last PUBLISHED image
-# (quay.io …:<appVersion>), which lags main's code whenever the app version is not bumped. Its
-# schema no longer lags (#298); before that guard, the first Argo sync of the dashboard met a report
-# image that understood snapshot schema 12 against main's 17 and answered readyz 503.
+# (quay.io …:<appVersion>), which lags main's code whenever the app version is not bumped. The
+# release commit's schema no longer lags (#298); before that guard, the first Argo sync of the
+# dashboard met a report image that understood snapshot schema 12 against main's 17 and answered
+# readyz 503. The TAG can still lag or lie: `:<appVersion>` is a name publish.yml moves in a run
+# nothing here waits for, and helm.yaml labels the same repository with every CHART version, so a
+# future application version can already be a tag on an old image (#410, measured: `:0.39.0` was
+# application 0.24.0). The branch path therefore reads the tag back before handing it to Argo.
 #
 # Immutability rule: a given <version>-<sha> tag always means the same source. Pushing a
 # different image under an existing tag is refused rather than silently overwritten.
@@ -194,10 +199,60 @@ if [ "$ARGOCD" != true ] && [ ! -f "$RELEASE_VALUES" ]; then
   exit 1
 fi
 
+# The image the chart at <branch> resolves, read back from the registry before anything is touched.
+# `:<appVersion>` is a tag, and a tag is a name: publish.yml moves it in a run this script does not
+# wait for, and helm.yaml labels the SAME repository with every chart version, so an application
+# version that does not exist yet can already be a tag on an old image (#410: `:0.39.0` resolved to
+# application 0.24.0, whose store has no newer-schema refusal — #305 is new in 0.37.0 — and would
+# write blind to the database the last release migrated). helm.yaml's own existence gate passes on
+# such a tag, and Argo would pull it. So both images are inspected with the `oc` this script needs
+# anyway (`oc image info` reads a public tag with no login), and each must carry the chart's
+# appVersion as its org.opencontainers.image.version label — the label every build stamps — or
+# nothing is deployed. The chart is read at the revision Argo will read it from, with the same sed
+# forms helm.yaml uses on the same files; a pinned image.tag is the operator's choice and is deployed
+# as pinned.
+published_image_is_the_release() {
+  local revision="$1" chart values app_version pinned repo ref version
+  chart=$(git show "${revision}:charts/group-sync-dashboard/Chart.yaml") || return 1
+  values=$(git show "${revision}:charts/group-sync-dashboard/values.yaml") || return 1
+  app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
+  pinned=$(printf '%s\n' "$values" | sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' | head -1)
+  repo=$(printf '%s\n' "$values" | sed -n 's/^  repository: \([^[:blank:]]*\)[[:blank:]]*$/\1/p' | head -1)
+  if [ -z "$app_version" ] || [ -z "$repo" ]; then
+    echo "ERROR: cannot read appVersion and image.repository from the chart at origin/${revision}." >&2
+    return 1
+  fi
+  if [ -n "$pinned" ]; then
+    echo "image   : ${repo}:${pinned} (pinned in values.yaml; not checked against appVersion)"
+    return 0
+  fi
+  for ref in "${repo}:${app_version}" "${repo}-report:${app_version}"; do
+    if ! version=$(oc image info "$ref" -o json 2>/dev/null | python3 -c '
+import json, sys
+labels = json.load(sys.stdin).get("config", {}).get("config", {}).get("Labels") or {}
+print(labels.get("org.opencontainers.image.version", ""))'); then
+      echo "ERROR: ${ref} is not in the registry, or cannot be read. Argo CD would pull it." >&2
+      echo "       publish.yml pushes the :${app_version} aliases on the merge that moved pyproject's version;" >&2
+      echo "       wait for that run, or publish them by hand: ./build-and-push-external.sh --release-tags" >&2
+      echo "       and ./build-and-push-report.sh --release-tags at the release commit." >&2
+      return 1
+    fi
+    if [ "$version" != "$app_version" ]; then
+      echo "ERROR: ${ref} is application ${version:-unknown}, not ${app_version} (#410)." >&2
+      echo "       The tag exists but names another build: a chart-version label on an old image, or an" >&2
+      echo "       alias publish.yml has not moved yet. Deploying it would run that build against the" >&2
+      echo "       database on the volume. Wait for publish.yml on the release merge, then re-run." >&2
+      return 1
+    fi
+    echo "image   : ${ref} is application ${version}"
+  done
+}
+
 # --argocd <branch> with no build: point the Application at that branch and its chart's default
 # image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
 if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
   echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
+  published_image_is_the_release "$EXPECTED_REVISION" || exit 1
   if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
     echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m

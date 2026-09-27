@@ -285,6 +285,13 @@ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/ver
 Expected: `{"leader": true, "version": "0.15.0", …}` (with `oauthProxy.enabled` the app binds
 loopback; `curl` from inside the pod is the honest check).
 
+**The report pod stays NotReady for one poll cycle** after a restore from a newer image. The newest copy under
+`/data/report` is the one the previous image wrote, and the report service refuses a snapshot newer than it
+understands (`snapshot schema N is newer…`, `/report/readyz` 503). The leader's first poll after this start writes a
+new copy (`gsd/poller.py#_maybe_report_snapshot`: at once on the first cycle, then every
+`reporting.snapshot.intervalSeconds`), and the report pod becomes Ready. Nothing to do; it clears itself (measured by
+OB2's composition review of Epics A and B).
+
 **A copy newer than the image is refused (#305).** When the restored file's `user_version` (§1) is
 above the highest migration the running image carries, the dashboard does not start: the container
 exits 1 before it binds its port, `oc rollout status` does not complete, and the last log line names
@@ -380,3 +387,6 @@ start removes.
 **Using a copy.** Verify it with §1, reading `/data/pre-upgrade/<file>` instead of a backup; outside the
 cluster, run `sha256sum -c <file>.sha256` from the directory that holds both files (§3). To go back to the
 previous image, restore the copy with §4a from `/data/pre-upgrade/<file>` and deploy that image.
+If the previous image then runs on the restored database, move the earlier `-to-<to>-` copy and its `.sha256` out of
+`pre-upgrade/` before you upgrade again ("Once per upgrade" above), or the retry takes no copy of what that image
+wrote since.

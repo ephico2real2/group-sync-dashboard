@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **`release-crc.sh --argocd <branch>` reads the published images back before deploying (#410, found by OB2's
+  composition review of Epics A and B; development tooling only).** Both `:<appVersion>` images must carry the
+  chart's appVersion as their `org.opencontainers.image.version` label, or nothing is deployed. Measured on quay:
+  `:0.37.0` is application 0.37.0 and passes; `:0.39.0` is application 0.24.0 and is refused. The backup runbook
+  adds the report pod's one-cycle wait after a restore, and when to move an old pre-upgrade copy aside.
 - **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
   its own).** `gsd/fleetlogin.py` writes its login-failure lines (`fleet-login-failed` for a retry, a give-up
   or a stop, and `fleet-login-refused`) from one method instead of two, and names an exception's type inline

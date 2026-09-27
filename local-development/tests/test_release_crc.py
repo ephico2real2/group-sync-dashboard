@@ -38,6 +38,11 @@ case "$(basename "$0") $*" in
         *) echo 'error: You must be logged in to the server (Unauthorized)' >&2; exit 1 ;;
       esac ;;
   "oc get application "*) exit 0 ;;
+  "oc image info "*)     # the registry: STUB_IMAGES is "<ref>=<org.opencontainers.image.version> ..."; an unlisted ref is absent
+      for entry in $STUB_IMAGES; do
+        case "$entry" in "${3}="*) printf '{"digest":"sha256:stub","config":{"config":{"Labels":{"org.opencontainers.image.version":"%s"}}}}\n' "${entry#*=}"; exit 0 ;; esac
+      done
+      echo "error: unable to read image ${3}: manifest unknown" >&2; exit 1 ;;
   "helm status "*)       exit "${STUB_HELM_EXISTS:-1}" ;;
   "podman run "*)        echo "$STUB_COMMIT" ;;
 esac
@@ -63,6 +68,13 @@ def lab(tmp_path: Path):
         (repo / "local-development" / name).write_text("FROM scratch\n")
     (repo / "environments" / "crc.yaml").write_text("logLevel: DEBUG\n")
     shutil.copy(REPO / "gitops" / "argocd-application-dashboard.yaml", repo / "gitops" / "argocd-application-dashboard.yaml")
+    # The chart the branch path reads at origin/<branch>: the same lines helm.yaml reads from the same files.
+    (repo / "charts" / "group-sync-dashboard").mkdir(parents=True)
+    (repo / "charts" / "group-sync-dashboard" / "Chart.yaml").write_text(
+        f'apiVersion: v2\nname: group-sync-dashboard\nversion: 0.1.0\nappVersion: "{_version()}"\n')
+    (repo / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
+        "image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: \"\"\n"
+        "reporting:\n  image:\n    repository: quay.io/example/group-sync-dashboard-report\n    tag: \"\"\n")
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.email", "t@example.invalid")
     _git(repo, "config", "user.name", "t")
@@ -88,6 +100,9 @@ def lab(tmp_path: Path):
         "STUB_APP_FILE": str(tmp_path / "app-merged.json"),
         "STUB_APPLIED": str(tmp_path / "applied.json"),
         "STUB_APP_JSON": str(tmp_path / "app-status.json"),
+        # The registry as publish.yml leaves it after the release merge: both aliases carry this version.
+        "STUB_IMAGES": f"quay.io/example/group-sync-dashboard:{_version()}={_version()} "
+                       f"quay.io/example/group-sync-dashboard-report:{_version()}={_version()}",
         "ARGOCD_WAIT_INTERVAL": "1",
         "ARGOCD_WAIT_TIMEOUT": "3",
     }
@@ -284,6 +299,69 @@ def test_argocd_branch_clears_the_image_parameters_and_waits_for_its_commit(lab)
     synced_status(lab, "0" * 40)
     r = run(lab, "--argocd", "main", ARGOCD_WAIT_INTERVAL="1")
     assert r.returncode == 1, "the waiter accepted a status for a commit that is not origin/main"
+
+
+# --- the published image the branch path hands to Argo (#410) -----------------------------------
+
+def _stale_alias(lab, image: str, version: str) -> None:
+    """`:<appVersion>` of `image` exists but is another build: a chart-version label on an old image."""
+    ref = f"quay.io/example/{image}:{_version()}"
+    entries = [e for e in lab["env"]["STUB_IMAGES"].split() if not e.startswith(f"{ref}=")]
+    lab["env"]["STUB_IMAGES"] = " ".join(entries + [f"{ref}={version}"])
+
+
+def test_argocd_branch_refuses_an_alias_that_is_another_application_version(lab):
+    """#410 as measured on quay: `:0.39.0` existed before application 0.39.0 and was application 0.24.0."""
+    synced_status(lab, lab["full"])
+    _stale_alias(lab, "group-sync-dashboard", "0.24.0")
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"quay.io/example/group-sync-dashboard:{_version()} is application 0.24.0, not {_version()} (#410)" in r.stderr
+    log = calls(lab)
+    assert "helm uninstall" not in log and "oc patch" not in log and "oc apply" not in log, log
+
+
+def test_argocd_branch_refuses_a_stale_report_alias_too(lab):
+    """The chart resolves both images at appVersion; the report pod refuses a newer snapshot, so an old one 503s."""
+    synced_status(lab, lab["full"])
+    _stale_alias(lab, "group-sync-dashboard-report", "0.24.0")
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"group-sync-dashboard-report:{_version()} is application 0.24.0" in r.stderr
+    assert "oc apply" not in calls(lab)
+
+
+def test_argocd_branch_refuses_an_alias_publish_has_not_pushed_yet(lab):
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "main", STUB_IMAGES="")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"quay.io/example/group-sync-dashboard:{_version()} is not in the registry" in r.stderr
+    assert "--release-tags" in r.stderr
+    assert "oc apply" not in calls(lab)
+
+
+def test_argocd_branch_reads_the_chart_at_the_branch_not_the_checkout(lab):
+    """A pin on origin/<branch> is the operator's choice: deployed as pinned, whatever the local tree says."""
+    _git(lab["repo"], "checkout", "-qb", "pin")
+    (lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
+        'image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: "0.9.9-abcdef1234"\n')
+    _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", "pin"); _git(lab["repo"], "push", "-q", "origin", "pin")
+    _git(lab["repo"], "checkout", "-q", "main")
+    synced_status(lab, _git(lab["repo"], "rev-parse", "pin"))
+    r = run(lab, "--argocd", "pin", STUB_IMAGES="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "pinned in values.yaml" in r.stdout
+    assert "oc image info" not in calls(lab)
+
+
+def test_argocd_branch_deploys_when_both_aliases_are_the_release(lab):
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} -o json" in log
+    assert f"oc image info quay.io/example/group-sync-dashboard-report:{_version()} -o json" in log
+    assert log.index("oc image info") < log.index("oc patch --local"), "the registry is read before the Application is written"
 
 
 # --- the waiter on its own ----------------------------------------------------------------------
