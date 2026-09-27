@@ -120,10 +120,11 @@ fail on its own ("group data is unaffected") without failing the whole cycle.
 token, a **revoked** token and a **withdrawn** grant are indistinguishable. The message says "invalid
 or expired" because that is the honest limit of what a 401 supports.
 
-## 4. Recovering a cluster today
+## 4. Recovering a cluster by hand
 
-There is **no in-product way** to re-establish a credential. Today it is done by hand, and it
-requires being cluster-admin on **both** clusters with two sessions:
+With writes on, Rejoin (§5) re-establishes a credential from the tab. Without writes, or without the UI, it is done
+by hand, and it requires being cluster-admin on **both** clusters with two sessions. The steps, with what each
+answer means, are in [`RUNBOOK.md`](RUNBOOK.md), beside this file:
 
 ```sh
 # on the REMOTE cluster — mint a token for the poller ServiceAccount
@@ -148,7 +149,7 @@ so the *entire* JSON must be supplied, not just the token.
 Measured on the reference cluster: 8m30s for a newly created Secret, and 3m42s / 4m08s for a rotation
 — all via `oc`. Detail in [`docs/polling-and-discovery.md`](../../docs/polling-and-discovery.md).
 
-## 5. The intended recovery flow — Refresh **BUILT**, Rejoin **PLANNED**
+## 5. The recovery flow — Refresh, then Rejoin
 
 Two steps, deliberately separate.
 
@@ -169,10 +170,15 @@ writes off, has no Refresh**. The route is `POST /api/clusterconfigs/{name}/refr
 > bearer token — no LDAP bind, no fleet account, no lockout exposure. A refresh that triggered a
 > *retrieval* would be an on-demand bind, which is the thing to avoid.
 
-**Rejoin (#316).** When Refresh reports `auth_failed`, an administrator clicks Rejoin and supplies
-**their own** cluster-admin username and password *at that moment*. The dashboard authenticates to
-the remote cluster as that person, retrieves the ServiceAccount token, writes
-`gsd-cluster-<name>`, and **discards the credentials**. Nothing is stored.
+**Rejoin (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`).** When Refresh reports `auth_failed`, or `pending` for a
+cluster whose token was never fetched, the card offers **Rejoin…** on a Secret-sourced cluster or a `saTokenLookup`
+stanza. An administrator types **their own** username and password for that cluster, *at that moment*. The dashboard
+logs in to the remote once as that person (`gsd/rejoin.py#RejoinLogin`), asks the remote whether that person may
+`update clusterrolebindings` there (D8, one `SelfSubjectAccessReview` with the login's own token), reads the poller's
+token Secret, signs the login out, and writes `gsd-cluster-<name>` with `token-source: rejoin` and the person's name
+(`rejoined-by`, `rejoin-account`, `rejoined-at`). **The password is discarded**: nothing about it is stored. The route is
+`POST /api/clusterconfigs/{name}/rejoin` (`local-development/API.md`), and the steps are in
+[`RUNBOOK.md`](RUNBOOK.md).
 
 Why the admin's own credential rather than the fleet account:
 
@@ -188,13 +194,20 @@ connection can always authenticate.
 ### Rules these must obey
 
 - Refresh **never** triggers a retrieval and **never** binds.
-- Rejoin's credentials are never stored, never logged, never echoed — in the Secret, a finding, or an
-  error.
+- Rejoin's password is never stored, never logged, never echoed — in the Secret, a finding, or an
+  error. The Secret records the username as provenance (`rejoin-account`).
 - The credential gate still applies to Rejoin: once a password is on the wire the outcome is
   terminal. No retry on a 401, and **none on the HTTP 500 a locked directory returns** — a locked
   389-ds account answers LDAP code 19, which OpenShift surfaces as a 500, so "it failed, try again"
-  is wrong precisely when the account is already locked.
-- Both are admin-tier only.
+  is wrong precisely when the account is already locked. A Rejoin sends the password at most once per
+  press, and the poller's gate holds a refused password back in that pod until it restarts. The gate
+  lives in memory, so a press that reaches a restarted pod or another replica can send the same
+  password once more. A durable hold keyed by the username alone was declined for its operating cost:
+  any failure would block that account's Rejoin on every pod until someone deleted the hold by hand,
+  even after the right password (SPEC_D4, D4-7).
+- Rejoin never uses the fleet account: it refuses any name a fleet path logs in as, and it writes
+  `rejoin-account`, never `lookup-account`, which the daily ping logs in as with the fleet password.
+- Both are for the cluster-admin tier only (#322), and exist only with writes on.
 
 ## 6. The `OAuthAccessToken` objects a login leaves (#286)
 

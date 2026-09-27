@@ -2160,7 +2160,8 @@ visibility:
   #   the Cluster Configurations tab — its existence, GET /api/clusterconfigs, and the write routes
   #     (Create / Rotate / Delete / Test), which clusterConfig.secrets.writes.enabled still switches
   #   the KPI page — GET /api/kpi
-  #   Rejoin (#316), when it is built
+  #   Rejoin (#316) — and, asked of the REMOTE with the person's own login, the same question decides whether a
+  #     Rejoin may read the token Secret there (SPEC_D4, D8)
   #
   # THE TOP TIER: a reader who passes it is granted every tier this cluster decides — the wide view
   # here and on `inherit` clusters, and Usage — whatever adminSar and usageAdminSar answer for them,

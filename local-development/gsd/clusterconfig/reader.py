@@ -17,7 +17,7 @@ import dataclasses
 from ..config import ClusterConfig, valid_bootstrap_username
 from . import LABEL_SELECTOR
 from .parser import Finding, parse_secret
-from .writer import LOOKUP_ACCOUNT_ANNOTATION, TOKEN_SOURCE_ANNOTATION
+from .writer import LOOKUP_ACCOUNT_ANNOTATION, TOKEN_SOURCE_ANNOTATION, owned_by_mode
 
 #: What to do about each refusal, in the operator's terms rather than the parser's. `action=` is the
 #: fix, not the diagnosis (#245): a line that says only what broke leaves the reader to translate,
@@ -122,8 +122,7 @@ def discover(cluster_client, namespace: str, *, host_name: str | None,
         if parsed.name in values_names:
             # The retriever's own Secret over the stanza that asked for it is the design, not a
             # shadow (SPEC_S4 §1): the values entry declares the mode, the Secret says it came from it.
-            ours = (values_modes or {}).get(parsed.name) is not None \
-                and token_source.get(secret_name) == (values_modes or {}).get(parsed.name)
+            ours = owned_by_mode(token_source.get(secret_name), (values_modes or {}).get(parsed.name))
             if not ours:
                 findings.append(Finding(secret_name, "shadows-values-entry",
                                         f"{parsed.name} is also a values entry; the Secret wins"))

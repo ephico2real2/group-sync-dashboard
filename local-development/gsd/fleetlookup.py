@@ -47,8 +47,8 @@ from pathlib import Path
 import httpx
 
 from .clusterconfig.writer import (
-    MANAGED_BY_LOOKUP, MANAGED_BY_ONBOARD, TOKEN_SOURCE_LOOKUP, CreateRequest, WriteFailed, WriteRefused, create, secret_name_for,
-    store_lookup,
+    MANAGED_BY_LOOKUP, MANAGED_BY_ONBOARD, MANAGED_BY_UI, TOKEN_SOURCE_LOOKUP, TOKEN_SOURCE_REJOIN, CreateRequest, WriteFailed,
+    WriteRefused, create, secret_name_for, store_lookup,
 )
 from .clusterconfig.events import is_transport_message, redact
 from .config import ClusterConfig, Settings
@@ -358,12 +358,13 @@ def declared_trust(cluster: ClusterConfig) -> tuple[str, str | None]:
 
 
 def store(host_client: ClusterClient, own_namespace: str, cluster: ClusterConfig, settings: Settings,
-          sa_token: SaToken, *, account: str) -> str:
+          sa_token: SaToken, *, account: str, rejoin: tuple[str, str, str] = ()) -> str:
     """Write the credential where the declaration says (SPEC_S4 §1): a values stanza gets a new
     `gsd-cluster-<name>` through `writer.create`; a declaring Secret is updated in place through
-    `writer.store_lookup`. Returns `created` or `updated`."""
+    `writer.store_lookup`. Returns `created` or `updated`. `rejoin` is (who pressed, the account, the
+    instant) for a person's Rejoin (SPEC_D4): the same write, with the person's provenance."""
     provenance = dict(source_namespace=sa_token.namespace, source_service_account=sa_token.service_account,
-                      lookup_account=account)
+                      lookup_account=None if rejoin else account, rejoin=rejoin)
     try:
         if cluster.source.startswith("secret:"):
             store_lookup(host_client, own_namespace, cluster.source.split(":", 1)[1], token=sa_token.token,
@@ -371,16 +372,17 @@ def store(host_client: ClusterClient, own_namespace: str, cluster: ClusterConfig
             return "updated"
         tls_mode, ca_data = declared_trust(cluster)
         visibility, identity = settings.cluster_policy(cluster.name)
+        managed_by = MANAGED_BY_UI if rejoin else MANAGED_BY_ONBOARD if cluster.onboarding else MANAGED_BY_LOOKUP
         req = CreateRequest(name=cluster.name, server=cluster.api_url, credential_kind="bearerToken",
                             token=sa_token.token, tls_mode=tls_mode, ca_data=ca_data,
                             visibility=visibility, identity=identity, enabled=cluster.enabled,
-                            managed_by=MANAGED_BY_ONBOARD if cluster.onboarding else MANAGED_BY_LOOKUP,
-                            onboarding=cluster.onboarding, token_source=TOKEN_SOURCE_LOOKUP, **provenance)
+                            managed_by=managed_by, onboarding=cluster.onboarding,
+                            token_source=TOKEN_SOURCE_REJOIN if rejoin else TOKEN_SOURCE_LOOKUP, **provenance)
         # `taken` without this cluster: the stanza IS the entry the Secret is written for.
         taken = {c.name: c.source for c in settings.effective_clusters() if c.name != cluster.name}
         host = settings.host_cluster()
         create(host_client, own_namespace, req, host_name=host.name if host else None, taken=taken,
-               viewer=MANAGED_BY_LOOKUP)
+               viewer=rejoin[0] if rejoin else MANAGED_BY_LOOKUP)
         return "created"
     except WriteRefused as exc:
         raise LookupRefused("lookup-write-failed", f"{exc.code}: {exc.detail}",

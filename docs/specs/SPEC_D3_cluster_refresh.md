@@ -40,6 +40,10 @@ Citations use `file#name` anchors, so they move with the code.
   discovery last read (`settings.cluster(name)`). A Secret rotated with `oc` or GitOps reaches that set at the next
   discovery (`discoveryIntervalSeconds`), so a Refresh in between presents the old token. Refresh does not wake
   discovery to close that gap: it forces nothing (§3). A rotation made in the tab wakes discovery itself.
+- **#316 builds the next step §4 names (`docs/specs/SPEC_D4_cluster_rejoin.md`).** On `auth_failed` the line now
+  says to use Rejoin, and the card draws its **Rejoin…** control where the row is `rejoinable`; §4's "Rejoin (#316),
+  not built yet" and "No Rejoin control is drawn until Rejoin exists" describe the page before #316. The route, the
+  probe, the words and the four states are unchanged.
 
 ## 1. The decisions (the operator, 2026-09-27)
 

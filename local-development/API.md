@@ -176,7 +176,7 @@ half-populated view that otherwise looks exactly like a cluster with no groups.
 **The cluster-admin tier (#322), not the administrator tier.** One SubjectAccessReview —
 `visibility.clusterAdminSar`, default `update clusterrolebindings.rbac.authorization.k8s.io` on the
 host, asked whatever `visibility.enabled` says — gates this route, the tab's existence (through
-`/api/whoami`'s `visibility.cluster_admin`) and the four write routes below; `can.manage` is `true`
+`/api/whoami`'s `visibility.cluster_admin`) and the write routes below; `can.manage` is `true`
 for whoever reaches it, the deployment's `secrets.writes` switch permitting. Deliberately **stricter
 than the administrator tier**, which the auditor persona (`cluster-reader`) passes by design: that
 persona fails `update clusterrolebindings` and a cluster-admin passes it (measured on CRC), while the
@@ -265,9 +265,14 @@ the last ping attempted, whatever its outcome — `last_ok` may be older), and `
 otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",
 "expires_at", "renew_at"}`. Every instant is ISO-8601 UTC; the page computes any age itself.
 
+**`rejoinable`** (#316) is on every live row: `true` where `POST /api/clusterconfigs/{name}/rejoin` accepts the
+cluster — a Secret-sourced cluster that does not declare `userSelfLogin` and was not generated from a ConfigMap, or a
+`saTokenLookup` stanza — and `false` for the host, a values entry with its own credential, a `userSelfLogin` cluster and
+a ConfigMap-generated one. It is the route's own rule (`gsd/rejoin.py#refusal`). A retired row carries none.
+
 ### The Cluster Configurations tab's writes (#230 S2)
 
-Five routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
+Six routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
 identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
 the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
 (`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
@@ -329,6 +334,29 @@ fleet login, no lookup, no self-login session, no credential gate. It stores not
 no poll or discovery; the card's `connection` row still shows the last poll. Every non-retired cluster may be
 refreshed, the host included; an unknown or retired name is `404`, and a second request while a probe of the
 same cluster is running in this process is `409`. One `cluster-refreshed` line per call, with no credential.
+
+`POST /api/clusterconfigs/{name}/rejoin` (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`) with `{"username": "…",
+"password": "…"}` → `200 {"outcome": "rejoined", "message": "Signed in to east as alice, who may update
+clusterrolebindings there; …", "at": "2026-09-27T14:05:40Z"}`. A cluster administrator's **own** username and password,
+for ONE login to the remote: the dashboard logs in as that person, asks the remote with that login's own token whether
+the person may `update clusterrolebindings` there (the host's `visibility.clusterAdminSar` question; a no reads and
+writes nothing), reads `group-sync-operator/group-sync-dashboard-cluster-poller-token`, signs the login out, and writes
+the token to `gsd-cluster-<name>` with `token-source: rejoin`, `rejoined-by`, `rejoin-account` and `rejoined-at` — never
+`lookup-account`. **The password is never stored, logged or echoed.** It is sent at most once per request and never
+retried, and a password the directory refused for this exact username is not sent again by this process while it is the
+same password (the poller's credential gate, #315). `outcome` is `rejoined` or a refusal's code: `login-refused`,
+`login-failed`, `not-cluster-admin`, `access-review-failed`, `sa-token-secret-missing`, `sa-token-unreadable`,
+`sa-token-invalidated`, `lookup-write-failed`, or `rejoin-failed` for an error the design did not expect (fixed words,
+because that error's own text may quote the password, then how the login ended when there was one). Refused before
+anything is sent: `403` below the cluster-admin tier or without an identity; `404` for an unknown or retired name, and
+with writes off (the route does not exist); `409 not-rejoinable` where `rejoinable` is false; `409` while another Rejoin
+is in flight in this process, or when the process runs no poller; `422` for a body that is not exactly `{username,
+password}` as strings (fixed words: no key or value is repeated, because a key can be the password),
+`rejoin-username-invalid` (outside the bootstrap grammar), `rejoin-fleet-account` (a name a fleet path logs in as,
+compared stripped and casefolded), `rejoin-password-missing` and `rejoin-password-invalid` (a control character, which
+RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry). A success wakes discovery. One
+`cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
+the person and the account and carries no credential.
 
 ## GroupSync CRs
 
