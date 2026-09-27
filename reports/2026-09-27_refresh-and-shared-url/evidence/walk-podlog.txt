@@ -1,0 +1,19 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-c9664c7c4-2lv9v -c dashboard --timestamps --since-time=2026-09-27T20:18:52Z  (captured 2026-09-27T20:24:30Z)
+# lines in the window: 259
+# cluster-refreshed lines:
+2026-09-27T20:20:24.707785885Z 2026-09-27 16:20:24,707-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=shared-rnd credential=bearer by=developer outcome=ok
+2026-09-27T20:21:31.451049649Z 2026-09-27 16:21:31,450-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-privateca credential=bearer by=developer outcome=unreachable
+2026-09-27T20:21:31.911971731Z 2026-09-27 16:21:31,911-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-selfsigned credential=bearer by=developer outcome=unreachable
+2026-09-27T20:21:32.380110802Z 2026-09-27 16:21:32,379-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-trusted credential=bearer by=developer outcome=unreachable
+2026-09-27T20:21:38.424089752Z 2026-09-27 16:21:38,423-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=shared-rnd credential=bearer by=developer outcome=ok
+2026-09-27T20:22:45.243442493Z 2026-09-27 16:22:45,240-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-privateca credential=bearer by=developer outcome=unreachable
+2026-09-27T20:22:45.713831530Z 2026-09-27 16:22:45,713-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-selfsigned credential=bearer by=developer outcome=unreachable
+2026-09-27T20:22:46.179163506Z 2026-09-27 16:22:46,178-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-trusted credential=bearer by=developer outcome=unreachable
+2026-09-27T20:22:52.422327641Z 2026-09-27 16:22:52,422-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=shared-rnd credential=bearer by=developer outcome=ok
+2026-09-27T20:23:59.231414381Z 2026-09-27 16:23:59,231-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-privateca credential=bearer by=developer outcome=unreachable
+2026-09-27T20:23:59.696032812Z 2026-09-27 16:23:59,695-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-selfsigned credential=bearer by=developer outcome=unreachable
+2026-09-27T20:24:00.160879078Z 2026-09-27 16:24:00,160-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-trusted credential=bearer by=developer outcome=unreachable
+# cluster-refreshed lines: 12, of them by=developer: 12
+# fleet-login lines:
+# fleet-login lines: 0
+# ERROR or Traceback lines: 0
