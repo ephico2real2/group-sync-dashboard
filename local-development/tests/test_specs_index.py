@@ -45,7 +45,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 29, f"expected twenty-nine index rows, including S4d (#315); matched {sorted(rows)}"
+    assert len(rows) == 30, f"expected thirty index rows, including S4e (#432); matched {sorted(rows)}"
     return rows
 
 
@@ -99,9 +99,9 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # S1-S3 are three steps of one issue (#230). S4 is its own issue set (#283-#286): the credential
     # RETRIEVAL machinery is separable work with its own steps, not a fourth step of the Secret
     # contract, so the batch now spans two issues rather than one.
-    # S4's steps each carry their own issue (S4a #283, S4b #284, S4c #285, S4d #315): one design, one row per step.
+    # S4's steps each carry their own issue (S4a #283, S4b #284, S4c #285, S4d #315, S4e #432): one design, one row per step.
     s_issues = {int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid.startswith("S")}
-    assert s_issues == {230, 283, 284, 285, 293, 315}, f"the S batch includes ConfigMap onboarding #293 (S5) and the per-account gate #315 (S4d); got {sorted(s_issues)}"
+    assert s_issues == {230, 283, 284, 285, 293, 315, 432}, f"the S batch includes ConfigMap onboarding #293 (S5), the per-account gate #315 (S4d) and the ping's account scope #432 (S4e); got {sorted(s_issues)}"
 
 
 def _ordered_ids() -> list[str]:
