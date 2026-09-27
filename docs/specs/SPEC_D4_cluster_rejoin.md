@@ -116,6 +116,14 @@ never as the fleet account. The tests use made-up names against a fake remote.
   echoes; a hostile remote holds the password anyway, and can always choose an encoding no scrubber recognises.
   Codex's triple-escape probe is kept as an expected failure, `xfail(strict=True)`, so it runs every time and turns
   red if the residual ever closes. Declined: Codex's general unescape-and-map-back scrubber.
+- **The confirmation review, round 3** (Grok and Codex on `4010a52`). Both: the pre-cut scrub holds at every offset,
+  and the stated boundary and the strict expected failure hold. Both refuted one point, taken: Go's `encoding/json`,
+  the encoder of the Kubernetes and OpenShift API servers and of the oauth-server, writes `<`, `>`, `&`, U+2028 and
+  U+2029 as lower-case `\u` escapes and leaves every other character as is, `é\u2028Z` for one. `_spellings` adds
+  that one spelling (`_GO`), once and twice like the others; its test rows are the Go runtime's own output (Codex's
+  `go-spellings.json`). The Rejoin test file measured `104 passed, 5 xfailed` at `4010a52`, as both reviewers found;
+  the 105 in round 3's hand-back counted one Chromium test run beside it. Declined, and stated in §3.7: Codex's
+  per-character matcher for PHP's optional `JSON_HEX_*` flags and .NET's `JavaScriptEncoder` escapes.
 
 ## 1. The point
 
@@ -333,7 +341,7 @@ store, answer or browser storage the dashboard controls.**
 | the request logs | oauth-proxy's request log and Uvicorn's access log write the request line, never the body |
 | a 422 | `body: Any`, and the shape refused in fixed words |
 | an unexpected error | caught by `rejoin` while it holds the login, and by the route before one exists: fixed words and how the login ended, nothing of the error |
-| the app's lines and answers | every line and answer is scrubbed of the password, its Basic form, the login's token and the token read, in every spelling — as written, and JSON-escaped once and twice, ASCII or not, `/` as `\/` or not, `\u` hex in either case — at any length: the emit helper skips values under four characters, and the shared escaped forms stop at eight |
+| the app's lines and answers | every line and answer is scrubbed of the password, its Basic form, the login's token and the token read, in every spelling of §3.7's covered set, at any length: the emit helper skips values under four characters, and the shared escaped forms stop at eight |
 | a cut quote | the login's and D8's clients scrub a remote's body before cutting it to 200 characters, so a password straddling the cut leaves no fragment; the token read quotes no body at all (`gsd/fleetlookup.py#_status_only`) |
 | a failed revoke | the token read, or a refused read's, is handed to the login before the revoke runs |
 | the audit logs | the password is in a header, never the URI; the audit log is written at Metadata level |
@@ -343,10 +351,18 @@ store, answer or browser storage the dashboard controls.**
 | a password manager | `autocomplete="off"` is a request a browser may ignore; the dialog says so |
 
 **What the scrub is for: accidental echoes.** A remote that quotes the request back by mistake, a proxy's error page,
-a debug handler: they write the raw value, or standard JSON spellings of it, at most two layers deep, `\/` and either
-`\u` hex case included. The scrub removes all of those. It does not claim more. A hostile remote already holds the
-password, since it received it, and it can always choose an encoding no scrubber recognises, base64 for one; three
-layers of escaping are in that class (§6).
+a debug handler. The covered set:
+
+- the raw value;
+- Python's `json.dumps`, ASCII or not, with `/` as `\/` or not, and `\u` hex in either case;
+- Go's `encoding/json` default, the remote's own encoder: `<`, `>`, `&`, U+2028 and U+2029 as lower-case `\u`
+  escapes, every other character as is;
+- each of those up to two layers deep.
+
+The scrub removes all of those. It does not claim more. Other encoders' optional escapes are outside the set: PHP's
+`JSON_HEX_*` flags, .NET's `JavaScriptEncoder`. The remote is OpenShift, whose servers encode with Go. A hostile remote
+already holds the password, since it received it, and it can always choose an encoding no scrubber recognises, base64
+for one; three layers of escaping are in that class (§6).
 
 **The redaction pin** (`tests/test_cluster_rejoin.py#test_the_password_appears_on_one_header_and_nowhere_else`, #283's,
 carried) runs fourteen scenarios. In each, the fake remote plants every secret in play in every field it controls. The
@@ -405,16 +421,16 @@ whole database, and on the wire outside the one authorize's `Authorization` head
 6. **An identity provider without password challenges** (OpenID Connect, GitHub, Google) cannot be rejoined.
 7. **The browser's resend** of a written request is not guarded beyond the lock and the gate (§2).
 8. **A password manager** may still offer to save what is typed (§3.6).
-9. **Arbitrary encodings of an echo.** The scrub covers accidental echoes: the raw value and standard JSON spellings up
-   to two layers (§3.7). Three layers, base64 or any other encoding a hostile remote may choose are not recognised; the
-   remote holds the password already. `test_other_json_spellings_never_reach_evidence[triple-…]` records three
+9. **Arbitrary encodings of an echo.** The scrub covers accidental echoes: §3.7's covered set, up to two layers.
+   Three layers, other encoders' optional escapes, base64 or any other encoding a hostile remote may choose are not
+   recognised; the remote holds the password already. `test_other_json_spellings_never_reach_evidence[triple-…]` records three
    layers as an expected failure (`xfail`, strict), on all five paths.
 
 ## 7. The change, file by file
 
 | file | change | added | removed |
 |---|---|---|---|
-| `local-development/gsd/rejoin.py` | new: `_spellings`, `_scrub`, `RejoinLogin`, `refusal`, `fleet_accounts`, `check`, `question`, `question_words`, `_ReviewClient`, `remote_says_cluster_admin`, `rejoin`, `_exchange`, `stopped_unexpectedly` | +317 | −0 |
+| `local-development/gsd/rejoin.py` | new: `_spellings`, `_scrub`, `RejoinLogin`, `refusal`, `fleet_accounts`, `check`, `question`, `question_words`, `_ReviewClient`, `remote_says_cluster_admin`, `rejoin`, `_exchange`, `stopped_unexpectedly` | +323 | −0 |
 | `local-development/gsd/fleetlogin.py` | `FleetLogin.REFUSED_ACTION` and `FleetLogin.NEXT_TRY`: the refusal and next-try words as class attributes, byte-identical for the fleet | +11 | −8 |
 | `local-development/gsd/clusterconfig/writer.py` | `TOKEN_SOURCE_REJOIN`, the three Rejoin annotations, `owned_by_mode`, `CreateRequest.rejoin`; `store_lookup` takes `rejoin` | +36 | −8 |
 | `local-development/gsd/clusterconfig/reader.py` | the "ours" rule through `owned_by_mode` | +2 | −3 |
@@ -423,7 +439,7 @@ whole database, and on the wire outside the one authorize's `Authorization` head
 | `local-development/gsd/api.py` | the route `rejoin_cluster_config`, its one-at-a-time lock and its catch for the unexpected; `rejoinable` on each live row | +48 | −1 |
 | `local-development/gsd/static/index.html` | the dialog; the card's Rejoin button and line; the Refresh line's next step; `openRejoin`, `closeRejoin`, `clearRejoin`, `sendRejoin`; `apiSend`'s `redirect` argument; the `pagehide` listener; `idleExpire` closes the dialog | +120 | −5 |
 | `local-development/gsd/static/app.css` | the dialog's width and its gates list | +6 | −0 |
-| `local-development/tests/test_cluster_rejoin.py` | new: Appendix C | +744 | −0 |
+| `local-development/tests/test_cluster_rejoin.py` | new: Appendix C | +758 | −0 |
 | `local-development/tests/test_api_contract.py` | the carve-out gains the route | +3 | −2 |
 | `local-development/tests/test_clusterconfig.py` | the pinned row gains `rejoinable` | +1 | −1 |
 | `local-development/tests/test_ui.py` | Refresh's `auth_failed` assertion names Rejoin; three Rejoin tests | +160 | −2 |
@@ -437,7 +453,7 @@ whole database, and on the wire outside the one authorize's `Authorization` head
 | `docs/diagrams/remote-cluster-access/source.html` | Figure 4 and the D8 card drawn as built | +14 | −13 |
 | `docs/specs/SPEC_D3_cluster_refresh.md` | a note: #316 builds the next step §4 names | +4 | −0 |
 | `docs/CHANGELOG.md` | the `## Unreleased` entry | +15 | −0 |
-| **total** | 23 files | **+1734** | **−85** |
+| **total** | 23 files | **+1754** | **−85** |
 
 Measured with `git diff --numstat` on the tree the blocks produce. Two steps the blocks cannot carry, both in the
 implementing commit:
@@ -500,6 +516,7 @@ The question is built as the host's `TierResolver` builds it (kube.py:1481-1495)
 | a short password | `gsd/clusterconfig/events.py#redact` skips a secret shorter than `_MIN_SECRET` (4); measured before the fix: a three-character password in D8's reason or error reached the review and failure lines |
 | a short password, JSON-escaped | `gsd/kube.py#redact_text` makes the escaped forms only for values of eight characters or more; measured before round 1's fix: `x"Z` and `éZ`, escaped once or twice, reached the review, failure, login and revoke lines and the answer (20 cases, Codex round 1) |
 | other JSON spellings | measured before round 2's fix: `x\/Z` for `x/Z`, and `\u00E9Z` for `éZ`, reached the lines or the answer on all five paths (10 cases, Grok and Codex round 2) |
+| Go's spelling | Go's `encoding/json.Marshal`, run on the Go runtime by Codex in round 3 (`go-spellings.json`: `x\u003cZ`, `é\u2028Z`, `x😀Z` as is, and each twice); measured before round 3's fix: 10 of its 12 rows reached the lines or the answer on all five paths (50 cases); the two left as is were already scrubbed |
 | D8's cut | `ClusterClient._send` redacts through `kube.redact_text`, floor eight, then cuts the body at 200 characters (kube.py:666); measured before round 2's fix: a password straddling the cut, escaped or raw, left a fragment in the review's failure line and the answer (2 cases) |
 | a refused read, then a failed revoke | measured before the fix: the token read reached `fleet-logout-failed` |
 | the request logs | oauth-proxy's `-request-logging` (`values.yaml`, `requestLogging`) and Uvicorn's access format (uvicorn 0.53.0, config.py:94) write the request line only |
@@ -602,7 +619,7 @@ the after tree.
 | an unexpected error, inside the exchange and before a login exists: fixed words out, nothing of it logged, the login still revoked when there was one | `…::test_unexpected_exception_cannot_escape_with_secrets` | ×2 `ModuleNotFoundError: gsd.rejoin` | ×2 passed |
 | a short password JSON-escaped once or twice (`x"Z`, `éZ`) in an allowed or denied review, a review 500, a login 500 or a revoke 500 reaches no line and no answer | `…::test_short_escaped_password_never_reaches_evidence` | ×20 `assert 404 == 200` | ×20 passed |
 | an unexpected D8 or store error still says how the login ended, whether its revoke answered 200 or 500 | `…::test_unexpected_error_still_reports_cleanup` | ×4 `ModuleNotFoundError: gsd.rejoin` | ×4 passed |
-| `x\/Z` for `x/Z`, and `\u00E9Z` for `éZ`, on all five paths, reach no line and no answer; three layers of escaping stay an expected failure (§6) | `…::test_other_json_spellings_never_reach_evidence` | ×10 `KeyError: 'message'`: no route; ×5 xfailed | ×10 passed; ×5 xfailed |
+| `x\/Z` for `x/Z`, `\u00E9Z` for `éZ`, and the Go runtime's twelve spellings, on all five paths, reach no line and no answer; three layers of escaping stay an expected failure (§6) | `…::test_other_json_spellings_never_reach_evidence` | ×70 `KeyError: 'message'`: no route; ×5 xfailed | ×70 passed; ×5 xfailed |
 | a password straddling D8's 200-character cut, escaped or raw, leaves no fragment | `…::test_a_password_across_the_reviews_200_character_cut_leaves_no_fragment` | ×2 `KeyError: 'message'`: no route | ×2 passed |
 | the dialog promises only what the dashboard controls, and states the gate's scope | `…::test_dialog_does_not_promise_to_control_password_managers` | `ValueError`: no dialog in the page | passed |
 | the budget over the system (§2), twelve shapes | `…::test_the_budget_over_the_system` | `KeyError: 'outcome'` | passed |
@@ -630,15 +647,17 @@ fix and passed with it, and the mutant that reverts it is caught.
 | (P2) `rejoin`'s boundary keeps how the login ended (round 1) | `test_unexpected_error_still_reports_cleanup`: 4 of 4 failed, the answer said only to press Refresh | caught |
 | (R2a) D8's client scrubs before its cut (round 2) | `test_a_password_across_the_reviews_200_character_cut_leaves_no_fragment`: 2 of 2 failed, the fragment in the failure line and the answer | caught |
 | (R2b) `\/` and upper-case hex among the spellings (round 2) | `test_other_json_spellings_never_reach_evidence`: 10 of 10 failed, the spelling in a line or the answer; the triple escape failed 5 of 5, as expected | caught |
+| (R3) Go's spelling (round 3) | `test_other_json_spellings_never_reach_evidence[go-…]`: 50 of 60 failed, the Go spelling in a line or the answer; the 10 emoji cases passed before, Go writing them as is | caught |
 
 **The totals.**
 
 | run | before | after |
 |---|---|---|
-| the new and changed tests alone | `109 failed, 84 passed, 5 xfailed in 81.15s`: the 84 are those files' other cases and the writes-off guard | `193 passed, 5 xfailed in 11.52s` |
-| the whole suite, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included | `109 failed, 6173 passed, 28 skipped, 4 deselected, 5 xfailed in 566.46s` | `6298 passed, 19 skipped, 4 deselected, 5 xfailed in 493.78s` |
+| the new and changed tests alone | `169 failed, 84 passed, 5 xfailed in 82.88s`: the 84 are those files' other cases and the writes-off guard | `253 passed, 5 xfailed in 12.94s` |
+| the Rejoin test file alone, `tests/test_cluster_rejoin.py` | — | `164 passed, 5 xfailed` |
+| the whole suite, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included | `169 failed, 6173 passed, 28 skipped, 4 deselected, 5 xfailed in 568.25s` | `6358 passed, 19 skipped, 4 deselected, 5 xfailed in 497.92s` |
 
-The whole before-suite fails exactly the 109 of the table: the two lists of `FAILED` lines compare equal. The five
+The whole before-suite fails exactly the 169 of the table: the two lists of `FAILED` lines compare equal. The five
 expected failures are the triple escape on both trees (§6). The after tree collects seven cases more, each
 parametrized over something the other blocks add: `rejoin.py` in three module scans, `RUNBOOK.md` in the fence check,
 and three citations the documents gain. The before tree skips nine citations more: this spec cites `gsd/rejoin.py`
@@ -650,7 +669,7 @@ reasons.
 and the applied tree equals the implemented copy byte for byte in all 23 files.
 
 **Every design decision and every fix is held by a test.** Each was reverted in its own copy of the implemented tree
-and its tests run against the mutant: all twenty-four were caught.
+and its tests run against the mutant: all twenty-five were caught.
 
 | reverted | caught by |
 |---|---|
@@ -675,6 +694,7 @@ and its tests run against the mutant: all twenty-four were caught.
 | (P2) no boundary in `rejoin`: the route's fallback answers | `test_unexpected_error_still_reports_cleanup` |
 | (R2a) D8's client redacts only as the shared client does, then cuts | `test_a_password_across_the_reviews_200_character_cut_leaves_no_fragment[escaped]` |
 | (R2b) no `\/` and no upper-case hex spellings | `test_other_json_spellings_never_reach_evidence[slash-allowed]` |
+| (R3) no Go spelling | `test_other_json_spellings_never_reach_evidence[go-lt-once-allowed]` |
 | the token read not handed to the login's scrub | `test_the_password_appears_on_one_header_and_nowhere_else[revoke-500]` |
 | the password field kept after the press | `test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` |
 | no clearing on `pagehide` | the same |
@@ -1054,15 +1074,21 @@ READ_SAYS = {
 
 
 _HEX = re.compile(r"\\u([0-9a-f]{4})")
+#: Go's encoding/json, the remote's own encoder, writes these five as lower-case `\\u` escapes and every other character
+#: as is: for any value `check` lets through (no control character, no lone surrogate), Python's non-ASCII spelling
+#: with these five replaced is Go's.
+_GO = str.maketrans({"<": "\\u003c", ">": "\\u003e", "&": "\\u0026", "\u2028": "\\u2028", "\u2029": "\\u2029"})
 
 
 def _spellings(value: str) -> set[str]:
-    """`value` escaped once, as JSON encoders write it: ASCII or not, `/` as `\\/` or not, `\\u` hex in either case."""
+    """`value` escaped once, as JSON encoders write it: ASCII or not, `/` as `\\/` or not, `\\u` hex in either case,
+    and Go's `encoding/json` default."""
     out = set()
     for ascii_ in (True, False):
         escaped = json.dumps(value, ensure_ascii=ascii_)[1:-1]
         for form in (escaped, escaped.replace("/", "\\/")):
             out |= {form, _HEX.sub(lambda m: "\\u" + m[1].upper(), form)}
+    out.add(json.dumps(value, ensure_ascii=False)[1:-1].translate(_GO))
     return out
 
 
@@ -2147,9 +2173,8 @@ def _planted(target_kind: str) -> dict:
                                   "write-echo", "success"])
 def test_the_password_appears_on_one_header_and_nowhere_else(tmp_path, monkeypatch, remote, caplog, kind):
     """The scrub is for accidental echoes: a remote, a proxy's error page or a debug handler that quotes what it got,
-    as written or in standard JSON spellings up to two layers, `\\/` and either `\\u` hex case included. A hostile
-    remote already holds the password and can pick an encoding nothing recognises; that is stated, not claimed
-    (SPEC_D4 §3.7, §6)."""
+    as written or as Python's or Go's JSON encoder writes it, up to two layers (SPEC_D4 §3.7 lists the set). A hostile
+    remote already holds the password and can pick an encoding nothing recognises; that is stated, not claimed (§6)."""
     scenario = _planted(kind)
     for field in ("answers", "discovery", "secret", "revoke"):
         if field in scenario:
@@ -2225,16 +2250,31 @@ def test_short_escaped_password_never_reaches_evidence(rig, caplog, phase, passw
     assert escaped.replace('"', "'") not in caplog.text   # a line's value has its double quotes turned single
 
 
+#: Go's encoding/json.Marshal of each password, once and twice, as the Go runtime wrote them (review round 3, Codex's
+#: go-spellings.json): `<`, `>`, `&`, U+2028 and U+2029 as lower-case `\\u` escapes, every other character as is.
+GO_SPELLINGS = [
+    ("lt", "x<Z", "x\\u003cZ", "x\\\\u003cZ"),
+    ("gt", "x>Z", "x\\u003eZ", "x\\\\u003eZ"),
+    ("amp", "x&Z", "x\\u0026Z", "x\\\\u0026Z"),
+    ("e-lt", "é<Z", "é\\u003cZ", "é\\\\u003cZ"),
+    ("e-2028", "é\u2028Z", "é\\u2028Z", "é\\\\u2028Z"),
+    ("emoji", "x😀Z", "x😀Z", "x😀Z"),
+]
+
+
 @pytest.mark.parametrize("phase", PHASES)
 @pytest.mark.parametrize("password,spelled", [
-    ("x/Z", "x\\/Z"),        # `/` as `\/`, which some encoders write
-    ("éZ", "\\u00E9Z"),      # `\u` hex in upper case, which other encoders write
-    pytest.param('x"Z', _escaped('x"Z', 3), marks=pytest.mark.xfail(strict=True, reason=(
+    pytest.param("x/Z", "x\\/Z", id="slash"),         # `/` as `\/`, which some encoders write
+    pytest.param("éZ", "\\u00E9Z", id="hex-case"),    # `\u` hex in upper case, which other encoders write
+    *(pytest.param(password, spelled, id=f"go-{name}-{layer}") for name, password, *spelled_by_layer in GO_SPELLINGS
+      for layer, spelled in zip(("once", "twice"), spelled_by_layer)),
+    pytest.param('x"Z', _escaped('x"Z', 3), id="triple", marks=pytest.mark.xfail(strict=True, reason=(
         "a stated residual (SPEC_D4 §6): three layers of escaping are no accidental echo, and the scrub covers two"))),
-], ids=["slash", "hex-case", "triple"])
+])
 def test_other_json_spellings_never_reach_evidence(rig, caplog, phase, password, spelled):
-    """Real JSON encoders also write `/` as `\\/` and `\\u` hex in upper case, so an accidental echo can take those
-    spellings too (review round 2). Three layers are left, stated: a hostile remote holds the password anyway."""
+    """Real JSON encoders also write `/` as `\\/` and `\\u` hex in upper case (review round 2), and Go's, the remote's
+    own, escapes five characters and leaves the rest as is (round 3). Three layers are left, stated: a hostile remote
+    holds the password anyway."""
     c, app, settings, host, remote = rig
     _echo(remote, phase, "remote echo: " + spelled)
     with caplog.at_level(logging.DEBUG):
