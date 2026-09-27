@@ -44,7 +44,7 @@ Two to four measured facts, each with its source.
 **In:** the children, one line each. **Out:** what this epic does not do, and where that lives.
 
 ## Build order
-| # | Issue | What it delivers | Depends on | Implementer | Size | Target version |
+| # | Issue | What it delivers | Depends on | Implementer | Size | Target version (the child's MINOR, or "none") |
 
 ## Picture
 A committed mockup PNG (screen work) or a fenced mermaid flow (back-end work), with a caption. Current vs proposed

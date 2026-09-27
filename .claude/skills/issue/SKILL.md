@@ -21,7 +21,8 @@ operator chart's #70).
 - **Target versions, as a DevOps shop plans them** (the operator, 2026-09-27). The milestone is the epic's major
   release, the one this issue ships in. The target version is the MINOR this issue's own PR will take. Set it when
   work starts: the next free minor after `main`'s version, and only if the issue changes what goes into the image
-  (`publish.yml`'s `on.push.paths`). A docs- or CI-only issue writes "none". If the merge order moves, update the
+  (`publish.yml`'s `on.push.paths`). Write "none" only when the change is outside those paths —
+  `local-development/README.md` and `.github/workflows/publish.yml` are image inputs and take a MINOR. If the merge order moves, update the
   target on the issue, never the rule. CI's required check "App image changes bump the app version" holds the actual
   number.
 - **Already done?** Say so in "Where this stands", with the evidence (the PR, the merge sha, the file:line, a lab
@@ -31,7 +32,7 @@ operator chart's #70).
 ## The body
 
 ```
-**Epic:** #<epic> — <epic title> · **Milestone:** <X.0.0> · **Target version:** <1.Y.0, or "none — docs/CI only, ships in X.0.0">
+**Epic:** #<epic> — <epic title> · **Milestone:** <X.0.0> · **Target version:** <the next MINOR, e.g. 1.2.0, or "none">
 
 ## Where this stands (<date>)
 Measured bullets: what shipped since the issue was filed, what is still true, what changed.
