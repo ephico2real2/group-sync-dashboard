@@ -241,6 +241,14 @@ finding (the LIST itself failed — the Role absent, the API unreachable) carrie
 previous set of discovered clusters stands. `secrets.enabled=false` (`clusterConfig.secrets.enabled`)
 answers the values list alone with `last_discovery: null`.
 
+**`fleet`** (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md` §3.10) is the daily ping's setting,
+`{"ping": {"enabled": true, "interval_seconds": 86400}}`, and one entry per fleet account as its Lease
+holds it: `username`, `lease` (`gsd-fleet-<sha256(username)[:16]>`), `last_attempt`, `last_ok` (null before
+the first success), `last_outcome` (`ok` or the finding code the last ping met), `last_target` (the cluster
+the last ping attempted, whatever its outcome — `last_ok` may be older), and `suspended` — `[{"target", "since", "code"}]` while a refused entry stands, `[]`
+otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",
+"expires_at", "renew_at"}`. Every instant is ISO-8601 UTC; the page computes any age itself.
+
 ### The Cluster Configurations tab's writes (#230 S2)
 
 Four routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified

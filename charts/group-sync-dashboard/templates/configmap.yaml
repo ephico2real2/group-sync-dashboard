@@ -96,6 +96,9 @@ data:
     fleetPasswordSecretNamespace: {{ .Values.clusterConfig.fleetAccount.passwordSecret.namespace | quote }}
     fleetPasswordSecretName: {{ .Values.clusterConfig.fleetAccount.passwordSecret.name | quote }}
     fleetPasswordSecretKey: {{ .Values.clusterConfig.fleetAccount.passwordSecret.key | quote }}
+    # The daily ping (SPEC_S4c §3.4): once per fleet account per interval, on the discovery cadence.
+    fleetPingEnabled: {{ .Values.clusterConfig.fleetAccount.ping.enabled }}
+    fleetPingIntervalSeconds: {{ .Values.clusterConfig.fleetAccount.ping.intervalSeconds }}
     saTokenLookupSourceNamespace: {{ .Values.clusterConfig.saTokenLookup.sourceNamespace | quote }}
     saTokenLookupSourceServiceAccount: {{ .Values.clusterConfig.saTokenLookup.sourceServiceAccount | quote }}
     saTokenLookupTokenSecretName: {{ .Values.clusterConfig.saTokenLookup.tokenSecretName | quote }}

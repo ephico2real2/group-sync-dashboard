@@ -7055,6 +7055,58 @@ class TestClusterConfigPage:
         assert "onboard,sideload" in page.locator("#cc-head").inner_text()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
+    def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
+        """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster
+        the last ping tried and what it met, and a suspended badge while its Lease holds an entry — and a self-login
+        cluster's credential row says when its session expires. Instants as the service stamps them; 375 px."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        base, host, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        sl = parse_secret(_secret("gsd-cluster-sl", cluster="sl", config={"userSelfLogin": True, "ldapConnectionBootstrap": "svc-gsd"}),
+                          host_name="crc-local")
+        settings.cluster_registry.replace([east, sl], [], at="now")
+        signals = _SCOPED_APP.state.signals
+        signals.note_fleet_accounts({
+            "svc-gsd": {"lease": "gsd-fleet-3b1f9c0e7a2d4e61", "last_attempt": "2026-09-22T06:00:04Z", "last_ok": "2026-09-22T06:00:05Z",
+                        "last_outcome": "ok", "last_target": "shared-rnd",
+                        "suspended": [{"target": "https://api.other.example.com:6443", "since": "2026-09-22T14:03:11Z", "code": "login-refused"}]},
+            "svc-new": {"lease": "gsd-fleet-0000000000000000", "last_attempt": None, "last_ok": None, "last_outcome": None,
+                        "last_target": None, "suspended": []}})
+        signals.note_self_login("sl", {"state": "current", "expires_at": "2026-09-23T06:00:05Z", "renew_at": "2026-09-23T04:00:05Z"})
+        try:
+            page.set_viewport_size({"width": 375, "height": 812})
+            page.set_extra_http_headers({"X-Forwarded-User": "root"})
+            page.goto(f"{base}/#page=clusters")
+            page.wait_for_selector("#cc-cluster-sl")
+            row = page.locator("[data-cc-fleet='svc-gsd']").inner_text().replace("\n", " ")
+            assert "last confirmed 2026-09-22 06:00 · last ping shared-rnd: ok" in row and "suspended" in row, row
+            assert "not yet confirmed by the daily ping" in page.locator("[data-cc-fleet='svc-new']").inner_text()
+            credential = page.locator("#cc-cluster-sl .cc-kv", has_text="credential").inner_text().replace("\n", " ")
+            assert "self-login" in credential and "expires 2026-09-23 06:00" in credential, credential
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        finally:
+            signals.note_fleet_accounts({})
+            signals.note_self_login("sl", None)
+
+
+    def test_a_failed_ping_on_the_next_target_is_not_said_as_confirmed_there(self, page, cc_rig):
+        """OB1-lite N2: `last_ok` is the last SUCCESS's instant and `last_target` the last ATTEMPT's cluster; after
+        a success on c00 and a failure on c01 the row must not say c01 was confirmed."""
+        base, host, settings = cc_rig
+        signals = _SCOPED_APP.state.signals
+        signals.note_fleet_accounts({"svc-gsd": {"lease": "gsd-fleet-3b1f9c0e7a2d4e61", "last_attempt": "2026-09-23T06:00:04Z",
+                                                 "last_ok": "2026-09-22T06:00:05Z", "last_outcome": "sa-token-unreadable",
+                                                 "last_target": "c01", "suspended": []}})
+        try:
+            page.set_extra_http_headers({"X-Forwarded-User": "root"})
+            page.goto(f"{base}/#page=clusters")
+            page.wait_for_selector("[data-cc-fleet='svc-gsd']")
+            row = page.locator("[data-cc-fleet='svc-gsd']").inner_text().replace("\n", " ")
+            assert "on c01" not in row.split("·")[1], row
+            assert "last confirmed 2026-09-22 06:00" in row and "last ping c01: sa-token-unreadable" in row, row
+        finally:
+            signals.note_fleet_accounts({})
     def test_the_form_offers_remote_sar_and_starts_on_the_default_pair(self, page, cc_rig):
         """SPEC_D2b §3.3: the form starts on the pair a remote that states nothing resolves to, and offers
         remote-sar with its meaning; same-as-host says how a reader is matched (design D3)."""

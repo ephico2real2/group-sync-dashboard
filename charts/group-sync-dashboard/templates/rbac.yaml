@@ -72,9 +72,12 @@ rules:
     resourceNames: ["cluster"]
     verbs: ["get"]
   {{- end }}
-  {{- if .Values.leaderElection.enabled }}
-  # Leader election. Namespaced, so this belongs in a Role rather than the ClusterRole —
-  # but keeping one object is simpler and the grant is confined to one named Lease anyway.
+  {{- if or .Values.leaderElection.enabled (eq (include "gsd.fleetAccountInUse" .) "true") }}
+  # Leader election, and the fleet-account claim (SPEC_S4c §3.3): a second Lease under the same rule,
+  # still the one resource this application writes. It renders when a fleet account is in use even with
+  # election off, because above one replica election MUST be off and that is where a claim the API
+  # server arbitrates matters most. Namespaced, so it belongs in a Role rather than the ClusterRole —
+  # but keeping one object is simpler; `create` cannot be narrowed by resourceNames, so none is set.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update"]

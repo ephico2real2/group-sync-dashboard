@@ -6052,6 +6052,9 @@ function ccCredential(c) {
   const kind = c.credential === "bearer" ? "bearerToken" : c.credential === "in-cluster" ? "serviceAccount" : c.credential;
   // a retired row from before S1 recorded the kind carries "": say so rather than printing a bare badge
   let out = kind ? `${esc(kind)} ${ccBadge("ok", "set")}` : `<span class="muted">unknown</span>`;
+  // SPEC_S4c §3.10: a self-login cluster's credential is its session — say when it expires, as an instant.
+  const s = c.session;
+  if (s) out += ` · ${s.expires_at ? `expires <span class="mono">${fmtStamp(s.expires_at)}</span>` : esc(s.state === "suspended" ? "suspended" : "no session yet")}`;
   const secretRow = ccSourceKind(c) === "secret";
   if (c.onboarding_configmap && !c.retired) {
     out += ` <span class="cc-hint">managed by ConfigMap ${esc(c.onboarding_configmap)} — edit the stanza there</span>`;
@@ -6248,6 +6251,20 @@ function ccAddForm(d) {
         the namespace will still delete a UI-written Secret unless it honours <span class="mono">groupsync-dashboard.io/managed-by: ui</span>.</p>
     </aside></div></section>`;
 }
+/* SPEC_S4c §3.10: one row per fleet account — when the daily ping last confirmed it, and which cluster the last ping
+   tried with what it met; `not yet confirmed` before the first success, and `suspended` when its Lease holds an entry. */
+function ccFleetRows(f) {
+  return ((f && f.accounts) || []).map((a) => {
+    // `last_ok` is the last SUCCESS; `last_target` and `last_outcome` are the last ATTEMPT, which may have failed on
+    // the next cluster in the rotation — so the two are said apart, never "confirmed on" the attempt's target.
+    const seen = a.last_ok
+      ? `last confirmed <span class="mono">${fmtStamp(a.last_ok)}</span>`
+      : "not yet confirmed by the daily ping";
+    const last = a.last_target ? ` · last ping ${esc(a.last_target)}: ${esc(a.last_outcome || "—")}` : "";
+    const n = (a.suspended || []).length;
+    return `<div class="cc-kv" data-cc-fleet="${esc(a.username)}"><span class="k">fleet account</span><span class="v"><span class="mono">${esc(a.username)}</span> · ${seen}${last}${n ? ` ${ccBadge("critical", "suspended")}` : ""}</span></div>`;
+  }).join("");
+}
 function clusterConfigPage() {
   const d = data.clusterconfigs;
   if (!d) return `<section class="card"><h2>Cluster Configurations</h2><div class="empty-note">Loading…</div></section>`;
@@ -6269,6 +6286,7 @@ function clusterConfigPage() {
     <div class="cc-kv"><span class="k">ConfigMap selector</span><span class="v mono">${esc((d.configmaps || {}).label || "")}</span></div>
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
       : `${n.secret} Secret${n.secret === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
+    ${ccFleetRows(d.fleet)}
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
   const findings = (d.findings || []).map(ccFinding).join("")
     || `<div class="empty-note">No configuration findings. Refused Secrets and ConfigMap stanzas are listed here with their source and reason.</div>`;

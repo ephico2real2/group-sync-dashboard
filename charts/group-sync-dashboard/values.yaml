@@ -765,7 +765,8 @@ clusters:
   # dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target
   # (clusterConfig.saTokenLookup below) and writes gsd-cluster-<name> here, which discovery then
   # polls like any other Secret. It needs clusterConfig.secrets.writes.enabled, and its CA must
-  # cover both the API host and the OAuth route. A userSelfLogin stanza is still pending (#285).
+  # cover both the API host and the OAuth route. A userSelfLogin stanza polls on its own session, renewed a
+  # fixed margin before it expires (#285); the render refuses it above one replica.
   # The render refuses each of these exactly as the loader does, so a bad stanza fails
   # `helm template`, not the pod after a green upgrade.
 
@@ -1537,6 +1538,17 @@ clusterConfig:
       # Secret and the key if the grant is absent — it does not crash.
       rbac:
         create: true
+    # THE DAILY PING (SPEC_S4c §3.4, #285): once per account per interval the dashboard logs in as
+    # the fleet account and reads the poller ServiceAccount's token on ONE cluster the lookup retrieved,
+    # stores nothing, and records on the account's Lease the instant it last succeeded. One bind per
+    # interval for the whole fleet — never one per cluster. It stands down on a refusal (a wrong
+    # password is sent once, not daily), and it rides config.discoveryIntervalSeconds, so it never
+    # runs more often than discovery does.
+    ping:
+      enabled: true
+      # Daily. Shorter buys little — a credential rarely breaks between two mornings — and every
+      # increment multiplies the bind rate at a directory that is counting (SPEC_S3 §9.3.6).
+      intervalSeconds: 86400
   # WHAT `saTokenLookup` READS on every target (SPEC_S4b, #284): the poller ServiceAccount's permanent
   # token, held in a `kubernetes.io/service-account-token` Secret the operator chart creates beside
   # the ServiceAccount. One convention for the fleet — the operator chart provisions the same names

@@ -25,6 +25,10 @@ API server then refuses the token. A manually created Secret is not referenced a
 one that carries the label is already dead, and storing it would be a 401 on the first poll.
 
 `lookup(..., write=False)` is #285's daily ping: the same login, read and revoke, and nothing stored.
+
+THE ACCOUNT LEASE (#285, SPEC_S4c §3.3). A caller that passes `lease` has CLAIMED the fleet account's Lease
+first: its entry for this password gates here like the process's own, and a bound answer is written to it
+before the process's gate, so a restart and a second replica read what this process was told.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from .clusterconfig.writer import (
 from .clusterconfig.events import is_transport_message, redact
 from .config import ClusterConfig, Settings
 from .fleetlogin import FleetLogin, LoginError, _without_userinfo
+from .fleetstate import FleetLease, lease_digest
 from .kube import AUTH_FAILED, ClusterClient, ClusterError, redact_text
 
 log = logging.getLogger(__name__)
@@ -117,9 +122,14 @@ class CredentialGate:
     THE BUDGET, with its scope: at most one answered failed authorize per (account, password) per
     process, across every target. "Account" is the exact configured username string, compared as
     written: directory aliases and case variants are not resolved, so every stanza for one identity
-    must use one spelling. "Process" is the production Poller's one gate, used serially on its
-    discovery thread; a new gate starts a new budget. A restart or a second replica starts empty —
-    not covered until #285's account Lease, which this becomes the cache of (SPEC_S4c §3.3)."""
+    must use one spelling. "Process" is the production Poller's one gate, shared by its discovery
+    thread and its self-login poll threads (single dict and set operations); a new gate starts a new
+    budget. It is the cache of the account Lease's gate (SPEC_S4c §3.3): every bind path claims the
+    Lease first, seeds the REFUSED kind from the Lease's entry, and records its attempt there before
+    the password is sent; a bound answer replaces that record before it is written here — so a
+    restart, a crash and a second replica read it while the Lease is writable, and this is the only
+    copy when it is not. The SPENT kind is never on the Lease, and self-login and the read-only ping
+    ask for the REFUSED kind alone (`account_refusal`)."""
 
     def __init__(self) -> None:
         self._refused: dict[tuple[str, str], str] = {}
@@ -138,6 +148,12 @@ class CredentialGate:
     @staticmethod
     def _digest(password: str) -> str:
         return hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+
+    def account_refusal(self, username: str, password: str) -> str | None:
+        """The REFUSED kind alone: the target that answered for this account and password, or None. Self-login and
+        the read-only ping ask this — #293's SPENT mark is a writing lookup's budget, never an account refusal
+        (#285, review of #419, F2)."""
+        return self._refused.get((username, self._digest(password)))
 
     def answered(self, target: str, username: str, password: str) -> str | None:
         """The target whose answer gates this password for this account on `target`, or None: the
@@ -226,9 +242,10 @@ def fleet_account(settings: Settings, cluster: ClusterConfig) -> str:
     return username
 
 
-def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace: str) -> str:
-    """The password, read now through the chart's one-Secret grant (`templates/fleet-account-rbac.yaml`);
-    never held on Settings or ClusterConfig, so `poller._credentials` never sees it."""
+def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace: str) -> tuple[str, str]:
+    """The password and the Secret's `metadata.uid` — the Lease fingerprint's salt (`gsd/fleetstate.py#lease_digest`)
+    — read now, in one GET, through the chart's one-Secret grant (`templates/fleet-account-rbac.yaml`); never held on
+    Settings or ClusterConfig, so `poller._credentials` never sees it."""
     ns = settings.fleet_password_secret_namespace or own_namespace
     name, key = settings.fleet_password_secret_name, settings.fleet_password_secret_key
     where = f"Secret {ns}/{name} key {key!r}"
@@ -246,7 +263,10 @@ def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace
         password = ""
     if not password:
         raise LookupRefused("fleet-credential-missing", f"{where} is absent or empty", action=action, spent=False)
-    return password
+    uid = str((obj.get("metadata") or {}).get("uid") or "")
+    if not uid:   # every object an API server returns has one: fail closed rather than salt with less (#419, D2)
+        raise LookupRefused("fleet-credential-missing", f"{where} carries no metadata.uid", action=action, spent=False)
+    return password, uid
 
 
 def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSource, *, timeout: float) -> SaToken:
@@ -373,12 +393,14 @@ def store(host_client: ClusterClient, own_namespace: str, cluster: ClusterConfig
 
 def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClient, *, own_namespace: str,
            gate: CredentialGate, write: bool = True, sleep: Callable[[float], None] = time.sleep,
-           clock: Callable[[], datetime] | None = None) -> LookupResult:
+           clock: Callable[[], datetime] | None = None, lease: FleetLease | None = None) -> LookupResult:
     """The whole retrieval for one cluster: password, login, read, revoke, and — with `write` — store.
 
     Every refusal is a `LookupRefused` carrying the finding it becomes and the secrets in play. The
     session is a context manager, so the login's token is revoked whatever the read does. With
-    `write=False` (#285's ping) nothing is written and the token is returned in the result.
+    `write=False` (#285's ping) nothing is written and the token is returned in the result. `lease` is
+    the fleet account's Lease with the caller's claim on it (SPEC_S4c §3.3); every production caller
+    passes one, and None is the process's gate alone — #284's and #293's own hermetic tests.
     """
     if write and not (settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled):
         # THE SWITCH IS CHECKED HERE, not only by the caller (review of #295, P1-4): a second caller —
@@ -390,10 +412,20 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                                     "that switch renders"), spent=False)
     source = LookupSource.from_settings(settings)
     account = fleet_account(settings, cluster)
-    password = fleet_password(host_client, settings, own_namespace)
+    password, salt = fleet_password(host_client, settings, own_namespace)
+    digest = lease_digest(account, password, salt) if lease is not None else ""
     secrets: list[str] = [password]
     try:
-        answered = gate.answered(cluster.api_url, account, password)
+        if lease is not None:
+            # THE LEASE SEEDS THE PROCESS'S GATE (SPEC_S4c §3.3): an entry another replica, or this pod before
+            # a restart, wrote for this account and password gates here too, naming the target that answered.
+            entry = lease.record.gated(digest)
+            if entry is not None:
+                gate.refuse(entry.get("target") or "", account, password)
+        # A writing lookup asks the combined gate — #293's per-target SPENT mark included; the read-only ping asks
+        # for an account refusal alone (review of #419, F2).
+        answered = (gate.answered(cluster.api_url, account, password) if write
+                    else gate.account_refusal(account, password))
         if answered is not None:
             # THE TARGET THAT ANSWERED IS NAMED (#315): the entry is the account's, so it may be another
             # cluster's answer that stops this one, and the finding must say where to look. Shown without
@@ -406,9 +438,16 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                                         "changes — rotate the Secret, or correct ldapConnectionBootstrap; the password is "
                                         "re-read each cycle at no cost and the login resumes when it moves (SPEC_S4 §6)"),
                                 spent=False, gated=True)
+        if lease is not None:
+            # THE ATTEMPT IS ON THE LEASE BEFORE THE PASSWORD IS ON THE WIRE (SPEC_S4c §3.3, step 3): from here a crash,
+            # a lost refusal write, a restart or a second process finds it. ClaimHeld and FleetStateUnavailable are
+            # the caller's, as they are for the claim.
+            lease.reserve(CredentialGate._target(cluster.api_url), digest)
         knobs = {"clock": clock} if clock is not None else {}
         try:
             with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
+                if lease is not None:
+                    lease.complete()   # a session came back: the attempt's entry goes, whatever the read does (#293)
                 secrets.append(session.token)
                 if cluster.onboarding:
                     # #293's strict budget includes successful binds, even if the later read/write fails.
@@ -428,14 +467,19 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                 # account's 500 cannot be told from a sick target's): re-entering #283's terminal answer
                 # from a schedule is the lockout walk one layer up, and an in-memory "final" that any
                 # shape change re-arms is not a stop. `AUTH_FAILED` is the refusal's word; the rest read
-                # as failed.
-                gate.refuse(cluster.api_url, account, password)
+                # as failed. The Lease first, the process second (SPEC_S4c §3.3, step 5): a crash between the
+                # two loses the cheap copy, never the durable one.
                 code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
+                if lease is not None:
+                    lease.refuse(CredentialGate._target(cluster.api_url), digest, code)
+                gate.refuse(cluster.api_url, account, password)
                 raise LookupRefused(code, f"phase={exc.phase}{which}: {exc.message}",
                                     action=(f"the password for {account} was sent to {cluster.name} and no session came "
                                             f"back: rotate the fleet password Secret or correct ldapConnectionBootstrap, "
                                             f"or check the account is not locked — it is not sent again, to this or any "
                                             f"other cluster, while it is the same password"), spent=True) from exc
+            if lease is not None:
+                lease.complete()       # provably never written: the attempt's entry goes
             hint = ""
             if exc.phase == "tls":
                 hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "

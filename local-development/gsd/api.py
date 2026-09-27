@@ -30,7 +30,7 @@ from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
 from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
-    IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
+    CREDENTIAL_SELF_LOGIN, IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
     VISIBILITY_REMOTE_SAR, VISIBILITY_SELF_ONLY, Settings, load_settings, remote_policy,
 )
 from .kube import REMOTE_FAILURE_HOLD_SECONDS, TIER_ALL, TIER_SELF, ClusterClient, RemoteTierResolvers, TierResolver
@@ -1131,6 +1131,10 @@ def build_app(
                 "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
                 "retired": False, "onboarding_configmap": c.onboarding[0] if c.onboarding else None,
             })
+            if c.credential_kind == CREDENTIAL_SELF_LOGIN:
+                # SPEC_S4c §3.10: the session's instants — never an age; the page computes one where it repaints.
+                clusters[-1]["session"] = signals.self_login(c.name) or {"state": "none", "expires_at": None,
+                                                                          "renew_at": None}
         # A cluster the store still holds but no source names any more — a Secret that vanished, a values
         # entry removed — is retired (enabled=0, history kept, #96). The tab shows it as such rather than
         # letting it disappear: its rows are still there, and the reader should know why.
@@ -1156,6 +1160,11 @@ def build_app(
             "configmaps": {"enabled": settings.cluster_secrets_enabled, "label": CONFIG_SELECTOR},
             "clusters": clusters,
             "findings": [f.public() for f in registry.findings()],
+            # SPEC_S4c §3.10: the daily ping and each fleet account's Lease, as instants.
+            "fleet": {"ping": {"enabled": settings.fleet_ping_enabled,
+                               "interval_seconds": settings.fleet_ping_interval_seconds},
+                      "accounts": [{"username": account, **view}
+                                   for account, view in sorted(signals.fleet_accounts().items())]},
         }
 
     # ── SPEC_S2: the Cluster Configurations tab's writes ─────────────────────────────────────────────

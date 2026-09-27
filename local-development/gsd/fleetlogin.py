@@ -316,17 +316,23 @@ class FleetLogin:
 
     `timeout` is the per-request budget the poller gives `ClusterClient` (`requestTimeoutSeconds`);
     `policy`, `sleep` and `clock` are the loop's knobs, injectable so a test can drive the whole
-    ceiling without waiting fifteen seconds or trusting the wall clock. One instance is one session:
+    ceiling without waiting fifteen seconds or trusting the wall clock. `secrets` are other values in
+    play that a remote may echo — a self-login renewal's held session tokens (#285) — scrubbed with the
+    password from every line and every quoted remote text, and never sent. One instance is one session:
     entering it twice is refused.
     """
 
     def __init__(self, cluster: ClusterConfig, username: str, password: str, *,
                  timeout: float = 15.0, policy: RetryPolicy = RETRY_POLICY,
                  sleep: Callable[[float], None] = time.sleep,
-                 clock: Callable[[], datetime] = _utcnow):
+                 clock: Callable[[], datetime] = _utcnow, secrets: tuple[str, ...] = ()):
         self.cluster = cluster
         self.username = username
         self._password = password
+        # The password as the wire carries it (RFC 7617 §2; the `auth=` below): a proxy or a server that quotes the
+        # request's Authorization header quotes base64(user:password), which decodes to the password.
+        basic = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        self._secrets = tuple(v for v in (*secrets, basic) if v)
         self._timeout = timeout
         self._policy = policy
         self._sleep = sleep
@@ -364,6 +370,10 @@ class FleetLogin:
         finally:
             self._close()
         return False
+
+    def add_secrets(self, *secrets: str) -> None:
+        """More values to scrub from this session's revoke lines — redaction only (#285, review of #419)."""
+        self._secrets = (*self._secrets, *(v for v in secrets if v))
 
     def _close(self) -> None:
         if self._client is not None:
@@ -422,7 +432,7 @@ class FleetLogin:
                 event(log, logging.INFO, "fleet-login", **self._fields(), oauth=issuer,
                       expires_at=session.expires_at_iso,
                       attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
-                      secrets=(self._password, token))
+                      secrets=(self._password, token, *self._secrets))
             except BaseException as problem:
                 minted, malformed = self._minted_by(response)
                 if minted:
@@ -646,7 +656,7 @@ class FleetLogin:
                                    f"itself failed before the target answered")
         self.revoked = answer.gone
         shown = answer.name if answer.name and token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
-        secrets = (self._password, token)
+        secrets = (self._password, token, *self._secrets)
         try:
             if answer.gone:
                 event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown, outcome=answer.word,
@@ -687,7 +697,7 @@ class FleetLogin:
         displayed copy; never on a structured value the operator acts on — the issuer, the endpoint's
         host — where userinfo is stripped structurally instead; only on free text, where mangling
         costs a less readable quote and nothing else."""
-        secrets = tuple(v for v in (self._password, *more) if v)
+        secrets = tuple(v for v in (self._password, *self._secrets, *more) if v)
         out = redact(redact_text(text, *secrets), secrets)
         for secret in sorted(secrets, key=len, reverse=True):
             out = out.replace(secret, "<redacted>")
@@ -716,7 +726,7 @@ class FleetLogin:
                             f"password Secret or correct ldapConnectionBootstrap — no second attempt is "
                             f"made, because a retry is the lockout walk against the account the target "
                             f"authenticates every user with"),
-                    detail=exc.message, secrets=(self._password,))
+                    detail=exc.message, secrets=(self._password, *self._secrets))
             return
         ceiling = self._policy.attempts
         if attempt is None:
@@ -731,4 +741,4 @@ class FleetLogin:
                 attempt=None if attempt is None else f"{attempt}/{ceiling}",
                 retry_in=None if retry_in is None else f"{retry_in:g}",
                 gave_up="true" if gave_up else None, action=action, detail=exc.message,
-                secrets=(self._password,))
+                secrets=(self._password, *self._secrets))

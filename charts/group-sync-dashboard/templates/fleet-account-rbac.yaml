@@ -33,18 +33,8 @@ cross-namespace Role is pruned — same template, same key, no code change.
 {{- $fleet := (.Values.clusterConfig).fleetAccount | default dict }}
 {{- $ps := $fleet.passwordSecret | default dict }}
 {{- $rbac := $ps.rbac | default dict }}
-{{- /* In use when the chart names an account, or any cluster stanza declares a connection mode —
-       a stanza's ldapConnectionBootstrap names the username but the password is still this one. */ -}}
-{{- $inUse := not (empty ($fleet.username | default "")) }}
-{{- range .Values.clusters }}
-  {{- /* SKIP A NON-ENTRY RATHER THAN DEREFERENCE IT. Helm pads a list index set beyond the list's
-         length with null, so `clusters[0]` can be nil; `gsd.validateClusters` refuses that BY NAME
-         ("clusters[0] is not a cluster entry"), and reaching into it here would abort the render
-         with a nil-pointer first — replacing a diagnosis with a stack trace. */ -}}
-  {{- if kindIs "map" . }}
-    {{- if or .saTokenLookup .userSelfLogin }}{{- $inUse = true }}{{- end }}
-  {{- end }}
-{{- end }}
+{{- /* In use: `gsd.fleetAccountInUse`, shared with rbac.yaml's Lease rule (SPEC_S4c §3.8). */ -}}
+{{- $inUse := eq (include "gsd.fleetAccountInUse" .) "true" }}
 {{- /* A WORD, NOT TRUTHINESS. `$rbac.create | default true` returns TRUE for an explicit `false`,
        because Helm's `default` treats false as empty — an opt-out that silently does not opt out.
        The same trap `enabled: "false"` fell into on a cluster stanza; read it the same way. */ -}}

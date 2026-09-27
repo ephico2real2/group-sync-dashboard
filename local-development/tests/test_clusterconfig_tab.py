@@ -74,7 +74,7 @@ class _Host(ClusterClient):
 
     def _send(self, client, method, path, *, json=None, secrets=()):
         self.calls.append((method, path))
-        if self.refuse:
+        if self.refuse and "/leases" not in path:    # `refuse` models the Secret grant; a Lease has its own (#285)
             raise ClusterError(FORBIDDEN, f"403 Forbidden on {method} {path}")
         if self.echo:
             import json as _json

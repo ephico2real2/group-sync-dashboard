@@ -46,14 +46,15 @@ def _refused(tmp_path, extra: str = "", body: str | None = None) -> str:
 # ── the loader (§4 items 1-6) ──────────────────────────────────────────────────────────────────
 
 class TestTheLoader:
-    @pytest.mark.parametrize("key,kind", [("saTokenLookup", "remote-lookup"), ("userSelfLogin", "self-login")])
-    def test_a_stanza_declaring_a_mode_loads_without_a_credential(self, tmp_path, key, kind):
+    @pytest.mark.parametrize("key,kind,pending", [("saTokenLookup", "remote-lookup", True), ("userSelfLogin", "self-login", False)])
+    def test_a_stanza_declaring_a_mode_loads_without_a_credential(self, tmp_path, key, kind, pending):
         s = _load(tmp_path, f"    {key}: true\n")
         c = s.cluster("shared-rnd")
         assert (c.connection_mode, c.credential_kind, c.ldap_connection_bootstrap) == (key, kind, None)
-        assert c.credential_pending and "S3b" in c.credential_pending
+        # A lookup is pending until its Secret exists; a self-login cluster polls on its session (#285, SPEC_S4c §3.6).
+        assert bool(c.credential_pending and "S3b" in c.credential_pending) is pending
         with pytest.raises(ConfigError, match="S3b"):
-            c.resolve_token()      # §4.2: nothing has been obtained, and the message says so
+            c.resolve_token()      # §4.2: nothing is resolved from the declaration, and the message says so
         assert s.host_cluster().name == "dashboard"
 
     def test_a_stanza_declaring_neither_mode_nor_credential_keeps_todays_refusal(self, tmp_path):
@@ -205,7 +206,10 @@ class TestThePollPath:
         finally:
             poller.stop()
 
-    def test_a_secret_declaring_a_mode_is_discovered_listed_and_not_polled(self, tmp_path):
+    def test_a_secret_declaring_self_login_is_discovered_listed_and_polled_only_on_a_session(self, tmp_path):
+        """#285 (SPEC_S4c §3.6): self-login is no longer pending — its thread starts — and it polls only on a
+        session. This Secret names no account and the chart none, so there is no session: the poll is skipped
+        (never a false `auth_failed`) and the finding says why."""
         _Host.secrets = {"items": [_secret(config={"userSelfLogin": True})]}
         store = Store(str(tmp_path / "p.db"))
         settings = Settings(clusters=[ClusterConfig("host", "https://kubernetes.default.svc", token_env="X")],
@@ -216,7 +220,9 @@ class TestThePollPath:
             assert self._wait(lambda: "host" in self.polled)
             east = settings.cluster("east")
             assert east is not None and east.credential_kind == "self-login" and east.source == "secret:gsd-cluster-east"
-            assert "east" not in poller._cluster_stops and "east" not in self.polled
+            assert self._wait(lambda: any(f.code == "fleet-credential-missing" and f.secret == "east"
+                                          for f in settings.cluster_registry.findings()))
+            assert "east" in poller._cluster_stops and "east" not in self.polled
             assert next(r for r in store.clusters() if r["id"] == "east")["credential"] == "self-login"
         finally:
             poller.stop()

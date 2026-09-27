@@ -334,6 +334,27 @@ flowchart TD
                                           outcome=<finding>` line — attempt=n/5,
                                           retry_in=, gave_up=true — and a standing
                                           finding on the tab until the next success.
+
+  CONFIRMED DAILY (SPEC_S4c, #285) — the fleet account itself, once per account per interval
+  ───────────────────────────────────  ─────────────────────────────────────────
+  the daily ping                       the leader claims the account's Lease, logs in on
+               one retrieved cluster,  ONE retrieved cluster (in rotation by name) and
+               read, nothing stored    reads the same token, writing nothing:
+                                          `fleet-ping account= target= last_ok=<instant>`.
+                                          A failure is `fleet-ping-failed phase=credential
+                                          outcome=<finding> attempt=1/1`; a refused
+                                          password stands it down, said once: gave_up=true
+                                          suspended=<account> scope=ping.
+
+  SELF-LOGIN (SPEC_S4c, #285) — a stanza that says userSelfLogin: true
+  ───────────────────────────────────  ─────────────────────────────────────────
+  self-login   the fleet account's     nothing at rest: the session is the credential,
+               own session             renewed at expires_at − min(2 h, ¼ × expires_in):
+                                          `self-login-renewed`. A 401 before expiry logs in
+                                          once more (`self-login-failed reauth=next-cycle`);
+                                          a refused password stops every self-login cluster
+                                          on the account: `fleet-credential-suspended
+                                          suspended=<account> scope=self-login stopped=<n>`.
 ```
 
 ---

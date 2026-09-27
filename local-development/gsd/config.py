@@ -224,12 +224,12 @@ CREDENTIAL_LOOKUP = "remote-lookup"     # saTokenLookup: a ServiceAccount token 
 #: found. It pairs with `self-login` — both say how the credential was got, in two words.
 CREDENTIAL_SELF_LOGIN = "self-login"    # userSelfLogin: the bootstrap account polls as itself
 #: Credential kinds the process cannot resolve yet, each with the reason the poller logs instead of
-#: polling. A kind in this table is never handed to ClusterClient.
+#: polling. A kind in this table is never handed to ClusterClient. `self-login` left it with #285: its
+#: credential is the session the poll thread holds, substituted for each poll (SPEC_S4c §3.6).
 CREDENTIAL_PENDING_REASONS = {
     "oauth": "declares oauth (#119 P2, not built)",
     CREDENTIAL_LOOKUP: "declares saTokenLookup — S3b's lookup has not retrieved a credential yet; the Cluster "
                        "Configurations tab's findings say why when it is late",
-    CREDENTIAL_SELF_LOGIN: "declares userSelfLogin — the self-login mode is S3b's #285, not built; nothing has been obtained yet",
 }
 #: Every key a values stanza may carry. The parser's accepted `config` keys include CONNECTION_KEYS
 #: too, and tests/test_connection_modes.py fails the commit on which the two sets diverge (§4.1).
@@ -299,6 +299,10 @@ class ClusterConfig:
     # is the lookup's own write for that stanza: ClusterRegistry.merge keeps its credential and serves the
     # stanza's policy and `enabled`. None for a values entry and for a Secret that carries no annotation.
     token_source: str | None = field(default=None, repr=False)
+    # The account a lookup-written Secret records it logged in as (`groupsync-dashboard.io/lookup-account`):
+    # the one place that account survives retrieval, which strips the mode keys from a declaring Secret and
+    # never had them on a generated one — so it is what the daily ping is keyed on (SPEC_S4c §3.4).
+    lookup_account: str | None = field(default=None, repr=False)
 
     @property
     def tls_mode(self) -> dict:
@@ -368,9 +372,14 @@ class ClusterConfig:
                 f"cluster {self.name!r}: username/password exchange against the OAuth server is #119 P2, not built"
             )
         if self.connection_mode is not None:
-            # Listed so the tab can say what the stanza declares; obtaining the credential is S3b. The
-            # poller never asks (`credential_pending`), so this is reached only by a direct caller.
-            raise ConfigError(f"cluster {self.name!r}: {CREDENTIAL_PENDING_REASONS[self.credential_kind]}")
+            # Listed so the tab can say what the stanza declares; obtaining the credential is S3b. The poller
+            # never asks: a lookup is pending (`credential_pending`) until its Secret exists, and a self-login
+            # session is substituted as `token_value` for each poll (SPEC_S4c §3.6) — so this is reached only
+            # by a direct caller.
+            reason = CREDENTIAL_PENDING_REASONS.get(self.credential_kind) or (
+                "declares userSelfLogin — S3b's session is its credential, held by the poll thread and never "
+                "resolved from the declaration")
+            raise ConfigError(f"cluster {self.name!r}: {reason}")
         if self.token_file:
             try:
                 token = Path(self.token_file).read_text(encoding="utf-8").strip()
@@ -671,6 +680,10 @@ class Settings:
     # How many replicas the chart runs (ConfigMap `replicaCount`): the lookup refuses to run above one
     # without an elector, because every replica would log in (SPEC_S4 §6; review of #295, P0-2).
     replica_count: int = 1
+    # The daily ping (SPEC_S4c §3.4): one real login-and-read per fleet account per interval, on the
+    # discovery cadence, leader only — `clusterConfig.fleetAccount.ping.{enabled, intervalSeconds}`.
+    fleet_ping_enabled: bool = True
+    fleet_ping_interval_seconds: int = 86400
     cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
@@ -1766,6 +1779,8 @@ def load_settings(path: str | Path) -> Settings:
         sa_token_lookup_service_account=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SERVICE_ACCOUNT", "saTokenLookupSourceServiceAccount", "group-sync-dashboard-cluster-poller"),
         sa_token_lookup_secret_name=_str_setting(raw, "GSD_SA_TOKEN_LOOKUP_SECRET_NAME", "saTokenLookupTokenSecretName", ""),
         replica_count=_num_setting(raw, "GSD_REPLICA_COUNT", "replicaCount", 1, int),
+        fleet_ping_enabled=_bool_setting(raw, "GSD_FLEET_PING_ENABLED", "fleetPingEnabled", True),
+        fleet_ping_interval_seconds=_num_setting(raw, "GSD_FLEET_PING_INTERVAL_SECONDS", "fleetPingIntervalSeconds", 86400, int),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int

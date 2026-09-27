@@ -23,7 +23,7 @@ from gsd.kube import ClusterError
 from gsd.poller import Poller
 from gsd.store import Store
 from test_clusterconfig_tab import _Host, _as_stored
-from test_fleet_lookup import API, PASSWORD, USER, SA_TOKEN, settings, wire  # noqa: F401
+from test_fleet_lookup import API, PASSWORD, UID, USER, SA_TOKEN, settings, wire  # noqa: F401
 from test_fleet_login import login_302, refused_401
 
 STANZA = {"name": "rnd", "apiUrl": API, "saTokenLookup": True, "ldapConnectionBootstrap": USER}
@@ -36,7 +36,7 @@ def cm(entries=None, *, name="fleet", uid="cm-1", label="onboard"):
 
 class Host(_Host):
     def __init__(self, maps=None):
-        password = {"metadata": {"name": "gsd-fleet-account"},
+        password = {"metadata": {"name": "gsd-fleet-account", "uid": UID},
                     "data": {"password": base64.b64encode(PASSWORD.encode()).decode()}}
         super().__init__({"gsd-fleet-account": password})
         self.maps = [cm()] if maps is None else maps

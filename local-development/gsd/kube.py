@@ -21,8 +21,8 @@ from urllib.parse import quote, unquote, urlsplit
 import httpx
 
 from .config import (
-    IDENTITY_SAME_AS_HOST, VISIBILITY_REMOTE_SAR, VISIBILITY_TIER_TTL_DEFAULT, ClusterConfig, ConfigError, Settings,
-    remote_policy,
+    CREDENTIAL_SELF_LOGIN, IDENTITY_SAME_AS_HOST, VISIBILITY_REMOTE_SAR, VISIBILITY_TIER_TTL_DEFAULT, ClusterConfig,
+    ConfigError, Settings, remote_policy,
 )
 
 log = logging.getLogger(__name__)
@@ -1722,8 +1722,11 @@ class RemoteTierResolvers:
 
     def get(self, cluster_id: str) -> TierResolver | None:
         host = self._settings.host_cluster()
+        # A self-login cluster is not askable either (#285): its credential is the poll thread's session, which
+        # this resolver never holds, so the review would present no token at all — it answers self, as it did
+        # while the mode was pending.
         askable = {c.name: c for c in self._settings.effective_clusters()
-                   if c.enabled and c.credential_pending is None
+                   if c.enabled and c.credential_pending is None and c.credential_kind != CREDENTIAL_SELF_LOGIN
                    and (host is None or c.name != host.name)
                    and remote_policy(c.visibility, c.identity) == (VISIBILITY_REMOTE_SAR, IDENTITY_SAME_AS_HOST)}
         cluster = askable.get(cluster_id)
