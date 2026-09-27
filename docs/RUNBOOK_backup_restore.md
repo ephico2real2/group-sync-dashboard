@@ -21,6 +21,72 @@ Everything below uses only what the pod has: `sh`, `cat`, `ls`, `rm`, `chgrp`, `
 NS=group-sync; REL=group-sync-dashboard
 ```
 
+## What a successful backup looks like
+
+Three pictures from the CRC lab (`reports/2026-09-26_epic-b-release/`). The first is the live dashboard pod. The second
+and third come from a throwaway pod that worked on *copies* of a backup, not from the dashboard pod. Each shows the
+pod's own output. The commands are below each picture, and lines not relevant to the picture are left out. `grep` and
+`tail` run on your workstation; the pod has neither.
+
+**The six-hourly backup (the live pod).** The log line names the file and how many are kept, and the listing shows
+that many copies. The §1 check on the newest copy says `integrity_check: ok`, with a `user_version` equal to the
+running app's. Failures are zero, and the last-success metric is the newest file's time. In this capture the metric
+`1.7904500667085032e+09` is 2026-09-26T19:14:26.7Z, the same second as the file `gsd-20260926T191426.213034Z.db`. It
+was taken at 23:02:25Z on application 0.36.0.
+
+![A successful six-hourly backup: the log line, four copies, the §1 check ok at schema 20, zero failures](screenshots/backup-six-hourly-success.png)
+
+```sh
+oc logs -n $NS deploy/$REL -c dashboard | grep 'backup written' | tail -1
+oc exec -n $NS deploy/$REL -c dashboard -- ls -l /data/backup
+oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/metrics").read().decode())' | grep '^gsd_backup'
+```
+
+The picture's `<the §1 check>` block is §1's Python snippet, run on the newest file.
+
+**The pre-upgrade copy (§6).** When a new image finds an older database, its startup log has
+`pre-upgrade copy written before migrating schema <from> -> <to>: <file> (<bytes> bytes, <seconds> s)` before the
+first `schema migration <to> applied` line. `pre-upgrade/` holds the copy and its `.sha256`. The copy matches its
+sidecar, passes `integrity_check`, and keeps the old `user_version`:
+
+![A successful pre-upgrade copy: taken before the migration, one copy with its sidecar, sidecar OK, integrity ok, schema 20](screenshots/backup-pre-upgrade-copy-success.png)
+
+```sh
+oc exec -n $NS deploy/$REL -c dashboard -- ls -l /data/pre-upgrade
+oc exec -n $NS deploy/$REL -c dashboard -- sh -c 'cat /data/pre-upgrade/*.sha256'
+oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c "$(cat reports/2026-09-26_epic-b-release/walk/pre-verify.py)" /data/pre-upgrade
+```
+
+The picture was taken on a copy in a throwaway pod, with a test-only migration 21, so its paths are under
+`/tmp/work/301/`. On the dashboard they are under `/data/pre-upgrade/`, or `/data/<pod-name>/pre-upgrade/` with more
+than one replica. A database already at the image's schema has no `pre-upgrade/` directory, and that is correct.
+
+**A backup proven restorable.** On copies in a throwaway pod, never on the live file:
+- the released app opens the copy with no migration and no new copy;
+- the row counts are the same before and after the open;
+- with polling off, the app serves the copy's groups and their stored changes.
+
+The picture shows these checks, R1 to R4, for the six-hourly backup and for the pre-upgrade copy. Its total, 13, also
+counts the #305 and #301 checks, which are out of frame:
+
+![A backup proven restorable: R1 to R4 on the six-hourly backup and on the pre-upgrade copy; 13 of 13 checks, five of them out of frame](screenshots/backup-restore-check-success.png)
+
+The recipe, as run on the lab. The pod mounts no volume, and the image has no `sleep`, so the pod waits in Python:
+
+```sh
+IMG=$(oc get deploy -n $NS $REL -o jsonpath='{.spec.template.spec.containers[0].image}')
+oc run gsd-restore-check -n $NS --image=$IMG --restart=Never --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"gsd-restore-check","image":"'$IMG'","command":["python3.14","-c","import time; time.sleep(1800)"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
+oc wait -n $NS pod/gsd-restore-check --for=condition=Ready --timeout=120s
+B=$(oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'import glob; print(sorted(glob.glob("/data/backup/gsd-*.db"))[-1])')
+oc exec -n $NS deploy/$REL -c dashboard -- cat "$B" | oc exec -i -n $NS gsd-restore-check -- sh -c 'cat > /tmp/backup.db'
+oc exec -i -n $NS gsd-restore-check -- sh -c 'cat > /tmp/walk_epic_b.py' < reports/2026-09-26_epic-b-release/walk/walk_epic_b.py
+oc exec -n $NS gsd-restore-check -- python3.14 -W ignore /tmp/walk_epic_b.py /tmp/backup.db /tmp/work
+oc delete pod gsd-restore-check -n $NS
+```
+
+The script prints PASS or FAIL for each check, and exits 1 on any failure. Restoring onto the live database is §4, and
+the scripted rollback is #302.
+
 ## 1. Verify a copy without restoring it
 
 Any copy, anywhere. On the dashboard pod (on-volume copies):

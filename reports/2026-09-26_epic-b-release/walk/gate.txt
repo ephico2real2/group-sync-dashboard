@@ -1,0 +1,11 @@
+  validated: b087c78f80b44be68bb40a0c0b44c71b53b069e7 is on main
+  validated again: every file the PR touched is on main
+#409 MERGED b087c78f80b44be68bb40a0c0b44c71b53b069e7
+merge b087c78f80b44be68bb40a0c0b44c71b53b069e7
+publish.yml success run 36281230543
+group-sync-dashboard :0.37.0=sha256:62e231178a3a :0.37.0-b087c78f80=sha256:62e231178a3a MATCH
+group-sync-dashboard-report :0.37.0=sha256:4715d4be2331 :0.37.0-b087c78f80=sha256:4715d4be2331 MATCH
+helm.yaml success
+2026-09-27T00:10:01Z
+
+[exited with code 0]
