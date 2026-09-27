@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Twenty-nine specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Thirty specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The twenty-nine specifications
+## The thirty specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -95,6 +95,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | T2 | [`SPEC_T2_cluster_admin_tier.md`](SPEC_T2_cluster_admin_tier.md) — the cluster-admin tier: `visibility.clusterAdminSar` (`update clusterrolebindings` on the host) gates the KPI page and the whole Cluster Configurations tab, and grants every host tier to whoever passes it; replaces #230's two-level pair | T — tiers | — | app 0.35.0, chart 0.57.0 | [#322](https://github.com/ephico2real2/group-sync-dashboard/issues/322) | released |
 | D2b | [`SPEC_D2b_remote_sar_for_every_join.md`](SPEC_D2b_remote_sar_for_every_join.md) — `remote-sar` for every way a cluster is joined, and `remote-sar` + `same-as-host` the default for a remote (design D1, D2) | D — architecture | — | app and chart minor bumps at the PR | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) | released |
 | U1 | [`SPEC_U1_unmanaged_subjects.md`](SPEC_U1_unmanaged_subjects.md) — the unmanaged finding on ServiceAccount and User subjects: the platform's own (`platformNamespaces`, `is_platform_user`, OpenShift's three per-project controller bindings (two by exact shape, `system:image-pullers` by the `system:` group rule)) built-in, the rest silenced only by the operator's `rbac.ocp.io/config-source` label or the exception annotation on the binding; schema migration 20 | U — unmanaged-grant discovery | — | app 0.33.0, chart 0.54.0 | [#353](https://github.com/ephico2real2/group-sync-dashboard/issues/353) | released |
+| W1 | [`SPEC_W1_rollout_blue_green.md`](SPEC_W1_rollout_blue_green.md) — blue-green with Argo Rollouts, off by default: a Rollout that takes its pods from the Deployment (`workloadRef`, `scaleDown: onsuccess`), so a missing controller leaves the Deployment serving; each version opens its own database, seeded from the running version's newest copy, so the migration runs on green's copy before the switch | W — workload strategy | — | chart 0.60.0 (chart only: no image input changes, so no app version) | [#426](https://github.com/ephico2real2/group-sync-dashboard/issues/426) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
