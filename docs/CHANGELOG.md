@@ -8,7 +8,13 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.38.0 — chart 0.59.2 — 2026-09-27
+
+- **Epic C: keep the shared fleet login account safe (#383).** The fleet account's credential lifecycle (#285,
+  PR #419, `602a1c4`): a durable, replica-shared gate on an account Lease, the daily ping and `userSelfLogin`. The
+  gate per account (#315, PR #416, `ed3edda`); the fleet login consolidated (#291, PR #411, `cbe828b`); a values
+  `apiUrl` carrying userinfo refused (#415, PR #417, `f82a065`); the `OAuthAccessToken` policy (#286, PR #422,
+  `b679701`); and Case G, a retrieved token expiring (#310 Part B, PR #421, `44271d8`). The entries follow.
 
 - **The policy on the `OAuthAccessToken` objects a login leaves on a cluster (#286; chart 0.59.1, docs only).**
   `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` §6, linked from SPEC_S4's orchestrator's notes, describes

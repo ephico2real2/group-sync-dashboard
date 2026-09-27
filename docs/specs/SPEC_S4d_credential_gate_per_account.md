@@ -7,7 +7,7 @@
 | Release | — (post-programme; S4's fourth step, landing ahead of S4c) |
 | Version on release | chart 0.58.7 (docs only: `CLUSTER_CREDENTIALS.md`); the application code has no version of its own and rides the next application release, as #291 does |
 | Issue | [#315](https://github.com/ephico2real2/group-sync-dashboard/issues/315) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's specification of 2026-09-26, written before any code from issue #315 in full (its "Where this stands", "The change", "Must not change" and Definition of Done), the operator's ruling in `docs/specs/SPEC_S4c_credential_lifecycle.md` (orchestrator's notes, and §5 question 7), #293's budget in `docs/specs/SPEC_S5_configmap_onboarding.md` §3.3, and main `cbe828b`, measured on this machine. §6's blocks were cut from a copy of `cbe828b` with the design implemented, and applied back to a clean clone for the proof in §4. No cluster was touched. Revised the same day on the review of `555a7e2` by Grok and Codex Astra, on the orchestrator's decisions (Orchestrator's notes), on a branch that merged main `3d1c237`; §6's blocks were cut again from a copy of that merge with the revised design implemented |
 
 ## How to read this spec
