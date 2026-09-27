@@ -106,8 +106,9 @@ The next ping is due 24 h after that attempt, and this walk did not move it (`ev
 - `local-development/gsd/fleetlookup.py#fleet_password` reads **one** Secret, `settings.fleet_password_secret_*`, for
   every account.
 - `local-development/gsd/poller.py#Poller._ping_accounts` builds its accounts from every retrieved cluster's
-  `lookup_account`. It pings each of them with that one password, and it is due whenever the password's digest
-  differs from the Lease's `ping-digest`.
+  `lookup_account`. It pings each of them with that one password. It is due on its first attempt, when the interval
+  has elapsed, or when the password's digest differs from the Lease's `ping-digest`; the digest case is the one the
+  walk's steps trigger.
 - So `ldapConnectionBootstrap` changes the username, but never the password.
 - Filed as #432 under Epic C. It is a product defect as well as a walk hazard: any estate using two accounts with
   different passwords gets a wrong-password bind on each extra account per password change.
@@ -165,8 +166,15 @@ values:
 
 **Options.** None of these is implemented here; each is the orchestrator's decision:
 - **Walk:** run steps 2–3 in a release or lab where no retrieved Secret records the fleet account.
-- **Product:** a password Secret per account beside `ldapConnectionBootstrap`.
-- **Product:** or ping only the accounts whose password the configured Secret holds.
+- **Product:** a password Secret per account beside `ldapConnectionBootstrap`. This is the only option that closes #432
+  on every path: the ping (`local-development/gsd/poller.py#_ping_accounts`), the lookup
+  (`local-development/gsd/poller.py#_retrieve_pending` → `local-development/gsd/fleetlookup.py#lookup`) and
+  self-login (`local-development/gsd/selflogin.py#credential_for`) all pair the stanza's or the Secret's account with
+  the one configured password.
+- **Product, the ping only:** ping only the accounts whose password the configured Secret holds. This stops the ping's
+  bind as a recorded account, but not the lookup's or self-login's bind as a stanza's `ldapConnectionBootstrap`
+  account. Both present the one password as that account with the ping off (measured:
+  `hermetic/test_432_scope_beyond_the_ping.py`, 2 passed, found by OB1-lite in PR #433's review).
 
 ## What could not be done, and why
 
@@ -222,6 +230,9 @@ Commit this folder first: `release-crc.sh` refuses a tree with anything untracke
    openshift-config/enterprise-and-cluster-ca-bundle> KUBECONFIG=<the lab's> pytest -v -s
    tests/test_live_fleet_login.py`. It asserts n, n+1, n itself. Redact `token_name=` before keeping the output.
 3. **The walk's grants and Secret:**
+   - Precondition, re-checked immediately before the deploy: no enabled cluster Secret or onboarding ConfigMap declares
+     `saTokenLookup` or `userSelfLogin` with `ldapConnectionBootstrap: ocp-oauth-bind-serviceid`. Either would send the
+     walk password as the fleet account through the lookup or self-login, whatever the ping flag says.
    - `oc apply -f reports/2026-09-27_epic-c-walk/prepared/walk-rbac.yaml`.
    - Create `gsd-walk-developer-password` in `group-sync-dashboard` from the variable, with `oc create secret
      generic … --dry-run=client -o yaml`, labelled `walk.gsd.lab/run=epic-c-2026-09-27`.
@@ -255,7 +266,11 @@ Commit this folder first: `release-crc.sh` refuses a tree with anything untracke
   - `hermetic-*.txt` are the three test runs.
   - `rbac-diff-walk-selflogin.txt` is the rendered RBAC diff of the walk values against the Argo shape: REMOVED 1,
     the fleet-account Role's `get` on `ldap-oauth-bind-secret`, which `prepared/walk-rbac.yaml` keeps; ADDED 1.
+    `scripts/rbac_rules.py` diffs Role rules only, not bindings. PR #433's review diffed the effective grants per
+    subject (bindings × rules) for both walk files: REMOVED 1 without `walk-rbac.yaml`, REMOVED 0 with it.
 - `hermetic/test_walk_password_scope.py`: the finding's measurement.
+- `hermetic/test_432_scope_beyond_the_ping.py`: #432 beyond the ping (the lookup and self-login), from PR #433's
+  review. Run from `local-development` with `PYTHONPATH=.:tests:../reports/2026-09-27_epic-c-walk/hermetic`.
 - `scripts/snapshot.sh`, `scripts/capture.sh` and `scripts/rbac_rules.py`: all read-only. Temporary files are
   `mktemp` files, removed on exit. The raw audit log, which holds every user's name, is never kept.
 - `prepared/`: the walk values for steps 4–5 and for #310 Part A, the two temporary grants, and the Argo
