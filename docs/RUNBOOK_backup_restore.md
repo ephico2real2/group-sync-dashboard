@@ -21,6 +21,42 @@ Everything below uses only what the pod has: `sh`, `cat`, `ls`, `rm`, `chgrp`, `
 NS=group-sync; REL=group-sync-dashboard
 ```
 
+## What a successful backup looks like
+
+Three pictures from the CRC lab (`reports/2026-09-26_epic-b-release/`). Each is the pod's own output, unedited,
+rendered from the commands shown in it. If yours looks like these, the copy is good.
+
+**The six-hourly backup.** The log line names the file and how many are kept. The listing shows that many copies.
+The §1 check on the newest one says `integrity_check: ok` and the running app's schema. The metrics show no failures,
+and the last success is the newest file's time:
+
+![A successful six-hourly backup: the log line, four copies, the §1 check ok at schema 20, zero failures](screenshots/backup-six-hourly-success.png)
+
+```sh
+oc logs -n $NS deploy/$REL -c dashboard | grep 'backup written' | tail -1
+oc exec -n $NS deploy/$REL -c dashboard -- ls -l /data/backup
+oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/metrics").read().decode())' | grep '^gsd_backup'
+```
+
+(`tail` and `grep` run on your workstation; the pod has neither. The §1 check is in §1.)
+
+**The pre-upgrade copy (§6).** When a new image finds an older database, the first log line is
+`pre-upgrade copy written before migrating schema <from> -> <to>: <file> (<bytes> bytes, <seconds> s)`. The
+`schema migration <to> applied` line comes after it. `pre-upgrade/` holds the copy and its `.sha256`. The copy
+matches its sidecar, passes `integrity_check`, and keeps the old `user_version`:
+
+![A successful pre-upgrade copy: taken before the migration, one copy with its sidecar, sidecar OK, integrity ok, schema 20](screenshots/backup-pre-upgrade-copy-success.png)
+
+**A backup proven restorable.** This check runs on copies in a throwaway pod, never on the live file. The
+released app opens the copy with no migration and no new copy, the row counts are the same before and after, and
+the app serves it with polling off:
+
+![A backup proven restorable: R1 to R4 on the six-hourly backup and on the pre-upgrade copy, 13 of 13 checks passed](screenshots/backup-restore-check-success.png)
+
+The script is `reports/2026-09-26_epic-b-release/walk/walk_epic_b.py`
+(`python3.14 walk_epic_b.py <copy.db> <work-dir>`). Restoring onto the live database is §4, and the scripted
+rollback is #302.
+
 ## 1. Verify a copy without restoring it
 
 Any copy, anywhere. On the dashboard pod (on-volume copies):
