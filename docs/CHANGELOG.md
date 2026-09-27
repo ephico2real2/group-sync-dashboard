@@ -8,6 +8,15 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Warn when cluster entries share an API URL (#314, Epic D).** Discovery compares effective values,
+  Secret and ConfigMap entries using the credential gate's URL rule. A group is logged once when it
+  appears and once when it clears. `GET /api/clusterconfigs` gains `warnings`, separate from findings;
+  the tab shows a warning banner and a `shared API URL` chip on each affected card. Refused Secrets
+  are excluded. Nothing is refused or deduplicated; polling, counts, alerts and metrics are unchanged.
+  Application **1.3.0**, chart 0.59.4; 1.2.0 is reserved for #311.
+
 ## Application 1.1.0 — chart 0.59.3 — 2026-09-27
 
 - **Epic C's composition review, applied (OB2, Fable; #383).** The daily ping's login now scrubs the poller token this

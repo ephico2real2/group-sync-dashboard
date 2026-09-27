@@ -535,6 +535,16 @@ place a password is ever presented.
 
 ## Reading the log against these pictures
 
+A shared API URL is a warning; every entry keeps its own polling and counts. Discovery logs a group
+once when it appears and once when it clears. Unchanged cycles are silent. If membership changes,
+the old group clears and the new group appears. Refused Secrets never join a group.
+
+```text
+gsd.clusterconfig WARN shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd state=appeared cycle=7
+gsd.clusterconfig INFO shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd state=cleared cycle=9
+```
+
+
 ```text
 gsd.clusterconfig INFO  discovery cycle=7 namespace=gsd seen=4 accepted=3 refused=1 added=ocp-east
 gsd.clusterconfig INFO  cluster-resolved cycle=7 cluster=ocp-east source=secret:gsd-cluster-ocp-east

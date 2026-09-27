@@ -6112,6 +6112,7 @@ function ccTls(c) {
   return t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
 }
 function ccClusterCard(c) {
+  const shared = (data.clusterconfigs.warnings || []).find((w) => w.code === "shared-api-url" && w.clusters.includes(c.id));
   const secretRow = ccSourceKind(c) === "secret";
   const armed = view.clusterDeleteArmed === c.id;
   let foot;
@@ -6134,8 +6135,9 @@ function ccClusterCard(c) {
   const vis = c.visibility ? `<span class="rp-chip">${esc(c.visibility)}</span> <span class="cc-hint">${esc(CC_VIS_MEAN[c.visibility] || "")}</span>` : `<span class="muted">—</span>`;
   const ident = c.identity ? `<span class="rp-chip">${esc(c.identity)}</span> <span class="cc-hint">${esc(CC_ID_MEAN[c.identity] || "")}</span>` : `<span class="muted">—</span>`;
   return `<article class="card cc-cluster" id="cc-cluster-${esc(c.id)}" data-cc-cluster="${esc(c.id)}">
-    <div class="row-wrap"><h2>${esc(c.id)} ${ccSourceChip(c)} ${ccBadge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled")}</h2></div>
+    <div class="row-wrap"><h2>${esc(c.id)} ${ccSourceChip(c)} ${ccBadge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled")} ${shared ? ccBadge("warning", "shared API URL") : ""}</h2></div>
     <div class="cc-kv"><span class="k">server</span><span class="v mono">${esc(c.api_url)}</span></div>
+    ${shared ? `<p class="cc-hint cc-shared-api-hint">Also declared by ${shared.clusters.filter((name) => name !== c.id).map(esc).join(", ")} — each entry is polled and counted on its own.</p>` : ""}
     <div class="cc-kv"><span class="k">credential</span><span class="v">${ccCredential(c)}</span></div>
     <div class="cc-kv"><span class="k">tls</span><span class="v">${ccTls(c)}</span></div>
     <div class="cc-kv"><span class="k">labels</span><span class="v">${ccLabelChips(c.labels)}</span></div>
@@ -6287,6 +6289,7 @@ function clusterConfigPage() {
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
       : `${n.secret} Secret${n.secret === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
     ${ccFleetRows(d.fleet)}
+    ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${w.code === "shared-api-url" ? "Shared API URL." : "Configuration warning."}</strong> ${esc(w.detail)}</div>`).join("")}
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
   const findings = (d.findings || []).map(ccFinding).join("")
     || `<div class="empty-note">No configuration findings. Refused Secrets and ConfigMap stanzas are listed here with their source and reason.</div>`;

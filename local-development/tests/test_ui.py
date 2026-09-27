@@ -7033,6 +7033,50 @@ class TestClusterConfigPage:
         assert page.locator("#cc-cred-oauth").is_disabled() and "#119 P2, not built yet" in page.locator("#cc-oauth-reason").inner_text()
         assert not errors
 
+    @pytest.mark.parametrize("width", [375, 1280])
+    def test_shared_api_warning_banner_chips_and_clear(self, page, cc_rig, width):
+        import dataclasses
+        base, host, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        alias = dataclasses.replace(east, name="shared-qa", source="secret:gsd-cluster-shared-qa")
+        settings.cluster_registry.replace([east, alias], [], at="now")
+        page.set_viewport_size({"width": width, "height": 900})
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        banner = page.locator('#cc-head [data-cc-warning="shared-api-url"]')
+        banner.wait_for()
+        assert "⚠️" in banner.inner_text()
+        assert all(text in banner.inner_text() for text in ("east", "shared-qa", east.api_url))
+        for name, other in (("east", "shared-qa"), ("shared-qa", "east")):
+            card = page.locator(f"#cc-cluster-{name}")
+            assert card.locator(".badge.warning").inner_text() == "shared API URL"
+            assert other in card.locator(".cc-shared-api-hint").inner_text()
+            assert card.locator("[data-cc-rotate], [data-cc-delete]").count() == 2
+        assert page.locator("#cc-cluster-crc-local .cc-shared-api-hint").count() == 0
+        assert "shared API URL" not in page.locator("#cc-findings").inner_text()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        settings.cluster_registry.replace([east], [], at="later")
+        page.reload()
+        page.wait_for_selector("#cc-cluster-east")
+        assert banner.count() == 0
+        assert page.locator(".cc-shared-api-hint").count() == 0
+        assert "shared API URL" not in page.locator("#cc-cluster-east").inner_text()
+
+    def test_shared_api_warning_text_is_escaped(self, page, cc_rig):
+        base, _, _ = cc_rig
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-east")
+        page.evaluate("""() => {
+            data.clusterconfigs.warnings = [{code: 'shared-api-url',
+                clusters: ['east', '<img src=x onerror=alert(1)>'],
+                detail: '<img src=x onerror=alert(1)> declares the same API URL.'}];
+            render();
+        }""")
+        assert page.locator('#cc-head [data-cc-warning] img, .cc-shared-api-hint img').count() == 0
+        assert "<img" in page.locator('#cc-head [data-cc-warning]').inner_text()
+        assert "<img" in page.locator('#cc-cluster-east .cc-shared-api-hint').inner_text()
+
     def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig):
         import dataclasses
         from gsd.clusterconfig.parser import Finding
