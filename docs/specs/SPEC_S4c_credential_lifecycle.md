@@ -8,7 +8,7 @@
 | Version on release | app 0.38.0, chart 0.59.0 |
 | Issue | [#285](https://github.com/ephico2real2/group-sync-dashboard/issues/285) |
 | Status | specified |
-| Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22. Brought to main `f82a065` on 2026-09-26 by OB3 (#285, the implementer's brief): the reference cluster re-measured read-only, the body corrected where it had stopped being true (Orchestrator's notes), and §8's implementation blocks cut from a copy of `f82a065` with the design implemented and applied back to a clean clone for the proof in §8.1 |
+| Source | OB1's design specification of 2026-09-22, written before any code from the business owner's brief, the issue and its eight comments (the fixed-margin correction, the 401 ambiguity, the retraction on the one-year fuse, the inherited replica requirement), `docs/specs/SPEC_S4_token_retrieval.md` §3.1, §6 and §9, `docs/specs/SPEC_S4b_sa_token_lookup.md` (orchestrator's notes R2-5 and R3-2, §6), the review record `docs/REVIEW_S4b.md` ("What is NOT held"), the upstream sources cited in §2, and the reference cluster measured read-only on 2026-09-22. Brought to main `f82a065` on 2026-09-26 by OB3 (#285, the implementer's brief): the reference cluster re-measured read-only, the body corrected where it had stopped being true (Orchestrator's notes), and §8's implementation blocks cut from a copy of `f82a065` with the design implemented and applied back to a clean clone for the proof in §8.1. Rewritten on round 1 of the spec review (PR #419, 2026-09-27: Grok and Codex Astra; OB2's rulings D1–D4) by OB3: the rulings and the accepted findings written into the body and the notes, §8 re-cut and re-measured |
 
 ## How to read this spec
 
@@ -88,8 +88,11 @@ Decisions taken at review, recorded first and then applied:
   Lease carries no `refused` entry after them, a restart with the output missing binds once more (#293's row, unchanged),
   and a ping of an onboarded cluster leaves the spent kind empty.
 - **#291, #293, #315 and #415, accounted for.** #291 consolidated `FleetLogin`'s failure writers; every name this spec
-  cites in `gsd/fleetlogin.py` still exists, and no block touches the file (#283's rules hold by construction: every
-  login is a `FleetLogin` context manager, and a 401 on the revoke is still "not proven gone" — R7 asserts the line).
+  cites in `gsd/fleetlogin.py` still exists. One block now touches the file (round 1, D4): an additive `secrets`
+  input, default empty, that scrubs a self-login renewal's held session tokens from every line `FleetLogin` writes —
+  the lines are emitted inside `FleetLogin`, so nothing outside it can scrub them. Every existing caller and every #283
+  test is unchanged, and #283's rules hold by construction: every login is a `FleetLogin` context manager, and a 401 on
+  the revoke is still "not proven gone" — R7 asserts the line.
   #293's budget table (SPEC_S5 §3.3) is stated per canonical target and per process, and every row is unchanged; the
   Lease adds no row to it (it removes the rebind of a *bound failure* after a restart, which the table never
   counted). #315 is the in-memory half this spec's Lease seeds (above). #415 refuses userinfo, a query and a fragment
@@ -97,7 +100,8 @@ Decisions taken at review, recorded first and then applied:
   Lease entry keeps as evidence cannot carry a URL credential; the API and the lines show it through
   `gsd/fleetlogin.py#_without_userinfo` regardless.
 - **Implementation deviations — each found while implementing, each decided on the reason given.**
-  - *The Lease's digest is salted and slow* (§3.3's YAML and the gate paragraph): `lease_digest` is scrypt salted with
+  - *The Lease's digest is salted and slow* (§3.3's YAML and the gate paragraph; round 1 salts it with the password
+    Secret's uid too, D2): `lease_digest` is scrypt salted with
     the account at the OWASP Password Storage Cheat Sheet's 16 MiB setting (N=2^14, r=8, p=5; measured 112 ms here,
     once per password per process), 64 bits kept — not the gate's sha256 prefix, which the draft named. The
     measurement above is why: `cluster-reader` reads the Lease and not the password, and a fast unsalted prefix on an
@@ -112,9 +116,11 @@ Decisions taken at review, recorded first and then applied:
     `release`. `claim(read, **changes)` writes against the record a decision rests on, so the ping records its attempt
     WITH its claim (`ping-last-attempt`, `ping-last-target`, `ping-digest`) — B3 across replicas and across a crash,
     atomically — and a success releases with `refused` removed; `note_ping` and `clear_other_digests` are those two
-    writes. `lookup(..., lease=None)` takes a claimed Lease: it seeds the gate from it and records a bound answer
+    writes. (Round 1, D1: the attempt is recorded by `reserve()` before the bind, and `complete()` — not the release —
+    removes it.) `lookup(..., lease=None)` takes a claimed Lease: it seeds the gate from it and records a bound answer
     there first; None is the process gate alone, which #284's and #293's own hermetic tests call it with, unchanged.
-  - *The re-read before the bind is dropped* (§3.3's step 3, B1, §2.5's table, §4): the claim's compare-and-swap PUT is
+  - *The re-read before the bind is dropped* (§3.3's step 3, B1, §2.5's table, §4; round 1 puts the reservation in
+    step 3, D1): the claim's compare-and-swap PUT is
     itself the last confirmation, and only the in-memory gate check and the unauthenticated OAuth discovery GET
     separate it from the authorize GET, which a re-read cannot come after (#283's `FleetLogin` owns both requests).
     A re-read would narrow nothing measurable, so B1's residual is restated as the window it is.
@@ -163,6 +169,100 @@ Decisions taken at review, recorded first and then applied:
   chart 0.51.0 had already shipped (#307), and main was at 0.52.1 (#317). SPEC_D2b's implementation (#338) took
   those two rungs first and SPEC_U1 (#353) the next (app 0.33.0, chart 0.54.0); the rungs after were taken too (the
   first bullet below lists them). This spec carries **app 0.38.0, chart 0.59.0**, the header's and the index's pair.
+- **Round 1 of the spec review, on `1d38c67` (PR #419, 2026-09-27): Grok and Codex Astra, and OB2's rulings on the four
+  disputed findings.** Both reviewers confirmed the ping (20 clusters, one authorize per interval, the stand-down, the
+  read by name, no rewrite of a working Secret), RBAC REMOVED 0 in all eight renders with the only-write test unchanged,
+  the renewal margin with an injected clock, #283 intact, no names in the metrics, and instants in the page. The
+  decisions, each with its reason and measurement, then the deviations OB3 made while writing them in; §8 is re-cut
+  from a copy of `f82a065` with all of it implemented, and §8.1–§8.3 re-measured on the applied tree.
+  - **F1 (both), settled by OB2 as D1: the attempt is recorded before the wire.** Measured by both reviewers and again
+    here: a process that dies after the authorize GET, or whose refusal write the API server rejects, left the account
+    ungated, and a restart sent the password again — 2 authorizes; so did a second replica taking the claim over while
+    the first's authorize was in flight (clock skew larger than `claim_seconds`). The fix is OB2's: the ONE `refused`
+    entry is written first, marked `uncertain`, by a strict compare-and-swap against the claim's own resourceVersion
+    (`FleetLease.reserve`) — a 409 abandons the attempt as ClaimHeld and is never re-applied, because re-applying is
+    how Grok's `presented` annotation still let a second process reach the wire; any other failure is
+    FleetStateUnavailable and nothing binds. A session, or a failure provably before the password was written, removes
+    it (`FleetLease.complete`, right after `FleetLogin.__enter__`, so #293's post-bind read or write failure never
+    becomes an account-wide refusal); a bound answer replaces it (`refuse`, unchanged). One key, so `gated()`, `view()`,
+    the metric and §5 Q7's clear procedure all see a crash-gated account unchanged. An ABSENT Lease is still created by
+    the first claim — hands-free; Codex's fail-closed-on-absence is **rejected**: it makes the install two steps, and
+    OB2 measured on the lab that only principals who can already read the password Secret can delete a Lease. Measured
+    here (§8.1, §8.2), 74 blocks → these: crash 2 → 1, lost write 2 → 1, a takeover while the authorize is in flight
+    or before the refusal lands 2 → 1 each (a takeover at the reservation: 1 → 1 — the 74 blocks write none, so
+    there was nothing to take over), the paused winner 2 → 1, first install 1 → 1. B1's "one extra bind per paused
+    winner" is no longer a residual. **What it leaves, measured and stated in §4:** a holder paused past
+    `claim_seconds` AFTER its reservation whose attempt then gets a session. The process that took over is gated by
+    the reservation (no second bind), but the success's removal meets the 409 and is dropped, as ruled (`complete()`
+    goes through `_put`, which never erases an entry it cannot prove its own), so the `uncertain` entry stays: the
+    account is gated and, through D3's sweep, its valid self-login sessions stop, until §5 Q7's clear — measured on a
+    scratch test, not shipped. The safe direction. A narrower removal — on a 409, drop the entry only when it is
+    byte-for-byte this attempt's reservation — is left to round 2, not written in.
+  - **F2 (Codex), accepted: #293's SPENT mark is not an account refusal.** Self-login's acquisition and the read-only
+    ping asked `CredentialGate.answered()`, which returns #293's per-target success mark too: in the process that
+    onboarded a cluster, a self-login cluster on the same target was suspended and the ping of that target was
+    silenced. Grok's C3 passed only because its test built a fresh Poller. `CredentialGate.account_refusal` returns
+    the REFUSED kind alone; self-login and `lookup(write=False)` ask it; a writing lookup keeps the combined gate.
+  - **F3 (both), accepted: no `IndexError` on an account with no ping target.** An account whose only clusters are
+    self-login or pending has no ping target, and an unreadable Lease raised `IndexError` on `names[0]`, aborting the
+    sweep for every later account. The unavailable-state finding now goes to every enabled cluster in use on the
+    account (Codex's shape). OB3's addition: those findings sit in a registry slot of their own, `lease`, cleared by the
+    next successful read — in the 74 blocks the same finding sat in the `ping` slot, which only a successful PING
+    clears: up to a day after the Lease became readable again at the default interval, and never with the ping off.
+  - **F4 (Codex), settled by OB2 as D2: scrypt salted with the account AND the password Secret's `metadata.uid`,
+    compared with `hmac.compare_digest`.** The oracle is real: `ping-digest` fingerprints the VALID password every day,
+    on an object `cluster-reader` reads, and OB2 measured on the lab `get leases` yes and `get` on the password Secret
+    no for `cluster-reader` (a user and the `system:cluster-readers` group); a candidate computed from the account and a
+    guess matched the stored fingerprint with the account salt, and did not with the uid added, at the same 112 ms. The
+    uid is read by the one GET `fleet_password` already makes — no grant, Secret, env or mint — and only whoever reads
+    the Secret can read it. Codex's minted HMAC key (and its key tests) is **not adopted**: stronger, not required, and
+    a lost key would gate every account. A Secret without a uid (no API server serves one) is `fleet-credential-missing`
+    rather than a digest salted with less; the test fakes now carry a uid. Price, stated in §4: deleting and
+    recreating the password Secret (a new uid) re-arms the gate once. The ruling's examples of a recreation, `helm
+    upgrade --force` and Argo CD's `Replace=true`, are corrected against their own documents: Helm 3's `--force`
+    replaces with a PUT (the table in helm/helm#7431) and `Replace=true` is `kubectl replace` or `create` (Argo CD's
+    sync-options page), so both keep the uid; a delete and a create changes it — `kubectl replace --force`, or Argo
+    CD's `Force=true,Replace=true`, which that page says syncs with `kubectl delete/create` — and the chart does not
+    render that Secret at all. OB3's addition: `gated()` treats a stored digest
+    that is not an ASCII string as unreadable — it gates every password — because `hmac.compare_digest` raises on a
+    non-ASCII string.
+  - **F5 (Codex), settled by OB2 as D3: "stops" holds whichever path or replica wrote the entry.** In the 74 blocks a
+    refusal the lookup or the ping met left the account's VALID self-login sessions polling until their renewal — a
+    year on the lab. The account sweep that already reads every Lease each discovery cadence now observes it on the
+    leader: an entry for the configured password seeds the process's gate and calls
+    `SelfLoginSessions.suspend_account`, which is idempotent, so the line is said once. One observation point, not
+    Codex's three call sites. Latency: a lookup's refusal on this replica, the same discovery cycle; the ping's own, or
+    another replica's, the next cadence (300 s by default). The price, under §5 Q7: one flaky target's 500 now stops
+    the account's valid self-login sessions within a cadence. **OB3's deviation from the prototype, found while
+    writing it in:** the sweep reads the Lease outside any claim, so an `uncertain` entry under a LIVE claim may be an
+    attempt still under way — on another replica, or on this one's self-login poll thread — and the prototype read it
+    as a refusal: it suspended the account's sessions and seeded this process's gate, and when that attempt then got a
+    session the suspension and the gate stayed until a rotation or a restart. Measured: on OB2's prototype
+    `test_d3_an_attempt_in_flight_on_another_replica_is_not_read_as_a_refusal` fails (`'suspended' == 'current'`); here
+    it passes. The rule is one line: while a live claim holds the account, the sweep leaves it — view, observation and
+    ping — for the next read (`FleetRecord.in_flight`, which `claim()` now uses too).
+  - **F6 (Codex), settled by OB2 as D4: a held session token echoed by the remote.** The renewal's authorize GET carries
+    only the fleet account's basic credentials and the CSRF header (measured: 0 of 2 authorize requests carry the held
+    token), so only the issuing OAuth server can echo one; when it did, the token reached `fleet-login-failed` and the
+    `self-login-suspended` finding the API serves. `FleetLogin` gains an additive `secrets` input (default empty: every
+    caller and every #283 test unchanged), carrying the tokens of every session the process holds, and `_suspend`
+    redacts the finding like the line. This is the one block in `gsd/fleetlogin.py`; #283's rules — a login is a
+    `FleetLogin` context manager, a 401 on the revoke is "not proven gone" — are untouched.
+  - **F7 (Codex), rejected here:** a namespaced Role for the election-off grant is narrower, but the same cluster-wide
+    rule already exists with election on; namespacing both is a separate hardening issue, not this spec's.
+  - **F8 (Codex), accepted: behavioural regression tests** — the ones OB2 named under each ruling (adapted to assert,
+    OB2's printed), Codex's `test_spent_success_does_not_suspend_self_login_account`,
+    `test_ping_ignores_onboarding_spent_mark_in_same_process` and `test_ping_read_failure_with_no_retrieved_targets`,
+    and Codex's `test_lookup_refusal_stops_existing_self_login` run in the discovery cycle's order. Codex's
+    `test_absent_lease_is_closed` and `test_durable_budget[deleted]` encode the rejected fail-closed-on-absence and are
+    not adopted. §8.1 runs every round-1 test against three trees: the 74 blocks (16 of 16 fail — fifteen on the
+    behaviour, the in-flight case on the missing `reserve()`, since there is no reservation there to misread), OB2's
+    prototype (4 fail: the in-flight case and F2's and F3's three) and this spec's blocks (16 pass).
+  - **Grok's note:** `values.yaml`'s clusters comment still said "A userSelfLogin stanza is still pending (#285)";
+    corrected.
+  - **What no longer happens:** a release no longer carries `refused=None` after a success. `complete()`, right after
+    the session exists and inside the claim, is the one removal (the reservation had already replaced any older
+    password's entry), so the release's own removal was redundant.
 
 ## 0. The requirement, in business terms
 
@@ -433,7 +533,7 @@ read: absence means never, not zero"* — and `gsd_backup_last_success_timestamp
 | | |
 |---|---|
 | the durable, replica-shared object | **one Lease per fleet account** in the release namespace: `gsd-fleet-<sha256(username)[:16]>`, labelled `groupsync-dashboard.io/lease-type: fleet-account`, annotated with the account. Its `spec` is the **claim** (who may bind as this account right now); its annotations are the **gate** (which (account, password) must not be presented again, from whichever target answered; the target is evidence, not the key) and the **ping's bookkeeping** (last attempt, last ok, last outcome, last target, and the password the last attempt was for) |
-| who takes the claim | every code path that can put the password on the wire: #284's lookup, this spec's ping, a `self-login` acquisition or renewal. **No claim, no bind** — fail closed |
+| who takes the claim | every code path that can put the password on the wire: #284's lookup, this spec's ping, a `self-login` acquisition or renewal. **No claim, no bind** — fail closed; and inside the claim, the attempt is recorded on the Lease before the password is sent (round 1, D1) |
 | the daily ping | `fleetlookup.lookup(cluster, settings, host_client, own_namespace=…, gate=…, write=False, lease=…)` against **one** target per account per cadence, on the discovery thread, leader only; the result is read for `sa_token.last_used` and dropped; the login's token is revoked by the session |
 | once per credential per day | the ping's due-ness is read from the account Lease (`ping-last-attempt`), not from memory: a restart, a second replica and twenty clusters on one account all see the same instant |
 | stands down on a refusal | before binding, the ping reads the gate on the Lease; any entry for this (account, password digest) — a 401 refusal *or* a bound-and-failed answer such as a locked account's 500 — stands it down until the password changes or the entry is cleared, said once with `gave_up=true` |
@@ -451,23 +551,34 @@ read: absence means never, not zero"* — and `gsd_backup_last_success_timestamp
 - **B1 — one claim holder per account at a time, across every replica and restart.** *Held by* the
   CAS on `gsd-fleet-<account>`: a PUT with the `resourceVersion` just read; 409 means someone else
   won, and the loser does not bind. Scope: **the estate**, arbitrated by the API server. Residual,
-  stated: a holder paused past `claim_seconds` (§3.3) can still bind after its claim was judged
-  expired and re-taken — one extra bind per pause, never a walk. The claim's own compare-and-swap is
-  written immediately before the bind: only the in-memory gate and the OAuth discovery GET lie between it
-  and the authorize GET. When the paused holder resumes, its bound answer is re-applied to the Lease as
-  it now is and the claim that took over is left standing.
+  stated: a holder paused past `claim_seconds` (§3.3) could bind after its claim was judged expired and
+  re-taken. Round 1 (D1) closes it: the attempt's reservation is a strict compare-and-swap against the
+  claim's own resourceVersion, so a paused holder's reservation meets the 409 of the claim taken over and
+  the attempt is abandoned — **+0, measured at three interleavings** (a takeover before the reservation,
+  while the authorize is in flight, before the refusal: 1, 1, 1 authorize) and for the paused winner (1).
+  A holder that resumes after its reservation still sends the password — once, because the process that
+  took over is gated by that reservation. A refusal is then re-applied to the Lease as it now is, and the
+  claim that took over is left standing; a session's removal is dropped, and the reservation gates the
+  account until §5 Q7's clear (§4).
 - **B2 — at most one *answered* failed authorize per (account, password) until the password
   changes, across every target, replica and restart.** *Held by* the account entry on the Lease
   (`refused`, §3.3): every `LoginError.bound` answer (`gsd/fleetlogin.py#LoginError`) — a 401, and a
   500 alike, since a locked account's code 19 arrives as a 500 that cannot be told from a sick
   target's (SPEC_S4a §3.1) — is recorded there **before** the finding is raised, and every bind path
   (the lookup, the ping, a `self-login` acquisition) reads it **inside** the claim before building a
-  `FleetLogin`. The target that answered is recorded as evidence; it is not part of the key (#315: a
+  `FleetLogin`. Since round 1 (D1) the attempt itself is written there first, marked `uncertain`, before
+  the password is on the wire: a crash, or an answer whose write the API server rejects, leaves the
+  account gated rather than open. The target that answered is recorded as evidence; it is not part of
+  the key (#315: a
   lockout is per directory account). Scope: **the estate**, as long as the Lease is readable.
   Residuals: if the Lease cannot be written (RBAC absent), the write is refused and **no bind happens
   at all** (fail closed, §3.3) — the in-memory `CredentialGate` is then the only memory and the finding
-  says so; and a 500 from one sick target stops every target of the account until the password rotates
-  or the entry is cleared — the price the operator chose over walking a locked account (§5, question 7).
+  says so; a 500 from one sick target stops every target of the account until the password rotates
+  or the entry is cleared — the price the operator chose over walking a locked account (§5, question 7);
+  a crash between the reservation and the answer leaves the account GATED (an over-block) until §5 Q7's
+  clear or a rotation — the safe direction; the entry removed by hand, or the Lease deleted, is **+1 per
+  act**, an operator's act by a principal that can already read the password Secret (OB2, measured on the
+  lab); and the password Secret deleted and recreated (a new uid, D2) is **+1**.
 - **B3 — at most one ping bind per (account, password) per `fleetPingIntervalSeconds`, across
   replicas and restarts.** *Held by* `ping-last-attempt` and `ping-digest` on the Lease, written WITH
   the claim, on the read the decision rests on (a 409 means another replica decided first). Twenty clusters on one account are one bind, because the ping is keyed on the account
@@ -493,7 +604,8 @@ against its lockout threshold, whose value and reset window this lab cannot meas
 | one target | **1** | the first bound answer writes the account entry; nothing binds again until the password changes |
 | T targets sharing one account | **1** | the entry is the account's: the other T − 1 read it inside their claim and stand down (B1 serialises them, B2 stops them) |
 | after a restart | **+0** | the entry is on the Lease; the new pod reads it before its first claim; `ping-last-attempt` keeps the ping off |
-| two replicas | **+0**, plus at most one per paused winner (B1's residual) | the CAS admits one claimant; the loser reads the entry the winner wrote |
+| two replicas | **+0** | the CAS admits one claimant; the loser reads the entry the winner wrote; a claim taken over mid-attempt abandons the attempt at its reservation (round 1, D1) |
+| a crash after the authorize GET, or the answer's write rejected | **+0** | the reservation was on the Lease before the password was sent (round 1, D1; measured §8.2) |
 
 Never "at most N per cluster": whatever the number of clusters on the account, a wrong or locked
 password is presented to the directory once.
@@ -514,9 +626,11 @@ metadata:
     groupsync-dashboard.io/account: ocp-oauth-bind-serviceid
     # THE GATE: ONE entry per account (§3.2 B2) — the last bound failure for this (account, password),
     # from whichever target answered; `target` (as httpx canonicalises it, R3-1) is evidence, not the key.
-    # `digest` is 64 bits of scrypt salted with the account (`gsd/fleetstate.py#lease_digest`), NOT the
-    # sha256 prefix CredentialGate keeps in memory: cluster-reader reads Leases (R3-2's rule holds: a
-    # collision over-blocks, never binds). A rotated password is a different digest and does not match.
+    # Written first as the attempt's RESERVATION, `"uncertain": true`, before the password is on the wire
+    # (round 1, D1); the answer replaces it, a session removes it. `digest` is 64 bits of scrypt salted with
+    # the account AND the password Secret's uid (`gsd/fleetstate.py#lease_digest`, round 1, D2) — the one
+    # input a Lease reader cannot see — NOT the sha256 prefix CredentialGate keeps in memory (R3-2's rule
+    # holds: a collision over-blocks, never binds). A rotated password is a different digest and does not match.
     groupsync-dashboard.io/refused: '{"digest": "9f2a…", "at": "2026-09-22T14:03:11Z", "code": "login-refused", "target": "https://api.crc.testing:6443"}'
     # THE PING'S BOOKKEEPING — instants, never ages.
     groupsync-dashboard.io/ping-last-attempt: "2026-09-22T06:00:04Z"
@@ -554,7 +668,7 @@ class FleetRecord:
     resource_version: str | None
     holder: str
     holder_until: datetime | None          # renewTime + leaseDurationSeconds, or None when unheld
-    refused: dict | None                   # {digest, at, code, target}: the account entry; target is evidence
+    refused: dict | None                   # {digest, at, code, target[, uncertain]}: the account entry; target is evidence
     ping_last_attempt: datetime | None
     ping_last_ok: datetime | None
     ping_last_outcome: str | None
@@ -562,7 +676,10 @@ class FleetRecord:
     ping_digest: str | None
 
     def gated(self, digest: str) -> dict | None:
-        """The account entry when its digest matches, whatever the target — every bind path's rule (B2)."""
+        """The account entry when its digest matches, whatever the target — every bind path's rule (B2) —
+        compared with `hmac.compare_digest`; an unreadable digest gates every password."""
+    def in_flight(self, now: datetime) -> bool:
+        """A live claim holds the account: an `uncertain` entry may be an attempt still under way."""
 
 
 class FleetLease:
@@ -578,19 +695,24 @@ class FleetLease:
         """ONE write with the resourceVersion of `read` (the record a decision rests on) or of a fresh
         read: a live claim — anyone's, this process's included — or a 409 is ClaimHeld (a free,
         silent outcome). `changes` ride the same write: the ping's attempt is recorded with its claim."""
+    def reserve(self, target: str, digest: str) -> None:
+        """The attempt, before the wire: the account entry marked `uncertain`, a STRICT compare-and-swap
+        against the claim's own resourceVersion — a 409 is ClaimHeld, never re-applied (round 1, D1)."""
+    def complete(self) -> None:
+        """A session, or a provably unbound failure: the entry goes. Never raises; a 409 drops the removal."""
     def refuse(self, target: str, digest: str, code: str) -> None:
         """The account entry, one CAS write while holding; `target` is evidence, not the key. Never raises."""
     def release(self, **changes) -> FleetRecord | None:
-        """holder="" with any last changes (`refused=None` after a success retires an older password's
-        entry); never clears a claim that was taken meanwhile; never raises."""
+        """holder="" with any last changes; never clears a claim that was taken meanwhile; never raises."""
 
 
 class ClaimHeld(Exception):
     """Another holder's claim is live, or the Lease changed since the read. Not a failure: next cycle."""
 
 
-def lease_digest(account: str, password: str) -> str:
-    """scrypt(password, salt=account, N=2^14, r=8, p=5), 64 bits — the Lease's fingerprint."""
+def lease_digest(account: str, password: str, salt: str) -> str:
+    """scrypt(password, salt=(account, the password Secret's uid), N=2^14, r=8, p=5), 64 bits — the Lease's
+    fingerprint (round 1, D2)."""
 
 
 def claim_seconds(settings) -> int:
@@ -602,34 +724,42 @@ def claim_seconds(settings) -> int:
 **The protocol every bind path follows, in this order and no other:**
 
 1. `record = lease.claim()` — CAS; `ClaimHeld` → stop, silently, try next cycle.
-2. `record.gated(lease_digest(account, password))` — the account entry, the same rule on every path
+2. `record.gated(lease_digest(account, password, uid))` — the account entry, the same rule on every path
    (B2): when it matches, it SEEDS the process's gate (`CredentialGate.refuse`, the answering target as
-   evidence), and the process's gate is asked as it is today → a gated credential is a free refusal
-   (`LookupRefused(..., gated=True)`, R3-2's shape), said once with `gave_up=true`, and the claim is released.
-3. *(The draft's re-read of the Lease here is dropped — Orchestrator's notes: the claim's own
-   compare-and-swap is the last confirmation, written immediately before the bind.)*
-4. Bind: build `FleetLogin` (`gsd/fleetlogin.py#FleetLogin`), run the caller's body.
+   evidence), and the process's gate is asked — the combined gate by a writing lookup, the REFUSED kind
+   alone (`CredentialGate.account_refusal`) by self-login and the read-only ping (round 1, F2) → a gated
+   credential is a free refusal (`LookupRefused(..., gated=True)`, R3-2's shape), said once with
+   `gave_up=true`, and the claim is released.
+3. **The reservation** (round 1, D1; the draft's re-read here is gone): `lease.reserve(target, digest)` —
+   the account entry marked `uncertain`, a strict compare-and-swap against the claim's own resourceVersion.
+   A 409 → `ClaimHeld`: the claim was taken meanwhile, and this attempt is abandoned, never re-applied; any
+   other failure → `FleetStateUnavailable`, and nothing binds.
+4. Bind: build `FleetLogin` (`gsd/fleetlogin.py#FleetLogin`), run the caller's body. A session →
+   `lease.complete()` at once, before the read (so #293's post-bind read or write failure never becomes an
+   account-wide refusal); a failure provably before the password was written → `lease.complete()` too.
 5. On `LoginError.bound` → `lease.refuse(target, digest, code)` — the account entry,
    with the answering target as evidence — **before** the finding is raised — the durable write comes first, the in-memory `CredentialGate.refuse` second, so a crash
    between the two loses the cheap copy, never the durable one.
-6. `lease.release()` in a `finally` — with `refused=None` after a success, which retires an entry an
-   older password left.
+6. `lease.release()` in a `finally`, with no removal of its own: `complete()`, in step 4, is the one
+   removal (the reservation had already replaced any older password's entry).
 
 `gsd/fleetlookup.py#CredentialGate` stays as the **cache**, and the relation is exact. Its REFUSED kind is
 keyed on (the exact configured username, sha256(password)[:16]) and gates every target (#315,
 `docs/specs/SPEC_S4d_credential_gate_per_account.md`); its SPENT kind is keyed on (canonical target,
 username, digest) and is written only by #293's success mark (SPEC_S5 §3.3). The Lease holds one
 `refused` entry per account and nothing else of the gate: it SEEDS the refused kind whenever a bind path
-claims it (step 2) and EXTENDS it across restarts and replicas (step 5 writes the Lease first). The
+claims it (step 2) and EXTENDS it across restarts, crashes and replicas (steps 3 and 5 write the Lease first). The
 spent kind is never read from or written to the Lease — a success records nothing there — so #293's
 per-target success mark never becomes an account-wide refusal. Its docstring's sentence *"A restart or a
 second replica starts empty — not covered until #285's account Lease, which this becomes the cache of
 (SPEC_S4c §3.3)"* is replaced by "It is the cache of the account Lease's gate (SPEC_S4c §3.3): every bind
-path claims the Lease first and seeds the REFUSED kind from the Lease's entry, and a bound answer is
-written to the Lease before it is written here — so a restart and a second replica read it while the
-Lease is writable, and this is the only copy when it is not. The SPENT kind is never on the Lease."
+path claims the Lease first, seeds the REFUSED kind from the Lease's entry, and records its attempt there
+before the password is sent; a bound answer replaces that record before it is written here — so a restart,
+a crash and a second replica read it while the Lease is writable, and this is the only copy when it is not.
+The SPENT kind is never on the Lease, and self-login and the read-only ping ask for the REFUSED kind alone
+(`account_refusal`)."
 
-**Fail closed, and what it looks like.** `FleetStateUnavailable` on `claim()` or `refuse()` is the
+**Fail closed, and what it looks like.** `FleetStateUnavailable` on `claim()`, `reserve()` or `refuse()` is the
 finding `fleet-state-unavailable` (free, announced on transition, rechecked every cycle), with
 `action=` naming the grant — *grant get/create/update on coordination.k8s.io/leases in <namespace> to
 <serviceaccount> (the chart renders it under leaderElection.enabled or a fleet account in use)* — and
@@ -689,6 +819,14 @@ def _ping_accounts(self) -> None:
   (§3.10) as it is on the Lease — an ISO-8601 UTC instant. Never an age in a server string
   (`absolute-instants-in-server-text`, the operator's ruling).
 
+**Any path's entry, observed (round 1, D3).** On the leader, an entry on the account's Lease for the
+configured password — whichever path or replica wrote it — seeds the process's gate and stops the account's
+self-login clusters through `SelfLoginSessions.suspend_account`, idempotent, so the line is said once:
+a lookup's refusal on this replica within the same discovery cycle, the ping's own or another replica's at
+the next cadence. The sweep reads the Lease outside any claim, so while a LIVE claim holds the account
+(`FleetRecord.in_flight`) its `uncertain` entry may be an attempt still under way: the account — view,
+observation and ping — is left for the next read, and its last view stands.
+
 **Restart, and standbys.** On `start()`, the discovery thread is woken at once, and **every** replica
 reads every account's Lease (`FleetLease.read`, no claim) into `RuntimeSignals`, and re-reads them on every
 discovery cadence (one GET per account per `discoveryIntervalSeconds`, no claim, no write) — so
@@ -747,7 +885,10 @@ class SelfLoginSessions:
 **Acquisition** (first cycle, and every renewal) runs §3.3's protocol against the account's Lease —
 `gated(digest)`, the account entry every path reads (B2): a failure written by any target parks
 this acquisition too, after a restart and on another replica alike (R2-1 is reversed by the operator's
-ruling, Orchestrator's notes) — then `FleetLogin(cluster, account, password, timeout=…, policy=ONE_ATTEMPT).__enter__()`
+ruling, Orchestrator's notes); #293's per-target success mark does not (`account_refusal`, round 1, F2) — then
+the reservation and `FleetLogin(cluster, account, password, timeout=…, policy=ONE_ATTEMPT, secrets=<every session
+token this process holds>).__enter__()`: the renewal's authorize GET carries none of those tokens, but the issuing
+OAuth server may echo one, and `FleetLogin` scrubs them from every line it writes (round 1, D4)
 — one attempt, because the poll interval is the retry (SPEC_S3 §9.3.1). On success the
 **new** state replaces the old and the old `FleetLogin.__exit__` runs, so the superseded token is
 revoked *after* its replacement exists; the poll never runs without a credential, and the token cache
@@ -780,12 +921,15 @@ revoke path keeps #283's rule untouched: a 401 on the DELETE is `fleet-logout-fa
 gone".
 
 **Suspension.** A bound failure on any `self-login` acquisition for account *A* — or a gate entry
-for *A*'s password met by one — calls `_suspend` for *A*: every `self-login` cluster on *A* has its session exited (revoked), its thread
+for *A*'s password met by one, or an entry any other path or replica wrote, observed by the account sweep
+within a discovery cadence (§3.4; round 1, D3) — calls `_suspend` for *A*: every `self-login` cluster
+on *A* has its session exited (revoked), its thread
 parked (it keeps checking the gate each cycle at no cost and resumes when the digest changes), a
 standing finding `self-login-suspended` on the registry, and its `poll_outcome` recorded once as
 `auth_failed` for a `login-refused` (the password *was* presented and refused — truthful, and it
 turns the Overview card critical, which is what "an outage, not a warning" means on this page) or
-`unreachable` with the code for any other bound answer. The line:
+`unreachable` with the code for any other bound answer. The finding is redacted with the same values as
+the line (round 1, D4). The line:
 
 ```
 fleet-credential-suspended phase=credential outcome=<login-refused|login-failed> account=<A> suspended=<A> scope=self-login stopped=<n> clusters=<a,b,c> target=<the one that answered> action="every self-login cluster on this account stopped polling: rotate the fleet password Secret or correct ldapConnectionBootstrap, or check the account is not locked; the gate on Lease gsd-fleet-… re-arms when the password changes"
@@ -805,13 +949,14 @@ cluster carries `self-login-lifetime-too-short` naming both numbers and the fix 
 |---|---|
 | `gsd/fleetstate.py` | **new** — §3.3 |
 | `gsd/selflogin.py` | **new** — §3.6 |
-| `gsd/fleetlookup.py` | `lookup()` gains `lease`, a `FleetLease` its caller has claimed: the Lease's entry seeds the gate, and a bound answer is recorded there before the gate (§3.3, steps 2 and 5); `CredentialGate` becomes the seeded cache (its docstring); `LookupRefused` gains nothing — `FleetStateUnavailable` carries its fields (§3.3) |
+| `gsd/fleetlookup.py` | `lookup()` gains `lease`, a `FleetLease` its caller has claimed: the Lease's entry seeds the gate, the attempt is reserved before the wire and completed after a session, and a bound answer is recorded there before the gate (§3.3, steps 2–5); `fleet_password` returns the Secret's uid with the password; `CredentialGate.account_refusal`; `CredentialGate` becomes the seeded cache (its docstring); `LookupRefused` gains nothing — `FleetStateUnavailable` carries its fields (§3.3) |
+| `gsd/fleetlogin.py` | the additive `secrets` input (round 1, D4): scrubbed with the password, never sent; default empty |
 | `gsd/poller.py` | `_ping_accounts()`; `_retrieve_pending()` claims the account's `FleetLease` around `lookup()`; `_run_cluster` consults `SelfLoginSessions` before `poll_once` and reports after it, and stops the session on the thread's way out; `start()` wakes discovery for the Lease reads and no longer skips `self-login`; `_reconcile_threads` likewise |
 | `gsd/config.py` | `fleet_ping_enabled`, `fleet_ping_interval_seconds`; `CREDENTIAL_PENDING_REASONS` drops `self-login`; `resolve_token()`'s message for the mode; `ClusterConfig.lookup_account` |
 | `gsd/clusterconfig/reader.py` | records a lookup-written Secret's `lookup-account` annotation on the cluster (§3.4) |
 | `gsd/kube.py` | `RemoteTierResolvers` leaves a self-login cluster unaskable, as while it was pending (Orchestrator's notes) |
 | `gsd/clusterconfig/__init__.py` | the three codes join `FINDING_CODES` |
-| `gsd/clusterconfig/registry.py` | `set_standing_finding(slot, cluster, finding)` and `prune_standing` — the ping's and self-login's own standing slots, merged into `findings()` (§3.4) |
+| `gsd/clusterconfig/registry.py` | `set_standing_finding(slot, cluster, finding)` and `prune_standing` — the ping's, the Lease read's and self-login's own standing slots, merged into `findings()` (§3.4) |
 | `gsd/metrics.py` | the three families of §3.9; `RuntimeSignals.note_fleet_accounts`, `note_self_login` |
 | `gsd/api.py` | the `fleet` block and the per-cluster `session` block on `/api/clusterconfigs` (§3.10) |
 | `gsd/static/index.html` | the two rows (§3.10) |
@@ -953,6 +1098,18 @@ result before and after.
 - **#293:** `test_293s_success_mark_stays_per_target_and_off_the_lease` — two successful ConfigMap
   onboardings on one account are two authorizes with the Lease in the loop; the Lease records no refusal;
   a restart with the output missing binds once more; the ping writes no success mark.
+- **Round 1 (#419), each a behaviour the 74-block version failed (§8.1):** D1 —
+  `test_d1_the_budget_survives_a_lost_refusal_write_and_a_crash`, `test_d1_clock_skew_does_not_admit_a_second_bind`,
+  `test_d1_skew_takeover_at_each_point_of_the_attempt[reservation|authorize|refusal]`,
+  `test_d1_a_paused_winner_resumes_after_the_takeover_and_does_not_bind`; D2 —
+  `test_d2_the_comparison_uses_compare_digest_and_a_secret_without_a_uid_is_refused` and R2's digest test
+  (differs by account and by uid); D3 — `test_d3_a_lookup_refusal_stops_a_valid_self_login_session_within_the_same_cycle`,
+  `test_d3_another_replicas_refusal_stops_this_replicas_valid_session_within_one_cadence`,
+  `test_lookup_refusal_stops_existing_self_login` (Codex's, run in the cycle's order) and
+  `test_d3_an_attempt_in_flight_on_another_replica_is_not_read_as_a_refusal`; D4 — `test_old_session_echo_not_in_findings`;
+  F2 — `test_spent_success_does_not_suspend_self_login_account`, `test_ping_ignores_onboarding_spent_mark_in_same_process`;
+  F3 — `test_ping_read_failure_with_no_retrieved_targets`. Not adopted: Codex's `test_absent_lease_is_closed`,
+  `test_durable_budget[deleted]` and its key tests (the rejected shapes).
 - **Index:** `test_specs_index.py` — its count (twenty-nine) and its S-batch issue set already hold S4c;
   the `specified`-versions rule's `assert "S4c" in checked` is retired, since this change takes the chart
   rung S4c names.
@@ -1017,11 +1174,16 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
 |---|---|---|
 | **pod restart mid-window** (a claim was held) | the new pod GETs the Lease: the old claim is live until `renewTime + claim_seconds` (≤ 195 s at defaults) → `ClaimHeld`, silent, next cycle. The gate and the ping instants are on the object, so nothing is re-bound and nothing is re-pinged | B1, B2, B3 |
 | **two replicas** (a hand `scale`, a rollover's overlap, a partition, someone's HPA) | both read the gate; both try the CAS; one 409s and stands down. The render refuses the shapes it can see (§3.8); the claim covers the rest | B1 |
-| **a paused winner** (GC, throttling) past `claim_seconds` | the claim is judged expired and re-taken; the paused pod's bind may still go out when it resumes — one extra bind, never a walk, because its answer is re-applied to the Lease and gated like any other, and the claim that took over is left standing | B1's stated residual |
+| **a paused winner** (GC, throttling) past `claim_seconds` | the claim is judged expired and re-taken; a pod paused before its reservation meets the 409 and abandons the attempt — +0 (round 1, D1; measured 1 authorize). A pod paused after its reservation still sends the password, once: the process that took over is gated by the reservation. A refusal is then re-applied to the Lease, and the claim that took over is left standing; a session's removal meets the 409 and is dropped (`complete()` never erases an entry it cannot prove its own), so the `uncertain` entry stays — the account gated, and its valid self-login sessions stopped by the sweep (§3.4), until §5 Q7's clear: an over-block, the safe direction (measured, round 1) | B1 |
+| **a crash, or the answer's write rejected, after the authorize GET** | the reservation is on the Lease: after the claim expires, every process reads it and nothing binds — the account is gated (an over-block) until §5 Q7's clear or a rotation | B2 (round 1, D1) |
+| **the Lease deleted, or its entry removed by hand** | the next claim creates or finds it empty: one more bind, by an operator's act — only principals that can read the password Secret can delete a Lease (OB2, measured on the lab) | +1 per act |
+| **the password Secret deleted and recreated** (a new uid: `oc delete` then a create, `kubectl replace --force`, or an Argo CD sync with `Force=true,Replace=true`; an update in place — a rotation, a Helm 3 `--force`, Argo CD's `Replace=true` alone — keeps it) | the fingerprint's salt changed: the entry no longer matches, and the password is bound once more | +1 (round 1, D2) |
+| **a refusal met by the lookup or the ping while self-login sessions are valid** | the account sweep observes the entry and stops those sessions: the same cycle for a lookup here, the next cadence for the ping's own or another replica's | round 1, D3 |
+| **an attempt in flight on another replica or thread when the sweep reads** | a live claim holds the account: the sweep leaves it for the next read — an `uncertain` entry under a live claim is not yet an answer | round 1 |
 | **rotated password** | a new digest: the gate entry does not match; the old entry for the account is retired; the ping confirms within one cadence (one bind); `self-login` clusters resume on their next cycle | B2, B3 |
 | **a directory that has already locked the account** | the first bind answers 500 (code 19 → `HandleError`), `bound=True`, `login-failed` on the object; every path on that account stands down (ping, lookup, `self-login`); the finding says *check the account is not locked*. Nothing here can unlock it, and nothing here binds again while it is locked | B2 |
 | **the Lease is unreadable / unwritable** (RBAC drift, `rbac.create: false`, a 5xx) | `fleet-state-unavailable`, announced once, rechecked every cycle; **no bind by any path**; the lookup and the ping wait; a `self-login` cluster keeps its current session until `expires_at` and then stops with `gave_up=true` | fail closed |
-| **clock skew between pods** | the CAS is unaffected; the expiry judgement moves by the skew; a skew larger than `claim_seconds` lets a live claim be judged expired → the paused-winner case above. Stated, not solved: client-go's own doc recommends clock synchronisation and offers no fence either | B1's residual |
+| **clock skew between pods** | the CAS is unaffected; the expiry judgement moves by the skew; a skew larger than `claim_seconds` lets a live claim be judged expired → the paused-winner case above, +0 since round 1 (measured at the reservation, the authorize and the refusal: 1, 1, 1). Client-go's own doc recommends clock synchronisation and offers no fence either | B1 |
 | **the target's inactivity timeout / an admin revoke** | a 401 on the poll before `expires_at` → re-authenticate next cycle, once; no refusal recorded | B4 |
 | **the API server refuses a fresh session** | a second 401 in the episode → `self-login-suspended`; no login loop | B4 |
 | **`expires_in ≤ 4 × pollIntervalSeconds`** | the session is exited at once; `self-login-lifetime-too-short` names both numbers; the cluster does not poll | — |
@@ -1065,7 +1227,11 @@ Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks 
    stops the lookup, the ping and `self-login` acquisition on EVERY target of that account until the
    password rotates or an operator clears the entry — `oc annotate leases.coordination.k8s.io
    gsd-fleet-<…> -n <ns> groupsync-dashboard.io/refused-`, then a restart of the dashboard pod, which
-   keeps its own copy in the gate — which the runbook (#316) must carry. *To settle whether a narrower
+   keeps its own copy in the gate — which the runbook (#316) must carry. The same procedure clears an
+   `uncertain` entry that a crash, or a success after a takeover (§4, a paused winner), left (round 1,
+   D1), and after it the parked self-login clusters log in again on their first cycle. Since round 1
+   (D3) the price reaches further, and is stated: one flaky target's 500 now stops the account's VALID
+   self-login sessions within a discovery cadence, not at their renewal. *To settle whether a narrower
    rule is ever safe:* what the estate's directory answers for a locked account through its OAuth
    server (question 2's measurement); if a locked account were distinguishable from a sick target, the
    500 half could return to a per-target entry without walking a locked account.
@@ -1098,8 +1264,8 @@ residual stated rather than claimed away.
 ## 8. Implementation blocks
 
 The whole of #285's step 3 as implementation blocks (`docs/specs/README.md`, "Implementation blocks"), in apply
-order, cut from a copy of main `f82a065` with the design implemented and applied back to a clean clone of `f82a065`
-for the proof below:
+order: 91 blocks over 34 files, cut from a copy of main `f82a065` with the design and round 1's rulings implemented
+(Orchestrator's notes), and applied back to a clean export of `f82a065` for the proof below:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_S4c_credential_lifecycle.md . --apply
 
@@ -1109,16 +1275,16 @@ beside the applied blocks — a block cannot, because its Old text would also ma
 
 ### 8.1 Tests, before and after
 
-"Before" is `f82a065` plus this section's test blocks only (the eleven blocks under `local-development/tests/`);
+"Before" is `f82a065` plus this section's test blocks only (the seventeen blocks under `local-development/tests/`);
 "after" is `f82a065` with every block applied. Run from `local-development/` with `PYTHONPATH=.` (the venv's editable
 install points at another checkout), `-p no:cacheprovider`.
 
 | Definition of Done | test | before | after |
 |---|---|---|---|
 | R1: two processes cannot both win one claim; no claim, no bind | `test_fleet_lifecycle.py::test_r1_two_processes_cannot_both_win_one_claim_and_no_claim_is_no_bind` | ERROR at collection: `ModuleNotFoundError: No module named 'gsd.fleetstate'` (every test in the file) | passed |
-| B1's residual: a paused holder's refusal is recorded, the claim that took over stands | `…::test_r1_a_paused_holders_refusal_is_recorded_and_it_never_clears_the_claim_that_took_over` | ERROR (the same) | passed |
+| a paused holder's refusal is recorded, the claim that took over stands | `…::test_r1_a_paused_holders_refusal_is_recorded_and_it_never_clears_the_claim_that_took_over` | ERROR (the same) | passed |
 | authorize count 1 across two processes, three targets, a restart and an irrelevant edit (401 and 500) | `…::test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_targets_a_restart_and_an_edit[401]`, `[500]` | ERROR (the same); the same scenario measured on `f82a065` without the Lease: 4 authorizes (§8.2) | passed |
-| the Lease's fingerprint is salted and slow | `…::test_r2_the_lease_digest_is_salted_and_slow_not_the_gates_prefix` | ERROR (the same) | passed |
+| the Lease's fingerprint is salted with the account and the password Secret's uid, and slow | `…::test_r2_the_lease_digest_is_salted_and_slow_not_the_gates_prefix` | ERROR (the same) | passed |
 | #293's success mark is not turned into an account-wide refusal | `…::test_293s_success_mark_stays_per_target_and_off_the_lease` | ERROR (the same) | passed |
 | R3: twenty clusters, one ping a cadence, rotation by name, a restart, a rotated password once (a failing read too) | `…::test_r3_twenty_clusters_on_one_account_are_one_ping_a_cadence_rotating_by_name` | ERROR (the same) | passed |
 | R4: the ping stands down on either code, said once | `…::test_r4_a_gated_account_is_not_pinged_and_is_said_once[login-refused]`, `[login-failed]` | ERROR (the same) | passed |
@@ -1133,36 +1299,64 @@ install points at another checkout), `-p no:cacheprovider`.
 | the API's `fleet` and `session` blocks | `…::test_the_api_serves_the_fleet_block_and_a_self_login_session_as_instants` | ERROR (the same) | passed |
 | the three codes in the closed set; `claim_seconds` computed | `…::test_the_new_codes_join_the_closed_set_and_claim_seconds_is_computed` | ERROR (the same) | passed |
 | the `CredentialGate` docstring names the Lease | `…::test_the_gate_docstring_names_the_lease_as_its_durable_half` | ERROR (the same) | passed |
+| round 1's sixteen (the next table) | `…::test_d1_…` to `…::test_ping_read_failure_with_no_retrieved_targets` | ERROR (the same) | passed |
 | the chart: the ping's values in the ConfigMap | `test_chart_connection_modes.py::TestTheCredentialLifecycleInTheChart::test_the_ping_values_reach_the_configmap` | FAILED `KeyError: 'fleetPingEnabled'` | passed |
-| the chart: `userSelfLogin` above one replica refused by name | `…::test_self_login_above_one_replica_is_refused_by_name` | FAILED (rendered) | passed |
-| the chart: the Lease rule where a claim is needed; the only write stays a Lease | `…::test_the_lease_rule_renders_where_a_claim_is_needed_and_stays_the_only_write[mode-in-use-election-off]`, `[username-election-off]` | FAILED (no `leases` rule) | passed |
+| the chart: `userSelfLogin` above one replica refused by name | `…::test_self_login_above_one_replica_is_refused_by_name` | FAILED: the render succeeds, nothing refused | passed |
+| the chart: the Lease rule where a claim is needed; the only write stays a Lease | `…::test_the_lease_rule_renders_where_a_claim_is_needed_and_stays_the_only_write[mode-in-use-election-off]`, `[username-election-off]` | FAILED: no `leases` rule rendered | passed |
 | the same, the guards | `…[no-account-election-off]`, `[election-on]` | passed | passed |
 | self-login is no longer pending | `test_connection_modes.py::TestTheLoader::test_a_stanza_declaring_a_mode_loads_without_a_credential[userSelfLogin-self-login-False]` | FAILED `assert True is False` — `credential_pending` still says "the self-login mode is S3b's #285, not built" | passed |
-| a Secret-declared self-login cluster starts a thread and polls only on a session | `test_connection_modes.py::TestThePollPath::test_a_secret_declaring_self_login_is_discovered_listed_and_polled_only_on_a_session` | FAILED: no `fleet-credential-missing` finding within 5 s — the cluster is still pending, so no thread starts | passed |
+| a Secret-declared self-login cluster starts a thread and polls only on a session | `test_connection_modes.py::TestThePollPath::test_a_secret_declaring_self_login_is_discovered_listed_and_polled_only_on_a_session` | FAILED: no `fleet-credential-missing` finding within the test's 5 s — the cluster is still pending, so no thread starts | passed |
 | the tab's two rows, at 375 px | `test_ui.py::TestClusterConfigPage::test_the_fleet_account_rows_and_a_self_login_expiry_are_instants` | FAILED `AttributeError: 'RuntimeSignals' object has no attribute 'note_fleet_accounts'` | passed |
 | the index rule's retired pin | `test_specs_index.py::test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached` | passed (unchanged, it passes on `f82a065`); the original test FAILS on the applied tree | passed |
 | harness only: the Lease needs the fake host | `test_fleet_lookup.py::TestTheSchedule::test_a_spent_failure_backs_off_and_gives_up_out_loud`, `…::test_success_clears_the_finding_and_wakes_discovery` | passed | passed; without the added line, FAILED `fleet-state-unavailable` (the Lease read went to a real client) |
 | harness only: `_Host.refuse` models the Secret grant | `test_configmap_onboarding.py::test_values_bind_budget_is_unchanged[write-failure]`, `test_configmap_bind_budget_through_the_poller[write-failure]` (#293's table, unchanged) | passed | passed; with `refuse` on the Lease too, FAILED (no bind) |
+| harness only: the fake password Secret carries a `metadata.uid`, as every object an API server serves does (round 1, D2) | `test_fleet_lookup.py` (`FakeHost` and its two rotations), `test_configmap_onboarding.py` (`Host`) | passed | passed; without it, FAILED `fleet-credential-missing` ("carries no metadata.uid") — 21 of `test_fleet_lookup.py`'s 32 tests, 51 of `test_configmap_onboarding.py`'s 109 |
+
+**Round 1's tests (#419)**, run against three trees: the 74 blocks of `1d38c67` applied to `f82a065`; those plus
+OB2's prototype of the rulings; and this section's blocks. Each test is copied into the other two trees as one file
+over that tree's own harness (`LeaseHost`, `process`, `wire`) by a comparison script that is not shipped; its one
+shim is the 74 blocks' `lease_digest`, which takes no salt there.
+
+| round 1 | test (`test_fleet_lifecycle.py::`) | the 74 blocks | OB2's prototype | these blocks |
+|---|---|---|---|---|
+| D1: a refusal write the API server rejects; a process that dies after the authorize GET (Codex) | `test_d1_the_budget_survives_a_lost_refusal_write_and_a_crash[lost-write]`, `[crash]` | FAILED `lost-write: 2 authorizes`, `crash: 2 authorizes` | passed | passed |
+| D1: a takeover while the authorize is in flight (Codex) | `test_d1_clock_skew_does_not_admit_a_second_bind` | FAILED `assert 2 == 1` | passed | passed |
+| D1: a takeover at each point of the attempt (OB2) | `test_d1_skew_takeover_at_each_point_of_the_attempt[reservation]`, `[authorize]`, `[refusal]` | FAILED `([], 1)` — no reservation is written, so the takeover never fires; `(['authorize'], 2)`; `(['refusal'], 2)` | passed | passed |
+| D1: the paused winner, B1's old residual (OB2) | `test_d1_a_paused_winner_resumes_after_the_takeover_and_does_not_bind` | FAILED `assert ([True] and 2 == 1)` | passed | passed |
+| D2: `hmac.compare_digest`; a Secret without a uid is refused | `test_d2_the_comparison_uses_compare_digest_and_a_secret_without_a_uid_is_refused` | FAILED: `compare_digest` is never called (`[] == ['8b9a8c37e88d8ce3']`) | passed | passed |
+| D3: a lookup's refusal stops a valid self-login session in the same cycle (OB2) | `test_d3_a_lookup_refusal_stops_a_valid_self_login_session_within_the_same_cycle` | FAILED: `credential_for` still returns the session's cluster | passed | passed |
+| D3: another replica's refusal, within one cadence (OB2) | `test_d3_another_replicas_refusal_stops_this_replicas_valid_session_within_one_cadence` | FAILED (the same) | passed | passed |
+| D3: Codex's test, in the discovery cycle's order | `test_lookup_refusal_stops_existing_self_login` | FAILED `a current session ignored the account's refusal` | passed | passed |
+| an attempt in flight is not read as a refusal (OB3, writing D3) | `test_d3_an_attempt_in_flight_on_another_replica_is_not_read_as_a_refusal` | FAILED `AttributeError: 'FleetLease' object has no attribute 'reserve'` — there is no reservation to misread | FAILED `assert ('suspended' == 'current'` | passed |
+| D4: a held token echoed by the remote (Codex) | `test_old_session_echo_not_in_findings` | FAILED `assert False` — the token is in the standing finding | passed | passed |
+| F2: #293's SPENT mark does not suspend self-login (Codex) | `test_spent_success_does_not_suspend_self_login_account` | FAILED `a per-target success was treated as an account refusal` | FAILED (the same) | passed |
+| F2: nor silence the ping in the onboarding process (Codex) | `test_ping_ignores_onboarding_spent_mark_in_same_process` | FAILED `the ping was silenced by a per-target onboarding success mark` | FAILED (the same) | passed |
+| F3: no ping target and an unreadable Lease (Codex) | `test_ping_read_failure_with_no_retrieved_targets` | FAILED `IndexError: list index out of range` (`names[0]`) | FAILED (the same) | passed |
 
 The whole suite, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included: on `f82a065`,
 `5913 passed, 19 skipped, 4 deselected, 2 warnings in 467.71s`; with every block applied (this spec in the tree),
-`5969 passed, 19 skipped, 4 deselected, 2 warnings in 471.25s`. `helm lint` passes for the default values and each of
-the three values files below, and `helm template` renders all eight renders of §8.3.
+`5986 passed, 19 skipped, 4 deselected, 2 warnings`.
+`helm lint` passes for the default values and each of the three values files below, and `helm template` renders all
+eight renders of §8.3.
 
-Twelve design decisions were each reverted in the implemented copy and the tests above run against the mutant; all
-twelve were caught: the paused holder clearing the claim that took over; the ping writing #293's success mark; the
-ping recording no password per attempt; the lookup not seeding the gate from the Lease; the lookup not recording a
-bound answer on the Lease; the Lease keeping the gate's sha256 prefix; the ping not standing down; the lookup binding
-without a claim; renewal at 80 % of the lifetime; a second 401 logging in again; a bound failure suspending only its
-own cluster; an unreadable Lease still letting the lookup bind.
+Twenty-six design decisions were each reverted in the implemented copy and the tests above run against the mutant;
+all twenty-six were caught. Round 0's twelve: the paused holder clearing the claim that took over; the ping writing
+#293's success mark; the ping recording no password per attempt; the lookup not seeding the gate from the Lease; the
+lookup not recording a bound answer on the Lease; the Lease keeping the gate's sha256 prefix; the ping not standing
+down; the lookup binding without a claim; renewal at 80 % of the lifetime; a second 401 logging in again; a bound
+failure suspending only its own cluster; an unreadable Lease still letting the lookup bind. Round 1's fourteen: the
+reservation re-applied on a 409; no reservation before the wire; no `complete()` after a session, or after an unbound
+self-login failure; the digest without the uid; plain equality for `compare_digest`; a Secret without a uid salted
+with less; the sweep not stopping the sessions; the sweep reading an attempt in flight (OB2's prototype); the
+standing finding not redacted; `FleetLogin` not told the held tokens; self-login and the ping asking the combined
+gate; the `lease`-slot finding never cleared.
 
 ### 8.2 The budget over the system
 
-One wrong (401) or locked (500) password on one account, three `saTokenLookup` stanzas, measured in authorize
-requests by the hermetic harness (a wire mock counts requests, not directory binds); each later shape is a new
-`Poller` — its own in-memory gate — over the same fake API server. Before is `f82a065` (the same scenario, with the
-Lease resource answered if asked, which that tree never does); after is every block applied
-(`test_r2_the_budget_over_the_system…`).
+One wrong (401) or locked (500) password on one account, measured in authorize requests by the hermetic harness (a
+wire mock counts requests, not directory binds); each later shape is a new `Poller` — its own in-memory gate — over
+the same fake API server. Round 0's table, before is `f82a065` (the same scenario, with the Lease resource answered if
+asked, which that tree never does), after is every block applied (`test_r2_the_budget_over_the_system…`):
 
 | shape | before (`f82a065`), 401 and 500 alike | after |
 |---|---|---|
@@ -1172,6 +1366,25 @@ Lease resource answered if asked, which that tree never does); after is every bl
 | + an irrelevant config edit (`visibility`) | +1 | **+0** |
 | total | 4 | **1** |
 | + a rotated password | — | +1, and its success retires the old entry |
+
+Round 1's shapes, the 74 blocks against these, 401 and 500 alike, measured by one script (not shipped) over each
+tree's own harness; the operator's acts and the Secret's recreation start from the gated state the rows above leave:
+
+| shape | the 74 blocks | these blocks |
+|---|---|---|
+| one process, three targets | 1 | **1** |
+| + a second replica | +0 | **+0** |
+| + a restart | +0 | **+0** |
+| + an irrelevant config edit (`visibility`) | +0 | **+0** |
+| + the Lease unreadable (403) | +0 | **+0** — fail closed |
+| + the entry removed by hand and the pod restarted (§5 Q7) | +1 | **+1** — an operator's act |
+| + the Lease deleted and the pod restarted | +1 | **+1** — an operator's act |
+| + the password Secret deleted and recreated, same password (a new uid) | +0 | **+1** — D2's price |
+| a crash after the authorize GET, the claim expired, a restart | 2 | **1** |
+| the refusal write rejected, a restart | 2 | **1** |
+| clock skew: a takeover while the authorize is in flight | 2 | **1** |
+| first install (no Lease), one target | 1 | **1** — the first claim creates it |
+| two successful ConfigMap onboardings (#293, a success is spent per target) | 2 | **2** |
 
 The ping, measured by `test_r3…`: twenty retrieved clusters on one account are ONE authorize per interval, a restart
 inside the interval adds none, and a rotated password is confirmed once — once, too, while its read keeps failing.
@@ -1185,7 +1398,8 @@ from `f82a065` and from the applied tree, with `-n group-sync-dashboard`, for th
 `environments/crc.yaml`, `environments/example-production.yaml` and `charts/group-sync-dashboard/example-production.yaml`,
 each with election on and off. REMOVED is 0 in all eight renders. ADDED is the `leases` rule — `get`, `create`,
 `update` on `coordination.k8s.io/leases` in the reader ClusterRole, 3 atoms — in exactly the two renders where
-election is off and a fleet account is in use (`crc`, and the chart's production example); 0 elsewhere.
+election is off and a fleet account is in use (`crc`, and the chart's production example); 0 elsewhere. Round 1
+changes no template — only a comment in `values.yaml` and a paragraph of `CLUSTER_CREDENTIALS.md`.
 `test_the_only_write_in_the_role_is_the_dashboards_own_lease` passes unchanged.
 
 ### 8.4 The blocks
@@ -1208,22 +1422,26 @@ changed since, and the client's duty is to "GET the resource again, apply the ch
 submitting again". So two processes cannot both win one claim, whatever their clocks — the API server
 arbitrates. What it CANNOT be is a fence: client-go's leaderelection package says so of itself ("does not
 guarantee that only one client is acting as a leader"), and a holder paused past the claim's duration can
-still bind after another process took the claim over. SPEC_S4c §3.2 states that residual (B1); nothing here
-claims it away.
+still send the password after another process took the claim over. What keeps that to one bind is the
+attempt's reservation, not the claim (SPEC_S4c §3.2, B1): written before the wire against the claim's own
+resourceVersion, it gates the process that took over, and a holder paused before writing it meets the 409.
 
 FAIL CLOSED. A Lease that cannot be read or written is `FleetStateUnavailable`, and no path binds without
 its claim: a missed login while the RBAC is fixed is one stale cluster; a bind without the gate is the
 lockout walk this object exists to stop (SPEC_S4a §3.1's asymmetry).
 
-THE CALLER OWNS THE CLAIM. One `FleetLease` per attempt: `claim()` holds it, `refuse()` records a bound
-failure while holding it, `release()` lets it go — so the ping's due-ness is decided on the read its claim
-writes against, and nothing here is shared between threads.
+THE CALLER OWNS THE CLAIM. One `FleetLease` per attempt: `claim()` holds it; `reserve()` records the attempt
+BEFORE the password is on the wire (#419, D1), so a crash, a lost write, a restart or a second process finds it;
+`complete()` removes it after a session or a provably unbound failure, `refuse()` turns it into the answer;
+`release()` lets the claim go — so the ping's due-ness is decided on the read its claim writes against, and
+nothing here is shared between threads.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -1251,7 +1469,7 @@ CAS_TRIES = 3
 GRANT = ("grant get/create/update on coordination.k8s.io/leases in this namespace to the dashboard's "
          "ServiceAccount — the chart renders it under leaderElection.enabled or a fleet account in use")
 
-_DIGESTS: dict[tuple[str, str], str] = {}
+_DIGESTS: dict[tuple[str, str, str], str] = {}
 
 
 class ClaimHeld(Exception):
@@ -1276,19 +1494,22 @@ def lease_name(account: str) -> str:
     return "gsd-fleet-" + hashlib.sha256(account.encode("utf-8")).hexdigest()[:16]
 
 
-def lease_digest(account: str, password: str) -> str:
-    """The password's fingerprint AS THE LEASE RECORDS IT: scrypt, salted with the account, at the OWASP Password
-    Storage Cheat Sheet's 16 MiB scrypt setting (N=2^14, r=8, p=5), 64 bits kept.
+def lease_digest(account: str, password: str, salt: str) -> str:
+    """The password's fingerprint AS THE LEASE RECORDS IT: scrypt at the OWASP Password Storage Cheat Sheet's 16 MiB
+    setting (N=2^14, r=8, p=5), 64 bits kept, salted with the account AND `salt` — the password Secret's own
+    `metadata.uid`, which `gsd/fleetlookup.py#fleet_password` reads with the password, in the same GET.
 
-    NOT the in-memory gate's sha256 prefix (`gsd/fleetlookup.py#CredentialGate`), on purpose: a Lease is read by
-    whoever holds `get leases` in this namespace — `cluster-reader` among them, measured on the reference cluster
-    (SPEC_S4c orchestrator's notes), which cannot read the password Secret in `openshift-config` — and an
-    unsalted fast hash there would be an offline dictionary oracle for the LDAP bind password. 64 bits of it
-    still over-block on a collision and never bind (R3-2's rule). Computed once per (account, password) per
-    process: the cache is keyed on the password's sha256, never on the password."""
-    key = (account, hashlib.sha256(password.encode("utf-8")).hexdigest())
+    WHY THE UID (#419, D2): a Lease is read by whoever holds `get leases` in this namespace — `cluster-reader` among
+    them, measured on the reference cluster, which cannot read the password Secret — and `ping-digest` fingerprints
+    the VALID password every day. A fingerprint whose every other input is public verifies a guess offline, slow or
+    not; the uid is readable only by whoever reads the Secret, who has the password already. It survives an update
+    in place (a rotation) and changes only when the Secret is deleted and recreated, which re-arms the gate once.
+    NOT the in-memory gate's sha256 prefix, which never leaves the process. 64 bits over-block on a collision and
+    never bind (R3-2's rule). Computed once per (account, salt, password) per process; the cache is keyed on the
+    password's sha256, never on the password."""
+    key = (account, salt, hashlib.sha256(password.encode("utf-8")).hexdigest())
     if key not in _DIGESTS:
-        _DIGESTS[key] = hashlib.scrypt(password.encode("utf-8"), salt=account.encode("utf-8"),
+        _DIGESTS[key] = hashlib.scrypt(password.encode("utf-8"), salt=f"{account}\0{salt}".encode("utf-8"),
                                        n=2**14, r=8, p=5, dklen=8).hex()
     return _DIGESTS[key]
 
@@ -1332,7 +1553,7 @@ class FleetRecord:
     resource_version: str | None
     holder: str
     holder_until: datetime | None          # renewTime + leaseDurationSeconds, or None when unheld
-    refused: dict | None                   # {digest, at, code, target}: the account entry; target is evidence
+    refused: dict | None                   # {digest, at, code, target[, uncertain]}: the account entry; target is evidence
     ping_last_attempt: datetime | None
     ping_last_ok: datetime | None
     ping_last_outcome: str | None
@@ -1341,11 +1562,20 @@ class FleetRecord:
     raw: dict | None = field(default=None, repr=False, compare=False)
 
     def gated(self, digest: str) -> dict | None:
-        """The account entry when its digest matches, whatever the target — every bind path's rule (B2). An
-        entry that is not this dashboard's JSON gates every password: the safe direction, until it is removed."""
+        """The account entry when its digest matches, whatever the target — every bind path's rule (B2) — compared in
+        constant time (`hmac.compare_digest`). An entry whose digest is not this dashboard's gates every password: the
+        safe direction, until it is removed."""
         if self.refused is None:
             return None
-        return self.refused if self.refused.get("digest") in (digest, None) else None
+        saved = self.refused.get("digest")
+        if not isinstance(saved, str) or not saved.isascii():
+            return self.refused
+        return self.refused if hmac.compare_digest(saved, digest) else None
+
+    def in_flight(self, now: datetime) -> bool:
+        """A live claim holds the account: an attempt may be under way, and an `uncertain` entry may be its
+        reservation, not yet its answer (#419). A reader outside the claim waits for the next read."""
+        return bool(self.holder) and self.holder_until is not None and self.holder_until > now
 
     def view(self) -> dict:
         """What the API and `/metrics` serve: instants and words as the Lease holds them, never the digest."""
@@ -1425,7 +1655,7 @@ class FleetLease:
         with its claim, before its bind, so a second replica or a crash cannot ping twice (B3)."""
         now = self._clock()
         record = read if read is not None else self.read()
-        if record.holder and record.holder_until is not None and record.holder_until > now:
+        if record.in_flight(now):
             raise ClaimHeld(f"{record.holder} holds {self.name} until {stamp(record.holder_until)}")
         obj = _applied(record.raw or {"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
                                       "metadata": {"name": self.name, "namespace": self.namespace,
@@ -1441,6 +1671,36 @@ class FleetLease:
             raise self._unavailable("claim", exc) from exc
         self.record, self._lost = (_record(self.account, written) if isinstance(written, dict) else self.read()), False
         return self.record
+
+    def reserve(self, target: str, digest: str) -> None:
+        """THE ATTEMPT, ON THE LEASE BEFORE THE PASSWORD IS ON THE WIRE (#419, D1): the account entry itself, marked
+        `uncertain`, written against the claim's own resourceVersion. A 409 is ClaimHeld — the claim was taken
+        meanwhile, and this attempt is abandoned, NEVER re-applied (re-applying is how a paused holder binds after
+        the process that took over did); any other failure is FleetStateUnavailable, and nothing binds. From here a
+        crash, a lost refusal write, a restart and a second process all find the entry: the directory may have seen
+        the password."""
+        entry = json.dumps({"digest": digest, "at": stamp(self._clock()), "code": "login-failed", "target": target,
+                            "uncertain": True}, sort_keys=True)
+        try:
+            written = self._call("PUT", _applied(self.record.raw, {"refused": entry}))
+        except ClusterError as exc:
+            if exc.message.startswith("HTTP 409"):
+                raise ClaimHeld(f"{self.name} changed since it was claimed") from exc
+            raise self._unavailable("reserve", exc) from exc
+        self.record = _record(self.account, written) if isinstance(written, dict) else self.read()
+
+    def complete(self) -> None:
+        """The attempt ended without the directory refusing it — a session came back, or the password was provably
+        never written — so its entry goes (and with it any older password's). Never raises: a 409 drops the removal
+        (`_put`), so another process's entry is never erased, and a removal that fails leaves the safe direction."""
+        try:
+            self._put({"refused": None}, release=False)
+        except FleetStateUnavailable as exc:
+            failure(log, "fleet-state-unavailable", phase="credential", outcome=exc.code, account=self.account,
+                    lease=self.name, action=f"the attempt's entry stays on the Lease and gates this password until "
+                                            f"it is removed: {exc.action}", detail=exc.detail)
+        except Exception:  # noqa: BLE001 - cleanup never replaces the outcome it follows
+            log.exception("clearing the attempt's entry on Lease %s/%s failed; it stays", self.namespace, self.name)
 
     def refuse(self, target: str, digest: str, code: str) -> None:
         """A bound answer, recorded on the Lease BEFORE the process's gate and before the finding (SPEC_S4c §3.3,
@@ -1576,12 +1836,89 @@ log = logging.getLogger(__name__)
     must use one spelling. "Process" is the production Poller's one gate, shared by its discovery
     thread and its self-login poll threads (single dict and set operations); a new gate starts a new
     budget. It is the cache of the account Lease's gate (SPEC_S4c §3.3): every bind path claims the
-    Lease first and seeds the REFUSED kind from the Lease's entry, and a bound answer is written to
-    the Lease before it is written here — so a restart and a second replica read it while the Lease
-    is writable, and this is the only copy when it is not. The SPENT kind is never on the Lease."""
+    Lease first, seeds the REFUSED kind from the Lease's entry, and records its attempt there before
+    the password is sent; a bound answer replaces that record before it is written here — so a
+    restart, a crash and a second replica read it while the Lease is writable, and this is the only
+    copy when it is not. The SPENT kind is never on the Lease, and self-login and the read-only ping
+    ask for the REFUSED kind alone (`account_refusal`)."""
 
     def __init__(self) -> None:
         self._refused: dict[tuple[str, str], str] = {}
+```
+
+<!-- block: local-development/gsd/fleetlookup.py | edit -->
+```python
+    def _digest(password: str) -> str:
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+
+    def answered(self, target: str, username: str, password: str) -> str | None:
+        """The target whose answer gates this password for this account on `target`, or None: the
+        account's REFUSED entry from whichever target answered, else `target`'s own SPENT entry."""
+```
+
+```python
+    def _digest(password: str) -> str:
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()[:16]
+
+    def account_refusal(self, username: str, password: str) -> str | None:
+        """The REFUSED kind alone: the target that answered for this account and password, or None. Self-login and
+        the read-only ping ask this — #293's SPENT mark is a writing lookup's budget, never an account refusal
+        (#285, review of #419, F2)."""
+        return self._refused.get((username, self._digest(password)))
+
+    def answered(self, target: str, username: str, password: str) -> str | None:
+        """The target whose answer gates this password for this account on `target`, or None: the
+        account's REFUSED entry from whichever target answered, else `target`'s own SPENT entry."""
+```
+
+<!-- block: local-development/gsd/fleetlookup.py | edit -->
+```python
+    return username
+
+
+def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace: str) -> str:
+    """The password, read now through the chart's one-Secret grant (`templates/fleet-account-rbac.yaml`);
+    never held on Settings or ClusterConfig, so `poller._credentials` never sees it."""
+    ns = settings.fleet_password_secret_namespace or own_namespace
+    name, key = settings.fleet_password_secret_name, settings.fleet_password_secret_key
+    where = f"Secret {ns}/{name} key {key!r}"
+```
+
+```python
+    return username
+
+
+def fleet_password(host_client: ClusterClient, settings: Settings, own_namespace: str) -> tuple[str, str]:
+    """The password and the Secret's `metadata.uid` — the Lease fingerprint's salt (`gsd/fleetstate.py#lease_digest`)
+    — read now, in one GET, through the chart's one-Secret grant (`templates/fleet-account-rbac.yaml`); never held on
+    Settings or ClusterConfig, so `poller._credentials` never sees it."""
+    ns = settings.fleet_password_secret_namespace or own_namespace
+    name, key = settings.fleet_password_secret_name, settings.fleet_password_secret_key
+    where = f"Secret {ns}/{name} key {key!r}"
+```
+
+<!-- block: local-development/gsd/fleetlookup.py | edit -->
+```python
+        password = ""
+    if not password:
+        raise LookupRefused("fleet-credential-missing", f"{where} is absent or empty", action=action, spent=False)
+    return password
+
+
+def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSource, *, timeout: float) -> SaToken:
+```
+
+```python
+        password = ""
+    if not password:
+        raise LookupRefused("fleet-credential-missing", f"{where} is absent or empty", action=action, spent=False)
+    uid = str((obj.get("metadata") or {}).get("uid") or "")
+    if not uid:   # every object an API server returns has one: fail closed rather than salt with less (#419, D2)
+        raise LookupRefused("fleet-credential-missing", f"{where} carries no metadata.uid", action=action, spent=False)
+    return password, uid
+
+
+def read_sa_token(session_token: str, cluster: ClusterConfig, source: LookupSource, *, timeout: float) -> SaToken:
 ```
 
 <!-- block: local-development/gsd/fleetlookup.py | edit -->
@@ -1619,27 +1956,71 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
 
 <!-- block: local-development/gsd/fleetlookup.py | edit -->
 ```python
+                                    "that switch renders"), spent=False)
+    source = LookupSource.from_settings(settings)
+    account = fleet_account(settings, cluster)
     password = fleet_password(host_client, settings, own_namespace)
     secrets: list[str] = [password]
     try:
         answered = gate.answered(cluster.api_url, account, password)
         if answered is not None:
             # THE TARGET THAT ANSWERED IS NAMED (#315): the entry is the account's, so it may be another
+            # cluster's answer that stops this one, and the finding must say where to look. Shown without
 ```
 
 ```python
-    password = fleet_password(host_client, settings, own_namespace)
+                                    "that switch renders"), spent=False)
+    source = LookupSource.from_settings(settings)
+    account = fleet_account(settings, cluster)
+    password, salt = fleet_password(host_client, settings, own_namespace)
+    digest = lease_digest(account, password, salt) if lease is not None else ""
     secrets: list[str] = [password]
     try:
         if lease is not None:
             # THE LEASE SEEDS THE PROCESS'S GATE (SPEC_S4c §3.3): an entry another replica, or this pod before
             # a restart, wrote for this account and password gates here too, naming the target that answered.
-            entry = lease.record.gated(lease_digest(account, password))
+            entry = lease.record.gated(digest)
             if entry is not None:
                 gate.refuse(entry.get("target") or "", account, password)
-        answered = gate.answered(cluster.api_url, account, password)
+        # A writing lookup asks the combined gate — #293's per-target SPENT mark included; the read-only ping asks
+        # for an account refusal alone (review of #419, F2).
+        answered = (gate.answered(cluster.api_url, account, password) if write
+                    else gate.account_refusal(account, password))
         if answered is not None:
             # THE TARGET THAT ANSWERED IS NAMED (#315): the entry is the account's, so it may be another
+            # cluster's answer that stops this one, and the finding must say where to look. Shown without
+```
+
+<!-- block: local-development/gsd/fleetlookup.py | edit -->
+```python
+                                        "changes — rotate the Secret, or correct ldapConnectionBootstrap; the password is "
+                                        "re-read each cycle at no cost and the login resumes when it moves (SPEC_S4 §6)"),
+                                spent=False, gated=True)
+        knobs = {"clock": clock} if clock is not None else {}
+        try:
+            with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
+                secrets.append(session.token)
+                if cluster.onboarding:
+                    # #293's strict budget includes successful binds, even if the later read/write fails.
+```
+
+```python
+                                        "changes — rotate the Secret, or correct ldapConnectionBootstrap; the password is "
+                                        "re-read each cycle at no cost and the login resumes when it moves (SPEC_S4 §6)"),
+                                spent=False, gated=True)
+        if lease is not None:
+            # THE ATTEMPT IS ON THE LEASE BEFORE THE PASSWORD IS ON THE WIRE (SPEC_S4c §3.3, step 3): from here a crash,
+            # a lost refusal write, a restart or a second process finds it. ClaimHeld and FleetStateUnavailable are
+            # the caller's, as they are for the claim.
+            lease.reserve(CredentialGate._target(cluster.api_url), digest)
+        knobs = {"clock": clock} if clock is not None else {}
+        try:
+            with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
+                if lease is not None:
+                    lease.complete()   # a session came back: the attempt's entry goes, whatever the read does (#293)
+                secrets.append(session.token)
+                if cluster.onboarding:
+                    # #293's strict budget includes successful binds, even if the later read/write fails.
 ```
 
 <!-- block: local-development/gsd/fleetlookup.py | edit -->
@@ -1653,6 +2034,11 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                 raise LookupRefused(code, f"phase={exc.phase}{which}: {exc.message}",
                                     action=(f"the password for {account} was sent to {cluster.name} and no session came "
                                             f"back: rotate the fleet password Secret or correct ldapConnectionBootstrap, "
+                                            f"or check the account is not locked — it is not sent again, to this or any "
+                                            f"other cluster, while it is the same password"), spent=True) from exc
+            hint = ""
+            if exc.phase == "tls":
+                hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "
 ```
 
 ```python
@@ -1663,11 +2049,18 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                 # two loses the cheap copy, never the durable one.
                 code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
                 if lease is not None:
-                    lease.refuse(CredentialGate._target(cluster.api_url), lease_digest(account, password), code)
+                    lease.refuse(CredentialGate._target(cluster.api_url), digest, code)
                 gate.refuse(cluster.api_url, account, password)
                 raise LookupRefused(code, f"phase={exc.phase}{which}: {exc.message}",
                                     action=(f"the password for {account} was sent to {cluster.name} and no session came "
                                             f"back: rotate the fleet password Secret or correct ldapConnectionBootstrap, "
+                                            f"or check the account is not locked — it is not sent again, to this or any "
+                                            f"other cluster, while it is the same password"), spent=True) from exc
+            if lease is not None:
+                lease.complete()       # provably never written: the attempt's entry goes
+            hint = ""
+            if exc.phase == "tls":
+                hint = (" — the stanza's CA must verify BOTH the API host and the OAuth route (the ingress CA, "
 ```
 
 <!-- block: local-development/gsd/config.py | edit -->
@@ -2035,6 +2428,149 @@ log = logging.getLogger(__name__)
         cluster = askable.get(cluster_id)
 ```
 
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+
+    `timeout` is the per-request budget the poller gives `ClusterClient` (`requestTimeoutSeconds`);
+    `policy`, `sleep` and `clock` are the loop's knobs, injectable so a test can drive the whole
+    ceiling without waiting fifteen seconds or trusting the wall clock. One instance is one session:
+    entering it twice is refused.
+    """
+
+    def __init__(self, cluster: ClusterConfig, username: str, password: str, *,
+                 timeout: float = 15.0, policy: RetryPolicy = RETRY_POLICY,
+                 sleep: Callable[[float], None] = time.sleep,
+                 clock: Callable[[], datetime] = _utcnow):
+        self.cluster = cluster
+        self.username = username
+        self._password = password
+        self._timeout = timeout
+        self._policy = policy
+        self._sleep = sleep
+```
+
+```python
+
+    `timeout` is the per-request budget the poller gives `ClusterClient` (`requestTimeoutSeconds`);
+    `policy`, `sleep` and `clock` are the loop's knobs, injectable so a test can drive the whole
+    ceiling without waiting fifteen seconds or trusting the wall clock. `secrets` are other values in
+    play that a remote may echo — a self-login renewal's held session tokens (#285) — scrubbed with the
+    password from every line and every quoted remote text, and never sent. One instance is one session:
+    entering it twice is refused.
+    """
+
+    def __init__(self, cluster: ClusterConfig, username: str, password: str, *,
+                 timeout: float = 15.0, policy: RetryPolicy = RETRY_POLICY,
+                 sleep: Callable[[float], None] = time.sleep,
+                 clock: Callable[[], datetime] = _utcnow, secrets: tuple[str, ...] = ()):
+        self.cluster = cluster
+        self.username = username
+        self._password = password
+        self._secrets = tuple(v for v in secrets if v)
+        self._timeout = timeout
+        self._policy = policy
+        self._sleep = sleep
+```
+
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+                event(log, logging.INFO, "fleet-login", **self._fields(), oauth=issuer,
+                      expires_at=session.expires_at_iso,
+                      attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
+                      secrets=(self._password, token))
+            except BaseException as problem:
+                minted, malformed = self._minted_by(response)
+                if minted:
+```
+
+```python
+                event(log, logging.INFO, "fleet-login", **self._fields(), oauth=issuer,
+                      expires_at=session.expires_at_iso,
+                      attempt=f"{attempt}/{policy.attempts}" if attempt > 1 else None,
+                      secrets=(self._password, token, *self._secrets))
+            except BaseException as problem:
+                minted, malformed = self._minted_by(response)
+                if minted:
+```
+
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+                                   f"itself failed before the target answered")
+        self.revoked = answer.gone
+        shown = answer.name if answer.name and token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
+        secrets = (self._password, token)
+        try:
+            if answer.gone:
+                event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown, outcome=answer.word,
+```
+
+```python
+                                   f"itself failed before the target answered")
+        self.revoked = answer.gone
+        shown = answer.name if answer.name and token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
+        secrets = (self._password, token, *self._secrets)
+        try:
+            if answer.gone:
+                event(log, logging.INFO, "fleet-logout", **self._fields(), token=shown, outcome=answer.word,
+```
+
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+        displayed copy; never on a structured value the operator acts on — the issuer, the endpoint's
+        host — where userinfo is stripped structurally instead; only on free text, where mangling
+        costs a less readable quote and nothing else."""
+        secrets = tuple(v for v in (self._password, *more) if v)
+        out = redact(redact_text(text, *secrets), secrets)
+        for secret in sorted(secrets, key=len, reverse=True):
+            out = out.replace(secret, "<redacted>")
+```
+
+```python
+        displayed copy; never on a structured value the operator acts on — the issuer, the endpoint's
+        host — where userinfo is stripped structurally instead; only on free text, where mangling
+        costs a less readable quote and nothing else."""
+        secrets = tuple(v for v in (self._password, *self._secrets, *more) if v)
+        out = redact(redact_text(text, *secrets), secrets)
+        for secret in sorted(secrets, key=len, reverse=True):
+            out = out.replace(secret, "<redacted>")
+```
+
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+                            f"password Secret or correct ldapConnectionBootstrap — no second attempt is "
+                            f"made, because a retry is the lockout walk against the account the target "
+                            f"authenticates every user with"),
+                    detail=exc.message, secrets=(self._password,))
+            return
+        ceiling = self._policy.attempts
+        if attempt is None:
+```
+
+```python
+                            f"password Secret or correct ldapConnectionBootstrap — no second attempt is "
+                            f"made, because a retry is the lockout walk against the account the target "
+                            f"authenticates every user with"),
+                    detail=exc.message, secrets=(self._password, *self._secrets))
+            return
+        ceiling = self._policy.attempts
+        if attempt is None:
+```
+
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+                attempt=None if attempt is None else f"{attempt}/{ceiling}",
+                retry_in=None if retry_in is None else f"{retry_in:g}",
+                gave_up="true" if gave_up else None, action=action, detail=exc.message,
+                secrets=(self._password,))
+```
+
+```python
+                attempt=None if attempt is None else f"{attempt}/{ceiling}",
+                retry_in=None if retry_in is None else f"{retry_in:g}",
+                gave_up="true" if gave_up else None, action=action, detail=exc.message,
+                secrets=(self._password, *self._secrets))
+```
+
 <!-- block: local-development/gsd/selflogin.py | create -->
 ```python
 """`userSelfLogin`: the session is the credential, and it renews or it stops (#285, SPEC_S4c §3.6).
@@ -2065,9 +2601,10 @@ revoke path a 401 keeps #283's reading: "not proven gone".
 
 SUSPENSION (SPEC_S3 §9.3 rule 1). A bound answer on any acquisition gates the (account, password) and stops EVERY
 self-login cluster on the account at once — its session revoked, the cluster parked, a standing finding, its poll
-outcome recorded once — in one `fleet-credential-suspended` line that names what stopped and how many. A parked
-cluster re-reads the password each cycle at no cost to the directory and resumes when it, the account or the
-cluster's URL changes.
+outcome recorded once — in one `fleet-credential-suspended` line that names what stopped and how many. So does an
+entry any other path or replica wrote (#419, D3): the poller's account sweep observes it each discovery cadence and
+calls `suspend_account`. A parked cluster re-reads the password each cycle at no cost to the directory and resumes
+when it, the account or the cluster's URL changes.
 """
 
 from __future__ import annotations
@@ -2078,7 +2615,7 @@ import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from .clusterconfig.events import event, failure
+from .clusterconfig.events import event, failure, redact
 from .clusterconfig.parser import Finding
 from .config import CREDENTIAL_SELF_LOGIN, ClusterConfig
 from .fleetlogin import FleetLogin, FleetSession, LoginError, RetryPolicy, _without_userinfo
@@ -2095,6 +2632,13 @@ MARGIN = timedelta(hours=2)
 #: The registry slot this module's standing findings live in.
 SLOT = "self-login"
 EVENTS = ("self-login-renewed", "self-login-failed", "fleet-credential-suspended")
+
+
+def _evaluated(target: str, account: str, entry: dict | None) -> str:
+    """What gates this password, said as what is known: a reservation left by an attempt that never recorded its
+    answer (#419, D1) MAY have been evaluated; a refusal was."""
+    said = "may have evaluated" if (entry or {}).get("uncertain") else "evaluated"
+    return f"{_without_userinfo(target) or 'another target'} {said} this password for {account} already and it has not changed"
 
 
 def renew_at(session: FleetSession) -> datetime:
@@ -2154,7 +2698,7 @@ class SelfLoginSessions:
         client, namespace = host
         try:
             account = fleet_account(poller.settings, cluster)
-            password = fleet_password(client, poller.settings, namespace)
+            password, salt = fleet_password(client, poller.settings, namespace)
         except LookupRefused as exc:
             self._finding(cluster.name, exc.code, f"{exc.detail} — {exc.action}")
             return live
@@ -2165,7 +2709,7 @@ class SelfLoginSessions:
                 del self._parked[cluster.name]          # the password, the account or the URL moved: try again
         if parked == key:
             return None
-        fresh = self._acquire(cluster, client, namespace, account, password, key, held)
+        fresh = self._acquire(cluster, client, namespace, account, password, salt, key, held)
         if fresh is not None:
             return fresh
         with self._lock:                                  # a suspension may have ended the session meanwhile
@@ -2199,6 +2743,21 @@ class SelfLoginSessions:
               action="the session was invalidated before it expired (an inactivity timeout or a revoke): one login on "
                      "the next cycle; nothing is recorded as a refusal")
 
+    def suspend_account(self, account: str, password: str, entry: dict) -> None:
+        """An entry on the account's Lease for this password, whichever path or replica wrote it, stops every
+        self-login cluster on the account now — not at its renewal (SPEC_S4c §3.6; #419, D3). Idempotent: when every
+        one is parked on this password already, nothing is said, so the sweep that calls this each cadence says it
+        once."""
+        poller, digest = self._poller, CredentialGate._digest(password)
+        clusters = [c for c in poller.settings.effective_clusters() if c.enabled and c.credential_kind == CREDENTIAL_SELF_LOGIN
+                    and (c.ldap_connection_bootstrap or poller.settings.fleet_account_username) == account]
+        with self._lock:
+            live = [c for c in clusters if self._parked.get(c.name) != (account, digest, c.api_url)]
+        if live:
+            target = entry.get("target") or ""
+            self._suspend(live[0], account, (account, digest, live[0].api_url), code=entry.get("code") or "login-refused",
+                          target=target, detail=_evaluated(target, account, entry), secrets=(password,))
+
     def stop(self, name: str) -> None:
         """Exit (revoke) the cluster's session: it was disabled, retired, or its thread is stopping."""
         with self._lock:
@@ -2219,7 +2778,7 @@ class SelfLoginSessions:
 
     # ── the login ─────────────────────────────────────────────────────────────────────────────
 
-    def _acquire(self, cluster, client, namespace, account, password, key, held) -> ClusterConfig | None:
+    def _acquire(self, cluster, client, namespace, account, password, salt, key, held) -> ClusterConfig | None:
         poller = self._poller
         lease = FleetLease(client, namespace, account, claim_seconds=claim_seconds(poller.settings), clock=self._clock)
         try:
@@ -2231,36 +2790,46 @@ class SelfLoginSessions:
             return None
         acquired: tuple[FleetLogin, FleetSession] | None = None
         try:
-            entry = lease.record.gated(lease_digest(account, password))
+            digest = lease_digest(account, password, salt)
+            entry = lease.record.gated(digest)
             if entry is not None:
                 poller._credential_gate.refuse(entry.get("target") or "", account, password)
-            answered = poller._credential_gate.answered(cluster.api_url, account, password)
-            secrets = (password, *((held.session.token,) if held is not None else ()))
+            # The account's refusal alone: #293's per-target SPENT mark is not a self-login refusal (#419, F2).
+            answered = poller._credential_gate.account_refusal(account, password)
+            with self._lock:      # every session this process holds: the remote may echo any of them (#419, D4)
+                carried = tuple(s.session.token for s in self._sessions.values())
             if answered is not None:
                 self._suspend(cluster, account, key, code=(entry or {}).get("code") or "login-refused", target=answered,
-                              detail=f"{_without_userinfo(answered) or 'another target'} evaluated this password for "
-                                     f"{account} already and it has not changed", secrets=secrets)
+                              detail=_evaluated(answered, account, entry), secrets=(password, *carried))
+                return None
+            try:
+                lease.reserve(CredentialGate._target(cluster.api_url), digest)   # before the wire (SPEC_S4c §3.3, step 3)
+            except ClaimHeld:
+                return None                              # taken meanwhile: this attempt is abandoned, the next cycle
+            except FleetStateUnavailable as exc:
+                self._finding(cluster.name, exc.code, f"{exc.detail} — {exc.action}")
                 return None
             login = FleetLogin(cluster, account, password, timeout=poller.settings.request_timeout_seconds,
-                               policy=ONE_ATTEMPT, clock=self._clock)
+                               policy=ONE_ATTEMPT, clock=self._clock, secrets=carried)
             try:
                 acquired = login, login.__enter__()
+                lease.complete()                         # a session came back: the attempt's entry goes
             except LoginError as exc:
                 if not exc.bound:
                     # Before the password was written: nothing bound, the current session (if any) keeps polling.
+                    lease.complete()
                     if held is None:
                         poller.store.record_poll(cluster.name, UNREACHABLE, f"self-login: {exc.message}")
                     return None
                 code = "login-refused" if exc.outcome == AUTH_FAILED else "login-failed"
                 # The Lease first, the process second (SPEC_S4c §3.3, step 5), then the finding.
-                lease.refuse(CredentialGate._target(cluster.api_url), lease_digest(account, password), code)
+                lease.refuse(CredentialGate._target(cluster.api_url), digest, code)
                 poller._credential_gate.refuse(cluster.api_url, account, password)
                 self._suspend(cluster, account, key, code=code, target=cluster.api_url,
-                              detail=f"phase={exc.phase}: {exc.message}", secrets=secrets)
+                              detail=f"phase={exc.phase}: {exc.message}", secrets=(password, *carried))
                 return None
         finally:
-            # A password that works retires the entry an older one left on the Lease.
-            lease.release(**({"refused": None} if acquired else {}))
+            lease.release()
         login, session = acquired
         floor = 4 * poller.settings.poll_interval_seconds
         if session.expires_in <= floor:
@@ -2302,8 +2871,10 @@ class SelfLoginSessions:
             stopped = [self._sessions.pop(name) for name in names if name in self._sessions]
             for name in names:
                 self._parked[name] = (account, key[1], stanzas[name].api_url)
-        # Every value in play leaves the line: the password, and each session being stopped (a remote may echo one).
+        # Every value in play leaves the line AND the standing finding the API serves (#419, D4): the password, and each
+        # session being stopped (a remote may echo one).
         secrets = (*secrets, *(held.session.token for held in stopped))
+        detail = redact(detail, secrets)
         for held in stopped:
             held.login.__exit__(None, None, None)
         action = (f"every self-login cluster on {account} stopped polling: rotate the fleet password Secret or correct "
@@ -2554,8 +3125,6 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
                 self._lookup_failed(state, name, secret, exc, now)
                 continue
             self._lookups.pop(name, None)
-            registry.set_lookup_finding(name, None)
-            event(discovery_log, logging.INFO, "fleet-lookup", cluster=name, account=result.account, secret=result.secret,
 ```
 
 ```python
@@ -2563,29 +3132,22 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
                     spent=False), now)
                 continue
             # THE ACCOUNT LEASE FIRST (SPEC_S4c §3.3): no claim, no bind. A live claim is someone else binding as
-            # this account now — silent, the next cycle tries; an unreadable Lease is a free finding (fail closed).
+            # this account now, and a claim taken before this attempt was recorded abandons it — silent, the next
+            # cycle tries; an unreadable or unwritable Lease is a free finding (fail closed).
             try:
                 lease = self._fleet_lease(client, namespace, fleet_account(self.settings, cluster))
                 lease.claim()
+                try:
+                    result = lookup(cluster, self.settings, client, own_namespace=namespace,
+                                    gate=self._credential_gate, lease=lease)
+                finally:
+                    lease.release()
             except ClaimHeld:
                 continue
             except (LookupRefused, FleetStateUnavailable) as exc:
                 self._lookup_failed(state, name, secret, exc, now)
                 continue
-            retrieved = False
-            try:
-                result = lookup(cluster, self.settings, client, own_namespace=namespace, gate=self._credential_gate,
-                                lease=lease)
-                retrieved = True
-            except LookupRefused as exc:
-                self._lookup_failed(state, name, secret, exc, now)
-                continue
-            finally:
-                # A password that works retires the entry an older one left on the Lease.
-                lease.release(**({"refused": None} if retrieved else {}))
             self._lookups.pop(name, None)
-            registry.set_lookup_finding(name, None)
-            event(discovery_log, logging.INFO, "fleet-lookup", cluster=name, account=result.account, secret=result.secret,
 ```
 
 <!-- block: local-development/gsd/poller.py | edit -->
@@ -2618,9 +3180,11 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
     def _ping_accounts(self) -> None:
         """One real read per fleet account per cadence (SPEC_S4c §3.4) — the daily ping, on the discovery thread,
         after the lookups. Every account in use has its Lease read each cadence, on every replica, so the tab and
-        /metrics serve the same instants and the same gate on a standby; an account whose clusters the lookup
-        retrieved is pinged against ONE of them — the `lookup-account` their Secrets record, in rotation by name —
-        through `lookup(write=False)` under the account Lease's claim, by the leader alone."""
+        /metrics serve the same instants and the same gate on a standby. On the leader, an entry for the configured
+        password — whichever path or replica wrote it — seeds the gate and stops the account's self-login clusters
+        (#419, D3), and an account whose clusters the lookup retrieved is pinged against ONE of them — the
+        `lookup-account` their Secrets record, in rotation by name — through `lookup(write=False)` under the account
+        Lease's claim."""
         from .clusterconfig.events import event, failure
         from .clusterconfig.parser import Finding
         from .clusterconfig.writer import secret_name_for
@@ -2629,47 +3193,60 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
         registry = self.settings.cluster_registry
         if registry.error:
             return
-        accounts: dict[str, list[ClusterConfig]] = {}      # every account in use -> the clusters its ping may read
+        targets: dict[str, list[ClusterConfig]] = {}       # account -> the retrieved clusters its ping may read
+        members: dict[str, list[str]] = {}                 # account -> every enabled cluster in use on it (#419, F3)
         for c in self.settings.effective_clusters():
             named = c.ldap_connection_bootstrap or self.settings.fleet_account_username
             if c.enabled and c.token_source == CREDENTIAL_LOOKUP and c.lookup_account:
-                accounts.setdefault(c.lookup_account, []).append(c)
+                targets.setdefault(c.lookup_account, []).append(c)
+                members.setdefault(c.lookup_account, []).append(c.name)
             elif c.enabled and c.connection_mode is not None and named:
-                accounts.setdefault(named, [])
-        registry.prune_standing("ping", {c.name for group in accounts.values() for c in group})
+                members.setdefault(named, []).append(c.name)
+        for slot in ("ping", "lease"):
+            registry.prune_standing(slot, {n for names in members.values() for n in names})
         found = self._host_client()
         if found is None:
             return
         client, namespace = found
         views = dict(self.signals.fleet_accounts()) if self.signals is not None else {}
         leader = self.elector is None or self.elector.is_leader
-        for account, clusters in sorted(accounts.items()):
-            names = sorted(c.name for c in clusters)
+        for account, names in sorted(members.items()):
             lease = self._fleet_lease(client, namespace, account)
             try:
                 record = lease.read()
             except FleetStateUnavailable as exc:
-                self._ping_finding(names[0], exc, account)
+                for name in names:                         # every cluster on the account, a ping target or not (F3)
+                    self._ping_finding(name, exc, account, slot="lease")
                 continue                                   # the last view stands: never zeroed on a failed read
+            for name in names:
+                registry.set_standing_finding("lease", name, None)
+            if record.in_flight(datetime.now(UTC)):
+                continue    # an attempt holds the account: its entry may be a reservation, not yet an answer (#419)
             views[account] = record.view()
-            if not (leader and clusters and self.settings.fleet_ping_enabled):
-                continue
             # ROTATION BY NAME (§3.4): the first after the last target, wrapping — over N cadences every target is
             # read once, so a grant revoked on one is found naming it.
-            last = record.ping_last_target
-            pick = next((n for n in names if last is None or n > last), names[0])
-            target = next(c for c in clusters if c.name == pick)
-            try:
-                password = fleet_password(client, self.settings, namespace)
-            except LookupRefused as exc:
-                self._ping_finding(target.name, exc, account)
+            clusters, last = sorted(targets.get(account, []), key=lambda c: c.name), record.ping_last_target
+            target = next((c for c in clusters if last is None or c.name > last), clusters[0] if clusters else None)
+            ping = leader and target is not None and self.settings.fleet_ping_enabled
+            if not (ping or (leader and record.refused is not None)):
                 continue
-            digest, now = lease_digest(account, password), datetime.now(UTC)
+            try:
+                password, salt = fleet_password(client, self.settings, namespace)
+            except LookupRefused as exc:
+                if ping:
+                    self._ping_finding(target.name, exc, account)
+                continue
+            digest, now = lease_digest(account, password, salt), datetime.now(UTC)
             entry = record.gated(digest)
             if entry is not None:
-                # STANDS DOWN on either kind of gated entry (§3.4): a 500 may be a locked account's code 19, and
-                # one more bind a day against it is the walk in a health check's clothing. Said once.
-                if (account, digest) not in self._ping_said:
+                # ANY PATH'S ENTRY, OBSERVED (#419, D3): it seeds this process's gate and stops the account's self-login
+                # clusters now, not at their renewal — the same cycle for this replica's own refusal, one discovery
+                # cadence for another replica's.
+                self._credential_gate.refuse(entry.get("target") or "", account, password)
+                self.self_login.suspend_account(account, password, entry)
+                # THE PING STANDS DOWN on either kind of gated entry (§3.4): a 500 may be a locked account's code 19,
+                # and one more bind a day against it is the walk in a health check's clothing. Said once.
+                if ping and (account, digest) not in self._ping_said:
                     self._ping_said.add((account, digest))
                     action = (f"not pinged again until the fleet password Secret changes, or the entry on Lease "
                               f"{lease_name(account)} is removed and the pod restarted; the gate is re-read every cycle "
@@ -2682,6 +3259,8 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
                     registry.set_standing_finding("ping", target.name, Finding(
                         secret_name_for(target.name), entry.get("code"), f"the daily ping for {account} stands down: "
                                                                           f"{said} — {action}"))
+                continue
+            if not ping:
                 continue
             interval = timedelta(seconds=self.settings.fleet_ping_interval_seconds)
             if (record.ping_last_attempt is not None and now - record.ping_last_attempt < interval
@@ -2702,7 +3281,9 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
                 result = lookup(dataclasses.replace(target, ldap_connection_bootstrap=account, onboarding=()),
                                 self.settings, client, own_namespace=namespace, gate=self._credential_gate,
                                 write=False, lease=lease)
-            except LookupRefused as exc:
+            except ClaimHeld:
+                pass                    # taken before the attempt was recorded: abandoned; the stamp stands (B3)
+            except (LookupRefused, FleetStateUnavailable) as exc:
                 changes = {"ping_last_outcome": exc.code}
                 failure(discovery_log, "fleet-ping-failed", phase="credential", outcome=exc.code, account=account,
                         target=target.name, attempt="1/1", gave_up="true" if exc.gated else None, action=exc.action,
@@ -2710,7 +3291,7 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
                 registry.set_standing_finding("ping", target.name, Finding(secret_name_for(target.name), exc.code,
                                                                             f"{exc.detail} — {exc.action}"))
             else:
-                changes = {"ping_last_ok": stamp(now), "ping_last_outcome": "ok", "refused": None}
+                changes = {"ping_last_ok": stamp(now), "ping_last_outcome": "ok"}
                 self._ping_said = {k for k in self._ping_said if k[0] != account}
                 registry.set_standing_finding("ping", target.name, None)
                 event(discovery_log, logging.INFO, "fleet-ping", account=account, target=target.name,
@@ -2718,10 +3299,11 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
             finally:
                 views[account] = (lease.release(**changes) or record).view()
         if self.signals is not None:
-            self.signals.note_fleet_accounts({a: v for a, v in views.items() if a in accounts})
+            self.signals.note_fleet_accounts({a: v for a, v in views.items() if a in members})
 
-    def _ping_finding(self, target: str, exc, account: str) -> None:
-        """A free ping failure — no password Secret, an unreadable Lease — announced when it appears."""
+    def _ping_finding(self, target: str, exc, account: str, slot: str = "ping") -> None:
+        """A free failure of the sweep — no password Secret, an unreadable Lease (slot `lease`, cleared by the next
+        read) — announced when it appears."""
         from .clusterconfig.events import failure
         from .clusterconfig.parser import Finding
         from .clusterconfig.writer import secret_name_for
@@ -2730,7 +3312,7 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
         if finding not in registry.findings():
             failure(discovery_log, "fleet-ping-failed", phase="credential", outcome=exc.code, account=account,
                     target=target, action=exc.action, detail=exc.detail)
-        registry.set_standing_finding("ping", target, finding)
+        registry.set_standing_finding(slot, target, finding)
 
     def _run_discovery(self) -> None:
         """The discovery stage on its own cadence, `discoveryIntervalSeconds` (SPEC_S1 C3; off the binding
@@ -3041,6 +3623,28 @@ function clusterConfigPage() {
 
 <!-- block: charts/group-sync-dashboard/values.yaml | edit -->
 ```yaml
+  # dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target
+  # (clusterConfig.saTokenLookup below) and writes gsd-cluster-<name> here, which discovery then
+  # polls like any other Secret. It needs clusterConfig.secrets.writes.enabled, and its CA must
+  # cover both the API host and the OAuth route. A userSelfLogin stanza is still pending (#285).
+  # The render refuses each of these exactly as the loader does, so a bad stanza fails
+  # `helm template`, not the pod after a green upgrade.
+
+```
+
+```yaml
+  # dashboard logs in as the fleet account, reads the poller ServiceAccount's token on the target
+  # (clusterConfig.saTokenLookup below) and writes gsd-cluster-<name> here, which discovery then
+  # polls like any other Secret. It needs clusterConfig.secrets.writes.enabled, and its CA must
+  # cover both the API host and the OAuth route. A userSelfLogin stanza polls on its own session, renewed a
+  # fixed margin before it expires (#285); the render refuses it above one replica.
+  # The render refuses each of these exactly as the loader does, so a bad stanza fails
+  # `helm template`, not the pod after a green upgrade.
+
+```
+
+<!-- block: charts/group-sync-dashboard/values.yaml | edit -->
+```yaml
       # Secret and the key if the grant is absent — it does not crash.
       rbac:
         create: true
@@ -3312,10 +3916,11 @@ say*. This covers *what happens to the credential afterwards* — who holds it, 
 Since #315, every bound login failure gates that account and password on every target in this
 process, for values, Secret and ConfigMap triggers alike. Successful ConfigMap sessions still spend only
 their own target's budget; successful values/Secret logins are not globally one-shot. Account means the
-exact configured username string: use one spelling for one directory identity. Since #285 the refusal is
-also recorded on the fleet account's Lease (`gsd-fleet-<sha256(username)[:16]>` in the release namespace)
-before the process's gate, and every login claims that Lease first, so a restart or another replica reads
-it and does not send the password again; a success is still not recorded there. Keep one replica.
+exact configured username string: use one spelling for one directory identity. Since #285 every login claims
+the fleet account's Lease (`gsd-fleet-<sha256(username)[:16]>` in the release namespace) and records its attempt
+there before the password is sent; a session clears it and a refusal replaces it, so a restart, a crash or
+another replica reads it and does not send the password again; a success is still not recorded there. Keep one
+replica.
 
 Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an
@@ -3395,9 +4000,10 @@ use one spelling per identity. The ConfigMap trigger also marks a successful ses
 read), for that target only (#293). A gated password is not sent again in this process, including
 after a rename, policy edit, or a later read/write failure. A TLS or connect failure
 before the password is written may bind again. Since #285 every login claims the fleet account's Lease
-first, and a bound failure is recorded there before the process's gate, so a restart or another replica
-does not send a refused password again; a successful session's mark is not on the Lease, so after a
-restart that trigger may bind once more. A missing output after that budget was spent stays pending with a finding; fix the
+first and records its attempt there before the password is sent; a session clears it and a refusal
+replaces it, so a restart, a crash or another replica does not send a refused password again; a
+successful session's mark is not on the Lease, so after a restart that trigger may bind once more.
+A missing output after that budget was spent stays pending with a finding; fix the
 cause and rotate the credential or deliberately restart after checking the account. Routine policy
 edits need neither. Do not delete an output as
 a way to remove the declaration; the source is the record. Turning discovery off suspends all cleanup;
@@ -3500,8 +4106,9 @@ today.** When it is built, the constraint that governs it is not performance but
 **Which modes bind, precisely.** **`saTokenLookup`** binds to retrieve a cluster's token, and the daily
 ping binds once per fleet account per interval to confirm it (#285). **`userSelfLogin`** binds for its own
 session — at the first cycle and at each renewal, a fixed margin before the session expires
-(`gsd/selflogin.py#SelfLoginSessions`). Every one of those logins claims the fleet account's Lease first
-and reads the refusal recorded there (`gsd/fleetstate.py#FleetLease`).
+(`gsd/selflogin.py#SelfLoginSessions`). Every one of those logins claims the fleet account's Lease first,
+reads the refusal recorded there, and records its own attempt before the password is sent
+(`gsd/fleetstate.py#FleetLease`).
 
 So a refresh on a `saTokenLookup` cluster *is a bind*, and it must honour
 `gsd/fleetlookup.py#CredentialGate` — returning a gated credential's standing refusal **without
@@ -3585,24 +4192,26 @@ Four routes, all the cluster-admin tier (above — never the wide tier) and each
 - **The fleet account's credential lifecycle — a durable, replica-shared gate, the daily ping, and `userSelfLogin`
   (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md`; chart 0.59.0; the application code rides Epic C's release).**
   Every login as the fleet account first claims the account's Lease in the release namespace
-  (`gsd-fleet-<sha256(username)[:16]>`) and binds nothing without it. A password the directory refused, or
-  answered without a session, is recorded there before the process's own gate, so a restart, a second replica
-  and every other cluster on the account read it: one wrong or locked password costs one login across two
-  processes, three clusters, a restart and an irrelevant edit, where each of those sent it once more. The Lease
-  keeps a salted scrypt fingerprint of the password, never the fast hash the process holds, because
-  `cluster-reader` can read Leases. A successful ConfigMap onboarding still spends only its own cluster (#293's
-  budget, unchanged). **The daily ping** (`clusterConfig.fleetAccount.ping`, on, `intervalSeconds: 86400`): once
-  per account per interval, on the leader, the dashboard logs in on ONE cluster the lookup retrieved (in rotation
-  by name) and reads the poller token Secret there, storing nothing; the instant it last succeeded is served on
-  `GET /api/clusterconfigs` (`fleet`), the Cluster Configurations tab and `gsd_fleet_account_last_ok_timestamp_seconds`
-  (with `gsd_fleet_account_ping_enabled` and `gsd_fleet_account_suspended`, all unlabelled). A refused entry
-  stands it down, said once. **`userSelfLogin` is built**: the cluster polls on its own session, renewed at
-  `expires_at − min(2 h, ¼ × expires_in)` from the lifetime the session states (a year on CRC renews two hours
-  before it ends); a 401 before expiry logs in once more and a second suspends the cluster; a refused password
-  suspends every self-login cluster on the account at once (`fleet-credential-suspended … stopped=<n>`). The
-  chart's `leases` rule also renders when a fleet account is in use with election off, and a `userSelfLogin`
-  stanza with `replicaCount > 1` is refused. Clearing a refused entry by hand means removing its annotation and
-  restarting the pod, which keeps its own copy.
+  (`gsd-fleet-<sha256(username)[:16]>`), binds nothing without it, and records its attempt there before the password
+  is sent; a session clears the record and the directory's answer replaces it. So a restart, a crash mid-login, a lost
+  write, a second replica and every other cluster on the account read it: one wrong or locked password costs one login
+  across two processes, three clusters, a restart, a crash and an irrelevant edit (measured, SPEC_S4c §8.2), where a
+  second process, a restart and an edit each sent it once more before. The Lease keeps a scrypt fingerprint of the
+  password salted with the account and the password Secret's uid — never the fast hash the process holds — because
+  `cluster-reader` can read Leases and not that Secret; recreating the Secret (a new uid) therefore allows one login.
+  A successful ConfigMap onboarding still spends only its own cluster (#293's budget, unchanged). **The daily ping**
+  (`clusterConfig.fleetAccount.ping`, on, `intervalSeconds: 86400`): once per account per interval, on the leader,
+  the dashboard logs in on ONE cluster the lookup retrieved (in rotation by name) and reads the poller token Secret
+  there, storing nothing; the instant it last succeeded is served on `GET /api/clusterconfigs` (`fleet`), the Cluster
+  Configurations tab and `gsd_fleet_account_last_ok_timestamp_seconds` (with `gsd_fleet_account_ping_enabled` and
+  `gsd_fleet_account_suspended`, all unlabelled). A refused entry stands it down, said once. **`userSelfLogin` is
+  built**: the cluster polls on its own session, renewed at `expires_at − min(2 h, ¼ × expires_in)` from the lifetime
+  the session states (a year on CRC renews two hours before it ends); a 401 before expiry logs in once more and a
+  second suspends the cluster; a refused password, whichever path or replica met it, suspends every self-login
+  cluster on the account within one discovery cadence (`fleet-credential-suspended … stopped=<n>`). The chart's
+  `leases` rule also renders when a fleet account is in use with election off, and a `userSelfLogin` stanza with
+  `replicaCount > 1` is refused. Clearing a refused entry by hand means removing its annotation and restarting the
+  pod, which keeps its own copy.
 - **A values `apiUrl` carrying userinfo, a query or a fragment is refused (#415; chart 0.58.8).**
   `https://user:password@host` (in any letter case, and with surrounding whitespace), `…?x` and `…#x` in
   `clusters[].apiUrl` now fail `helm template` and the pod's loader, as the cluster Secret's `server` already did;
@@ -3645,7 +4254,7 @@ from gsd.poller import Poller
 from gsd.selflogin import SelfLoginSessions, renew_at
 from gsd.store import Store
 from test_fleet_login import API, PASSWORD, T0, TOKEN, USER, login_302, refused_401
-from test_fleet_lookup import SA_TOKEN, FakeHost, sa_secret, wire  # noqa: F401
+from test_fleet_lookup import SA_TOKEN, UID, FakeHost, sa_secret, wire  # noqa: F401
 
 LEASES = "/apis/coordination.k8s.io/v1/namespaces/ns/leases"
 ANSWERS = {"401": refused_401, "500": lambda: httpx.Response(500, text="Internal Server Error")}
@@ -3711,8 +4320,8 @@ class LeaseHost(FakeHost):
         return super()._send(client, method, path, json=json, secrets=secrets)
 
     def rotate(self, password: str) -> None:
-        self.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {
-            "data": {"password": base64.b64encode(password.encode()).decode()}}
+        self.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {    # an update in place keeps the uid
+            "metadata": {"uid": UID}, "data": {"password": base64.b64encode(password.encode()).decode()}}
 
 
 def stanza(name: str, url: str | None = None, **kw) -> ClusterConfig:
@@ -3785,7 +4394,7 @@ def test_r1_a_paused_holders_refusal_is_recorded_and_it_never_clears_the_claim_t
     now[0] += timedelta(seconds=61)                  # judged expired...
     taker = FleetLease(host, "ns", USER, claim_seconds=60, identity="pod-b", clock=lambda: now[0])
     taker.claim()                                    # ...and taken
-    paused.refuse("https://api.crc.testing:6443", lease_digest(USER, PASSWORD), "login-refused")
+    paused.refuse("https://api.crc.testing:6443", lease_digest(USER, PASSWORD, UID), "login-refused")
     paused.release()
     obj = host.leases.objects[lease_name(USER)]
     assert json.loads(obj["metadata"]["annotations"]["groupsync-dashboard.io/refused"])["code"] == "login-refused"
@@ -3815,7 +4424,7 @@ def test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_
     assert measured == {"one process, three targets": 1, "a second replica": 0, "a restart": 0,
                         "an irrelevant config edit (visibility)": 0}, measured
     entry = json.loads(host.leases.annotations()["groupsync-dashboard.io/refused"])
-    assert entry["digest"] == lease_digest(USER, PASSWORD) != CredentialGate._digest(PASSWORD)
+    assert entry["digest"] == lease_digest(USER, PASSWORD, UID) != CredentialGate._digest(PASSWORD)
     assert entry["code"] == ("login-refused" if answer == "401" else "login-failed")
     assert entry["target"] == "https://api.crc.testing:6443", "the target that answered, kept as evidence"
     # A rotated password is a new (account, password): it binds once, and its success retires the old entry.
@@ -3826,11 +4435,13 @@ def test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_
 
 
 def test_r2_the_lease_digest_is_salted_and_slow_not_the_gates_prefix():
-    """The Lease is readable by `cluster-reader` (measured on the reference cluster): an unsalted fast hash there is
-    an offline dictionary oracle for the bind password. scrypt salted with the account, 64 bits kept."""
-    assert lease_digest(USER, PASSWORD) != CredentialGate._digest(PASSWORD)
-    assert lease_digest(USER, PASSWORD) != lease_digest("another-account", PASSWORD), "salted with the account"
-    assert len(lease_digest(USER, PASSWORD)) == 16 and lease_digest(USER, PASSWORD) == lease_digest(USER, PASSWORD)
+    """The Lease is readable by `cluster-reader` (measured on the reference cluster), which cannot read the password
+    Secret: a fingerprint whose other inputs are public would be an offline guessing oracle for the bind password.
+    scrypt salted with the account AND the Secret's uid (#419, D2), 64 bits kept."""
+    assert lease_digest(USER, PASSWORD, UID) != CredentialGate._digest(PASSWORD)
+    assert lease_digest(USER, PASSWORD, UID) != lease_digest("another-account", PASSWORD, UID), "salted with the account"
+    assert lease_digest(USER, PASSWORD, UID) != lease_digest(USER, PASSWORD, "another-secret-uid"), "salted with the uid"
+    assert len(lease_digest(USER, PASSWORD, UID)) == 16 and lease_digest(USER, PASSWORD, UID) == lease_digest(USER, PASSWORD, UID)
 
 
 # ── #293: the Lease never turns a per-target success mark into an account-wide refusal ──────────
@@ -3898,7 +4509,7 @@ def test_r4_a_gated_account_is_not_pinged_and_is_said_once(tmp_path, monkeypatch
     host = LeaseHost()
     holder = FleetLease(host, "ns", USER, claim_seconds=195, identity="pod-a")
     holder.claim()
-    holder.refuse("https://api.other.example.com:6443", lease_digest(USER, PASSWORD), code)
+    holder.refuse("https://api.other.example.com:6443", lease_digest(USER, PASSWORD, UID), code)
     holder.release()
     p = process(tmp_path, monkeypatch, host, discovered=[retrieved("c00")])
     with caplog.at_level(logging.INFO, logger="gsd"):
@@ -3981,7 +4592,7 @@ def test_r6_a_bound_failure_suspends_every_self_login_cluster_on_the_account(tmp
     assert f"suspended={USER}" in line and "scope=self-login" in line and "stopped=2" in line and "clusters=a,b" in line
     rows = {r["id"]: r["status"] for r in p.store.clusters()}
     assert rows == {"a": "auth_failed" if answer == "401" else "unreachable", "b": "auth_failed" if answer == "401" else "unreachable"}
-    assert json.loads(host.leases.annotations()["groupsync-dashboard.io/refused"])["digest"] == lease_digest(USER, PASSWORD)
+    assert json.loads(host.leases.annotations()["groupsync-dashboard.io/refused"])["digest"] == lease_digest(USER, PASSWORD, UID)
     # A restart reads the gate off the Lease: no login.
     other = process(tmp_path, monkeypatch, host, self_login("a"), name="restarted")
     assert sessions(other, now).credential_for(other.settings.cluster("a")) is None and len(wire.authorize) == 3
@@ -4135,6 +4746,298 @@ def test_the_gate_docstring_names_the_lease_as_its_durable_half():
     assert "the cache of the account Lease's gate (SPEC_S4c §3.3)" in doc
     assert "not covered until #285" not in doc and "The SPENT kind is never on the Lease" in doc
     assert lookup.__kwdefaults__["lease"] is None
+
+
+# ── the review of #419: round 1's accepted findings and OB2's rulings, as behaviour ─────────────────
+
+def expire(host: LeaseHost) -> None:
+    """Every claim judged expired: what clock skew larger than claim_seconds, or a pause that long, looks like."""
+    for obj in host.leases.objects.values():
+        obj["spec"]["renewTime"] = "2000-01-01T00:00:00.000000Z"
+
+
+def kind(obj: dict) -> str:
+    entry = obj.get("metadata", {}).get("annotations", {}).get("groupsync-dashboard.io/refused")
+    return "reservation" if entry and json.loads(entry).get("uncertain") else "refusal" if entry else "other"
+
+
+@pytest.mark.parametrize("failure", ["lost-write", "crash"])
+def test_d1_the_budget_survives_a_lost_refusal_write_and_a_crash(tmp_path, monkeypatch, wire, failure):
+    """D1 (Codex's `test_durable_budget`): the attempt is on the Lease before the password is on the wire, so neither
+    a refusal write the API server rejects nor a process that dies after the authorize GET sends it again after the
+    claim expires. The 74 blocks measured 2 authorizes in both."""
+    host = LeaseHost()
+    original = host.leases.write
+
+    def reject_the_answer(method, name, obj):
+        if kind(obj) == "refusal":
+            raise ClusterError(FORBIDDEN, "HTTP 403 on the refusal write")
+        return original(method, name, obj)
+
+    first = process(tmp_path, monkeypatch, host, stanza("a"), stanza("b"), stanza("c"), name="first")
+    if failure == "lost-write":
+        wire.answers = [refused_401(), refused_401()]
+        monkeypatch.setattr(host.leases, "write", reject_the_answer)
+        first._retrieve_pending()
+        monkeypatch.setattr(host.leases, "write", original)
+    else:
+        wire.answers = [lambda request: SystemExit("the process dies after the authorize GET"), refused_401()]
+        with pytest.MonkeyPatch.context() as crash, pytest.raises(SystemExit):
+            crash.setattr(FleetLease, "release", lambda *a, **k: None)          # nothing runs after a crash
+            first._retrieve_pending()
+    expire(host)
+    process(tmp_path, monkeypatch, host, stanza("a"), stanza("b"), stanza("c"), name="restart")._retrieve_pending()
+    assert len(wire.authorize) == 1, f"{failure}: {len(wire.authorize)} authorizes"
+
+
+def test_d1_clock_skew_does_not_admit_a_second_bind(tmp_path, monkeypatch, wire):
+    """D1 (Codex): a second replica judges the first's live claim expired while its authorize is in flight."""
+    host = LeaseHost()
+    other = process(tmp_path, monkeypatch, host, stanza("b"), name="second")
+
+    def interleave(request):
+        expire(host)
+        other._retrieve_pending()
+        return refused_401()
+
+    wire.answers = [interleave, refused_401()]
+    process(tmp_path, monkeypatch, host, stanza("a"), name="first")._retrieve_pending()
+    assert len(wire.authorize) == 1
+
+
+@pytest.mark.parametrize("point", ["reservation", "authorize", "refusal"])
+def test_d1_skew_takeover_at_each_point_of_the_attempt(tmp_path, monkeypatch, wire, point):
+    """D1 (OB2): the second replica takes the claim over — skew larger than claim_seconds — before the first's
+    reservation lands, while its authorize is in flight, or before its refusal lands. One authorize each: the
+    reservation is a strict compare-and-swap (a 409 abandons the attempt, never re-applied)."""
+    host = LeaseHost()
+    other = process(tmp_path, monkeypatch, host, stanza("b"), name="second")
+    fired = []
+
+    def takeover():
+        if not fired:
+            fired.append(point)
+            expire(host)
+            other._retrieve_pending()
+
+    wire.answers = [refused_401() for _ in range(3)]
+    if point == "authorize":
+        wire.answers[0] = lambda request: takeover() or refused_401()
+    original = host.leases.write
+    monkeypatch.setattr(host.leases, "write", lambda method, name, obj: (
+        takeover() if method == "PUT" and kind(obj) == point else None) or original(method, name, obj))
+    process(tmp_path, monkeypatch, host, stanza("a"), name="first")._retrieve_pending()
+    assert fired and len(wire.authorize) == 1, (fired, len(wire.authorize))
+
+
+def test_d1_a_paused_winner_resumes_after_the_takeover_and_does_not_bind(tmp_path, monkeypatch, wire):
+    """B1's residual as the 74 blocks stated it (one extra bind per paused winner, measured 2 there) is closed: the
+    paused claimant's reservation meets the 409 of the claim taken over, and its attempt is abandoned."""
+    host = LeaseHost()
+    other = process(tmp_path, monkeypatch, host, stanza("b"), name="second")
+    original, fired = host.leases.write, []
+
+    def hooked(method, name, obj):
+        if method == "PUT" and not fired and kind(obj) in ("reservation", "refusal"):
+            fired.append(True)
+            expire(host)
+            other._retrieve_pending()
+        return original(method, name, obj)
+
+    wire.answers = [refused_401() for _ in range(3)]
+    monkeypatch.setattr(host.leases, "write", hooked)
+    process(tmp_path, monkeypatch, host, stanza("a"), name="first")._retrieve_pending()
+    assert fired and len(wire.authorize) == 1
+
+
+def test_d2_the_comparison_uses_compare_digest_and_a_secret_without_a_uid_is_refused(monkeypatch):
+    """D2 (Codex's `test_comparison_uses_compare_digest`): `hmac.compare_digest`. And the salt is the Secret's uid,
+    which every object an API server serves carries: a Secret without one is refused, never salted with less."""
+    import hmac
+    from gsd.fleetlookup import LookupRefused, fleet_password
+    from gsd.fleetstate import PREFIX, _record
+    calls, compare = [], hmac.compare_digest
+    monkeypatch.setattr(hmac, "compare_digest", lambda a, b: calls.append(a) or compare(a, b))
+    digest = lease_digest(USER, PASSWORD, UID)
+    record = _record(USER, {"metadata": {"annotations": {PREFIX + "refused": json.dumps({"digest": digest})}}})
+    assert record.gated(digest) is not None and calls == [digest]
+    host = LeaseHost()
+    host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"].pop("metadata")
+    with pytest.raises(LookupRefused) as exc:
+        fleet_password(host, Settings(clusters=[], db_path=":memory:"), "ns")
+    assert exc.value.code == "fleet-credential-missing" and "metadata.uid" in exc.value.detail
+
+
+def test_d3_a_lookup_refusal_stops_a_valid_self_login_session_within_the_same_cycle(tmp_path, monkeypatch, wire, caplog):
+    """D3 (OB2): an entry the lookup wrote stops the account's valid self-login sessions in the same discovery cycle
+    (`_retrieve_pending` then `_ping_accounts`), said once."""
+    host, now = LeaseHost(), [T0]
+    p = process(tmp_path, monkeypatch, host, self_login("a"), stanza("b"))
+    s = sessions(p, now)
+    wire.answers = [login_302(), refused_401()]
+    assert s.credential_for(p.settings.cluster("a")) is not None
+    with caplog.at_level(logging.INFO, logger="gsd"):
+        p._retrieve_pending()
+        assert s.view("a")["state"] == "current"
+        p._ping_accounts()
+        assert s.credential_for(p.settings.cluster("a")) is None and s.view("a")["state"] == "suspended"
+        p._ping_accounts()
+    line, = lines(caplog, "fleet-credential-suspended")
+    assert "scope=self-login" in line and "stopped=1" in line and len(wire.revokes) == 1
+
+
+def test_d3_another_replicas_refusal_stops_this_replicas_valid_session_within_one_cadence(tmp_path, monkeypatch, wire):
+    """D3 (OB2): the entry another replica wrote, observed by this replica's next sweep."""
+    host, now = LeaseHost(), [T0]
+    one = process(tmp_path, monkeypatch, host, self_login("a"), name="one")
+    s = sessions(one, now)
+    wire.answers = [login_302(), refused_401()]
+    assert s.credential_for(one.settings.cluster("a")) is not None
+    process(tmp_path, monkeypatch, host, stanza("b"), name="two")._retrieve_pending()
+    assert s.view("a")["state"] == "current"
+    one._ping_accounts()
+    assert s.credential_for(one.settings.cluster("a")) is None and s.view("a")["state"] == "suspended"
+    assert len(wire.authorize) == 2
+
+
+def test_lookup_refusal_stops_existing_self_login(tmp_path, monkeypatch, wire):
+    """Codex's F5 test, run in the discovery cycle's order: `_ping_accounts()` after `_retrieve_pending()`."""
+    host, now = LeaseHost(), [T0]
+    p = process(tmp_path, monkeypatch, host, self_login("a"), stanza("b"))
+    s = sessions(p, now)
+    wire.answers = [login_302(), refused_401()]
+    s.credential_for(p.settings.cluster("a"))
+    p._retrieve_pending()
+    p._ping_accounts()
+    assert s.credential_for(p.settings.cluster("a")) is None, "a current session ignored the account's refusal"
+    assert s.view("a")["state"] == "suspended"
+
+
+def test_d3_an_attempt_in_flight_on_another_replica_is_not_read_as_a_refusal(tmp_path, monkeypatch, wire, caplog):
+    """The sweep reads the Lease outside any claim, so an `uncertain` entry under a LIVE claim may be an attempt still
+    under way: it is left for the next cadence, and neither this process's gate nor its sessions are touched. Read as
+    a refusal, a success elsewhere would leave this replica suspended and gated until a rotation or a restart."""
+    host, now = LeaseHost(), [T0]
+    one = process(tmp_path, monkeypatch, host, self_login("a"), name="one")
+    s = sessions(one, now)
+    wire.answers = [login_302()]
+    assert s.credential_for(one.settings.cluster("a")) is not None
+    other = FleetLease(host, "ns", USER, claim_seconds=195, identity="pod-b")
+    other.claim()
+    other.reserve("https://api.b.example.com:6443", lease_digest(USER, PASSWORD, UID))     # in flight
+    with caplog.at_level(logging.INFO, logger="gsd"):
+        one._ping_accounts()
+        assert s.view("a")["state"] == "current" and one._credential_gate.account_refusal(USER, PASSWORD) is None
+        other.complete()                                                                   # a session came back
+        other.release()
+        one._ping_accounts()
+    assert s.credential_for(one.settings.cluster("a")) is not None and not lines(caplog, "fleet-credential-suspended")
+
+
+def test_old_session_echo_not_in_findings(tmp_path, monkeypatch, wire, caplog):
+    """D4 (Codex's test, with OB2's premise): the renewal's authorize GET carries no held session token, so only the
+    issuing OAuth server can echo one; when it does, neither the standing finding the API serves nor any line carries
+    it — `FleetLogin(secrets=...)` and the finding redacted like the line."""
+    host, now = LeaseHost(), [T0]
+    p = process(tmp_path, monkeypatch, host, self_login("a"))
+    s = sessions(p, now)
+    wire.answers = [login_302(expires_in="3600", token=TOKEN_2), httpx.Response(500, text=f"echo {TOKEN_2}")]
+    with caplog.at_level(logging.INFO, logger="gsd"):
+        s.credential_for(p.settings.cluster("a"))
+        now[0] += timedelta(seconds=2700)
+        assert s.credential_for(p.settings.cluster("a")) is None
+    assert not [r for r in wire.authorize if TOKEN_2 in str(r.headers) + str(r.url)], "the renewal carried the held token"
+    assert lines(caplog, "fleet-login-failed") and lines(caplog, "fleet-credential-suspended")
+    assert all(TOKEN_2 not in (f.detail or "") for f in p.settings.cluster_registry.findings())
+    assert all(TOKEN_2 not in m for m in caplog.messages)
+    # The finding is scrubbed by `_suspend` itself, whatever produced its detail — not only by FleetLogin's scrub.
+    s._suspend(p.settings.cluster("a"), USER, (USER, "-", "-"), code="login-failed", target="", detail=f"echo {TOKEN_3}",
+               secrets=(TOKEN_3,))
+    assert all(TOKEN_3 not in (f.detail or "") for f in p.settings.cluster_registry.findings())
+
+
+def test_spent_success_does_not_suspend_self_login_account(tmp_path, monkeypatch, wire):
+    """F2 (Codex): #293's per-target SPENT mark is a writing lookup's budget, never an account refusal."""
+    host, now = LeaseHost(), [T0]
+    onboard = dataclasses.replace(stanza("a"), onboarding=("fixture", "uid-1", "a"))
+    same_target = dataclasses.replace(self_login("b"), api_url=onboard.api_url)
+    p = process(tmp_path, monkeypatch, host, onboard, same_target, self_login("c"))
+    wire.answers = [login_302(), login_302()]
+    p._retrieve_pending()
+    s = sessions(p, now)
+    assert s.credential_for(same_target) is not None, "a per-target success was treated as an account refusal"
+    assert s.view("c")["state"] != "suspended" and len(wire.authorize) == 2
+
+
+def test_ping_ignores_onboarding_spent_mark_in_same_process(tmp_path, monkeypatch, wire):
+    """F2 (Codex): the read-only ping asks for an account refusal alone, so the process that onboarded a cluster
+    still pings it — round 1 found the composition test built a fresh Poller and could not see this."""
+    host = LeaseHost()
+    onboard = dataclasses.replace(stanza("a"), onboarding=("fixture", "uid-1", "a"))
+    p = process(tmp_path, monkeypatch, host, onboard)
+    wire.answers = [login_302(), login_302()]
+    p._retrieve_pending()
+    p.settings = dataclasses.replace(p.settings, clusters=[p.settings.host_cluster()])
+    p.settings.cluster_registry.replace([retrieved("a")], [], at="now")
+    p._ping_accounts()
+    assert len(wire.authorize) == 2, "the ping was silenced by a per-target onboarding success mark"
+
+
+def test_ping_read_failure_with_no_retrieved_targets(tmp_path, monkeypatch, wire):
+    """F3 (Codex): an account with no ping target and an unreadable Lease raised IndexError on `names[0]`. Its
+    unavailable-state finding goes to the account's member clusters, and the next read clears it."""
+    host = LeaseHost()
+    host.leases.refuse = True
+    p = process(tmp_path, monkeypatch, host, self_login("a"))
+    p._ping_accounts()
+    assert not wire.authorize
+    assert ("gsd-cluster-a", "fleet-state-unavailable") in {(f.secret, f.code) for f in p.settings.cluster_registry.findings()}
+    host.leases.refuse = False
+    p._ping_accounts()
+    assert "fleet-state-unavailable" not in {f.code for f in p.settings.cluster_registry.findings()}
+```
+
+<!-- block: local-development/tests/test_fleet_lookup.py | edit -->
+```python
+)
+
+SA_TOKEN = "eyJhbGciOiJSUzI1NiJ9.sa-token-that-must-never-reach-a-log.sig"
+SOURCE = "/api/v1/namespaces/group-sync-operator/secrets/group-sync-dashboard-cluster-poller-token"
+
+
+```
+
+```python
+)
+
+SA_TOKEN = "eyJhbGciOiJSUzI1NiJ9.sa-token-that-must-never-reach-a-log.sig"
+#: The fleet password Secret's uid, as an API server serves every object's: the Lease fingerprint's salt (#285, #419 D2).
+UID = "11111111-2222-4333-8444-555555555555"
+SOURCE = "/api/v1/namespaces/group-sync-operator/secrets/group-sync-dashboard-cluster-poller-token"
+
+
+```
+
+<!-- block: local-development/tests/test_fleet_lookup.py | edit -->
+```python
+    def __init__(self, secrets: dict[str, dict] | None = None):
+        super().__init__(ClusterConfig("host", "https://kubernetes.default.svc", token_env="X"))
+        self.secrets = {"/api/v1/namespaces/ns/secrets/gsd-fleet-account":
+                        {"data": {"password": base64.b64encode(PASSWORD.encode()).decode()}}, **(secrets or {})}
+        self.writes: list[tuple[str, str, dict]] = []
+
+    class _Ctx:
+```
+
+```python
+    def __init__(self, secrets: dict[str, dict] | None = None):
+        super().__init__(ClusterConfig("host", "https://kubernetes.default.svc", token_env="X"))
+        self.secrets = {"/api/v1/namespaces/ns/secrets/gsd-fleet-account":
+                        {"metadata": {"uid": UID}, "data": {"password": base64.b64encode(PASSWORD.encode()).decode()}},
+                        **(secrets or {})}
+        self.writes: list[tuple[str, str, dict]] = []
+
+    class _Ctx:
 ```
 
 <!-- block: local-development/tests/test_fleet_lookup.py | edit -->
@@ -4160,6 +5063,27 @@ def test_the_gate_docstring_names_the_lease_as_its_durable_half():
 
 <!-- block: local-development/tests/test_fleet_lookup.py | edit -->
 ```python
+            run(RND, host, gate=gate)
+        assert second.value.code == "login-refused" and second.value.spent is False
+        assert len(wire.authorize) == 1, "the refusal was retried — that is the lockout walk"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        wire.secret = httpx.Response(200, json=sa_secret())
+        result, _ = run(RND, host, gate=gate)
+        assert result.written == "created" and len(wire.authorize) == 2
+```
+
+```python
+            run(RND, host, gate=gate)
+        assert second.value.code == "login-refused" and second.value.spent is False
+        assert len(wire.authorize) == 1, "the refusal was retried — that is the lockout walk"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"metadata": {"uid": UID}, "data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        wire.secret = httpx.Response(200, json=sa_secret())
+        result, _ = run(RND, host, gate=gate)
+        assert result.written == "created" and len(wire.authorize) == 2
+```
+
+<!-- block: local-development/tests/test_fleet_lookup.py | edit -->
+```python
         def failing(*a, **kw):
             raise LookupRefused("sa-token-secret-missing", "gone", action="create the token Secret on the target", spent=True)
         monkeypatch.setattr(fleetlookup, "lookup", failing)
@@ -4180,6 +5104,27 @@ def test_the_gate_docstring_names_the_lease_as_its_durable_half():
 
 <!-- block: local-development/tests/test_fleet_lookup.py | edit -->
 ```python
+        assert len(lines) == 2 and "attempt=1/5" in lines[0] and "outcome=login-failed" in lines[0]
+        assert "outcome=login-refused" in lines[1] and "gave_up=true" in lines[1] and "until the fleet password Secret" in lines[1]
+        assert len(wire.authorize) == 1, "the gate held across the cycles"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert len(wire.authorize) == 2 and any(m.startswith("fleet-lookup ") for m in caplog.messages), "a rotated password resumed the login"
+```
+
+```python
+        assert len(lines) == 2 and "attempt=1/5" in lines[0] and "outcome=login-failed" in lines[0]
+        assert "outcome=login-refused" in lines[1] and "gave_up=true" in lines[1] and "until the fleet password Secret" in lines[1]
+        assert len(wire.authorize) == 1, "the gate held across the cycles"
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {"metadata": {"uid": UID}, "data": {"password": base64.b64encode(b"rotated-pass-9").decode()}}
+        with caplog.at_level(logging.INFO, logger="gsd"):
+            poller._retrieve_pending()
+        assert len(wire.authorize) == 2 and any(m.startswith("fleet-lookup ") for m in caplog.messages), "a rotated password resumed the login"
+```
+
+<!-- block: local-development/tests/test_fleet_lookup.py | edit -->
+```python
     def test_success_clears_the_finding_and_wakes_discovery(self, tmp_path, monkeypatch, caplog):
         from gsd.fleetlookup import LookupResult, SaToken
         poller = self._poller(tmp_path, monkeypatch)
@@ -4196,6 +5141,48 @@ def test_the_gate_docstring_names_the_lease_as_its_durable_half():
         poller.settings.cluster_registry.set_lookup_finding("rnd", Finding("gsd-cluster-rnd", "login-failed", "x"))
         monkeypatch.setattr(fleetlookup, "lookup", lambda *a, **kw: LookupResult(
             "rnd", USER, SaToken(token=SA_TOKEN, namespace="group-sync-operator", service_account="poller", secret_name="poller-token", last_used="2026-09-22"),
+```
+
+<!-- block: local-development/tests/test_configmap_onboarding.py | edit -->
+```python
+from gsd.poller import Poller
+from gsd.store import Store
+from test_clusterconfig_tab import _Host, _as_stored
+from test_fleet_lookup import API, PASSWORD, USER, SA_TOKEN, settings, wire  # noqa: F401
+from test_fleet_login import login_302, refused_401
+
+STANZA = {"name": "rnd", "apiUrl": API, "saTokenLookup": True, "ldapConnectionBootstrap": USER}
+```
+
+```python
+from gsd.poller import Poller
+from gsd.store import Store
+from test_clusterconfig_tab import _Host, _as_stored
+from test_fleet_lookup import API, PASSWORD, UID, USER, SA_TOKEN, settings, wire  # noqa: F401
+from test_fleet_login import login_302, refused_401
+
+STANZA = {"name": "rnd", "apiUrl": API, "saTokenLookup": True, "ldapConnectionBootstrap": USER}
+```
+
+<!-- block: local-development/tests/test_configmap_onboarding.py | edit -->
+```python
+
+class Host(_Host):
+    def __init__(self, maps=None):
+        password = {"metadata": {"name": "gsd-fleet-account"},
+                    "data": {"password": base64.b64encode(PASSWORD.encode()).decode()}}
+        super().__init__({"gsd-fleet-account": password})
+        self.maps = [cm()] if maps is None else maps
+```
+
+```python
+
+class Host(_Host):
+    def __init__(self, maps=None):
+        password = {"metadata": {"name": "gsd-fleet-account", "uid": UID},
+                    "data": {"password": base64.b64encode(PASSWORD.encode()).decode()}}
+        super().__init__({"gsd-fleet-account": password})
+        self.maps = [cm()] if maps is None else maps
 ```
 
 <!-- block: local-development/tests/test_clusterconfig_tab.py | edit -->
