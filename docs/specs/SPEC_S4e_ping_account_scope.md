@@ -5,9 +5,9 @@
 | Programme | Epic C (#383), keep the shared fleet login account safe. A correction to SPEC_S4c's daily ping (§3.4) and its lab walk (§3.12), found while preparing the Epic C lab walk (PR #433) |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; S4's fifth step, a correction to S4c) |
-| Version on release | the next application MINOR at merge and the chart PATCH its appVersion move takes; the orchestrator sets both |
+| Version on release | app 1.4.0, chart 0.59.6 |
 | Issue | [#432](https://github.com/ephico2real2/group-sync-dashboard/issues/432) |
-| Status | specified |
+| Status | merged |
 | Source | OB3's specification of 2026-09-27 (implementer, phase 1: research and the spec, no production code), written from issue #432, PR #433's walk report and its hermetic test, Grok's review of PR #433, OB1-lite's finding N1 on PR #433 (relayed by the orchestrator), SPEC_S4c, SPEC_S4d and main `6740e1e` (application 1.1.0, chart 0.59.3). Revised on round 1 of the spec review (Grok and Codex Astra on `b341697`) with the orchestrator's decisions (Orchestrator's notes). Measured on this machine, and read-only on the reference cluster. §6's blocks were cut from a copy of `6740e1e` with the design implemented, and applied back to a clean clone for the proof in §4 |
 
 ## How to read this spec

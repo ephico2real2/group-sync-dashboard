@@ -111,7 +111,7 @@ typo that silently does nothing is how a cluster ends up unpolled with no one th
 | `dashboardController` | bool | this pod's own cluster. Exactly one enabled entry |
 | `saTokenLookup` | bool | connection mode: log in as the fleet account, read the poller SA's token |
 | `userSelfLogin` | bool | connection mode: poll as the fleet account itself |
-| `ldapConnectionBootstrap` | string | the username that performs the login; overrides `clusterConfig.fleetAccount.username` for this cluster |
+| `ldapConnectionBootstrap` | string | the username that performs the login; overrides `clusterConfig.fleetAccount.username` for this cluster. The password is still the chart's one `passwordSecret`, so name only an account whose password that Secret holds: nothing but a login can check the pairing. A wrong one is refused, and every path stands down while that password is the latest one refused; the Lease keeps one refusal, so rotating away and back can send it again (SPEC_S4e §3.5, #432) |
 
 ## 2. The credential — exactly one source
 
@@ -231,6 +231,9 @@ readers. The differences:
   `execProviderConfig`, `awsAuthConfig`, `proxyUrl`, `disableCompression`, `certData`, `keyData`,
   `serverName`), so a Secret copied from an Argo cluster entry says what is not supported.
 - A refused Secret is a **finding on the tab**, never a crashed pod.
+- Once the lookup retrieves a Secret-declared cluster, its `config` keeps an explicit `ldapConnectionBootstrap` beside
+  the `bearerToken`: it is the account the daily ping may use (#432). The mode keys leave, and a Secret that named no
+  account gains none.
 
 A key name is a place a credential can land, so a refusal repeats a key only when it is one this
 contract already knows; anything else is described by its length.

@@ -258,8 +258,8 @@ previous set of discovered clusters stands. `secrets.enabled=false` (`clusterCon
 answers the values list alone with `last_discovery: null`.
 
 **`fleet`** (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md` §3.10) is the daily ping's setting,
-`{"ping": {"enabled": true, "interval_seconds": 86400}}`, and one entry per fleet account as its Lease
-holds it: `username`, `lease` (`gsd-fleet-<sha256(username)[:16]>`), `last_attempt`, `last_ok` (null before
+`{"ping": {"enabled": true, "interval_seconds": 86400}}`, and one entry per fleet account in use, as its Lease holds
+it — including one that only a retrieved Secret's `lookup-account` still records, listed but never pinged (#432): `username`, `lease` (`gsd-fleet-<sha256(username)[:16]>`), `last_attempt`, `last_ok` (null before
 the first success), `last_outcome` (`ok` or the finding code the last ping met), `last_target` (the cluster
 the last ping attempted, whatever its outcome — `last_ok` may be older), and `suspended` — `[{"target", "since", "code"}]` while a refused entry stands, `[]`
 otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",

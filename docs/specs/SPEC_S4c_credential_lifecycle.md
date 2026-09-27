@@ -357,6 +357,16 @@ Decisions taken at review, recorded first and then applied:
     and the last attempt apart; `API.md` and §3.10 say what `last_target` is.
   - Measured by the orchestrator on the branch: the four tests (N1, N3, and N2's new and amended UI tests) fail without
     the code changes and pass with them; main plus this spec's 102 blocks equals the branch but for the index row.
+- **#432 (`docs/specs/SPEC_S4e_ping_account_scope.md`, 2026-09-27): §3.4's ping and §3.12's walk, corrected in place.**
+  The deviation "The ping's targets and accounts" above keyed the ping on the `lookup-account` annotation. That
+  annotation records who retrieved a token under the configuration of that day and is never revised, while the
+  password is the one Secret the configuration names today. So after a username change, a removed stanza or a
+  repointed Secret, the ping presented today's password as yesterday's account. §3.12's steps 2–3 as written would
+  have done exactly that on the reference cluster: `developer`'s password, then a wrong one, sent as the fleet account
+  (the Epic C walk, PR #433: 2 authorizes, 3 with a restart, measured hermetically; not run). The ping now presents the
+  password only as an account the configuration names, and still lists an account it no longer pings; SPEC_S4e §3.2
+  states the budget over the system. §3.12 is rewritten: nothing the walk deploys names the fleet account, and the
+  lab is re-checked read-only before any password is placed.
 
 ## 0. The requirement, in business terms
 
@@ -898,7 +908,11 @@ def _ping_accounts(self) -> None:
   `ping-last-target` rotation: the cluster that was not the last target and comes first by name.
   Over N cadences every target is read once, so a grant revoked on target 3 is a finding naming
   target 3 within N days and the account's `last_ok` still moves on the days the others answer.
-  Decided, not measured; §5.1 says what would change it.
+  Decided, not measured; §5.1 says what would change it. **Only an account the configuration names now is
+  pinged** (#432, `docs/specs/SPEC_S4e_ping_account_scope.md` §3.1): the chart's `fleetAccount.username`, or a
+  declaration's `ldapConnectionBootstrap` — a stanza's, a retrieved Secret's own, an accepted ConfigMap
+  declaration's. The annotation records who retrieved a token under the configuration of that day; on its word
+  alone the password is never presented. The account's Lease is still read and served, so its row stays.
 - **Due when** `now − ping_last_attempt ≥ fleet_ping_interval_seconds`, **or** the password digest
   differs from `ping-digest` (a rotation is confirmed once, within one cadence). Both read from the
   Lease inside the claim, so a restart at 23:59 does not ping again at 00:00 and a second replica
@@ -1243,37 +1257,81 @@ result before and after.
 
 ### 3.12 Verification on the reference cluster — read-only where it matters
 
-The lab cannot fire the normal renewal (§2.3) and **must not** log in as the fleet account. The walk:
+The lab cannot fire the normal renewal (§2.3) and **must not** log in as the fleet account. Corrected by #432
+(`docs/specs/SPEC_S4e_ping_account_scope.md` §5): as first written, steps 2–3 put `developer`'s password in the
+password Secret while the chart still named the fleet account and `gsd-cluster-shared-rnd` recorded it as its
+`lookup-account`, so the ping would have presented that password, and then a wrong one, as the fleet account. What
+keeps this walk safe is now a rule the code enforces, not care: **nothing the walk deploys names the fleet account**,
+and the release presents the password only as an account the configuration names (SPEC_S4e §3.1). The walk:
 
-1. Deploy the PR head with `release-crc.sh` (the operator's rule: the deployed page, not the
-   harness). Before anything: `oc get secret gsd-cluster-shared-rnd -o jsonpath='{.metadata.resourceVersion}'`
-   and `oc get oauthaccesstokens -o json | jq '[.items[] | select(.userName=="developer" and .clientName=="openshift-challenging-client")] | length'`.
-2. **The ping, as `developer`.** A `saTokenLookup` stanza with `ldapConnectionBootstrap: developer`
-   and the password Secret holding `developer`'s password (S4b's live-check arrangement; the
-   token-reader Role granted to `developer` on the lab). Set `intervalSeconds` low for the walk.
-   Expect: `fleet-ping account=developer target=… last_ok=<ISO>`; the Lease `gsd-fleet-<sha(developer)>`
-   with its annotations; `gsd_fleet_account_last_ok_timestamp_seconds` present; the tab's row; the
-   Secret's `resourceVersion` **unchanged**; the `developer` token count back to its starting number.
-3. **The stand-down.** Rotate the Secret to a wrong password. Expect exactly **one** authorize on the
-   oauth-server (its pod log, or the audit log D1 already parses), `login-refused` on the object,
-   `fleet-ping-failed … gave_up=true suspended=developer scope=ping`, and *no further authorize
-   across three cadences*. Rotate back: one confirming ping within a cadence.
-4. **`self-login`, as `developer`.** A `userSelfLogin` stanza with `ldapConnectionBootstrap: developer`
-   against `https://api.crc.testing:6443`. Expect the cluster to poll (`gsd_cluster_up 1`), the tab's
-   `expires <ISO>` a year out, `renew_at` two hours before it.
+0. **Two checks before anything is deployed. The walk stops if either fails.**
+   - The deployed release carries SPEC_S4e: `/api/version`, read through the pod's loopback, names the release whose
+     CHANGELOG entry cites #432, or a later one. On an older release the ping presents the password as every account a
+     retrieved Secret records: run with `clusterConfig.fleetAccount.ping.enabled: false` and skip steps 2–3.
+   - The walk's values name only `developer`. Render them with `helm template`; in the rendered ConfigMap's
+     `clusters.yaml`, `fleetAccountUsername` is `"developer"`, every `ldapConnectionBootstrap` is `developer`, and
+     `grep -c ocp-oauth-bind-serviceid` is `0`. (The reference cluster's own values render `1`, so the check tells
+     the two apart.)
+1. **Baseline, read-only.** `oc get secret gsd-cluster-shared-rnd -o jsonpath='{.metadata.resourceVersion}'`; the
+   `openshift-challenging-client` `OAuthAccessToken` counts for `developer` and for the fleet account; the fleet
+   account's Lease as JSON (`gsd-fleet-666f1ba7f2fdead0` on the reference cluster), its `resourceVersion` and
+   annotations; and the start instant for the oauth-server audit log. Then pause Argo CD's auto-sync and deploy the
+   walk's values with `release-crc.sh --values` (the operator's rule: the deployed page, not the harness).
+2. **The ping, as `developer`.** The chart's `fleetAccount.username` is `developer`. Its `passwordSecret` names a
+   walk-only Secret in the release namespace — never `ldap-oauth-bind-secret`. A `saTokenLookup` stanza,
+   `walk-lookup`, points at `https://api.crc.testing:6443` with `ldapConnectionBootstrap: developer`. For the walk,
+   `developer` is bound to the estate's `group-sync-dashboard-cluster-poller-token-reader` Role in
+   `group-sync-operator` (S4b's rehearsal, `docs/VALIDATION_satokenlookup.md`). The ping runs at most once per
+   discovery cadence, so set `intervalSeconds` to 300.
+
+   **The lab check, read-only: run it now, before the walk Secret exists, and again immediately before steps 3 and
+   5 place a wrong password. Stop unless all three print `0`.** The deployed configuration, every cluster Secret's
+   `ldapConnectionBootstrap`, and every onboarding ConfigMap must name no account but `developer`. A
+   `lookup-account` annotation is history and is allowed.
+
+       F=ocp-oauth-bind-serviceid
+       oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c "${F}"
+       oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json \
+         | jq --arg f "${F}" '[.items[] | (.data.config // "" | @base64d | fromjson? // {}) | select(.ldapConnectionBootstrap == $f)] | length'
+       oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json \
+         | jq --arg f "${F}" '[.items[] | .data // {} | to_entries[] | select(.value | contains($f))] | length'
+
+   Then create the walk Secret with `developer`'s password. Expect:
+   - `fleet-lookup cluster=walk-lookup`, then `fleet-ping target=walk-lookup last_ok=<ISO>`, both as `developer`. If
+     `developer`'s password is `developer` (CRC's default), these lines read `account=<redacted>`: that is the
+     redactor working, not a failure.
+   - `developer`'s Lease, `gsd-fleet-88fa0d759f845b47`, with its annotations, and
+     `gsd_fleet_account_last_ok_timestamp_seconds` present.
+   - No `fleet-ping` line for the fleet account, and the fleet account's Lease byte-identical to step 1's. Its tab row
+     stays, as history: the dashboard reads and serves that Lease, and never reads a password for it.
+   - `gsd-cluster-shared-rnd`'s `resourceVersion` unchanged, and the `developer` token count back to its start.
+3. **The stand-down.** Run the lab check, then rotate the walk Secret to a wrong password with `oc replace` (never `oc apply`, which would
+   copy the value into an annotation). Expect exactly **one** authorize for `developer` in the oauth-server audit log
+   (the log D1 already parses), `login-refused` on `developer`'s Lease, `fleet-ping-failed … gave_up=true
+   scope=ping`, and *no further authorize across three cadences*. Rotate back: one confirming ping within a cadence.
+4. **`self-login`, as `developer`, with the ping still on.** A `userSelfLogin` stanza with `ldapConnectionBootstrap:
+   developer` against `https://api.crc.testing:6443`; `developer` is bound to the `group-sync-dashboard-cluster-poller`
+   ClusterRole for the walk. Expect the cluster to poll (`gsd_cluster_up 1`), the tab's `expires <ISO>` a year out,
+   and `renew_at` two hours before it.
 5. **The reactive path the lab *can* drive.** `oc delete oauthaccesstoken <the session's object>` as
    cluster-admin. Expect: the next poll's 401, `reauth`, one new login on the following cycle, the
-   poll green again — and no refusal recorded. Then a wrong password + the same deletion: the
+   poll green again — and no refusal recorded. Then, after the lab check, a wrong password + the same deletion: the
    re-authentication is refused once, `fleet-credential-suspended … scope=self-login stopped=1`, the
    card critical, and no second authorize.
 6. **Two processes.** With the pod running, run a second copy of the app out of cluster against the
-   same namespace (`GSD_NAMESPACE`, the pod's ServiceAccount token): the second `claim()` on a held
-   Lease is `ClaimHeld`; the authorize count moves by the leader's binds only.
-7. `oc get oauthaccesstokens` count for `developer` at the end equals the start; the fleet account's
-   count is **untouched at 2** (the pre-existing pair, #286's).
+   same namespace (`GSD_NAMESPACE`, the pod's ServiceAccount token), started from the same walk values:
+   the second `claim()` on a held Lease is `ClaimHeld`; the authorize count moves by the leader's binds only.
+7. **The end.** The `developer` token count equals the start. The fleet account's is **untouched at 2** (the
+   pre-existing pair, #286's). The audit log holds **0** authorizes for the fleet account since step 1's instant, and
+   its Lease is byte-identical to step 1's. Remove what the walk created — the walk Secret, its three grants (the two
+   above, and the Role that keeps the dashboard ServiceAccount's `get` on `ldap-oauth-bind-secret` while the chart's
+   grant points at the walk Secret), `developer`'s Lease and `gsd-cluster-walk-lookup` — and restore with
+   `release-crc.sh --argocd main`.
 
 Steps 3 and 5 are the "deliberately wrong password" the Definition of Done asks for. **Both use
-`developer`.** A wrong password for `ocp-oauth-bind-serviceid` is never tried, on this lab or any.
+`developer`.** A wrong password for `ocp-oauth-bind-serviceid` is never tried, on this lab or any. Since #432 no path
+can present one during the walk: step 0 refuses values that name that account, the lab check refuses a lab where
+anything else names it, and nothing presents the password as an account the configuration does not name.
 
 ### 3.13 Documents
 
