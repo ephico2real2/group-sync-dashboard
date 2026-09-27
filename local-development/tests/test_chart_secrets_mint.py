@@ -212,3 +212,34 @@ class TestTheBringYourOwnKeyAndTheDocs:
         uninstall = readme[readme.index("## Uninstall"):]
         assert "group-sync-dashboard-oauth-session" in uninstall and "group-sync-dashboard-report-shared-token" in uninstall, "what an uninstall leaves behind"
         assert "oc delete secret <fullname>-oauth-session" in readme and "oc delete secret <fullname>-oauth-session" in values, "switching cookieSecret on an existing release"
+
+
+def test_the_default_image_is_red_hats_cli_and_the_docs_say_what_a_cluster_without_it_must_do():
+    """Review of #413 (OB1-lite, Grok N1): the default is registry.redhat.io's ose-cli-rhel9, pulled BY TAG from a
+    pre-install/pre-upgrade hook, so an unpullable image fails the release (measured for ose-cli:latest,
+    docs/OAUTH_LOGLEVEL_REVIEW.md C2). The rendered Job pins the default; all three documents name the failure,
+    the mirror path that redirects a tag pull, and the imagestream fallback."""
+    job, _, _ = _job(_render())
+    assert job["spec"]["template"]["spec"]["containers"][0]["image"] == "registry.redhat.io/openshift4/ose-cli-rhel9:v4.22"
+    values = (CHART / "values.yaml").read_text()
+    block = values[values.index("\nsecretsMint:"):values.index("\nargocd:")]
+    row = next(l for l in (CHART / "README.md").read_text().splitlines() if l.startswith("| `secretsMint.enabled`"))
+    log = (REPO / "docs" / "CHANGELOG.md").read_text()
+    start = log.index("The secrets-mint Job pulls Red Hat")
+    entry = log[start:log.index("\n- **", start)]
+    for name, text in (("values.yaml", block), ("README row", row), ("CHANGELOG", entry)):
+        flat = " ".join(text.replace("#", " ").split())
+        assert "ImageTagMirrorSet" in flat, f"{name}: a tag pull is redirected by an ImageTagMirrorSet, not a digest mirror"
+        assert "fails the" in flat or "FAILS" in flat, f"{name}: an unpullable hook image fails the install/upgrade"
+        assert "openshift/cli" in flat, f"{name}: the in-cluster imagestream fallback"
+    assert "a cluster without the in-cluster imagestream" not in row, "stale: the default no longer uses the imagestream"
+
+
+@pytest.mark.parametrize("sets, want", [((), 300), (("secretsMint.activeDeadlineSeconds=900",), 900)])
+def test_the_hook_deadline_covers_a_first_pull_and_is_settable(sets, want):
+    """The operator (2026-09-26): 120 s "might be too small". The deadline counts the image pull, and ose-cli-rhel9 is
+    about 450 MB; the Job is a pre-install/pre-upgrade hook, so running out fails the release. The default matches
+    Helm's own hook wait (--timeout, 5m), and a slow link raises it."""
+    job, _, _ = _job(_render(*sets))
+    assert job["spec"]["activeDeadlineSeconds"] == want
+
