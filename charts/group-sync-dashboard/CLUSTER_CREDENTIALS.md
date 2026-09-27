@@ -144,12 +144,22 @@ so the *entire* JSON must be supplied, not just the token.
 Measured on the reference cluster: 8m30s for a newly created Secret, and 3m42s / 4m08s for a rotation
 — all via `oc`. Detail in [`docs/polling-and-discovery.md`](../../docs/polling-and-discovery.md).
 
-## 5. The intended recovery flow — **PLANNED**
+## 5. The intended recovery flow — Refresh **BUILT**, Rejoin **PLANNED**
 
 Two steps, deliberately separate.
 
-**Refresh (#311).** Probe an existing cluster **with the credential it already holds** and return the
-outcome. It answers "is this actually broken, and how?" without changing anything.
+**Refresh (#311, application 1.2.0).** Press **Refresh** on the cluster's card in the Cluster Configurations tab.
+The dashboard probes that cluster **with the credential it already holds** — `GET /version`, then `GET
+/apis/user.openshift.io/v1/users/~` — and shows the answer under the card's `connection` row, in the words of §3:
+`connected` (the API's `ok`), `auth_failed`, `forbidden`, `unreachable` or `cert-verify-failed`, with the instant
+in UTC and the message. It answers "is this actually broken, and how?" without changing anything: nothing is
+stored, rotated or re-polled. It presents the credential the dashboard holds now, so after a rotation made
+with `oc` or GitOps it tests the new token only once discovery has read it (the table in §4); a rotation made
+in the tab is read within seconds. A cluster whose credential has not been retrieved yet answers `pending` with the
+reason, and a `userSelfLogin` cluster `not-probed`, without contacting the cluster. The button exists only for
+cluster administrators and only when `clusterConfig.secrets.writes.enabled` is on; **a default install, with
+writes off, has no Refresh**. The route is `POST /api/clusterconfigs/{name}/refresh`
+(`local-development/API.md`).
 
 > **Refresh probes; it never re-binds.** A probe is an ordinary authenticated API call with a stored
 > bearer token — no LDAP bind, no fleet account, no lockout exposure. A refresh that triggered a
