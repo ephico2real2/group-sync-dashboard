@@ -18,6 +18,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
     ("docs/diagrams/remote-cluster-access/source.html", "once refused, not re-sent to that target by this process"),
     ("docs/diagrams/remote-cluster-access/source.html", "a password the target already refused is not sent again"),
     ("docs/DESIGN_remote_cluster_access.md", "a password this target already refused is not sent again"),
+    ("docs/CLUSTER_STANZA.md", "the same canonical target/account/password is not sent again"),
 ])
 def test_current_docs_do_not_claim_failure_is_target_scoped(path, stale):
     text = (REPO / path).read_text()

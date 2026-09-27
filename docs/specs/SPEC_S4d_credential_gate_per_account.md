@@ -63,6 +63,7 @@ Decisions on the review of `555a7e2` (Grok, Codex Astra; 2026-09-26), recorded f
   still took 0.58.6): the check reads the words `chart <version>` on one line. The block's first lines are
   re-wrapped to keep them together; no wording changes.
 - **The chart version moved from 0.58.6 to 0.58.7**: #413 (`6451a32`) took 0.58.6 first; main was merged and the `Chart.yaml` and CHANGELOG blocks re-cut above #413's history line and entry.
+- Grok, code review of `e80ff62`: CLUSTER_STANZA.md still stated the per-target failure key; corrected by block 23.
 
 ## 1. The mandate
 
@@ -208,7 +209,7 @@ every block applied.
 | line 280, rewritten to the ruling | `test_one_target_spelled_three_ways_is_one_gate_entry` | FAILED `https://api.example.com:6444` | passed |
 | :284, rewritten to the ruling | `test_the_gate_is_per_account_so_a_sick_clusters_500_stops_a_healthy_one_too` | FAILED `DID NOT RAISE LookupRefused` (the second target bound and was written) | passed |
 | F1: the gated detail, finding and log line carry no URL credentials | `test_gated_target_never_exports_url_credentials` | FAILED `IndexError: pop from empty list` (not gated: the second target bound); against the first revision's code, without the display seam: FAILED `AssertionError: url-user` | passed |
-| F2: five stale per-target statements are gone, each file names #315 | `test_current_docs_do_not_claim_failure_is_target_scoped` (5 cases) | FAILED, 5 of 5 | passed |
+| F2: six stale per-target statements are gone, each file names #315 | `test_current_docs_do_not_claim_failure_is_target_scoped` (6 cases; the sixth, `CLUSTER_STANZA.md`, from the code review of `e80ff62`) | FAILED, 6 of 6 | passed |
 | F3: the docstring defines "account" and "process" | `test_the_gate_states_the_scope_of_account_and_process` | FAILED | passed |
 | F3: two spellings of one username are two authorizes (a pinned residual) | `test_username_case_residual` | passed | passed |
 
@@ -222,7 +223,7 @@ pinned to the merge sha, as the issue's Definition of Done says.
 
 ## 6. Implementation blocks
 
-Twenty-two blocks over thirteen files, in apply order.
+Twenty-three blocks over fourteen files, in apply order.
 
 <!-- block: local-development/gsd/fleetlookup.py | edit -->
 ```python
@@ -670,6 +671,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
     ("docs/diagrams/remote-cluster-access/source.html", "once refused, not re-sent to that target by this process"),
     ("docs/diagrams/remote-cluster-access/source.html", "a password the target already refused is not sent again"),
     ("docs/DESIGN_remote_cluster_access.md", "a password this target already refused is not sent again"),
+    ("docs/CLUSTER_STANZA.md", "the same canonical target/account/password is not sent again"),
 ])
 def test_current_docs_do_not_claim_failure_is_target_scoped(path, stale):
     text = (REPO / path).read_text()
@@ -863,4 +865,24 @@ version: 0.58.7
   until #285's account Lease.
 
 - **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
+```
+
+<!-- block: docs/CLUSTER_STANZA.md | edit -->
+```markdown
+The ConfigMap trigger marks the existing process-lifetime CredentialGate on a bound
+login failure and on a successful session (before the token read). After that mark,
+the same canonical target/account/password is not sent again in this process, including
+after a rename, policy edit, or a later read/write failure. A TLS or connect failure
+before the password is written may bind again. A restart or another replica binds
+again. There is no durable or replica-shared claim until #285. A missing output after that budget was spent stays pending with a finding; fix the
+```
+
+```markdown
+The fleet lookup gates a password in memory (#315). A bound login failure (the password was sent and
+no session came back) gates it for that account on every target; the account is the exact username, so
+use one spelling per identity. The ConfigMap trigger also marks a successful session (before the token
+read), for that target only (#293). A gated password is not sent again in this process, including
+after a rename, policy edit, or a later read/write failure. A TLS or connect failure
+before the password is written may bind again. A restart or another replica binds
+again. There is no durable or replica-shared claim until #285. A missing output after that budget was spent stays pending with a finding; fix the
 ```
