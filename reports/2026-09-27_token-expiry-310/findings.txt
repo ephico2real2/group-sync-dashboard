@@ -1,0 +1,24 @@
+Both runs onboarded the same CRC API as `shared-qa` via a labelled Secret with a TokenRequest
+ServiceAccount token, and watched it lapse. Poll interval is 60 s, so every boundary below is
+measured to ±60 s.
+
+Measured twice: **+36 s** and **+42 s** past the `exp` claim, both accepted; rejected by the following
+poll. An earlier note in this session guessed a cached authenticator — **that is retracted**. The
+cause is a **validation leeway**: go-jose's `DefaultLeeway` is one minute and "causes the token to be
+deemed valid until one minute after the expiration time"
+([go-jose jwt docs](https://pkg.go.dev/gopkg.in/square/go-jose.v2/jwt)).
+
+Consequence for #285: a renewal margin computed from `exp` is correct and conservative. The leeway is
+**free slack, not budget** — it is a server-side validation detail, not a contract, and nothing should
+be designed to consume it.
+
+The line is well-formed — it names the Secret to fix, the credential kind and the TLS mode — and the
+audit-log capture degraded independently ("could not list nodes … group data is unaffected") rather
+than failing the whole poll. But an expired token, a revoked token and a withdrawn grant are all a
+bare 401, and the text says "invalid or expired" because that is all it can honestly say. Telling
+them apart is real work, not a wording change.
+
+Measured: **8m30s** to discover a new Secret, **3m42s** to notice a rotated
+credential — the first being longer than one binding interval. With the shortest token the
+TokenRequest API will issue, onboarding nearly missed the window entirely. Filed as #311 (a
+force-refresh endpoint and its UI control).
