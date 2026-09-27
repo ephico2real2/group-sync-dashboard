@@ -1,0 +1,7 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=authfail-2026-09-27 -o wide
+# at 2026-09-27T20:48:14Z
+NAME                                                        CREATED AT
+clusterrole.rbac.authorization.k8s.io/gsd-walk-crb-update   2026-09-27T20:48:14Z
+
+NAME                                                                         ROLE                              AGE   USERS       GROUPS   SERVICEACCOUNTS
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-crb-update-developer   ClusterRole/gsd-walk-crb-update   0s    developer            

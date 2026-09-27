@@ -1,0 +1,5 @@
+# which request of the probe answers 401: /version and users/~ with a random sha256~ token, and /version with none
+# at 2026-09-27T20:51:01Z
+bearer=<random> GET /version -> 401
+bearer=<random> GET /apis/user.openshift.io/v1/users/~ -> 401
+no token     GET /version -> 200
