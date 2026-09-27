@@ -1,0 +1,54 @@
+# Epic C's lab walk (#383), 2026-09-27 — the two temporary grants the walk makes, both removed at its end.
+# Labelled walk.gsd.lab/run=epic-c-2026-09-27 so their removal is one selector and provable.
+#
+# 1. KEEP the dashboard ServiceAccount's `get` on the fleet password Secret while the walk's values point the chart's
+#    fleet-account Role at the walk-only Secret instead (rendered RBAC diff: REMOVED 1, exactly this rule). The same
+#    subject, resourceName and verb as the chart's own group-sync-dashboard-fleet-account Role — so the
+#    ServiceAccount's effective permissions never drop during the walk (the operator's rule of 2026-09-25).
+#    Nothing in the walk's configuration reads this Secret; the grant only keeps what the ServiceAccount already had.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gsd-walk-keep-fleet-password-get
+  namespace: openshift-config
+  labels:
+    walk.gsd.lab/run: epic-c-2026-09-27
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["ldap-oauth-bind-secret"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gsd-walk-keep-fleet-password-get
+  namespace: openshift-config
+  labels:
+    walk.gsd.lab/run: epic-c-2026-09-27
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gsd-walk-keep-fleet-password-get
+subjects:
+  - kind: ServiceAccount
+    name: group-sync-dashboard
+    namespace: group-sync-dashboard
+---
+# 2. developer reads what the estate's remote poller identity reads (the ClusterRole the poller ServiceAccount on this
+#    cluster is bound to), so a self-login cluster polling as developer's session answers `ok` (SPEC_S4c §3.12 step 4:
+#    "Expect the cluster to poll"). Scoped exactly as the shipped grant for that role, no wider.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-developer-poller
+  labels:
+    walk.gsd.lab/run: epic-c-2026-09-27
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: group-sync-dashboard-cluster-poller
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

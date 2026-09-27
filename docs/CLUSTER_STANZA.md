@@ -1,5 +1,24 @@
 # The cluster stanza — every accepted combination, measured
 
+## Cluster Configurations: findings and warnings
+
+The tab names configuration problems and warnings separately. Only cluster administrators can open it.
+
+| Where | Meaning | What to do |
+|---|---|---|
+| Findings card | A refused Secret or ConfigMap stanza names its source and reason. | Fix the source named in the finding. |
+| ⚠️ banner and `shared API URL` chip | Two or more effective entries declare the same API URL. The banner names the entries and URL; each affected card names its peers. | Keep deliberate aliases. Remove an unintended duplicate from its source. |
+
+A shared URL refuses nothing. Each enabled, ready entry still polls and contributes its own counts;
+a finding on that server can therefore appear once per entry. Existing Rotate, Delete and Add controls
+keep their behaviour. Refused Secrets do not contribute to the warning. Pending entries count and can
+be named; a disabled entry is not polled and joins no group. Values, discovered Secrets and ConfigMap-generated entries all
+participate after name precedence is resolved.
+
+Host case, default ports and trailing slashes are normalised by the credential gate's existing URL
+rule. Different URLs that reach the same physical cluster are not detected. The API exposes warnings
+separately from findings; see [`GET /api/clusterconfigs`](../local-development/API.md#get-apiclusterconfigs).
+
 ## ConfigMap onboarding (#293, SPEC_S5)
 
 The existing measured values tables below remain the values contract. The additional runtime authoring

@@ -212,12 +212,28 @@ writes are S2's.
      "enabled": false, "credential": "bearer", "labels": {}, "visibility": null, "identity": null, "tls": null,
      "status": "ok", "last_poll": "2026-09-19T02:00:00Z", "error": null, "retired": true}
   ],
+  "warnings": [],
   "findings": [
     {"secret": "gsd-cluster-broken", "code": "config-not-json",
      "detail": "Expecting value: line 1 column 1"}
   ]
 }
 ```
+
+**`warnings` is a separate list of advisories.** Every response includes it; no warning means `[]`.
+Existing response fields and `findings` keep their meaning. Each warning has exactly these fields:
+
+```json
+{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"],
+ "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}
+```
+
+One warning names all effective entries sharing a normalised URL, sorted by name. Values, discovered
+Secrets and ConfigMap entries participate; refused Secrets and retired rows do not. The credential gate's
+`httpx.URL` rule normalises host case, IDNA and default ports, then strips trailing slashes. Different
+non-default ports stay different. Pending declarations count; a disabled entry is not polled, so it joins no group.
+This warning changes no polling, counts, binding findings, alerts or metrics. Different URLs reaching
+one physical cluster are not detected.
 
 **`tls`** says how the cluster's API server certificate is verified, one of three (the operator's ruling,
 2026-09-20): `{"insecure": false, "ca": "trusted-bundle"}` — the default when the Secret names no
@@ -251,7 +267,7 @@ otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current
 
 ### The Cluster Configurations tab's writes (#230 S2)
 
-Four routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
+Five routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
 identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
 the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
 (`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
@@ -302,6 +318,17 @@ The request goes through the parser (the same refusals), then `GET /version` and
 /apis/user.openshift.io/v1/users/~` with that credential and TLS mode; a cluster without the OpenShift
 user API leaves `identity` null; a failure answers `reachable: false` with `error: "<outcome>: <message>"`.
 Nothing is stored or registered.
+
+`POST /api/clusterconfigs/{name}/refresh` (#311, `docs/specs/SPEC_D3_cluster_refresh.md`), no body → `200
+{"outcome": "ok", "message": "authenticated as system:serviceaccount:…, server v1.31.6", "at": "2026-09-27T14:05:40Z"}`.
+It runs the connection test's probe on an **existing** cluster with the credential the dashboard **already holds**,
+and answers in the poller's words: `ok`, `auth_failed`, `forbidden`, `unreachable`, `cert-verify-failed`. `at` is
+ISO-8601 UTC. A credential kind that is still pending (`oauth`, `remote-lookup`) answers `pending` with its reason,
+and a `self-login` cluster `not-probed`; neither makes a network call. **It never logs in and never binds**: no
+fleet login, no lookup, no self-login session, no credential gate. It stores nothing, rotates nothing, and forces
+no poll or discovery; the card's `connection` row still shows the last poll. Every non-retired cluster may be
+refreshed, the host included; an unknown or retired name is `404`, and a second request while a probe of the
+same cluster is running in this process is `409`. One `cluster-refreshed` line per call, with no credential.
 
 ## GroupSync CRs
 

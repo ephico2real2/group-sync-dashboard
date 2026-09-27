@@ -1,0 +1,6 @@
+# helm template (chart at 22a485c) — the Argo shape (-f environments/crc.yaml -f <the Application's valuesObject>) against the walk (-f walk-values-selflogin.yaml); rules expanded by rbac_rules.py
+rules: before 65, after 65
+REMOVED 1
+  - Role openshift-config group-sync-dashboard-fleet-account  secrets get ldap-oauth-bind-secret
+ADDED 1
+  + Role group-sync-dashboard group-sync-dashboard-fleet-account  secrets get gsd-walk-developer-password

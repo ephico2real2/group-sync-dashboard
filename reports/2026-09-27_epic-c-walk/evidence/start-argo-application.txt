@@ -1,0 +1,45 @@
+# oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq '{syncPolicy: .spec.syncPolicy, targetRevision: .spec.source.targetRevision, helm: .spec.source.helm, sync: .status.sync.status, syncedRevision: .status.sync.revision, health: .status.health.status}'
+# at 2026-09-27T12:50:05Z
+{
+  "syncPolicy": {
+    "automated": {
+      "prune": true,
+      "selfHeal": true
+    },
+    "retry": {
+      "backoff": {
+        "duration": "30s",
+        "factor": 2,
+        "maxDuration": "5m"
+      },
+      "limit": 3
+    },
+    "syncOptions": [
+      "CreateNamespace=true",
+      "RespectIgnoreDifferences=true",
+      "ServerSideApply=true"
+    ]
+  },
+  "targetRevision": "main",
+  "helm": {
+    "releaseName": "group-sync-dashboard",
+    "valueFiles": [
+      "../../environments/crc.yaml"
+    ],
+    "valuesObject": {
+      "clusters": [
+        {
+          "apiUrl": "https://kubernetes.default.svc",
+          "caBundleFile": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+          "dashboardController": true,
+          "enabled": true,
+          "name": "dashboard",
+          "tokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      ]
+    }
+  },
+  "sync": "Synced",
+  "syncedRevision": "22a485c66a7fe1b93983546374b1fd1a93e1549e",
+  "health": "Healthy"
+}

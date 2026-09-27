@@ -1,0 +1,15 @@
+# oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -n -E '^(fleet|discoveryIntervalSeconds|pollIntervalSeconds|requestTimeoutSeconds|replicaCount|leaderElection|clusterSecrets)' || true
+# at 2026-09-27T12:50:07Z
+1:pollIntervalSeconds: 60
+4:discoveryIntervalSeconds: 300
+12:requestTimeoutSeconds: 15
+72:clusterSecretsEnabled: true
+73:clusterSecretsWritesEnabled: true
+77:fleetAccountUsername: "ocp-oauth-bind-serviceid"
+78:fleetPasswordSecretNamespace: "openshift-config"
+79:fleetPasswordSecretName: "ldap-oauth-bind-secret"
+80:fleetPasswordSecretKey: "bindPassword"
+82:fleetPingEnabled: true
+83:fleetPingIntervalSeconds: 86400
+89:replicaCount: 1
+152:leaderElection: true

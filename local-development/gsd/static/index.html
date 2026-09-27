@@ -159,10 +159,11 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
-                   reader typed; the open rotate panel; the armed delete; the messages under the form and the cards. */
+                   reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.
+                   #311: each card's Refresh state by cluster id — in flight, or the answer — so the repaint keeps it. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
-                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false,
+                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
                 libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
@@ -6048,6 +6049,27 @@ function ccConnection(c) {
   if (st === "never") out += `<div class="cc-consq">${esc(MEANS.cl_never)}</div>`;
   return out;
 }
+/* #311 (SPEC_D3 §4): Refresh probes the cluster with the credential it already holds — it never logs in. Four
+   states, each a word: idle, in flight, succeeded (`ok`, shown as connected) and refused (the poller's word). */
+function ccRefreshButton(c) {
+  const busy = (view.clusterRefresh[c.id] || {}).state === "flight";
+  return `<button type="button" class="btn" id="cc-refresh-${esc(c.id)}" data-cc-refresh="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Refreshing…" : "Refresh"}</button>`;
+}
+function ccRefreshLine(c) {
+  const r = view.clusterRefresh[c.id];
+  if (!r) return "";
+  const head = `<div class="cc-consq" id="cc-refresh-result-${esc(c.id)}"><strong>Refresh:</strong> `;
+  if (r.state === "flight") return `${head}probing /version and users/~ with the stored credential…</div>`;
+  // nothing was asked of the cluster for these two, so nothing was refused: the grey badge, never the red one
+  const shape = r.outcome === "ok" ? "ok" : r.outcome === "pending" || r.outcome === "not-probed" ? "unknown" : "critical";
+  let out = `${head}${ccBadge(shape, r.outcome === "ok" ? "connected" : r.outcome)}`;
+  if (r.at) out += ` · <span class="mono">${esc(r.at)}</span>`;
+  if (r.message) out += ` — ${esc(r.message)}`;
+  if (r.outcome === "auth_failed") {
+    out += `<div class="cc-hint">The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.</div>`;
+  }
+  return out + "</div>";
+}
 function ccCredential(c) {
   const kind = c.credential === "bearer" ? "bearerToken" : c.credential === "in-cluster" ? "serviceAccount" : c.credential;
   // a retired row from before S1 recorded the kind carries "": say so rather than printing a bare badge
@@ -6112,8 +6134,11 @@ function ccTls(c) {
   return t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
 }
 function ccClusterCard(c) {
+  const shared = (data.clusterconfigs.warnings || []).find((w) => w.code === "shared-api-url" && w.clusters.includes(c.id));
   const secretRow = ccSourceKind(c) === "secret";
   const armed = view.clusterDeleteArmed === c.id;
+  // every live row may be refreshed (#311 decision 3); absent, not disabled, where no write control exists
+  const refresh = !c.retired && ccWritesOn() ? ccRefreshButton(c) : "";
   let foot;
   if (c.retired) {
     foot = `<div class="cc-foot">its Secret is gone — the history is kept, the cluster is disabled</div>`;
@@ -6124,24 +6149,27 @@ function ccClusterCard(c) {
       ? "changing cluster configuration is reserved to cluster configuration administrators"
       : "this deployment's writes are off"}</div>`;
   } else if (secretRow) {
-    foot = `<div class="cc-acts"><button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
+    foot = `<div class="cc-acts">${refresh}<button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
       <span class="cc-hint" id="cc-delete-msg-${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
   } else if (c.host) {
     foot = `<div class="cc-foot">the pod's own in-cluster ServiceAccount — not a Secret</div>`;
   } else {
     foot = `<div class="cc-foot">declared in the chart's values — remove it there</div>`;
   }
+  // Delete's row already carries Refresh; every other live row gets a row of its own above the footer
+  if (refresh && !(secretRow && !c.onboarding_configmap)) foot = `<div class="cc-acts">${refresh}</div>${foot}`;
   const vis = c.visibility ? `<span class="rp-chip">${esc(c.visibility)}</span> <span class="cc-hint">${esc(CC_VIS_MEAN[c.visibility] || "")}</span>` : `<span class="muted">—</span>`;
   const ident = c.identity ? `<span class="rp-chip">${esc(c.identity)}</span> <span class="cc-hint">${esc(CC_ID_MEAN[c.identity] || "")}</span>` : `<span class="muted">—</span>`;
   return `<article class="card cc-cluster" id="cc-cluster-${esc(c.id)}" data-cc-cluster="${esc(c.id)}">
-    <div class="row-wrap"><h2>${esc(c.id)} ${ccSourceChip(c)} ${ccBadge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled")}</h2></div>
+    <div class="row-wrap"><h2>${esc(c.id)} ${ccSourceChip(c)} ${ccBadge(c.enabled ? "ok" : "unknown", c.enabled ? "enabled" : "disabled")} ${shared ? ccBadge("warning", "shared API URL") : ""}</h2></div>
     <div class="cc-kv"><span class="k">server</span><span class="v mono">${esc(c.api_url)}</span></div>
+    ${shared ? `<p class="cc-hint cc-shared-api-hint">Also declared by ${shared.clusters.filter((name) => name !== c.id).map(esc).join(", ")} — each entry is polled and counted on its own.</p>` : ""}
     <div class="cc-kv"><span class="k">credential</span><span class="v">${ccCredential(c)}</span></div>
     <div class="cc-kv"><span class="k">tls</span><span class="v">${ccTls(c)}</span></div>
     <div class="cc-kv"><span class="k">labels</span><span class="v">${ccLabelChips(c.labels)}</span></div>
     <div class="cc-kv"><span class="k">visibility</span><span class="v">${vis}</span></div>
     <div class="cc-kv"><span class="k">identity</span><span class="v">${ident}</span></div>
-    <div class="cc-kv"><span class="k">connection</span><span class="v">${ccConnection(c)}</span></div>
+    <div class="cc-kv"><span class="k">connection</span><span class="v">${ccConnection(c)}${ccRefreshLine(c)}</span></div>
     ${foot}</article>`;
 }
 function ccFinding(f) {
@@ -6287,6 +6315,7 @@ function clusterConfigPage() {
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
       : `${n.secret} Secret${n.secret === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
     ${ccFleetRows(d.fleet)}
+    ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${w.code === "shared-api-url" ? "Shared API URL." : "Configuration warning."}</strong> ${esc(w.detail)}</div>`).join("")}
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
   const findings = (d.findings || []).map(ccFinding).join("")
     || `<div class="empty-note">No configuration findings. Refused Secrets and ConfigMap stanzas are listed here with their source and reason.</div>`;
@@ -6393,6 +6422,20 @@ function wireClusterConfig() {
       } catch (e) { view.clusterMsg[`rotate:${id}`] = e.message; }
       if (field) field.value = "";
       render(); refresh();
+    };
+  });
+  document.querySelectorAll("[data-cc-refresh]").forEach((el) => {
+    el.onclick = async () => {
+      const id = el.dataset.ccRefresh;
+      // one probe per cluster: a click on the old button, or the repainted one, while the first is out does nothing
+      if ((view.clusterRefresh[id] || {}).state === "flight") return;
+      view.clusterRefresh[id] = { state: "flight" }; render();
+      try {
+        view.clusterRefresh[id] = { state: "done", ...(await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/refresh`, "POST")) };
+      } catch (e) {
+        view.clusterRefresh[id] = { state: "done", outcome: e.status ? `HTTP ${e.status}` : "error", message: e.message, at: null };
+      }
+      render();
     };
   });
   document.querySelectorAll("[data-cc-delete]").forEach((el) => {

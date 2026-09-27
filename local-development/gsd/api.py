@@ -14,6 +14,7 @@ from urllib.parse import quote
 import os
 from email.utils import formatdate, parsedate_to_datetime
 import re
+import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -1117,11 +1118,13 @@ def build_app(
                                        "and how its certificate is trusted.")
         viewer = trusted_viewer(request)
         from .clusterconfig import CONFIG_SELECTOR, LABEL_SELECTOR
+        from .clusterconfig.warnings import shared_api_warnings
         registry = settings.cluster_registry
         host = settings.host_cluster()
         polled = {row["id"]: row for row in store.clusters()}
         clusters = []
-        for c in settings.effective_clusters():
+        effective = settings.effective_clusters()
+        for c in effective:
             row = polled.get(c.name) or {}
             visibility, identity = settings.cluster_policy(c.name)
             clusters.append({
@@ -1160,6 +1163,7 @@ def build_app(
             "configmaps": {"enabled": settings.cluster_secrets_enabled, "label": CONFIG_SELECTOR},
             "clusters": clusters,
             "findings": [f.public() for f in registry.findings()],
+            "warnings": shared_api_warnings(effective),
             # SPEC_S4c §3.10: the daily ping and each fleet account's Lease, as instants.
             "fleet": {"ping": {"enabled": settings.fleet_ping_enabled,
                                "interval_seconds": settings.fleet_ping_interval_seconds},
@@ -1337,6 +1341,31 @@ def build_app(
                                               timeout=settings.request_timeout_seconds, viewer=viewer)
             except (writer.WriteRefused, writer.WriteFailed) as exc:
                 raise _write_error(exc) from exc
+
+        # One probe per cluster at a time, per process (SPEC_D3 note D3-2): a second press is refused, never queued.
+        refreshing: set[str] = set()
+        refreshing_lock = threading.Lock()
+
+        @app.post("/api/clusterconfigs/{name}/refresh")
+        def refresh_cluster_config(request: Request, name: str) -> dict:
+            """SPEC_D3 (#311): probe an existing cluster with the credential it already holds —
+            `{outcome, message, at}` in the poller's words. Writes nothing, and never logs in or binds:
+            a pending or self-login credential is answered with no network call. Registered with the
+            writes, like `/test`, so a default install stays read-only."""
+            from .clusterconfig import writer
+            viewer, _, _ = _writes_gate(request)
+            cluster = settings.cluster(name)
+            if cluster is None:
+                raise HTTPException(status_code=404, detail=f"unknown cluster {name!r}")
+            with refreshing_lock:
+                if name in refreshing:
+                    raise HTTPException(status_code=409, detail=f"a refresh of {name} is already in flight")
+                refreshing.add(name)
+            try:
+                return writer.refresh(cluster, timeout=settings.request_timeout_seconds, viewer=viewer)
+            finally:
+                with refreshing_lock:
+                    refreshing.discard(name)
 
     @app.get("/api/clusters")
     @consistent

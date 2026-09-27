@@ -1,0 +1,40 @@
+# oc get leases.coordination.k8s.io -n group-sync-dashboard -o json | jq '[.items[] | {name: .metadata.name, resourceVersion: .metadata.resourceVersion, labels: .metadata.labels, annotations: (.metadata.annotations // {} | with_entries(select(.key | startswith("groupsync-dashboard.io/")))), holder: .spec.holderIdentity, leaseDurationSeconds: .spec.leaseDurationSeconds, renewTime: .spec.renewTime}]'
+# at 2026-09-27T12:50:06Z
+[
+  {
+    "name": "grafana-operator-a3ff8cb167045bd296db1493d0f15dc4ab61f57a6c217969fef5964ac9e3daae",
+    "resourceVersion": "5204535",
+    "labels": null,
+    "annotations": {},
+    "holder": "grafana-operator-controller-manager-v5-58748cb7d4-wlpf9_e7671b43-2787-4ed6-8cbe-cf7effb0791a",
+    "leaseDurationSeconds": 15,
+    "renewTime": "2026-09-27T12:50:05.854751Z"
+  },
+  {
+    "name": "group-sync-dashboard",
+    "resourceVersion": "5204461",
+    "labels": null,
+    "annotations": {},
+    "holder": "group-sync-dashboard-5ff4d6cc87-kp5kw",
+    "leaseDurationSeconds": 30,
+    "renewTime": "2026-09-27T12:49:59.213699Z"
+  },
+  {
+    "name": "gsd-fleet-666f1ba7f2fdead0",
+    "resourceVersion": "5127386",
+    "labels": {
+      "groupsync-dashboard.io/lease-type": "fleet-account"
+    },
+    "annotations": {
+      "groupsync-dashboard.io/account": "ocp-oauth-bind-serviceid",
+      "groupsync-dashboard.io/ping-digest": "e23c0ea210579dde",
+      "groupsync-dashboard.io/ping-last-attempt": "2026-09-27T10:27:05Z",
+      "groupsync-dashboard.io/ping-last-ok": "2026-09-27T10:27:05Z",
+      "groupsync-dashboard.io/ping-last-outcome": "ok",
+      "groupsync-dashboard.io/ping-last-target": "shared-rnd"
+    },
+    "holder": "",
+    "leaseDurationSeconds": 195,
+    "renewTime": "2026-09-27T10:27:05.906118Z"
+  }
+]

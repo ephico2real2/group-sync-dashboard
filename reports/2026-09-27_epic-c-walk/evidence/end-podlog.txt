@@ -1,0 +1,17 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-5ff4d6cc87-kp5kw -c dashboard --timestamps  (captured 2026-09-27T13:20:53Z); token object names redacted
+# pod started: 2026-09-27T10:21:54Z
+# fleet-*, self-login*, and every line naming a walk cluster other than its poll-cycle timing:
+2026-09-27T10:22:03.426005370Z 2026-09-27 06:22:03,425-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=mock-privateca source=secret:gsd-cluster-mock-privateca credential=bearer tls=caData visibility=inherit identity=same-as-host enabled=true
+2026-09-27T10:22:03.426318204Z 2026-09-27 06:22:03,426-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=mock-selfsigned source=secret:gsd-cluster-mock-selfsigned credential=bearer tls=insecure visibility=inherit identity=same-as-host enabled=true
+2026-09-27T10:22:03.426579247Z 2026-09-27 06:22:03,426-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=mock-trusted source=secret:gsd-cluster-mock-trusted credential=bearer tls=trusted-bundle visibility=inherit identity=same-as-host enabled=true
+2026-09-27T10:22:03.426843040Z 2026-09-27 06:22:03,426-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-qa source=secret:gsd-cluster-shared-qa credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T10:22:03.427103374Z 2026-09-27 06:22:03,427-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T10:27:06.054455292Z 2026-09-27 06:27:06,054-0400 INFO    gsd.fleetlogin fleet-login cluster=shared-rnd account=ocp-oauth-bind-serviceid tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T10:27:06Z
+2026-09-27T10:27:06.116176136Z 2026-09-27 06:27:06,115-0400 INFO    gsd.fleetlogin fleet-logout cluster=shared-rnd account=ocp-oauth-bind-serviceid tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T10:27:06.117038139Z 2026-09-27 06:27:06,116-0400 INFO    gsd.clusterconfig fleet-ping account=ocp-oauth-bind-serviceid target=shared-rnd last_used=2026-09-27 last_ok=2026-09-27T10:27:05Z
+# 'shared-rnd poll cycle' lines: 179
+2026-09-27T10:22:35.796587366Z 2026-09-27 06:22:35,796-0400 DEBUG   gsd.poller shared-rnd poll cycle took 7.35s; next binding refresh in 3596s
+2026-09-27T13:20:30.830489964Z 2026-09-27 09:20:30,830-0400 DEBUG   gsd.poller shared-rnd poll cycle took 2.26s; next binding refresh in 180s
+# 'walk-self-login poll cycle' lines: 0
+# 'walk-renewal poll cycle' lines: 0
+# fleet-login lines naming shared-rnd: 1

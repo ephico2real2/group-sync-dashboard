@@ -948,6 +948,7 @@ class Poller:
         self._discovery_cycle = 0
         self._discovered_shape: dict[str, tuple] = {}
         self._discovery_findings: set[tuple[str, str]] = set()
+        self._shared_api_urls: set[tuple[str, tuple[str, ...]]] = set()
         # The discovery failure in force, so a standing one speaks once — see
         # `_announce_discovery_failure`. None means the last cycle discovered cleanly.
         self._discovery_failure: str | None = None
@@ -1438,6 +1439,18 @@ class Poller:
         self._discovery_failure = None
         event(discovery_log, logging.INFO, "discovery-recovered", cycle=cycle, namespace=namespace)
 
+    def _announce_shared_api_urls(self) -> None:
+        from .clusterconfig.events import event
+        from .clusterconfig.warnings import shared_api_urls
+        groups = set(shared_api_urls(self.settings.effective_clusters()).items())
+        for state, transitions in (("cleared", self._shared_api_urls - groups),
+                                   ("appeared", groups - self._shared_api_urls)):
+            for url, names in sorted(transitions):
+                event(discovery_log, logging.WARNING if state == "appeared" else logging.INFO,
+                      "shared-api-url", url=url, clusters=",".join(names), state=state,
+                      cycle=self._discovery_cycle)
+        self._shared_api_urls = groups
+
     def _discover_once(self) -> None:
         """One discovery of the labelled cluster Secrets (SPEC_S1 C3): the host's client LISTs the pod's
         own namespace by label; the registry is replaced on success and keeps the previous set on a
@@ -1483,6 +1496,7 @@ class Poller:
         before = {c.name for c in registry.discovered()}
         before_shape, before_findings = self._discovered_shape, self._discovery_findings
         registry.replace(clusters, findings, at=at, blocked=blocked)
+        self._announce_shared_api_urls()
         after = {c.name for c in clusters}
         # TRANSITIONS, NOT STATES (#245), and the FINDINGS ARE A TRANSITION TOO (review of #247,
         # Grok C2). The first version gated on `or findings` — this cycle's list, not a diff — so a
@@ -1872,6 +1886,7 @@ class Poller:
         # instead of lingering as `ok` with frozen data and stale alerts (#96). Config changes roll
         # the pod, so this runs on every change — retire/add on the fly.
         effective = self.settings.effective_clusters()
+        self._announce_shared_api_urls()
         # When the discovery could not look, absence proves nothing about a Secret-sourced cluster:
         # spare those rows rather than retiring the whole fleet on one failed LIST (Grok C6).
         keep = ("secret:", "configmap:") if discovery_failed else ()
