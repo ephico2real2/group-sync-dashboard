@@ -16,7 +16,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   pre-install/pre-upgrade hook, so a cluster that cannot pull the image fails the upgrade. Before upgrading a
   disconnected or OKD cluster, point `secretsMint.image` at your mirror (the reference is a tag: an
   ImageTagMirrorSet redirects it, an ImageDigestMirrorSet does not) or back at the in-cluster `openshift/cli`
-  imagestream, the previous default.
+  imagestream, the previous default. The Job's deadline goes from a fixed 120 s to `secretsMint.activeDeadlineSeconds`,
+  default 300: it counts the roughly 450 MB first pull, and 300 s matches Helm's own hook wait.
 - **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
   its own).** `gsd/fleetlogin.py` writes its login-failure lines (`fleet-login-failed` for a retry, a give-up
   or a stop, and `fleet-login-refused`) from one method instead of two, and names an exception's type inline

@@ -234,3 +234,12 @@ def test_the_default_image_is_red_hats_cli_and_the_docs_say_what_a_cluster_witho
         assert "openshift/cli" in flat, f"{name}: the in-cluster imagestream fallback"
     assert "a cluster without the in-cluster imagestream" not in row, "stale: the default no longer uses the imagestream"
 
+
+@pytest.mark.parametrize("sets, want", [((), 300), (("secretsMint.activeDeadlineSeconds=900",), 900)])
+def test_the_hook_deadline_covers_a_first_pull_and_is_settable(sets, want):
+    """The operator (2026-09-26): 120 s "might be too small". The deadline counts the image pull, and ose-cli-rhel9 is
+    about 450 MB; the Job is a pre-install/pre-upgrade hook, so running out fails the release. The default matches
+    Helm's own hook wait (--timeout, 5m), and a slow link raises it."""
+    job, _, _ = _job(_render(*sets))
+    assert job["spec"]["activeDeadlineSeconds"] == want
+
