@@ -1,0 +1,10 @@
+# each walk values file against environments/crc.yaml at 6a83e3edda, parsed with PyYAML: equal outside `clusters` and `clusterConfig.fleetAccount`; and the Argo override file against gitops/argocd-application-dashboard.yaml's helm.valuesObject  (2026-09-27T23:00:34Z)
+prepared/argo-clusters-override.yaml == gitops valuesObject: True
+prepared/walk-values-ping.yaml equals environments/crc.yaml outside the two blocks: True
+  clusters[0] is the Argo override's dashboard entry: True
+  walk entries: [{"name": "walk-lookup", "apiUrl": "https://api.crc.testing:6443", "saTokenLookup": true, "ldapConnectionBootstrap": "developer", "enabled": true}]
+  fleetAccount: {"username": "developer", "passwordSecret": {"namespace": "group-sync-dashboard", "name": "gsd-walk-developer-password", "key": "password"}, "ping": {"enabled": true, "intervalSeconds": 300}}
+prepared/walk-values-selflogin.yaml equals environments/crc.yaml outside the two blocks: True
+  clusters[0] is the Argo override's dashboard entry: True
+  walk entries: [{"name": "walk-lookup", "apiUrl": "https://api.crc.testing:6443", "saTokenLookup": true, "ldapConnectionBootstrap": "developer", "enabled": true}, {"name": "walk-self-login", "apiUrl": "https://api.crc.testing:6443", "userSelfLogin": true, "ldapConnectionBootstrap": "developer", "enabled": true}]
+  fleetAccount: {"username": "developer", "passwordSecret": {"namespace": "group-sync-dashboard", "name": "gsd-walk-developer-password", "key": "password"}, "ping": {"enabled": true, "intervalSeconds": 300}}

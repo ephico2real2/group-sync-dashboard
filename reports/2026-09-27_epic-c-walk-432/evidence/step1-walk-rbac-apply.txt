@@ -1,0 +1,19 @@
+# oc apply --dry-run=server -f prepared/walk-rbac.yaml  (2026-09-27T21:41:09Z)
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get created (server dry run)
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get created (server dry run)
+rolebinding.rbac.authorization.k8s.io/gsd-walk-developer-token-reader created (server dry run)
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-developer-poller created (server dry run)
+# oc apply -f prepared/walk-rbac.yaml  (2026-09-27T21:41:09Z)
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get created
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get created
+rolebinding.rbac.authorization.k8s.io/gsd-walk-developer-token-reader created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-developer-poller created
+# the walk's grants by label, and what they now allow (2026-09-27T21:41:09Z)
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+rolebinding.rbac.authorization.k8s.io/gsd-walk-developer-token-reader
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-developer-poller
+developer get group-sync-operator/group-sync-dashboard-cluster-poller-token: yes
+developer list groups.user.openshift.io: yes
+developer update clusterrolebindings: no
+ServiceAccount get openshift-config/ldap-oauth-bind-secret: yes

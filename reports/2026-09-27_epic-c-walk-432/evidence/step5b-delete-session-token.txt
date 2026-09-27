@@ -1,0 +1,4 @@
+2026-09-27T22:39:18Z the session: 2026-09-27T22:33:28.678474303Z  fleet-login cluster=walk-self-login expires_at=2027-09-27T22:33:28Z
+matching objects: 1 (developer, openshift-challenging-client, created since 2026-09-27T21:39:46Z, creation + expiresIn within 3 s of 2027-09-27T22:33:28Z)
+deleting the one match, created 2026-09-27T22:33:28Z, expiresIn 31536000: sha256~<redacted>
+oauthaccesstoken.oauth.openshift.io "sha256~<redacted>" deleted

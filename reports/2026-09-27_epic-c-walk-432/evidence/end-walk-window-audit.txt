@@ -1,0 +1,26 @@
+# oc adm node-logs --role=master --path=oauth-server/<audit.log>  (captured 2026-09-27T22:57:02Z), DERIVED:
+# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client in [2026-09-27T21:39:46Z, 9999-12-31T00:00:00Z),
+# for developer and ocp-oauth-bind-serviceid only, and the records that carry no username (another user's name is never printed)
+# audit records read: 27490; earliest: 2026-09-16T14:23:06.841941Z
+2026-09-27T21:47:59.773507Z user=developer decision=allow code=302
+2026-09-27T21:47:59.897630Z user=developer decision=allow code=302
+2026-09-27T21:53:00.057731Z user=developer decision=allow code=302
+2026-09-27T21:58:00.194953Z user=developer decision=allow code=302
+2026-09-27T22:03:00.315588Z user=developer decision=allow code=302
+2026-09-27T22:08:00.609105Z user=developer decision=deny code=401
+2026-09-27T22:28:00.813810Z user=developer decision=allow code=302
+2026-09-27T22:29:29.359422Z user=developer decision=allow code=302
+2026-09-27T22:33:28.677799Z user=developer decision=allow code=302
+2026-09-27T22:33:53.776069Z user=developer decision=allow code=302
+2026-09-27T22:38:53.897915Z user=developer decision=allow code=302
+2026-09-27T22:40:29.079091Z user=developer decision=deny code=401
+# counts in [2026-09-27T21:39:46Z, 9999-12-31T00:00:00Z):
+#   developer allow: 10
+#   developer deny: 2
+#   developer error: 0
+#   developer authorize records, any decision: 12
+#   ocp-oauth-bind-serviceid allow: 0
+#   ocp-oauth-bind-serviceid deny: 0
+#   ocp-oauth-bind-serviceid error: 0
+#   ocp-oauth-bind-serviceid authorize records, any decision: 0
+#   records with no username (an unauthenticated challenge a client may send first): 0

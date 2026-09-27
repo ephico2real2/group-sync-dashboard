@@ -1,0 +1,40 @@
+# rendered RBAC, effective grants per subject (scripts/rbac_grants.py), helm v4.3.0+gbec5b06, chart at 6a83e3edda, 2026-09-27T21:40:49Z
+# before = the Argo CD shape: helm template -f environments/crc.yaml -f prepared/argo-clusters-override.yaml
+
+## after = helm template -f prepared/walk-values-ping.yaml, WITHOUT the walk's grants
+inputs: before argo.yaml; after walk-ping.yaml
+grants: before 66, after 66
+REMOVED 1
+  - ServiceAccount:group-sync-dashboard:group-sync-dashboard | openshift-config | secrets | get | ldap-oauth-bind-secret
+ADDED 1
+  + ServiceAccount:group-sync-dashboard:group-sync-dashboard | group-sync-dashboard | secrets | get | gsd-walk-developer-password
+REMOVED for ServiceAccount:group-sync-dashboard:group-sync-dashboard: 1
+
+## after = the same, WITH prepared/walk-rbac.yaml applied beside it
+inputs: before argo.yaml; after walk-ping.yaml + prepared/walk-rbac.yaml
+grants: before 66, after 69
+REMOVED 0
+ADDED 3
+  + ServiceAccount:group-sync-dashboard:group-sync-dashboard | group-sync-dashboard | secrets | get | gsd-walk-developer-password
+  + User::developer | (cluster) | roleRef ClusterRole/group-sync-dashboard-cluster-poller
+  + User::developer | group-sync-operator | roleRef Role/group-sync-dashboard-cluster-poller-token-reader
+REMOVED for ServiceAccount:group-sync-dashboard:group-sync-dashboard: 0
+
+## after = helm template -f prepared/walk-values-selflogin.yaml, WITHOUT the walk's grants
+inputs: before argo.yaml; after walk-selflogin.yaml
+grants: before 66, after 66
+REMOVED 1
+  - ServiceAccount:group-sync-dashboard:group-sync-dashboard | openshift-config | secrets | get | ldap-oauth-bind-secret
+ADDED 1
+  + ServiceAccount:group-sync-dashboard:group-sync-dashboard | group-sync-dashboard | secrets | get | gsd-walk-developer-password
+REMOVED for ServiceAccount:group-sync-dashboard:group-sync-dashboard: 1
+
+## after = the same, WITH prepared/walk-rbac.yaml applied beside it
+inputs: before argo.yaml; after walk-selflogin.yaml + prepared/walk-rbac.yaml
+grants: before 66, after 69
+REMOVED 0
+ADDED 3
+  + ServiceAccount:group-sync-dashboard:group-sync-dashboard | group-sync-dashboard | secrets | get | gsd-walk-developer-password
+  + User::developer | (cluster) | roleRef ClusterRole/group-sync-dashboard-cluster-poller
+  + User::developer | group-sync-operator | roleRef Role/group-sync-dashboard-cluster-poller-token-reader
+REMOVED for ServiceAccount:group-sync-dashboard:group-sync-dashboard: 0

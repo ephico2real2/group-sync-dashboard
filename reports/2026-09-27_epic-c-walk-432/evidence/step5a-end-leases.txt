@@ -1,0 +1,57 @@
+# for l in $(oc get leases.coordination.k8s.io -n group-sync-dashboard -o name | grep '/gsd-fleet-'); do
+     obj=$(oc get -n group-sync-dashboard "${l}" -o json)
+     printf '%s' "${obj}" | jq '{name: .metadata.name, resourceVersion: .metadata.resourceVersion, uid: .metadata.uid, labels: .metadata.labels,
+         annotations: (.metadata.annotations // {} | with_entries(select(.key | startswith("groupsync-dashboard.io/")))
+           | (if has("groupsync-dashboard.io/ping-digest") then .["groupsync-dashboard.io/ping-digest"] = "<redacted>" else . end)
+           | (if has("groupsync-dashboard.io/refused") then .["groupsync-dashboard.io/refused"] |= (fromjson? // {} | if has("digest") then .digest = "<redacted>" else . end | tojson) else . end)),
+         spec: .spec}'
+     echo "sha256 of the whole unredacted object (jq -S -c .): $(printf '%s' "${obj}" | jq -S -c . | shasum -a 256 | cut -d' ' -f1)"
+   done; echo "(fleet-account Leases: $(oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o name | wc -l | tr -d ' '))"
+# at 2026-09-27T22:34:41Z
+{
+  "name": "gsd-fleet-666f1ba7f2fdead0",
+  "resourceVersion": "5127386",
+  "uid": "9891a017-8b78-472c-bcf1-559f829b52b1",
+  "labels": {
+    "groupsync-dashboard.io/lease-type": "fleet-account"
+  },
+  "annotations": {
+    "groupsync-dashboard.io/account": "ocp-oauth-bind-serviceid",
+    "groupsync-dashboard.io/ping-digest": "<redacted>",
+    "groupsync-dashboard.io/ping-last-attempt": "2026-09-27T10:27:05Z",
+    "groupsync-dashboard.io/ping-last-ok": "2026-09-27T10:27:05Z",
+    "groupsync-dashboard.io/ping-last-outcome": "ok",
+    "groupsync-dashboard.io/ping-last-target": "shared-rnd"
+  },
+  "spec": {
+    "acquireTime": "2026-09-27T10:27:05.906118Z",
+    "holderIdentity": "",
+    "leaseDurationSeconds": 195,
+    "renewTime": "2026-09-27T10:27:05.906118Z"
+  }
+}
+sha256 of the whole unredacted object (jq -S -c .): 96e3727807355ca16f9299e067bada4e3a1e83f3a335410ac432f78f85ea9d45
+{
+  "name": "gsd-fleet-88fa0d759f845b47",
+  "resourceVersion": "5530970",
+  "uid": "3bc61d7f-7877-424e-9dd1-27d2f0969d9d",
+  "labels": {
+    "groupsync-dashboard.io/lease-type": "fleet-account"
+  },
+  "annotations": {
+    "groupsync-dashboard.io/account": "developer",
+    "groupsync-dashboard.io/ping-digest": "<redacted>",
+    "groupsync-dashboard.io/ping-last-attempt": "2026-09-27T22:33:53Z",
+    "groupsync-dashboard.io/ping-last-ok": "2026-09-27T22:33:53Z",
+    "groupsync-dashboard.io/ping-last-outcome": "ok",
+    "groupsync-dashboard.io/ping-last-target": "walk-lookup"
+  },
+  "spec": {
+    "acquireTime": "2026-09-27T22:33:53.693552Z",
+    "holderIdentity": "",
+    "leaseDurationSeconds": 195,
+    "renewTime": "2026-09-27T22:33:53.693552Z"
+  }
+}
+sha256 of the whole unredacted object (jq -S -c .): 557d12c504a96f0b1949d0b0e20f90e30ae0f19baca34e56db72cba3db2fb691
+(fleet-account Leases: 2)

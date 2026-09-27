@@ -1,0 +1,43 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-6dc7997df8-snrqn -c dashboard --timestamps --since-time=2026-09-27T21:44:28Z  (captured 2026-09-27T22:24:33Z); sha256~ names redacted
+# pod started: 2026-09-27T21:42:54Z; lines in the window: 1916
+# every line of the fleet, self-login, lookup-state and discovery loggers; leadership changes; failed polls;
+# a walk cluster's start and stop; ERROR/CRITICAL/Traceback. Routine poll lines are counted below, not listed:
+2026-09-27T21:47:59.774418831Z 2026-09-27 17:47:59,774-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-lookup account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T21:47:59Z
+2026-09-27T21:47:59.789265978Z 2026-09-27 17:47:59,789-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-lookup account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T21:47:59.795712339Z 2026-09-27 17:47:59,795-0400 INFO    gsd.clusterconfig.writer cluster-secret-created secret=gsd-cluster-walk-lookup namespace=group-sync-dashboard cluster=walk-lookup by=sa-token-lookup
+2026-09-27T21:47:59.800327775Z 2026-09-27 17:47:59,800-0400 INFO    gsd.clusterconfig fleet-lookup cluster=walk-lookup account=<redacted> secret=gsd-cluster-walk-lookup written=created source=group-sync-operator/group-sync-dashboard-cluster-poller last_used=2026-09-27 attempt=1/5
+2026-09-27T21:47:59.812551411Z 2026-09-27 17:47:59,812-0400 INFO    gsd.clusterconfig discovery cycle=4 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=walk-lookup
+2026-09-27T21:47:59.812569369Z 2026-09-27 17:47:59,812-0400 INFO    gsd.clusterconfig cluster-resolved cycle=4 cluster=walk-lookup source=secret:gsd-cluster-walk-lookup credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T21:47:59.812926954Z 2026-09-27 17:47:59,812-0400 INFO    gsd.poller cluster walk-lookup: polling started (secret:gsd-cluster-walk-lookup)
+2026-09-27T21:47:59.906100768Z 2026-09-27 17:47:59,906-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-lookup account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T21:47:59Z
+2026-09-27T21:47:59.922123211Z 2026-09-27 17:47:59,922-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-lookup account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T21:47:59.922231379Z 2026-09-27 17:47:59,922-0400 INFO    gsd.clusterconfig fleet-ping account=<redacted> target=walk-lookup last_used=2026-09-27 last_ok=2026-09-27T21:47:59Z
+2026-09-27T21:53:00.058699262Z 2026-09-27 17:53:00,058-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-lookup account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T21:52:59Z
+2026-09-27T21:53:00.080218192Z 2026-09-27 17:53:00,080-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-lookup account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T21:53:00.080361193Z 2026-09-27 17:53:00,080-0400 INFO    gsd.clusterconfig fleet-ping account=<redacted> target=walk-lookup last_used=2026-09-27 last_ok=2026-09-27T21:52:59Z
+2026-09-27T21:58:00.195831173Z 2026-09-27 17:58:00,195-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-lookup account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T21:58:00Z
+2026-09-27T21:58:00.214589549Z 2026-09-27 17:58:00,214-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-lookup account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T21:58:00.214724633Z 2026-09-27 17:58:00,214-0400 INFO    gsd.clusterconfig fleet-ping account=<redacted> target=walk-lookup last_used=2026-09-27 last_ok=2026-09-27T21:58:00Z
+2026-09-27T22:03:00.316369301Z 2026-09-27 18:03:00,316-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-lookup account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T22:03:00Z
+2026-09-27T22:03:00.332251039Z 2026-09-27 18:03:00,332-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-lookup account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T22:03:00.332378414Z 2026-09-27 18:03:00,332-0400 INFO    gsd.clusterconfig fleet-ping account=<redacted> target=walk-lookup last_used=2026-09-27 last_ok=2026-09-27T22:03:00Z
+2026-09-27T22:08:00.609737456Z 2026-09-27 18:08:00,609-0400 WARNING gsd.fleetlogin fleet-login-refused phase=credential outcome=login-refused cluster=walk-lookup account=developer tls=trusted-bundle action="the target refused the password for developer: rotate the fleet password Secret or correct ldapConnectionBootstrap — no second attempt is made, because a retry is the lockout walk against the account the target authenticates every user with" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-27T22:08:00.615205981Z 2026-09-27 18:08:00,615-0400 WARNING gsd.clusterconfig fleet-ping-failed phase=credential outcome=login-refused account=developer target=walk-lookup attempt=1/1 action="the password for developer was sent to walk-lookup and no session came back: rotate the fleet password Secret or correct ldapConnectionBootstrap, or check the account is not locked — it is not sent again, to this or any other cluster, while it is the same password" detail="phase=credential: 401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-27T22:13:00.639206761Z 2026-09-27 18:13:00,639-0400 WARNING gsd.clusterconfig fleet-ping-failed phase=credential outcome=login-refused account=developer target=walk-lookup gave_up=true suspended=developer scope=ping action="not pinged again until the fleet password Secret changes, or the entry on Lease gsd-fleet-88fa0d759f845b47 is removed and the pod restarted; the gate is re-read every cycle at no cost" detail="https://api.crc.testing:6443 answered login-refused at 2026-09-27T22:08:00Z"
+# successful 'shared-rnd' polls ('polled shared-rnd:' lines): 40; failed polls (cluster-unreachable … cluster=shared-rnd): 0
+# successful 'walk-lookup' polls ('polled walk-lookup:' lines): 37; failed polls (cluster-unreachable … cluster=walk-lookup): 0
+# successful 'walk-self-login' polls ('polled walk-self-login:' lines): 0; failed polls (cluster-unreachable … cluster=walk-self-login): 0
+# 'fleet-login' lines: 5, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-login-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-login-refused' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-logout' lines: 5, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-logout-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-lookup' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-lookup-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-ping' lines: 4, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-ping-failed' lines: 2, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-credential-suspended' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'self-login-renewed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'self-login-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-state-unavailable' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# ERROR or Traceback lines: 0

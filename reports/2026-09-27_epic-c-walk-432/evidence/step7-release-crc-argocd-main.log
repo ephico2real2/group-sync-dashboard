@@ -1,0 +1,20 @@
+main worktree uncommitted entries: 0
+6fe404c34004351b1dd89f687dd3b0ef3fcf9a7f
+start 2026-09-27T22:50:28Z
+argocd  : group-sync-dashboard -> revision main (6fe404c340), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:1.4.0 is application 1.4.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:1.4.0 is application 1.4.0
+helm    : uninstalling release group-sync-dashboard (the PVCs and the minted Secrets survive)
+These resources were kept due to the resource policy:
+[PersistentVolumeClaim] group-sync-dashboard-report-artifacts
+[PersistentVolumeClaim] group-sync-dashboard-data
+
+release "group-sync-dashboard" uninstalled
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+22:50:31Z  ?          ?            ?          (status is for the previous spec) (revision ?, want 6fe404c340) 
+22:50:46Z  OutOfSync  Progressing  Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+22:51:01Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+22:51:16Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+22:51:32Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+end 2026-09-27T22:51:32Z rc=0

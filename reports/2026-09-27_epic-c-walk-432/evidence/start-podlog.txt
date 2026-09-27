@@ -1,0 +1,34 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-c9664c7c4-2lv9v -c dashboard --timestamps --since-time=2026-09-27T17:09:00Z  (captured 2026-09-27T21:40:25Z); sha256~ names redacted
+# pod started: 2026-09-27T17:09:41Z; lines in the window: 11547
+# fleet-*, self-login*, cluster-secret-*, discovery and walk-cluster lines (walk poll-cycle timing lines counted below):
+2026-09-27T17:09:51.193808444Z 2026-09-27 13:09:51,143-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd state=appeared cycle=1
+2026-09-27T17:09:51.195782160Z 2026-09-27 13:09:51,195-0400 INFO    gsd.clusterconfig discovery cycle=1 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 added=mock-privateca,mock-selfsigned,mock-trusted,shared-qa,shared-rnd refused_now=gsd-cluster-mock-refusal:insecure-with-ca
+2026-09-27T17:09:51.196424121Z 2026-09-27 13:09:51,196-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=mock-privateca source=secret:gsd-cluster-mock-privateca credential=bearer tls=caData visibility=inherit identity=same-as-host enabled=true
+2026-09-27T17:09:51.196705122Z 2026-09-27 13:09:51,196-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=mock-selfsigned source=secret:gsd-cluster-mock-selfsigned credential=bearer tls=insecure visibility=inherit identity=same-as-host enabled=true
+2026-09-27T17:09:51.196963998Z 2026-09-27 13:09:51,196-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=mock-trusted source=secret:gsd-cluster-mock-trusted credential=bearer tls=trusted-bundle visibility=inherit identity=same-as-host enabled=true
+2026-09-27T17:09:51.197233791Z 2026-09-27 13:09:51,197-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-qa source=secret:gsd-cluster-shared-qa credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T17:09:51.197494417Z 2026-09-27 13:09:51,197-0400 INFO    gsd.clusterconfig cluster-resolved cycle=1 cluster=shared-rnd source=secret:gsd-cluster-shared-rnd credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T20:49:59.154527737Z 2026-09-27 16:49:59,154-0400 INFO    gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd state=cleared cycle=46
+2026-09-27T20:49:59.154797947Z 2026-09-27 16:49:59,154-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-authfail state=appeared cycle=46
+2026-09-27T20:49:59.155951076Z 2026-09-27 16:49:59,155-0400 INFO    gsd.clusterconfig discovery cycle=46 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=walk-authfail
+2026-09-27T20:49:59.156415786Z 2026-09-27 16:49:59,156-0400 INFO    gsd.clusterconfig cluster-resolved cycle=46 cluster=walk-authfail source=secret:gsd-cluster-walk-authfail credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T20:54:59.355017309Z 2026-09-27 16:54:59,354-0400 INFO    gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-authfail state=cleared cycle=47
+2026-09-27T20:54:59.355205601Z 2026-09-27 16:54:59,355-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd state=appeared cycle=47
+2026-09-27T20:54:59.355825479Z 2026-09-27 16:54:59,355-0400 INFO    gsd.clusterconfig discovery cycle=47 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 removed=walk-authfail
+# 'shared-rnd poll cycle took' lines: 271
+# 'walk-lookup poll cycle took' lines: 0
+# 'walk-self-login poll cycle took' lines: 0
+# 'fleet-login' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-login-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-login-refused' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-logout' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-logout-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-lookup' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-lookup-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-ping' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-ping-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-credential-suspended' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'self-login-renewed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'self-login-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-state-unavailable' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# ERROR or Traceback lines: 0

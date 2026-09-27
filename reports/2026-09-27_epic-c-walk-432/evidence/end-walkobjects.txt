@@ -1,0 +1,15 @@
+# echo 'objects labelled walk.gsd.lab/run=epic-c-walk-432-2026-09-27:'
+   oc get secrets,roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run=epic-c-walk-432-2026-09-27 -o name
+   oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=epic-c-walk-432-2026-09-27 -o name
+   echo 'the product-made walk objects, by name:'
+   oc get secrets -n group-sync-dashboard gsd-cluster-walk-lookup -o name 2>&1 | sed 's/^Error from server (NotFound): //'
+   oc get leases.coordination.k8s.io -n group-sync-dashboard gsd-fleet-88fa0d759f845b47 -o name 2>&1 | sed 's/^Error from server (NotFound): //'
+   echo 'the walk Secret, by name:'
+   oc get secrets -n group-sync-dashboard gsd-walk-developer-password -o name 2>&1 | sed 's/^Error from server (NotFound): //'
+# at 2026-09-27T22:56:59Z
+objects labelled walk.gsd.lab/run=epic-c-walk-432-2026-09-27:
+the product-made walk objects, by name:
+secrets "gsd-cluster-walk-lookup" not found
+leases.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" not found
+the walk Secret, by name:
+secrets "gsd-walk-developer-password" not found
