@@ -8,6 +8,12 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Require an application version bump for image-changing PRs (#427).** CI reads the image paths
+  from `publish.yml` and requires exactly the next MINOR or MAJOR against the PR base. Version
+  fields alone and docs outside the image paths need no bump; an invalid base fails the check.
+
 ## Application 1.0.0 — chart 0.59.2 — 2026-09-27
 
 - **Epic C: keep the shared fleet login account safe (#383). The first major release: from here the application

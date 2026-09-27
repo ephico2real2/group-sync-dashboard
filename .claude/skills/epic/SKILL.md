@@ -102,15 +102,17 @@ Child by child, in the build order, per `.claude/skills/adversarial-review/SKILL
 Grok can help with a hard problem as an advisor, but its proposals are checked like any other.
 
 ## 6. Close the epic
+
+- **Application bump:** cut the next MAJOR per closed epic with `local-development/prepare-release.py --app X.0.0 "Epic summary"` (`docs/RELEASING.md`).
+
 **Every epic is released and deployed, a docs-only one included.** The operator, 2026-09-26: *"In agile. You have
 deploy or redeploy every epic and cut a release note. So we are remaining true."* Never offer to skip either.
 
 1. **Release.** On a clean checkout of `main` (`git status` empty: the script refuses a dirty tree and, unless you
    pass `--no-commit`, any branch other than `main`), run `local-development/prepare-release.py` with the *next*
    version and a one-line reason:
-   - `--app X.Y.Z` when `local-development/gsd/` changed, or when any other path in `publish.yml`'s filter changed
-     and this epic ships the image. The script also bumps the chart's patch unless you pass `--chart`.
-   - otherwise `--chart A.B.C`, the next chart patch.
+   - `--app X.0.0` for the next application MAJOR. The script also bumps the chart's patch unless you pass
+     `--chart A.B.C` to choose the chart version explicitly.
 
    The reason is the script's positional argument: the epic's title, for example `"Epic A: quick cleanup (#381)"`.
    It must be one line, contain a letter or a digit, and contain no `*` and no unbalanced backtick. The script
@@ -119,8 +121,8 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    spec marked `merged` in `docs/specs/README.md` to `released`. Add the epic's children to that first bullet.
    Review and merge the release PR as any other. After the merge, `helm.yaml` publishes the chart and retags the
    existing `:<appVersion>` image as `:<chart-version>`. `publish.yml` moves the `:<appVersion>` alias only on an
-   `--app` release; a `--chart`-only merge builds no image (`docs/RELEASING.md`, the chart-only flow), and any other
-   merge that changes the image's inputs pushes only the immutable `<appVersion>-<sha>` tag.
+   application version change; image-changing issue PRs carry a MINOR bump and publish both tags too.
+   A `--chart`-only merge builds no image (`docs/RELEASING.md`, the chart-only flow).
 2. **Release note.** Once `helm.yaml` has created the GitHub release, write the epic's summary (the children, their
    merge shas, the lab evidence) into that release's body. The tag is the **chart** version just cut, not the
    application version: `gh release edit group-sync-dashboard-<chart-version> --notes-file <file>`.
