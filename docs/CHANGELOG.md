@@ -8,7 +8,11 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 0.37.0 — chart 0.58.5 — 2026-09-26
+
+- **Epic B: protect the data during upgrades (#382).** The database is copied and verified before a new image
+  migrates it (#301), an older image refuses a database a newer one migrated (#305), and CI fails a migration
+  merged without an application release (#298).
 
 - **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
   its own).** `gsd/fleetlogin.py` writes its login-failure lines (`fleet-login-failed` for a retry, a give-up
@@ -17,7 +21,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   event, field, phase, outcome word and `action=`/`detail=` sentence is unchanged, and the fleet tests pass
   unedited. 742 → 734 lines, 32 → 30 functions and methods.
 - **The database is copied before a new image upgrades it (#301, `docs/specs/SPEC_M1_pre_upgrade_copy.md`;
-  application behaviour arriving with the next application release, chart 0.58.4 for its values comment and
+  application behaviour in application 0.37.0, chart 0.58.4 for its values comment and
   README).** When an image opens a database whose `user_version` is below its highest migration, it first
   writes the database as it was to `pre-upgrade/` beside it (`/data/pre-upgrade`, or
   `/data/$POD_NAME/pre-upgrade` when `replicaCount` is greater than 1), before its own schema, migrations or
