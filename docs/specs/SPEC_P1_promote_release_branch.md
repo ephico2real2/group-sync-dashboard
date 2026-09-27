@@ -8,7 +8,7 @@
 | Version on release | app 1.1.0, chart 0.59.3 |
 | Issue | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) |
 | Status | specified |
-| Source | OB1-lite's specification of 2026-09-27, written before any code from issue #410 in full (the body, OB2's PreSync input, the operator's direction and go-ahead of 2026-09-27), main `05e32c8` (application 1.0.0, chart 0.59.2), the upstream documents cited in §3, and read-only measurements of quay.io, GitHub and the lab. §8's blocks were cut from a copy of `05e32c8` with the design implemented, and applied back to a clean copy for the proof in §6. No cluster, branch or GitHub setting was changed. Revised the same day: main `1cd67d5` (#428, #427's app-version check) was merged in, every block re-cut against it, and the figure corrected on the orchestrator's review (Orchestrator's notes) |
+| Source | OB1-lite's specification of 2026-09-27, written before any code from issue #410 in full (the body, OB2's PreSync input, the operator's direction and go-ahead of 2026-09-27), main `05e32c8` (application 1.0.0, chart 0.59.2), the upstream documents cited in §3, and read-only measurements of quay.io, GitHub and the lab. §8's blocks were cut from a copy of `05e32c8` with the design implemented, and applied back to a clean copy for the proof in §6. No cluster, branch or GitHub setting was changed. Revised the same day: main `1cd67d5` (#428, #427's app-version check) was merged in, every block re-cut against it, and the figure corrected on the orchestrator's review; then round 1 of the spec review (Grok and Codex Astra on `02a39f2`) written in on main `22a485c` (#429), every block re-cut against it (Orchestrator's notes) |
 
 ## How to read this spec
 
@@ -23,6 +23,40 @@ Line citations are plain text, file:line, at `05e32c8`; none of the cited files 
 the implementing commit sets both to `merged` beside the applied blocks.
 
 ## Orchestrator's notes
+
+**Round 1 of the spec review** (Grok and Codex Astra on `02a39f2`; every finding accepted by the orchestrator on
+PR #430). Main moved to `22a485c` (#429, the epic and issue skills) and was merged first; the blocks are re-cut on it.
+
+- **F1 (both): `read_back` checked only the runner's platform, then pinned the whole index.** `skopeo inspect` on a
+  manifest list reports "a per-architecture/OS image matching the current run-time environment" (skopeo-inspect(1)).
+  Both reviewers made one arm64 child another build and `promote.py` still wrote `release`. Now it reads the digest,
+  then `--raw` by digest, and `--config` of every `linux` child by digest; a single image is its own only child. The
+  signature is still verified on the pinned (index) digest, which covers every child. Test:
+  `test_every_linux_image_of_a_manifest_list_is_read_back[version|revision|missing]` (Codex's three probes).
+- **F2 (Codex, with Grok's wording note): `--argocd release` fell back to the aliases when `release` had no
+  `promotion.yaml`.** Codex measured exit 0, `valueFiles` with `crc.yaml` only, then `oc apply`. Now a `release`
+  without the pin is refused before anything is written, and the log line names "the digests in promotion.yaml",
+  not "the chart's default image". Test: `test_release_without_a_pin_is_refused_before_anything_is_written`, and the
+  log assertion added to `test_argocd_release_reads_the_pinned_digests_back_and_adds_the_pin_last`.
+- **F5 (Codex): `--argocd main` was still allowed**, against the operator's "we shouldn't be … syncing argo on main".
+  `main` and `refs/heads/main` are refused (exit 2) before any fetch or cluster call; other branch names still deploy
+  a PR branch for testing. The CRC tests that used `main` now use a branch named `pr-test`, assertions unchanged.
+  `.claude/skills/epic/SKILL.md`'s deploy step said `--argocd main` and now says `--argocd release`. Test:
+  `test_main_is_refused_before_anything_is_fetched_or_written[main|refs/heads/main]`.
+- **F3 (Codex) and Grok's F3/F4: scope, first read, comments.** §5's guarantee now names what enforces it and puts
+  the test modes outside it. §2's "the tree's image" and §4(c) take Grok's first-read wording. `docs/CICD.md` no
+  longer says the revision label is "the commit": it is the 10-character sha of the commit the image was built from,
+  which on a chart-only merge is not the promoted commit. Every new comment is one line of why: `Chart.yaml`'s two
+  history lines keep the file's `# CHART x.y.z (date), KIND:` convention on one line each (Codex's block removed
+  the convention; not taken), the Application's six lines become two, `release-crc.sh`'s four-line loop note one,
+  `promote.yml`'s header one. Test: `test_the_guide_and_figure_state_what_is_optional_and_what_is_required`.
+- **F4 (Codex): the figure and guide showed signing and SBOM as unconditional.** They say "on by default"; the guide
+  names `SUPPLY_CHAIN_SIGNING=false` and `SUPPLY_CHAIN_SBOM=false` and says promotion then skips cosign. The registry
+  arrow says "pushes" (the build is on a GitHub runner); the rollback box says "older sha, rollback checked". The
+  same test holds the figure's four strings. Re-rendered: `375 px viewport: scrollWidth 375`, both PNGs read.
+- **Kept as tests:** Grok's and Codex's history probes that add coverage — a revert needs its own publish, and a
+  topic branch's build is not the merge commit's — in `test_a_revert_or_a_second_parent_change_needs_its_own_publish`.
+  The failed-publish-then-docs and newest-ancestor probes duplicate existing tests and are not added.
 
 The orchestrator's review of the rendered figure (2026-09-27), applied:
 
@@ -60,7 +94,7 @@ PR #412). Measured today: publishing `05e32c8` took 2 min 22 s (run 36312105709,
 
 **Must not change:** `publish.yml` (its path filter, tag scheme, alias rule, signing and SBOM); every published tag;
 `helm.yaml`; the chart's templates, values and RBAC; `release-crc.sh`'s Helm mode, its build path, and
-`--argocd <branch>` for a branch without `promotion.yaml`.
+`--argocd <branch>` for a test branch without `promotion.yaml` (`main` is now refused, round 1 F5).
 
 ## 2. Words
 
@@ -76,7 +110,8 @@ PR #412). Measured today: publishing `05e32c8` took 2 min 22 s (run 36312105709,
 | `workflow_run` | the GitHub Actions trigger that starts a workflow when another workflow's run completes |
 | image input | a file in `publish.yml`'s `on.push.paths` list: a change to it changes the image |
 | first-parent line | the chain of merge commits on `main` (`git log --first-parent`); every commit `publish.yml` builds is on it |
-| the tree's image | for a commit T on main: the image built from the newest first-parent commit at or before T that changed an image input |
+| the tree's image | for a commit T on main: the image `publish.yml` built for I, the last first-parent commit at or before T that changed an image input. Chart-only commits after I reuse I's image |
+| revision label | `org.opencontainers.image.revision`: the 10-character sha of the commit the image was built from (I, not T, after a chart-only merge) |
 
 ## 3. Read and measured
 
@@ -153,10 +188,10 @@ The nine questions:
 |---|---|---|---|
 | a | What `release` contains | `charts/group-sync-dashboard/`, `environments/`, `promotion.yaml`; nothing else, and no `.github/` | Argo reads the chart path and `../../environments/crc.yaml` only; the chart reads nothing outside itself (§3.1). A push runs only workflows in the pushed commit, and a `GITHUB_TOKEN` push runs none (§3.2): two independent reasons nothing runs on `release`. `test_a_code_merge_is_promoted_with_both_images_pinned_by_digest` asserts the tree |
 | b | Pin by tag or digest | digest, with the tag written beside it for people | A tag is a name that can move (#410's `:0.39.0` was application 0.24.0); a digest is the content. The chart renders `repository@digest` and prefers it over the tag (_helpers.tpl:72-82, :668-679), measured in the render (§3.3) |
-| c | A chart-only merge | pinned to the tree's image: the newest first-parent commit at or before T that changed an image input; any first-parent commit from there to T that `publish.yml` built on `main` with success has the same inputs; the newest such run wins | Deterministic, from git and the runs API. The issue's example, "the newest `<appVersion>-<sha10>` whose sha is an ancestor", is unsafe: if the last publish failed it picks an older image that lacks that merge's code. Measured on `b679701` → `602a1c4` (§3.3) |
+| c | A chart-only merge | Find I, the last first-parent commit at or before T that changed an image input. Commits from I to T share I's inputs. Promote the newest of them that `publish.yml` built on `main` with success (usually I). Never look before I | From git and the runs API. "Newest `<appVersion>-<sha10>` whose sha is an ancestor of T" is unsafe: if I's publish failed, that rule deploys an older image that does not contain I's code. Measured on `b679701` → `602a1c4` (§3.3) |
 | d | A failed publish | never promoted | The job's `if` requires `workflow_run.conclusion == 'success'`; and the script requires a successful run for the tree's image, or refuses (`test_a_failed_publish_is_never_promoted_even_when_an_older_image_exists`) |
 | e | Rollback | Run workflow with `sha` = an older commit on `main` and `rollback` checked; the same read-back runs | A hand-made revert on `release` would skip the read-back. The rollback holds until the next promotion; revert on `main` to keep it |
-| f | #414's guard and `release-crc.sh --argocd` | `--argocd release` re-reads the pinned digests (version and revision labels) before pointing the lab at `release`; `--argocd <branch>` keeps #414's alias check for a branch with no `promotion.yaml`; bare `--argocd` still builds the pushed head | The operator's step 3. Every Argo mode now states `valueFiles` explicitly, because the committed default ends with `promotion.yaml`, which exists only on `release`, and a missing file fails the render. Alternative reading for review: bare `--argocd` could mean `release`; not taken, because it would remove the documented pre-merge gate on a pushed head |
+| f | #414's guard and `release-crc.sh --argocd` | `--argocd release` requires `promotion.yaml` and re-reads the pinned digests (version and revision labels, every Linux image) before pointing the lab at `release`; `--argocd main` is refused; `--argocd <branch>` keeps #414's alias check for a test branch with no `promotion.yaml`; bare `--argocd` still builds the pushed head | The operator's step 3. Every Argo mode now states `valueFiles` explicitly, because the committed default ends with `promotion.yaml`, which exists only on `release`, and a missing file fails the render. Alternative reading for review: bare `--argocd` could mean `release`; not taken, because it would remove the documented pre-merge gate on a pushed head |
 | g | How the Application switches | `targetRevision: release`, `valueFiles: [../../environments/crc.yaml, ../../promotion.yaml]`; applied on the lab by `release-crc.sh --argocd release` after the first promotion | Argo: the last values file wins (§3.2). `test_the_application_script_and_workflow_name_one_pin_file_on_release` holds the three places that name the file together |
 | h | Two merges in a row | one promotion at a time (`concurrency: promote-release`, no cancel); each run promotes the tip it fetches; a commit that does not descend from the one on `release` is refused unless `rollback`; the push is a fast-forward, never forced | A replaced pending run loses nothing, because the later run fetches a tip at least as new, and `main` never rewinds (§3.3). `test_an_older_commit_needs_rollback_and_a_second_run_changes_nothing` |
 | i | `:latest` (#425) | not used, not blocked | The lab pins by digest, so moving any tag changes nothing it runs |
@@ -179,14 +214,23 @@ branch exists, `promote.yml` is red and says so.
 
 ## 5. The budget
 
-**The guarantee:** the lab's Argo CD never syncs an image that does not exist, or whose version and revision labels do
-not match the pinned version and commit, **through any path this repository automates.**
+**The guarantee, scoped to what enforces it:** `promote.py` writes a digest to `release` only after every Linux image
+behind it carries the pinned version and the 10-character sha of the commit it was built from, and, with signing on,
+a signature from `publish.yml` on `main`. The lab's Application tracks `release` and pulls those digests.
+`release-crc.sh --argocd release` requires the pin and reads the digests back again before it writes the Application.
+The checks hold at read-back time; they cannot stop a later registry deletion or a person bypassing promotion
+(residuals below).
+
+**Outside the guarantee: the test modes.** `--argocd <branch>` on a test branch keeps #414's alias check (version
+only, skipping an explicit tag); bare `--argocd` and Helm mode build their own image and check its stamp. None of them
+is how the lab normally runs, and `--argocd main` is refused. `--argocd release` returns the lab to promotions.
 
 | Path to the lab | What enforces it | Where |
 |---|---|---|
 | Argo auto-sync of `release` | `release` only holds trees `promote.py` wrote after reading both images back (labels, digest, and the cosign signature when signing is on); the pin is a digest, so what was read is what is pulled | promote.py `read_back`, `verify_signature`, `commit_release`; promote.yml `if`; the Application's last values file |
-| `release-crc.sh --argocd release` | re-reads each pinned digest's labels before writing the Application | release-crc.sh `promoted_images_are_the_release` |
-| `release-crc.sh --argocd <branch>` | #414's alias read-back, unchanged | release-crc.sh `published_image_is_the_release` |
+| `release-crc.sh --argocd release` | refuses a `release` without the pin; re-reads each pinned digest's labels, every Linux image, before writing the Application | release-crc.sh `promoted_images_are_the_release` |
+| `release-crc.sh --argocd main` | refused before any fetch or cluster call | release-crc.sh, the `main\|refs/heads/main` case |
+| `release-crc.sh --argocd <test branch>` | #414's alias read-back, unchanged; outside the guarantee | release-crc.sh `published_image_is_the_release` |
 | `release-crc.sh`, Helm mode and bare `--argocd` | builds its own image and verifies the commit stamp in the pod, unchanged | release-crc.sh:354-488 |
 
 **Residuals, stated:**
@@ -206,10 +250,10 @@ not match the pinned version and commit, **through any path this repository auto
 
 ## 6. Tests, before and after
 
-Three new or changed test files; no other test is edited. "Before" is `1cd67d5` with this spec plus §8's three test
+Three new or changed test files; no other test is edited. "Before" is `22a485c` with this spec plus §8's three test
 blocks only; "after" is the same tree with every block applied. Where "before" fails only because a new file is
-missing, the right-hand column adds a mutation run on the "after" tree: one rule of `promote.py` switched off, or
-`release-crc.sh` put back to `05e32c8`, to show the test fails for the reason it names.
+missing, the right-hand column adds a run on the "after" tree with one rule switched off, or, for round 1's tests,
+with round 0's code (the `02a39f2` blocks), to show the test fails for the reason it names.
 
 | Definition of Done | Test | Before | After |
 |---|---|---|---|
@@ -217,6 +261,8 @@ missing, the right-hand column adds a mutation run on the "after" tree: one rule
 | (c) a chart-only merge carries the image of the last image-input commit | `test_a_chart_only_merge_carries_the_image_of_the_last_image_input_commit` | FAILED: no `promote.py` | passed |
 | (d) a failed publish is never promoted, though an older image exists | `test_a_failed_publish_is_never_promoted_even_when_an_older_image_exists` | FAILED: no `promote.py` | passed; FAILED under the issue's "newest ancestor" rule |
 | a publish still running: green, nothing written | `test_a_publish_still_running_waits_for_its_own_completion` | FAILED: no `promote.py` | passed; FAILED when a running publish counts as failed |
+| round 1 F1: one Linux image of a manifest list with another version, another revision, or unreadable, refuses the index | `test_every_linux_image_of_a_manifest_list_is_read_back[version]`, `[revision]`, `[missing]` | FAILED: no `promote.py` | passed; all three FAILED `DID NOT RAISE Refused` with round 0's `read_back` |
+| a revert, and a topic branch's build, are not the merge's image (reviewers' history probes) | `test_a_revert_or_a_second_parent_change_needs_its_own_publish` | FAILED: no `promote.py` | passed; passes on round 0 too: coverage, not a fix |
 | a wrong version or revision label is refused | `test_an_image_whose_labels_are_not_this_build_is_refused[version]`, `[revision]` | FAILED: no `promote.py` | passed; both FAILED with the label check off |
 | a signature that does not verify is refused; signing off skips cosign | `test_a_signature_that_does_not_verify_is_refused_and_signing_off_skips_it` | FAILED: no `promote.py` | passed; FAILED with the signature check off |
 | (e)(h) an older commit needs `rollback`; the same tree twice is a no-op | `test_an_older_commit_needs_rollback_and_a_second_run_changes_nothing` | FAILED: no `promote.py` | passed; FAILED with the ancestry check off |
@@ -229,25 +275,29 @@ missing, the right-hand column adds a mutation run on the "after" tree: one rule
 | the same cosign as publish.yml | `test_it_verifies_with_the_cosign_publish_signs_with` | FAILED: no `promote.yml` | passed |
 | (g) the Application tracks `release` with `promotion.yaml` last; one file name in three places | `test_the_application_script_and_workflow_name_one_pin_file_on_release` | FAILED: `'main' == 'release'` | passed |
 | (f) `--argocd <branch>` states `valueFiles` without the pin | `test_release_crc.py::test_argocd_branch_clears_the_image_parameters_and_waits_for_its_commit` (edited) | FAILED: no `valueFiles` in the patch | passed |
-| (f) `--argocd release` re-reads both pinned digests and lists the pin last | `test_argocd_release_reads_the_pinned_digests_back_and_adds_the_pin_last` | FAILED: no `promote.py` | passed; FAILED with `05e32c8`'s script (it reads the `:1.1.0` alias, which the stub registry does not hold) |
+| (f) `--argocd release` re-reads both pinned digests, lists the pin last, and says so in its log | `test_argocd_release_reads_the_pinned_digests_back_and_adds_the_pin_last` | FAILED: no `promote.py` | passed; FAILED with `05e32c8`'s script (it reads the `:1.1.0` alias), and with round 0's (its log says "the chart's default image") |
+| round 1 F2: a `release` without `promotion.yaml` is refused before anything is written | `test_release_without_a_pin_is_refused_before_anything_is_written` | FAILED | passed; FAILED `assert (0 == 1)` with round 0's script, which deployed the aliases |
+| round 1 F5: `--argocd main` and `refs/heads/main` are refused before any fetch or cluster call | `test_main_is_refused_before_anything_is_fetched_or_written[main]`, `[refs/heads/main]` | FAILED | passed; both FAILED `assert (1 == 2)` with round 0's script |
+| round 1 F3/F4: the guide names the revision label's 10-character sha and the signing switch; the figure says pushes, on by default, signature if on, rollback checked | `test_promote_workflow.py::test_the_guide_and_figure_state_what_is_optional_and_what_is_required` | FAILED | passed; FAILED on round 0's guide (`the revision label is the commit`) |
 | (f) a pinned digest of another build, unlabelled or absent is refused before anything is written | `test_argocd_release_refuses_a_pinned_digest_that_is_not_the_release[other-build]`, `[unlabelled]`, `[absent]` | FAILED: no `promote.py` | passed; FAILED with `05e32c8`'s script (its message names the alias, not the digest) |
 
-Before: `21 failed, 30 passed` over the three files. After, the three files: `51 passed`.
+Before: `29 failed, 30 passed` over the three files. After, the three files: `59 passed`. The CRC tests that used
+`main` as their test branch use `pr-test` (round 1 F5), with the same assertions.
 
 The gates, on the applied copy:
 
 | Gate | Command | Result |
 |---|---|---|
-| the blocks | `apply-spec-blocks.py docs/specs/SPEC_P1_promote_release_branch.md <copy>`, then `--apply` | `34 blocks check out across 18 files`; the applied files are byte-equal to the proof tree's |
-| the hermetic suite, main | `pytest -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` on `1cd67d5` | `5453 passed, 19 skipped, 610 deselected` |
+| the blocks | `apply-spec-blocks.py docs/specs/SPEC_P1_promote_release_branch.md <copy>`, then `--apply`, on a fresh export of `22a485c` + this spec | `51 blocks check out across 19 files`; the applied files are byte-equal to the proof tree's |
+| the hermetic suite, main | `pytest -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` on `22a485c` | `5453 passed, 19 skipped, 610 deselected` |
 | the hermetic suite, main + this spec | the same | `5456 passed, 19 skipped, 610 deselected` |
-| the hermetic suite, after | the same, on the applied copy | `5477 passed, 19 skipped, 610 deselected` |
-| the workflows | actionlint v1.7.12 | no finding in `promote.yml`; the other two findings (ci.yml SC2086, mock-cluster.yml SC2034) are `1cd67d5`'s |
+| the hermetic suite, after | the same, on the applied copy | `5485 passed, 19 skipped, 610 deselected` |
+| the workflows | actionlint v1.7.12 | no finding in `promote.yml`; the other two findings (ci.yml SC2086, mock-cluster.yml SC2034) are `22a485c`'s |
 | the script | `bash -n` and `shellcheck -S warning` on `release-crc.sh` | clean |
 | the render | `helm template … -f environments/crc.yaml -f promotion.yaml` | every dashboard and report image is `repository@sha256:…` |
 | RBAC | Roles, ClusterRoles and their bindings, rendered with `crc.yaml`, before and after | 70 and 70; REMOVED 0, ADDED 0 |
-| the figure | `docs/diagrams/render.py … promotion-pipeline` | two PNGs written; `375 px viewport: scrollWidth 375` |
-| Markdown | `markdownlint-cli2` on every edited `.md` | no new finding (the counts per file equal `1cd67d5`'s) |
+| the figure | `docs/diagrams/render.py … promotion-pipeline` | two PNGs written and read; `375 px viewport: scrollWidth 375` |
+| Markdown | `markdownlint-cli2` on every edited `.md` | no new finding (the counts per file equal `22a485c`'s) |
 
 ## 7. On the lab, for the implementing pull request
 
@@ -271,13 +321,14 @@ Nothing here was run for this spec. The implementer runs it, with the lab's kube
 
 ## 8. Implementation blocks
 
-Thirty-four blocks over eighteen files, in apply order: the workflow, the script, the Application, `release-crc.sh`,
-the tests, the figure's page, the docs, the versions, the CHANGELOG. Lines added / removed per file (§6's proof
-tree): `promote.yml` +75, `promote.py` +229, `test_promote.py` +215, `test_promote_workflow.py` +64,
-`docs/CICD.md` +204, `docs/diagrams/cicd/source.html` +155; `release-crc.sh` +50 −9, `test_release_crc.py` +51 −3,
-`gitops/argocd-application-dashboard.yaml` +9 −5, the chart README +18, `RELEASING.md` +9, the CHANGELOG +10,
-`Chart.yaml` +5 −2, `local-development/README.md` +3 −2, `docs/README.md` +1, `gitops/README.md` +1,
-`pyproject.toml` and `gsd/__init__.py` +1 −1 each.
+Fifty-one blocks over nineteen files, in apply order: the workflow, the script, the Application, `release-crc.sh`,
+the tests, the figure's page, the docs, the epic skill, the versions, the CHANGELOG. Lines added / removed per file
+(§6's proof tree): `promote.yml` +74, `promote.py` +238, `test_promote.py` +268, `test_promote_workflow.py` +73,
+`docs/CICD.md` +215, `docs/diagrams/cicd/source.html` +155; `release-crc.sh` +63 −12, `test_release_crc.py` +87 −23
+(18 blocks: 17 are the rename of the test branch from `main` to `pr-test`), `gitops/argocd-application-dashboard.yaml`
++7 −5, the chart README +18, `RELEASING.md` +9, the CHANGELOG +10, `Chart.yaml` +4 −2, `local-development/README.md`
++4 −2, `.claude/skills/epic/SKILL.md` +6 −8, `docs/README.md` +1, `gitops/README.md` +1, `pyproject.toml` and
+`gsd/__init__.py` +1 −1 each.
 
 The pipeline figure's PNGs cannot be blocks. With the blocks applied, render them from the repository root and read
 both before committing:
@@ -288,8 +339,7 @@ It exits non-zero on a page error, a font that did not load, a name/figure misma
 
 <!-- block: .github/workflows/promote.yml | create -->
 ```yaml
-# Promote what publish.yml built to the `release` branch the lab's Argo CD tracks (#410).
-# Nothing here builds. docs/CICD.md is the operator guide; SPEC_P1 is the design.
+# The lab deploys only what this read back from the registry, never main itself (#410, docs/CICD.md).
 name: promote
 
 on:
@@ -318,7 +368,7 @@ on:
         type: boolean
         default: false
 
-# One promotion at a time; each run promotes main's tip as it finds it, so a replaced pending run loses nothing.
+# Each run promotes main's tip as it finds it, so a replaced pending run loses nothing.
 concurrency:
   group: promote-release
   cancel-in-progress: false
@@ -460,15 +510,24 @@ def built_image(repo: str, candidates: list[str]) -> tuple[str, int] | None:
 
 
 def read_back(ref: str, version: str, revision: str) -> str:
-    """The digest of `ref`, or a refusal when its labels are not this version and commit."""
-    info = json.loads(run("skopeo", "inspect", "--no-tags", f"docker://{ref}"))
-    labels = info.get("Labels") or {}
-    got = (labels.get("org.opencontainers.image.version"), labels.get("org.opencontainers.image.revision"))
-    if got != (version, revision):
-        raise Refused(f"{ref} is labelled version {got[0]!r}, revision {got[1]!r}; expected {version!r}, {revision!r}")
-    digest = info.get("Digest") or ""
+    """The digest of `ref`, once every Linux image in it is labelled with this version and 10-character sha."""
+    digest = json.loads(run("skopeo", "inspect", "--no-tags", f"docker://{ref}")).get("Digest") or ""
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise Refused(f"{ref} reported no sha256 digest (got {digest!r})")
+    image = ref.rsplit(":", 1)[0]
+    # By digest, and every child of a list: skopeo's default reads only the runner's platform (#414).
+    raw = json.loads(run("skopeo", "inspect", "--raw", f"docker://{image}@{digest}"))
+    children = [m.get("digest", "") for m in raw["manifests"] if (m.get("platform") or {}).get("os") == "linux"] \
+        if "manifests" in raw else [digest]
+    if not children:
+        raise Refused(f"{ref} is a manifest list with no Linux image")
+    for child in children:
+        config = json.loads(run("skopeo", "inspect", "--config", f"docker://{image}@{child}"))
+        labels = (config.get("config") or {}).get("Labels") or {}
+        got = (labels.get("org.opencontainers.image.version"), labels.get("org.opencontainers.image.revision"))
+        if got != (version, revision):
+            raise Refused(f"{image}@{child} is labelled version {got[0]!r}, revision {got[1]!r};"
+                          f" expected {version!r}, {revision!r}")
     return digest
 
 
@@ -615,12 +674,10 @@ if __name__ == "__main__":
 ```
 
 ```yaml
-# `release` holds only what .github/workflows/promote.yml committed after reading both images back
-# (docs/CICD.md). promotion.yaml, last in valueFiles, pins both images by digest and exists only there.
+# promotion.yaml comes last so no environment value can replace the read-back digests (docs/CICD.md).
 #
-# Iterating on a branch: `release-crc.sh --argocd <branch>` (it drops promotion.yaml from valueFiles),
-# or pause (`argocd app set group-sync-dashboard --sync-policy none`) and use release-crc.sh — never both
-# at once, Argo's prune and selfHeal would undo a hand-installed release.
+# Pause auto-sync before a Helm test (`argocd app set group-sync-dashboard --sync-policy none`): selfHeal
+# would undo it.
 ```
 
 <!-- block: gitops/argocd-application-dashboard.yaml | edit -->
@@ -654,20 +711,40 @@ if __name__ == "__main__":
 #                                                                                                         origin/<branch>
 #   --argocd release                Argo     GitHub @ release    promotion.yaml's      default +          a promotion on
 #                                                                digests, read back    promotion.yaml     origin/release
+#   --argocd main                   REFUSED: main can move before its image exists; the lab tracks release.
 #   --build-only                    (none)   —                   built, NOT pushed     —                  —
 ```
 
 <!-- block: local-development/release-crc.sh | edit -->
 ```bash
+# Typical loop: iterate with the bare script (or --values for a local variant); before merging,
 # --argocd on the pushed head; after a merge, --argocd main. The published images may lag main's
 # code, not its schema: CI fails a migration merged without an app release (#298) — a guarantee
 # about the RELEASE COMMIT, not about the tag on quay, which the branch path reads back (below).
 ```
 
 ```bash
-# --argocd on the pushed head; after a merge, promote.yml deploys it through `release`, and
-# --argocd release hands the lab back to that (docs/CICD.md). --argocd main still works and reads
-# the :<appVersion> alias back (below); it is for testing, the lab tracks release.
+# After testing, --argocd release hands the lab back to verified promotions (docs/CICD.md).
+```
+
+<!-- block: local-development/release-crc.sh | edit -->
+```bash
+  exit 2
+fi
+
+# The values file, repository-relative (this script runs in local-development/). Helm reads it from
+```
+
+```bash
+  exit 2
+fi
+case "$ARGO_REVISION" in
+  main|refs/heads/main)   # main can move before its image exists (#410)
+    echo "ERROR: main is not a deployment branch; use --argocd release, or a test branch." >&2
+    exit 2 ;;
+esac
+
+# The values file, repository-relative (this script runs in local-development/). Helm reads it from
 ```
 
 <!-- block: local-development/release-crc.sh | edit -->
@@ -715,13 +792,14 @@ helm["valueFiles"] = values.split(",")
 
 <!-- block: local-development/release-crc.sh | edit -->
 ```bash
-
 # --argocd <branch> with no build: point the Application at that branch and its chart's default
+# image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
+if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
+  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
 ```
 
 ```bash
-
-# release: the digests promote.yml pinned, read back again, because Argo will pull exactly these.
+# Argo pulls exactly these digests, so read them back again before handing it the branch.
 promoted_images_are_the_release() {
   local revision="$1" chart="$2" app_version rows repo tag digest commit labels
   app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
@@ -756,18 +834,17 @@ print(" ".join(sorted({l.get("org.opencontainers.image.version", "") + "/" + l.g
 }
 
 # --argocd <branch> with no build: point the Application at that branch and its chart's default
-```
-
-<!-- block: local-development/release-crc.sh | edit -->
-```bash
-  published_image_is_the_release "$EXPECTED_REVISION" || exit 1
-  if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-```
-
-```bash
-  published_image_is_the_release "$EXPECTED_REVISION" || exit 1
-  git cat-file -e "${EXPECTED_REVISION}:${PIN}" 2>/dev/null && ARGO_VALUES="${ARGO_VALUES},../../${PIN}"
-  if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+# image, or `release` and its pinned digests. Any other --argocd use builds this commit first.
+if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
+  if git cat-file -e "${EXPECTED_REVISION}:${PIN}" 2>/dev/null; then
+    ARGO_VALUES="${ARGO_VALUES},../../${PIN}"
+    echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the digests in ${PIN}"
+  elif [ "$ARGO_REVISION" = release ]; then   # release must never fall back to a mutable alias
+    echo "ERROR: origin/release has no ${PIN}; nothing has been promoted to it yet (docs/CICD.md)." >&2
+    exit 1
+  else
+    echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
+  fi
 ```
 
 <!-- block: local-development/release-crc.sh | edit -->
@@ -820,8 +897,19 @@ case "$(basename "$0")" in
     all="$*"; sha="${all##*head_sha=}"; sha="${sha%% *}"
     python3 -c 'import json,sys; print(json.dumps({"workflow_runs": json.load(open(sys.argv[1])).get(sys.argv[2], [])}))' "$STUB_RUNS" "$sha" ;;
   skopeo)
-    ref="${!#}"; ref="${ref#docker://}"
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(1) if sys.argv[2] not in d else print(json.dumps(d[sys.argv[2]]))' "$STUB_REGISTRY" "$ref" ;;
+    ref="${!#}"; python3 - "$STUB_REGISTRY" "${ref#docker://}" "$2" <<'EOF'
+import json, sys
+registry, ref, mode = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+if "@" in ref:   # by digest: the tag whose image has it
+    image, digest = ref.split("@")
+    ref = next((k for k, v in registry.items() if k.rsplit(":", 1)[0] == image and v["Digest"] == digest), "")
+if ref not in registry:
+    sys.exit(1)
+entry = registry[ref]
+print(json.dumps({"--raw": {"schemaVersion": 2, "config": {}, "layers": []},
+                  "--config": {"os": "linux", "config": {"Labels": entry["Labels"]}}}.get(mode, entry)))
+EOF
+    ;;
   cosign) exit "${STUB_COSIGN_RC:-0}" ;;
 esac
 '''
@@ -1006,6 +1094,48 @@ def test_without_a_release_branch_nothing_is_promoted(lab):
     assert r.returncode == 1 and "origin has no `release` branch" in r.stderr, r.stdout + r.stderr
 
 
+@pytest.mark.parametrize("bad", ["version", "revision", "missing"])
+def test_every_linux_image_of_a_manifest_list_is_read_back(monkeypatch, bad):
+    """One arm64 child of another build, or unreadable, refuses the whole index."""
+    promote = _load()
+    index, amd, arm = ("sha256:" + n * 64 for n in "123")
+    good = {"org.opencontainers.image.version": "1.1.0", "org.opencontainers.image.revision": "0123456789"}
+    wrong = {**good, f"org.opencontainers.image.{'version' if bad == 'version' else 'revision'}": "other"}
+
+    def registry(*cmd, **_):
+        ref = cmd[-1]
+        if "--raw" in cmd:
+            return json.dumps({"manifests": [{"digest": amd, "platform": {"os": "linux", "architecture": "amd64"}},
+                                             {"digest": arm, "platform": {"os": "linux", "architecture": "arm64"}}]})
+        if "--config" in cmd:
+            if ref.endswith(arm) and bad == "missing":
+                raise promote.Refused("manifest unknown")
+            return json.dumps({"os": "linux", "config": {"Labels": wrong if ref.endswith(arm) else good}})
+        return json.dumps({"Digest": index, "Labels": good})
+
+    monkeypatch.setattr(promote, "run", registry)
+    with pytest.raises(promote.Refused):
+        promote.read_back("quay.io/example/app:1.1.0-0123456789", "1.1.0", "0123456789")
+
+
+def test_a_revert_or_a_second_parent_change_needs_its_own_publish(lab):
+    a = lab.commit({"local-development/gsd/app.py": "v = 1\n"})
+    lab.publish(a)
+    reverted = lab.commit({"local-development/gsd/app.py": "v = 0\n"}, "revert")
+    assert lab.promote().returncode == 1, "a revert is an image change"
+    lab.publish(reverted)
+    git(lab.src, "checkout", "-qb", "topic")
+    topic = lab.commit({"local-development/gsd/app.py": "topic = 1\n"})
+    git(lab.src, "checkout", "-q", "main")
+    git(lab.src, "merge", "-q", "--no-ff", "-m", "merge topic", "topic")
+    git(lab.src, "push", "-q", "origin", "main")
+    merged = git(lab.src, "rev-parse", "HEAD")
+    lab.publish(topic)
+    assert lab.promote().returncode == 1, "the topic's build is not main's"
+    lab.publish(merged)
+    assert lab.promote().returncode == 0 and f"# images: {merged}" in lab.pin()
+
+
 def test_the_image_input_reader_is_publish_ymls_path_filter():
     parsed = yaml.safe_load(PUBLISH.read_text())
     assert _load().image_inputs(PUBLISH.read_text()) == (parsed.get("on") or parsed[True])["push"]["paths"]
@@ -1077,6 +1207,15 @@ def test_the_application_script_and_workflow_name_one_pin_file_on_release():
     assert app["helm"]["valueFiles"] == ["../../environments/crc.yaml", "../../promotion.yaml"], "the pin must come last to win"
     assert re.search(r'^PIN = "promotion.yaml"$', (REPO / "local-development" / "promote.py").read_text(), re.M)
     assert re.search(r"^PIN=promotion.yaml$", (REPO / "local-development" / "release-crc.sh").read_text(), re.M)
+
+
+def test_the_guide_and_figure_state_what_is_optional_and_what_is_required():
+    guide = (REPO / "docs" / "CICD.md").read_text()
+    figure = (REPO / "docs" / "diagrams" / "cicd" / "source.html").read_text()
+    assert "the revision label is the commit" not in guide and "10-character sha" in guide
+    assert "SUPPLY_CHAIN_SIGNING=false" in guide and "`--argocd main` is refused" in guide
+    for text in (">pushes<", "on by default", "signature if on", "rollback checked"):
+        assert text in figure, text
 ```
 
 <!-- block: local-development/tests/test_release_crc.py | edit -->
@@ -1099,22 +1238,212 @@ def test_the_application_script_and_workflow_name_one_pin_file_on_release():
 
 <!-- block: local-development/tests/test_release_crc.py | edit -->
 ```python
-    assert patch["spec"]["source"] == {"targetRevision": "main", "helm": {"parameters": []}}
+    _git(repo, "init", "-q", "-b", "main")
 ```
 
 ```python
-    assert patch["spec"]["source"] == {"targetRevision": "main", "helm": {"parameters": [], "valueFiles": ["../../environments/crc.yaml"]}}
+    _git(repo, "init", "-q", "-b", "pr-test")
 ```
 
 <!-- block: local-development/tests/test_release_crc.py | edit -->
 ```python
-
-# --- the waiter on its own ----------------------------------------------------------------------
+    _git(repo, "push", "-q", "-u", "origin", "main")
 ```
 
 ```python
+    _git(repo, "push", "-q", "-u", "origin", "pr-test")
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    src = {"repoURL": "x", "path": "charts/group-sync-dashboard", "targetRevision": "main"}
+```
+
+```python
+    src = {"repoURL": "x", "path": "charts/group-sync-dashboard", "targetRevision": "pr-test"}
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    for args in (("--argocd", "main", "--build-only"), ("--build-only", "--argocd"), ("--values", "environments/crc.yaml", "--build-only")):
+```
+
+```python
+    for args in (("--argocd", "pr-test", "--build-only"), ("--build-only", "--argocd"), ("--values", "environments/crc.yaml", "--build-only")):
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    r = run(lab, "--argocd", "main", "--values", "environments/crc.yaml")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "branch main is not on origin, or origin is unreachable" in r.stderr
+```
+
+```python
+    r = run(lab, "--argocd", "pr-test", "--values", "environments/crc.yaml")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "branch pr-test is not on origin, or origin is unreachable" in r.stderr
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    _git(lab["repo"], "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+```
+
+```python
+    _git(lab["repo"], "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/pr-test")
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    r = run(lab, "--argocd", "main", "--values", "environments/other.yaml")
+    assert r.returncode == 1 and "does not exist on origin/main" in r.stderr
+```
+
+```python
+    r = run(lab, "--argocd", "pr-test", "--values", "environments/other.yaml")
+    assert r.returncode == 1 and "does not exist on origin/pr-test" in r.stderr
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+def test_argocd_branch_clears_the_image_parameters_and_waits_for_its_commit(lab):
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = calls(lab)
+```
+
+```python
+def test_argocd_branch_clears_the_image_parameters_and_waits_for_its_commit(lab):
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "pr-test")
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = calls(lab)
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    assert patch["spec"]["source"] == {"targetRevision": "main", "helm": {"parameters": []}}
+    # the branch moved on origin but the Application's `main` did not: the old status must not satisfy the waiter
+    synced_status(lab, "0" * 40)
+    r = run(lab, "--argocd", "main", ARGOCD_WAIT_INTERVAL="1")
+    assert r.returncode == 1, "the waiter accepted a status for a commit that is not origin/main"
+```
+
+```python
+    assert patch["spec"]["source"] == {"targetRevision": "pr-test", "helm": {"parameters": [], "valueFiles": ["../../environments/crc.yaml"]}}
+    # the branch moved on origin but the Application's `main` did not: the old status must not satisfy the waiter
+    synced_status(lab, "0" * 40)
+    r = run(lab, "--argocd", "pr-test", ARGOCD_WAIT_INTERVAL="1")
+    assert r.returncode == 1, "the waiter accepted a status for a commit that is not origin/pr-test"
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    _stale_alias(lab, "group-sync-dashboard", "0.24.0")
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 1, r.stdout + r.stderr
+```
+
+```python
+    _stale_alias(lab, "group-sync-dashboard", "0.24.0")
+    r = run(lab, "--argocd", "pr-test")
+    assert r.returncode == 1, r.stdout + r.stderr
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    _stale_alias(lab, "group-sync-dashboard-report", "0.24.0")
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 1, r.stdout + r.stderr
+```
+
+```python
+    _stale_alias(lab, "group-sync-dashboard-report", "0.24.0")
+    r = run(lab, "--argocd", "pr-test")
+    assert r.returncode == 1, r.stdout + r.stderr
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    r = run(lab, "--argocd", "main", STUB_IMAGES="")
+```
+
+```python
+    r = run(lab, "--argocd", "pr-test", STUB_IMAGES="")
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    _git(lab["repo"], "checkout", "-q", "main")
+```
+
+```python
+    _git(lab["repo"], "checkout", "-q", "pr-test")
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 0, r.stdout + r.stderr
+```
+
+```python
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "pr-test")
+    assert r.returncode == 0, r.stdout + r.stderr
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    _git(lab["repo"], "commit", "-qam", "shipped values"); _git(lab["repo"], "push", "-q", "origin", "main")
+    synced_status(lab, _git(lab["repo"], "rev-parse", "HEAD"))
+    r = run(lab, "--argocd", "main")
+```
+
+```python
+    _git(lab["repo"], "commit", "-qam", "shipped values"); _git(lab["repo"], "push", "-q", "origin", "pr-test")
+    synced_status(lab, _git(lab["repo"], "rev-parse", "HEAD"))
+    r = run(lab, "--argocd", "pr-test")
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+    r = run(lab, "--argocd", "main", STUB_OCI_DIR=str(oci), STUB_REAL_OC=REAL_OC)
+```
+
+```python
+    r = run(lab, "--argocd", "pr-test", STUB_OCI_DIR=str(oci), STUB_REAL_OC=REAL_OC)
+```
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+```python
+        assert "oc apply" not in calls(lab)
+
+```
+
+```python
+        assert "oc apply" not in calls(lab)
+
 
 # --- the release branch promote.yml writes (#410) ------------------------------------------------
+
+@pytest.mark.parametrize("branch", ["main", "refs/heads/main"])
+def test_main_is_refused_before_anything_is_fetched_or_written(lab, branch):
+    r = run(lab, "--argocd", branch)
+    assert r.returncode == 2 and "main is not a deployment branch" in r.stderr, r.stdout + r.stderr
+    assert calls(lab) == ""
+
+
+def test_release_without_a_pin_is_refused_before_anything_is_written(lab):
+    """A release tree nobody promoted must not fall back to the :<appVersion> aliases."""
+    _git(lab["repo"], "push", "-q", "origin", "pr-test:release")
+    synced_status(lab, lab["full"])
+    r = run(lab, "--argocd", "release")
+    assert r.returncode == 1 and "origin/release has no promotion.yaml" in r.stderr, r.stdout + r.stderr
+    assert "oc apply" not in calls(lab) and "helm uninstall" not in calls(lab) and "oc image info" not in calls(lab)
 
 def _promotion(lab, dashboard: str, report: str) -> str:
     """origin/release as promote.py leaves it: the chart, environments/ and promotion.yaml; `dashboard` and
@@ -1130,7 +1459,7 @@ def _promotion(lab, dashboard: str, report: str) -> str:
     _git(lab["repo"], "add", "promotion.yaml", "charts", "environments")
     _git(lab["repo"], "commit", "-qm", "promote"); _git(lab["repo"], "push", "-q", "origin", "release")
     release = _git(lab["repo"], "rev-parse", "HEAD")
-    _git(lab["repo"], "checkout", "-qf", "main")
+    _git(lab["repo"], "checkout", "-qf", "pr-test")
     lab["env"]["STUB_IMAGES"] = f"{pins[0][0]}@{pins[0][2]}={dashboard} {pins[1][0]}@{pins[1][2]}={report}"
     synced_status(lab, release)
     return release
@@ -1141,6 +1470,7 @@ def test_argocd_release_reads_the_pinned_digests_back_and_adds_the_pin_last(lab)
     _promotion(lab, good, good)
     r = run(lab, "--argocd", "release")
     assert r.returncode == 0, r.stdout + r.stderr
+    assert "the digests in promotion.yaml" in r.stdout and "the chart's default image" not in r.stdout
     log = calls(lab)
     assert "oc image info quay.io/example/group-sync-dashboard@sha256:1111" in log
     assert "oc image info quay.io/example/group-sync-dashboard-report@sha256:2222" in log
@@ -1160,8 +1490,6 @@ def test_argocd_release_refuses_a_pinned_digest_that_is_not_the_release(lab, rep
     assert "group-sync-dashboard-report@sha256:2222" in r.stderr
     assert "oc apply" not in calls(lab) and "helm uninstall" not in calls(lab)
 
-
-# --- the waiter on its own ----------------------------------------------------------------------
 ```
 
 <!-- block: docs/diagrams/cicd/source.html | create -->
@@ -1217,7 +1545,7 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
 
   <figure>
     <div class="fig-scroll">
-      <svg viewBox="0 0 1100 720" role="img" aria-label="The pipeline in five lanes, time flowing down. A pull request passes ci.yml, including the chart-version and app-version bump checks, and is merged to main. publish.yml builds, pushes and signs the image 1.1.0 dash sha10 on quay.io, and moves the 1.1.0 alias only on a version bump. If publish fails, nothing is promoted. When publish succeeds, or a chart-only merge lands, promote.yml reads both images back from quay.io, checking labels, digest and signature, then commits the chart and promotion.yaml with the digests to the release branch. Argo CD syncs release and pulls the images by digest. A rollback is a manual run of promote.yml with an older commit.">
+      <svg viewBox="0 0 1100 720" role="img" aria-label="The pipeline in five lanes, time flowing down. A pull request passes ci.yml, including the chart-version and app-version bump checks, and is merged to main. publish.yml builds the image 1.1.0 dash sha10 on a GitHub runner and pushes it to quay.io, signed with an SBOM by default, and moves the 1.1.0 alias only on a version bump. If publish fails, nothing is promoted. When publish succeeds, or a chart-only merge lands, promote.yml reads both images back from quay.io, checking every Linux image's labels and the digest, and the signature when signing is on, then commits the chart and promotion.yaml with the digests to the release branch. Argo CD syncs release and pulls the images by digest. A rollback is a manual run of promote.yml with an older commit and rollback checked.">
         <defs>
           <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
           <marker id="ah-ship" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ship)"/></marker>
@@ -1274,9 +1602,9 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
           <text x="550" y="367">immutable, every build</text>
           <text x="550" y="386" font-weight="600" fill="var(--build)">:1.1.0 alias</text>
           <text x="550" y="403">moves on a version bump</text>
-          <text x="550" y="418" fill="var(--muted)">signed · SBOM attached</text>
+          <text x="550" y="418" fill="var(--muted)">signing, SBOM: on by default</text>
           <line x1="395" y1="368" x2="451" y2="368" stroke="var(--build)" stroke-width="1.5" marker-end="url(#ah-build)"/>
-          <text x="423" y="360" fill="var(--build)" font-size="11.5">builds</text>
+          <text x="423" y="360" fill="var(--build)" font-size="11.5">pushes</text>
           <rect x="455" y="264" width="190" height="44" rx="6" fill="var(--gap-wash)" stroke="var(--gap)" stroke-width="1"/>
           <text x="550" y="283" font-weight="600" fill="var(--gap)">publish failed</text>
           <text x="550" y="300" fill="var(--gap)">nothing is promoted</text>
@@ -1294,10 +1622,10 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
           <text x="258" y="455" text-anchor="start" fill="var(--muted)">merge</text>
           <path d="M500,424 L410,536" stroke="var(--ship)" stroke-width="1.3" fill="none" marker-end="url(#ah-ship)"/>
           <text x="505" y="470" text-anchor="start" fill="var(--ship)">read back: labels,</text>
-          <text x="505" y="486" text-anchor="start" fill="var(--ship)">digest, signature</text>
+          <text x="505" y="486" text-anchor="start" fill="var(--ship)">digest; signature if on</text>
           <rect x="235" y="650" width="190" height="44" rx="6" fill="var(--surface)" stroke="var(--muted)" stroke-width="1"/>
           <text x="330" y="669">rollback: run promote.yml</text>
-          <text x="330" y="686">with an older sha</text>
+          <text x="330" y="686">older sha, rollback checked</text>
           <line x1="330" y1="650" x2="330" y2="608" stroke="var(--muted)" stroke-width="1" marker-end="url(#ah-alt)"/>
 
           <!-- release, then the cluster -->
@@ -1318,7 +1646,7 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
     </div>
     <figcaption>Only <code>promote.yml</code> writes to <code>release</code>, and only after both images are read back.
       A failed publish never reaches it. A chart-only merge reuses the image of the last commit that changed an image
-      input. <code>helm.yaml</code>'s chart release to the Helm repository is not drawn: the lab does not read it.</figcaption>
+      input. Signing and the SBOM are on by default and can be switched off. <code>helm.yaml</code>'s chart release to the Helm repository is not drawn: the lab does not read it.</figcaption>
   </figure>
 </div>
 ```
@@ -1335,7 +1663,7 @@ same image, checked and pinned, never a rebuild and never a moving tag.
 
 1. You open a pull request. `ci.yml` tests it.
 2. It is reviewed and merged to `main`.
-3. `publish.yml` builds the two images and pushes them to quay.io, signed.
+3. `publish.yml` builds the two images on a GitHub runner and pushes them to quay.io. Signing is on by default.
 4. `promote.yml` reads both images back from quay.io. If they are right, it commits the chart and the image
    digests to the `release` branch.
 5. Argo CD on the lab cluster syncs `release`, and pulls the images by digest.
@@ -1353,6 +1681,7 @@ Nothing builds on `release`, and nothing but `promote.yml` writes to it.
 | digest | `sha256:…`, the hash of an image's content; it cannot point at different bytes, unlike a tag |
 | publish | `publish.yml`: build the images from `main`, push, sign |
 | promote | `promote.yml`: read the images back, then commit the chart and the digests to `release` |
+| revision label | `org.opencontainers.image.revision`, set at build time to the first 10 characters of the commit the image was built from |
 | `release` branch | a branch holding only the chart, `environments/` and `promotion.yaml`; the lab's Argo CD tracks it |
 | `promotion.yaml` | the values file on `release` that pins both images by digest |
 | `workflow_run` | the GitHub Actions trigger "run this workflow after that one finishes"; it is how `promote.yml` follows `publish.yml` |
@@ -1367,10 +1696,11 @@ Nothing builds on `release`, and nothing but `promote.yml` writes to it.
 </picture>
 <!-- markdownlint-enable MD033 -->
 
-*Figure 1. Five lanes, time flowing down. `publish.yml` builds on quay.io; `promote.yml` reads back and commits to
-`release`; Argo CD syncs `release`. A failed publish stops the line. A chart-only merge goes straight to
+*Figure 1. Five lanes, time flowing down. `publish.yml` builds on a GitHub runner and pushes to quay.io; `promote.yml`
+reads back and commits to `release`; Argo CD syncs `release`. A failed publish stops the line. A chart-only merge goes straight to
 `promote.yml` and reuses the last image. A rollback is a manual run of `promote.yml`. Thick lines are the main path,
-thin grey lines an alternate path, red a failure. Everything drawn ships.*
+thin grey lines an alternate path, red a failure. Signing and the SBOM are on by default and can be switched off.
+Everything drawn ships.*
 
 ````text
 GITHUB PR            GITHUB MAIN          QUAY.IO               RELEASE BRANCH        CLUSTER (ARGO CD)
@@ -1382,18 +1712,18 @@ MINOR/MAJOR bump
     | merged
     +----------------> merge to main
                          |          \ chart-only merge (skips publish)  [alternate]
-                       publish.yml --builds--> 1.1.0-<sha10>
+                       publish.yml --pushes--> 1.1.0-<sha10>
                          |    \                :1.1.0 on a version bump
-                         |     \               signed, SBOM
+                         |     \               signing, SBOM: on by default
                          |      `--fails--> "publish failed: nothing is promoted"  [failure]
                          | succeeds
-                       promote.yml <--reads back: labels, digest, signature--
+                       promote.yml <--reads back: labels, digest; signature if on--
                          |
                          +--commits the pinned artifact--> release: chart,
                          ^                                 environments/,
                          |                                 promotion.yaml ----syncs----> pulls both
                   rollback: run promote.yml  [alternate]                                 images by digest
-                  with an older sha
+                  with an older sha, rollback checked
 ````
 
 ## Step by step
@@ -1427,7 +1757,11 @@ A merge to `main` starts the workflows below. Nobody pushes to `main` directly; 
 2. moves the alias `:<appVersion>` only if the merge changed the application version;
 3. signs each image by digest with cosign, attaches an SBOM, and reads the signature back.
 
-A merge that changes only the chart, the environments or the docs builds nothing.
+Signing and the SBOM are on by default. The repository variable `SUPPLY_CHAIN_SIGNING=false` turns signing off, and
+then promotion skips its signature check: labels and digests still have to match, but they do not prove who built the
+image. `SUPPLY_CHAIN_SBOM=false` turns the SBOM off; promotion does not read it.
+
+A merge that changes only the chart, the environments or docs outside the image inputs builds nothing.
 
 ### 4. Promote: read back, then commit
 
@@ -1441,10 +1775,13 @@ A merge that changes only the chart, the environments or the docs builds nothing
 
 It always promotes a commit on `main`, by default the newest. For that commit it:
 
-1. finds the tree's image: the build of the last commit that changed an image input;
-2. checks that `publish.yml` succeeded for it. If publish failed, it stops: an older image is not this code;
-3. reads both images back: the version label is the chart's `appVersion`, the revision label is the commit, and the
-   signature verifies against `publish.yml` on `main`;
+1. finds I, the last commit on `main` that changed an image input. Every commit from I to the one promoted has the
+   same image inputs;
+2. takes the newest of those commits that `publish.yml` built successfully, usually I. If none, it stops: an image
+   older than I does not contain I's code;
+3. reads both images back, every Linux image in each: the version label must be the chart's `appVersion` and the
+   revision label that commit's 10-character sha. With signing on, the signature must verify against `publish.yml`
+   on `main`;
 4. writes `promotion.yaml` with both digests and commits it to `release` with the chart and `environments/`.
 
 If publish is still running, it exits green and says so: that publish run's completion starts it again.
@@ -1484,6 +1821,7 @@ read back.
 | `promote` red: `cosign verify` failed | the image is not signed by `publish.yml` on `main` | re-run `publish.yml`; check `SUPPLY_CHAIN_SIGNING` |
 | `promote` red: `does not descend from` | a manual run named an older commit | run it again with `rollback` checked, if that is what you mean |
 | `promote` red: `origin has no release branch` | the one-time setup was not done | see Setup below |
+| `release-crc.sh --argocd release`: `origin/release has no promotion.yaml` | nothing has been promoted yet | let `promote.yml` run first |
 | `promote` green: `still being published` | publish has not finished | nothing; publish's completion promotes |
 
 ## Rollback and setup
@@ -1509,8 +1847,9 @@ Do not add **Restrict updates**: GitHub Actions cannot be a bypass actor on a us
 `promote.yml` too.
 
 **Switching the lab to `release`.** `local-development/release-crc.sh --argocd release` reads the pinned digests back,
-then points the Application at `release`. `--argocd <branch>` still deploys a branch for testing; it leaves
-`promotion.yaml` out.
+then points the Application at `release`. It refuses a `release` without `promotion.yaml`. `--argocd <branch>` still
+deploys a test branch, with #414's older alias check and without the pin; `--argocd main` is refused. Run
+`--argocd release` after testing so the lab follows promotions again.
 
 ## Chart publishing (`helm.yaml`)
 
@@ -1609,14 +1948,13 @@ after the image was pushed). The whole pipeline is in [docs/CICD.md](../../docs/
 
 <!-- block: local-development/README.md | edit -->
 ```markdown
-| `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
 | `--build-only` | untouched | — | built, **not** pushed (no credentials needed) | — | — |
 ```
 
 ```markdown
-| `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
 | `--argocd release` | Argo | GitHub at `release` | the digests in `promotion.yaml`, read back first | `[../../environments/crc.yaml, ../../promotion.yaml]` | a promotion on `origin/release` ([CICD.md](../docs/CICD.md)) |
 | `--build-only` | untouched | — | built, **not** pushed (no credentials needed) | — | — |
+| `--argocd main` | **refused** | | | | main can move before its image exists; the lab tracks `release` |
 ```
 
 <!-- block: local-development/README.md | edit -->
@@ -1640,6 +1978,34 @@ a local variant), `--argocd` on the pushed head before the PR is called ready; a
 | `argocd-repo-github.yaml` | the repository connection: a Secret in `openshift-gitops` with the label `argocd.argoproj.io/secret-type: repository` and the repo `url` — that label is what registers it (Argo's declarative setup). This repository is public; a private one adds `username`/`password` or `sshPrivateKey` |
 | `argocd-application-dashboard.yaml` | the dashboard chart from the `release` branch, which only `promote.yml` writes (`docs/CICD.md`): the chart, `environments/crc.yaml`, and `promotion.yaml` pinning both images by digest. Apply it with `local-development/release-crc.sh --argocd release`, which reads the digests back first |
 | `argocd-application-grafana.yaml` | the `openshift-grafana` chart from this git repository (`charts/openshift-grafana` on `main`), release `grafana`, destination `group-sync-dashboard`, automated sync |
+```
+
+<!-- block: .claude/skills/epic/SKILL.md | edit -->
+```markdown
+- [ ] The published release deployed to CRC through `release-crc.sh --argocd main`, walked, PVC UIDs unchanged.
+```
+
+```markdown
+- [ ] The published release deployed to CRC through `release-crc.sh --argocd release`, walked, PVC UIDs unchanged.
+```
+
+<!-- block: .claude/skills/epic/SKILL.md | edit -->
+```markdown
+   `local-development/release-crc.sh --argocd main`. That mode uses the chart on GitHub at `main` and the published
+   quay image (the mode table in the `release-crc.sh` header and in `local-development/README.md`). Bare
+   `--argocd` builds HEAD and pins that image, so it is not the published release. The branch path refuses to hand Argo an image whose
+   `org.opencontainers.image.version` label is not the chart's appVersion, or that is not in the registry (#410): a
+   refusal means publish.yml has not moved the `:<appVersion>` aliases yet, or a chart-version label already occupied
+   that tag. Wait for the publish run; never retag by hand. The lab's Application auto-syncs `main`, so it can deploy
+   before this script runs; #410 tracks that race. Walk it, and record the two PVC
+```
+
+```markdown
+   `local-development/release-crc.sh --argocd release`, once `promote.yml` has promoted the release merge
+   (`docs/CICD.md`). That mode uses the chart and the digests `promote.yml` read back and pinned on `release`, and reads
+   both digests back again; `--argocd main` is refused (#410). Bare `--argocd` builds HEAD and pins that image, so it
+   is not the published release. A refusal naming `promotion.yaml` means the promotion has not run yet: wait for
+   `promote.yml`; never retag by hand. Walk it, and record the two PVC
 ```
 
 <!-- block: local-development/pyproject.toml | edit -->
@@ -1666,8 +2032,7 @@ version: 0.59.2
 ```
 
 ```yaml
-# CHART 0.59.3 (2026-09-27), PATCH: appVersion moves to application 1.1.0 (below); the README's ArgoCD
-# section names the `release` branch the lab tracks (#410, SPEC_P1). No template, value or RBAC change.
+# CHART 0.59.3 (2026-09-27), PATCH: appVersion 1.1.0 and README docs only (#410); no template, value or RBAC change.
 version: 0.59.3
 ```
 
@@ -1677,7 +2042,7 @@ appVersion: "1.0.0"
 ```
 
 ```yaml
-# 1.1.0 (2026-09-27). The lab deploys the promoted artifact from `release` (#410, Epic E). MINOR.
+# 1.1.0 (2026-09-27). MINOR (#410): the lab deploys the promoted artifact from `release`.
 appVersion: "1.1.0"
 ```
 
