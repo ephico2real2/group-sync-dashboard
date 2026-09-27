@@ -1,0 +1,29 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-79944d6c8f-8vzjm -c dashboard --timestamps --since-time=2026-09-27T22:30:17Z  (captured 2026-09-27T22:34:43Z); sha256~ names redacted
+# pod started: 2026-09-27T22:28:52Z; lines in the window: 280
+# every line of the fleet, self-login, lookup-state and discovery loggers; leadership changes; failed polls;
+# a walk cluster's start and stop; ERROR/CRITICAL/Traceback. Routine poll lines are counted below, not listed:
+2026-09-27T22:32:28.587382928Z 2026-09-27 18:32:28,587-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-self-login source=values tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-27T22:32:28.591678158Z 2026-09-27 18:32:28,591-0400 INFO    gsd.selflogin self-login-failed phase=poll outcome=auth_failed cluster=walk-self-login account=developer expires_at=2027-09-27T22:29:29Z reauth=next-cycle action="the session was invalidated before it expired (an inactivity timeout or a revoke): one login on the next cycle; nothing is recorded as a refusal"
+2026-09-27T22:33:28.678474303Z 2026-09-27 18:33:28,678-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-self-login account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T22:33:28Z
+2026-09-27T22:33:28.711657929Z 2026-09-27 18:33:28,711-0400 WARNING gsd.fleetlogin fleet-logout-failed phase=credential outcome=auth_failed cluster=walk-self-login account=<redacted> tls=trusted-bundle token=sha256~<redacted> action="the OAuthAccessToken may still be on the target and nothing here will try again: delete it there as cluster-admin (oc delete oauthaccesstoken <token>) so it does not become litter" detail="401 Unauthorized on DELETE /apis/oauth.openshift.io/v1/useroauthaccesstokens/<name>: the token did not authorise its own revoke, so the object may still exist — {'kind':'Status','apiVersion':'v1','metadata':{},'status':'Failure','message':'Unauthorized','reason':'Unauthorized','code':401}\n"
+2026-09-27T22:33:28.711940680Z 2026-09-27 18:33:28,711-0400 INFO    gsd.selflogin self-login-renewed cluster=walk-self-login account=<redacted> expires_at=2027-09-27T22:33:28Z renew_at=2027-09-27T20:33:28Z reauth=true
+2026-09-27T22:33:53.776893626Z 2026-09-27 18:33:53,776-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-lookup account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T22:33:53Z
+2026-09-27T22:33:53.791960077Z 2026-09-27 18:33:53,791-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-lookup account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-27T22:33:53.792099953Z 2026-09-27 18:33:53,792-0400 INFO    gsd.clusterconfig fleet-ping account=<redacted> target=walk-lookup last_used=2026-09-27 last_ok=2026-09-27T22:33:53Z
+# successful 'shared-rnd' polls ('polled shared-rnd:' lines): 5; failed polls (cluster-unreachable … cluster=shared-rnd): 0
+# successful 'walk-lookup' polls ('polled walk-lookup:' lines): 5; failed polls (cluster-unreachable … cluster=walk-lookup): 0
+# successful 'walk-self-login' polls ('polled walk-self-login:' lines): 4; failed polls (cluster-unreachable … cluster=walk-self-login): 1
+# 'fleet-login' lines: 2, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-login-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-login-refused' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-logout' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-logout-failed' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-lookup' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-lookup-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-ping' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-ping-failed' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-credential-suspended' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# 'self-login-renewed' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'self-login-failed' lines: 1, naming ocp-oauth-bind-serviceid: 0
+# 'fleet-state-unavailable' lines: 0, naming ocp-oauth-bind-serviceid: 0
+# ERROR or Traceback lines: 0

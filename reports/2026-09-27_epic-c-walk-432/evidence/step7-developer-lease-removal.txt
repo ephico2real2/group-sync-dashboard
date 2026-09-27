@@ -1,0 +1,7 @@
+# 2026-09-27T22:52:18Z the restored configuration names no developer account (clusters.yaml fleet keys and every ldapConnectionBootstrap):
+fleetAccountUsername: "ocp-oauth-bind-serviceid"
+cluster Secrets recording lookup-account developer: 0
+# the Lease before deletion:
+{"name":"gsd-fleet-88fa0d759f845b47","resourceVersion":"5534296","account":"developer","holder":""}
+# 2026-09-27T22:52:19Z oc delete leases.coordination.k8s.io -n group-sync-dashboard gsd-fleet-88fa0d759f845b47
+lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted from group-sync-dashboard namespace

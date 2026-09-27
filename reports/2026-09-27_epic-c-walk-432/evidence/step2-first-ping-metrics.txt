@@ -1,0 +1,11 @@
+# oc exec … -c dashboard -- python3.14 urlopen(http://127.0.0.1:8080/metrics) | grep the families  (2026-09-27T21:48:25Z)
+gsd_cluster_up{cluster="dashboard"} 1.0
+gsd_cluster_up{cluster="mock-privateca"} 1.0
+gsd_cluster_up{cluster="mock-selfsigned"} 1.0
+gsd_cluster_up{cluster="mock-trusted"} 1.0
+gsd_cluster_up{cluster="shared-qa"} 1.0
+gsd_cluster_up{cluster="shared-rnd"} 1.0
+gsd_cluster_up{cluster="walk-lookup"} 1.0
+gsd_fleet_account_last_ok_timestamp_seconds 1.790504825e+09
+gsd_fleet_account_ping_enabled 1.0
+gsd_fleet_account_suspended 0.0

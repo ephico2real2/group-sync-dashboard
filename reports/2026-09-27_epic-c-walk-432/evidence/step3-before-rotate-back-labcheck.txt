@@ -1,0 +1,9 @@
+# SPEC_S4e §5 lab check at 2026-09-27T22:24:49Z (read-only). The three commands, as the spec gives them:
+#   oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c "${F}"
+#   oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq --arg f "${F}" '[.items[] | (.data.config // "" | @base64d | fromjson? // {}) | select(.ldapConnectionBootstrap == $f)] | length'
+#   oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json | jq --arg f "${F}" '[.items[] | .data // {} | to_entries[] | select(.value | contains($f))] | length'
+# F=ocp-oauth-bind-serviceid
+# looked at: ConfigMap group-sync-dashboard-config resourceVersion 5500085; fleetAccountUsername line: fleetAccountUsername: "developer"
+# looked at: 7 cluster Secret(s): gsd-cluster-mock-privateca, gsd-cluster-mock-refusal, gsd-cluster-mock-selfsigned, gsd-cluster-mock-trusted, gsd-cluster-shared-qa, gsd-cluster-shared-rnd, gsd-cluster-walk-lookup
+# looked at: 0 onboarding ConfigMap(s)
+0 0 0

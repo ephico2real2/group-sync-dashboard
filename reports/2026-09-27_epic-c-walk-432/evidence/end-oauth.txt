@@ -1,0 +1,3 @@
+# echo "oauths.config.openshift.io/cluster spec.tokenConfig: $(oc get oauths.config.openshift.io cluster -o jsonpath='{.spec.tokenConfig}')"
+# at 2026-09-27T22:56:59Z
+oauths.config.openshift.io/cluster spec.tokenConfig: {"accessTokenMaxAgeSeconds":31536000}

@@ -1,0 +1,31 @@
+# cm=$(oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json)
+   echo "ConfigMap group-sync-dashboard-config resourceVersion $(printf '%s' "${cm}" | jq -r .metadata.resourceVersion); clusters.yaml: the fleet, cadence and election keys, then the whole clusters list"
+   printf '%s' "${cm}" | jq -r '.data["clusters.yaml"]' | awk '/^clusters:/{p=1} p || /^(fleet|saTokenLookup|discoveryIntervalSeconds|pollIntervalSeconds|requestTimeoutSeconds|replicaCount|leaderElection|clusterSecrets)/'
+   echo "onboarding ConfigMaps (label key groupsync-dashboard.io/config-type): $(oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o name | wc -l | tr -d ' ')"
+# at 2026-09-27T21:39:48Z
+ConfigMap group-sync-dashboard-config resourceVersion 5349997; clusters.yaml: the fleet, cadence and election keys, then the whole clusters list
+pollIntervalSeconds: 60
+discoveryIntervalSeconds: 300
+requestTimeoutSeconds: 15
+clusterSecretsEnabled: true
+clusterSecretsWritesEnabled: true
+fleetAccountUsername: "ocp-oauth-bind-serviceid"
+fleetPasswordSecretNamespace: "openshift-config"
+fleetPasswordSecretName: "ldap-oauth-bind-secret"
+fleetPasswordSecretKey: "bindPassword"
+fleetPingEnabled: true
+fleetPingIntervalSeconds: 86400
+saTokenLookupSourceNamespace: "group-sync-operator"
+saTokenLookupSourceServiceAccount: "group-sync-dashboard-cluster-poller"
+saTokenLookupTokenSecretName: ""
+replicaCount: 1
+leaderElection: true
+clusters:
+  - apiUrl: https://kubernetes.default.svc
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    dashboardController: true
+    enabled: true
+    name: dashboard
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+onboarding ConfigMaps (label key groupsync-dashboard.io/config-type): 0

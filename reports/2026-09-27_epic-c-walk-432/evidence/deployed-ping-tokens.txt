@@ -1,0 +1,25 @@
+# oc get oauthaccesstokens.oauth.openshift.io -o json | jq -r '
+     def n(f): [.items[] | select(f)] | length;
+     "all objects: \(.items | length)",
+     "developer, openshift-challenging-client: \(n(.userName=="developer" and .clientName=="openshift-challenging-client"))",
+     "developer, any client: \(n(.userName=="developer"))",
+     "ocp-oauth-bind-serviceid, openshift-challenging-client: \(n(.userName=="ocp-oauth-bind-serviceid" and .clientName=="openshift-challenging-client"))",
+     "ocp-oauth-bind-serviceid, any client: \(n(.userName=="ocp-oauth-bind-serviceid"))",
+     "fleet account token creation instants: \([.items[] | select(.userName=="ocp-oauth-bind-serviceid") | .metadata.creationTimestamp] | sort | join(", "))",
+     "developer challenging-client creation instants: \([.items[] | select(.userName=="developer" and .clientName=="openshift-challenging-client") | .metadata.creationTimestamp] | sort | join(", "))",
+     "by client:",
+     (.items | group_by(.clientName) | map("  \(.[0].clientName): \(length)") | .[])'
+# at 2026-09-27T21:43:54Z
+all objects: 194
+developer, openshift-challenging-client: 3
+developer, any client: 20
+ocp-oauth-bind-serviceid, openshift-challenging-client: 2
+ocp-oauth-bind-serviceid, any client: 2
+fleet account token creation instants: 2026-09-19T00:48:44Z, 2026-09-19T00:50:11Z
+developer challenging-client creation instants: 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z, 2026-09-26T14:35:41Z
+by client:
+  console: 16
+  openshift-challenging-client: 30
+  system:serviceaccount:group-sync-dashboard:grafana-openshift-grafana-sa: 10
+  system:serviceaccount:group-sync-dashboard:group-sync-dashboard: 136
+  system:serviceaccount:openshift-gitops:openshift-gitops-argocd-dex-server: 2
