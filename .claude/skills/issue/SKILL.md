@@ -44,6 +44,7 @@ Behaviour, features and permissions this issue must leave exactly as they are.
 - [ ] A test for each behaviour, which fails before the change and passes after.
 - [ ] The full hermetic suite and the browser suite are green; CI is green on the PR's head.
 - [ ] (chart changes) a version bump; rendered RBAC before and after, REMOVED 0.
+- [ ] (image changes) bump the application to the next MINOR with `prepare-release.py --app X.Y.Z --no-commit "Issue summary"`; docs-only changes outside `publish.yml`'s paths are exempt (`docs/RELEASING.md`).
 - [ ] Docs updated: <name them>.
 - [ ] Reviewed by at least two seats other than the implementer, Grok (with a shell) always one of them, as
       `.claude/skills/adversarial-review/SKILL.md` sets out; decisions recorded on the PR.

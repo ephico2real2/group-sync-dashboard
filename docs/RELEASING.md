@@ -5,7 +5,7 @@ model, and everything below is a consequence of it.
 
 | artefact | version | changes when | published to |
 |---|---|---|---|
-| the application | `pyproject.toml` `version` | the app changes and you decide to ship it | quay.io |
+| the application | `pyproject.toml` `version` | MINOR per merged issue changing the image; MAJOR per closed epic | quay.io |
 | the chart | `Chart.yaml` `version` | the templates or defaults change | gh-pages |
 
 They meet only here:
@@ -15,8 +15,24 @@ They meet only here:
 - **A chart change forced by an app change** — a new value, a template that has to render something
   new. Then both move, in the same PR.
 
-Nothing else couples them. A patch to the app does not touch the chart. A template fix does not
-pretend the app changed.
+Nothing else couples them. An application release updates the chart's version fields without
+requiring template changes. A template-only fix does not pretend the app changed.
+
+The application takes exactly the next **MINOR per merged issue that changes the image**, or
+the next **MAJOR per closed epic**, cut with `local-development/prepare-release.py`. Lower
+components reset to zero: from `1.0.0`, those are `1.1.0` and `2.0.0`. Keep `gsd/__init__.py`
+and the chart's `appVersion` in sync using the application release steps below.
+
+CI's **App image changes bump the app version** job reads `publish.yml`'s `on.push.paths`
+as the image-input allowlist. It compares the PR merge ref with the PR base SHA and requires
+exactly the next MINOR or MAJOR when image content changed; unchanged, skipped, backwards,
+and patch-only versions fail. An empty or unresolvable base also fails. The version assignment
+lines in `pyproject.toml` and `gsd/__init__.py` themselves do not count as content; other
+changes in those files do. Docs-only changes outside the allowlist need no bump, but
+`local-development/README.md` is an image input and does. After another PR claims a MINOR,
+merge main into the remaining PR and take the next MINOR.
+A PR that moves the version without image changes (an epic's release) must also take exactly
+the next MINOR or MAJOR.
 
 ---
 
@@ -29,6 +45,7 @@ Every merge goes through one gate, then fans out to two independent workflows:
         |
         |   ci.yml:  tests(3.11) · tests(3.14) · ui · chart · diagrams · image
         |            "Chart changes bump the chart version"
+        |            "App image changes bump the app version"
         v
    merge to main
         |
@@ -105,9 +122,10 @@ Every merge goes through one gate, then fans out to two independent workflows:
    only for a NEW version; a skipped version attests nothing
 ```
 
-**Read the two `rel` branches carefully — they are the part people get wrong.** An ordinary merge
-publishes an immutable tag and nothing else. The alias the chart actually resolves moves only when a
-human changed the application version.
+**Read the two `rel` branches carefully — they are the part people get wrong.**
+The alias the chart actually resolves moves only when the application version changes. Image-changing issue PRs now
+carry a MINOR bump, so their merges publish both the immutable tag and the version alias. The
+publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme are unchanged.
 
 ---
 
@@ -187,8 +205,8 @@ no GPG key, in `DESIGN_supply_chain.md`. Two repository variables turn the modul
 
 ```sh
 cd local-development
-./prepare-release.py --app 0.12.0 "Users tab pages by cursor"          # branch + commit
-./prepare-release.py --app 0.12.0 "Users tab pages by cursor" --pr     # ...and the pull request
+./prepare-release.py --app 2.0.0 "Close the epic"          # next MAJOR: branch + commit
+./prepare-release.py --app 2.0.0 "Close the epic" --pr     # ...and the pull request
 ```
 
 What that does, and what you would do by hand without it:
@@ -231,9 +249,10 @@ under the new chart version.
 
 ### Neither
 
-An ordinary code merge. An immutable `<appVersion>-<sha>` image is published for traceability and
-for the dev cluster. **Consumers see nothing**, because the chart still resolves the previous
-appVersion. That is the deliberate-release model: merging is not shipping.
+A docs-only or tooling PR outside `publish.yml`'s image-input paths, with no chart content change,
+needs neither version bump. An image-changing issue takes the next MINOR in its PR; on its branch,
+`./prepare-release.py --app X.Y.Z "Issue summary" --no-commit` prepares the matching version fields
+and release notes for review alongside the change.
 
 **A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
 without an application release leaves the chart's default image one schema behind `main`, and that image

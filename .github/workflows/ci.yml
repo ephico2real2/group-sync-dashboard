@@ -125,6 +125,25 @@ jobs:
           done
           exit $status
 
+  app-version-bump:
+    name: App image changes bump the app version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Keep the default PR merge ref and compare it with the current base.
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install the workflow parser
+        run: python -m pip install PyYAML
+      - name: Image changes require the next MINOR or MAJOR app version
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: python local-development/check-app-version-bump.py
+
   tests:
     runs-on: ubuntu-latest
     defaults:
