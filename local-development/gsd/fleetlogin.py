@@ -271,10 +271,6 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _describe(exc: BaseException) -> str:
-    return type(exc).__name__
-
-
 def _text_of(exc: BaseException) -> str:
     """`str(exc)`, and never the reason cleanup raises: an exception whose `__str__` raises would
     otherwise replace the exception being cleaned up after (final pass, R5-3)."""
@@ -352,7 +348,7 @@ class FleetLogin:
         try:
             self._client = self._build_client()
         except LoginError as exc:
-            self._log_stop(exc)
+            self._log_failure(exc)
             raise
         try:
             self.session = self._login()
@@ -403,22 +399,19 @@ class FleetLogin:
             except LoginError as exc:
                 exc.attempts = attempt
                 if not exc.retryable:
-                    self._log_stop(exc)
+                    self._log_failure(exc)
                     raise
                 if attempt >= policy.attempts:
-                    self._log_retry(exc, attempt, gave_up=True)
+                    self._log_failure(exc, attempt, gave_up=True)
                     raise
                 wait = policy.wait_after(attempt)
-                self._log_retry(exc, attempt, retry_in=wait)
+                self._log_failure(exc, attempt, retry_in=wait)
                 self._sleep(wait)
                 continue
             # FROM HERE THE TARGET MAY HAVE MINTED A TOKEN: the response is in hand, and this guard
-            # holds until the session is returned. THE CLEANUP DEPENDS ON NO LATER BINDING (third
-            # pass, Codex: an interruption after the token was bound inside `_token_from` still
-            # abandoned it — the third time "the moment the token is bound" moved with a refactor).
-            # On any exception the guard re-reads what the RESPONSE ITSELF carried (`_minted_by`,
-            # pure and total), so there is no line between "the token exists in this process" and
-            # "an exception here revokes it": the response has carried it since the request returned.
+            # holds until the session is returned. It depends on no later binding — on any exception
+            # it re-reads the RESPONSE (`_minted_by`), which has carried the token since the request
+            # returned (third pass, Codex: a token bound inside `_token_from` was still abandoned).
             # Revocation is attempted exactly once per token: nothing inside this block revokes.
             try:
                 token, fragment = self._token_from(response, endpoint)
@@ -439,7 +432,7 @@ class FleetLogin:
                     self.revoked = all([self._revoke(token, best_effort=malformed) for token in minted])
                 if isinstance(problem, LoginError):
                     problem.attempts = attempt
-                    self._log_stop(problem)
+                    self._log_failure(problem)
                 raise
             return session
 
@@ -564,10 +557,8 @@ class FleetLogin:
                              phase="credential", retryable=False)
         locations = response.headers.get_list("location")
         if len(locations) > 1:
-            # RFC 9110 §5.5: Location is a singleton field, so this response is MALFORMED — and a
-            # systems control client does not recover from a malformed construct (§5.5, "might
-            # consider any form of error recovery to be dangerous"): picking a candidate token would
-            # be a rule the target controls. No session; the guard revokes what it carried best-effort.
+            # MALFORMED (RFC 9110 §5.5; the module docstring says why a systems client does not
+            # recover). No session; the guard revokes what it carried best-effort.
             raise LoginError(UNREACHABLE, f"302 from {host} carried {len(locations)} Location headers — "
                              f"malformed (RFC 9110 §5.5: Location is a singleton field); a systems client "
                              f"does not recover, so no session is built and anything it minted is revoked "
@@ -651,7 +642,7 @@ class FleetLogin:
             answer = self._delete_token(token)
         except BaseException as exc:  # noqa: BLE001 - the wire never raises; this is a fault of this process
             answer = _RevokeAnswer(False, None, "unanswered", "connect", UNREACHABLE,
-                                   f"{_describe(exc)}: {self._scrub(_text_of(exc), token)[:200]} — the revoke "
+                                   f"{type(exc).__name__}: {self._scrub(_text_of(exc), token)[:200]} — the revoke "
                                    f"itself failed before the target answered")
         self.revoked = answer.gone
         shown = answer.name if answer.name and token.startswith(TOKEN_PREFIX) else None   # unprefixed IS the token
@@ -670,7 +661,7 @@ class FleetLogin:
         except BaseException as exc:  # noqa: BLE001 - the LINE failed, not the revoke; `revoked` already holds the answer
             try:
                 log.warning("fleet-logout line could not be written (revoked=%s): %s: %s", answer.gone,
-                            _describe(exc), self._scrub(_text_of(exc), token)[:200])
+                            type(exc).__name__, self._scrub(_text_of(exc), token)[:200])
             except BaseException:  # noqa: BLE001, S110 - the last resort: cleanup can never raise (final pass, R5-3)
                 pass
         return answer.gone
@@ -714,22 +705,12 @@ class FleetLogin:
         phase = "tls" if is_verify_failure(raw) else "connect"
         return LoginError(UNREACHABLE, self._scrub(raw, *more), phase=phase, retryable=retryable, host=host, bound=bound)
 
-    def _log_retry(self, exc: LoginError, attempt: int, *, retry_in: float | None = None,
-                   gave_up: bool = False) -> None:
-        ceiling = self._policy.attempts
-        if gave_up:
-            action = (f"gave up after {ceiling} attempts: nothing more is tried until the next lookup or "
-                      f"ping — check the API URL, the OAuth route and TLS trust for the OAuth host "
-                      f"(the INGRESS CA, which the API's bundle may not carry) from this pod")
-        else:
-            action = f"retrying in {retry_in:g}s; if every attempt fails, the gave_up line says so"
-        failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(), host=exc.host,
-                attempt=f"{attempt}/{ceiling}", retry_in=None if retry_in is None else f"{retry_in:g}",
-                gave_up="true" if gave_up else None, action=action, detail=exc.message,
-                secrets=(self._password,))
-
-    def _log_stop(self, exc: LoginError) -> None:
-        if exc.outcome == AUTH_FAILED:
+    def _log_failure(self, exc: LoginError, attempt: int | None = None, *, retry_in: float | None = None,
+                     gave_up: bool = False) -> None:
+        """The login's failure line: with `attempt`, a retryable failure under the policy; without it,
+        a terminal stop — `fleet-login-refused` for a refusal. The emit helper drops None fields, so
+        a stop carries no `attempt=`, `retry_in=` or `gave_up=`."""
+        if attempt is None and exc.outcome == AUTH_FAILED:
             failure(log, "fleet-login-refused", phase="credential", outcome=LOGIN_REFUSED, **self._fields(),
                     action=(f"the target refused the password for {self.username}: rotate the fleet "
                             f"password Secret or correct ldapConnectionBootstrap — no second attempt is "
@@ -737,6 +718,17 @@ class FleetLogin:
                             f"authenticates every user with"),
                     detail=exc.message, secrets=(self._password,))
             return
+        ceiling = self._policy.attempts
+        if attempt is None:
+            action = "not retried: fix what detail names before the next lookup or ping"
+        elif gave_up:
+            action = (f"gave up after {ceiling} attempts: nothing more is tried until the next lookup or "
+                      f"ping — check the API URL, the OAuth route and TLS trust for the OAuth host "
+                      f"(the INGRESS CA, which the API's bundle may not carry) from this pod")
+        else:
+            action = f"retrying in {retry_in:g}s; if every attempt fails, the gave_up line says so"
         failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(), host=exc.host,
-                action="not retried: fix what detail names before the next lookup or ping",
-                detail=exc.message, secrets=(self._password,))
+                attempt=None if attempt is None else f"{attempt}/{ceiling}",
+                retry_in=None if retry_in is None else f"{retry_in:g}",
+                gave_up="true" if gave_up else None, action=action, detail=exc.message,
+                secrets=(self._password,))
