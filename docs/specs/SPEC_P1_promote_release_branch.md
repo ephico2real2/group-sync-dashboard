@@ -24,6 +24,14 @@ the implementing commit sets both to `merged` beside the applied blocks.
 
 ## Orchestrator's notes
 
+**Round 2, the confirmation** (Grok and Codex Astra on `bb1f8b9`). Both confirmed that every round-1 fix holds
+against new bypasses: an empty pin, a one-image pin, `./main`, ` main`, `main-test`, and a wrong Windows child
+(Linux-only by design). Neither found a regression: 59 of 59 in the three test files, RBAC REMOVED 0. Two
+documentation corrections were accepted, taken verbatim from Codex's corrected spec:
+- **A:** the epic skill's deploy step names the one-time `release` bootstrap (`docs/CICD.md`, Rollback and setup), and
+  tells a missing pin apart from a failed read-back, where waiting does not help. Found by both reviewers.
+- **B:** `release-crc.sh`'s two-line WHAT comment above the branch path becomes one line of WHY.
+
 **Round 1 of the spec review** (Grok and Codex Astra on `02a39f2`; every finding accepted by the orchestrator on
 PR #430). Main moved to `22a485c` (#429, the epic and issue skills) and was merged first; the blocks are re-cut on it.
 
@@ -833,8 +841,7 @@ print(" ".join(sorted({l.get("org.opencontainers.image.version", "") + "/" + l.g
   done <<< "$rows"
 }
 
-# --argocd <branch> with no build: point the Application at that branch and its chart's default
-# image, or `release` and its pinned digests. Any other --argocd use builds this commit first.
+# An explicit branch uses already-published images, so handing it to Argo must not rebuild them.
 if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
   if git cat-file -e "${EXPECTED_REVISION}:${PIN}" 2>/dev/null; then
     ARGO_VALUES="${ARGO_VALUES},../../${PIN}"
@@ -2002,10 +2009,14 @@ a local variant), `--argocd` on the pushed head before the PR is called ready; a
 
 ```markdown
    `local-development/release-crc.sh --argocd release`, once `promote.yml` has promoted the release merge
-   (`docs/CICD.md`). That mode uses the chart and the digests `promote.yml` read back and pinned on `release`, and reads
+   (`docs/CICD.md`). For the first deployment, before `release` exists, ask the operator to create the orphan
+   branch with one empty commit and its ruleset, following `docs/CICD.md`, **Rollback and setup**. Then re-run
+   `promote.yml` on main and wait for a successful promotion before deploying. That mode uses the chart and
+   the digests `promote.yml` read back and pinned on `release`, and reads
    both digests back again; `--argocd main` is refused (#410). Bare `--argocd` builds HEAD and pins that image, so it
-   is not the published release. A refusal naming `promotion.yaml` means the promotion has not run yet: wait for
-   `promote.yml`; never retag by hand. Walk it, and record the two PVC
+   is not the published release. An `origin/release has no promotion.yaml` refusal means no pin is present:
+   wait for a successful `promote.yml` run. For a digest or label mismatch, investigate the failed read-back;
+   waiting alone does not repair it. Never retag by hand. Walk it, and record the two PVC
 ```
 
 <!-- block: local-development/pyproject.toml | edit -->
