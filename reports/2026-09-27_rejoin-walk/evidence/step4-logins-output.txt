@@ -1,0 +1,4 @@
+2026-09-27T23:47:59Z Logins row, as the table shows it       : 2026-09-27 19:44:09 EDT developer break-glass  signed in developer audit: cli allow via openshift-challenging-client crc
+2026-09-27T23:47:59Z shot                                    : 14-1280-step4-logins-header.png
+2026-09-27T23:47:59Z shot                                    : 15-1280-step4-logins-cli-row.png
+2026-09-27T23:47:59Z failures                                : []

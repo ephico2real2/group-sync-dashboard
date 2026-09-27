@@ -1,0 +1,20 @@
+# oc adm node-logs --role=master --path=oauth-server/audit.log (and any rotated file), events at or after 2026-09-27T23:42:28Z
+# captured 2026-09-27T23:49:23Z; the raw log is read through a pipe and never written
+annotated login events since 2026-09-27T23:42:28Z: 11
+developer, all: 11
+developer, cli authorize (GET /oauth/authorize, client_id=openshift-challenging-client): 1
+  of them allow: 1, deny: 0, error: 0
+fleet account, all: 0
+fleet account, authorize: 0
+developer rows (instant, kind, decision, status):
+  2026-09-27T23:43:55Z  credential  allow  302
+  2026-09-27T23:43:55Z  session  allow  302
+  2026-09-27T23:44:09Z  cli  allow  302
+  2026-09-27T23:46:52Z  credential  allow  302
+  2026-09-27T23:46:52Z  session  allow  302
+  2026-09-27T23:47:31Z  credential  allow  302
+  2026-09-27T23:47:31Z  session  allow  302
+  2026-09-27T23:47:53Z  credential  allow  302
+  2026-09-27T23:47:53Z  session  allow  302
+  2026-09-27T23:48:40Z  credential  allow  302
+  2026-09-27T23:48:40Z  session  allow  302

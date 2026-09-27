@@ -1,0 +1,4 @@
+# oc get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=rejoin-2026-09-27 -o wide
+# at 2026-09-27T23:42:40Z
+NAME                        ROLE                        AGE   USERS       GROUPS   SERVICEACCOUNTS
+rejoin-walk-cluster-admin   ClusterRole/cluster-admin   0s    developer            
