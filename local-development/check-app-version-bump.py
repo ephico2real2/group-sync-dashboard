@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Require the next MINOR or MAJOR for image changes, comparing BASE to HEAD.
-
-CI checks out the PR merge ref, so HEAD includes the current base. Run locally with
-BASE=<commit> python local-development/check-app-version-bump.py from the repo root.
-Only committed changes are inspected, just as in the chart version check.
-"""
+"""A PR that changes the image must bump the app version to the next MINOR or MAJOR (#427)."""
 
 from __future__ import annotations
 
@@ -61,11 +56,7 @@ def read_image_paths(repo: Path) -> list[str]:
 
 
 def path_matches(path: str, patterns: list[str]) -> bool:
-    """GitHub path filters: full paths, * within a segment, ** across segments.
-
-    **/ also matches zero directories. Ordered ! exclusions can be re-included
-    by later patterns. GitHub's ? and + quantify the preceding character/class.
-    """
+    """Match as GitHub's `paths:` filter does, so this check and publish.yml agree."""
     matched = False
     for pattern in patterns:
         excluded = pattern.startswith("!")
@@ -106,10 +97,10 @@ def changed_files(repo: Path, base: str) -> list[str]:
 
 
 def has_nonversion_change(repo: Path, base: str, path: str) -> bool:
-    """Ignore only changed version assignment lines, never the entire file."""
+    """A version bump alone is not image content; any other line in the file is."""
     if path not in VERSION_LINES:
         return True
-    diff = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+    diff = git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
                "--unified=0", base, "HEAD", "--", path)
     in_hunk = False
     for line in diff.splitlines():
@@ -137,18 +128,23 @@ def app_version(repo: Path, ref: str) -> str:
 def check(repo: Path, base: str) -> int:
     base = validate_base(repo, base)
     changed = image_content_changes(repo, base)
-    if not changed:
+    was, now = app_version(repo, base), app_version(repo, "HEAD")
+    if changed:
+        print("image content changed:\n" + "\n".join(f"  {path}" for path in changed))
+    elif now == was:
         print("no image content changed (publish.yml paths, excluding version fields); no bump needed")
         return 0
-    print("image content changed:\n" + "\n".join(f"  {path}" for path in changed))
-    was, now = app_version(repo, base), app_version(repo, "HEAD")
+    else:
+        # A release PR moves only the version fields, and MAJOR per epic holds there too.
+        print("no image content changed, but the application version moved")
     if not isinstance(was, str) or not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", was):
         raise ValueError(f"base application version must be X.Y.Z, got {was!r}")
     major, minor, _ = map(int, was.split("."))
     expected = (f"{major}.{minor + 1}.0", f"{major + 1}.0.0")
     print(f"application version: {was} -> {now}")
     if now not in expected:
-        print(f"::error file={PYPROJECT}::image content changed; expected exactly "
+        reason = "image content changed" if changed else "application version changed"
+        print(f"::error file={PYPROJECT}::{reason}; expected exactly "
               f"{expected[0]} (next MINOR) or {expected[1]} (next MAJOR), got {now}")
         return 1
     print("application version is the next MINOR or MAJOR; bump accepted")

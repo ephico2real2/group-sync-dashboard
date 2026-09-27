@@ -92,7 +92,7 @@ def test_no_image_content_needs_no_bump(repo, kind, capsys):
     if kind == "docs":
         write(root, "docs/guide.md", "Documentation\n")
     elif kind == "version-fields":
-        versions(root, "1.2.0")  # The rule does not restrict a version-only release.
+        versions(root, "1.1.0")  # A release PR moves only the version fields.
     commit(root)
     assert gate.image_content_changes(root, base) == []
     assert "no image content changed" in assert_check(root, base, 0, capsys)
@@ -207,3 +207,39 @@ def test_real_publish_allowlist():
         "local-development/build-and-push-report.sh",
         ".github/workflows/publish.yml",
     ]
+
+
+@pytest.mark.parametrize("version,code", [
+    ("1.1.0", 0), ("2.0.0", 0),
+    ("1.0.1", 1), ("1.2.0", 1), ("0.9.0", 1), ("3.0.0", 1),
+])
+def test_version_only_change_is_still_the_next_minor_or_major(repo, version, code, capsys):
+    root, base = repo
+    versions(root, version)
+    commit(root)
+    assert gate.image_content_changes(root, base) == []
+    output = assert_check(root, base, code, capsys)
+    if code:
+        assert "1.1.0 (next MINOR) or 2.0.0 (next MAJOR)" in output
+
+
+def test_removed_version_line_fails(repo):
+    root, base = repo
+    path = root / PROJECT
+    path.write_text(path.read_text().replace('version = "1.0.0"\n', ""))
+    commit(root)
+    result = subprocess.run([sys.executable, str(SCRIPT)], cwd=root,
+                            env={**os.environ, "BASE": base}, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "::error::" in result.stdout
+
+
+def test_forced_diff_colour_does_not_hide_content(repo, capsys):
+    root, base = repo
+    git(root, "config", "color.ui", "always")
+    with (root / PROJECT).open("a") as stream:
+        stream.write("# This comment is image content too.\n")
+    commit(root)
+    assert gate.image_content_changes(root, base) == [PROJECT]
+    assert_check(root, base, 1, capsys)
+

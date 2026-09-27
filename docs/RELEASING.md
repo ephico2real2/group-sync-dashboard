@@ -31,6 +31,8 @@ lines in `pyproject.toml` and `gsd/__init__.py` themselves do not count as conte
 changes in those files do. Docs-only changes outside the allowlist need no bump, but
 `local-development/README.md` is an image input and does. After another PR claims a MINOR,
 merge main into the remaining PR and take the next MINOR.
+A PR that moves the version without image changes (an epic's release) must also take exactly
+the next MINOR or MAJOR.
 
 ---
 
