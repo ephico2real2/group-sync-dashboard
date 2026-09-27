@@ -400,7 +400,7 @@ class TestApi:
                               "labels": {"environment": "prod"}, "visibility": "remote-sar", "identity": "same-as-host",
                               "tls": {"insecure": False, "ca": "trusted-bundle"},
                               "status": None, "last_poll": None, "error": None, "retired": False,
-                              "onboarding_configmap": None}
+                              "onboarding_configmap": None, "rejoinable": True}
         assert by["c1"]["tls"] == {"insecure": False, "ca": "trusted-bundle"}
         assert body["findings"] == [{"secret": "gsd-cluster-broken", "code": "config-not-json", "detail": "Expecting value"}]
         # a cluster the store holds but no source names — its Secret vanished — is listed as retired, never dropped

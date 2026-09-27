@@ -7461,7 +7461,8 @@ class TestClusterConfigPage:
             page.wait_for_function("() => (document.getElementById('cc-refresh-result-east') || {innerText: ''}).innerText.includes('auth_failed')")
             refused = line()
             assert re.search(r"auth_failed · \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ — 401 Unauthorized", refused), refused
-            assert "Rejoin (#316), not built yet" in refused and page.locator("#cc-cluster-east [data-cc-rejoin]").count() == 0
+            # #316 (SPEC_D4): the next step is Rejoin, drawn where the route accepts it — the Secret row here
+            assert "use Rejoin" in refused and page.locator("#cc-cluster-east [data-cc-rejoin]").count() == 1
             assert page.locator("#cc-refresh-result-east .badge.critical").count() == 1
             assert page.locator("#cc-refresh-east").inner_text() == "Refresh" and not page.locator("#cc-refresh-east").is_disabled()
             page.evaluate(repaint); page.wait_for_function(fresh)
@@ -7481,9 +7482,166 @@ class TestClusterConfigPage:
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
             # absent, not disabled, where the writes are off
             page.evaluate("() => { data.clusterconfigs.secrets.writes = false; render(); }")
-            assert page.locator("[data-cc-refresh]").count() == 0
+            assert page.locator("[data-cc-refresh], [data-cc-rejoin]").count() == 0
         finally:
             gate.set()
+
+    def test_rejoin_is_offered_after_a_refused_refresh_and_its_dialog_keeps_what_is_typed(self, page, cc_rig, monkeypatch):
+        """#316 (SPEC_D4 §3.6): Rejoin appears only where the route accepts it (`rejoinable`) and only once Refresh said
+        the stored credential is refused. Its dialog is static, outside #main, so the minute's repaint keeps what is
+        typed; there is no form, so no submission can carry the password into a URL; Cancel clears both fields."""
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+
+        class _Refused(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Refused)
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        assert page.locator("[data-cc-rejoin]").count() == 0, "no Rejoin before Refresh has said anything"
+        page.click("#cc-refresh-east")
+        page.wait_for_selector("#cc-rejoin-east")
+        assert page.locator("#cc-cluster-east .cc-acts #cc-refresh-east + #cc-rejoin-east + #cc-delete-east").count() == 1
+        assert "use Rejoin" in page.locator("#cc-refresh-result-east").inner_text()
+        # the host and the values entry are refused by the route, so they are never offered it, refused or not
+        page.click("#cc-refresh-crc-local"); page.click("#cc-refresh-prod-east")
+        page.wait_for_function("() => ['crc-local', 'prod-east'].every((id) => (view.clusterRefresh[id] || {}).state === 'done')")
+        assert page.locator("#cc-rejoin-crc-local, #cc-rejoin-prod-east").count() == 0
+        assert "Replace the credential where it is written" in page.locator("#cc-refresh-result-prod-east").inner_text()
+        page.click("#cc-rejoin-east")
+        page.wait_for_selector("#rejoin-dialog[open]")
+        assert page.evaluate("() => !document.getElementById('main').contains(document.getElementById('rejoin-dialog'))")
+        text = page.locator("#rejoin-dialog").inner_text()
+        assert "Rejoin east" in text and "is used for this one login and is not saved" in text and "decided there" in text
+        assert "https://api.east.example:6443" in text and "gsd-cluster-east" in text
+        assert page.locator("#rejoin-password").get_attribute("type") == "password"
+        assert page.locator("#rejoin-username").get_attribute("autocomplete") == "off" == page.locator("#rejoin-password").get_attribute("autocomplete")
+        assert page.locator("#rejoin-dialog form").count() == 0
+        page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-typed")
+        # a real repaint of #main, proved by a marker the old button carries and the new one lacks
+        page.evaluate("() => { document.getElementById('cc-rejoin-east').dataset.old = '1'; lastFingerprint = null; return refresh({ auto: true }); }")
+        page.wait_for_function("() => !document.getElementById('cc-rejoin-east').dataset.old")
+        assert page.input_value("#rejoin-username") == "alice.admin" and page.input_value("#rejoin-password") == "Adm1n-pw-typed"
+        assert page.evaluate("() => document.getElementById('rejoin-dialog').open")
+        page.set_viewport_size({"width": 375, "height": 812}); page.wait_for_timeout(200)
+        box = page.locator("#rejoin-dialog").bounding_box()
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth") and box["x"] >= 0 and box["x"] + box["width"] <= 375
+        page.click("#rejoin-cancel")
+        page.wait_for_function("() => !document.getElementById('rejoin-dialog').open")
+        assert page.input_value("#rejoin-username") == "" and page.input_value("#rejoin-password") == ""
+        page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+        page.fill("#rejoin-password", "Adm1n-pw-escaped"); page.keyboard.press("Escape")   # closes without closeRejoin
+        page.wait_for_function("() => !document.getElementById('rejoin-dialog').open && !document.getElementById('rejoin-password').value")
+        page.evaluate("() => { data.clusterconfigs.secrets.writes = false; render(); }")
+        assert page.locator("[data-cc-rejoin]").count() == 0, "absent, not disabled, where the writes are off"
+
+    def test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere(self, page, cc_rig, monkeypatch):
+        """#316 (SPEC_D4 §3.6, §2): a press is one request carrying the typed password once. The field is emptied as the
+        request leaves, so a double click, and a second press before it is typed again, send nothing more. A refusal
+        keeps the dialog open with its sentence; a success closes it; both land on the card. The password is in no
+        storage, no URL and no page state, and pagehide and the idle timeout clear what is typed."""
+        import threading
+        from gsd.fleetlookup import CredentialGate
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+        release, calls, answers = threading.Event(), [], ["login-refused", "rejoined"]
+
+        class _Refused(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+
+        class _Poller:
+            _credential_gate = CredentialGate()
+
+            def request_discovery(self):
+                pass
+
+        def rejoin(cluster, settings, host_client, *, own_namespace, gate, username, password, viewer):
+            calls.append((cluster.name, username, password, viewer))
+            release.wait(10)
+            return {"outcome": answers.pop(0), "message": "the remote said so", "at": "2026-09-27T14:05:40Z"}
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Refused)
+        monkeypatch.setattr(_SCOPED_APP.state, "poller", _Poller(), raising=False)
+        monkeypatch.setattr("gsd.rejoin.rejoin", rejoin)
+        posts: list[str] = []
+        page.on("request", lambda r: posts.append(r.post_data) if r.method == "POST" and r.url.endswith("/rejoin") else None)
+        kept = "() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage), location.href, JSON.stringify(view)])"
+        try:
+            _open_as(page, base, "root")
+            page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+            page.click("#cc-refresh-east"); page.wait_for_selector("#cc-rejoin-east")
+            page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+            page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-once")
+            page.dblclick("#rejoin-go")
+            page.wait_for_selector("#cc-rejoin-east[disabled][aria-busy='true']")
+            assert page.input_value("#rejoin-password") == "", "emptied as the request left"
+            assert "Adm1n-pw-once" not in page.evaluate(kept)
+            release.set()
+            page.wait_for_function("() => (document.getElementById('cc-rejoin-result-east') || {innerText: ''}).innerText.includes('login-refused')")
+            release.clear()
+            assert page.evaluate("() => document.getElementById('rejoin-dialog').open") and "login-refused" in page.inner_text("#rejoin-msg")
+            page.click("#rejoin-go")                                     # nothing typed again: nothing is sent
+            assert "Type your username and your password" in page.inner_text("#rejoin-msg")
+            assert [json.loads(p) for p in posts] == [{"username": "alice.admin", "password": "Adm1n-pw-once"}]
+            page.fill("#rejoin-password", "Adm1n-pw-twice"); page.press("#rejoin-password", "Enter")
+            release.set()
+            page.wait_for_function("() => !document.getElementById('rejoin-dialog').open")
+            assert "rejoined" in page.inner_text("#cc-rejoin-result-east")
+            assert [c[1:] for c in calls] == [("alice.admin", "Adm1n-pw-once", "root"), ("alice.admin", "Adm1n-pw-twice", "root")]
+            assert len(posts) == 2 and not any(p in page.evaluate(kept) for p in ("Adm1n-pw-once", "Adm1n-pw-twice"))
+            # pagehide (the back/forward cache keeps typed values) and the idle timeout both clear the fields
+            page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+            page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-left")
+            page.evaluate("() => window.dispatchEvent(new Event('pagehide'))")
+            assert page.input_value("#rejoin-username") == "" and page.input_value("#rejoin-password") == ""
+            page.fill("#rejoin-password", "Adm1n-pw-left")
+            page.evaluate("() => { idle.logoutUrl = null; idleExpire(); }")
+            assert not page.evaluate("() => document.getElementById('rejoin-dialog').open")
+            assert page.input_value("#rejoin-password") == ""
+        finally:
+            release.set()
+
+    def test_fetch_refuses_redirects_and_submits_once(self, page, cc_rig, monkeypatch):
+        """#316 (review of the spec, C1): a 307 or 308 in front of the dashboard would re-send the POST, password and
+        all, to its Location (measured in Chromium). The credential fetch refuses redirects and is sent once."""
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+
+        class _Refused(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Refused)
+        seen: list[tuple[str, str]] = []
+        page.on("request", lambda r: seen.append((r.method, r.url)))
+        page.route("**/api/clusterconfigs/east/rejoin",
+                   lambda route: route.fulfill(status=307, headers={"Location": f"{base}/elsewhere"}))
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        page.click("#cc-refresh-east"); page.wait_for_selector("#cc-rejoin-east")
+        page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+        page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-redirected")
+        page.click("#rejoin-go")
+        page.wait_for_function("() => (view.clusterRejoin.east || {}).state === 'done'")
+        assert [url for method, url in seen if url.endswith("/elsewhere")] == [], "the 307 carried the password on"
+        assert [url for method, url in seen if method == "POST" and url.endswith("/rejoin")] == [
+            f"{base}/api/clusterconfigs/east/rejoin"]
+        assert page.evaluate("() => view.clusterRejoin.east.outcome") == "unknown"
 
 
 class TestKyvernoPage:

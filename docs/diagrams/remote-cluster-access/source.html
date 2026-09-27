@@ -361,10 +361,10 @@ a { color: var(--remote); }
     <h2>How a cluster is joined, and who may join it</h2>
     <p class="muted">Joining means one thing in this product: log in to the remote with a username and password, read
       the poller ServiceAccount's token from <code>group-sync-operator</code>, and store it on the host. Today only the
-      fleet account does it, automatically. Rejoin (#316) is the same exchange started by a person.</p>
+      fleet account does it automatically, and Rejoin (#316) is the same exchange started by a person.</p>
     <figure>
       <div class="fig-scroll">
-        <svg viewBox="0 0 980 870" role="img" aria-label="How a cluster is joined. On the host, saTokenLookup starts automatically: it stops first if cluster-Secret writes are off, then the leader or sole replica reads the fleet account's password from one host Secret, and a password the account was already refused, by any target, is not sent again. Rejoin, proposed, starts with a person who must pass clusterAdminSar on the host, update clusterrolebindings, and types their own username and password. On the remote, the dashboard logs in as that account, a proposed SelfSubjectAccessReview asks #322's cluster-admin question of a Rejoin credential there, it reads the poller's token Secret by name in group-sync-operator, and tries once to revoke the login's own token. Back on the host it writes gsd-cluster-shared-rnd. Once joined, the poller's token authenticates every later call; its rights on the remote are the ClusterRole group-sync-dashboard-cluster-poller, and under remote-sar the same token asks the remote about each reader.">
+        <svg viewBox="0 0 980 870" role="img" aria-label="How a cluster is joined. On the host, saTokenLookup starts automatically: it stops first if cluster-Secret writes are off, then the leader or sole replica reads the fleet account's password from one host Secret, and a password the account was already refused, by any target, is not sent again. Rejoin starts with a person who must pass clusterAdminSar on the host, update clusterrolebindings, and types their own username and password. On the remote, the dashboard logs in as that account, a SelfSubjectAccessReview asks #322's cluster-admin question of a Rejoin credential there and logs the answer, it reads the poller's token Secret by name in group-sync-operator, and tries once to revoke the login's own token. Back on the host it writes gsd-cluster-shared-rnd. Once joined, the poller's token authenticates every later call; its rights on the remote are the ClusterRole group-sync-dashboard-cluster-poller, and under remote-sar the same token asks the remote about each reader.">
           <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
           <!-- lanes -->
           <g font-family="IBM Plex Mono, monospace" font-size="13" font-weight="600">
@@ -378,16 +378,16 @@ a { color: var(--remote); }
             <!-- host: the two ways in -->
             <g fill="none" stroke-width="1.2">
               <rect x="30" y="64" width="200" height="62" rx="6" stroke="currentColor"/>
-              <rect x="260" y="64" width="200" height="62" rx="6" stroke="currentColor" stroke-dasharray="5 4"/>
+              <rect x="260" y="64" width="200" height="62" rx="6" stroke="currentColor"/>
               <rect x="30" y="152" width="200" height="62" rx="6" stroke="currentColor"/>
               <rect x="30" y="240" width="200" height="62" rx="6" stroke="currentColor"/>
-              <rect x="260" y="240" width="200" height="62" rx="6" stroke="currentColor" stroke-dasharray="5 4"/>
+              <rect x="260" y="240" width="200" height="62" rx="6" stroke="currentColor"/>
             </g>
-            <rect x="260" y="152" width="200" height="62" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <rect x="260" y="152" width="200" height="62" rx="8" fill="var(--host-wash)" stroke="var(--host)" stroke-width="1.5"/>
             <text x="130" y="86" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="600">saTokenLookup: true</text>
             <text x="130" y="103" text-anchor="middle">a stanza or Secret · automatic</text>
             <text x="130" y="119" text-anchor="middle" fill="var(--muted)">stops first if writes are off</text>
-            <text x="360" y="86" text-anchor="middle" font-weight="600">Rejoin (#316, not built)</text>
+            <text x="360" y="86" text-anchor="middle" font-weight="600">Rejoin (#316)</text>
             <text x="360" y="103" text-anchor="middle">a person on the tab</text>
             <text x="360" y="119" text-anchor="middle" fill="var(--muted)">on demand · one exchange</text>
             <text x="130" y="174" text-anchor="middle">the leader, or the sole replica</text>
@@ -428,8 +428,8 @@ a { color: var(--remote); }
             <text x="546" y="322" font-weight="600">① log in as that account</text>
             <text x="546" y="339">discovery → /oauth/authorize (basic auth) → 302 token</text>
             <text x="546" y="355" fill="var(--gap)">refused once the password is sent → terminal, not retried</text>
-            <rect x="530" y="388" width="420" height="62" rx="6" fill="none" stroke="var(--remote)" stroke-width="1.2" stroke-dasharray="5 4"/>
-            <text x="546" y="410" font-weight="600" fill="var(--remote)">② proposed (D8) · Rejoin only</text>
+            <rect x="530" y="388" width="420" height="62" rx="6" fill="none" stroke="var(--remote)" stroke-width="1.2"/>
+            <text x="546" y="410" font-weight="600" fill="var(--remote)">② D8 · Rejoin only · the answer is logged</text>
             <text x="546" y="427">SelfSubjectAccessReview: update clusterrolebindings?</text>
             <text x="546" y="443" fill="var(--muted)">no → refuse and revoke · the fleet account skips it</text>
             <rect x="530" y="476" width="420" height="62" rx="8" fill="var(--remote-wash)" stroke="var(--remote)" stroke-width="1.5"/>
@@ -458,13 +458,13 @@ a { color: var(--remote); }
             <text x="46" y="772">its rights there are the ClusterRole <tspan font-family="IBM Plex Mono, monospace" font-size="12">group-sync-dashboard-cluster-poller</tspan></text>
             <text x="46" y="790">under remote-sar, the same token asks shared-rnd about each reader (Figure 3)</text>
             <text x="30" y="832" fill="var(--muted)">Every check is an OpenShift RBAC answer: the host's before a password exists, the remote's once the cluster is joined.</text>
-            <text x="30" y="852" fill="var(--host)" font-weight="600">Dashed = proposed, not built: Rejoin (#316), clusterAdminSar (#322, D7), the remote's confirmation (D8).</text>
+            <text x="30" y="852" fill="var(--host)" font-weight="600">Built: Rejoin (#316), its host gate clusterAdminSar (#322, D7) and the remote's check (D8).</text>
           </g>
         </svg>
       </div>
       <figcaption>Both ways in converge on the same four remote steps. Step ③ reads the token the Secret already
         holds (#284); minting a fresh one with the TokenRequest API, which the same Role also allows, is #238. The
-        fleet account is configuration, not a person, and holds no cluster-admin grant (measured on the lab). A person's Rejoin would be gated twice: by the
+        fleet account is configuration, not a person, and holds no cluster-admin grant (measured on the lab). A person's Rejoin is gated twice: by the
         host before the password exists (D7), and by the remote once it does (D8). The remote's check needs no new grant,
         because every authenticated user may create a SelfSubjectAccessReview.</figcaption>
     </figure>
@@ -476,7 +476,7 @@ a { color: var(--remote); }
           <tr><td>The lookup itself (join)</td><td>the poller, automatically: the leader, or the sole replica without election (more replicas without election are refused)</td><td>unchanged</td><td>remote: the fleet account's login</td><td>the fleet password; once refused, not re-sent as that account to any target by this process (#315)</td></tr>
           <tr><td>Add a cluster on the tab</td><td class="cell-gap"><code>create secrets</code> in the dashboard's namespace: <span class="no">a namespace admin passes</span></td><td><code>clusterAdminSar</code>: <code>update clusterrolebindings</code> on the host</td><td>host</td><td>a pasted bearer token</td></tr>
           <tr><td>Rotate, delete, test</td><td class="cell-gap">the same namespace-level check</td><td><code>clusterAdminSar</code></td><td>host</td><td>a pasted token, or none</td></tr>
-          <tr><td>Rejoin (#316)</td><td>not built</td><td><code>clusterAdminSar</code>, then D8 on the remote</td><td>host, then remote</td><td>the person's own username and password, once, never stored</td></tr>
+          <tr><td>Rejoin (#316)</td><td><code>clusterAdminSar</code>, then D8 on the remote</td><td>unchanged</td><td>host, then remote</td><td>the person's own username and password, once, never stored</td></tr>
           <tr><td>See a joined remote wide</td><td>the policy: <code>remote-sar</code> + <code>same-as-host</code>, the standard (D2), on both lab remotes since SPEC_D2b (<code>self-only</code> before it)</td><td>unchanged</td><td>remote, with the poller's token</td><td>none: the token is already held</td></tr>
         </tbody>
       </table>
@@ -563,8 +563,9 @@ a { color: var(--remote); }
           passes it; it is not a search for a binding to <code>cluster-admin</code> itself. The login's token is
           <code>user:full</code>, so the review answers with the person's own RBAC and groups. The fleet account skips
           it: it is not cluster admin, by design.</div>
-        <div class="rec"><strong>Recommend: yes, for Rejoin only.</strong> It enforces D7's rule on the remote with
-          the remote's own RBAC, after the join credential exists.</div>
+        <div class="rec"><strong>Directed, and built with Rejoin (#316)</strong> (the operator, 2026-09-26): <em>"we log the
+          response from the remote cluster but don't make things very complicated."</em> One review, its answer logged;
+          a no reads and writes nothing.</div>
       </div>
     </div>
   </section>

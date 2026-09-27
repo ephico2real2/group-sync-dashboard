@@ -145,6 +145,38 @@
   </form>
 </dialog>
 
+<!-- #316 (SPEC_D4 §3.6): Rejoin's dialog. Static and outside #main for #ns-preview's reason: render() replaces #main on
+     every poll and would erase what is typed. No <form>, so no submission can carry the password into a URL; the
+     fields are cleared on close and on pagehide, and autocomplete="off" asks the browser not to remember them. -->
+<dialog id="rejoin-dialog" class="ns-preview cc-rejoin" aria-labelledby="rejoin-title">
+  <h2 id="rejoin-title">Rejoin <span id="rejoin-name"></span></h2>
+  <p>Sign in to <span class="mono rejoin-cluster"></span> as yourself. The dashboard logs in once to
+    <span class="mono" id="rejoin-server"></span>, asks it whether you are a cluster administrator there, reads the
+    poller's token, writes <span class="mono" id="rejoin-secret"></span>, and signs that login out.
+    <strong>Your password is used for this one login and is not saved by the dashboard.</strong> The Secret records
+    your username and who pressed Rejoin. Browser password managers may ignore the request not to save these fields.</p>
+  <div class="cc-field"><label for="rejoin-username">Username on <span class="rejoin-cluster"></span></label>
+    <input id="rejoin-username" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+  <div class="cc-field"><label for="rejoin-password">Password</label>
+    <input id="rejoin-password" type="password" autocomplete="off"></div>
+  <ul class="cc-gates" aria-label="Two gates, on two clusters">
+    <li><span class="badge ok"><span class="glyph" aria-hidden="true"></span>passed</span> <strong>1 · this cluster, the
+      host.</strong> You hold the cluster-admin tier here, which is why Rejoin is shown to you at all.</li>
+    <li><span class="badge unknown"><span class="glyph" aria-hidden="true"></span>decided there</span> <strong>2 ·
+      <span class="rejoin-cluster"></span>, the remote.</strong> Once you are signed in, it is asked the same question
+      about you. If it says no, nothing is read or written, and this dashboard cannot override it.</li>
+  </ul>
+  <div class="cc-warn"><strong>One try per password on this pod.</strong> If this password is refused, this pod does not
+    send it again, to any cluster, while it is the same password. A restarted pod or another replica does not know
+    that, and can send it once more: press Refresh before you press Rejoin again. A locked directory account answers
+    HTTP 500, not 401, so trying again only locks it further.</div>
+  <p class="cc-hint" id="rejoin-msg" aria-live="polite"></p>
+  <div class="idle-actions rejoin-acts">
+    <button type="button" id="rejoin-cancel">Cancel</button>
+    <button type="button" class="btn cc-btn-acc" id="rejoin-go">Rejoin</button>
+  </div>
+</dialog>
+
 <script>
 "use strict";
 
@@ -164,6 +196,7 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
                 clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
+                clusterRejoin: {},   // #316: each card's Rejoin answer by cluster id — never a username or a password
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
                 libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
@@ -6066,9 +6099,28 @@ function ccRefreshLine(c) {
   if (r.at) out += ` · <span class="mono">${esc(r.at)}</span>`;
   if (r.message) out += ` — ${esc(r.message)}`;
   if (r.outcome === "auth_failed") {
-    out += `<div class="cc-hint">The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.</div>`;
+    out += `<div class="cc-hint">The stored credential was refused. Refresh only probes with it; it never logs in. ${c.rejoinable
+      ? "To fetch a new token with your own account, use Rejoin." : "Replace the credential where it is written."}</div>`;
   }
   return out + "</div>";
+}
+/* #316 (SPEC_D4 §3.6): Rejoin is offered where the route accepts it (`rejoinable`, the server's rule), once Refresh has
+   said the stored credential is refused or not there yet — and stays while its own answer is shown. */
+function ccRejoinButton(c) {
+  const r = view.clusterRefresh[c.id] || {};
+  if (!c.rejoinable || !(["auth_failed", "pending"].includes(r.outcome) || view.clusterRejoin[c.id])) return "";
+  const busy = (view.clusterRejoin[c.id] || {}).state === "flight";
+  return `<button type="button" class="btn cc-btn-acc" id="cc-rejoin-${esc(c.id)}" data-cc-rejoin="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Rejoining…" : "Rejoin…"}</button>`;
+}
+function ccRejoinLine(c) {
+  const r = view.clusterRejoin[c.id];
+  if (!r) return "";
+  const head = `<div class="cc-consq" id="cc-rejoin-result-${esc(c.id)}"><strong>Rejoin:</strong> `;
+  if (r.state === "flight") return `${head}signing in once and reading the poller's token…</div>`;
+  const shape = r.outcome === "rejoined" ? "ok" : r.outcome === "unknown" ? "unknown" : "critical";
+  let out = `${head}${ccBadge(shape, r.outcome)}`;
+  if (r.at) out += ` · <span class="mono">${esc(r.at)}</span>`;
+  return out + (r.message ? ` — ${esc(r.message)}` : "") + "</div>";
 }
 function ccCredential(c) {
   const kind = c.credential === "bearer" ? "bearerToken" : c.credential === "in-cluster" ? "serviceAccount" : c.credential;
@@ -6138,7 +6190,7 @@ function ccClusterCard(c) {
   const secretRow = ccSourceKind(c) === "secret";
   const armed = view.clusterDeleteArmed === c.id;
   // every live row may be refreshed (#311 decision 3); absent, not disabled, where no write control exists
-  const refresh = !c.retired && ccWritesOn() ? ccRefreshButton(c) : "";
+  const refresh = !c.retired && ccWritesOn() ? ccRefreshButton(c) + ccRejoinButton(c) : "";
   let foot;
   if (c.retired) {
     foot = `<div class="cc-foot">its Secret is gone — the history is kept, the cluster is disabled</div>`;
@@ -6169,7 +6221,7 @@ function ccClusterCard(c) {
     <div class="cc-kv"><span class="k">labels</span><span class="v">${ccLabelChips(c.labels)}</span></div>
     <div class="cc-kv"><span class="k">visibility</span><span class="v">${vis}</span></div>
     <div class="cc-kv"><span class="k">identity</span><span class="v">${ident}</span></div>
-    <div class="cc-kv"><span class="k">connection</span><span class="v">${ccConnection(c)}${ccRefreshLine(c)}</span></div>
+    <div class="cc-kv"><span class="k">connection</span><span class="v">${ccConnection(c)}${ccRefreshLine(c)}${ccRejoinLine(c)}</span></div>
     ${foot}</article>`;
 }
 function ccFinding(f) {
@@ -6323,8 +6375,8 @@ function clusterConfigPage() {
     + `<section class="card" id="cc-findings"><h2>Findings</h2>${findings}</section>`
     + ccAddForm(d);
 }
-async function apiSend(path, method, body) {
-  const res = await fetch(path, { method, headers: { Accept: "application/json", "Content-Type": "application/json", "X-GSD-Interaction": "1" },
+async function apiSend(path, method, body, redirect = "follow") {
+  const res = await fetch(path, { method, redirect, headers: { Accept: "application/json", "Content-Type": "application/json", "X-GSD-Interaction": "1" },
                                  body: body === undefined ? undefined : JSON.stringify(body) });
   if (res.redirected || !(res.headers.get("Content-Type") || "").includes("json")) {
     const err = new Error("the dashboard session has ended"); err.sessionEnded = true; throw err;
@@ -6438,6 +6490,20 @@ function wireClusterConfig() {
       render();
     };
   });
+  document.querySelectorAll("[data-cc-rejoin]").forEach((el) => {
+    el.onclick = () => openRejoin(el.dataset.ccRejoin);
+  });
+  const rejoinDlg = $("rejoin-dialog");
+  if (rejoinDlg) {
+    $("rejoin-go").onclick = sendRejoin;
+    $("rejoin-cancel").onclick = closeRejoin;
+    $("rejoin-password").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); sendRejoin(); } };
+    rejoinDlg.onclose = () => {
+      clearRejoin();
+      const b = $(`cc-rejoin-${rejoinDlg.dataset.cluster}`);   // by id: a repaint replaced the button that opened it
+      if (b) b.focus();
+    };
+  }
   document.querySelectorAll("[data-cc-delete]").forEach((el) => {
     el.onclick = async () => {
       const id = el.dataset.ccDelete;
@@ -6455,6 +6521,54 @@ function ccEmptyForm() {
   return { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
            labels: {}, labelKey: "", labelVal: "", test: null };
 }
+/* #316 (SPEC_D4 §3.6): the Rejoin dialog. What is typed lives only in its two fields: never in `view`, storage or a URL. */
+function openRejoin(id) {
+  const c = ((data.clusterconfigs || {}).clusters || []).find((x) => x.id === id);
+  const dlg = $("rejoin-dialog");
+  if (!c || !dlg || dlg.open) return;
+  dlg.dataset.cluster = id;
+  $("rejoin-name").textContent = id;
+  $("rejoin-server").textContent = c.api_url || "";
+  $("rejoin-secret").textContent = `gsd-cluster-${id}`;
+  document.querySelectorAll(".rejoin-cluster").forEach((el) => { el.textContent = id; });
+  $("rejoin-msg").textContent = "";
+  dlg.showModal();
+  $("rejoin-username").focus();
+}
+function closeRejoin() {
+  const dlg = $("rejoin-dialog");
+  clearRejoin();                      // now: the close event fires from a queued task
+  if (dlg && dlg.open) dlg.close();   // Escape closes without this; the close handler clears then
+}
+function clearRejoin() {
+  ["rejoin-username", "rejoin-password"].forEach((id) => { const el = $(id); if (el) el.value = ""; });
+}
+async function sendRejoin() {
+  const dlg = $("rejoin-dialog"), id = dlg.dataset.cluster, field = $("rejoin-password");
+  const username = $("rejoin-username").value.trim(), password = field.value;
+  if ((view.clusterRejoin[id] || {}).state === "flight") return;          // one press, one request
+  if (!username || !password) { $("rejoin-msg").textContent = "Type your username and your password."; return; }
+  field.value = "";                                                       // sent once: another try means typing it again
+  view.clusterRejoin[id] = { state: "flight" };
+  $("rejoin-go").disabled = true;
+  $("rejoin-msg").textContent = "Signing in once…";
+  render();
+  try {
+    // "error": a 307 or 308 in front of the dashboard would re-send the password to its Location (#316)
+    view.clusterRejoin[id] = { state: "done", ...(await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/rejoin`, "POST", { username, password }, "error")) };
+  } catch (e) {
+    // No JSON answer (a gateway timeout, a dropped connection): the server may still have finished the Rejoin.
+    view.clusterRejoin[id] = e.status ? { state: "done", outcome: `HTTP ${e.status}`, message: e.message, at: null }
+      : { state: "done", outcome: "unknown", at: null, message: "The answer did not arrive, and the Rejoin may have "
+          + "finished anyway. Press Refresh in a minute; do not press Rejoin again until Refresh answers." };
+  }
+  const r = view.clusterRejoin[id];
+  $("rejoin-go").disabled = false;
+  if (r.outcome === "rejoined") closeRejoin(); else $("rejoin-msg").textContent = `${r.outcome} — ${r.message}`;
+  render(); refresh();
+}
+// The back/forward cache keeps a page's DOM, typed values included: a page left with the dialog open keeps none (#316).
+window.addEventListener("pagehide", clearRejoin);
 
 function nsAuditPage() {
   const ub = data.userBindings;
@@ -8147,6 +8261,7 @@ function idleExpire() {
   // ended" panel — over the card below (review of C4). refresh() also checks the state itself.
   navSeq++;
   $("idle-modal").hidden = true;
+  closeRejoin();   // #316: a typed username is on screen too, and it leaves with the rest
   setIdleChrome(false);
   $("logout").hidden = true;
   $("filters").innerHTML = "";

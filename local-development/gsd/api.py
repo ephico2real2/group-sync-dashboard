@@ -19,8 +19,9 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.responses import Response
@@ -1119,6 +1120,7 @@ def build_app(
         viewer = trusted_viewer(request)
         from .clusterconfig import CONFIG_SELECTOR, LABEL_SELECTOR
         from .clusterconfig.warnings import shared_api_warnings
+        from .rejoin import refusal as rejoin_refusal
         registry = settings.cluster_registry
         host = settings.host_cluster()
         polled = {row["id"]: row for row in store.clusters()}
@@ -1133,6 +1135,8 @@ def build_app(
                 "labels": dict(c.labels), "visibility": visibility, "identity": identity, "tls": c.tls_mode,
                 "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
                 "retired": False, "onboarding_configmap": c.onboarding[0] if c.onboarding else None,
+                # SPEC_D4 (#316): the route's own rule, so the page offers Rejoin exactly where the route accepts it.
+                "rejoinable": rejoin_refusal(c, settings) is None,
             })
             if c.credential_kind == CREDENTIAL_SELF_LOGIN:
                 # SPEC_S4c §3.10: the session's instants — never an age; the page computes one where it repaints.
@@ -1366,6 +1370,49 @@ def build_app(
             finally:
                 with refreshing_lock:
                     refreshing.discard(name)
+
+        # One Rejoin at a time in this process (SPEC_D4 §3.3): the gate's check and the login it guards are then one step,
+        # so a double click, two tabs or a script can never both reach a password's first use. Refused, never queued.
+        rejoining = threading.Lock()
+
+        @app.post("/api/clusterconfigs/{name}/rejoin")
+        def rejoin_cluster_config(request: Request, name: str, body: Any = Body(None)) -> dict:
+            """SPEC_D4 (#316): a cluster administrator's own username and password, for ONE login to the remote; the
+            dashboard reads the poller's token there, writes it here and keeps no password. `body: Any`, so FastAPI
+            neither validates nor echoes what arrived (a typed body's 422 quotes a non-object body whole): the shape is
+            refused here in fixed words, because even a key can be the password. Registered with the writes."""
+            from . import rejoin
+            from .clusterconfig.writer import WriteRefused
+            viewer, namespace, host_client = _writes_gate(request)
+            if not isinstance(body, dict) or set(body) - {"username", "password"}:
+                raise HTTPException(status_code=422, detail="body: an object with username and password, and no other key")
+            username, password = body.get("username"), body.get("password")
+            if not isinstance(username, str) or not isinstance(password, str):
+                raise HTTPException(status_code=422, detail="username and password: each must be a string")
+            cluster = settings.cluster(name)
+            if cluster is None:
+                raise HTTPException(status_code=404, detail=f"unknown cluster {name!r}")
+            try:
+                rejoin.check(cluster, settings, username, password)
+            except WriteRefused as exc:
+                raise _write_error(exc) from exc
+            # The poller's gate (#315), the one the lookup and self-login use: no poller, no gate, so no login.
+            gate = getattr(getattr(app.state, "poller", None), "_credential_gate", None)
+            if gate is None:
+                raise HTTPException(status_code=409, detail="this process runs no poller, so it holds no credential "
+                                                            "gate; nothing was sent")
+            if not rejoining.acquire(blocking=False):
+                raise HTTPException(status_code=409, detail="a Rejoin is already in flight on this pod; nothing was sent")
+            try:
+                answer = rejoin.rejoin(cluster, settings, host_client, own_namespace=namespace, gate=gate,
+                                       username=username, password=password, viewer=viewer)
+            except Exception:  # noqa: BLE001 - its text may quote the password: fixed words, and nothing of it logged
+                answer = rejoin.stopped_unexpectedly(cluster.name, viewer)
+            finally:
+                rejoining.release()
+            if answer["outcome"] == rejoin.REJOINED:
+                _request_discovery()
+            return answer
 
     @app.get("/api/clusters")
     @consistent

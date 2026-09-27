@@ -8,6 +8,7 @@ import threading
 
 from ..config import ClusterConfig
 from .parser import Finding
+from .writer import owned_by_mode
 
 
 class ClusterRegistry:
@@ -82,7 +83,8 @@ class ClusterRegistry:
         """The values list with the discovered clusters laid over it: a Secret shadows a values entry of the same
         name (C2 — the shadow is reported by the reader as a finding); the host, values[0] enabled, is never replaced
         (the parser refuses a Secret naming it, so nothing here can). A Secret the lookup wrote FOR a mode stanza
-        (its token-source is that stanza's credential kind — the reader's "ours") keeps the credential and takes
+        (its token-source is that stanza's credential kind, or a Rejoin's over a lookup stanza — the reader's "ours",
+        `gsd/clusterconfig/writer.py#owned_by_mode`) keeps the credential and takes
         the stanza's policy and switch, so an edit of the stanza's visibility, a change of default, or the stanza
         set to `enabled: false` reaches what is served (SPEC_D2b §3.4); an unowned Secret still wins wholesale
         (SPEC_S3). A Secret with no values entry is appended."""
@@ -96,7 +98,7 @@ class ClusterRegistry:
             found = discovered.pop(c.name, None)
             if found is None:
                 out.append(c)
-            elif c.connection_mode is not None and found.token_source == c.credential_kind:
+            elif c.connection_mode is not None and owned_by_mode(found.token_source, c.credential_kind):
                 # Either side may disable it: the lookup writes the stanza's `enabled` into the Secret.
                 out.append(dataclasses.replace(found, visibility=c.visibility, identity=c.identity,
                                                enabled=c.enabled and found.enabled))

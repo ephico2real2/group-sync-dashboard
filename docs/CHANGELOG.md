@@ -10,6 +10,21 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Rejoin: an administrator signs in to a remote cluster as themselves, once, and the dashboard fetches a fresh
+  poller token (#316, Epic D #384, `docs/specs/SPEC_D4_cluster_rejoin.md`).** When Refresh answers `auth_failed`, or
+  `pending` for a token that was never fetched, a Secret-sourced card or a `saTokenLookup` stanza offers **Rejoin…**.
+  Its dialog takes the administrator's own username and password for that cluster. The new
+  `POST /api/clusterconfigs/{name}/rejoin` logs in once as that person and asks the remote, with that login's own
+  token, whether the person may `update clusterrolebindings` there (D8: the answer is logged, and a no reads and writes
+  nothing). It reads the poller's token Secret, signs the login out, and writes `gsd-cluster-<name>` with
+  `token-source: rejoin`, `rejoined-by`, `rejoin-account` and `rejoined-at`. **The password is used for that one login
+  and is never stored, logged or echoed.** One press presents it at most once, nothing is retried, and a password the
+  directory refused for that username is not sent again by that pod while it is the same password (the poller's
+  credential gate, #315). The fleet account's name is refused. The route sits in the writes carve-out, so a default
+  install has no Rejoin. `GET /api/clusterconfigs` rows gain `rejoinable`, and discovery counts a Rejoin over a
+  `saTokenLookup` stanza as that stanza's own Secret. `charts/group-sync-dashboard/RUNBOOK.md` walks the repair:
+  Refresh, then Rejoin, then the manual fallback. No RBAC change. Application **1.5.0**, chart 0.59.7.
+
 - **The daily ping presents the fleet password only as an account the configuration names (#432,
   `docs/specs/SPEC_S4e_ping_account_scope.md`).** The ping took its account from a retrieved cluster's
   `lookup-account` annotation — who fetched that cluster's token, under the configuration of that day — and its

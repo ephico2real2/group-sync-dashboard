@@ -322,6 +322,12 @@ class FleetLogin:
     entering it twice is refused.
     """
 
+    #: What a refusal line tells its reader to do, and when the next try comes: the fleet account's words. A person's
+    #: own login (Rejoin, SPEC_D4) states its own (`gsd/rejoin.py#RejoinLogin`); the events and every rule are these.
+    REFUSED_ACTION = ("rotate the fleet password Secret or correct ldapConnectionBootstrap — no second attempt is made, "
+                      "because a retry is the lockout walk against the account the target authenticates every user with")
+    NEXT_TRY = "the next lookup or ping"
+
     def __init__(self, cluster: ClusterConfig, username: str, password: str, *,
                  timeout: float = 15.0, policy: RetryPolicy = RETRY_POLICY,
                  sleep: Callable[[float], None] = time.sleep,
@@ -722,19 +728,16 @@ class FleetLogin:
         a stop carries no `attempt=`, `retry_in=` or `gave_up=`."""
         if attempt is None and exc.outcome == AUTH_FAILED:
             failure(log, "fleet-login-refused", phase="credential", outcome=LOGIN_REFUSED, **self._fields(),
-                    action=(f"the target refused the password for {self.username}: rotate the fleet "
-                            f"password Secret or correct ldapConnectionBootstrap — no second attempt is "
-                            f"made, because a retry is the lockout walk against the account the target "
-                            f"authenticates every user with"),
+                    action=f"the target refused the password for {self.username}: {self.REFUSED_ACTION}",
                     detail=exc.message, secrets=(self._password, *self._secrets))
             return
         ceiling = self._policy.attempts
         if attempt is None:
-            action = "not retried: fix what detail names before the next lookup or ping"
+            action = f"not retried: fix what detail names before {self.NEXT_TRY}"
         elif gave_up:
-            action = (f"gave up after {ceiling} attempts: nothing more is tried until the next lookup or "
-                      f"ping — check the API URL, the OAuth route and TLS trust for the OAuth host "
-                      f"(the INGRESS CA, which the API's bundle may not carry) from this pod")
+            action = (f"gave up after {ceiling} attempts: nothing more is tried until {self.NEXT_TRY} — check the "
+                      f"API URL, the OAuth route and TLS trust for the OAuth host (the INGRESS CA, which the API's "
+                      f"bundle may not carry) from this pod")
         else:
             action = f"retrying in {retry_in:g}s; if every attempt fails, the gave_up line says so"
         failure(log, "fleet-login-failed", phase=exc.phase, outcome=exc.outcome, **self._fields(), host=exc.host,

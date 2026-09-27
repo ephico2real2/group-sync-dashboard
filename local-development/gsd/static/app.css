@@ -1191,6 +1191,12 @@ dialog.ns-preview p { margin: 0 0 var(--space-4); font-size: var(--text-sm); }
 @media (forced-colors: active) {
   dialog.ns-preview { border: 2px solid CanvasText; }
 }
+/* #316 (SPEC_D4 §3.6): the Rejoin dialog wears #ns-preview's look, wider for two fields and the two gates. */
+dialog.cc-rejoin { max-width: min(560px, calc(100% - 2 * var(--space-8))); }
+dialog.cc-rejoin ul.cc-gates { max-height: none; overflow: visible; display: grid; gap: var(--space-4); }
+dialog.cc-rejoin ul.cc-gates li { border: 1px solid var(--gridline); border-radius: var(--radius-md); padding: var(--space-5) var(--space-6);
+  font-size: var(--text-md); color: var(--text-secondary); overflow-wrap: anywhere; }
+dialog.cc-rejoin .rejoin-acts { justify-content: flex-end; margin-top: var(--space-6); }
 
 /* ---- The lookup (#174) ----------------------------------------------------------------------
    A door is a card whose whole face opens a list; the matched substring is marked in weight (the
