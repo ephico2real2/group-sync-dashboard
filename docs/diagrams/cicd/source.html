@@ -1,0 +1,155 @@
+<title>Build Once, Promote</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f5f6f8; --surface: #ffffff; --ink: #18212c; --muted: #58636f; --rule: #d7dce3; --lane: #f0f2f5;
+  --build: #a55a0b; --build-wash: #fbf1e4; --ship: #0e6f68; --ship-wash: #e3f3f1;
+  --gap: #b3261e; --gap-wash: #fbe9e7; --none: #6b7684; --none-wash: #eef0f3;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0e131a; --surface: #151c25; --ink: #e5e9ef; --muted: #9aa5b3; --rule: #2a3440; --lane: #111821;
+    --build: #f0a53c; --build-wash: #2a2014; --ship: #3fcfc0; --ship-wash: #122a28;
+    --gap: #f2857c; --gap-wash: #2d1614; --none: #9aa5b3; --none-wash: #1b232d;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0e131a; --surface: #151c25; --ink: #e5e9ef; --muted: #9aa5b3; --rule: #2a3440; --lane: #111821;
+  --build: #f0a53c; --build-wash: #2a2014; --ship: #3fcfc0; --ship-wash: #122a28;
+  --gap: #f2857c; --gap-wash: #2d1614; --none: #9aa5b3; --none-wash: #1b232d;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; margin: 0; }
+.page { max-width: 1160px; margin: 0 auto; padding-inline: 16px; padding-block: 32px 56px; display: grid; gap: 28px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: clamp(24px, 4vw, 34px); line-height: 1.15; margin: 0; font-weight: 700; text-wrap: balance; }
+p { margin: 0; max-width: 72ch; }
+code { font-family: var(--font-mono); font-size: .9em; }
+figure { margin: 0; display: grid; gap: 10px; }
+.fig-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; }
+.fig-scroll svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--ink); }
+figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+</style>
+
+<div class="page">
+  <header>
+    <div class="eyebrow">group-sync-dashboard · CI/CD · #410</div>
+    <h1>From a pull request to the cluster: build once, promote the artifact</h1>
+    <p>Main is the source. <code>publish.yml</code> builds the images once. <code>promote.yml</code> reads them back
+      and commits the chart with the images pinned by digest to the <code>release</code> branch. Argo CD syncs only
+      <code>release</code>.</p>
+  </header>
+
+  <figure>
+    <div class="fig-scroll">
+      <svg viewBox="0 0 1100 720" role="img" aria-label="The pipeline in five lanes, time flowing down. A pull request passes ci.yml, including the chart-version and app-version bump checks, and is merged to main. publish.yml builds the image 1.1.0 dash sha10 on a GitHub runner and pushes it to quay.io, signed with an SBOM by default, and moves the 1.1.0 alias only on a version bump. If publish fails, nothing is promoted. When publish succeeds, or a chart-only merge lands, promote.yml reads both images back from quay.io, checking every Linux image's labels and the digest, and the signature when signing is on, then commits the chart and promotion.yaml with the digests to the release branch. Argo CD syncs release and pulls the images by digest. A rollback is a manual run of promote.yml with an older commit and rollback checked.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          <marker id="ah-ship" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ship)"/></marker>
+          <marker id="ah-build" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--build)"/></marker>
+          <marker id="ah-alt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker>
+          <marker id="ah-gap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--gap)"/></marker>
+        </defs>
+        <!-- lanes: one trust boundary each -->
+        <g fill="var(--lane)">
+          <rect x="0" y="0" width="220" height="720"/><rect x="440" y="0" width="220" height="720"/><rect x="880" y="0" width="220" height="720"/>
+        </g>
+        <g stroke="var(--rule)"><line x1="220" y1="0" x2="220" y2="720"/><line x1="440" y1="0" x2="440" y2="720"/><line x1="660" y1="0" x2="660" y2="720"/><line x1="880" y1="0" x2="880" y2="720"/></g>
+        <g font-family="IBM Plex Mono, monospace" font-size="12.5" font-weight="600" fill="var(--muted)" text-anchor="middle">
+          <text x="110" y="30">GITHUB · PULL REQUEST</text>
+          <text x="330" y="30">GITHUB · MAIN</text>
+          <text x="550" y="30">QUAY.IO</text>
+          <text x="770" y="30">RELEASE BRANCH</text>
+          <text x="990" y="30">CLUSTER · ARGO CD</text>
+        </g>
+        <g font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--muted)">
+          <text x="1090" y="706" text-anchor="end">time flows down</text>
+          <line x1="675" y1="660" x2="705" y2="660" stroke="var(--ship)" stroke-width="1.5"/><text x="712" y="664">the main path</text>
+          <line x1="675" y1="680" x2="705" y2="680" stroke="var(--muted)" stroke-width="1"/><text x="712" y="684">an alternate path: chart-only merge, manual rollback</text>
+          <line x1="675" y1="700" x2="705" y2="700" stroke="var(--gap)" stroke-width="1"/><text x="712" y="704">a failure: nothing is promoted</text>
+          <text x="675" y="642" font-weight="600">Everything drawn ships in #410.</text>
+        </g>
+
+        <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
+          <!-- pull request -->
+          <rect x="15" y="60" width="190" height="40" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+          <text x="110" y="85" font-weight="600">you open a pull request</text>
+          <rect x="15" y="124" width="190" height="104" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+          <text x="110" y="146" font-weight="600">ci.yml checks the PR</text>
+          <text x="110" y="164">tests · chart · image scan</text>
+          <text x="110" y="182">chart change → chart bump</text>
+          <text x="110" y="200">image change → next</text>
+          <text x="110" y="217">MINOR or MAJOR</text>
+          <line x1="110" y1="100" x2="110" y2="120" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+          <path d="M110,228 L110,292 L231,292" stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#ah)"/>
+          <text x="118" y="284" text-anchor="start" fill="var(--muted)">reviewed, merged</text>
+
+          <!-- main: merge, publish -->
+          <rect x="235" y="272" width="190" height="40" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+          <text x="330" y="297" font-weight="600">merge to main</text>
+          <rect x="265" y="344" width="130" height="64" rx="6" fill="var(--build-wash)" stroke="var(--build)" stroke-width="1.5"/>
+          <text x="330" y="368" font-weight="600" fill="var(--build)">publish.yml</text>
+          <text x="330" y="386">runs if an image</text>
+          <text x="330" y="401">input changed</text>
+          <line x1="330" y1="312" x2="330" y2="340" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+
+          <!-- quay: the build, and the failure branch -->
+          <rect x="455" y="328" width="190" height="96" rx="6" fill="var(--build-wash)" stroke="var(--build)" stroke-width="1.5"/>
+          <text x="550" y="350" font-weight="600" fill="var(--build)">1.1.0-&lt;sha10&gt;</text>
+          <text x="550" y="367">immutable, every build</text>
+          <text x="550" y="386" font-weight="600" fill="var(--build)">:1.1.0 alias</text>
+          <text x="550" y="403">moves on a version bump</text>
+          <text x="550" y="418" fill="var(--muted)">signing, SBOM: on by default</text>
+          <line x1="395" y1="368" x2="451" y2="368" stroke="var(--build)" stroke-width="1.5" marker-end="url(#ah-build)"/>
+          <text x="423" y="360" fill="var(--build)" font-size="11.5">pushes</text>
+          <rect x="455" y="264" width="190" height="44" rx="6" fill="var(--gap-wash)" stroke="var(--gap)" stroke-width="1"/>
+          <text x="550" y="283" font-weight="600" fill="var(--gap)">publish failed</text>
+          <text x="550" y="300" fill="var(--gap)">nothing is promoted</text>
+          <path d="M395,352 L451,300" stroke="var(--gap)" stroke-width="1" fill="none" marker-end="url(#ah-gap)"/>
+
+          <!-- main: promote, and its three ways in -->
+          <rect x="235" y="540" width="190" height="64" rx="6" fill="var(--ship-wash)" stroke="var(--ship)" stroke-width="1.5"/>
+          <text x="330" y="563" font-weight="600" fill="var(--ship)">promote.yml</text>
+          <text x="330" y="581">reads both images back,</text>
+          <text x="330" y="597">then commits</text>
+          <line x1="330" y1="408" x2="330" y2="536" stroke="var(--ship)" stroke-width="1.5" marker-end="url(#ah-ship)"/>
+          <text x="322" y="500" text-anchor="end" fill="var(--ship)">succeeds</text>
+          <path d="M250,312 L250,536" stroke="var(--muted)" stroke-width="1" fill="none" marker-end="url(#ah-alt)"/>
+          <text x="258" y="440" text-anchor="start" fill="var(--muted)">chart-only</text>
+          <text x="258" y="455" text-anchor="start" fill="var(--muted)">merge</text>
+          <path d="M500,424 L410,536" stroke="var(--ship)" stroke-width="1.3" fill="none" marker-end="url(#ah-ship)"/>
+          <text x="505" y="470" text-anchor="start" fill="var(--ship)">read back: labels,</text>
+          <text x="505" y="486" text-anchor="start" fill="var(--ship)">digest; signature if on</text>
+          <rect x="235" y="650" width="190" height="44" rx="6" fill="var(--surface)" stroke="var(--muted)" stroke-width="1"/>
+          <text x="330" y="669">rollback: run promote.yml</text>
+          <text x="330" y="686">older sha, rollback checked</text>
+          <line x1="330" y1="650" x2="330" y2="608" stroke="var(--muted)" stroke-width="1" marker-end="url(#ah-alt)"/>
+
+          <!-- release, then the cluster -->
+          <rect x="675" y="532" width="190" height="80" rx="6" fill="var(--ship-wash)" stroke="var(--ship)" stroke-width="1.5"/>
+          <text x="770" y="554" font-weight="600" fill="var(--ship)">release</text>
+          <text x="770" y="572">chart + environments/</text>
+          <text x="770" y="590">promotion.yaml: digests</text>
+          <text x="770" y="606" fill="var(--muted)">no workflows, no builds</text>
+          <line x1="425" y1="572" x2="671" y2="572" stroke="var(--ship)" stroke-width="1.5" marker-end="url(#ah-ship)"/>
+          <text x="548" y="566" fill="var(--ship)">commits the pinned artifact</text>
+          <rect x="895" y="532" width="190" height="80" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+          <text x="990" y="556" font-weight="600">Argo CD syncs release</text>
+          <text x="990" y="576">pulls both images</text>
+          <text x="990" y="594">by digest</text>
+          <line x1="865" y1="572" x2="891" y2="572" stroke="var(--ship)" stroke-width="1.5" marker-end="url(#ah-ship)"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Only <code>promote.yml</code> writes to <code>release</code>, and only after both images are read back.
+      A failed publish never reaches it. A chart-only merge reuses the image of the last commit that changed an image
+      input. Signing and the SBOM are on by default and can be switched off. <code>helm.yaml</code>'s chart release to the Helm repository is not drawn: the lab does not read it.</figcaption>
+  </figure>
+</div>

@@ -68,7 +68,9 @@ minted Secrets survive either way). `--values` applies to both modes.
 | `--argocd --values X` | Argo | GitHub at HEAD | same | `valueFiles: [../../X]` | `X` committed, clean, pushed |
 | `--argocd <branch>` | Argo | GitHub at `<branch>` | the chart's default — the published quay image, which lags main; no in-pod commit check | default | branch on origin (fetched by full ref before the Helm release goes; the waiter wants its commit synced) |
 | `--argocd <branch> --values X` | Argo | GitHub at `<branch>` | same | `[../../X]` | `X` present at `origin/<branch>` |
+| `--argocd release` | Argo | GitHub at `release` | the digests in `promotion.yaml`, read back first | `[../../environments/crc.yaml, ../../promotion.yaml]` | a promotion on `origin/release` ([CICD.md](../docs/CICD.md)) |
 | `--build-only` | untouched | — | built, **not** pushed (no credentials needed) | — | — |
+| `--argocd main` | **refused** | | | | main can move before its image exists; the lab tracks `release` |
 | `--allow-dirty --argocd` | **refused** | | | | Argo deploys a commit; a dirty tree has none |
 | `--build-only --argocd`, `--build-only --values X` | **refused** | | | | neither applies to a build |
 
@@ -82,8 +84,8 @@ the Application once (`gitops/argocd-application-dashboard.yaml` with the revisi
 parameters and the values file merged in, one `oc apply`) so the controller never sees the file's
 `main` in between. Nothing is written back into the tree — `helm get values`, or the Application's
 spec, records what is deployed. The typical loop: iterate with the bare script (or `--values` for
-a local variant), `--argocd` on the pushed head before the PR is called ready, `--argocd main`
-after a merge once the app release is cut. `./argocd-wait.sh` is the waiter the Argo modes use: it
+a local variant), `--argocd` on the pushed head before the PR is called ready; after a merge,
+`promote.yml` deploys through `release`, and `--argocd release` hands the lab back to it. `./argocd-wait.sh` is the waiter the Argo modes use: it
 accepts Synced/Healthy/Succeeded only once the status was computed for the current spec
 (`status.sync.comparedTo.source`) and for the expected commit, and names the failed hook or
 resource on timeout.

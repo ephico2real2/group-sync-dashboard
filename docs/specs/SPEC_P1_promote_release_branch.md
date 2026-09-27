@@ -7,7 +7,7 @@
 | Release | — (post-programme; Epic E) |
 | Version on release | app 1.1.0, chart 0.59.3 |
 | Issue | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's specification of 2026-09-27, written before any code from issue #410 in full (the body, OB2's PreSync input, the operator's direction and go-ahead of 2026-09-27), main `05e32c8` (application 1.0.0, chart 0.59.2), the upstream documents cited in §3, and read-only measurements of quay.io, GitHub and the lab. §8's blocks were cut from a copy of `05e32c8` with the design implemented, and applied back to a clean copy for the proof in §6. No cluster, branch or GitHub setting was changed. Revised the same day: main `1cd67d5` (#428, #427's app-version check) was merged in, every block re-cut against it, and the figure corrected on the orchestrator's review; then round 1 of the spec review (Grok and Codex Astra on `02a39f2`) written in on main `22a485c` (#429), every block re-cut against it (Orchestrator's notes) |
 
 ## How to read this spec

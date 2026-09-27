@@ -1,0 +1,74 @@
+# The lab deploys only what this read back from the registry, never main itself (#410, docs/CICD.md).
+name: promote
+
+on:
+  # After every publish run; only a successful one promotes (the job's `if`).
+  workflow_run:
+    workflows: [publish]
+    types: [completed]
+    branches: [main]
+  # Chart-only merges: publish.yml skips them, so nothing else would deploy them.
+  push:
+    branches: [main]
+    paths:
+      - 'charts/group-sync-dashboard/**'
+      - 'environments/**'
+      - '.github/workflows/promote.yml'
+      - 'local-development/promote.py'
+  # A re-run, or a rollback to an older commit on main.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The commit on main to promote (empty = main's tip)
+        required: false
+        default: ''
+      rollback:
+        description: Allow a commit older than the one on release
+        type: boolean
+        default: false
+
+# Each run promotes main's tip as it finds it, so a replaced pending run loses nothing.
+concurrency:
+  group: promote-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: >-
+      github.repository == 'ephico2real2/group-sync-dashboard'
+      && github.ref == 'refs/heads/main'
+      && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # the push to release
+      actions: read     # publish.yml's runs, looked up by commit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: vars.SUPPLY_CHAIN_SIGNING != 'false'
+        with:
+          cosign-release: v3.1.3   # the cosign publish.yml signs with
+
+      - name: Read both images back and promote
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+          SUPPLY_CHAIN_SIGNING: ${{ vars.SUPPLY_CHAIN_SIGNING }}
+          SHA: ${{ inputs.sha }}
+          ROLLBACK: ${{ inputs.rollback }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${SHA}" ]; then args+=(--sha "${SHA}"); fi
+          if [ "${ROLLBACK}" = true ]; then args+=(--rollback); fi
+          python3 local-development/promote.py "${args[@]}"

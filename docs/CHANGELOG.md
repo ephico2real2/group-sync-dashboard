@@ -10,6 +10,16 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Build once, promote the artifact: the lab tracks `release` (#410, Epic E, `docs/specs/SPEC_P1_promote_release_branch.md`;
+  app 1.1.0, chart 0.59.3).** A new workflow, `promote.yml`, runs after a successful `publish.yml` and after a
+  chart-only merge. It reads both images back (version and revision labels, digest, cosign signature), then
+  commits the chart, `environments/` and `promotion.yaml` (both images pinned by digest) to the `release` branch,
+  which holds no workflows and builds nothing. The lab's Application tracks `release`, so Argo CD can no longer
+  sync a chart before its image exists: the race #410 measured, where a sync landed 95 s after the image. A failed
+  publish is never promoted; a rollback is a manual run with an older commit. `release-crc.sh --argocd release`
+  reads the pinned digests back before pointing the lab at `release`; `--argocd <branch>` keeps working for tests.
+  New operator guide: `docs/CICD.md`, with the pipeline figure. The `release` branch is created once by hand
+  (`docs/CICD.md`, Rollback and setup).
 - **Require an application version bump for image-changing PRs (#427).** CI reads the image paths
   from `publish.yml` and requires exactly the next MINOR or MAJOR against the PR base. Version
   fields alone and docs outside the image paths need no bump; an invalid base fails the check.

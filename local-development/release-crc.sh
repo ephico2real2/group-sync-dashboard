@@ -39,6 +39,9 @@
 #                                                                image — lags main)                       in-pod check
 #   --argocd <branch> --values X    Argo     GitHub @ <branch>   same                  [../../X]          X present at
 #                                                                                                         origin/<branch>
+#   --argocd release                Argo     GitHub @ release    promotion.yaml's      default +          a promotion on
+#                                                                digests, read back    promotion.yaml     origin/release
+#   --argocd main                   REFUSED: main can move before its image exists; the lab tracks release.
 #   --build-only                    (none)   —                   built, NOT pushed     —                  —
 #   --allow-dirty --argocd          REFUSED: Argo deploys a commit and a dirty tree has none — the image
 #                                   would not match the chart Argo reads, and uncommitted chart edits
@@ -46,10 +49,7 @@
 #   --build-only --argocd|--values  REFUSED: neither applies to a build (measured by review: `--argocd main
 #                                   --build-only` ran the cutover with nothing built).
 #
-# Typical loop: iterate with the bare script (or --values for a local variant); before merging,
-# --argocd on the pushed head; after a merge, --argocd main. The published images may lag main's
-# code, not its schema: CI fails a migration merged without an app release (#298) — a guarantee
-# about the RELEASE COMMIT, not about the tag on quay, which the branch path reads back (below).
+# After testing, --argocd release hands the lab back to verified promotions (docs/CICD.md).
 #
 # TWO MANAGERS, ONE RELEASE, NEVER BOTH (#212). The release name and namespace are the same under
 # Helm and under Argo CD, so the modes hand over: Helm mode deletes the Argo Application first
@@ -113,6 +113,11 @@ if [ "$BUILD_ONLY" = true ] && { [ "$ARGOCD" = true ] || [ -n "$VALUES_FILE" ]; 
   echo "ERROR: --build-only combines with --allow-dirty only; --argocd and --values do not apply to a build." >&2
   exit 2
 fi
+case "$ARGO_REVISION" in
+  main|refs/heads/main)   # main can move before its image exists (#410)
+    echo "ERROR: main is not a deployment branch; use --argocd release, or a test branch." >&2
+    exit 2 ;;
+esac
 
 # The values file, repository-relative (this script runs in local-development/). Helm reads it from
 # this tree; Argo reads it from the repository at the revision it tracks, as a path relative to the
@@ -121,11 +126,12 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 if [ -n "$VALUES_FILE" ]; then
   RELEASE_VALUES="${REPO_ROOT}/${VALUES_FILE}"
-  ARGO_VALUES="../../${VALUES_FILE}"
 else
   RELEASE_VALUES="${RELEASE_VALUES:-../environments/crc.yaml}"
-  ARGO_VALUES=""                                       # the Application's own default
 fi
+# Always stated: the Application's default ends with promotion.yaml, which exists only on release.
+ARGO_VALUES="../../${VALUES_FILE:-environments/crc.yaml}"
+PIN=promotion.yaml
 
 # --argocd <branch>: the branch is resolved on origin FIRST. A fetch that fails must not fall
 # through to a stale remote-tracking ref (measured by review: with the remote unreachable,
@@ -178,8 +184,7 @@ helm = {"parameters": [
     {"name": "image.repository", "value": image[0]}, {"name": "image.tag", "value": image[1]},
     {"name": "reporting.image.repository", "value": image[2]}, {"name": "reporting.image.tag", "value": image[3]},
 ] if image else []}
-if values:
-    helm["valueFiles"] = [values]
+helm["valueFiles"] = values.split(",")
 print(json.dumps({"spec": {"source": {"targetRevision": revision, "helm": helm}}}))
 PY
 )
@@ -218,6 +223,10 @@ fi
 published_image_is_the_release() {
   local revision="$1" chart values app_version pinned report_pinned repo spec name this_pin ref version
   chart=$(git show "${revision}:charts/group-sync-dashboard/Chart.yaml") || return 1
+  if git cat-file -e "${revision}:${PIN}" 2>/dev/null; then
+    promoted_images_are_the_release "$revision" "$chart"
+    return
+  fi
   values=$(git show "${revision}:charts/group-sync-dashboard/values.yaml") || return 1
   app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
   pinned=$(printf '%s\n' "$values" | sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' | head -1)
@@ -277,16 +286,57 @@ print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or 
   done
 }
 
-# --argocd <branch> with no build: point the Application at that branch and its chart's default
-# image, e.g. `--argocd main` after a merge. Any other --argocd use builds this commit first.
+# Argo pulls exactly these digests, so read them back again before handing it the branch.
+promoted_images_are_the_release() {
+  local revision="$1" chart="$2" app_version rows repo tag digest commit labels
+  app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
+  # A variable, not a process substitution: a pin that does not parse must stop the deploy.
+  if ! rows=$(git show "${revision}:${PIN}" | python3 -c '
+import re, sys
+rows = re.findall(r"^ +repository: (\S+)\n +tag: \"([^\"]+)\"\n +digest: \"(sha256:[0-9a-f]{64})\"$", sys.stdin.read(), re.M)
+if len(rows) != 2:
+    sys.exit("expected two pinned images")
+for row in rows:
+    print(*row)'); then
+    echo "ERROR: cannot read the two pinned images from ${PIN} on origin/${revision}." >&2
+    return 1
+  fi
+  while read -r repo tag digest; do
+    commit="${tag#"${app_version}"-}"
+    if ! labels=$(oc image info "${repo}@${digest}" --filter-by-os='linux/.*' --show-multiarch -o json 2>/dev/null | python3 -c '
+import json, sys
+images = json.load(sys.stdin)
+images = [images] if isinstance(images, dict) else images
+labels = [(i.get("config", {}).get("config", {}).get("Labels") or {}) for i in images]
+print(" ".join(sorted({l.get("org.opencontainers.image.version", "") + "/" + l.get("org.opencontainers.image.revision", "") for l in labels})))'); then
+      echo "ERROR: ${repo}@${digest}, pinned in ${PIN} on origin/${revision}, is not in the registry." >&2
+      return 1
+    fi
+    if [ "$labels" != "${app_version}/${commit}" ]; then
+      echo "ERROR: ${repo}@${digest} is ${labels:-unlabelled}, not ${app_version}/${commit} (${PIN} on origin/${revision})." >&2
+      return 1
+    fi
+    echo "image   : ${repo}@${digest} is application ${app_version}, commit ${commit}"
+  done <<< "$rows"
+}
+
+# An explicit branch uses already-published images, so handing it to Argo must not rebuild them.
 if [ "$ARGOCD" = true ] && [ -n "$ARGO_REVISION" ]; then
-  echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
+  if git cat-file -e "${EXPECTED_REVISION}:${PIN}" 2>/dev/null; then
+    ARGO_VALUES="${ARGO_VALUES},../../${PIN}"
+    echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the digests in ${PIN}"
+  elif [ "$ARGO_REVISION" = release ]; then   # release must never fall back to a mutable alias
+    echo "ERROR: origin/release has no ${PIN}; nothing has been promoted to it yet (docs/CICD.md)." >&2
+    exit 1
+  else
+    echo "argocd  : ${APP_NAME} -> revision ${ARGO_REVISION} (${EXPECTED_REVISION:0:10}), the chart's default image"
+  fi
   published_image_is_the_release "$EXPECTED_REVISION" || exit 1
   if helm status "${IMAGE}" -n "${NAMESPACE}" >/dev/null 2>&1; then
     echo "helm    : uninstalling release ${IMAGE} (the PVCs and the minted Secrets survive)"
     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
   fi
-  [ -n "$ARGO_VALUES" ] && echo "values  : ${VALUES_FILE} (the Application's valueFiles)"
+  echo "values  : ${ARGO_VALUES} (the Application's valueFiles)"
   apply_application "$ARGO_REVISION"
   exec ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}" "${ARGOCD_WAIT_TIMEOUT:-900}" "${EXPECTED_REVISION}"
 fi
@@ -434,7 +484,7 @@ if [ "$ARGOCD" = true ]; then
     helm uninstall "${IMAGE}" -n "${NAMESPACE}" --wait --timeout 5m
   fi
   echo "argocd  : ${APP_NAME} -> revision ${COMMIT}, image ${TAG}"
-  [ -n "$ARGO_VALUES" ] && echo "values  : ${VALUES_FILE} (the Application's valueFiles)"
+  echo "values  : ${ARGO_VALUES} (the Application's valueFiles)"
   apply_application "$COMMIT" "${INTERNAL%:*}" "$TAG" "${REPORT_INTERNAL%:*}" "$TAG"
   ./argocd-wait.sh "${APP_NAME}" "${ARGO_NAMESPACE}" "${ARGOCD_WAIT_TIMEOUT:-900}" "$(git rev-parse HEAD)"
 else
