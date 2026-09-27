@@ -28,7 +28,8 @@ and after the walk.
 | #311 | Refresh in flight, labelled | PASS | `"button": {"text": "Refreshing…", "disabled": true, "aria_busy": "true"}`, with the line `Refresh: probing /version and users/~ with the stored credential…`; `08`, `21`, `34-*-refresh-in-flight.png` |
 | #311 | Refresh succeeded: `connected · <ISO-8601 UTC>` | PASS | `Refresh: connected · 2026-09-27T20:20:24Z — authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6` (then `…20:21:38Z`, `…20:22:52Z`); `09`, `22`, `35-*-refresh-succeeded.png` |
 | #311 | The same state after the 60-second repaint | PASS | after 65 s at each width: one `GET /api/clusterconfigs` (`[200]`), the result line's node replaced (`marker … null`), the text unchanged (`"same": true, "repainted": true, "polls": 1`); `10`, `23`, `36-*-refresh-after-repaint.png` |
-| #311 | A failed Refresh on each of the three enabled mocks | PASS | `mock-privateca`, `mock-selfsigned`, `mock-trusted` each: `Refresh: unreachable · … — HTTP 404 on /version: {"detail":"Not Found"}`, with the red badge; `11–13`, `24–26`, `37–39-*-refresh-mock-*.png`. The `auth_failed` branch, which adds the Rejoin hint, was not exercised in this walk: Refresh was pressed on `shared-rnd` and the three mocks only, so the walk does not establish that no lab entry could return it. |
+| #311 | A failed Refresh on each of the three enabled mocks | PASS | `mock-privateca`, `mock-selfsigned`, `mock-trusted` each: `Refresh: unreachable · … — HTTP 404 on /version: {"detail":"Not Found"}`, with the red badge; `11–13`, `24–26`, `37–39-*-refresh-mock-*.png`. The `auth_failed` branch, which adds the Rejoin hint, was not exercised in this walk: Refresh was pressed on `shared-rnd` and the three mocks only. It was exercised the same day on a throwaway entry: the next row. |
+| #311 | On an entry with a refused token (a throwaway, never `shared-qa`), Refresh reads `auth_failed` and offers Rejoin | PASS | [the addendum](authfail/README.md): `walk-authfail`, a Secret with a random `sha256~` token, answered `auth_failed · 2026-09-27T20:50:25Z — 401 Unauthorized — token invalid or expired` with `Next step: Rejoin (#316), not built yet` at 1280, 768 and 375 px (`authfail/screenshots/42`–`44-*-walk-authfail-refused.png`); 3 `cluster-refreshed … by=developer outcome=auth_failed`, 0 `fleet-login`; the Secret was deleted and retired, and the grant removed |
 | #311 | The pod log: `cluster-refreshed` lines `by=developer`, no `fleet-login` | PASS | `evidence/walk-podlog.txt`: `cluster-refreshed lines: 12, of them by=developer: 12` (3 × `shared-rnd outcome=ok`, 9 × mock `outcome=unreachable`); `fleet-login lines: 0`; `ERROR or Traceback lines: 0` |
 | both | No page error, no sideways scroll | PASS | `no uncaught page errors: []`, `no 'Dashboard API error'` and `scrollWidth / innerWidth` `[1280, 1280]`, `[768, 768]`, `[375, 375]` |
 
@@ -55,6 +56,17 @@ changed.
 60-second timer re-fetched `/api/clusterconfigs` and replaced `#main`, so the node carrying the attribute was gone.
 The line drawn in its place read the same, because the answer is kept in the page's state (`view.clusterRefresh`),
 not in the DOM.
+
+## Addendum: the `auth_failed` branch (20:48–20:56 UTC)
+
+A second pass exercised #311's `auth_failed` branch. It used a throwaway cluster Secret, `walk-authfail`, whose
+bearer token was a random `sha256~` string. Its grant carried a separate label, `walk.gsd.lab/run=authfail-2026-09-27`.
+- Refresh answered `auth_failed` with the Rejoin (#316) hint at all three widths.
+- The shared-URL banner named three entries while the Secret existed, and two again once discovery had retired it.
+- The Secret and the grant were removed by label; the PVC UIDs are unchanged.
+
+Everything is in `authfail/`: the scripts, evidence and screenshots `40`–`46`, and
+[its README](authfail/README.md).
 
 ## A note, not a defect
 

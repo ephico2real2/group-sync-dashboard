@@ -1,0 +1,3 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=authfail-2026-09-27 -o wide
+# at 2026-09-27T20:48:14Z
+No resources found

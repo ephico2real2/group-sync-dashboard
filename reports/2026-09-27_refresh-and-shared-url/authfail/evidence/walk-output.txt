@@ -1,0 +1,26 @@
+2026-09-27T20:50:20Z whoami                            : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:50:20Z PASS developer holds the cluster-admin tier: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:50:23Z api warnings                      : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd", "walk-authfail"], "detail": "shared-qa, shared-rnd, walk-authfail declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-27T20:50:23Z api walk-authfail row             : {"id": "walk-authfail", "enabled": true, "retired": false, "api_url": "https://api.crc.testing:6443", "source": "secret:gsd-cluster-walk-authfail", "credential": "bearer", "status": "auth_failed", "error": "401 Unauthorized \u2014 token invalid or expired"}
+2026-09-27T20:50:23Z banner text                       : ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd, walk-authfail declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:50:23Z PASS banner names shared-qa, shared-rnd and walk-authfail at https://api.crc.testing:6443: ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd, walk-authfail declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:50:24Z shot                              : 40-1280-banner-three.png
+2026-09-27T20:50:24Z walk-authfail card before Refresh : {"heading": "walk-authfail Secret gsd-cluster-walk-authfail enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa, shared-rnd \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:50:24Z PASS walk-authfail is live, with the chip and a Refresh button: {"heading": "walk-authfail Secret gsd-cluster-walk-authfail enabled shared API URL", "chip": true, "hint": "Also declared by shared-qa, shared-rnd \u2014 each entry is polled and counted on its own.", "server": "https://api.crc.testing:6443", "button": {"text": "Refresh", "disabled": false, "aria_busy": null}, "result": null}
+2026-09-27T20:50:24Z shot                              : 41-1280-walk-authfail-before.png
+2026-09-27T20:50:25Z [1280] walk-authfail refresh answered: Refresh: auth_failed · 2026-09-27T20:50:25Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:25Z [1280] walk-authfail Rejoin hint  : The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:25Z PASS [1280] walk-authfail: auth_failed with the Rejoin hint: Refresh: auth_failed · 2026-09-27T20:50:25Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:26Z shot                              : 42-1280-walk-authfail-refused.png
+2026-09-27T20:50:27Z [768] walk-authfail refresh answered: Refresh: auth_failed · 2026-09-27T20:50:27Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:27Z [768] walk-authfail Rejoin hint   : The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:27Z PASS [768] walk-authfail: auth_failed with the Rejoin hint: Refresh: auth_failed · 2026-09-27T20:50:27Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:27Z shot                              : 43-768-walk-authfail-refused.png
+2026-09-27T20:50:28Z [375] walk-authfail refresh answered: Refresh: auth_failed · 2026-09-27T20:50:28Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:28Z [375] walk-authfail Rejoin hint   : The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:28Z PASS [375] walk-authfail: auth_failed with the Rejoin hint: Refresh: auth_failed · 2026-09-27T20:50:28Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Next step: Rejoin (#316), not built yet — until then, replace the credential where it is written.
+2026-09-27T20:50:29Z shot                              : 44-375-walk-authfail-refused.png
+2026-09-27T20:50:29Z PASS no 'Dashboard API error' (end): 0
+2026-09-27T20:50:29Z PASS no uncaught page errors      : []
+2026-09-27T20:50:29Z failures                          : []
+walk exit=0

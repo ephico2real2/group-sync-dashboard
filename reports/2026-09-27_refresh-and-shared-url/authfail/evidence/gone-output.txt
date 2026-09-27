@@ -1,0 +1,14 @@
+2026-09-27T20:55:17Z whoami                            : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:55:17Z PASS developer holds the cluster-admin tier: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T20:55:21Z api warnings                      : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"], "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-27T20:55:21Z api walk-authfail row             : {"id": "walk-authfail", "enabled": false, "retired": true, "api_url": "https://api.crc.testing:6443", "source": "secret:gsd-cluster-walk-authfail", "credential": "bearer", "status": "auth_failed", "error": "401 Unauthorized \u2014 token invalid or expired"}
+2026-09-27T20:55:21Z banner text                       : ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:55:21Z PASS banner names shared-qa and shared-rnd only: ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-27T20:55:21Z shot                              : 45-1280-banner-two.png
+2026-09-27T20:55:21Z walk-authfail card after the deletion: {"heading": "walk-authfail Secret gsd-cluster-walk-authfail disabled", "chip": false, "hint": null, "server": "https://api.crc.testing:6443", "button": null, "result": null}
+2026-09-27T20:55:21Z PASS walk-authfail retired: disabled, no chip, no Refresh: {"heading": "walk-authfail Secret gsd-cluster-walk-authfail disabled", "chip": false, "hint": null, "server": "https://api.crc.testing:6443", "button": null, "result": null}
+2026-09-27T20:55:22Z shot                              : 46-1280-walk-authfail-retired.png
+2026-09-27T20:55:22Z PASS no 'Dashboard API error' (gone): 0
+2026-09-27T20:55:22Z PASS no uncaught page errors      : []
+2026-09-27T20:55:22Z failures                          : []
+gone exit=0
