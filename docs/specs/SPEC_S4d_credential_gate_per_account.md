@@ -5,7 +5,7 @@
 | Programme | Epic C (#383), keep the shared fleet login account safe. The in-memory half of SPEC_S4c's B2, landed before #285, which seeds it from the account Lease |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; S4's fourth step, landing ahead of S4c) |
-| Version on release | chart 0.58.6 (docs only: `CLUSTER_CREDENTIALS.md`); the application code has no version of its own and rides the next application release, as #291 does |
+| Version on release | chart 0.58.7 (docs only: `CLUSTER_CREDENTIALS.md`); the application code has no version of its own and rides the next application release, as #291 does |
 | Issue | [#315](https://github.com/ephico2real2/group-sync-dashboard/issues/315) |
 | Status | merged |
 | Source | OB1-lite's specification of 2026-09-26, written before any code from issue #315 in full (its "Where this stands", "The change", "Must not change" and Definition of Done), the operator's ruling in `docs/specs/SPEC_S4c_credential_lifecycle.md` (orchestrator's notes, and §5 question 7), #293's budget in `docs/specs/SPEC_S5_configmap_onboarding.md` §3.3, and main `cbe828b`, measured on this machine. §6's blocks were cut from a copy of `cbe828b` with the design implemented, and applied back to a clean clone for the proof in §4. No cluster was touched. Revised the same day on the review of `555a7e2` by Grok and Codex Astra, on the orchestrator's decisions (Orchestrator's notes), on a branch that merged main `3d1c237`; §6's blocks were cut again from a copy of that merge with the revised design implemented |
@@ -47,7 +47,7 @@ Decisions on the review of `555a7e2` (Grok, Codex Astra; 2026-09-26), recorded f
 - **F2 (both reviewers): accepted.** Three maintained documents still stated the superseded per-target failure
   rule, and all three are corrected here: SPEC_S5 §3.3's "Different targets still have different #284 gate keys"
   (replaced in place, recorded in S5's notes), `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`'s paragraph
-  that left cross-target lockout to #285 (a chart PATCH, 0.58.5 → 0.58.6, with its history line; 0.59.0 stays
+  that left cross-target lockout to #285 (a chart PATCH to 0.58.7, above #413's 0.58.6, with its history line; 0.59.0 stays
   S4c's reservation), and `docs/diagrams/remote-cluster-access/source.html`'s join-figure aria-label and join-table
   row (text only). Codex's document-contract test is §6's `test_credential_gate_docs.py`. §3.5 no longer says the
   chart file is not edited.
@@ -57,10 +57,12 @@ Decisions on the review of `555a7e2` (Grok, Codex Astra; 2026-09-26), recorded f
   pins it (two spellings, two authorizes).
 - **Main moved** from `cbe828b` to `3d1c237` (#412, reports and a runbook only); it was merged first and every block
   re-cut against it. `## Unreleased` holds #291's entry only; this change's entry goes first under it.
-- **Implementation deviation: the CHANGELOG block wrapped "chart 0.58.6" across two lines.** Applied, the
+- **Implementation deviation: the CHANGELOG block wrapped the chart version across two lines.** Applied, the
   hermetic suite failed `test_kyverno.py::test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
-  ("Chart.yaml is 0.58.6 (last released 0.58.5) and no Unreleased entry names it"): the check reads the words
-  `chart 0.58.6` on one line. The block's first lines are re-wrapped to keep them together; no wording changes.
+  ("Chart.yaml is 0.58.6 (last released 0.58.5) and no Unreleased entry names it", measured while this change
+  still took 0.58.6): the check reads the words `chart <version>` on one line. The block's first lines are
+  re-wrapped to keep them together; no wording changes.
+- **The chart version moved from 0.58.6 to 0.58.7**: #413 (`6451a32`) took 0.58.6 first; main was merged and the `Chart.yaml` and CHANGELOG blocks re-cut above #413's history line and entry.
 
 ## 1. The mandate
 
@@ -186,7 +188,7 @@ join figure's aria-label and the join table's row). The rendered `joining-a-clus
 visible SVG text says only "gate: not re-sent once refused", an aria-label is not painted, and the table sits after
 the figure's `</figure>`. SPEC_S5 §3.3's "Different targets still have different #284 gate keys" is replaced in
 place and recorded in S5's notes; its table is unchanged. `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md`'s
-paragraph that left cross-target lockout to #285 is rewritten, with a chart PATCH (0.58.6) and its `Chart.yaml`
+paragraph that left cross-target lockout to #285 is rewritten, with a chart PATCH (0.58.7) and its `Chart.yaml`
 history line — no template, value or RBAC change. The CHANGELOG entry goes first under `## Unreleased`.
 
 ## 4. Tests, before and after
@@ -782,15 +784,21 @@ replica starts with an empty gate; durable, replica-shared protection remains #2
 ```yaml
 # CHART 0.58.5 (2026-09-26), PATCH: appVersion moves to application 0.37.0 (below); Epic B: protect
 # the data during upgrades (#382).
-version: 0.58.5
+# CHART 0.58.6 (2026-09-26), PATCH: the secrets-mint Job's default image is registry.redhat.io's
+# ose-cli-rhel9:v4.22 instead of the in-cluster openshift/cli imagestream (the operator's choice; 4.18 and
+# above). A value default; no template or RBAC change; appVersion unchanged.
+version: 0.58.6
 ```
 
 ```yaml
 # CHART 0.58.5 (2026-09-26), PATCH: appVersion moves to application 0.37.0 (below); Epic B: protect
 # the data during upgrades (#382).
-# CHART 0.58.6 (2026-09-26), PATCH: docs only — CLUSTER_CREDENTIALS.md states the credential gate per
+# CHART 0.58.6 (2026-09-26), PATCH: the secrets-mint Job's default image is registry.redhat.io's
+# ose-cli-rhel9:v4.22 instead of the in-cluster openshift/cli imagestream (the operator's choice; 4.18 and
+# above). A value default; no template or RBAC change; appVersion unchanged.
+# CHART 0.58.7 (2026-09-26), PATCH: docs only — CLUSTER_CREDENTIALS.md states the credential gate per
 # account (#315, SPEC_S4d). No template, value or RBAC change; appVersion unchanged.
-version: 0.58.6
+version: 0.58.7
 ```
 
 <!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
@@ -833,14 +841,14 @@ version: 0.58.6
 ```markdown
 ## Unreleased
 
-- **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
+- **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
 ```
 
 ```markdown
 ## Unreleased
 
 - **The credential gate is per account for every failed login (#315,
-  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.6 for `CLUSTER_CREDENTIALS.md`, the
+  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.7 for `CLUSTER_CREDENTIALS.md`, the
   application code with no version of its own).** When the fleet account's password is sent and no session comes
   back — a 401, or the 500 a locked directory account answers — the dashboard no longer sends that password, as that
   account, to any other cluster while it is the same password: at most one answered failed login per account
@@ -854,5 +862,5 @@ version: 0.58.6
   password is rotated or the pod restarts. A restart or a second replica still starts with an empty gate,
   until #285's account Lease.
 
-- **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
+- **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
 ```

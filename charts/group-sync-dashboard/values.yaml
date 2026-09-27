@@ -802,12 +802,28 @@ clusters:
 # -----------------------------------------------------------------------------
 secretsMint:
   enabled: true
-  # `oc` is all the Job needs: the in-cluster imagestream every OpenShift cluster ships (the
-  # release payload avoids a separate registry.redhat.io pull). Override on a cluster that mirrors
-  # elsewhere, or on plain Kubernetes.
+  # `oc` is all the Job needs: Red Hat's published OpenShift CLI image. Supported on OpenShift 4.18 and
+  # above: set `tag` to your cluster's minor (v4.18 … v4.22; both ends pulled and ran the Job's script
+  # on the lab, 2026-09-26). The pull uses the cluster's global pull secret for registry.redhat.io.
+  # The Job is a pre-install/pre-upgrade hook: an image the cluster cannot pull within its 120 s deadline
+  # FAILS the install or upgrade (under Argo, the sync). A cluster that cannot pull registry.redhat.io
+  # (disconnected, OKD, no Red Hat pull secret) sets the image before installing or upgrading, to either
+  #   - its mirror of this image: set `repository` to the mirror, or add an ImageTagMirrorSet for
+  #     registry.redhat.io/openshift4 (the reference is a tag; an ImageDigestMirrorSet does not redirect it);
+  #   - the in-cluster imagestream, the previous default: `repository:
+  #     image-registry.openshift-image-registry.svc:5000/openshift/cli`, `tag: latest`. It needs no
+  #     registry.redhat.io credential, is mirrored with the release payload and follows cluster upgrades,
+  #     but needs the internal image registry (managementState Managed).
+  # The Job's deadline, from its start: scheduling, the image pull and up to two retries count. The work
+  # itself takes seconds (two to four named Secrets in this namespace), but a first pull of ose-cli-rhel9 is
+  # about 450 MB (445 MB at v4.22, 479 MB at v4.18; 21.6 s for v4.18 on the lab). Because the Job is a
+  # pre-install/pre-upgrade hook, running out FAILS the install or upgrade. 300 s matches Helm's own hook
+  # wait (`helm upgrade --timeout`, default 5m): raise both together on a slow link to the registry or its
+  # mirror. Under Argo CD the hook waits for the Job, so this deadline is the limit.
+  activeDeadlineSeconds: 300
   image:
-    repository: image-registry.openshift-image-registry.svc:5000/openshift/cli
-    tag: latest
+    repository: registry.redhat.io/openshift4/ose-cli-rhel9
+    tag: v4.22
     pullPolicy: IfNotPresent
   resources:
     requests: {cpu: 25m, memory: 64Mi}

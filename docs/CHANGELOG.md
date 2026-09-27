@@ -11,7 +11,7 @@ which `local-development/prepare-release.py` does when the release is cut.
 ## Unreleased
 
 - **The credential gate is per account for every failed login (#315,
-  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.6 for `CLUSTER_CREDENTIALS.md`, the
+  `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.7 for `CLUSTER_CREDENTIALS.md`, the
   application code with no version of its own).** When the fleet account's password is sent and no session comes
   back — a 401, or the 500 a locked directory account answers — the dashboard no longer sends that password, as that
   account, to any other cluster while it is the same password: at most one answered failed login per account
@@ -25,6 +25,14 @@ which `local-development/prepare-release.py` does when the release is cut.
   password is rotated or the pod restarts. A restart or a second replica still starts with an empty gate,
   until #285's account Lease.
 
+- **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
+  `secretsMint.image` is now `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22`, for OpenShift 4.18 and above;
+  set the tag to your cluster's minor. The pull uses the cluster's registry.redhat.io pull secret, and the Job is a
+  pre-install/pre-upgrade hook, so a cluster that cannot pull the image fails the upgrade. Before upgrading a
+  disconnected or OKD cluster, point `secretsMint.image` at your mirror (the reference is a tag: an
+  ImageTagMirrorSet redirects it, an ImageDigestMirrorSet does not) or back at the in-cluster `openshift/cli`
+  imagestream, the previous default. The Job's deadline goes from a fixed 120 s to `secretsMint.activeDeadlineSeconds`,
+  default 300: it counts the roughly 450 MB first pull, and 300 s matches Helm's own hook wait.
 - **The fleet login module is consolidated, behaviour unchanged (#291; application code only, no version of
   its own).** `gsd/fleetlogin.py` writes its login-failure lines (`fleet-login-failed` for a retry, a give-up
   or a stop, and `fleet-login-refused`) from one method instead of two, and names an exception's type inline
