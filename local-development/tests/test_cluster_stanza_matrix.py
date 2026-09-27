@@ -24,6 +24,7 @@ HOST = {"name": "dashboard", "apiUrl": "https://kubernetes.default.svc",
         "caBundleFile": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
         "dashboardController": True, "enabled": True}
 REMOTE = {"name": "r", "apiUrl": "https://a.example.com:6443"}
+SENTINEL = "url-secret-415"
 
 ACCEPTED = [
     ("host mounted SA", [HOST]),
@@ -40,6 +41,8 @@ ACCEPTED = [
     ("enabled false", [HOST, {**REMOTE, "tokenEnv": "R", "enabled": False}]),
     ("remote-sar alone", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "remote-sar"}]),
     ("saTokenLookup + remote-sar", [HOST, {**REMOTE, "saTokenLookup": True, "visibility": "remote-sar"}]),
+    # #415 refuses userinfo in the AUTHORITY only: an `@` in a path is not a credential, and parses as before.
+    ("apiUrl with a path, an @ in it", [HOST, {**REMOTE, "apiUrl": "https://a.example.com:6443/k8s/c@1", "tokenEnv": "R"}]),
 ]
 
 #: (label, stanza, refused_by_render) — the third column is the document's "WHERE it fires" column.
@@ -58,6 +61,14 @@ REFUSED = [
     ("visibility typo", [HOST, {**REMOTE, "tokenEnv": "R", "visibility": "self_only"}], True),
     ("identity typo", [HOST, {**REMOTE, "tokenEnv": "R", "identity": "Same-As-Host"}], True),
     ("enabled as a quoted word", [HOST, {**REMOTE, "tokenEnv": "R", "enabled": "yes"}], True),
+    # #415: the Secret contract's `server` rule, for apiUrl. Each carries SENTINEL; see the no-echo test.
+    ("apiUrl with userinfo", [HOST, {**REMOTE, "apiUrl": f"https://url-user:{SENTINEL}@a.example.com:6443", "tokenEnv": "R"}], True),
+    ("apiUrl with a query", [HOST, {**REMOTE, "apiUrl": f"https://a.example.com:6443?token={SENTINEL}", "tokenEnv": "R"}], True),
+    ("apiUrl with a fragment", [HOST, {**REMOTE, "apiUrl": f"https://a.example.com:6443#{SENTINEL}", "tokenEnv": "R"}], True),
+    ("apiUrl with uppercase-scheme userinfo",
+     [HOST, {**REMOTE, "apiUrl": f"HTTPS://url-user:{SENTINEL}@a.example.com:6443", "tokenEnv": "R"}], True),
+    ("apiUrl with leading-whitespace userinfo",
+     [HOST, {**REMOTE, "apiUrl": f" https://url-user:{SENTINEL}@a.example.com:6443", "tokenEnv": "R"}], True),
     # The four the render does NOT catch. If one of these ever starts failing `helm template`, the
     # document's table is stale in the operator's favour — update it, do not delete the case.
     ("unknown key", [HOST, {**REMOTE, "tokenEnv": "R", "bearerToken": "x"}], False),
@@ -111,6 +122,27 @@ def test_where_each_refusal_fires_is_what_the_document_says(tmp_path, label, ent
         f"{label}: docs/CLUSTER_STANZA.md §5 says the render "
         f"{'refuses' if by_render else 'accepts'} this, and it does not"
     )
+
+
+URL_CREDENTIAL = [c for c in REFUSED if c[0].startswith("apiUrl with ")]
+
+
+@pytest.mark.parametrize("label,entries,by_render", URL_CREDENTIAL, ids=[c[0] for c in URL_CREDENTIAL])
+def test_an_apiurl_refusal_never_repeats_the_value(tmp_path, label, entries, by_render):
+    # The value may BE the credential (#415): the refusal names the key and the entry, never the URL.
+    with pytest.raises(ConfigError) as refused:
+        load_settings(_values(tmp_path, entries))
+    assert "apiUrl" in str(refused.value) and "clusters[1]" in str(refused.value)
+    assert SENTINEL not in str(refused.value)
+
+
+@pytest.mark.parametrize("label,entries,by_render", URL_CREDENTIAL, ids=[c[0] for c in URL_CREDENTIAL])
+@needs_helm
+def test_an_apiurl_render_refusal_never_repeats_the_value(tmp_path, label, entries, by_render):
+    r = subprocess.run(["helm", "template", "t", CHART, "-f", _values(tmp_path, entries)],
+                       capture_output=True, text=True, timeout=180, cwd="..")
+    assert r.returncode != 0 and "apiUrl must carry no userinfo" in r.stderr
+    assert SENTINEL not in r.stdout + r.stderr
 
 
 EXAMPLE = "../charts/group-sync-dashboard/example-production.yaml"

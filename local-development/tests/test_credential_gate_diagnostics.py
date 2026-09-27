@@ -1,6 +1,7 @@
 """#315 (SPEC_S4d, review F1): the gated refusal names the target that answered, and must not copy the
-credentials a values `apiUrl` may carry — the Secret contract's no-credential URL rule does not cover
-values — into the exception, the public finding or the `fleet-lookup-failed` line."""
+credentials a URL may carry into the exception, the public finding or the `fleet-lookup-failed` line. Both
+parsers now refuse such a URL (the Secret's `server` rule, and the values `apiUrl` rule since #415), so the
+cluster is built directly: this holds the gate's own structural strip as defence in depth."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import logging
 
 import pytest
 
-from gsd.config import ClusterConfig, parse_cluster_entries
+from gsd.config import ClusterConfig
 from gsd.fleetlookup import CredentialGate, LookupRefused
 from gsd.poller import Poller, _LookupState
 from gsd.store import Store
@@ -24,11 +25,9 @@ def fail(cluster: ClusterConfig, gate: CredentialGate) -> LookupRefused:
 
 
 def test_gated_target_never_exports_url_credentials(wire, tmp_path, caplog):
-    # A REAL values stanza: the values parser accepts userinfo in apiUrl.
+    # The ClusterConfig the values parser built for this stanza before #415 refused it at load.
     url = "https://url-user:url-secret@api.a.example.com:6443"
-    _, first = parse_cluster_entries([{"name": "home", "apiUrl": "https://kubernetes.default.svc", "tokenEnv": "X"},
-                                      {"name": "a", "apiUrl": url, "saTokenLookup": True,
-                                       "ldapConnectionBootstrap": USER}], "values")
+    first = ClusterConfig("a", url, sa_token_lookup=True, ldap_connection_bootstrap=USER)
     wire.answers = [refused_401()]
     gate = CredentialGate()
     fail(first, gate)

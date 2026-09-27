@@ -78,7 +78,7 @@ typo that silently does nothing is how a cluster ends up unpolled with no one th
 | key | type | meaning |
 |---|---|---|
 | `name` | string, required | the cluster id. **Renaming retires the old cluster** — 33 observation tables key on it, and nothing migrates. No `/`. |
-| `apiUrl` | string, required | `http://` or `https://`, trailing slash stripped |
+| `apiUrl` | string, required | `http://` or `https://`, trailing slash stripped. No userinfo (`user:password@`), query or fragment (#415): the URL is served to every reader, and httpx sends userinfo as an `Authorization: Basic` header that replaces the bearer token. The refusal names the key, never the value |
 | `tokenEnv` | string | the environment variable holding the token |
 | `tokenFile` | string | a file the chart mounts, re-read on every use so a rotated token needs no restart |
 | `caBundleFile` | string | a PEM file to verify the API server against |
@@ -148,7 +148,7 @@ A remote that states neither `visibility` nor `identity` — rows 2 to 8 and 12 
 
 ## 5. Refusals — measured, and WHERE each one fires
 
-This is the part worth reading twice. Fourteen refusals fail `helm template`, so a bad stanza never
+This is the part worth reading twice. Seventeen refusals fail `helm template`, so a bad stanza never
 reaches a cluster. **Four do not** — they render cleanly and the pod refuses them at startup, which
 after a green upgrade looks like an outage rather than a config error.
 
@@ -168,6 +168,9 @@ after a green upgrade looks like an outage rather than a config error.
 | a `visibility` typo (`self_only`) | **refused** | refused |
 | an `identity` typo (`Same-As-Host`) | **refused** | refused |
 | `enabled: "yes"` | **refused** | refused |
+| `apiUrl` with userinfo (`https://user:password@host`, also `HTTPS://` or padded with whitespace) | **refused** | refused |
+| `apiUrl` with a query (`?…`) | **refused** | refused |
+| `apiUrl` with a fragment (`#…`) | **refused** | refused |
 | **an unknown key** | *renders* | **refused** |
 | **a duplicate `name`** | *renders* | **refused** |
 | **`apiUrl` without a scheme** | *renders* | **refused** |

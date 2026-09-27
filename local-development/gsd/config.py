@@ -1457,6 +1457,15 @@ def parse_cluster_entries(entries: list, path: str | Path, *, remote_host: Clust
         api_url = str(_require(entry, "apiUrl", where)).rstrip("/")
         if not api_url.startswith(("http://", "https://")):
             raise ConfigError(f"{where}: apiUrl must start with http:// or https://")
+        # The Secret contract's rule for `server` (clusterconfig/parser.py, _SERVER), here for the
+        # values stanza (#415). Measured on httpx 0.28.1: URL userinfo becomes an `Authorization: Basic`
+        # header that REPLACES the poller's bearer token, the httpx request line logs it, and
+        # /api/clusters serves api_url to every tier. Split by hand, not urlsplit, which raises on
+        # inputs this check must leave to the parse they get today. The value is never repeated.
+        if "@" in api_url.split("://", 1)[1].split("/", 1)[0] or "?" in api_url or "#" in api_url:
+            raise ConfigError(f"{where}: apiUrl must carry no userinfo (user:password@), query or fragment — it is "
+                              "served to every reader and httpx sends userinfo as Basic auth; the value is not "
+                              "repeated here, in case it holds a credential")
 
         # SPEC_S3 §4 (S3a): the connection mode, read as a WORD like dashboardController — a quoted
         # "yes" must not become a login. A stanza declaring a mode may omit the credential; one

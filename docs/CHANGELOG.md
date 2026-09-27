@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A values `apiUrl` carrying userinfo, a query or a fragment is refused (#415; chart 0.58.8).**
+  `https://user:password@host` (in any letter case, and with surrounding whitespace), `…?x` and `…#x` in
+  `clusters[].apiUrl` now fail `helm template` and the pod's loader, as the cluster Secret's `server` already did;
+  the message names the entry and the key and never repeats
+  the value. Measured before the fix (httpx 0.28.1): the userinfo was sent as `Authorization: Basic` in place of
+  the poller's bearer token and on the fleet login's discovery request, printed on httpx's `HTTP Request:` line,
+  and served in `api_url` by `/api/clusters` to a self-tier reader. A values file that relied on it is refused at
+  upgrade: move the credential to `tokenEnv`/`tokenFile` or a connection mode. Every other URL parses as before.
 - **`release-crc.sh --argocd <branch>` reads the published images back before deploying (#410, found by OB2's
   composition review of Epics A and B; development tooling only).** Each image whose tag values.yaml does not pin
   must carry the chart's appVersion as the `org.opencontainers.image.version` label of every Linux image under its

@@ -933,6 +933,11 @@ them on the next start.
 {{- if and $id (not (has $id (list "same-as-host" "none"))) -}}
 {{- fail (printf "clusters[%d] (%s): identity %q is not one of same-as-host, none." $i $name $id) -}}
 {{- end -}}
+{{- /* The loader's apiUrl rule (#415), refused here so the credential never reaches the ConfigMap. Trimmed and case-blind: the loader refuses `HTTPS://` or a padded value only at its scheme check, after Helm has rendered it. */ -}}
+{{- $api := "" -}}{{- if and (hasKey $c "apiUrl") (not (kindIs "invalid" $c.apiUrl)) -}}{{- $api = trim (toString $c.apiUrl) -}}{{- end -}}
+{{- if or (regexMatch "(?i)^https?://[^/]*@" $api) (contains "?" $api) (contains "#" $api) -}}
+{{- fail (printf "clusters[%d] (%s): apiUrl must carry no userinfo (user:password@), query or fragment — it is served to every reader and httpx sends userinfo as Basic auth. The value is not repeated here, in case it holds a credential." $i $name) -}}
+{{- end -}}
 {{- /* A word, not truthiness: a quoted "false" is a non-empty string and truthy in Go, and the
        first ENABLED entry is the host (review of D2, second pass, Codex). */ -}}
 {{- $enabled := true -}}
