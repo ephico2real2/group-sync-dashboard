@@ -65,6 +65,10 @@ REFUSED = [
     ("apiUrl with userinfo", [HOST, {**REMOTE, "apiUrl": f"https://url-user:{SENTINEL}@a.example.com:6443", "tokenEnv": "R"}], True),
     ("apiUrl with a query", [HOST, {**REMOTE, "apiUrl": f"https://a.example.com:6443?token={SENTINEL}", "tokenEnv": "R"}], True),
     ("apiUrl with a fragment", [HOST, {**REMOTE, "apiUrl": f"https://a.example.com:6443#{SENTINEL}", "tokenEnv": "R"}], True),
+    ("apiUrl with uppercase-scheme userinfo",
+     [HOST, {**REMOTE, "apiUrl": f"HTTPS://url-user:{SENTINEL}@a.example.com:6443", "tokenEnv": "R"}], True),
+    ("apiUrl with leading-whitespace userinfo",
+     [HOST, {**REMOTE, "apiUrl": f" https://url-user:{SENTINEL}@a.example.com:6443", "tokenEnv": "R"}], True),
     # The four the render does NOT catch. If one of these ever starts failing `helm template`, the
     # document's table is stale in the operator's favour — update it, do not delete the case.
     ("unknown key", [HOST, {**REMOTE, "tokenEnv": "R", "bearerToken": "x"}], False),

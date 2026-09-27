@@ -168,7 +168,7 @@ after a green upgrade looks like an outage rather than a config error.
 | a `visibility` typo (`self_only`) | **refused** | refused |
 | an `identity` typo (`Same-As-Host`) | **refused** | refused |
 | `enabled: "yes"` | **refused** | refused |
-| `apiUrl` with userinfo (`https://user:password@host`) | **refused** | refused |
+| `apiUrl` with userinfo (`https://user:password@host`, also `HTTPS://` or padded with whitespace) | **refused** | refused |
 | `apiUrl` with a query (`?…`) | **refused** | refused |
 | `apiUrl` with a fragment (`#…`) | **refused** | refused |
 | **an unknown key** | *renders* | **refused** |
