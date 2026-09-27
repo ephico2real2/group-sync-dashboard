@@ -1,0 +1,20 @@
+# the hermetic substitutes for the lab steps this walk could not run safely (see README): R2 (the gate across processes, targets, a restart), R3 (one ping per account per cadence), R4 (the stand-down), plus R5-R7 beside the live self-login steps
+# PYTHONPATH=<worktree>/local-development python -m pytest -p no:cacheprovider -v tests/test_fleet_lifecycle.py -k 'test_r2_ or test_r3_ or test_r4_ or test_r5_ or test_r6_ or test_r7_ or test_r1_'
+# at 2026-09-27T13:00:40Z, worktree HEAD 22a485c66a (gsd/ identical to the deployed 05e32c8394)
+tests/test_fleet_lifecycle.py::test_r1_two_processes_cannot_both_win_one_claim_and_no_claim_is_no_bind PASSED [  6%]
+tests/test_fleet_lifecycle.py::test_r1_a_paused_holders_refusal_is_recorded_and_it_never_clears_the_claim_that_took_over PASSED [ 12%]
+tests/test_fleet_lifecycle.py::test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_targets_a_restart_and_an_edit[401] PASSED [ 18%]
+tests/test_fleet_lifecycle.py::test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_targets_a_restart_and_an_edit[500] PASSED [ 25%]
+tests/test_fleet_lifecycle.py::test_r2_the_lease_digest_is_salted_and_slow_not_the_gates_prefix PASSED [ 31%]
+tests/test_fleet_lifecycle.py::test_r3_twenty_clusters_on_one_account_are_one_ping_a_cadence_rotating_by_name PASSED [ 37%]
+tests/test_fleet_lifecycle.py::test_r4_a_gated_account_is_not_pinged_and_is_said_once[login-refused] PASSED [ 43%]
+tests/test_fleet_lifecycle.py::test_r4_a_gated_account_is_not_pinged_and_is_said_once[login-failed] PASSED [ 50%]
+tests/test_fleet_lifecycle.py::test_r5_renewal_is_a_fixed_margin_before_expiry[3600-2700] PASSED [ 56%]
+tests/test_fleet_lifecycle.py::test_r5_renewal_is_a_fixed_margin_before_expiry[86400-79200] PASSED [ 62%]
+tests/test_fleet_lifecycle.py::test_r5_renewal_is_a_fixed_margin_before_expiry[31536000-31528800] PASSED [ 68%]
+tests/test_fleet_lifecycle.py::test_r5_a_session_too_short_to_renew_is_not_chased PASSED [ 75%]
+tests/test_fleet_lifecycle.py::test_r6_renewal_answers_the_new_login_before_the_old_token_is_revoked PASSED [ 81%]
+tests/test_fleet_lifecycle.py::test_r6_a_bound_failure_suspends_every_self_login_cluster_on_the_account[401] PASSED [ 87%]
+tests/test_fleet_lifecycle.py::test_r6_a_bound_failure_suspends_every_self_login_cluster_on_the_account[500] PASSED [ 93%]
+tests/test_fleet_lifecycle.py::test_r7_a_401_before_expiry_reauthenticates_once_and_a_second_suspends PASSED [100%]
+================ 16 passed, 33 deselected, 2 warnings in 0.95s =================
