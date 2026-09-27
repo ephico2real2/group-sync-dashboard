@@ -251,7 +251,7 @@ otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current
 
 ### The Cluster Configurations tab's writes (#230 S2)
 
-Four routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
+Five routes, all the cluster-admin tier (above — never the wide tier) and each needing a proxy-verified
 identity to audit the change to (no identity, or the tier machinery off, is `403` before anything reaches
 the API server), all **registered only when** `clusterConfig.secrets.writes.enabled`
 (`GSD_CLUSTER_SECRETS_WRITES_ENABLED`) is on — **off by default**: the dashboard is a reader by design,
@@ -302,6 +302,17 @@ The request goes through the parser (the same refusals), then `GET /version` and
 /apis/user.openshift.io/v1/users/~` with that credential and TLS mode; a cluster without the OpenShift
 user API leaves `identity` null; a failure answers `reachable: false` with `error: "<outcome>: <message>"`.
 Nothing is stored or registered.
+
+`POST /api/clusterconfigs/{name}/refresh` (#311, `docs/specs/SPEC_D3_cluster_refresh.md`), no body → `200
+{"outcome": "ok", "message": "authenticated as system:serviceaccount:…, server v1.31.6", "at": "2026-09-27T14:05:40Z"}`.
+It runs the connection test's probe on an **existing** cluster with the credential the dashboard **already holds**,
+and answers in the poller's words: `ok`, `auth_failed`, `forbidden`, `unreachable`, `cert-verify-failed`. `at` is
+ISO-8601 UTC. A credential kind that is still pending (`oauth`, `remote-lookup`) answers `pending` with its reason,
+and a `self-login` cluster `not-probed`; neither makes a network call. **It never logs in and never binds**: no
+fleet login, no lookup, no self-login session, no credential gate. It stores nothing, rotates nothing, and forces
+no poll or discovery; the card's `connection` row still shows the last poll. Every non-retired cluster may be
+refreshed, the host included; an unknown or retired name is `404`, and a second request while a probe of the
+same cluster is running in this process is `409`. One `cluster-refreshed` line per call, with no credential.
 
 ## GroupSync CRs
 

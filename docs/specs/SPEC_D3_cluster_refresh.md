@@ -25,8 +25,8 @@ Citations use `file#name` anchors, so they move with the code.
 - **Decision the issue did not make — D3-1, `userSelfLogin` rows.** A `self-login` cluster stores no credential:
   its credential is the session the poll thread holds (`gsd/selflogin.py#SelfLoginSessions`), and getting or
   renewing that session is a login. Its kind is not in `CREDENTIAL_PENDING_REASONS`, so a plain probe of
-  `settings.cluster(name)` would fail locally with `auth_failed` and send the reader to Rejoin for a cluster
-  Rejoin does not serve. Refresh therefore answers a `self-login` row with `not-probed` and makes no network
+  `settings.cluster(name)` would fail locally with a false `auth_failed`, for a credential never presented, and
+  name Rejoin as the next step. Refresh therefore answers a `self-login` row with `not-probed` and makes no network
   call, like the pending row. The credential row already shows the session's state and expiry. Probing with the
   session the poll thread holds is possible later. It would read another thread's session and would answer only on
   the replica that holds it, so it is left out.
@@ -36,6 +36,10 @@ Citations use `file#name` anchors, so they move with the code.
 - **Decision the issue did not make — D3-3, the success word.** The API answers `ok`, the poller's word
   (`gsd/kube.py#OK`), so the route and the logs use one vocabulary. The page shows `ok` as **connected**, the
   word the issue and the mock use for the succeeded state.
+- **What "stored" means — D3-4.** Refresh presents the credential in the live configuration, which is what
+  discovery last read (`settings.cluster(name)`). A Secret rotated with `oc` or GitOps reaches that set at the next
+  discovery (`discoveryIntervalSeconds`), so a Refresh in between presents the old token. Refresh does not wake
+  discovery to close that gap: it forces nothing (§3). A rotation made in the tab wakes discovery itself.
 
 ## 1. The decisions (the operator, 2026-09-27)
 

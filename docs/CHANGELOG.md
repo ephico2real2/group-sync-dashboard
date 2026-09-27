@@ -8,6 +8,24 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Refresh: check a cluster now with the credential the dashboard already holds (application 1.2.0, chart
+  0.59.4; #311, Epic D #384, `docs/specs/SPEC_D3_cluster_refresh.md`).** Each live card on the Cluster
+  Configurations tab gains a **Refresh** button, beside Delete on a Secret row. It calls the new
+  `POST /api/clusterconfigs/{name}/refresh`, which runs the connection test's probe (`/version`, then `users/~`)
+  on the stored configuration and answers `{outcome, message, at}` in the poller's words: `ok` (shown as
+  **connected**), `auth_failed`, `forbidden`, `unreachable` or `cert-verify-failed`, with the instant in UTC. On
+  `auth_failed` the card names Rejoin (#316) as the next step, in text; Rejoin is not built yet. **It never logs in
+  and never binds**: no fleet login, no lookup, no self-login session and no credential gate. A cluster whose
+  credential is still pending answers `pending` with its reason, and a `userSelfLogin` cluster `not-probed`, without
+  contacting the cluster. It stores nothing, rotates nothing and forces no poll or discovery, so it probes the
+  credential discovery last read. The route sits in the writes carve-out like `/test`: a default install, with
+  `clusterConfig.secrets.writes.enabled` off, has no Refresh. It needs the cluster-admin tier, answers `404` for an
+  unknown or retired name and `409` while a probe of the same cluster is in flight. The page keeps each card's
+  state (in flight, or the answer) across the minute's repaint, and sends one probe per cluster at a time. No RBAC
+  change.
+
 ## Application 1.1.0 — chart 0.59.3 — 2026-09-27
 
 - **Epic C's composition review, applied (OB2, Fable; #383).** The daily ping's login now scrubs the poller token this
