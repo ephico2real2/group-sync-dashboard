@@ -11,7 +11,7 @@ import ssl
 from dataclasses import dataclass
 
 from ..config import (
-    BOOTSTRAP_KEY, CLUSTER_IDENTITIES, CLUSTER_VISIBILITIES, CONNECTION_KEYS, CONNECTION_MODE_KEYS,
+    BOOTSTRAP_KEY, CLUSTER_IDENTITIES, CLUSTER_VISIBILITIES, CONNECTION_KEYS, CONNECTION_MODE_KEYS, CREDENTIAL_LOOKUP,
     IDENTITY_NONE, VISIBILITY_REMOTE_SAR, ClusterConfig, valid_bootstrap_username,
 )
 
@@ -197,7 +197,10 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         if not valid_bootstrap_username(bootstrap):
             return finding("unsupported-config-key",
                            f"config.{BOOTSTRAP_KEY}: must be a username (letters, digits, '.', '_', '@', '-')")
-        if mode is None:
+        # A retrieved bearer Secret keeps its explicit account: the daily ping's declaration (#432).
+        from .writer import TOKEN_SOURCE_ANNOTATION   # local: the writer imports this module
+        retrieved = (meta.get("annotations") or {}).get(TOKEN_SOURCE_ANNOTATION) == CREDENTIAL_LOOKUP
+        if mode is None and not (retrieved and token is not None):
             return finding("unsupported-config-key",
                            f"config.{BOOTSTRAP_KEY} without saTokenLookup or userSelfLogin configures a login that would never happen")
     if token is not None and oauth is not None:

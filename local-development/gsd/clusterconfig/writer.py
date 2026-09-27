@@ -22,7 +22,7 @@ import re
 from dataclasses import dataclass, field
 
 from ..config import ClusterConfig
-from ..config import CONNECTION_KEYS, CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
+from ..config import CONNECTION_MODE_KEYS, CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
 from ..kube import AUTH_FAILED, FORBIDDEN, OK, UNREACHABLE, ClusterClient, ClusterError, redact_text
 from ..timeutil import now_iso
 from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
@@ -335,8 +335,9 @@ def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token
     Why in place and not a second Secret (SPEC_S4 §1): a Secret is named for its cluster and the
     reader fails closed on two Secrets for one cluster, so a `create` beside the declaring Secret is
     `secret-exists` and any other name is `duplicate-cluster-name` — neither loads. `config` becomes
-    `{bearerToken, tlsClientConfig}`: the mode and bootstrap keys leave (the parser refuses them
-    beside a credential) and the annotations keep the memory of the mode. `tlsClientConfig` is kept
+    `{bearerToken, tlsClientConfig}`: the mode keys leave (the parser refuses them beside a credential)
+    and the annotations keep the memory of the mode. An explicit `ldapConnectionBootstrap` stays: it is
+    the declaration the daily ping may present the password as (#432). `tlsClientConfig` is kept
     as declared — it is the trust that just verified both hosts. Labels and `managed-by` are kept:
     the lookup did not create this Secret. The decode refusal and the 409 are `rotate`'s, for the
     reasons stated there.
@@ -351,7 +352,7 @@ def store_lookup(host_client: ClusterClient, namespace: str, name: str, *, token
                                                   "fix the Secret where it is written") from None
         if not isinstance(config, dict):
             raise WriteRefused("config-not-json", f"Secret {name}: data.config is not a JSON object; fix the Secret where it is written")
-        for key in (*CONNECTION_KEYS, "oauth"):
+        for key in (*CONNECTION_MODE_KEYS, "oauth"):
             config.pop(key, None)
         config["bearerToken"] = token.strip()
         data["config"] = base64.b64encode(json.dumps(config, separators=(",", ":")).encode("utf-8")).decode("ascii")

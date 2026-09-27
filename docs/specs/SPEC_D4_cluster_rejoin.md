@@ -47,10 +47,11 @@ lab was read-only, through the kubeconfig handed to it.
   the login revoked on every exit as every `FleetLogin` already does.
 - **The decisions the issue left open are in §3.11**, each with the evidence and the recommendation. The operator
   rules on them; this spec implements the recommendations.
-- **S4e (#432) is not merged.** On main the daily ping logs in as every account a retrieved Secret's `lookup-account`
-  names, with the one fleet password. This spec never writes the person's name there (§3.5), so it is safe with S4e
-  and without it; `test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` runs the ping and counts the wire.
-  The index count in `test_specs_index.py` moves 30 → 31 here; whichever of S4e and this spec merges second takes 32.
+- **S4e (#432) merged first, in #438 (application 1.4.0).** The daily ping now presents the password only as an
+  account the configuration declares. This spec never writes the person's name into `lookup-account` or any
+  declaration (§3.5), so it was safe before S4e and is safe with it;
+  `test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` runs the ping and counts the wire. With S4e taking
+  index slot 31, this spec takes 32 (the orchestrator, merging main into this branch on 2026-09-27).
 - **The runbook's commands are fenced with `~~~`.** `local-development/apply-spec-blocks.py` ends a block's fence at the
   first line that is exactly three backticks, so a Markdown file created by a block cannot carry backtick fences of
   its own. Tilde fences are CommonMark's other fence and render the same.

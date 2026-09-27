@@ -184,7 +184,8 @@ class TestADeclaringSecretIsUpdatedInPlace:
         (method, path, obj), = host.writes
         assert (method, path, result.written) == ("PUT", "/api/v1/namespaces/ns/secrets/gsd-cluster-rnd", "updated")
         config = json.loads(base64.b64decode(obj["data"]["config"]))
-        assert config == {"tlsClientConfig": {"insecure": False, "caData": "Y2E="}, "bearerToken": SA_TOKEN}
+        assert config == {"tlsClientConfig": {"insecure": False, "caData": "Y2E="}, "bearerToken": SA_TOKEN,
+                          "ldapConnectionBootstrap": USER}, "the mode leaves; the explicit account stays (#432)"
         assert obj["metadata"]["resourceVersion"] == "7", "PUT as read: a rewrite underneath is a 409, not a silent overwrite"
         assert obj["metadata"]["labels"]["environment"] == "rnd"
         assert obj["metadata"]["annotations"] == {MANAGED_BY_ANNOTATION: "ui", TOKEN_SOURCE_ANNOTATION: "remote-lookup",
