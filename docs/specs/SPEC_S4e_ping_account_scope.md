@@ -29,6 +29,13 @@ the walk logs in as the htpasswd `developer` only.
 
 ## Orchestrator's notes
 
+- **Phase 2, rebased onto main `b18e62d` (the orchestrator, 2026-09-27).** #434 (#311) changed the import lines
+  around writer.py's `from ..config import CONNECTION_KEYS, …` (it added `OK`, `now_iso` and `is_verify_failure`), so
+  that block's seven-line Old text no longer matched. It is narrowed to the one line it changes, `CONNECTION_KEYS`
+  → `CONNECTION_MODE_KEYS`, with the same meaning. Main also already has a `## Unreleased` section (#311's and
+  #314's entries), so the CHANGELOG block is now an insert after that heading, with the bullet's text unchanged.
+  Nothing else in the blocks moved.
+
 - **The id, and why a file of its own.** S4's steps take the next letter in the order they are specified (S4a #283 …
   S4d #315), and this corrects S4c's ping, so it is S4e. It is a spec of its own, not a section of SPEC_S4c, because
   `local-development/apply-spec-blocks.py` checks and applies every block in a spec file: S4c's 102 blocks are on main
@@ -717,23 +724,11 @@ from ..config import (
 
 <!-- block: local-development/gsd/clusterconfig/writer.py | edit -->
 ```python
-from dataclasses import dataclass, field
-
-from ..config import ClusterConfig
 from ..config import CONNECTION_KEYS, CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
-from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
-from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
-from .events import event
 ```
 
 ```python
-from dataclasses import dataclass, field
-
-from ..config import ClusterConfig
 from ..config import CONNECTION_MODE_KEYS, CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN
-from ..kube import AUTH_FAILED, FORBIDDEN, UNREACHABLE, ClusterClient, ClusterError, redact_text
-from . import SECRET_TYPE_CLUSTER, SECRET_TYPE_LABEL
-from .events import event
 ```
 
 <!-- block: local-development/gsd/clusterconfig/writer.py | edit -->
@@ -1594,22 +1589,8 @@ the last ping attempted, whatever its outcome — `last_ok` may be older), and `
 otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",
 ```
 
-<!-- block: docs/CHANGELOG.md | edit -->
+<!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 ```markdown
-lives next to the code and in the design and review records linked here. Changes merged since the
-last release sit under `## Unreleased` until the release that carries them replaces that heading —
-which `local-development/prepare-release.py` does when the release is cut.
-
-## Application 1.1.0 — chart 0.59.3 — 2026-09-27
-
-```
-
-```markdown
-lives next to the code and in the design and review records linked here. Changes merged since the
-last release sit under `## Unreleased` until the release that carries them replaces that heading —
-which `local-development/prepare-release.py` does when the release is cut.
-
-## Unreleased
 
 - **The daily ping presents the fleet password only as an account the configuration names (#432,
   `docs/specs/SPEC_S4e_ping_account_scope.md`).** The ping took its account from a retrieved cluster's
@@ -1626,7 +1607,4 @@ which `local-development/prepare-release.py` does when the release is cut.
   account whose password the Secret does not hold is refused, and every path stands down while that password is the
   latest one refused. SPEC_S4c §3.12's walk now names only `developer` and re-checks the lab, read-only, before it
   places any password.
-
-## Application 1.1.0 — chart 0.59.3 — 2026-09-27
-
 ```
