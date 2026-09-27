@@ -337,6 +337,21 @@ Decisions taken at review, recorded first and then applied:
     passed with 2 failed before, and 266 passed after.
   - Codex's C5 was PLAUSIBLE only because its sandbox blocks local sockets and Chromium; the full suite is run outside
     it on the applied tree.
+- **The code review of #419, on `c56f7af`: Grok and OB1-lite.** Grok approved with no finding: fidelity, the lock sites,
+  a clean end-to-end credential capture, the chart on the 0.37.0 image, and the UI. OB1-lite's three findings are
+  accepted, applied as the nine blocks under "The code review's corrections" at the end of this document:
+  - **N1 (security):** `credential_for`'s steady state never compared the held session's URL with the cluster's, and a
+    Secret-declared server moves with no restart (SPEC_S1 C3), so a live token was presented to a host it was not
+    minted for. Now the session is ended, revoked where it was minted, and this cycle logs in against the new URL.
+  - **N3:** #283's scrub had no rule for the password as the wire carries it, `Basic base64(user:password)` (RFC 7617
+    §2). A remote that quotes the request's Authorization header put it on a log line, and through #419's standing
+    finding into `/api/clusterconfigs`. FleetLogin now adds that spelling to its secrets (an additive line; #283's
+    rules unchanged).
+  - **N2:** the tab row said "last confirmed <instant> on <target>" with the last *attempt's* target, so after a success
+    on one cluster and a failure on the next it named the failing cluster as confirmed. The row now says the last success
+    and the last attempt apart; `API.md` and §3.10 say what `last_target` is.
+  - Measured by the orchestrator on the branch: the four tests (N1, N3, and N2's new and amended UI tests) fail without
+    the code changes and pass with them; main plus this spec's 102 blocks equals the branch but for the index row.
 
 ## 0. The requirement, in business terms
 
@@ -1143,7 +1158,7 @@ and, on a `self-login` cluster's entry, `"session": {"state": "current|renewing|
 computes any age client-side where it re-renders for free.
 
 The tab (`gsd/static/index.html`, the `#cc-head` card): one row per account — `fleet account
-<username> · last confirmed <instant> on <target> · <outcome>`, `not yet confirmed by the daily ping`
+<username> · last confirmed <instant> · last ping <target>: <outcome>`, `not yet confirmed by the daily ping`
 before the first success, and a `suspended` badge while the account's Lease holds an entry; and on a
 `self-login` cluster's credential row
 `self-login · expires <instant>`. That is all; the provenance card and its words are S3c's.
@@ -5873,4 +5888,232 @@ def test_late_success_cannot_install_over_a_sweep_suspension(tmp_path, monkeypat
     assert PREFIX + "refused" not in host.leases.annotations()
     assert len(wire.authorize) == 1 + int(renewal)
     assert len(wire.revokes) == 1 + int(renewal), "the rejected late token still needs its one revoke"
+```
+
+### The code review's corrections (#419, OB1-lite's N1–N3)
+
+Applied after the 93 blocks above, in this order. N1: a held self-login session is ended, revoked where it was minted,
+when the cluster's URL has moved, and never presented to the new one. N3: FleetLogin also scrubs the password as the
+wire carries it, `Basic base64(user:password)`. N2: the tab row says the last success and the last attempt apart.
+
+<!-- block: local-development/gsd/fleetlogin.py | edit -->
+```python
+        self.username = username
+        self._password = password
+        self._secrets = tuple(v for v in secrets if v)
+        self._timeout = timeout
+        self._policy = policy
+```
+
+```python
+        self.username = username
+        self._password = password
+        # The password as the wire carries it (RFC 7617 §2; the `auth=` below): a proxy or a server that quotes the
+        # request's Authorization header quotes base64(user:password), which decodes to the password.
+        basic = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        self._secrets = tuple(v for v in (*secrets, basic) if v)
+        self._timeout = timeout
+        self._policy = policy
+```
+
+<!-- block: local-development/gsd/selflogin.py | edit -->
+```python
+        with self._lock:
+            held = self._sessions.get(cluster.name)
+        if held is not None and now < held.renew_at and not held.reauth:
+            return self._as(cluster, held)                      # the steady state: one comparison a cycle
+        if held is not None and now >= held.session.expires_at:
+            self._end(cluster.name, "the session reached expires_at with no replacement; the next cycle logs in again",
+```
+
+```python
+        with self._lock:
+            held = self._sessions.get(cluster.name)
+        if held is not None and held.key[2] != cluster.api_url:
+            # A session is its target's own: a Secret-declared server moves with no restart (SPEC_S1 C3), and the
+            # token minted by the old one must never be presented to the new one — revoked where it was minted.
+            self._end(cluster.name, f"the cluster's URL moved from {_without_userinfo(held.key[2])}: the session is "
+                      f"revoked there and never sent to the new URL; this cycle logs in against it", outcome="url-changed")
+            held = None
+        if held is not None and now < held.renew_at and not held.reauth:
+            return self._as(cluster, held)                      # the steady state: two comparisons a cycle
+        if held is not None and now >= held.session.expires_at:
+            self._end(cluster.name, "the session reached expires_at with no replacement; the next cycle logs in again",
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```html
+    </aside></div></section>`;
+}
+/* SPEC_S4c §3.10: one row per fleet account — when the daily ping last confirmed it, on which cluster, and what the
+   last ping said; `never` before the first success, and `suspended` when its Lease holds a refused entry. */
+function ccFleetRows(f) {
+  return ((f && f.accounts) || []).map((a) => {
+    const seen = a.last_ok
+      ? `last confirmed <span class="mono">${fmtStamp(a.last_ok)}</span> on ${esc(a.last_target || "—")} · ${esc(a.last_outcome || "")}`
+      : "not yet confirmed by the daily ping";
+    const n = (a.suspended || []).length;
+    return `<div class="cc-kv" data-cc-fleet="${esc(a.username)}"><span class="k">fleet account</span><span class="v"><span class="mono">${esc(a.username)}</span> · ${seen}${n ? ` ${ccBadge("critical", "suspended")}` : ""}</span></div>`;
+  }).join("");
+}
+```
+
+```html
+    </aside></div></section>`;
+}
+/* SPEC_S4c §3.10: one row per fleet account — when the daily ping last confirmed it, and which cluster the last ping
+   tried with what it met; `not yet confirmed` before the first success, and `suspended` when its Lease holds an entry. */
+function ccFleetRows(f) {
+  return ((f && f.accounts) || []).map((a) => {
+    // `last_ok` is the last SUCCESS; `last_target` and `last_outcome` are the last ATTEMPT, which may have failed on
+    // the next cluster in the rotation — so the two are said apart, never "confirmed on" the attempt's target.
+    const seen = a.last_ok
+      ? `last confirmed <span class="mono">${fmtStamp(a.last_ok)}</span>`
+      : "not yet confirmed by the daily ping";
+    const last = a.last_target ? ` · last ping ${esc(a.last_target)}: ${esc(a.last_outcome || "—")}` : "";
+    const n = (a.suspended || []).length;
+    return `<div class="cc-kv" data-cc-fleet="${esc(a.username)}"><span class="k">fleet account</span><span class="v"><span class="mono">${esc(a.username)}</span> · ${seen}${last}${n ? ` ${ccBadge("critical", "suspended")}` : ""}</span></div>`;
+  }).join("");
+}
+```
+
+<!-- block: local-development/tests/test_ui.py | edit -->
+```python
+
+    def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
+        """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, on which
+        cluster, what the last ping said, and a suspended badge while its Lease holds an entry — and a self-login
+        cluster's credential row says when its session expires. Instants as the service stamps them; 375 px."""
+        from gsd.clusterconfig import parse_secret
+```
+
+```python
+
+    def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
+        """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster
+        the last ping tried and what it met, and a suspended badge while its Lease holds an entry — and a self-login
+        cluster's credential row says when its session expires. Instants as the service stamps them; 375 px."""
+        from gsd.clusterconfig import parse_secret
+```
+
+<!-- block: local-development/tests/test_ui.py | edit -->
+```python
+            page.wait_for_selector("#cc-cluster-sl")
+            row = page.locator("[data-cc-fleet='svc-gsd']").inner_text().replace("\n", " ")
+            assert "last confirmed 2026-09-22 06:00 on shared-rnd · ok" in row and "suspended" in row, row
+            assert "not yet confirmed by the daily ping" in page.locator("[data-cc-fleet='svc-new']").inner_text()
+            credential = page.locator("#cc-cluster-sl .cc-kv", has_text="credential").inner_text().replace("\n", " ")
+```
+
+```python
+            page.wait_for_selector("#cc-cluster-sl")
+            row = page.locator("[data-cc-fleet='svc-gsd']").inner_text().replace("\n", " ")
+            assert "last confirmed 2026-09-22 06:00 · last ping shared-rnd: ok" in row and "suspended" in row, row
+            assert "not yet confirmed by the daily ping" in page.locator("[data-cc-fleet='svc-new']").inner_text()
+            credential = page.locator("#cc-cluster-sl .cc-kv", has_text="credential").inner_text().replace("\n", " ")
+```
+
+<!-- block: local-development/tests/test_ui.py | edit -->
+```python
+            signals.note_self_login("sl", None)
+
+    def test_the_form_offers_remote_sar_and_starts_on_the_default_pair(self, page, cc_rig):
+        """SPEC_D2b §3.3: the form starts on the pair a remote that states nothing resolves to, and offers
+```
+
+```python
+            signals.note_self_login("sl", None)
+
+
+    def test_a_failed_ping_on_the_next_target_is_not_said_as_confirmed_there(self, page, cc_rig):
+        """OB1-lite N2: `last_ok` is the last SUCCESS's instant and `last_target` the last ATTEMPT's cluster; after
+        a success on c00 and a failure on c01 the row must not say c01 was confirmed."""
+        base, host, settings = cc_rig
+        signals = _SCOPED_APP.state.signals
+        signals.note_fleet_accounts({"svc-gsd": {"lease": "gsd-fleet-3b1f9c0e7a2d4e61", "last_attempt": "2026-09-23T06:00:04Z",
+                                                 "last_ok": "2026-09-22T06:00:05Z", "last_outcome": "sa-token-unreadable",
+                                                 "last_target": "c01", "suspended": []}})
+        try:
+            page.set_extra_http_headers({"X-Forwarded-User": "root"})
+            page.goto(f"{base}/#page=clusters")
+            page.wait_for_selector("[data-cc-fleet='svc-gsd']")
+            row = page.locator("[data-cc-fleet='svc-gsd']").inner_text().replace("\n", " ")
+            assert "on c01" not in row.split("·")[1], row
+            assert "last confirmed 2026-09-22 06:00" in row and "last ping c01: sa-token-unreadable" in row, row
+        finally:
+            signals.note_fleet_accounts({})
+    def test_the_form_offers_remote_sar_and_starts_on_the_default_pair(self, page, cc_rig):
+        """SPEC_D2b §3.3: the form starts on the pair a remote that states nothing resolves to, and offers
+```
+
+<!-- block: local-development/API.md | edit -->
+```markdown
+holds it: `username`, `lease` (`gsd-fleet-<sha256(username)[:16]>`), `last_attempt`, `last_ok` (null before
+the first success), `last_outcome` (`ok` or the finding code the last ping met), `last_target` (the cluster
+it last read), and `suspended` — `[{"target", "since", "code"}]` while a refused entry stands, `[]`
+otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",
+"expires_at", "renew_at"}`. Every instant is ISO-8601 UTC; the page computes any age itself.
+```
+
+```markdown
+holds it: `username`, `lease` (`gsd-fleet-<sha256(username)[:16]>`), `last_attempt`, `last_ok` (null before
+the first success), `last_outcome` (`ok` or the finding code the last ping met), `last_target` (the cluster
+the last ping attempted, whatever its outcome — `last_ok` may be older), and `suspended` — `[{"target", "since", "code"}]` while a refused entry stands, `[]`
+otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",
+"expires_at", "renew_at"}`. Every instant is ISO-8601 UTC; the page computes any age itself.
+```
+
+<!-- block: local-development/tests/test_self_login_url_moved.py | create -->
+```python
+"""A self-login session is presented only to the URL it was minted for (#285, the code review of #419, N1)."""
+from __future__ import annotations
+
+import dataclasses
+
+from test_fleet_lookup import wire  # noqa: F401
+from test_fleet_login import T0, TOKEN, login_302
+from test_fleet_lifecycle import TOKEN_2, LeaseHost, process, self_login, sessions
+
+
+def test_a_session_is_never_presented_to_a_url_it_was_not_minted_for(tmp_path, monkeypatch, wire):
+    host, now = LeaseHost(), [T0]
+    p = process(tmp_path, monkeypatch, host, self_login("sl"))
+    s = sessions(p, now)
+    wire.answers = [login_302(expires_in="3600"), login_302(expires_in="3600", token=TOKEN_2)]
+    first = s.credential_for(p.settings.cluster("sl"))
+    assert first.token_value == TOKEN and first.api_url == "https://api.sl.example.com:6443"
+    # The stanza's server is edited in place (a Secret- or ConfigMap-declared cluster: no pod roll, same thread).
+    moved = dataclasses.replace(p.settings.cluster("sl"), api_url="https://api.elsewhere.example.com:6443")
+    polled = s.credential_for(moved)
+    assert polled is None or polled.token_value != TOKEN, \
+        f"the session minted by {first.api_url} was handed to the poll against {moved.api_url}"
+    assert [r.headers["authorization"] for r in wire.revokes] == [f"Bearer {TOKEN}"], "revoked where it was minted"
+    assert wire.revokes[0].url.host == "api.sl.example.com"
+```
+
+<!-- block: local-development/tests/test_fleet_login_basic_scrub.py | create -->
+```python
+"""The password as the wire carries it — `Basic base64(user:password)` (RFC 7617 §2) — echoed by a remote reaches no
+line and no error handed to the caller, so no finding and no API response (#283's scrub; the code review of #419, N3)."""
+from __future__ import annotations
+
+import base64
+import logging
+
+import pytest
+
+from gsd.fleetlogin import LoginError
+from test_fleet_login import PASSWORD, USER, Target, make, refused_401
+
+
+def test_the_basic_credential_echoed_by_the_remote_is_redacted(caplog):
+    basic = base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
+    fl, _ = make(Target(refused_401(body=f"denied; request had Authorization: Basic {basic}")))
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(LoginError) as exc:
+            with fl:
+                pass
+    assert basic not in exc.value.message, exc.value.message
+    assert basic not in "\n".join(caplog.messages)
+    assert "Basic <redacted>" in exc.value.message
 ```

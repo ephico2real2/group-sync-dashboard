@@ -245,7 +245,7 @@ answers the values list alone with `last_discovery: null`.
 `{"ping": {"enabled": true, "interval_seconds": 86400}}`, and one entry per fleet account as its Lease
 holds it: `username`, `lease` (`gsd-fleet-<sha256(username)[:16]>`), `last_attempt`, `last_ok` (null before
 the first success), `last_outcome` (`ok` or the finding code the last ping met), `last_target` (the cluster
-it last read), and `suspended` — `[{"target", "since", "code"}]` while a refused entry stands, `[]`
+the last ping attempted, whatever its outcome — `last_ok` may be older), and `suspended` — `[{"target", "since", "code"}]` while a refused entry stands, `[]`
 otherwise. A `self-login` cluster's entry carries `session`: `{"state": "current|renewing|suspended|none",
 "expires_at", "renew_at"}`. Every instant is ISO-8601 UTC; the page computes any age itself.
 

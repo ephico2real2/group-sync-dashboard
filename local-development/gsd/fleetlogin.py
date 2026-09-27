@@ -329,7 +329,10 @@ class FleetLogin:
         self.cluster = cluster
         self.username = username
         self._password = password
-        self._secrets = tuple(v for v in secrets if v)
+        # The password as the wire carries it (RFC 7617 §2; the `auth=` below): a proxy or a server that quotes the
+        # request's Authorization header quotes base64(user:password), which decodes to the password.
+        basic = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        self._secrets = tuple(v for v in (*secrets, basic) if v)
         self._timeout = timeout
         self._policy = policy
         self._sleep = sleep

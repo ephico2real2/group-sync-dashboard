@@ -6251,15 +6251,18 @@ function ccAddForm(d) {
         the namespace will still delete a UI-written Secret unless it honours <span class="mono">groupsync-dashboard.io/managed-by: ui</span>.</p>
     </aside></div></section>`;
 }
-/* SPEC_S4c §3.10: one row per fleet account — when the daily ping last confirmed it, on which cluster, and what the
-   last ping said; `never` before the first success, and `suspended` when its Lease holds a refused entry. */
+/* SPEC_S4c §3.10: one row per fleet account — when the daily ping last confirmed it, and which cluster the last ping
+   tried with what it met; `not yet confirmed` before the first success, and `suspended` when its Lease holds an entry. */
 function ccFleetRows(f) {
   return ((f && f.accounts) || []).map((a) => {
+    // `last_ok` is the last SUCCESS; `last_target` and `last_outcome` are the last ATTEMPT, which may have failed on
+    // the next cluster in the rotation — so the two are said apart, never "confirmed on" the attempt's target.
     const seen = a.last_ok
-      ? `last confirmed <span class="mono">${fmtStamp(a.last_ok)}</span> on ${esc(a.last_target || "—")} · ${esc(a.last_outcome || "")}`
+      ? `last confirmed <span class="mono">${fmtStamp(a.last_ok)}</span>`
       : "not yet confirmed by the daily ping";
+    const last = a.last_target ? ` · last ping ${esc(a.last_target)}: ${esc(a.last_outcome || "—")}` : "";
     const n = (a.suspended || []).length;
-    return `<div class="cc-kv" data-cc-fleet="${esc(a.username)}"><span class="k">fleet account</span><span class="v"><span class="mono">${esc(a.username)}</span> · ${seen}${n ? ` ${ccBadge("critical", "suspended")}` : ""}</span></div>`;
+    return `<div class="cc-kv" data-cc-fleet="${esc(a.username)}"><span class="k">fleet account</span><span class="v"><span class="mono">${esc(a.username)}</span> · ${seen}${last}${n ? ` ${ccBadge("critical", "suspended")}` : ""}</span></div>`;
   }).join("");
 }
 function clusterConfigPage() {

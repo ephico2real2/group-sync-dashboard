@@ -100,8 +100,14 @@ class SelfLoginSessions:
         now = self._clock()
         with self._lock:
             held = self._sessions.get(cluster.name)
+        if held is not None and held.key[2] != cluster.api_url:
+            # A session is its target's own: a Secret-declared server moves with no restart (SPEC_S1 C3), and the
+            # token minted by the old one must never be presented to the new one — revoked where it was minted.
+            self._end(cluster.name, f"the cluster's URL moved from {_without_userinfo(held.key[2])}: the session is "
+                      f"revoked there and never sent to the new URL; this cycle logs in against it", outcome="url-changed")
+            held = None
         if held is not None and now < held.renew_at and not held.reauth:
-            return self._as(cluster, held)                      # the steady state: one comparison a cycle
+            return self._as(cluster, held)                      # the steady state: two comparisons a cycle
         if held is not None and now >= held.session.expires_at:
             self._end(cluster.name, "the session reached expires_at with no replacement; the next cycle logs in again",
                       outcome="expired")
