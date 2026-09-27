@@ -5,9 +5,9 @@
 | Programme | Epic D (#384), Reconnect a cluster from the screen — build step 3, after Refresh (#311, SPEC_D3) and the duplicate-URL warning (#314) |
 | Batch | D — reconnect |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | the next application MINOR at merge and the chart PATCH its appVersion move takes; the orchestrator sets both |
+| Version on release | app 1.5.0, chart 0.59.7 |
 | Issue | [#316](https://github.com/ephico2real2/group-sync-dashboard/issues/316) |
-| Status | specified |
+| Status | merged |
 | Source | OB3's specification of 2026-09-27 (implementer, phase 1: research and the spec, no production code), from issue #316 (its body, the runbook requirement and the design refinements of 2026-09-23, and D8 as the operator decided it on 2026-09-26), epic #384 and its mockup, SPEC_D3, SPEC_S4a, SPEC_S4c, SPEC_S4d and SPEC_S4e. Revised the same day after the reviews of Grok and Codex on `3cbc4e3` and the operator's decision on the gate's scope (orchestrator's notes). Measured on this machine against a fake remote, and read-only on the reference cluster. Appendix E's blocks were cut from a copy of `3cbc4e3` with the design implemented, and applied back to a clean clone for the proof in Appendix C |
 
 ## How to read this spec

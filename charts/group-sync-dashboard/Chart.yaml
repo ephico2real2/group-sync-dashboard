@@ -275,7 +275,9 @@ type: application
 # CHART 0.59.5 (2026-09-27), PATCH: appVersion moves to application 1.3.0 (below), shared API URL warnings (#314).
 # CHART 0.59.6 (2026-09-27), PATCH: appVersion moves to application 1.4.0 (below); CLUSTER_CREDENTIALS.md
 # states the ping's account rule (#432). No template, value or RBAC change.
-version: 0.59.6
+# CHART 0.59.7 (2026-09-27), PATCH: appVersion moves to application 1.5.0 (below); RUNBOOK.md, CLUSTER_CREDENTIALS.md
+# and values.yaml comments name Rejoin (#316). No template, value or RBAC change.
+version: 0.59.7
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -378,7 +380,9 @@ version: 0.59.6
 # 1.3.0 (2026-09-27). A warning, never a refusal, when two entries declare the same API URL (#314). MINOR.
 # 1.4.0 (2026-09-27). The daily ping presents the fleet password only as an account the configuration names
 # (#432, SPEC_S4e). MINOR.
-appVersion: "1.4.0"
+# 1.5.0 (2026-09-27). Rejoin: an administrator signs in to a remote cluster as themselves, once, and the
+# dashboard fetches a fresh poller token (#316, SPEC_D4). MINOR.
+appVersion: "1.5.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

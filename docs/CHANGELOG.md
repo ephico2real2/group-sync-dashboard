@@ -23,7 +23,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   credential gate, #315). The fleet account's name is refused. The route sits in the writes carve-out, so a default
   install has no Rejoin. `GET /api/clusterconfigs` rows gain `rejoinable`, and discovery counts a Rejoin over a
   `saTokenLookup` stanza as that stanza's own Secret. `charts/group-sync-dashboard/RUNBOOK.md` walks the repair:
-  Refresh, then Rejoin, then the manual fallback. No RBAC change.
+  Refresh, then Rejoin, then the manual fallback. No RBAC change. Application **1.5.0**, chart 0.59.7.
 
 - **The daily ping presents the fleet password only as an account the configuration names (#432,
   `docs/specs/SPEC_S4e_ping_account_scope.md`).** The ping took its account from a retrieved cluster's
