@@ -626,8 +626,9 @@ on `shared-qa` from 2026-09-23. Both runs onboarded the same CRC API via a label
 TokenRequest ServiceAccount token. Poll interval is 60 s, so every boundary below is measured to
 ±60 s ([setup and findings capture](../reports/2026-09-27_token-expiry-310/findings.txt)).
 
-**Capture provenance:** the raw pod logs from 2026-09-23 no longer exist because the pod has
-restarted since. The comment's quoted lines ARE the capture, transcribed verbatim below and under
+**Capture provenance:** the raw pod logs from 2026-09-23 are no longer retrievable: the dashboard pod
+that ran then has since been replaced (the running pod started 2026-09-27T08:44:51Z, read on 2026-09-27), and the lab
+forwards no logs. The comment's quoted lines ARE the capture, transcribed verbatim below and under
 [the report folder](../reports/2026-09-27_token-expiry-310/README.md). The recorded `exp` decodes
 are preserved as [claims only](../reports/2026-09-27_token-expiry-310/exp-claims.txt), never a token.
 This documentation write-up made no lab changes; `shared-qa`'s state was not touched.
@@ -667,8 +668,8 @@ poll ([Run 1](../reports/2026-09-27_token-expiry-310/run-1.txt),
 
 The [recorded finding](../reports/2026-09-27_token-expiry-310/findings.txt) attributes acceptance
 for up to 60 s past `exp` to validation leeway and retracts the earlier cached-authenticator guess.
-go-jose's `DefaultLeeway` is one minute ([upstream source](https://github.com/square/go-jose/blob/v2.6.0/jwt/validation.go#L15-L18))
-and “causes the token to be deemed valid until one minute after the expiration time”
+go-jose's `DefaultLeeway` is one minute ([upstream source](https://github.com/go-jose/go-jose/blob/v2.6.3/jwt/validation.go#L22-L25); v2.6.3 is the fork Kubernetes v1.35.0 imports for ServiceAccount tokens, `gopkg.in/go-jose/go-jose.v2` in its `go.mod`)
+and "causes the token to be deemed valid until one minute after the expiration time"
 ([go-jose jwt docs, as quoted in the comment](https://pkg.go.dev/gopkg.in/square/go-jose.v2/jwt#Claims.Validate)).
 The recorded consequence for #285 is that a renewal margin computed from `exp` is correct and
 conservative: the leeway is **free slack, not budget**
@@ -698,6 +699,7 @@ Measured: **8m30s** to discover a new Secret, **3m42s** to notice a rotated cred
 [Run 2](../reports/2026-09-27_token-expiry-310/run-2.txt)). Filed as
 [#311](https://github.com/ephico2real2/group-sync-dashboard/issues/311), a force-refresh endpoint
 and its UI control ([finding capture](../reports/2026-09-27_token-expiry-310/findings.txt)).
+Discovery latency left the 10-minute token **84 seconds** of useful life.
 
 ## 6. What is NOT proven by any of this
 
@@ -716,6 +718,10 @@ Stated plainly, because a validation document that only lists successes is not e
 - **A wrong fleet password was never tested**, deliberately. The gate that makes it safe
   (`bound` + `phase=credential` -> one bind, never repeated for that password) is proven by harness in
   #284's review, not against this directory.
+- **Case G observed expiry only.** A revoked token and a withdrawn grant were not run; that they also
+  produce a bare 401 is the observer's reading, not a measurement. The `userSelfLogin` renewal (#310
+  Part A) has not been observed, and Case G's Result blocks are the issue comment's transcription,
+  not raw pod logs.
 
 ## 7. Findings
 
@@ -731,4 +737,7 @@ Stated plainly, because a validation document that only lists successes is not e
 | A measurement against a guessed path produced a wrong conclusion, corrected by reading `GSD_TRUSTED_CA_FILE` | Case D, Step D1 |
 | The trust bundle is rebuilt by a re-runnable script; the ingress CA expires in 674 days and will need it | Case F |
 | A leaf certificate in a trust bundle costs 1,224 bytes and anchors nothing | Case F, Step F1 |
+| A TokenRequest token was accepted **+36 s** and **+42 s** past its `exp`, then refused with 401 on the next poll: go-jose's one-minute `DefaultLeeway` is free slack, not budget | Case G, Finding G1 |
+| An expired token, a revoked token and a withdrawn grant are all a bare 401; the warning names the Secret, credential kind and TLS mode but cannot tell them apart | Case G, Finding G2 |
+| Discovery took **8m30s** to find a new Secret and **3m42s** to notice a rotated one (#311) | Case G, Finding G3 |
 | Cross-cluster, `insecure: true`, and a wrong password remain untested live | Section 6 |
