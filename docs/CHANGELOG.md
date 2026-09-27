@@ -10,6 +10,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Warn when cluster entries share an API URL (#314, Epic D).** Discovery compares effective values,
+  Secret and ConfigMap entries using the credential gate's URL rule. A group is logged once when it
+  appears and once when it clears. `GET /api/clusterconfigs` gains `warnings`, separate from findings;
+  the tab shows a warning banner and a `shared API URL` chip on each affected card. Refused Secrets
+  and disabled entries are excluded: neither is polled, so neither doubles anything. Nothing is refused
+  or deduplicated; polling, counts, alerts and metrics are unchanged. Application **1.3.0**, chart 0.59.5.
+
 - **Refresh: check a cluster now with the credential the dashboard already holds (application 1.2.0,
   chart 0.59.4; #311, Epic D #384, `docs/specs/SPEC_D3_cluster_refresh.md`).** Each live card on the Cluster
   Configurations tab gains a **Refresh** button, beside Delete on a Secret row. It calls the new

@@ -212,12 +212,28 @@ writes are S2's.
      "enabled": false, "credential": "bearer", "labels": {}, "visibility": null, "identity": null, "tls": null,
      "status": "ok", "last_poll": "2026-09-19T02:00:00Z", "error": null, "retired": true}
   ],
+  "warnings": [],
   "findings": [
     {"secret": "gsd-cluster-broken", "code": "config-not-json",
      "detail": "Expecting value: line 1 column 1"}
   ]
 }
 ```
+
+**`warnings` is a separate list of advisories.** Every response includes it; no warning means `[]`.
+Existing response fields and `findings` keep their meaning. Each warning has exactly these fields:
+
+```json
+{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"],
+ "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}
+```
+
+One warning names all effective entries sharing a normalised URL, sorted by name. Values, discovered
+Secrets and ConfigMap entries participate; refused Secrets and retired rows do not. The credential gate's
+`httpx.URL` rule normalises host case, IDNA and default ports, then strips trailing slashes. Different
+non-default ports stay different. Pending declarations count; a disabled entry is not polled, so it joins no group.
+This warning changes no polling, counts, binding findings, alerts or metrics. Different URLs reaching
+one physical cluster are not detected.
 
 **`tls`** says how the cluster's API server certificate is verified, one of three (the operator's ruling,
 2026-09-20): `{"insecure": false, "ca": "trusted-bundle"}` — the default when the Secret names no

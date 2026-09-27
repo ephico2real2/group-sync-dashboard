@@ -1118,11 +1118,13 @@ def build_app(
                                        "and how its certificate is trusted.")
         viewer = trusted_viewer(request)
         from .clusterconfig import CONFIG_SELECTOR, LABEL_SELECTOR
+        from .clusterconfig.warnings import shared_api_warnings
         registry = settings.cluster_registry
         host = settings.host_cluster()
         polled = {row["id"]: row for row in store.clusters()}
         clusters = []
-        for c in settings.effective_clusters():
+        effective = settings.effective_clusters()
+        for c in effective:
             row = polled.get(c.name) or {}
             visibility, identity = settings.cluster_policy(c.name)
             clusters.append({
@@ -1161,6 +1163,7 @@ def build_app(
             "configmaps": {"enabled": settings.cluster_secrets_enabled, "label": CONFIG_SELECTOR},
             "clusters": clusters,
             "findings": [f.public() for f in registry.findings()],
+            "warnings": shared_api_warnings(effective),
             # SPEC_S4c §3.10: the daily ping and each fleet account's Lease, as instants.
             "fleet": {"ping": {"enabled": settings.fleet_ping_enabled,
                                "interval_seconds": settings.fleet_ping_interval_seconds},
