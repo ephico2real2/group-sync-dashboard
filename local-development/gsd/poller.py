@@ -1751,6 +1751,13 @@ class Poller:
                 continue
             digest, now = lease_digest(account, password, salt), datetime.now(UTC)
             entry = record.gated(digest)
+            if entry is None and self._credential_gate.account_refusal(account, password) is not None:
+                # THIS PROCESS'S GATE ALONE HOLDS THE REFUSAL: the entry was removed by hand (§5 Q7), or the Secret was
+                # recreated with a new uid (D2), and the pod keeps its copy until the restart both procedures name. The
+                # stand-down below applies, said once — and no attempt is stamped for a login that is not made, so the
+                # restarted pod pings on its first cadence instead of waiting out the interval with `last_outcome`
+                # reading `login-refused` (OB2's composition review of Epic C).
+                entry = {"target": self._credential_gate.account_refusal(account, password), "code": "login-refused", "at": ""}
             if entry is not None:
                 # ANY PATH'S ENTRY, OBSERVED (#419, D3): it seeds this process's gate and stops the account's self-login
                 # clusters now, not at their renewal — the same cycle for this replica's own refusal, one discovery
@@ -1793,7 +1800,7 @@ class Poller:
                 # `onboarding=()`: the ping must never write #293's per-target success mark (SPEC_S5 §3.3).
                 result = lookup(dataclasses.replace(target, ldap_connection_bootstrap=account, onboarding=()),
                                 self.settings, client, own_namespace=namespace, gate=self._credential_gate,
-                                write=False, lease=lease)
+                                write=False, lease=lease, held=(*_credentials(target), *self.self_login.tokens()))
             except ClaimHeld:
                 pass                    # taken before the attempt was recorded: abandoned; the stamp stands (B3)
             except (LookupRefused, FleetStateUnavailable) as exc:

@@ -1210,8 +1210,11 @@ class TestScopeIsLoginOnly:
 
         Then the source, as a guard on explicit syntax and not a proof over every spelling: no other `gsd`
         module USES the token API (its path, or `USER_TOKEN_API` imported or read as an attribute), and
-        `fleetlogin.py` makes one DELETE call. Documentation strings, a help string that names the kind and
-        a local variable that happens to be called `USER_TOKEN_API` are not uses (review of #422)."""
+        `fleetlogin.py` makes one DELETE call, and no other module calls `_revoke` or `_delete_token` — every
+        other module's revoke is `__exit__` (OB2's composition review of Epic C: a second `_revoke` call from
+        `selflogin.py` passed this guard and was caught only by the lifecycle tests' revoke counts). Documentation
+        strings, a help string that names the kind and a local variable that happens to be called `USER_TOKEN_API`
+        are not uses (review of #422)."""
         class Abort(BaseException):
             pass
 
@@ -1265,7 +1268,7 @@ class TestScopeIsLoginOnly:
             for node in ast.walk(tree):
                 if ((isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in documentation
                      and uses_the_api.search(node.value))
-                        or (isinstance(node, ast.Attribute) and node.attr == "USER_TOKEN_API")
+                        or (isinstance(node, ast.Attribute) and node.attr in ("USER_TOKEN_API", "_revoke", "_delete_token"))
                         or (isinstance(node, ast.alias) and node.name == "USER_TOKEN_API")):
                     naming.add(path.relative_to(source.parent).as_posix())
         assert naming == {"fleetlogin.py"}, naming

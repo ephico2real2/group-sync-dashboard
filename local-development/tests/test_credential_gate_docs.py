@@ -31,3 +31,16 @@ def test_the_gate_states_the_scope_of_account_and_process():
     assert '"Account" is the exact configured username string' in doc
     assert "must use one spelling" in doc
     assert "\"Process\" is the production Poller's one gate" in doc
+
+
+def test_the_release_notes_describe_the_gate_epic_c_shipped():
+    """Epic C shipped #315 and #285 in one release (1.0.0): its section must not carry #315's pre-#285 residual as
+    current, and the Secret-recreation re-arm must name the restart the running pod needs, as the hand-clear does
+    (OB2, Epic C composition review, K1 and K5)."""
+    text = (REPO / "docs/CHANGELOG.md").read_text()
+    start = text.index("## Application 1.0.0")
+    section = " ".join(text[start:text.index("\n## ", start + 1)].split())      # the entries wrap at 120 columns
+    assert "still starts with an empty gate" not in section
+    assert "recreating the Secret (a new uid) therefore allows one login once the pod restarts" in section
+    spec = (REPO / "docs/specs/SPEC_S4c_credential_lifecycle.md").read_text()
+    assert "same password (a new uid), and the pod restarted" in spec
