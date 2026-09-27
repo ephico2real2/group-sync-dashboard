@@ -803,11 +803,17 @@ clusters:
 secretsMint:
   enabled: true
   # `oc` is all the Job needs: Red Hat's published OpenShift CLI image. Supported on OpenShift 4.18 and
-  # above: set `tag` to your cluster's minor (v4.18 … v4.22; both ends pulled and ran `oc version --client`
-  # on the lab, 2026-09-26). The pull uses the cluster's global pull secret for registry.redhat.io; a
-  # disconnected cluster mirrors it. The in-cluster imagestream
-  # (image-registry.openshift-image-registry.svc:5000/openshift/cli) needs no pull secret and follows
-  # cluster upgrades by itself, and remains a valid override.
+  # above: set `tag` to your cluster's minor (v4.18 … v4.22; both ends pulled and ran the Job's script
+  # on the lab, 2026-09-26). The pull uses the cluster's global pull secret for registry.redhat.io.
+  # The Job is a pre-install/pre-upgrade hook: an image the cluster cannot pull within its 120 s deadline
+  # FAILS the install or upgrade (under Argo, the sync). A cluster that cannot pull registry.redhat.io
+  # (disconnected, OKD, no Red Hat pull secret) sets the image before installing or upgrading, to either
+  #   - its mirror of this image: set `repository` to the mirror, or add an ImageTagMirrorSet for
+  #     registry.redhat.io/openshift4 (the reference is a tag; an ImageDigestMirrorSet does not redirect it);
+  #   - the in-cluster imagestream, the previous default: `repository:
+  #     image-registry.openshift-image-registry.svc:5000/openshift/cli`, `tag: latest`. It needs no
+  #     registry.redhat.io credential, is mirrored with the release payload and follows cluster upgrades,
+  #     but needs the internal image registry (managementState Managed).
   image:
     repository: registry.redhat.io/openshift4/ose-cli-rhel9
     tag: v4.22
