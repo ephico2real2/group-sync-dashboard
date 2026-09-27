@@ -1591,6 +1591,8 @@ h2 .cc-chips { display: inline-flex; vertical-align: middle; }
 .cc-foot { margin-top: var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
 .cc-consq { font-size: var(--text-sm); color: var(--text-secondary); margin-top: var(--space-3); overflow-wrap: anywhere; }
 .cc-acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-4); align-items: center; }
+/* #311: a Refresh in flight is disabled; its label says so, and the muted text says it is not clickable. */
+.cc-acts .btn[disabled] { color: var(--text-muted); cursor: progress; }
 .cc-panel { margin-top: var(--space-4); padding: var(--space-5) var(--space-6); border: 1px dashed var(--border); border-radius: var(--radius-md); background: var(--zebra); }
 .cc-field { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-6); min-width: 0; }
 .cc-field > .cc-lbl, .cc-field > label { font-size: var(--text-sm); color: var(--text-secondary); }

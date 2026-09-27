@@ -123,8 +123,8 @@ has no button.
 |---|---|---|
 | idle | `Refresh` | none |
 | in flight | `Refreshing…`, disabled, `aria-busy="true"` | `Refresh: probing /version and users/~ with the stored credential…` |
-| succeeded (`ok`) | `Refresh` | `Refresh:` ● `connected` `2026-09-27T14:05:40Z` — the message |
-| refused (any other word) | `Refresh` | `Refresh:` ■ `<outcome>` `<at>` — the message |
+| succeeded (`ok`) | `Refresh` | `Refresh:` ● `connected · 2026-09-27T14:05:40Z` — the message |
+| refused (any other word) | `Refresh` | `Refresh:` ■ `<outcome> · <at>` — the message |
 
 - Every state carries a word. Colour and the badge glyph are a second channel only.
 - `pending` and `not-probed` use the grey `unknown` badge: nothing was refused, nothing was asked.
