@@ -10,6 +10,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **`release-crc.sh --argocd <branch>` reads the published images back before deploying (#410, found by OB2's
+  composition review of Epics A and B; development tooling only).** Each image whose tag values.yaml does not pin
+  must carry the chart's appVersion as the `org.opencontainers.image.version` label of every Linux image under its
+  `:<appVersion>` tag, or nothing is deployed. Measured on quay: `:0.37.0` is application 0.37.0 and passes;
+  `:0.39.0` is application 0.24.0 and is refused. The backup runbook adds the report pod's wait for a new copy after
+  a restore (and what to check when the copy fails), and when to move an old pre-upgrade copy aside. The refusal of a newer database
+  (#305) now also points to the pre-upgrade copy (§6) after an upgrade, besides §4's backups.
 - **The credential gate is per account for every failed login (#315,
   `docs/specs/SPEC_S4d_credential_gate_per_account.md`; chart 0.58.7 for `CLUSTER_CREDENTIALS.md`, the
   application code with no version of its own).** When the fleet account's password is sent and no session comes
