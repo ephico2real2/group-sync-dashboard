@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Thirty specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Thirty-one specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The thirty specifications
+## The thirty-one specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -92,6 +92,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | M1 | [`SPEC_M1_pre_upgrade_copy.md`](SPEC_M1_pre_upgrade_copy.md) — the pre-upgrade copy: before a migration, the database as it was is copied to `pre-upgrade/` beside it and verified, and the start is refused without it; once per upgrade, the newest three upgrades kept outside `config.backup.keep` | M — schema migrations | — | app 0.37.0, chart 0.58.5 | [#301](https://github.com/ephico2real2/group-sync-dashboard/issues/301) | released |
 | D3 | [`SPEC_D3_cluster_refresh.md`](SPEC_D3_cluster_refresh.md) — Refresh: probe an existing cluster with its stored credential and answer in the poller's words; it never logs in, never binds and changes nothing; the first step of Epic D (#384) | D — reconnect | — | app 1.2.0, chart 0.59.4 | [#311](https://github.com/ephico2real2/group-sync-dashboard/issues/311) | merged |
 | S4d | [`SPEC_S4d_credential_gate_per_account.md`](SPEC_S4d_credential_gate_per_account.md) — the credential gate is per account: every bound failure gates (account, password) on every target, the answering target kept as evidence; #293's success mark stays per target; the in-memory half of S4c's B2 | S — cluster configuration | — | app 1.0.0 (Epic C's release, which the application code rode, as #291's did), chart 0.58.7 (docs only: `CLUSTER_CREDENTIALS.md`) | [#315](https://github.com/ephico2real2/group-sync-dashboard/issues/315) | released |
+| D4 | [`SPEC_D4_cluster_rejoin.md`](SPEC_D4_cluster_rejoin.md) — Rejoin: a cluster administrator signs in to a remote cluster as themselves, once, and the dashboard fetches a fresh poller token and forgets the password; the host's cluster-admin tier and the remote's own answer (D8) gate it, and the password is presented at most once per press | D — reconnect | — | the next application MINOR at merge and the chart PATCH its appVersion move takes; the orchestrator sets both | [#316](https://github.com/ephico2real2/group-sync-dashboard/issues/316) | specified |
 | L1 | [`SPEC_L1_remove_oauth_debug.md`](SPEC_L1_remove_oauth_debug.md) — Remove the OAuth Debug reader and authLogLevel Jobs; retain stored history and audit capture | L — login capture | — | app 0.36.0, chart 0.58.0 | [#321](https://github.com/ephico2real2/group-sync-dashboard/issues/321) | released |
 | T2 | [`SPEC_T2_cluster_admin_tier.md`](SPEC_T2_cluster_admin_tier.md) — the cluster-admin tier: `visibility.clusterAdminSar` (`update clusterrolebindings` on the host) gates the KPI page and the whole Cluster Configurations tab, and grants every host tier to whoever passes it; replaces #230's two-level pair | T — tiers | — | app 0.35.0, chart 0.57.0 | [#322](https://github.com/ephico2real2/group-sync-dashboard/issues/322) | released |
 | D2b | [`SPEC_D2b_remote_sar_for_every_join.md`](SPEC_D2b_remote_sar_for_every_join.md) — `remote-sar` for every way a cluster is joined, and `remote-sar` + `same-as-host` the default for a remote (design D1, D2) | D — architecture | — | app and chart minor bumps at the PR | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) | released |
