@@ -8,616 +8,601 @@
 | Version on release | the next application MINOR at merge and the chart PATCH its appVersion move takes; the orchestrator sets both |
 | Issue | [#316](https://github.com/ephico2real2/group-sync-dashboard/issues/316) |
 | Status | specified |
-| Source | OB3's specification of 2026-09-27 (implementer, phase 1: research and the spec, no production code), written from issue #316 (its body, the runbook requirement and the design refinements of 2026-09-23, and D8 as the operator decided it on 2026-09-26), epic #384 and its mockup, SPEC_D3, SPEC_S4a, SPEC_S4c, SPEC_S4d, SPEC_S4e (branch `fix/432-ping-account-scope`, unmerged) and main `b18e62d` (application 1.3.0). Measured on this machine and read-only on the reference cluster. §8's blocks were cut from a copy of `b18e62d` with the design implemented, and applied back to a clean clone for the proof in §6 |
+| Source | OB3's specification of 2026-09-27 (implementer, phase 1: research and the spec, no production code), from issue #316 (its body, the runbook requirement and the design refinements of 2026-09-23, and D8 as the operator decided it on 2026-09-26), epic #384 and its mockup, SPEC_D3, SPEC_S4a, SPEC_S4c, SPEC_S4d and SPEC_S4e. Revised the same day after the reviews of Grok and Codex on `3cbc4e3` and the operator's decision on the gate's scope (orchestrator's notes). Measured on this machine against a fake remote, and read-only on the reference cluster. Appendix E's blocks were cut from a copy of `3cbc4e3` with the design implemented, and applied back to a clean clone for the proof in Appendix C |
 
 ## How to read this spec
 
-Each section opens with its point in one bold line; the rest is the evidence. §1 is the whole change in one table.
-§2 is what was read and measured, each with its source. §3 is the design: the route and its gates, the
-composition, the answers, the provenance, the dialog, the redaction pin, the budget over the system, what must not
-change, what is left, and the decisions the issue left open. §4 is the runbook. §5 is the change file by file.
-§6 maps every test to its result before and after, measured. §7 is the lab walk for the implementing PR. §8 is the
-change as implementation blocks (`docs/specs/README.md`, "Implementation blocks"), in apply order:
+Sections 1 to 4 are the design. Read them in order:
+
+| § | what it answers |
+|---|---|
+| 1 | what changes, in one table |
+| 2 | what one press may send: the safety budget, measured, with its scope |
+| 3 | the exchange, step by step: the route, the rows, the steps, the answers, the provenance, the dialog, the redaction |
+| 4 | every decision the issue left open, one line each |
+| 5 to 7 | what must not change, what is left, and the change file by file |
+| appendices | the evidence (A), the runbook's outline (B), the tests (C), the lab walk (D), the implementation blocks (E) |
+
+The implementer applies Appendix E with:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_D4_cluster_rejoin.md . --apply
 
-Line citations into the code at `b18e62d` are plain text, file:line, to keep them apart from the maintained
-`path#anchor` citations. Upstream sources are cited with the commit they were read at, from the raw file with line
-numbers (`curl` of the raw bytes, `nl -ba`). "Before" and "after" are `b18e62d` without and with §8's code blocks,
-with the same test blocks in both.
+Line citations are plain `file:line` text at `3cbc4e3`, the branch head the blocks apply to. `path#anchor` citations
+are the maintained kind. An upstream source is cited at the commit it was read at, from the raw file with line numbers.
 
-**The constraint that overrides everything here:** nothing in this spec, its tests or its walk logs in as any
-account, and never as the fleet account. The tests use placeholder names against a fake target. The research on the
-lab was read-only, through the kubeconfig handed to it.
+**The constraint over everything here:** nothing in this spec, its tests or its walk logs in as any account, and
+never as the fleet account. The tests use made-up names against a fake remote.
 
 ## Orchestrator's notes
 
-- **The id and the file.** The issue proposed `SPEC_R1_rejoin.md` and left the name to the orchestrator; the brief
-  names `SPEC_D4_cluster_rejoin.md`, the next step of batch D after SPEC_D3 (Refresh). The index row sits between S4d
-  (#315) and L1 (#321), because `local-development/tests/test_specs_index.py` holds the rows in issue order.
-- **The versions are the orchestrator's**, as for S4e: the release commit beside the implementing commit moves
-  `pyproject.toml`, `gsd/__init__.py` and `appVersion` to the next MINOR, and the chart by the PATCH that move takes.
-  No block here touches them. The PR needs that commit: `local-development/check-app-version-bump.py` requires the
-  next MINOR for a change under `gsd/`, and CI's `version-bump` job refuses a change under `charts/` without a new
-  `Chart.yaml` version (this change touches `values.yaml`, `README.md`, `CLUSTER_CREDENTIALS.md` and adds
-  `RUNBOOK.md`).
+- **The id and the file.** The issue proposed `SPEC_R1_rejoin.md`; the brief names `SPEC_D4_cluster_rejoin.md`, the
+  next step of batch D after SPEC_D3. The index row sits between S4d (#315) and L1 (#321), in issue order.
+- **The versions are the orchestrator's**, as for S4e. The release commit moves `pyproject.toml`, `gsd/__init__.py`
+  and `appVersion` to the next MINOR, and the chart by the PATCH that move takes. No block touches them.
+  `local-development/check-app-version-bump.py` and CI's `version-bump` job require that commit.
 - **D8 is decided, in its simple form** (the operator, 2026-09-26, #316): *"we log the response from the remote cluster
   but don't make things very complicated. We can check if the person joining the cluster is also a cluster admin on
-  the remote cluster."* §3.3 step 4 is exactly that: one review, its answer logged, a no reads and writes nothing, and
-  the login revoked on every exit as every `FleetLogin` already does.
-- **The decisions the issue left open are in §3.11**, each with the evidence and the recommendation. The operator
-  rules on them; this spec implements the recommendations.
+  the remote cluster."* §3.3 step 3 is exactly that.
 - **S4e (#432) merged first, in #438 (application 1.4.0).** The daily ping now presents the password only as an
   account the configuration declares. This spec never writes the person's name into `lookup-account` or any
   declaration (§3.5), so it was safe before S4e and is safe with it;
   `test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` runs the ping and counts the wire. With S4e taking
   index slot 31, this spec takes 32 (the orchestrator, merging main into this branch on 2026-09-27).
-- **The runbook's commands are fenced with `~~~`.** `local-development/apply-spec-blocks.py` ends a block's fence at the
-  first line that is exactly three backticks, so a Markdown file created by a block cannot carry backtick fences of
-  its own. Tilde fences are CommonMark's other fence and render the same.
-- **Three things found while writing, outside this change, for the orchestrator.** (1) The lookup's own session has the
-  gap this spec's redaction pin found in Rejoin's first draft: `gsd/fleetlookup.py#lookup` reads the token Secret inside
-  the `FleetLogin` session but never hands that token to `FleetLogin.add_secrets`, so a revoke that fails with a body
-  echoing it writes it into `fleet-logout-failed`. Rejoin calls `add_secrets` (§8); the lookup must not change here, so
-  it is a separate issue. (2) The card's element ids are `cc-refresh-<id>` and `cc-refresh-result-<id>`, so a cluster
-  named `result-east` beside `east` gets a colliding id. Rejoin's dialog uses its own `rejoin-` prefix and cannot
-  collide; the card's pattern is Refresh's and is left alone. (3) `gsd/config.py#valid_bootstrap_username` accepts a
-  name that ends in a newline: Python's `$` also matches before a final newline, so `valid_bootstrap_username("svc\n")`
-  is `True` (measured). The chart's own guard runs the same pattern through Go's `regexp`, whose `$` is the end of the
-  text (measured, go1.27.1: `"svc\n"` does not match), so a values stanza cannot carry one; a Secret's stanza
-  (clusterconfig/parser.py:197) and a `lookup-account` annotation (clusterconfig/reader.py:95) are read through the
-  Python grammar and can. Rejoin refuses such a username itself and strips the fleet names it compares (§3.1); the
-  shared grammar is left as it is, because tightening it would refuse Secrets that load today.
-- **The figure.** §8 edits `docs/diagrams/remote-cluster-access/source.html`; the PNGs are binary and are re-rendered
-  in the implementing commit (§5). The renderer is not byte-stable: measured, three figures whose source did not change
-  came out a few bytes different. Commit only `joining-a-cluster.light.png` and `joining-a-cluster.dark.png`.
+- **The runbook's commands are fenced with `~~~`.** `local-development/apply-spec-blocks.py` ends a block's fence at
+  the first line that is exactly three backticks, so a Markdown file a block creates cannot use backtick fences.
+- **The figure's PNGs are re-rendered in the implementing commit (§7).** The renderer is not byte-stable: three
+  figures whose source did not change came out a few bytes different. Commit only the two `joining-a-cluster` PNGs.
+- **Two things found while writing, outside this change.** (1) `gsd/fleetlookup.py#lookup` reads the token Secret
+  inside the `FleetLogin` session but never hands that token to `FleetLogin.add_secrets`, so a revoke that fails with
+  a body echoing it writes it into `fleet-logout-failed`. Rejoin does (§3.3); the lookup must not change here. (2) The
+  card's ids `cc-refresh-<id>` and `cc-refresh-result-<id>` collide for clusters named `east` and `result-east`.
+  Rejoin's dialog uses its own `rejoin-` prefix.
+- **The review of 2026-09-27** (Grok and Codex on `3cbc4e3`). Taken, each with its red and green test (Appendix C):
 
-## 1. The point, in one table
+  | finding | what changed |
+  |---|---|
+  | Codex C3 (a): a JSON key equal to the password came back in the 422 | the route refuses the body's shape in fixed words |
+  | Codex C3 (b): an unexpected error in D8 left the route, and Uvicorn prints a traceback with its text | the route catches it and answers `rejoin-failed` in fixed words; the line records only that it happened |
+  | Codex C3 (c): a password under four characters, echoed by D8, passed the emit helper's floor | D8's reason and every failure's evidence are scrubbed at any length before a line is written |
+  | Codex C3 (d): a refused token read, then a failed revoke echoing that token, logged it | the refused read's secrets reach the login inside `with`, before the revoke runs |
+  | Codex C1, the browser: a 307 or 308 re-sends the credential POST to its Location (measured in Chromium, Appendix A.7) | the credential fetch uses `redirect: "error"`; `test_fetch_refuses_redirects_and_submits_once` runs in Chromium |
+  | Codex C3, the dialog's words | it no longer says the username is not stored, and says a password manager may ignore `autocomplete="off"` |
+  | Grok C4 and Codex C4 | #438 made the shared username grammar `fullmatch`, so Rejoin's extra newline check and its explanation are gone; the newline cases stay and pass through the shared grammar |
+  | Grok C1 and Codex C1: the budget's missing shapes | §2 gains every shape the reviewers measured, with honest counts |
+  | Codex C7 | Appendix C says what was measured, where and on which tree |
+  | Grok C8 and Codex C8 | this structure: the design first, the evidence and blocks in appendices |
 
-**A cluster administrator signs in to a remote cluster as themselves, once; the dashboard fetches the poller's
-token there and forgets the password.**
+  **The operator's decision on C2 (2026-09-27):** keep the per-pod memory gate (D4-7). Its rationale is rewritten in
+  §2 and D4-7.
+
+  Declined, one line each:
+
+  | proposal | why declined |
+  |---|---|
+  | Codex's durable account hold, per-press receipt Secrets and request IDs (`guarded_rejoin`, `X-GSD-Rejoin-Request`) | the operator's decision on C2 |
+  | Codex's changes to D4-6, D4-8, D4-12 and D4-17, its `rejoin-held` outcome and its "rearm" words | they follow from the declined hold; its D4-7, D4-9, D4-11, D4-14 and D4-15 points are taken above |
+  | Codex's rearm section in the runbook | it follows from the declined hold |
+  | Grok's username-only TTL mark | the same class of durable hold; recorded in D4-7 as the design that exists |
+  | Codex's tests of the hold and receipts (`test_failure_is_held_across_pods_without_password_fingerprint`, `test_a_proxy_replaying_a_successful_post_to_another_pod_cannot_login_again`, `test_an_uncertain_guard_create_never_reaches_oauth`, `test_missing_request_id_never_logs_in`, `test_crash_after_login_leaves_hold_for_the_next_pod`) | they test the declined hold; the replay is measured as 2 in §2 instead |
+  | Codex's `test_fleet_spellings_never_reach_the_wire` and `test_only_boolean_true_permits_token_read` | they passed before and after (Codex's count); the refusal cases and `test_a_review_that_does_not_answer_is_a_refusal_never_a_yes` hold those shapes |
+  | Codex's `test_authorize_redirect_without_token_is_terminal` | the budget test now holds the same redirects, with their counts |
+  | Codex's node-based fetch test | taken by name and intent, run in Chromium instead: CI's `tests` job sets up no node |
+  | Codex's reworded test assertions for the before-run (C7) | Appendix C states each before-failure as measured instead |
+  | Grok's belt-and-braces newline check | the orchestrator's decision (C4): removed, the shared grammar refuses it |
+  | Grok's and Codex's tests over source and spec text (`test_d4_7_states_the_scope…`, `test_the_shared_grammar_already_refuses…`) | they pin comments and prose, not behaviour; the dialog test pins the dialog's scope sentence |
+
+## 1. The point
+
+**A cluster administrator signs in to a remote cluster as themselves, once. The dashboard fetches the poller's token
+there and forgets the password.**
 
 | | |
 |---|---|
-| **What goes wrong today** | When a remote's stored token stops working, the only repair is `oc create token` on the remote plus `oc patch secret` on the host: someone who is cluster-admin on both clusters, with two sessions (#316's body). The Secret it leaves names nobody. |
+| **What goes wrong today** | When a remote's stored token stops working, the only repair is `oc create token` on the remote plus `oc patch secret` on the host: someone cluster-admin on both clusters, with two sessions (#316). The Secret it leaves names nobody. |
 | **The change** | `POST /api/clusterconfigs/{name}/rejoin`, offered on the card after Refresh answers `auth_failed` or `pending`. One login as the person, one question to the remote about that person (D8), one read of the poller's token Secret, the login revoked, one write of `gsd-cluster-<name>` with the person's provenance. |
-| **The safety property** | The password is presented at most once per press, is never retried, never stored and never presented as any other account, and the fleet account is never used (§3.8, measured). |
+| **The safety property** | One press sends the password in at most one authorize request, never retried, never stored, never as any other account, and the fleet account is never used. The pod that sent a refused password does not send it again; another pod does not know (§2). |
 | **The gates** | The host: the cluster-admin tier (#322) and the writes switch. The remote: its own RBAC, asked about the person with the person's own login (D8). |
-| **What it reuses** | #283's `FleetLogin`, #284's `read_sa_token` and `store`, #315's `CredentialGate` (the poller's one instance), #311's card and its route pattern, #143's static dialog. |
-| **What is new** | `gsd/rejoin.py` (one module), the route, `rejoinable` on each row, three provenance annotations and the `rejoin` token-source, the dialog, `RUNBOOK.md`. |
-| **What does not change** | Refresh, the credential gate, the lookup, the daily ping, self-login, Rotate, Delete, Test, the Add form and its `oauth` refusal, the dashboard ServiceAccount's permissions (REMOVED 0, ADDED 0). |
+| **What it reuses** | #283's `FleetLogin`, #284's `read_sa_token` and `store`, #315's `CredentialGate` (the poller's one instance), #311's card and route pattern, #143's static dialog. |
+| **What is new** | `gsd/rejoin.py`, the route, `rejoinable` on each row, the `rejoin` token-source and three provenance annotations, the dialog, `RUNBOOK.md`. |
+| **What does not change** | Refresh, the credential gate, the lookup, the daily ping, self-login, Rotate, Delete, Test, the Add form and its `oauth` refusal, and the dashboard ServiceAccount's permissions (REMOVED 0, ADDED 0). |
 
-## 2. Read and measured
+## 2. The safety budget
 
-### 2.1 The login, and what it leaves behind
+**One press sends the password at most once. The pod that sent it does not send a refused password again. A
+restarted pod, another replica, or a proxy that replays a press to another pod can send it once more: 2 at worst.**
 
-**`oc login -u … -p …` is one GET on the remote's OAuth server with Basic auth; it leaves one `OAuthAccessToken`, a
-full-scope token for that person, which must be revoked.**
+The property, with its scope:
 
-| source | what it says or shows |
-|---|---|
-| openshift-docs `270ee60`, modules/oauth-token-requests.adoc | lines 22-23: `openshift-challenging-client` "Requests tokens with a user-agent that can handle `WWW-Authenticate` challenges". Lines 37-44: every token request goes to `/oauth/authorize`, and a CLI authenticates by a `WWW-Authenticate` challenge. Lines 56-60: Basic challenges need a non-empty `X-CSRF-Token` header. Lines 62-66: an identity provider that does not support challenges needs a browser |
-| SPEC_S4a §2 (measured 2026-09-21) | discovery at `/.well-known/oauth-authorization-server`; the authorize GET answered by a 302 whose `Location` fragment carries the token; the token's object is `sha256~` + base64url(sha256(the rest)); `DELETE …/useroauthaccesstokens/<name>` with the token itself as bearer answers 200; the token keeps authenticating from the API server's cache for about 121 s |
-| the lab, read-only, 2026-09-27 | discovery names `https://oauth-openshift.apps-crc.testing/oauth/authorize`. `oauthclients/openshift-challenging-client`: `grantMethod: auto`, `respondWithChallenges: true`, `accessTokenMaxAgeSeconds: null`. `oauths/cluster`: `tokenConfig.accessTokenMaxAgeSeconds: 31536000`; identity providers `developer` (HTPasswd) and `ldap-local` (LDAP), both `mappingMethod: claim`. 189 `OAuthAccessToken` objects at 16:37Z; all 30 challenging-client ones carry `scopes: [user:full]` and `expiresIn: 31536000` (counted at 17:43Z); `kubeadmin` alone held 13 of them, left by `oc login` |
-| OKD 4.20, "Managing user-owned OAuth access tokens" | `oc get useroauthaccesstokens --field-selector=clientName=…` lists your own; `oc delete useroauthaccesstokens <token_name>` deletes one; "Token names are not sensitive and cannot be used to log in"; "Deleting an OAuth access token logs out the user from all sessions that use the token" |
-| the lab's RBAC | `system:openshift:useroauthaccesstoken-manager` (get, list, watch, delete `useroauthaccesstokens`) is bound to `system:authenticated:oauth`, so any person may list and delete their own |
+- A press sends the password in at most one authorize request, as the account that request names.
+- The application never retries it.
+- The pod that sent a password the directory answered does not send it again until that pod restarts.
+- Nothing stores the password.
+- No fleet path presents the fleet password as the person, and the person is never presented as a fleet account.
 
-**Decides.** The login is `FleetLogin` unchanged: the flow, the retry rule once the password is on the wire, and the
-revoke on every exit. A Rejoin mints a `user:full` token for a cluster administrator that lives a year on the lab,
-so the revoke is load-bearing, and a failed one is named to the person with the command that deletes it (§3.4). A
-remote whose identity provider has no password challenge (OpenID Connect, GitHub, Google) cannot be rejoined: its
-authorize answer carries no token and the login fails; the runbook names the manual path.
+**The unit is an authorize request the application submits,** counted by the fake remote in the hermetic tests
+(`httpx.MockTransport`). What a remote OAuth server, a directory or a proxy does with that one request is outside this
+count.
 
-### 2.2 How the person's login reads the poller's token Secret
+**The scope, stated (D4-7).** The gate lives in each pod's memory. After a failure, a deliberate press that reaches a
+restarted pod or another replica sends the same password once more: 2 at worst. A proxy that replays a successful
+press to a second pod is also 2. A durable hold would close this and was declined for its operating cost (D4-7).
 
-**The same read #284 makes, as the person instead of the fleet account.**
-
-- `gsd/fleetlookup.py#read_sa_token` (fleetlookup.py:272-339) GETs
-  `group-sync-operator/group-sync-dashboard-cluster-poller-token` by name with the session as the bearer, checks its
-  type, its owner annotation and the legacy-token cleaner's `invalid-since` label, and decodes the token first so
-  every refusal carries it as a secret to scrub.
-- The lab, read-only: the Secret exists, `type: kubernetes.io/service-account-token`, annotated
-  `kubernetes.io/service-account.name: group-sync-dashboard-cluster-poller`, labelled
-  `kubernetes.io/legacy-token-last-used: 2026-09-27`, with `helm.sh/resource-policy: keep`.
-- A cluster administrator may `get` it. So may an `admin` of `group-sync-operator`, who is not a cluster
-  administrator (`docs/DESIGN_remote_cluster_access.md` §5). D8 is the stricter gate, and it runs first.
-
-### 2.3 D8: one SelfSubjectAccessReview, with the login's own token
-
-**A person may always ask the remote about themselves; the answer is a boolean and a reason, and nothing is stored.**
-
-| source | what it says or shows |
-|---|---|
-| kubernetes/website `ce7891d`, content/en/docs/reference/access-authn-authz/authorization.md | lines 403-405: `kubectl auth can-i` "uses the `SelfSubjectAccessReview` API to determine if the current user can perform a given action". Lines 469-470: the answer is the returned object's `status`. Lines 472-500: the request and answer shapes |
-| kubernetes/kubernetes `6c1c770`, staging/src/k8s.io/api/authorization/v1/types.go | lines 56-58: "Self is a special case, because users should always be able to check whether they can perform an action". Lines 258-276: `status` carries `allowed`, optional `denied`, `reason` and `evaluationError` |
-| the lab: who may ask | `create selfsubjectaccessreviews` reaches `system:authenticated` through the bindings `basic-users`, `self-access-reviewers` and `system:basic-user`: no grant is needed |
-| the lab: the exchange, JSON (`oc create -f` of the review, as the handed kubeconfig's `kubeadmin`) | asked `{"verb": "update", "group": "rbac.authorization.k8s.io", "resource": "clusterrolebindings"}`, answered `{"allowed": true, "reason": "RBAC: allowed by ClusterRoleBinding \"kubeadmin\" of ClusterRole \"cluster-admin\" to User \"kubeadmin\""}` with empty `metadata`; `oc get selfsubjectaccessreviews` answers `MethodNotAllowed`: nothing was kept |
-| the lab: who passes | `oc adm policy who-can update clusterrolebindings.rbac.authorization.k8s.io`: the user `kubeadmin` and the groups `system:cluster-admins` and `system:masters` (plus system ServiceAccounts); no other person |
-
-**Decides.** D8 is one `SelfSubjectAccessReview`, sent with the login's own `user:full` token, so the remote answers
-for the person and the groups it resolves for them. It asks the host's own cluster-admin question,
-`visibility.clusterAdminSar`, built as the host's `TierResolver` builds it (kube.py:1479-1495), so one definition of
-"cluster administrator" serves both clusters. It runs before the token read. Only a boolean `allowed: true` is a yes;
-anything else refuses. The remote's answer (`allowed`, `reason`, `evaluationError`) is logged, scrubbed.
-
-### 2.4 Keeping the password out of every place it could land
-
-**The password crosses one TLS hop into the app and one into the remote's OAuth server; it is in no URL, no log, no
-store, no answer and no browser storage.**
-
-| place | what could carry it | how it is kept out | source |
+| shape | authorize requests the app submits | outcomes, in order | measured by |
 |---|---|---|---|
-| a URL | a native form submission (GET by default) | the dialog has no `<form>`; the password travels in a POST body | the dialog (§3.6) |
-| the proxy's request log | oauth-proxy's `-request-logging` writes the request URI | never the body or the `Authorization` header, and it is off by default | `charts/group-sync-dashboard/values.yaml` (`requestLogging`) |
-| uvicorn's access log | the request line | method, path and status only | uvicorn 0.53.0, config.py:94 |
-| the usage record | the activity middleware | records the user and the email, never the path or the body | api.py:939-942 |
-| a 422 answer | FastAPI's validation of a typed body quotes a non-object body in `input` | measured with FastAPI 0.141.1 and pydantic 2.13.5: a typed `dict` body echoed `"input": "<the password>"` for a JSON string and for a list. The route takes `body: Any = Body(None)`, which FastAPI passes through unvalidated (measured: no echo), and refuses the shape itself, naming fields and never values | §3.1 |
-| the app's lines, answers and refusals | a remote's echo quoted in a message | every line goes through the emit helper with the secrets in play; `FleetLogin` scrubs every message; Rejoin scrubs every answer with the password, its Basic form, the login's token and the token read | `gsd/clusterconfig/events.py#event`, `gsd/fleetlogin.py#FleetLogin._scrub`, §3.7 |
-| a traceback | an exception's message | Python prints frames and messages, not local variables; every message on this path is scrubbed | §3.7 |
-| the remote's audit log | the authorize request | the oauth-server audit log is written at Metadata level: user, verb, URI and decision, never headers. The password is in the `Authorization` header, never the URI | openshift-docs `270ee60` modules/nodes-nodes-audit-config-about.adoc lines 35, 61-63; `gsd/auditlog.py`'s module docstring |
-| the host's audit log | the Secret write | the password never reaches the host's API server; the Secret the dashboard writes holds the token read, and Secrets are logged at metadata level under every profile | the same file, line 61 |
-| the database | a row | Rejoin writes none; the Logins row the audit-log capture later stores carries the username and the decision | §3.7 (the store dumped) |
-| the Secret | the write | the token read and the provenance, which names people, not secrets | §3.5 |
-| the credential gate | a refused password | 64 bits of its SHA-256, in the process's memory, never on disk; a durable copy was rejected (§3.11, D4-7) | `gsd/fleetlookup.py#CredentialGate` |
-| browser storage | the page | the page's `localStorage` holds only `gsd-mode` and `gsd-palette` (index.html:16, 82); the fields are read at the press and never copied into `view` | §3.6 |
-| the browser's password manager | autofill and save prompts | `autocomplete="off"`: "When an element's autofill field name is "off", the user agent should not remember the control's data, and should not offer past values to the user". The same section lets a user agent override it, and lets it treat a text field followed by a password field as `username` and `current-password`: the page's own guarantee is that it stores nothing | WHATWG HTML, "Autofilling form controls: the autocomplete attribute" |
-| the back/forward cache | a page left with the dialog open | the page is served `Cache-Control: no-cache, must-revalidate`, not `no-store` (api.py:3231), so the cache may keep typed values; the fields are cleared on `pagehide` | §3.6 |
-| the idle sign-out | the dialog stays on screen while the page navigates away | `idleExpire` blanks `#main` and then navigates (index.html:8143-8160); it now closes the dialog first | §3.6 |
+| one press, the right password | **1** | `rejoined` | `test_the_budget_over_the_system` |
+| a double click on the dialog's button | **1** | one POST, one answer | `test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` (Chromium) |
+| a second press, from another tab or a script, while the first is out | **1** | the second answered `409`, nothing sent | `test_one_rejoin_at_a_time_in_this_process` |
+| two presses in turn, the right password | 2 | `rejoined`, `rejoined` | `test_the_budget_over_the_system`: each press sends once; a success is not gated |
+| a 401, then the same password | **1** | `login-refused`, `login-refused` (not sent) | the same |
+| a 500 (a locked account), then the same password | **1** | `login-failed`, `login-refused` (not sent) | the same |
+| a timeout after the password was written, then the same | **1** | `login-failed`, `login-refused` | the same |
+| a 302 without a token, then the same | **1** | `login-failed`, `login-refused` | the same |
+| a 302 to another host, then the same | **1** | `login-failed`, `login-refused` | the same |
+| a 307 to another host, then the same | **1** | `login-failed`, `login-refused`: the redirect is not followed | the same |
+| a failure before the password was written, then again | 1 | `login-failed` (not sent), `rejoined` | `test_a_failure_before_the_password_is_written_is_tried_once_and_is_not_gated` |
+| a 401 on one cluster, then the same password on another | **1** | `login-refused`, `login-refused` | `test_a_bound_failure_is_one_authorize_and_the_same_password_is_not_sent_again` |
+| a 401, then the right password | 2 | `login-refused`, `rejoined` | `test_the_budget_over_the_system` |
+| a 401, then the same password on a restarted pod | 2 | `login-refused`, `login-refused` | the same: **the scope** |
+| a 401, then the same password on another replica | 2 | `login-refused`, `login-refused` | the same: **the scope** |
+| a proxy replays a successful press to another pod | 2 | `rejoined`, `rejoined` | the same: **the scope** |
+| the pod restarts after the password was written, then the same password | 2 | no answer, then the new pod's | not measured: the gate dies with the pod, and the restarted-pod row measures the new pod's side |
+| the page's own fetch | 1 per press, no retry | — | `test_fetch_refuses_redirects_and_submits_once` (Chromium) |
+| a 307 or 308 in front of the dashboard | 0 more | the fetch refuses the redirect; the page says the answer did not arrive | the same |
+| the browser's back or forward button | 0 | no `<form>` to resubmit; `pagehide` clears the fields | the `pagehide` clearing is measured; a real back/forward restore is not |
+| a proxy or the remote resends the one authorize | outside this count | — | not the application's to count (above) |
+| the daily ping after a Rejoin | 0 as the person | the ping presents only the fleet account's own pair | `test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` |
+| a fleet account's name, in any capitalisation | 0 | `422 rejoin-fleet-account` | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value` |
+| a fleet account's name with a final newline | 0 | `422 rejoin-username-invalid`: the shared grammar refuses it (#438) | the same |
 
-### 2.5 Can anything make one press run twice?
+**Can anything make one press run twice?** Each layer was read (Appendix A.5). The page sends once and refuses
+redirects. The router, oauth-proxy and the app do not replay a written POST. Only the browser resends a request it
+already wrote, and only when a reused connection closes before any response header; the router answers a failed
+backend with a status instead. Not measured end to end.
 
-**Each layer between the button and the directory was read for a retry. One can resend, the browser, and only in a
-narrow case this deployment's router makes rare.**
-
-| layer | does it replay a POST it already sent? | source |
-|---|---|---|
-| the page | no: one request per press; the button is disabled and the password field emptied as the request leaves | §3.6, measured (§6) |
-| the browser (Chromium) | **yes, in one case**: a reused keep-alive connection that closes before any response header arrives is resent, and the method is not consulted | chromium/src `71467d7`, net/http/http_network_transaction.cc lines 2103-2166 (`HandleIOError`) and 2331-2339 (`ShouldResendRequest`: "connection_is_proven && !has_received_headers") |
-| the OpenShift router (HAProxy) | no: `retry-on` defaults to `conn-failure`, "retry when the connection or the SSL handshake failed and the request could not be sent", and the router's template sets none | HAProxy v2.8.0, doc/configuration.txt lines 11264-11344; openshift/router `6c5868c`, images/router/haproxy/conf/haproxy-config.template lines 164-170 and 652-693 |
-| oauth-proxy (Go's `http.Transport`) | no: a request that was written is replayed only when its method is idempotent or it carries `Idempotency-Key` | golang/go `2ff5743`, src/net/http/transport.go lines 836-881 and src/net/http/request.go lines 1557-1571 |
-| the app | no: one Rejoin at a time per process, the second answered `409` | §3.1, measured |
-| the login | no: `ONE_TRY` | §3.3, measured |
-
-**Decides.** The browser's resend needs the router to drop the browser's connection after reading the request and
-before sending any header. The router answers a backend that died mid-request with a status of its own: a 502
-"when the server returns an empty, invalid or incomplete response", a 504 "when the response timeout strikes"
-(HAProxy v2.8.0, doc/configuration.txt lines 375-400). If it does
-happen on the same pod, the resend meets the one-at-a-time `409` while the first runs, and the gate after a bound
-failure; after a success it is a second successful login of a correct password, which counts toward no lockout. It
-is stated in §3.8 and not guarded further: a client nonce would not survive the restart the only other cause is.
-
-### 2.6 The code at `b18e62d`: what is reused, and what must change
-
-**Every piece exists; four of them speak to the fleet account and one would hand the person to the daily ping.**
-
-| piece | where | reused as is, or changed |
-|---|---|---|
-| `FleetLogin` | fleetlogin.py:309-744 | reused: the flow, `policy=`, the revoke on exit (366-372), `add_secrets` (374-376). Its refusal and next-try wording (fleetlogin.py:718-744) tells the reader to rotate the fleet password Secret, so the two strings become class attributes a subclass restates, byte-identical for the fleet (measured, §6) |
-| `CredentialGate` | fleetlookup.py:102-177 | reused as the lookup uses it: `account_refusal` (152) before the login, `refuse` (171) after a bound failure; never `spend` |
-| `read_sa_token` | fleetlookup.py:272-339 | reused as is; its refusal `action` names the fleet account, so Rejoin writes its own sentence for the person (§3.4) |
-| `store` and `writer.store_lookup` | fleetlookup.py:360-391, writer.py:331-374 | changed: both take the Rejoin's provenance; the lookup's own values are unchanged |
-| the "ours" rule | reader.py:122-129, registry.py:99-102 | changed: `writer.owned_by_mode` also counts `rejoin` over a `saTokenLookup` stanza, so the stanza keeps its policy and raises no `shadows-values-entry` |
-| the daily ping's targets | poller.py:1726-1729, 1815 | unchanged, and the reason for §3.5: a Secret with `token-source: remote-lookup` and a `lookup-account` is pinged as that account, with the fleet password |
-| the Add form's `oauth` refusal | writer.py:182-183 | unchanged (§3.11, D4-13) |
-| the writes gate, unknown keys, the Refresh route's pattern | api.py:1180-1199, 1229-1233, 1346-1368 | reused |
-| the static dialog | index.html:132-146 (`#ns-preview`) | the pattern Rejoin's dialog follows |
-
-## 3. Design
+## 3. The exchange
 
 ### 3.1 The route and its gates
 
-**`POST /api/clusterconfigs/{name}/rejoin`, behind the same gate as every write on the tab, registered only when
-writes are on, and refused before anything is sent unless the request is exactly right.**
+**`POST /api/clusterconfigs/{name}/rejoin`, registered only when writes are on, behind the tab's write gate, and
+refused before anything is sent unless the request is exactly right.**
 
-The route is `rejoin_cluster_config` inside `gsd/api.py#build_app`, beside Refresh inside the writes carve-out. In
-order:
+The route is `rejoin_cluster_config` inside `gsd/api.py#build_app`, beside Refresh. In order:
 
 | step | check | refusal | anything sent? |
 |---|---|---|---|
 | 1 | the writes switch (`clusterConfig.secrets.writes.enabled`) | the route does not exist: `404` | no |
 | 2 | `_writes_gate`: a proxy-verified identity and the cluster-admin tier (#322) — the **host's gate** | `403` | no |
-| 3 | the body is exactly `{"username": <string>, "password": <string>}` | `422`, naming a field, never a value | no |
+| 3 | the body is exactly `{"username": <string>, "password": <string>}` | `422` in fixed words: a key can be the password, so none is repeated | no |
 | 4 | the name is a live cluster | `404` | no |
-| 5 | `gsd/rejoin.py#check`: the cluster is rejoinable (§3.2); the username is in the bootstrap grammar and does not end in a newline; it is not a fleet account, the names compared stripped and casefolded; the password is present, with no control character and no unpaired surrogate | `409 not-rejoinable`, or `422 rejoin-username-invalid`, `rejoin-fleet-account`, `rejoin-password-missing`, `rejoin-password-invalid` | no |
-| 6 | this process runs a poller, whose credential gate Rejoin must use | `409` | no |
+| 5 | `gsd/rejoin.py#check`: the row is rejoinable (§3.2); the username fits the shared grammar; it is not a fleet account; the password is present, with no control character and no unpaired surrogate | `409 not-rejoinable`, or `422 rejoin-username-invalid`, `rejoin-fleet-account`, `rejoin-password-missing`, `rejoin-password-invalid` | no |
+| 6 | this process runs a poller, whose credential gate Rejoin uses | `409` | no |
 | 7 | no other Rejoin is running in this process | `409`, never queued | no |
-| 8 | `gsd/rejoin.py#rejoin` (§3.3): the credential gate, the login, **the remote's gate (D8)**, the read, the revoke, the write | `200` with a refusal's code | at most one login |
+| 8 | `gsd/rejoin.py#rejoin` (§3.3) | `200` with an outcome (§3.4) | at most one login |
+| 9 | any error step 8 did not expect | `200 rejoin-failed` in fixed words (`gsd/rejoin.py#stopped_unexpectedly`) | at most the one login |
 
-`body: Any = Body(None)` is deliberate. A body typed `dict` lets FastAPI answer a non-object body with a 422 that
-quotes it whole, password included (measured, §2.4). With `Any`, FastAPI passes what arrived unvalidated, and step 3
-refuses it with a fixed sentence. A request whose JSON does not parse is still FastAPI's `422`, whose `input` is `{}`
-(measured).
+Why `body: Any = Body(None)`: a body typed `dict` lets FastAPI answer a non-object body with a 422 that quotes it
+whole, password included (measured, Appendix A.4). With `Any`, FastAPI passes the body on unvalidated, and step 3
+refuses it in fixed words.
 
-The final newline in step 5 is not cosmetic. The shared grammar, `gsd/config.py#valid_bootstrap_username`, is a
-Python pattern ending in `$`, which also matches before a final newline: `SVC-GSD-Fleet\n` passes it (measured).
-LDAP string preparation maps a line feed to a space, and a trailing space is insignificant in a compared value
-(RFC 4518, lines 243-245 and 324-333), so a directory may read that name as the fleet account's. Before this
-refusal, a script's Rejoin as `SVC-GSD-Fleet\n` answered `rejoined` against the test's fake remote, which accepts any
-login. The page cannot send one: it trims the username.
+Why step 9: an error's own text may quote the password, and an error that leaves the route is printed with its text
+by Uvicorn. So it never leaves: the answer and the line are fixed words.
 
 A success wakes discovery, as every write on the tab does, so the card polls within seconds.
 
 ### 3.2 Which cards may be rejoined
 
-**Secret-sourced rows and `saTokenLookup` stanzas: the epic's decision. `rejoinable` on each row is the route's own
-rule, so the page offers Rejoin exactly where the route accepts it.**
+**Secret-sourced rows and `saTokenLookup` stanzas. `rejoinable` on each row is the route's own rule, so the page
+offers Rejoin exactly where the route accepts it.**
 
 | the row | rejoinable | what Rejoin writes | why |
 |---|---|---|---|
-| a Secret with a `bearerToken` (a hand-written one, like the lab's `shared-qa`; one the tab created; one the lookup wrote) | **yes** | updates it in place | the design's case: a stored token stopped working |
+| a Secret with a `bearerToken` (hand-written, created by the tab, or written by the lookup) | **yes** | updates it in place | the design's case: a stored token stopped working |
 | a Secret that declares `saTokenLookup` | **yes** | updates it in place, as the lookup would | its token was never fetched, or the lookup is stuck |
-| a Secret that declares `oauth` | **yes** | updates it in place: `bearerToken` replaces the `oauth` key | the declaration says a person's credential supplies it; Rejoin does that once, and removes any password the Secret held |
+| a Secret that declares `oauth` | **yes** | updates it in place: `bearerToken` replaces the `oauth` key | the declaration says a person supplies the credential |
 | a values stanza that declares `saTokenLookup` | **yes** | creates `gsd-cluster-<name>` with the stanza's policy | the stanza is pending, for example while the fleet account is locked |
-| a Secret or a stanza that declares `userSelfLogin` | no | — | its credential is the poll thread's session; a stored token would replace the declared mode, and Refresh answers `not-probed` there |
-| a Secret generated from a ConfigMap | no | — | its reconciler owns it (`not-our-secret`), and its stanza names its account |
-| a values entry with its own token | no | — | a Secret would shadow the values entry (`shadows-values-entry`) |
+| a Secret or stanza that declares `userSelfLogin` | no | — | its credential is a session; a stored token would replace the mode |
+| a Secret generated from a ConfigMap | no | — | its reconciler owns it |
+| a values entry with its own token | no | — | a Secret would shadow it (`shadows-values-entry`) |
 | the host | no | — | it polls as the pod's own ServiceAccount |
 | a retired row | no | — (`404`) | nothing describes it any more |
 
-### 3.3 The composition, step by step
+### 3.3 The steps
 
-**One login, one question, one read, one revoke, one write — in that order, and each failure stops it.**
+**One login, one question, one read, one revoke, one write — in that order, and each failure stops it.** The route
+holds a process-wide lock across all of them, so the gate's check and the login it guards are one step.
 
 | step | what | on failure | the credential gate |
 |---|---|---|---|
-| 1 | `gate.account_refusal(username, password)`: has the directory answered this password for this account already, anywhere? | answered `login-refused`, with the target that answered; **nothing is sent** | read |
-| 2 | `RejoinLogin(cluster, username, password, policy=ONE_TRY)`: #283's login, as the person | a bound failure (401, 500, a timeout after the password was written, a 302 without a token): `login-refused` or `login-failed`. A failure before the password was written: `login-failed`, the password not sent | `refuse(...)` after a **bound** failure only, exactly as the lookup does (#315) |
-| 3 | inside the session: D8, `remote_says_cluster_admin` | `not-cluster-admin` (a clean no) or `access-review-failed` (no clean answer); nothing read or written | — (the password was right) |
-| 4 | log `cluster-rejoin-review` with the remote's answer | — | — |
-| 5 | inside the session: `read_sa_token`, then `login.add_secrets(token)` so a failed revoke's line cannot quote it | `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated`; nothing written | — |
-| 6 | the session ends: `FleetLogin.__exit__` revokes the login, whatever happened | a failed revoke is a `fleet-logout-failed` line, and the answer names the object to delete | — |
-| 7 | `store(..., rejoin=(person, account, instant))`: update the Secret in place, or create it for a stanza | `lookup-write-failed`; nothing stored | — |
-| 8 | log `cluster-rejoined`; answer `rejoined` | — | — |
+| 1 | `gate.account_refusal(username, password)`: has the directory answered this password for this account in this pod? | `login-refused`; **nothing sent** | read |
+| 2 | `RejoinLogin(..., policy=ONE_TRY)`: #283's login, as the person | a bound failure (401, 500, a timeout after the write, a 302 without a token): `login-refused` or `login-failed`. A failure before the write: `login-failed`, not sent | `refuse` after a **bound** failure only, as the lookup does (#315) |
+| 3 | inside the session, D8: `remote_says_cluster_admin`, then the `cluster-rejoin-review` line with the remote's answer | `not-cluster-admin` (a no) or `access-review-failed` (no clean answer); nothing read or written | — |
+| 4 | inside the session: `read_sa_token`; its token, or a refused read's, goes to `login.add_secrets` before the session ends | `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated`; nothing written | — |
+| 5 | the session ends: `FleetLogin.__exit__` revokes the login, whatever happened | a failed revoke is a `fleet-logout-failed` line; the answer names the object to delete | — |
+| 6 | `store(..., rejoin=(person, account, instant))`: update the Secret, or create it for a stanza | `lookup-write-failed`; nothing stored | — |
+| 7 | the `cluster-rejoined` line; answer `rejoined` | — | — |
 
 `ONE_TRY` is `RetryPolicy(attempts=1)`. The fleet's schedule retries a failure that bound nothing up to five times,
-about a minute and a half; a person is waiting behind a router whose server timeout is 30 s by default (openshift/router
-`6c5868c`, haproxy-config.template line 167), and the next press is the retry. The password is sent at most once
-either way.
-
-The caller holds a process-wide lock across steps 1 to 8, so the gate's check and the login it guards are one step:
-two presses in one process can never both reach a password's first use.
+about a minute and a half. A person is waiting behind a router whose timeout is 30 s by default, and the next press
+is the retry.
 
 ### 3.4 The answer
 
-**`200 {outcome, message, at}` for every Rejoin that reached the gate, as Refresh answers; `rejoined`, or a refusal's
-code with one sentence for the person.** `at` is ISO-8601 UTC. `message` is scrubbed of every secret in play.
+**`200 {outcome, message, at}` for every Rejoin that reached step 8, as Refresh answers.** `at` is ISO-8601 UTC.
+`message` is scrubbed of every secret in play.
 
 | `outcome` | when | password sent? | gate writes? | written here? |
 |---|---|---|---|---|
-| `rejoined` | the login, a yes from the remote, the read and the write all succeeded | once | no | the Secret |
-| `login-refused` | the gate already held this password for this account | **no** | no | no |
+| `rejoined` | the login, a yes, the read and the write all succeeded | once | no | the Secret |
+| `login-refused` | this pod's gate already held this password for this account | **no** | no | no |
 | `login-refused` | the remote answered 401 with a Basic challenge | once | **yes** | no |
-| `login-failed` | the password was written and no session came back: a 500 (a locked directory account's LDAP code 19 is a 500), any other answer, a read timeout, a 302 without a token | once | **yes** | no |
-| `login-failed` | the login could not start: discovery failed, the connection or the TLS handshake failed | **no** | no | no |
+| `login-failed` | written, and no session came back: a 500 (a locked account's LDAP code 19), a read timeout, a 302 without a token, any other answer | once | **yes** | no |
+| `login-failed` | the login could not start: discovery, the connection or TLS failed | **no** | no | no |
 | `not-cluster-admin` | the remote answered `allowed: false` | once | no | no |
-| `access-review-failed` | the remote could not answer: a 403, a 500, a timeout, no boolean `allowed` | once | no | no |
+| `access-review-failed` | the remote could not answer: 403, 500, a timeout, no boolean `allowed` | once | no | no |
 | `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated` | the token Secret could not be used | once | no | no |
 | `lookup-write-failed` | the token was read and the host refused the write | once | no | no |
+| `rejoin-failed` | an error the design did not expect (§3.1 step 9) | unknown: press Refresh first | no | unknown |
 
-Every answer after a session existed ends by saying how the login ended: "the login was signed out", or that it could
-not be, naming the object and the command to delete it (the name is not a secret, §2.1).
-
-Refusals before anything is sent are HTTP errors, as on the tab's other writes: `403`, `404`, `409` and `422`
-(§3.1), each `detail` a code and a sentence that repeats no value.
+Every answer after a session existed says how the login ended: "the login was signed out", or the object to delete
+and the command (a token's name is not a secret). Refusals before anything is sent are HTTP errors (§3.1).
 
 ### 3.5 The provenance on the written Secret
 
-**The Secret says a person fetched it, who, as which account, and when; it never says so in `lookup-account`, which the
-daily ping logs in as with the fleet password.**
+**The Secret says a person fetched it, who, as which account, and when. It never says so in `lookup-account`.**
 
-| annotation | value | on an update in place | on a create |
+| annotation | value | on an update | on a create |
 |---|---|---|---|
 | `groupsync-dashboard.io/token-source` | `rejoin` | set | set |
 | `groupsync-dashboard.io/source-namespace` | `group-sync-operator` (the configured source) | set | set |
 | `groupsync-dashboard.io/source-service-account` | `group-sync-dashboard-cluster-poller` | set | set |
-| `groupsync-dashboard.io/rejoined-by` | the host identity who pressed Rejoin (the proxy's `X-Forwarded-User`, the same name the tab's other writes audit) | set | set |
+| `groupsync-dashboard.io/rejoined-by` | the host identity who pressed Rejoin (`X-Forwarded-User`) | set | set |
 | `groupsync-dashboard.io/rejoin-account` | the account the remote signed in | set | set |
 | `groupsync-dashboard.io/rejoined-at` | the instant, ISO-8601 UTC | set | set |
 | `groupsync-dashboard.io/lookup-account` | — | **removed** | never written |
-| `groupsync-dashboard.io/managed-by` | — | kept as it was | `ui`: a person made it through the tab |
+| `groupsync-dashboard.io/managed-by` | — | kept | `ui` |
 
-Three rules hold the provenance safe:
+Three rules:
 
-1. **Never `lookup-account`.** `Poller._ping_accounts` pings every Secret with `token-source: remote-lookup` and a
-   `lookup-account`, logging in as that account with the one fleet password (poller.py:1726-1729, 1815; #432). Had
-   Rejoin written the person there, the daily ping would present the fleet password as the person. A Rejoin removes
-   the key from a Secret the lookup wrote, and the lookup removes the three Rejoin keys when it writes a Secret again
-   (`writer.store_lookup`: one path's provenance replaces the other's).
-2. **`rejoin` is not a mode's word, and the reader knows it.** The reader counts a Secret over a values stanza as the
-   stanza's own only when its `token-source` names the stanza's mode (reader.py:122-129); otherwise the Secret is a
-   `shadows-values-entry` finding and the merge serves it wholesale, dropping the stanza's policy (registry.py:99-102).
-   `writer.owned_by_mode` counts `rejoin` over a `saTokenLookup` stanza as its own too: the same token Secret, read by
-   a person. Every other combination answers as before.
-3. **The two names are separate on purpose.** `rejoined-by` is who the dashboard verified; `rejoin-account` is who the
-   remote signed in. They are usually the same person under the same name, and they need not be: the host's identity
-   provider and the remote's may spell one person differently.
+1. **Never `lookup-account`.** The daily ping reads that annotation for the account it logs in as with the fleet
+   password (poller.py:1734-1739, 1827; S4e now also requires a declaration). A Rejoin removes it, and a later lookup
+   removes the three Rejoin keys (`writer.store_lookup`: one path's provenance replaces the other's).
+2. **`rejoin` is not a mode's word.** `writer.owned_by_mode` counts `rejoin` over a `saTokenLookup` stanza as the
+   stanza's own, so the stanza keeps its policy and raises no `shadows-values-entry`. Every other case answers as
+   before.
+3. **Two names on purpose.** `rejoined-by` is who the dashboard verified; `rejoin-account` is who the remote signed
+   in. They can differ: two identity providers may spell one person differently.
 
 ### 3.6 The dialog
 
-**A static `<dialog>` outside `#main`, the `#ns-preview` pattern: the minute's repaint cannot touch what is typed, and
-nothing typed outlives the dialog.**
+**A static `<dialog>` outside `#main`, like `#ns-preview`: the minute's repaint cannot touch what is typed.**
 
 | part | what |
 |---|---|
-| where | `#rejoin-dialog`, next to `#ns-preview`, outside `#main`; opened with `showModal()`, so Escape, the focus trap and the backdrop are the platform's |
-| when the card offers it | a **Rejoin…** button in the card's action row, after Refresh, where the row is `rejoinable` and Refresh has answered `auth_failed` or `pending`; it stays while its own answer is shown. Absent, not disabled, for a reader below the tier or with writes off |
-| the words | "Rejoin `<name>`"; "Sign in to `<name>` as yourself. The dashboard logs in once to `<server>`, asks it whether you are a cluster administrator there, reads the poller's token, writes `gsd-cluster-<name>`, and signs that login out. **Your username and password are used for this one login and are not stored** — not in the Secret, not in a log line, not in this page." |
-| the two gates | "passed · 1 · this cluster, the host": you hold the cluster-admin tier here. "decided there · 2 · `<name>`, the remote": once you are signed in, it is asked the same question about you; if it says no, nothing is read or written, and this dashboard cannot override it |
-| the one-try warning | "One try per password. If this password is refused, the dashboard does not send it again, to any cluster, while it is the same password. A locked directory account answers HTTP 500, not 401, so trying again only locks it further." |
+| where | `#rejoin-dialog`, next to `#ns-preview`, opened with `showModal()` |
+| when the card offers it | a **Rejoin…** button after Refresh, where the row is `rejoinable` and Refresh answered `auth_failed` or `pending`; it stays while its own answer shows. Absent, not disabled, below the tier or with writes off |
+| the words | "Sign in to `<name>` as yourself…" then: "**Your password is used for this one login and is not saved by the dashboard.** The Secret records your username and who pressed Rejoin. Browser password managers may ignore the request not to save these fields." |
+| the two gates | "passed · 1 · this cluster, the host" and "decided there · 2 · `<name>`, the remote" |
+| the one-try warning | "**One try per password on this pod.** If this password is refused, this pod does not send it again, to any cluster, while it is the same password. A restarted pod or another replica does not know that, and can send it once more: press Refresh before you press Rejoin again. A locked directory account answers HTTP 500, not 401, so trying again only locks it further." |
 | the fields | username (`autocomplete="off"`, `autocapitalize="none"`, `spellcheck="false"`) and password (`type="password"`, `autocomplete="off"`), in no `<form>` |
-| a press | reads both fields, **empties the password field as the request leaves**, disables the button, and sends one `POST`; a press while one is out sends nothing, and so does a press with the field empty. Enter in the password field is a press |
-| the answer | on the card, under the Refresh line: "Rejoin: ● rejoined · `<at>` — the message", or the refusal's code; a success closes the dialog, a refusal keeps it open with its sentence and an empty password field. An answer that never arrives (a gateway timeout) says the Rejoin may have finished anyway, and to press Refresh before pressing Rejoin again |
-| clearing | both fields are cleared by Cancel and Escape, on `pagehide` (the back/forward cache keeps typed values), and by the idle sign-out, which closes the dialog before it blanks the page |
-| state | `view.clusterRejoin[<id>]` holds the answer only, never a username or a password, so the repaint redraws the card's button and line from it |
+| a press | reads both fields, empties the password field, disables the button, and sends one `POST` with `redirect: "error"`. A press while one is out sends nothing; so does one with a field empty. Enter in the password field is a press |
+| the answer | on the card: "Rejoin: ● `<outcome>` · `<at>` — the message". A success closes the dialog; a refusal keeps it open with an empty password field. No answer (a gateway timeout, a refused redirect) says the Rejoin may have finished, and to press Refresh first |
+| clearing | Cancel, Escape, `pagehide` and the idle sign-out clear both fields |
+| state | `view.clusterRejoin[<id>]` holds the answer only, never a username or a password |
 
-The mockup (`docs/design/cluster-reconnect-mock.png`) draws the fields `autocomplete="username"` and
-`"current-password"`; this spec uses `off` (§3.11, D4-14).
+`autocomplete="off"` asks; it cannot forbid. The HTML Standard lets a browser override it (Appendix A.4), so the
+dialog says so. The mockup drew `autocomplete="username"` and `"current-password"`; this spec uses `off` (D4-14).
 
-### 3.7 The redaction pin
+### 3.7 Where the password could land, and what keeps it out
 
-**#283's pin, carried to this path: plant every secret in play in every field the remote controls, then look for it
-everywhere the dashboard could keep or say something.**
+**The password crosses one TLS hop into the app and one into the remote's OAuth server. It is in no URL, log,
+store, answer or browser storage the dashboard controls.**
 
-`tests/test_cluster_rejoin.py#test_the_password_appears_on_one_header_and_nowhere_else` runs thirteen scenarios. In
-each, the remote plants the secrets in play at that point: the password and its Basic form from the authorize on,
-the login's token from the 302 on, and the token read from the read on. A value the dashboard has not been handed yet
-is not its secret to scrub, and is not planted.
-
-| scenario | where the remote plants them |
+| place | what keeps it out |
 |---|---|
-| `401`, `401-challenge` | the refusal's body; the `Www-Authenticate` realm |
-| `500` | a 500's body (a locked account's answer) |
-| `302-error` | the `Location` fragment's `error` |
-| `issuer` | the discovery document's `issuer`, as userinfo |
-| `review-reason`, `review-denied`, `review-500` | the review's `reason` and `evaluationError`; a 500's body |
-| `read-500`, `read-owner` | the token Secret's error body; its owner annotation |
-| `revoke-500` | the revoke's error body |
-| `write-echo` | the host's write refusal, which quotes the object it was sent |
-| `success` | nothing: the ordinary path |
+| a URL | no `<form>`; the password travels in a POST body |
+| a redirect | the credential fetch uses `redirect: "error"` |
+| the request logs | oauth-proxy's request log and Uvicorn's access log write the request line, never the body |
+| a 422 | `body: Any`, and the shape refused in fixed words |
+| an unexpected error | caught in the route: fixed words out, nothing of the error logged |
+| the app's lines and answers | every line and answer is scrubbed of the password, its Basic form, the login's token and the token read; free remote text at any length, because the emit helper skips values under four characters |
+| a failed revoke | the token read, or a refused read's, is handed to the login before the revoke runs |
+| the audit logs | the password is in a header, never the URI; the audit log is written at Metadata level |
+| the database, the Secret, the gate | Rejoin writes no row; the Secret holds the token read and the provenance; the gate holds 64 bits of SHA-256, in memory |
+| browser storage | the page stores only `gsd-mode` and `gsd-palette`; the fields are never copied into `view` |
+| the back/forward cache | the fields are cleared on `pagehide` |
+| a password manager | `autocomplete="off"` is a request a browser may ignore; the dialog says so |
 
-Then it asserts that none of the password, its Basic form and the login's token appears in the answer, any log line
-at DEBUG, any stored Secret, the credential gate, any finding, or the whole database dumped as SQL; that the token
-read appears nowhere but the Secret it belongs in; and that on the wire the password rides one header of one request:
-the authorize's `Authorization`.
+**The redaction pin** (`tests/test_cluster_rejoin.py#test_the_password_appears_on_one_header_and_nowhere_else`, #283's,
+carried) runs fourteen scenarios. In each, the fake remote plants every secret in play in every field it controls. The
+test then looks for them in the answer, every log line at DEBUG, every stored Secret, the gate, the findings and the
+whole database, and on the wire outside the one authorize's `Authorization` header.
 
-### 3.8 The budget over the system
+## 4. The decisions
 
-**Measured: one press presents the password at most once; a password the directory answered is not presented again by
-that pod; the fleet account is never used. A restart and a second replica each start with an empty gate, which is the
-stated scope, because nothing about a person's password is kept.**
+**Each is decided as recommended; the operator rules.** One line each: the choice, and why.
 
-The property, with its scope: *a Rejoin press sends the password in at most one authorize request, as the account the
-same request named, and never retries it; a pod does not send a password the directory answered for that account
-again until the pod restarts; nothing stores it; no fleet path presents the fleet password as the person, and the
-person never presents as a fleet account.* The unit is SPEC_S4c's: an authorize request on the wire, counted by the
-fake target. Each row is measured by the test named, from a fresh process; "outcomes" are the answers in order.
-
-| shape | authorize requests | outcomes | measured by |
+| # | decision | chosen, and why | declined alternative |
 |---|---|---|---|
-| one press, the right password | **1** | `rejoined` | `test_the_budget_over_the_system` |
-| a double click on the dialog's button | **1** | one request, one answer | `test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` |
-| a second press, the other tab or a script, while the first is out | **1** | the second answered `409`, nothing sent | `test_one_rejoin_at_a_time_in_this_process` |
-| two presses in turn, the right password | 2 | `rejoined`, `rejoined` | `test_the_budget_over_the_system`: each press presents once, and a success is not gated |
-| a 401, then the same password | **1** | `login-refused`, `login-refused` (not sent) | `test_the_budget_over_the_system` |
-| a 500 (a locked account), then the same password | **1** | `login-failed`, `login-refused` (not sent) | the same |
-| a timeout after the password was written, then the same | **1** | `login-failed`, `login-refused` (not sent) | the same |
-| a failure before the password was written, then again | 1 | `login-failed` (not sent), `rejoined` | `test_a_failure_before_the_password_is_written_is_tried_once_and_is_not_gated` |
-| a 401 on one cluster, then the same password on another | **1** | `login-refused`, `login-refused` (not sent) | `test_a_bound_failure_is_one_authorize_and_the_same_password_is_not_sent_again` |
-| a 401, then the right password | 2 | `login-refused`, `rejoined` | `test_the_budget_over_the_system` |
-| a 401, then the same password on a restarted pod | 2 | `login-refused`, `login-refused` | the same: **the scope** |
-| a 401, then the same password on a second replica | 2 | `login-refused`, `login-refused` | the same: **the scope** |
-| a restart mid-flight, after the password was written, then the same password | 2 | no answer (the pod died), then the new pod's own outcome | stated below: the gate dies with the pod; the restarted-pod row measures the new pod's side |
-| the daily ping after a Rejoin | 0 as the person | the ping presents only the fleet account's own pair | `test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` |
-| a fleet account's name typed into the dialog, in any capitalisation | 0 | `422 rejoin-fleet-account` | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value` |
-| a fleet account's name with a final newline, sent by a script | 0 | `422 rejoin-username-invalid` | the same |
+| D4-1 | the spec's name | `SPEC_D4_cluster_rejoin.md`: the next step of batch D | `SPEC_R1_rejoin.md`, the issue's placeholder |
+| D4-2 | which rows are rejoinable | Secret rows and `saTokenLookup` stanzas (§3.2): the epic's decision; `oauth` Secrets say a person supplies the credential | `userSelfLogin` rows: a token would replace the mode |
+| D4-3 | when the card offers it | after Refresh answers `auth_failed` or `pending`: diagnose first | always: invites a Rejoin that cannot help |
+| D4-4 | D8's question | the host's `visibility.clusterAdminSar`, by a `SelfSubjectAccessReview` with the login's token: one definition of cluster administrator, no grant | a fixed question, or a review by a ServiceAccount, which needs a grant |
+| D4-5 | D8's place | before the token read: a no reads nothing, and refuses a namespace `admin` of `group-sync-operator` | after the read: the token is already in hand |
+| D4-6 | retries | none (`ONE_TRY`): a person is waiting, and the next press is the retry | the fleet's five attempts: a minute and a half behind a 30 s router timeout |
+| D4-7 | where the gate lives | the poller's in-memory `CredentialGate`, per pod. **The exposure:** after a failure, a press on a restarted pod or another replica can send the password once more (2 at worst), and so can a proxy replaying a successful press to a second pod | a durable account hold keyed by the username, with no password fingerprint (Codex C2, Grok C2): it exists, and was declined by the operator for its operating cost — any failure would block that account's Rejoin on every pod until someone deleted the hold by hand, even after the right password |
+| D4-8 | what the gate records | every bound failure (401, 500, a timeout after the write, a 302 without a token), as #315 | only a 401: a locked account's 500 would be walked further |
+| D4-9 | the fleet account typed in | refused by name, casefolded, against the stripped and casefolded names of the chart's `fleetAccount.username`, every `ldapConnectionBootstrap` and every `lookup-account`; the shared grammar (`fullmatch` since #438) refuses a final newline | allowed: a person's retries would walk the account every cluster uses |
+| D4-10 | the provenance | `token-source: rejoin`, `rejoined-by`, `rejoin-account`, `rejoined-at`; no `lookup-account` (§3.5) | `lookup-account` for the person: the ping reads it |
+| D4-11 | the body | exactly `{username, password}`, strings, refused in fixed words; `body: Any`, so FastAPI never echoes it | a typed body: its 422 quotes the password |
+| D4-12 | concurrency | one Rejoin per process, `409` for the second, never queued: the gate's check and the login are then one step | per cluster: two clusters could both send one wrong password |
+| D4-13 | the Add form's `oauth` choice | unchanged, still refused: joining a new cluster by password is not this issue | build it here: a larger change with its own design |
+| D4-14 | the dialog's autofill | `autocomplete="off"`, which asks the browser not to remember the fields; the dialog says a password manager may ignore it | the mockup's `username`/`current-password`: invites saving a remote's password |
+| D4-15 | the answer's shape | `200 {outcome, message, at}` for every Rejoin that reached step 8, `rejoin-failed` included; HTTP errors before it | HTTP 4xx/5xx for the remote's refusals: the page could not tell them from the dashboard's |
+| D4-16 | `rejoinable` on each row | served by the route's own rule | the page computing it: two copies of one rule |
+| D4-17 | the log lines | #283's login lines with `rejoin_by=`; `cluster-rejoin-review` for D8 ("we log the response"); then `cluster-rejoined` or `cluster-rejoin-failed` | new names for the login lines: breaks #283's pinned vocabulary |
+| D4-18 | the lab walk's administrator | a named person with a disposable `cluster-admin` binding (Appendix D): `kubeadmin` is never a Logins row | `kubeadmin`: the Logins check fails by design |
 
-**The restart mid-flight, stated.** If the pod dies after the authorize request was written, the person's answer
-never arrives, and the in-memory gate dies with the pod. A press on the new pod sends the password once more: the
-"restarted pod" row. Whatever the remote minted is not revoked; its object is named by nobody. The runbook's §6 lists
-the person's own tokens and deletes it.
-
-**Can anything make one press run twice?** Each layer was read (§2.5). Only the browser resends a request it already
-wrote, and only when a reused connection closes before any response header. In this deployment the browser's peer is
-the router, which answers a failed backend with a status, so the resend needs the router itself to drop the connection
-mid-request. On the same pod the resend then meets the `409` while the first runs, and the gate after a bound failure;
-after a success it is one more successful login with a correct password, which counts toward no lockout. Not measured
-end to end.
-
-### 3.9 What must not change, and what holds each
-
-**Everything the brief lists is untouched in behaviour, and each has a test or a render that says so.**
+## 5. What must not change
 
 | must not change | held by |
 |---|---|
-| Refresh (#434): its route, probe, words and four states | `gsd/clusterconfig/writer.py#refresh` and the route are untouched; `tests/test_cluster_refresh.py` passes unchanged. One UI assertion changes, as SPEC_D3 §4 anticipated: on `auth_failed` the line now names Rejoin and the card draws its button; SPEC_D3's notes record it |
-| the credential gate | `gsd/fleetlookup.py#CredentialGate` is untouched; Rejoin calls `account_refusal` and `refuse` as the lookup does. `tests/test_credential_gate_account.py`, `test_credential_gate_diagnostics.py` and `test_credential_gate_docs.py` pass unchanged |
-| Epic C's ping and self-login | `gsd/poller.py`, `gsd/selflogin.py` and `gsd/fleetstate.py` are untouched; `tests/test_fleet_lifecycle.py` and `test_fleet_lifecycle_round3.py` pass unchanged; the ping never targets a rejoined Secret (§3.8) |
-| the lookup: its schedule, gate, provenance and refusals | `store` and `store_lookup` write the lookup's values byte for byte when `rejoin` is empty (`tests/test_fleet_lookup.py` R1 and R2 unchanged); `FleetLogin`'s three fleet texts are byte-identical (measured: the same driver against both trees, `cmp` equal) |
-| the dashboard ServiceAccount's permissions | no template changes. Rendered RBAC atoms (one verb on one resource, one subject on one role), before and after, for the default values, `environments/crc.yaml`, `environments/example-production.yaml` and `charts/group-sync-dashboard/example-production.yaml`, each with leader election on and off: **REMOVED 0, ADDED 0** in all eight (63 to 73 atoms each). Rejoin writes through the existing Secret write grant |
-| no feature removed, narrowed or deprecated | Rotate, Delete, Test, the Add form and its `oauth` refusal are untouched; their tests pass unchanged |
-| the read-only API contract | `test_r6_the_api_is_read_only` is unchanged; the carve-out list gains the one route, on purpose, as Refresh's did |
+| Refresh (#434) | `gsd/clusterconfig/writer.py#refresh` and its route are untouched; `tests/test_cluster_refresh.py` passes unchanged. One UI assertion changes, as SPEC_D3 §4 anticipated: on `auth_failed` the line now names Rejoin |
+| the credential gate | `gsd/fleetlookup.py#CredentialGate` is untouched; Rejoin calls `account_refusal` and `refuse`, as the lookup does |
+| Epic C's ping and self-login | `gsd/poller.py`, `gsd/selflogin.py` and `gsd/fleetstate.py` are untouched; their tests pass unchanged |
+| the lookup | `store` and `store_lookup` write the lookup's values byte for byte when `rejoin` is empty; `FleetLogin`'s fleet wording is byte-identical (Appendix C) |
+| the dashboard ServiceAccount's permissions | no template changes; the rendered RBAC is identical in all eight renders (Appendix C) |
+| every other feature | Rotate, Delete, Test, the Add form and its `oauth` refusal are untouched; nothing is removed, narrowed or deprecated |
+| the other writes' fetch | `apiSend` keeps `redirect: "follow"` for every call but Rejoin's |
 
-### 3.10 What is left, stated
+## 6. What is left, stated
 
-1. **The scope of the gate.** In memory, per pod: a restart or a second replica may send one wrong password once more
-   (§3.8). Closing it needs a durable record of a person's password, which "never stored" forbids (§3.11, D4-7).
-2. **A transient 500 holds a correct password back.** A 500 cannot be told from a locked account (the operator's
-   ruling on #325), so the gate holds that password until the pod restarts, even if the directory was only sick. The
-   runbook's §6 says so; a new password works at once.
-3. **Directory aliases and spellings.** The fleet-account refusal compares names stripped and casefolded, and refuses a
-   username ending in a newline (§3.1); one directory entry known by two names (a `uid` and a `mail`) is still not
-   recognised as the fleet account under its other name, SPEC_S4d's residual. The credential gate compares the
-   username as typed (#315's rule, `gsd/fleetlookup.py#CredentialGate`), so the same wrong password under another
-   capitalisation of the name is a new try, as a different password is.
-4. **A failed revoke leaves a full-scope token.** The answer and the `fleet-logout-failed` line name it; nothing sweeps
-   it (`CLUSTER_CREDENTIALS.md` §6, point 3).
-5. **The login lines keep #283's names.** A Rejoin's login lines read `fleet-login…`, because #283's closed vocabulary
-   is pinned by `tests/test_fleet_login.py`'s parse of the source; each carries `rejoin_by=<person>` and the person's
-   `account=`, and its refusal speaks to the person.
-6. **An identity provider without password challenges** (OpenID Connect, GitHub, Google) cannot be rejoined (§2.1).
-7. **The browser's resend** of a written request is not guarded beyond the lock and the gate (§3.8).
+1. **The gate's scope** (§2, D4-7): a restart, another replica or a replayed press can send a password once more.
+2. **A transient 500 holds a correct password back** in that pod until it restarts: a 500 cannot be told from a
+   locked account (the operator's ruling on #325). A new password works at once; the runbook says so.
+3. **Directory aliases and spellings.** One directory entry known by two names (a `uid` and a `mail`) is not
+   recognised as the fleet account under its other name (SPEC_S4d's residual). The gate compares the username as
+   typed (#315's rule), so another capitalisation of the same wrong password is a new try, as a different password is.
+4. **A failed revoke leaves a full-scope token.** The answer and the `fleet-logout-failed` line name it; nothing
+   sweeps it (`CLUSTER_CREDENTIALS.md` §6, point 3).
+5. **The login lines keep #283's names** (`fleet-login…`), pinned by `tests/test_fleet_login.py`; each carries
+   `rejoin_by=` and the person's `account=`.
+6. **An identity provider without password challenges** (OpenID Connect, GitHub, Google) cannot be rejoined.
+7. **The browser's resend** of a written request is not guarded beyond the lock and the gate (§2).
+8. **A password manager** may still offer to save what is typed (§3.6).
 
-### 3.11 The decisions the issue left open
-
-**Each is decided here as recommended, with the evidence; the operator rules.**
-
-| # | decision | recommended, and why | the alternative, and why not |
-|---|---|---|---|
-| D4-1 | the spec's name | `SPEC_D4_cluster_rejoin.md`, the brief's: the next step of batch D after SPEC_D3 | `SPEC_R1_rejoin.md`, the issue's placeholder |
-| D4-2 | which rows are rejoinable | Secret rows (a `bearerToken`, a `saTokenLookup` or an `oauth` declaration) and `saTokenLookup` stanzas (§3.2): the epic's decision, with `oauth` Secrets included because their declaration says a person supplies the credential | also `userSelfLogin` rows: a stored token would replace the declared mode |
-| D4-3 | when the card offers it | after Refresh answers `auth_failed` or `pending`, and while its own answer is shown: diagnose first, the runbook's §1. The server accepts any rejoinable row without a prior Refresh | always on every rejoinable card: invites a Rejoin that cannot help (`forbidden`, `unreachable`) |
-| D4-4 | D8's question | the host's own `visibility.clusterAdminSar`, asked by a `SelfSubjectAccessReview` with the login's token: one definition of cluster administrator, no grant, the person's own groups | a fixed `update clusterrolebindings`; or a `SubjectAccessReview` as the dashboard's remote ServiceAccount, which needs a grant and a group lookup |
-| D4-5 | D8's place | before the token read: a no reads nothing, and a namespace `admin` of `group-sync-operator` is refused although RBAC would let them read the Secret | after the read: the token is already in hand |
-| D4-6 | retries | none, not even a failure before the password was written (`ONE_TRY`): a person is waiting, and the next press is the retry | the fleet's five attempts: up to a minute and a half behind a 30 s router timeout |
-| D4-7 | where the gate lives | the poller's in-memory `CredentialGate`: nothing about a person's password is stored | the fleet account's Lease pattern: it would keep a fingerprint of a person's password where `cluster-reader` can read it, and its salt is the fleet password Secret's uid, which a person's password has no equivalent of |
-| D4-8 | what the gate records | every bound failure (401, 500, a timeout after the write, a 302 without a token), as #315; nothing for a success, a D8 no, a read or a write failure | only a 401: a locked account's 500 would be walked further |
-| D4-9 | the fleet account typed in | refused by name, stripped and casefolded, against the chart's `fleetAccount.username`, every stanza's `ldapConnectionBootstrap` and every Secret's `lookup-account`; a username ending in a newline is refused before that comparison, since a directory may read it as the name without it (§3.1) | allowed: a person's retries would walk the account every cluster authenticates with |
-| D4-10 | the provenance | `token-source: rejoin`, `rejoined-by`, `rejoin-account`, `rejoined-at`; `lookup-account` removed; the reader counts `rejoin` over a `saTokenLookup` stanza as its own (§3.5) | `token-source: remote-lookup` with the person in `lookup-account`: the daily ping would log in as the person with the fleet password |
-| D4-11 | the body | exactly `{username, password}`, strings; a username in the bootstrap grammar and not ending in a newline (RFC 7617: no colon, no control character); a password without a control character or an unpaired surrogate; unknown keys named, values never; `body: Any` so FastAPI never echoes it | a typed body: its 422 quotes a non-object body, password included |
-| D4-12 | concurrency | one Rejoin per process at a time, `409` for the second, never queued | per cluster, as Refresh: two clusters at once could both send one wrong password before either answer lands |
-| D4-13 | the Add form's `oauth` choice | unchanged, still refused: joining a new cluster with a password is not this issue; Rejoin needs a card that already names the server and its trust | build it here: a larger change with its own design |
-| D4-14 | the dialog's autofill | `autocomplete="off"`: the WHATWG meaning is "do not remember this value", which is what used once means; the page itself stores nothing either way | the mockup's `username`/`current-password`: invites the browser to save a remote cluster's password under the dashboard's origin |
-| D4-15 | the answer's shape | `200 {outcome, message, at}` for every Rejoin that reached the gate, as Refresh; HTTP errors for refusals before anything is sent | HTTP 4xx and 5xx for the remote's refusals: the page would have to tell the dashboard's refusals from the remote's |
-| D4-16 | `rejoinable` on each row | served by the route's own rule, so the page cannot offer Rejoin where the route refuses it | the page computing it from `source` and `credential`: two copies of one rule |
-| D4-17 | the log lines | #283's login lines as they are, with `rejoin_by=`; `cluster-rejoin-review` for D8's answer (the operator: "we log the response"), then `cluster-rejoined` or `cluster-rejoin-failed` | new names for the login lines: breaks #283's pinned vocabulary |
-| D4-18 | the lab walk's administrator | a named person given a disposable `cluster-admin` binding on the lab for the walk and removed after (§7): `kubeadmin`, the lab's only human cluster administrator today, is never a Logins row, so the Definition of Done's Logins check cannot pass with it | `kubeadmin`: the Logins check fails by design |
-
-## 4. The runbook
-
-**`charts/group-sync-dashboard/RUNBOOK.md`, beside `values.yaml` and `CLUSTER_CREDENTIALS.md`, in the house shape of
-`docs/RUNBOOK_backup_restore.md`: numbered operations, each a command and what its answer looks like.**
-
-The six sections are the ones the comment of 2026-09-23 lists, with what this spec measured:
-
-| § | the operation | what it adds beyond the comment |
-|---|---|---|
-| 1 | decide whether the connection is broken: Refresh, and the log line | the outcome table: `auth_failed` and `pending` lead to Rejoin; `forbidden`, `unreachable` and `cert-verify-failed` do not; `not-probed` is a session |
-| 2 | confirm the token on the remote before rejoining | present the stored token through your own remote context (`oc --context … whoami --token`), so the remote's CA comes from your kubeconfig; then the two things Rejoin needs there: `can-i update clusterrolebindings` and a live token Secret |
-| 3 | Rejoin from the UI | who (both gates), what it asks, what it does, and how to confirm: the Secret's annotations, the log lines, and the login in the remote's audit log |
-| 4 | when Rejoin is not the answer | a table of what each refusal means and what fixes it, `sa-token-secret-missing` and `not-cluster-admin` included |
-| 5 | the manual fallback | the comment's two-cluster `oc create token` + `oc patch`, keeping the Secret's own `tlsClientConfig`; that a TokenRequest token expires; the discovery cadence; no provenance |
-| 6 | what not to do | no repeated presses (a 500 is also a locked account); never the fleet account's password; after a lost answer or a restart, Refresh first, then list and delete your own leftover token |
-
-`docs/README.md` lists it under "Troubleshooting and runbooks", and the chart's README and `CLUSTER_CREDENTIALS.md`
-link to it. Its commands are fenced with `~~~` (orchestrator's notes). #285 has shipped, but SPEC_S4c §5 question 7's
-`oc annotate lease …` concerns the fleet account's Lease; Rejoin keeps nothing on a Lease, so the runbook needs no
-Lease step.
-
-## 5. The change, file by file
-
-**One new module, one new route, one dialog; four small changes to shared code, each byte-identical for its existing
-callers; the rest is tests and the documents that describe Rejoin.**
+## 7. The change, file by file
 
 | file | change | added | removed |
 |---|---|---|---|
-| `local-development/gsd/rejoin.py` | new: `RejoinLogin`, `refusal`, `fleet_accounts`, `check`, `question`, `question_words`, `remote_says_cluster_admin`, `rejoin` | +251 | −0 |
-| `local-development/gsd/fleetlogin.py` | `FleetLogin.REFUSED_ACTION` and `FleetLogin.NEXT_TRY`: the refusal and next-try wording as class attributes, byte-identical for the fleet | +11 | −8 |
-| `local-development/gsd/clusterconfig/writer.py` | `TOKEN_SOURCE_REJOIN`, the three Rejoin annotations, `owned_by_mode`, `CreateRequest.rejoin`; `store_lookup` takes `rejoin` and one path's provenance replaces the other's | +36 | −8 |
+| `local-development/gsd/rejoin.py` | new: `RejoinLogin`, `refusal`, `fleet_accounts`, `check`, `question`, `question_words`, `remote_says_cluster_admin`, `rejoin`, `stopped_unexpectedly` | +257 | −0 |
+| `local-development/gsd/fleetlogin.py` | `FleetLogin.REFUSED_ACTION` and `FleetLogin.NEXT_TRY`: the refusal and next-try words as class attributes, byte-identical for the fleet | +11 | −8 |
+| `local-development/gsd/clusterconfig/writer.py` | `TOKEN_SOURCE_REJOIN`, the three Rejoin annotations, `owned_by_mode`, `CreateRequest.rejoin`; `store_lookup` takes `rejoin` | +36 | −8 |
 | `local-development/gsd/clusterconfig/reader.py` | the "ours" rule through `owned_by_mode` | +2 | −3 |
 | `local-development/gsd/clusterconfig/registry.py` | the merge through `owned_by_mode` | +4 | −2 |
 | `local-development/gsd/fleetlookup.py` | `store` takes `rejoin` | +10 | −8 |
-| `local-development/gsd/api.py` | the route `rejoin_cluster_config` with its one-at-a-time lock; `rejoinable` on each live row | +47 | −1 |
-| `local-development/gsd/static/index.html` | the dialog; the card's Rejoin button and line; the Refresh line's next step; `openRejoin`, `closeRejoin`, `clearRejoin`, `sendRejoin`; the `pagehide` listener; `idleExpire` closes the dialog | +116 | −3 |
+| `local-development/gsd/api.py` | the route `rejoin_cluster_config`, its one-at-a-time lock and its catch for the unexpected; `rejoinable` on each live row | +48 | −1 |
+| `local-development/gsd/static/index.html` | the dialog; the card's Rejoin button and line; the Refresh line's next step; `openRejoin`, `closeRejoin`, `clearRejoin`, `sendRejoin`; `apiSend`'s `redirect` argument; the `pagehide` listener; `idleExpire` closes the dialog | +120 | −5 |
 | `local-development/gsd/static/app.css` | the dialog's width and its gates list | +6 | −0 |
-| `local-development/tests/test_cluster_rejoin.py` | new: §6 | +583 | −0 |
+| `local-development/tests/test_cluster_rejoin.py` | new: Appendix C | +645 | −0 |
 | `local-development/tests/test_api_contract.py` | the carve-out gains the route | +3 | −2 |
 | `local-development/tests/test_clusterconfig.py` | the pinned row gains `rejoinable` | +1 | −1 |
-| `local-development/tests/test_ui.py` | Refresh's `auth_failed` assertion names Rejoin; two dialog tests | +129 | −2 |
-| `charts/group-sync-dashboard/RUNBOOK.md` | new: §4 | +161 | −0 |
-| `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` | §4 names Rejoin; §5 describes it as built and links the runbook; its rules | +20 | −10 |
+| `local-development/tests/test_ui.py` | Refresh's `auth_failed` assertion names Rejoin; three Rejoin tests | +160 | −2 |
+| `charts/group-sync-dashboard/RUNBOOK.md` | new: Appendix B | +162 | −0 |
+| `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` | §4 names Rejoin; §5 describes it and links the runbook; its rules, with the gate's scope and what is stored | +25 | −12 |
 | `charts/group-sync-dashboard/README.md` | links the runbook | +2 | −1 |
-| `charts/group-sync-dashboard/values.yaml` | the `clusterAdminSar` comment: Rejoin is built, and the remote asks the same question (a comment only) | +2 | −1 |
+| `charts/group-sync-dashboard/values.yaml` | the `clusterAdminSar` comment: the remote asks the same question (a comment only) | +2 | −1 |
 | `docs/README.md` | lists the runbook | +1 | −0 |
-| `local-development/API.md` | `rejoinable`; the route; six write routes | +28 | −2 |
+| `local-development/API.md` | `rejoinable`; the route; six write routes | +29 | −2 |
 | `docs/DESIGN_remote_cluster_access.md` | D7 built, D8 directed and built; §7's text and twin | +17 | −16 |
-| `docs/diagrams/remote-cluster-access/source.html` | Figure 4 and the D8 card: Rejoin, D7 and D8 drawn as built | +14 | −13 |
+| `docs/diagrams/remote-cluster-access/source.html` | Figure 4 and the D8 card drawn as built | +14 | −13 |
 | `docs/specs/SPEC_D3_cluster_refresh.md` | a note: #316 builds the next step §4 names | +4 | −0 |
 | `docs/CHANGELOG.md` | the `## Unreleased` entry | +15 | −0 |
-| **total** | 23 files | **+1463** | **−81** |
+| **total** | 23 files | **+1574** | **−85** |
 
 Measured with `git diff --numstat` on the tree the blocks produce. Two steps the blocks cannot carry, both in the
 implementing commit:
 
-1. **The figure's PNGs.** Render the figure with the command below, from the repository root; then commit only
-   `joining-a-cluster.light.png` and `joining-a-cluster.dark.png` and restore the other six (renderer noise,
-   orchestrator's notes). Rendered and checked on the implemented copy: the Rejoin, D7 and D8 boxes solid, the legend
-   reading "Built: …", 375 px scroll width 375.
+1. **The figure's PNGs.** Render with the command below, from the repository root. Commit only
+   `joining-a-cluster.light.png` and `joining-a-cluster.dark.png`, and restore the other six (renderer noise).
 2. **The release commit's versions** (orchestrator's notes).
 
-The render command for step 1 (`render.py` needs all four figure names):
+The render command (`render.py` needs all four figure names):
 
     local-development/.venv/bin/python docs/diagrams/render.py docs/diagrams/remote-cluster-access/source.html \
       docs/diagrams/remote-cluster-access \
       policies-who-decides,inherit-vs-remote-sar-outcomes,remote-sar-decision-flow,joining-a-cluster
 
-## 6. Tests, before and after
+## Appendix A. Research and measurements
 
-**Sixty-four new or changed test cases fail before and pass after; one guard passes both ways on purpose; the existing
-suite is otherwise unchanged.**
+### A.1 The login, and what it leaves behind
 
-"Before" is `b18e62d` plus §8's four test blocks only; "after" is `b18e62d` with every block applied. Run from
-`local-development/` with `PYTHONPATH` set to that tree, `-p no:cacheprovider`, `PYTHONDONTWRITEBYTECODE=1` and a
-`--basetemp` in the scratch directory, with `gsd` imported from the tree under test (printed with each run).
+**`oc login -u … -p …` is one GET on the remote's OAuth server with Basic auth. It leaves one `OAuthAccessToken`, a
+full-scope token for that person, which must be revoked.**
+
+| source | what it says or shows |
+|---|---|
+| openshift-docs `270ee60`, modules/oauth-token-requests.adoc | lines 22-23: `openshift-challenging-client` "Requests tokens with a user-agent that can handle `WWW-Authenticate` challenges". Lines 37-44: every token request goes to `/oauth/authorize`. Lines 56-60: Basic challenges need a non-empty `X-CSRF-Token`. Lines 62-66: a provider without challenges needs a browser |
+| SPEC_S4a §2 (measured 2026-09-21) | the authorize GET is answered by a 302 whose `Location` fragment carries the token; its object is `sha256~` + base64url(sha256(the rest)); `DELETE …/useroauthaccesstokens/<name>` with the token as bearer answers 200 |
+| the lab, read-only, 2026-09-27 | `oauthclients/openshift-challenging-client`: `grantMethod: auto`, `respondWithChallenges: true`. `oauths/cluster`: `accessTokenMaxAgeSeconds: 31536000`; providers `developer` (HTPasswd) and `ldap-local` (LDAP). All 30 challenging-client tokens carry `scopes: [user:full]` and `expiresIn: 31536000` (counted at 17:43Z) |
+| OKD 4.20, "Managing user-owned OAuth access tokens" | `oc get useroauthaccesstokens` lists your own; `oc delete useroauthaccesstokens <name>` deletes one; "Token names are not sensitive and cannot be used to log in" |
+| the lab's RBAC | `system:openshift:useroauthaccesstoken-manager` is bound to `system:authenticated:oauth`: any person may list and delete their own tokens |
+
+### A.2 How the person's login reads the poller's token Secret
+
+- `gsd/fleetlookup.py#read_sa_token` (fleetlookup.py:272-339) GETs
+  `group-sync-operator/group-sync-dashboard-cluster-poller-token` with the session as bearer. It checks the type, the
+  owner annotation and the legacy-token cleaner's `invalid-since` label, and decodes the token first, so every refusal
+  carries it as a secret to scrub.
+- The lab, read-only: the Secret exists, `type: kubernetes.io/service-account-token`, annotated
+  `kubernetes.io/service-account.name: group-sync-dashboard-cluster-poller`, with `helm.sh/resource-policy: keep`.
+- A cluster administrator may `get` it, and so may an `admin` of `group-sync-operator` who is not one
+  (`docs/DESIGN_remote_cluster_access.md` §5). D8 is the stricter gate, and it runs first.
+
+### A.3 D8: one SelfSubjectAccessReview, with the login's own token
+
+| source | what it says or shows |
+|---|---|
+| kubernetes/website `ce7891d`, content/en/docs/reference/access-authn-authz/authorization.md | lines 403-405: `kubectl auth can-i` "uses the `SelfSubjectAccessReview` API". Lines 469-500: the answer is the object's `status` |
+| kubernetes/kubernetes `6c1c770`, staging/src/k8s.io/api/authorization/v1/types.go | lines 56-58: "users should always be able to check whether they can perform an action". Lines 258-276: `status` carries `allowed`, `denied`, `reason`, `evaluationError` |
+| the lab: who may ask | `create selfsubjectaccessreviews` reaches `system:authenticated` (`basic-users`, `self-access-reviewers`, `system:basic-user`): no grant needed |
+| the lab: the exchange | asked `update clusterrolebindings.rbac.authorization.k8s.io`, answered `allowed: true` with an RBAC reason; `get` answers `MethodNotAllowed`: nothing kept |
+| the lab: who passes | `oc adm policy who-can update clusterrolebindings.rbac.authorization.k8s.io`: `kubeadmin`, `system:cluster-admins`, `system:masters` and system ServiceAccounts |
+
+The question is built as the host's `TierResolver` builds it (kube.py:1481-1495).
+
+### A.4 Where the password could land: the sources
+
+| place | source |
+|---|---|
+| a typed body's 422 | measured with FastAPI 0.141.1 and pydantic 2.13.5: a typed `dict` echoed `"input": "<the password>"` for a JSON string and a list; `Any` does not (also Grok C3, Codex C3) |
+| a key equal to the password | measured on the implemented copy before the fix: `_reject_unknown` named the key in the 422 (Codex C3) |
+| an unexpected error | Uvicorn 0.53.0 logs an exception that leaves the app with its traceback: `self.logger.error(msg, exc_info=exc)` in `run_asgi` (uvicorn/protocols/http/h11_impl.py lines 414-416); measured: before the fix the route answered 500 |
+| a short password | `gsd/clusterconfig/events.py#redact` skips a secret shorter than `_MIN_SECRET` (4); measured before the fix: a three-character password in D8's reason or error reached the review and failure lines |
+| a refused read, then a failed revoke | measured before the fix: the token read reached `fleet-logout-failed` |
+| the request logs | oauth-proxy's `-request-logging` (`values.yaml`, `requestLogging`) and Uvicorn's access format (uvicorn 0.53.0, config.py:94) write the request line only |
+| the usage record | the activity middleware records the user and the email (api.py:939-942) |
+| the audit logs | openshift-docs `270ee60`, modules/nodes-nodes-audit-config-about.adoc lines 35, 61-63: Metadata level, never headers |
+| browser storage | index.html:16 and 82: only `gsd-mode` and `gsd-palette` |
+| the back/forward cache | the page is served `Cache-Control: no-cache, must-revalidate`, not `no-store` (api.py:3231) |
+| autofill | WHATWG HTML, "Autofilling form controls: the autocomplete attribute" and its processing model: `off` means "do not remember", and a user agent may still override it |
+
+### A.5 Can one press run twice? Each layer
+
+| layer | does it replay a POST it already sent? | source |
+|---|---|---|
+| the page | no: one request per press, the password field emptied as it leaves, redirects refused | §3.6, measured (Appendix C) |
+| the browser (Chromium) | **yes, in one case**: a reused keep-alive connection that closes before any response header | chromium/src `71467d7`, net/http/http_network_transaction.cc lines 2103-2166 and 2331-2339 |
+| the OpenShift router (HAProxy) | no: `retry-on` defaults to `conn-failure`, and the router's template sets none; a failed backend is answered 502 or 504 | HAProxy v2.8.0, doc/configuration.txt lines 375-400 and 11264-11344; openshift/router `6c5868c`, haproxy-config.template lines 164-170 and 652-693 |
+| oauth-proxy (Go's `http.Transport`) | no: a written request is replayed only when idempotent or carrying `Idempotency-Key` | golang/go `2ff5743`, src/net/http/transport.go lines 836-881, request.go lines 1557-1571 |
+| the app | no: one Rejoin per process, the second `409` | §3.1, measured |
+| the login | no: `ONE_TRY` | §3.3, measured |
+
+### A.6 The code reused, at `3cbc4e3`
+
+| piece | where | reused as is, or changed |
+|---|---|---|
+| `FleetLogin` | fleetlogin.py:309-744 | reused: the flow, `policy=`, the revoke on exit (366-372), `add_secrets` (374-376). Its refusal and next-try words (718-744) speak to the fleet, so they become class attributes a subclass restates, byte-identical for the fleet |
+| `CredentialGate` | fleetlookup.py:102-177 | reused: `account_refusal` (152) before the login, `refuse` (171) after a bound failure; never `spend` |
+| `read_sa_token` | fleetlookup.py:272-339 | reused; its `action` names the fleet account, so Rejoin writes the person's sentence |
+| `store`, `writer.store_lookup` | fleetlookup.py:360-391, writer.py:331-374 | changed: both take the Rejoin's provenance; the lookup's values are unchanged |
+| the "ours" rule | reader.py:122-129, registry.py:99-102 | changed: through `writer.owned_by_mode` |
+| the daily ping's targets | poller.py:1734-1739, 1827 | unchanged (§3.5 rule 1) |
+| the Add form's `oauth` refusal | writer.py:182-183 | unchanged (D4-13) |
+| the writes gate, the Refresh route's pattern | api.py:1180-1199, 1346-1368 | reused |
+| `apiSend` | index.html, `apiSend` | gains a `redirect` argument, `"follow"` by default |
+| the static dialog | index.html:132-146 (`#ns-preview`) | the pattern Rejoin's dialog follows |
+
+### A.7 The review's measurements (2026-09-27)
+
+- **A 307 in front of the dashboard forwards the password** (Chromium through Playwright 1.63.0, `probe_redirect.py`
+  in the scratch record): a fetch POST answered 307 with `redirect: "follow"` re-sent `{"password":"Adm1n-pw"}` to the
+  Location; with `redirect: "error"` nothing was sent there.
+- **The four disclosures** each failed on the implemented copy before its fix and passed after: the cases named in
+  Appendix C, and the mutants that revert each fix.
+- **The shapes the reviewers measured** (Grok's `probe_c1_c4.py`, Codex's adversarial suite) are the new rows of §2,
+  measured again by `test_the_budget_over_the_system`.
+
+## Appendix B. The runbook
+
+**`charts/group-sync-dashboard/RUNBOOK.md`, beside `values.yaml` and `CLUSTER_CREDENTIALS.md`: numbered operations,
+each a command and what its answer looks like.** Its six sections are the ones the comment of 2026-09-23 lists:
+
+| § | the operation | what it adds |
+|---|---|---|
+| 1 | decide whether the connection is broken: Refresh, and the log line | `auth_failed` and `pending` lead to Rejoin; `forbidden`, `unreachable` and `cert-verify-failed` do not |
+| 2 | confirm the token on the remote | the stored token through your own remote context; `can-i update clusterrolebindings`; a live token Secret |
+| 3 | Rejoin from the UI | who, what it asks, what it does, and how to confirm: the annotations, the lines, the remote's audit log |
+| 4 | when Rejoin is not the answer | what each refusal means and what fixes it |
+| 5 | the manual fallback | the two-cluster `oc create token` + `oc patch`, keeping the Secret's `tlsClientConfig` |
+| 6 | what not to do | no repeated presses; the scope (a restarted pod or another replica can send once more); never the fleet account's password; after a lost answer, Refresh first, then delete your own leftover token |
+
+`docs/README.md` lists it, and the chart's README and `CLUSTER_CREDENTIALS.md` link to it.
+
+## Appendix C. Tests, before and after
+
+**What was measured, and where.** Every count below is from `pytest` run from `local-development/` of the named tree,
+with `PYTHONPATH` set to that tree (`gsd.__file__` printed with each run), `-p no:cacheprovider`,
+`PYTHONDONTWRITEBYTECODE=1` and a `--basetemp` in the scratch directory. The remote is a fake (`httpx.MockTransport`);
+the page runs in Chromium through Playwright; nothing touched a cluster.
+
+| tree | what it is |
+|---|---|
+| **before** | `3cbc4e3` plus Appendix E's blocks for the four test files only |
+| **after** | `3cbc4e3` with every block applied |
+| **implemented, without a fix** | the after tree with one fix reverted: the review's red runs and the mutants |
+
+**The new and changed tests.** "Before" is the first error each raised on the before tree, as measured; "after" is
+the after tree.
 
 | what it proves | test (`local-development/tests/…`) | before | after |
 |---|---|---|---|
-| the exchange: the wire in order, one authorize as the person, D8 with the login's token, the in-place write and its provenance, no `lookup-account`, the fleet password never read, the lines | `test_cluster_rejoin.py::test_a_secret_row_is_rejoined_in_place_with_the_persons_provenance` | FAILED `{"detail":"Not Found"}`: the route does not exist | passed |
-| a lookup-written Secret loses `lookup-account` and keeps `managed-by` | `…::test_a_lookup_written_secret_rejoined_drops_lookup_account_and_keeps_who_made_it` | FAILED `KeyError: 'outcome'` | passed |
-| a pending `saTokenLookup` stanza: created with the stanza's policy, `managed-by: ui`, and discovery counts it as the stanza's own | `…::test_a_pending_satokenlookup_stanza_is_created_and_counted_as_the_lookups_own` | FAILED `Not Found` | passed |
-| #432 read forward: the daily ping never presents the fleet password as the person who rejoined | `…::test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` | FAILED `KeyError: 'outcome'` | passed |
-| the body is `{username, password}` and nothing else; no refusal echoes the password (seven shapes) | `…::test_the_body_is_username_and_password_and_nothing_else` | FAILED ×7 `Not Found` | passed ×7 |
-| each refusal before the wire sends nothing and repeats no value: four rows (the host, a values entry, `userSelfLogin`, a ConfigMap's); three username shapes (a colon, a space, the fleet account's name with a final newline); four fleet-account names (the chart's in another capitalisation, a stanza's, a Secret's `lookup-account`, one recorded with a final newline); three password shapes | `…::test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value` | FAILED ×14 `Not Found` | passed ×14 |
-| below the cluster-admin tier, and without an identity: `403`, nothing sent | `…::test_below_the_cluster_admin_tier_is_403_and_nothing_is_sent` | FAILED `assert 404 == 403` | passed |
-| an unknown or retired name: `404` naming it | `…::test_an_unknown_or_retired_name_is_404_and_nothing_is_sent` | FAILED: the `404` does not name it | passed |
-| no poller, no gate, no login | `…::test_no_poller_means_no_gate_and_no_login` | FAILED `assert 404 == 409` | passed |
-| writes off: the route does not exist | `…::test_with_the_writes_switch_off_the_route_does_not_exist` | passed | passed: a guard, true both ways |
-| a bound failure (401, 500, a read timeout after the write) is one authorize; the same password is not sent again, to another cluster either; a different password is | `…::test_a_bound_failure_is_one_authorize_and_the_same_password_is_not_sent_again` | FAILED ×3 `KeyError: 'outcome'` | passed ×3 |
-| a failure before the password is written: one request, no retry, not gated | `…::test_a_failure_before_the_password_is_written_is_tried_once_and_is_not_gated` | FAILED `KeyError: 'outcome'` | passed |
-| D8's no: nothing read or written, the login revoked, the answer logged, the gate untouched | `…::test_the_remote_says_no_so_nothing_is_read_or_written_and_the_login_is_revoked` | FAILED `KeyError: 'outcome'` | passed |
-| a review that does not answer (403, 500, no status, a string `"true"`, a timeout) is a refusal, never a yes | `…::test_a_review_that_does_not_answer_is_a_refusal_never_a_yes` | FAILED ×5 `KeyError: 'outcome'` | passed ×5 |
-| D8 asks the host's configured question | `…::test_the_review_asks_the_configured_cluster_admin_question` | FAILED `IndexError`: no review was asked | passed |
-| a token read refusal (404, 403, invalidated) writes nothing and revokes the login | `…::test_a_token_read_refusal_writes_nothing_and_revokes_the_login` | FAILED ×3 `KeyError: 'outcome'` | passed ×3 |
-| a refused write stores nothing and says so | `…::test_a_refused_write_stores_nothing_and_says_so` | FAILED `KeyError: 'outcome'` | passed |
-| one Rejoin at a time in a process | `…::test_one_rejoin_at_a_time_in_this_process` | FAILED: the first login never started | passed |
-| the redaction pin (§3.7), thirteen scenarios | `…::test_the_password_appears_on_one_header_and_nowhere_else` | FAILED ×13 `Not Found` | passed ×13 |
-| the budget over the system (§3.8) | `…::test_the_budget_over_the_system` | FAILED `KeyError: 'outcome'` | passed |
-| the runbook beside the values, six sections, linked from `docs/` and the chart's README | `…::test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it` | FAILED `FileNotFoundError` | passed |
-| the carve-out, exact: six write routes | `test_api_contract.py::test_r6_the_only_writes_are_the_cluster_secret_routes_and_only_when_switched_on` | FAILED: five routes | passed |
-| the pinned row shape gains `rejoinable` | `test_clusterconfig.py::TestApi::test_the_payload_shape_the_tier_and_the_findings` | FAILED: no `rejoinable` | passed |
-| Refresh's `auth_failed` line names Rejoin and the card draws it | `test_ui.py::TestClusterConfigPage::test_refresh_shows_four_states_that_survive_a_repaint_with_one_probe_in_flight` | FAILED: "Next step: Rejoin (#316), not built yet" | passed |
-| the dialog: offered only where accepted and only after a refused Refresh; static and outside `#main`; no form; `autocomplete="off"`; survives a real repaint; fits 375 px; Cancel and Escape clear it; absent with writes off | `…::test_rejoin_is_offered_after_a_refused_refresh_and_its_dialog_keeps_what_is_typed` | FAILED: no Rejoin button (a 30 s wait) | passed |
-| one press, one request, the password once; emptied as it leaves; a refusal keeps the dialog, a success closes it; nothing in storage, the URL or `view`; `pagehide` and the idle sign-out clear it | `…::test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` | FAILED `ModuleNotFoundError`: no `gsd.rejoin` | passed |
+| the exchange: the wire in order, one authorize as the person, D8 with the login's token, the in-place write and its provenance, no `lookup-account`, the fleet password never read, the lines | `test_cluster_rejoin.py::test_a_secret_row_is_rejoined_in_place_with_the_persons_provenance` | `AssertionError` `{"detail":"Not Found"}`: no route | passed |
+| a lookup-written Secret loses `lookup-account` and keeps `managed-by` | `…::test_a_lookup_written_secret_rejoined_drops_lookup_account_and_keeps_who_made_it` | `KeyError: 'outcome'` | passed |
+| a pending `saTokenLookup` stanza: created with its policy, and counted as the stanza's own | `…::test_a_pending_satokenlookup_stanza_is_created_and_counted_as_the_lookups_own` | `AssertionError` `Not Found` | passed |
+| the daily ping never presents the fleet password as the person who rejoined | `…::test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` | `KeyError: 'outcome'` | passed |
+| the body is `{username, password}` and nothing else, and no refusal echoes the password — a key equal to the password included (eight shapes) | `…::test_the_body_is_username_and_password_and_nothing_else` | ×8 `AssertionError` `Not Found` | ×8 passed |
+| each refusal before the wire sends nothing and repeats no value: four rows, three username shapes (one the fleet name with a final newline), four fleet-account names (one recorded with a final newline), three password shapes | `…::test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value` | ×14 `AssertionError` `Not Found` | ×14 passed |
+| below the cluster-admin tier, and without an identity: `403`, nothing sent | `…::test_below_the_cluster_admin_tier_is_403_and_nothing_is_sent` | `assert 404 == 403` | passed |
+| an unknown or retired name: `404` naming it | `…::test_an_unknown_or_retired_name_is_404_and_nothing_is_sent` | `AssertionError` `Not Found` | passed |
+| no poller, no gate, no login | `…::test_no_poller_means_no_gate_and_no_login` | `assert 404 == 409` | passed |
+| writes off: the route does not exist | `…::test_with_the_writes_switch_off_the_route_does_not_exist` | passed: a guard, true both ways | passed |
+| a bound failure (401, 500, a read timeout after the write) is one authorize; the same password is not sent again, to another cluster either; a different one is | `…::test_a_bound_failure_is_one_authorize_and_the_same_password_is_not_sent_again` | ×3 `KeyError: 'outcome'` | ×3 passed |
+| a failure before the password is written: one request, no retry, not gated | `…::test_a_failure_before_the_password_is_written_is_tried_once_and_is_not_gated` | `KeyError: 'outcome'` | passed |
+| D8's no: nothing read or written, the login revoked, the answer logged, the gate untouched | `…::test_the_remote_says_no_so_nothing_is_read_or_written_and_the_login_is_revoked` | `KeyError: 'outcome'` | passed |
+| a review that does not answer (403, 500, no status, a string `"true"`, a timeout) is a refusal | `…::test_a_review_that_does_not_answer_is_a_refusal_never_a_yes` | ×5 `KeyError: 'outcome'` | ×5 passed |
+| D8 asks the host's configured question | `…::test_the_review_asks_the_configured_cluster_admin_question` | `IndexError`: no review was asked | passed |
+| a token read refusal (404, 403, invalidated) writes nothing and revokes the login | `…::test_a_token_read_refusal_writes_nothing_and_revokes_the_login` | ×3 `KeyError: 'outcome'` | ×3 passed |
+| a refused write stores nothing and says so | `…::test_a_refused_write_stores_nothing_and_says_so` | `KeyError: 'outcome'` | passed |
+| one Rejoin at a time in a process | `…::test_one_rejoin_at_a_time_in_this_process` | `AssertionError`: the first login never started | passed |
+| the redaction pin, fourteen scenarios, a refused read followed by a failed revoke among them | `…::test_the_password_appears_on_one_header_and_nowhere_else` | ×14 `AssertionError` `Not Found` | ×14 passed |
+| a three-character password echoed by D8 (allowed, denied, a 500) reaches no line | `…::test_short_password_echo_in_review_is_not_logged` | ×3 `assert 404 == 200` | ×3 passed |
+| an unexpected error inside the exchange: fixed words out, nothing of it logged, the login still revoked | `…::test_unexpected_exception_cannot_escape_with_secrets` | `ModuleNotFoundError: gsd.rejoin` | passed |
+| the dialog promises only what the dashboard controls, and states the gate's scope | `…::test_dialog_does_not_promise_to_control_password_managers` | `ValueError`: no dialog in the page | passed |
+| the budget over the system (§2), twelve shapes | `…::test_the_budget_over_the_system` | `KeyError: 'outcome'` | passed |
+| the runbook beside the values, six sections, linked | `…::test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it` | `FileNotFoundError` | passed |
+| the carve-out, exact: six write routes | `test_api_contract.py::test_r6_the_only_writes_are_the_cluster_secret_routes_and_only_when_switched_on` | `AssertionError`: five routes | passed |
+| the pinned row shape gains `rejoinable` | `test_clusterconfig.py::TestApi::test_the_payload_shape_the_tier_and_the_findings` | `AssertionError`: no `rejoinable` | passed |
+| Refresh's `auth_failed` line names Rejoin and the card draws it | `test_ui.py::TestClusterConfigPage::test_refresh_shows_four_states_that_survive_a_repaint_with_one_probe_in_flight` | `AssertionError`: the line said "Rejoin (#316), not built yet" | passed |
+| the dialog: offered only where accepted and only after a refused Refresh; static, outside `#main`; no form; survives a repaint; fits 375 px; Cancel and Escape clear it; absent with writes off | `…::test_rejoin_is_offered_after_a_refused_refresh_and_its_dialog_keeps_what_is_typed` | `TimeoutError`: no Rejoin button in 30 s | passed |
+| one press, one request, the password once; emptied as it leaves; nothing in storage, the URL or `view`; `pagehide` and the idle sign-out clear it | `…::test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` | `ModuleNotFoundError: gsd.rejoin` | passed |
+| a 307 in front of the dashboard carries nothing on; one POST per press | `…::test_fetch_refuses_redirects_and_submits_once` | `TimeoutError`: no Rejoin button in 30 s | passed |
 
-The new and changed tests alone (`tests/test_cluster_rejoin.py`, `tests/test_api_contract.py`,
-`tests/test_clusterconfig.py` and the three `TestClusterConfigPage` tests above): before, `64 failed, 84 passed`,
-the 84 being those files' other cases and the writes-off guard; after, `148 passed`. Each failure is the one the
-table names.
+**The review's fixes, red and green on the implemented tree.** The before tree cannot show why a fix is needed,
+because it has no route at all. So each fix was also measured on the implemented copy: its test failed without the
+fix and passed with it, and the mutant that reverts it is caught.
 
-**The whole suite**, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included, on each proof tree:
+| fix | the test's failure without the fix (measured) | mutant |
+|---|---|---|
+| (a) the shape refused in fixed words | `test_the_body_is_username_and_password_and_nothing_else[password-as-key]`: the 422 named the key, the password | caught |
+| (b) the route's catch for the unexpected | `test_unexpected_exception_cannot_escape_with_secrets`: `assert 500 == 200` | caught |
+| (c) D8's text scrubbed at any length | `test_short_password_echo_in_review_is_not_logged[allowed, denied, review-500]`: `xyZ` in the review and failure lines | caught, one mutant per line (c1, c2) |
+| (d) the refused read's secrets handed to the login | `test_the_password_appears_on_one_header_and_nowhere_else[read-refused-revoke-500]`: the token read in `fleet-logout-failed` | caught |
+| (e) `redirect: "error"` | `test_fetch_refuses_redirects_and_submits_once`: "the 307 carried the password on" | caught |
+| the honest dialog words | `test_dialog_does_not_promise_to_control_password_managers`: `password managers may ignore` absent | — |
 
-| tree | result |
-|---|---|
-| before | `64 failed, 6121 passed, 19 skipped, 4 deselected in 528.24s`: the 64 are the table's, each for its reason |
-| after | `6192 passed, 19 skipped, 4 deselected in 490.46s` |
+**The totals.**
 
-The after tree collects seven cases more than the before tree, each parametrized over something the other blocks
-add: `rejoin.py` in three module scans (`test_no_duplicate_methods.py`, and `test_storage_seam.py` twice),
-`RUNBOOK.md` in `test_docs_diagrams.py`'s fence check, and the three citations the documents gain
-(`test_docs_citations.py`). Measured by diffing the two trees' `--collect-only` lists: every other difference is a
-citation's line number.
+| run | before | after |
+|---|---|---|
+| the new and changed tests alone | `72 failed, 84 passed in 79.82s`: the 84 are those files' other cases and the writes-off guard | `156 passed in 10.53s` |
+| the whole suite, `pytest tests/ -q --deselect tests/test_live_smoke.py`, browser tests included | `72 failed, 6175 passed, 25 skipped, 4 deselected in 565.59s` | `6260 passed, 19 skipped, 4 deselected in 494.81s` |
 
-**The blocks**, on a clean clone of `b18e62d`: `python3 local-development/apply-spec-blocks.py <this spec> . --apply`
-reports "69 blocks check out across 23 files", and the applied tree equals the implemented copy byte for byte in all
-23 files.
+The whole before-suite fails exactly the 72 of the table: the two lists of `FAILED` lines compare equal. The after
+tree collects seven cases more, each parametrized over something the other blocks add: `rejoin.py` in three module
+scans, `RUNBOOK.md` in the fence check, and three citations the documents gain. The before tree skips six citations
+more: the spec as committed at `3cbc4e3` cites `gsd/rejoin.py` six times, and the before tree lacks the file. Both
+measured, by diffing the two trees' `--collect-only` lists and the citation test's skip reasons. The whole-suite runs
+carried that spec. This revision's own citations and index row pass on the branch with this spec alone
+(`1629 passed, 23 skipped`, the five documentation test files) and on the after tree (`test_docs_citations.py` and
+`test_specs_index.py`: `1267 passed, 15 skipped`).
 
-**`FleetLogin`'s fleet wording is byte-identical.** One driver emits its three caller-facing texts (a refusal, a
-terminal answer, a give-up after five attempts) against `b18e62d` and against the applied tree; the two outputs, seven
-lines each, compare equal with `cmp`.
+**The blocks.** On a clean clone of `3cbc4e3`, `apply-spec-blocks.py` reports "70 blocks check out across 23 files",
+and the applied tree equals the implemented copy byte for byte in all 23 files.
 
-**Every design decision is held by a test.** Each was reverted in a copy of the implemented tree and its tests run
-against the mutant; all fourteen were caught:
+**Every design decision and every fix is held by a test.** Each was reverted in its own copy of the implemented tree
+and its tests run against the mutant: all nineteen were caught.
 
-| reverted decision | caught by |
+| reverted | caught by |
 |---|---|
 | the person written into `lookup-account`, under the lookup's `token-source` | `test_the_daily_ping_never_logs_in_as_the_person_who_rejoined` |
 | a Rejoin over a `saTokenLookup` stanza counted as a shadow | `test_a_pending_satokenlookup_stanza_is_created_and_counted_as_the_lookups_own` |
@@ -628,57 +613,68 @@ against the mutant; all fourteen were caught:
 | a typed body | `test_the_body_is_username_and_password_and_nothing_else[string]` |
 | no one-at-a-time lock | `test_one_rejoin_at_a_time_in_this_process` |
 | a fleet account's name accepted | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value[…SVC-GSD-Fleet…]` |
-| a username ending in a newline accepted | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value[…SVC-GSD-Fleet\n…]` |
 | the fleet names compared unstripped | `test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value[…padded-account…]` |
+| (a) an unknown key named in the 422 | `test_the_body_is_username_and_password_and_nothing_else[password-as-key]` |
+| (b) an unexpected error leaves the route | `test_unexpected_exception_cannot_escape_with_secrets` |
+| (c1) D8's reason logged as the remote wrote it | `test_short_password_echo_in_review_is_not_logged[allowed]` |
+| (c2) a failure's evidence logged as the remote wrote it | `test_short_password_echo_in_review_is_not_logged[denied]` |
+| (d) a refused read's token not handed to the login | `test_the_password_appears_on_one_header_and_nowhere_else[read-refused-revoke-500]` |
+| (e) the credential fetch follows redirects | `test_fetch_refuses_redirects_and_submits_once` |
 | the token read not handed to the login's scrub | `test_the_password_appears_on_one_header_and_nowhere_else[revoke-500]` |
-| the password field kept after the press | `test_ui.py::…::test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` |
+| the password field kept after the press | `test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere` |
 | no clearing on `pagehide` | the same |
 
-**RBAC.** Rendered before and after (§3.9): REMOVED 0, ADDED 0 in all eight renders.
+**RBAC.** Rendered from `3cbc4e3` and from the after tree, for the default values, `environments/crc.yaml`,
+`environments/example-production.yaml` and `charts/group-sync-dashboard/example-production.yaml`, each with leader
+election on and off: REMOVED 0, ADDED 0 in all eight (63 to 73 atoms each).
 
-## 7. On the lab, for the implementing pull request
+**`FleetLogin`'s fleet words are byte-identical.** One driver emits its three caller-facing texts (a refusal, a
+terminal answer, a give-up after five attempts) against `3cbc4e3` and against the after tree: seven lines, 855 bytes
+each, and `cmp` finds them equal.
+
+**Not measured:** the browser's resend of a written request (§2); a real back/forward restore; what a password manager
+does with the dialog; the lab walk (Appendix D).
+
+## Appendix D. On the lab, for the implementing pull request
 
 **Break a throwaway entry, repair it with Rejoin as a named person, and prove the budget on the lab's own audit log.
-`shared-qa` is never touched and nobody logs in as the fleet account.**
+`shared-qa` is never touched, and nobody logs in as the fleet account.**
 
-The walk runs on the deployed PR head (`local-development/release-crc.sh`), read through the route and the pod.
-Before and after: the `group-sync-dashboard-data` and `-report-artifacts` PVC UIDs.
+The walk runs on the deployed PR head (`local-development/release-crc.sh`). Record the `group-sync-dashboard-data` and
+`-report-artifacts` PVC UIDs before and after.
 
 0. **Baseline, read-only.** `gsd-cluster-shared-qa`'s `resourceVersion`; the fleet account's Lease as JSON and its
-   `openshift-challenging-client` token count (2 on 2026-09-27, the pre-existing pair); the walker's own token count;
-   the start instant for the oauth-server audit log.
-1. **The walker.** `kubeadmin` is the only person who passes D8 on the lab today (§2.3), and its logins are never a
-   Logins row (`gsd/auditlog.py#SYSTEM_NAMES`). So a named person gets a disposable binding, removed in step 7:
-   `oc create clusterrolebinding rejoin-walk-cluster-admin --clusterrole=cluster-admin --user=<walker>` (D4-18). The
-   walker must not be named by any fleet path (D4-9).
-2. **The throwaway entry.** On the tab's Add form, `rejoin-walk` at `https://api.crc.testing:6443`, trusted bundle, with
-   a deliberately wrong token of eight or more characters. The card polls `auth_failed`; #314's warning names it beside
-   `shared-qa` and `shared-rnd` (one URL, by design).
-3. **Refresh, then Rejoin.** Refresh answers `auth_failed` and the card offers **Rejoin…**. Rejoin as the walker. Expect
-   `rejoined`; Refresh then answers `connected`, and the card's `connection` row turns `ok` at the next poll.
-4. **The evidence.** The Secret's annotations (`token-source: rejoin`, `rejoined-by`, `rejoin-account`, `rejoined-at`,
-   no `lookup-account`); the log lines `fleet-login … rejoin_by=…`, then `cluster-rejoin-review … allowed=true` with
-   the remote's reason naming the ClusterRoleBinding `rejoin-walk-cluster-admin`, then
-   `cluster-rejoined … revoked=true`; the walker's `cli` login on the Logins tab; the walker's token count back to
-   step 0's.
-5. **One wrong password, twice.** Rejoin with a wrong password: `login-refused`, one `deny` in the audit log. The same
-   wrong password again: `login-refused`, "so it was not sent", and **zero** new authorize in the audit log, counted.
-6. **The remote's no.** Remove the binding from step 1 and Rejoin with the right password: `not-cluster-admin`,
-   `cluster-rejoin-review … allowed=false` in the log, the Secret's `resourceVersion` unchanged, the walker's token
-   count unchanged (the login was revoked).
-7. **The end.** Delete `rejoin-walk` on the tab and the binding if it remains. `gsd-cluster-shared-qa`'s
-   `resourceVersion` equals step 0's; the fleet account's token count is still 2, its audit-log authorizes 0 since step
-   0, and its Lease byte-identical; the PVC UIDs are unchanged.
+   `openshift-challenging-client` token count (2 on 2026-09-27); the walker's own token count; the start instant for
+   the oauth-server audit log.
+1. **The walker.** `kubeadmin` is the only person who passes D8 on the lab today, and its logins are never a Logins row
+   (`gsd/auditlog.py#SYSTEM_NAMES`). So a named person gets a disposable binding, removed in step 7:
+   `oc create clusterrolebinding rejoin-walk-cluster-admin --clusterrole=cluster-admin --user=<walker>` (D4-18). No
+   fleet path may name the walker (D4-9).
+2. **The throwaway entry.** On the Add form, `rejoin-walk` at `https://api.crc.testing:6443`, trusted bundle, with a
+   deliberately wrong token of eight or more characters. The card polls `auth_failed`.
+3. **Refresh, then Rejoin.** Refresh answers `auth_failed`, and the card offers **Rejoin…**. Rejoin as the walker.
+   Expect `rejoined`; Refresh then answers `connected`.
+4. **The evidence.** The Secret's annotations (`token-source: rejoin`, `rejoined-by`, `rejoin-account`,
+   `rejoined-at`, no `lookup-account`); the lines `fleet-login … rejoin_by=…`, then `cluster-rejoin-review …
+   allowed=true` naming the ClusterRoleBinding `rejoin-walk-cluster-admin`, then `cluster-rejoined … revoked=true`;
+   the walker's `cli` login on the Logins tab; the walker's token count back to step 0's.
+5. **One wrong password, twice, on one pod.** `login-refused`, one `deny` in the audit log; the same wrong password
+   again: `login-refused`, "so it was not sent", and **zero** new authorize in the audit log.
+6. **The remote's no.** Remove the binding and Rejoin with the right password: `not-cluster-admin`,
+   `allowed=false` in the log, the Secret's `resourceVersion` unchanged, the walker's token count unchanged.
+7. **The end.** Delete `rejoin-walk` and the binding. `gsd-cluster-shared-qa`'s `resourceVersion` equals step 0's;
+   the fleet account's token count is still 2, its audit-log authorizes 0 since step 0, and its Lease unchanged; the
+   PVC UIDs are unchanged.
 
-The evidence, with screenshots of the card's states and the dialog, goes under `reports/<date>_<slug>/`, pinned to the
-merge sha, and on #316 against its Definition of Done.
+The evidence, with screenshots, goes under `reports/<date>_<slug>/`, pinned to the merge sha, and on #316 against its
+Definition of Done.
 
-## 8. Implementation blocks
+## Appendix E. Implementation blocks
 
-**Sixty-nine blocks over twenty-three files, in apply order: the code, the tests, then the documents.** This spec's
-Status, and its row in `docs/specs/README.md`, move to `merged` by hand in the implementing commit, beside the applied
-blocks — a block cannot, because its Old text would also match inside its own fence — so that
-`local-development/prepare-release.py` promotes them. The figure's PNGs and the versions are the two steps in §5.
+**Seventy blocks over twenty-three files, in apply order: the code, the tests, then the documents.** This spec's
+Status and its index row move to `merged` by hand in the implementing commit, beside the applied blocks — a block
+cannot, because its Old text would also match inside its own fence — so that `local-development/prepare-release.py`
+promotes them. The PNGs and the versions are the two steps in §7.
 
 <!-- block: local-development/gsd/fleetlogin.py | edit -->
 ```python
@@ -950,25 +946,19 @@ from .writer import owned_by_mode
 
 <!-- block: local-development/gsd/rejoin.py | create -->
 ```python
-"""Rejoin (#316, SPEC_D4): a cluster administrator signs in to a remote cluster as themselves, once, and the dashboard
-fetches the poller's token there and forgets the password.
+"""Rejoin (#316, SPEC_D4): a cluster administrator signs in to a remote cluster as themselves, once; the dashboard
+reads the poller's token there, writes it here, and forgets the password.
 
-THE EXCHANGE IS THE LOOKUP'S, STARTED BY A PERSON (docs/DESIGN_remote_cluster_access.md §7): one login with the
-person's own username and password (`RejoinLogin`: #283's `FleetLogin` in a person's words), one question to the
-remote about that person (D8), one read of the poller's token Secret by name (#284's `read_sa_token`), the login
-revoked on every exit, and one write of `gsd-cluster-<name>` here (#284's `store`, with the person's provenance).
-
-WHAT KEEPS THE PASSWORD SAFE, in the order it runs:
-  1. who may press: the route's writes gate (the cluster-admin tier, #322), then `check` — a Secret row or a
-     `saTokenLookup` stanza, a username RFC 7617 allows, never an account a fleet path logs in as;
-  2. one presentation per press: `ONE_TRY` retries nothing, not even a failure before the password was written;
-  3. a password the directory answered is not sent again: the poller's `CredentialGate`, asked before the login and
-     written after a bound failure, as the lookup does (#315); in memory only, because anything durable would store
-     a fingerprint of a person's password;
-  4. the remote decides (D8): `remote_says_cluster_admin` asks #322's question with the login's own token, and a no
-     reads and writes nothing;
-  5. nothing is kept: the password lives in this call and, hashed, in the gate; every answer and every line is
-     scrubbed of it, of its Basic form, of the login's token and of the token read.
+The exchange is the lookup's, started by a person: `RejoinLogin` (#283's login), D8's one question, #284's
+`read_sa_token`, the revoke on every exit, and #284's `store` with the person's provenance. What keeps the
+password safe, in the order it runs:
+  1. the route's host gate (the cluster-admin tier, #322), then `check`: a rejoinable row, a valid username, and
+     never a fleet account;
+  2. `ONE_TRY`: one authorize per press, and nothing retried;
+  3. the poller's `CredentialGate` (#315): a password the directory answered is not sent again BY THIS POD. It lives
+     in memory; a durable account hold was declined for its operating cost (SPEC_D4, D4-7);
+  4. D8: the remote says whether the person is its cluster administrator, and a no reads and writes nothing;
+  5. every answer and line is scrubbed of the password, its Basic form, the login's token and the token read.
 """
 
 from __future__ import annotations
@@ -987,10 +977,11 @@ from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
 
-#: The success word. Every other outcome is a refusal's code: the lookup's (`gsd/fleetlookup.py#CODES`) or these two.
+#: The success word. Every other outcome is a refusal's code: the lookup's (`gsd/fleetlookup.py#CODES`) or these three.
 REJOINED = "rejoined"
 NOT_CLUSTER_ADMIN = "not-cluster-admin"
 REVIEW_FAILED = "access-review-failed"
+STOPPED = "rejoin-failed"
 #: One attempt and no retry, not even before the password is written: a person is waiting, and the next press is the retry.
 ONE_TRY = RetryPolicy(attempts=1)
 SSAR_API = "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews"
@@ -1006,7 +997,7 @@ READ_SAYS = {
 class RejoinLogin(FleetLogin):
     """#283's login as the person who pressed Rejoin: the same wire, events and rules, in a person's words."""
 
-    REFUSED_ACTION = ("check the username and password — it is not sent again from this dashboard while it is the same "
+    REFUSED_ACTION = ("check the username and password — it is not sent again by this pod while it is the same "
                       "password, because each refused try counts toward the directory's lockout of the account")
     NEXT_TRY = "the next Rejoin"
 
@@ -1035,8 +1026,7 @@ def refusal(cluster: ClusterConfig, settings: Settings) -> str | None:
 
 def fleet_accounts(settings: Settings) -> set[str]:
     """Every account a fleet path may present the fleet password as: the chart's, each stanza's
-    `ldapConnectionBootstrap`, each Secret's `lookup-account`. Stripped, because the grammar lets a recorded name end
-    in a newline; casefolded, because over-refusing is the safe side."""
+    `ldapConnectionBootstrap`, each Secret's `lookup-account`. Stripped and casefolded: over-refusing is the safe side."""
     names = {settings.fleet_account_username}
     for c in (*settings.clusters, *settings.effective_clusters()):
         names.update((c.ldap_connection_bootstrap, c.lookup_account))
@@ -1048,9 +1038,7 @@ def check(cluster: ClusterConfig, settings: Settings, username: str, password: s
     reason = refusal(cluster, settings)
     if reason is not None:
         raise WriteRefused("not-rejoinable", f"{cluster.name} cannot be rejoined: {reason}", conflict=True)
-    # The grammar's `$` also matches before a final newline, so it passes `name\n`, and a directory may read that as
-    # `name` (RFC 4518: LF maps to a space, and a trailing space is insignificant): no fleet name may slip through.
-    if username.endswith("\n") or not valid_bootstrap_username(username):
+    if not valid_bootstrap_username(username):
         raise WriteRefused("rejoin-username-invalid", "a username is letters, digits and . _ @ -, starting with a letter "
                                                       "or digit, at most 255 characters (RFC 7617 forbids a colon and "
                                                       "control characters); the value is not repeated")
@@ -1119,6 +1107,7 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     def refused(code: str, said: str, detail: str | None = None, *, phase: str = "credential") -> dict:
         """One failure line and the answer: the person's sentence, then the evidence; both scrubbed."""
         said = f"{said}{_logged_out(login, cluster)}"
+        detail = _scrub(detail, secrets) if detail else None   # any length: the emit helper skips values under four
         failure(log, "cluster-rejoin-failed", phase=phase, outcome=code, **who, action=said, detail=detail,
                 secrets=secrets)
         return {"outcome": code, "message": _scrub(f"{said} ({detail})" if detail else said, secrets), "at": now_iso()}
@@ -1127,8 +1116,8 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     if answered is not None:
         shown = _without_userinfo(answered) or "an earlier cluster"
         return refused("login-refused", f"{shown} already refused this password for {username}, so it was not sent: "
-                                        f"type the right password (this dashboard holds a refused password back until "
-                                        f"it restarts)")
+                                        f"type the right password (this pod holds a refused password back until it "
+                                        f"restarts)")
     stopped: tuple[str, str, str | None] | None = None      # D8 refused, or could not be asked
     try:
         with login as session:
@@ -1140,14 +1129,18 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                                           f"so nothing was read or written", f"{exc.outcome}: {exc.message}")
             else:
                 event(log, logging.INFO, "cluster-rejoin-review", **who, question=asked,
-                      allowed="true" if allowed else "false", reason=reason or None, secrets=secrets)
+                      allowed="true" if allowed else "false", reason=_scrub(reason, secrets) or None, secrets=secrets)
                 if not allowed:
                     stopped = (NOT_CLUSTER_ADMIN, f"{cluster.name} says {username} may not {asked} there, so nothing "
                                                   f"was read or written: Rejoin needs a cluster administrator of "
                                                   f"{cluster.name}", reason or None)
                 else:
-                    sa_token = read_sa_token(session.token, cluster, LookupSource.from_settings(settings),
-                                             timeout=timeout)
+                    try:
+                        sa_token = read_sa_token(session.token, cluster, LookupSource.from_settings(settings),
+                                                 timeout=timeout)
+                    except LookupRefused as exc:
+                        login.add_secrets(*exc.secrets)   # the revoke on leaving `with` runs before any outer handler
+                        raise
                     secrets.append(sa_token.token)
                     login.add_secrets(sa_token.token)   # the revoke line quotes the remote's body too
     except LoginError as exc:
@@ -1156,10 +1149,10 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
             gate.refuse(cluster.api_url, username, password)
             if exc.outcome == AUTH_FAILED:
                 return refused("login-refused", f"{cluster.name} refused the password for {username}: check the "
-                                                f"username and password; it is not sent again from this dashboard "
-                                                f"while it is the same password", exc.message)
+                                                f"username and password; it is not sent again by this pod while it is "
+                                                f"the same password", exc.message)
             return refused("login-failed", f"the password for {username} was sent to {cluster.name} and no session "
-                                           f"came back; it is not sent again from this dashboard while it is the same "
+                                           f"came back; it is not sent again by this pod while it is the same "
                                            f"password, and a locked directory account answers HTTP 500, so check the "
                                            f"account before you try again", exc.message)
         hint = "; the cluster's trust must verify both the API host and the OAuth route" if exc.phase == "tls" else ""
@@ -1187,6 +1180,14 @@ def rejoin(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     return {"outcome": REJOINED, "message": _scrub(message, secrets), "at": at}
 
 
+def stopped_unexpectedly(cluster: str, viewer: str) -> dict:
+    """The route's answer to an error the design did not expect: fixed words, because the error's own may quote the
+    password. The line records only that it happened."""
+    said = "Rejoin stopped unexpectedly, and nothing of the error is shown or logged: press Refresh before Rejoin again"
+    failure(log, "cluster-rejoin-failed", phase="credential", outcome=STOPPED, cluster=cluster, by=viewer, action=said)
+    return {"outcome": STOPPED, "message": said, "at": now_iso()}
+
+
 def _logged_out(login: FleetLogin, cluster: ClusterConfig) -> str:
     """How the login ended, for every answer after a session existed: revoked, or what to delete. An unprefixed
     token is its own object's name, so it is never shown (`gsd/fleetlogin.py#token_object_name`)."""
@@ -1199,8 +1200,9 @@ def _logged_out(login: FleetLogin, cluster: ClusterConfig) -> str:
             f"useroauthaccesstokens <name>, as yourself)")
 
 
-__all__ = ["NOT_CLUSTER_ADMIN", "ONE_TRY", "READ_SAYS", "REJOINED", "REVIEW_FAILED", "RejoinLogin", "check",
-           "fleet_accounts", "question", "question_words", "refusal", "rejoin", "remote_says_cluster_admin"]
+__all__ = ["NOT_CLUSTER_ADMIN", "ONE_TRY", "READ_SAYS", "REJOINED", "REVIEW_FAILED", "STOPPED", "RejoinLogin", "check",
+           "fleet_accounts", "question", "question_words", "refusal", "rejoin", "remote_says_cluster_admin",
+           "stopped_unexpectedly"]
 ```
 
 <!-- block: local-development/gsd/api.py | edit -->
@@ -1253,13 +1255,12 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
             """SPEC_D4 (#316): a cluster administrator's own username and password, for ONE login to the remote; the
             dashboard reads the poller's token there, writes it here and keeps no password. `body: Any`, so FastAPI
             neither validates nor echoes what arrived (a typed body's 422 quotes a non-object body whole): the shape is
-            refused here, naming fields, never values. Registered with the writes, like `/refresh`."""
+            refused here in fixed words, because even a key can be the password. Registered with the writes."""
             from . import rejoin
             from .clusterconfig.writer import WriteRefused
             viewer, namespace, host_client = _writes_gate(request)
-            if not isinstance(body, dict):
-                raise HTTPException(status_code=422, detail="body: must be an object with username and password")
-            _reject_unknown("body", body, {"username", "password"})
+            if not isinstance(body, dict) or set(body) - {"username", "password"}:
+                raise HTTPException(status_code=422, detail="body: an object with username and password, and no other key")
             username, password = body.get("username"), body.get("password")
             if not isinstance(username, str) or not isinstance(password, str):
                 raise HTTPException(status_code=422, detail="username and password: each must be a string")
@@ -1280,6 +1281,8 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
             try:
                 answer = rejoin.rejoin(cluster, settings, host_client, own_namespace=namespace, gate=gate,
                                        username=username, password=password, viewer=viewer)
+            except Exception:  # noqa: BLE001 - its text may quote the password: fixed words, and nothing of it logged
+                answer = rejoin.stopped_unexpectedly(cluster.name, viewer)
             finally:
                 rejoining.release()
             if answer["outcome"] == rejoin.REJOINED:
@@ -1305,8 +1308,8 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
   <p>Sign in to <span class="mono rejoin-cluster"></span> as yourself. The dashboard logs in once to
     <span class="mono" id="rejoin-server"></span>, asks it whether you are a cluster administrator there, reads the
     poller's token, writes <span class="mono" id="rejoin-secret"></span>, and signs that login out.
-    <strong>Your username and password are used for this one login and are not stored</strong> — not in the Secret,
-    not in a log line, not in this page.</p>
+    <strong>Your password is used for this one login and is not saved by the dashboard.</strong> The Secret records
+    your username and who pressed Rejoin. Browser password managers may ignore the request not to save these fields.</p>
   <div class="cc-field"><label for="rejoin-username">Username on <span class="rejoin-cluster"></span></label>
     <input id="rejoin-username" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
   <div class="cc-field"><label for="rejoin-password">Password</label>
@@ -1318,9 +1321,10 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
       <span class="rejoin-cluster"></span>, the remote.</strong> Once you are signed in, it is asked the same question
       about you. If it says no, nothing is read or written, and this dashboard cannot override it.</li>
   </ul>
-  <div class="cc-warn"><strong>One try per password.</strong> If this password is refused, the dashboard does not send it
-    again, to any cluster, while it is the same password. A locked directory account answers HTTP 500, not 401, so
-    trying again only locks it further.</div>
+  <div class="cc-warn"><strong>One try per password on this pod.</strong> If this password is refused, this pod does not
+    send it again, to any cluster, while it is the same password. A restarted pod or another replica does not know
+    that, and can send it once more: press Refresh before you press Rejoin again. A locked directory account answers
+    HTTP 500, not 401, so trying again only locks it further.</div>
   <p class="cc-hint" id="rejoin-msg" aria-live="polite"></p>
   <div class="idle-actions rejoin-acts">
     <button type="button" id="rejoin-cancel">Cancel</button>
@@ -1393,6 +1397,17 @@ function ccRejoinLine(c) {
 
 <!-- block: local-development/gsd/static/index.html | edit -->
 ```html
+async function apiSend(path, method, body) {
+  const res = await fetch(path, { method, headers: { Accept: "application/json", "Content-Type": "application/json", "X-GSD-Interaction": "1" },
+```
+
+```html
+async function apiSend(path, method, body, redirect = "follow") {
+  const res = await fetch(path, { method, redirect, headers: { Accept: "application/json", "Content-Type": "application/json", "X-GSD-Interaction": "1" },
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```html
   });
   document.querySelectorAll("[data-cc-delete]").forEach((el) => {
 ```
@@ -1459,7 +1474,8 @@ async function sendRejoin() {
   $("rejoin-msg").textContent = "Signing in once…";
   render();
   try {
-    view.clusterRejoin[id] = { state: "done", ...(await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/rejoin`, "POST", { username, password })) };
+    // "error": a 307 or 308 in front of the dashboard would re-send the password to its Location (#316)
+    view.clusterRejoin[id] = { state: "done", ...(await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/rejoin`, "POST", { username, password }, "error")) };
   } catch (e) {
     // No JSON answer (a gateway timeout, a dropped connection): the server may still have finished the Rejoin.
     view.clusterRejoin[id] = e.status ? { state: "done", outcome: `HTTP ${e.status}`, message: e.message, at: null }
@@ -1566,7 +1582,7 @@ ADMIN_REASON = 'RBAC: allowed by ClusterRoleBinding "cluster-admins" of ClusterR
 
 
 def review(allowed=True, reason: str | None = ADMIN_REASON, **status) -> httpx.Response:
-    """The remote's SelfSubjectAccessReview answer, in the shape measured on the lab (SPEC_D4 §2.3)."""
+    """The remote's SelfSubjectAccessReview answer, in the shape measured on the lab (SPEC_D4, Appendix A.3)."""
     body = {"allowed": allowed, **({"reason": reason} if reason else {}), **status}
     return httpx.Response(201, json={"kind": "SelfSubjectAccessReview", "apiVersion": "authorization.k8s.io/v1",
                                      "metadata": {}, "status": body})
@@ -1771,9 +1787,10 @@ def test_the_daily_ping_never_logs_in_as_the_person_who_rejoined(rig, tmp_path, 
     "12345",
     "",                                                                           # no body at all
     f'{{"username": "{ADMIN}", "password": "{ADMIN_PASSWORD}", "token": "x"}}',  # a key the contract does not know
+    f'{{"username": "{ADMIN}", "password": "{ADMIN_PASSWORD}", "{ADMIN_PASSWORD}": "x"}}',  # a key that IS the password
     f'{{"username": "{ADMIN}", "password": 12345}}',
     f'{{"username": "{ADMIN}", "password": "{ADMIN_PASSWORD}"',                  # not JSON
-], ids=["string", "list", "number", "empty", "unknown-key", "not-a-string", "malformed"])
+], ids=["string", "list", "number", "empty", "unknown-key", "password-as-key", "not-a-string", "malformed"])
 def test_the_body_is_username_and_password_and_nothing_else(rig, raw):
     c, app, settings, host, remote = rig
     r = c.post("/api/clusterconfigs/east/rejoin", headers={**H("root"), "Content-Type": "application/json"}, content=raw)
@@ -1788,7 +1805,7 @@ def test_the_body_is_username_and_password_and_nothing_else(rig, raw):
     ("cm", ADMIN, ADMIN_PASSWORD, 409, "not-rejoinable"),                  # generated from a ConfigMap
     ("east", "alice:admin", ADMIN_PASSWORD, 422, "rejoin-username-invalid"),   # RFC 7617: no colon in a user-id
     ("east", "alice admin", ADMIN_PASSWORD, 422, "rejoin-username-invalid"),
-    ("east", "SVC-GSD-Fleet\n", ADMIN_PASSWORD, 422, "rejoin-username-invalid"),  # a final newline: the grammar's $ passes it
+    ("east", "SVC-GSD-Fleet\n", ADMIN_PASSWORD, 422, "rejoin-username-invalid"),  # a final newline: refused by the grammar (#438)
     ("east", "SVC-GSD-Fleet", ADMIN_PASSWORD, 422, "rejoin-fleet-account"),    # the chart's fleet account, any case
     ("east", "stanza-account", ADMIN_PASSWORD, 422, "rejoin-fleet-account"),   # a stanza's ldapConnectionBootstrap
     ("east", "recorded-account", ADMIN_PASSWORD, 422, "rejoin-fleet-account"), # a Secret's lookup-account
@@ -2002,13 +2019,17 @@ def _planted(target_kind: str) -> dict:
         "read-500": dict(secret=httpx.Response(500, text=session)),
         "read-owner": dict(secret=httpx.Response(200, json=sa_secret(sa=read))),
         "revoke-500": dict(revoke=httpx.Response(500, text=read)),
+        # the read is refused AFTER the token was decoded, then the revoke fails echoing it (review of the spec, C3)
+        "read-refused-revoke-500": dict(secret=httpx.Response(200, json=sa_secret(sa="wrong-owner")),
+                                        revoke=httpx.Response(500, text=read)),
         "write-echo": dict(host_echo=True),
         "success": {},
     }[target_kind]
 
 
 @pytest.mark.parametrize("kind", ["401", "401-challenge", "500", "302-error", "issuer", "review-reason", "review-denied",
-                                  "review-500", "read-500", "read-owner", "revoke-500", "write-echo", "success"])
+                                  "review-500", "read-500", "read-owner", "revoke-500", "read-refused-revoke-500",
+                                  "write-echo", "success"])
 def test_the_password_appears_on_one_header_and_nowhere_else(tmp_path, monkeypatch, remote, caplog, kind):
     scenario = _planted(kind)
     for field in ("answers", "discovery", "secret", "revoke"):
@@ -2034,10 +2055,58 @@ def test_the_password_appears_on_one_header_and_nowhere_else(tmp_path, monkeypat
     assert len(remote.authorize) <= 1
 
 
+@pytest.mark.parametrize("answer", [review(reason="remote echo: xyZ"), review(allowed=False, reason="remote echo: xyZ"),
+                                    httpx.Response(500, text="remote echo: xyZ")], ids=["allowed", "denied", "review-500"])
+def test_short_password_echo_in_review_is_not_logged(rig, caplog, answer):
+    """The emit helper skips a secret under four characters, and a password can be that short: D8's text is
+    scrubbed before any line, whatever the length (review of the spec, C3)."""
+    c, app, settings, host, remote = rig
+    remote.review = answer
+    with caplog.at_level(logging.DEBUG):
+        r = _rejoin(c, password="xyZ")
+    assert r.status_code == 200 and "xyZ" not in caplog.text + r.text
+
+
+def test_unexpected_exception_cannot_escape_with_secrets(rig, monkeypatch, caplog):
+    """An error the design did not expect may quote the password. It never leaves the route, so the server has no
+    traceback to print: the answer and the line are fixed text, and the login is still revoked (review, C3)."""
+    c, app, settings, host, remote = rig
+
+    def explode(*args, **kwargs):
+        raise RuntimeError(f"{ADMIN_PASSWORD} {BASIC} {TOKEN}")
+    monkeypatch.setattr("gsd.rejoin.remote_says_cluster_admin", explode)
+    with caplog.at_level(logging.DEBUG):
+        r = TestClient(app, raise_server_exceptions=False).post(
+            "/api/clusterconfigs/east/rejoin", headers=H("root"), json={"username": ADMIN, "password": ADMIN_PASSWORD})
+    assert r.status_code == 200 and r.json()["outcome"] == "rejoin-failed", r.text
+    assert all(secret not in r.text + caplog.text for secret in (ADMIN_PASSWORD, BASIC, TOKEN))
+    assert len(remote.revokes) == 1 and _writes(host) == []
+
+
+def test_dialog_does_not_promise_to_control_password_managers():
+    """The dialog says what the dashboard controls and nothing more (review of the spec, C3): the HTML Standard lets
+    a browser override autocomplete="off", and the Secret records the username. It says the gate's scope (D4-7)."""
+    page = (REPO / "local-development/gsd/static/index.html").read_text()
+    start = page.index('<dialog id="rejoin-dialog"')
+    dialog = " ".join(page[start:page.index("</dialog>", start)].split())   # the source wraps its sentences
+    assert "password managers may ignore" in dialog
+    assert "Secret records your username" in dialog
+    assert "Your username and password are used for this one login and are not stored" not in dialog
+    assert "A restarted pod or another replica" in dialog
+
+
 # ── the budget over the system ───────────────────────────────────────────────────────────────────────────────
 
-#: SPEC_D4 §3.8's rows: (the remote's answers in order, the presses as (process, password)). A new process name is a
+#: SPEC_D4 §2's rows: (the remote's answers in order, the presses as (process, password)). A new process name is a
 #: restart or a second replica: its own poller gate, over the same host and remote.
+OTHER = "https://elsewhere.example"
+
+
+def _moved(status: int, host: str) -> httpx.Response:
+    """An authorize answered by a redirect that carries no token: the password was sent, and no session came back."""
+    return httpx.Response(status, headers={"Location": f"{host}/oauth/token/implicit#error=access_denied"})
+
+
 BUDGET = {
     "one press, the right password": ([login_302()], [("p", ADMIN_PASSWORD)]),
     "two presses, the right password": ([login_302(), login_302()], [("p", ADMIN_PASSWORD)] * 2),
@@ -2050,13 +2119,18 @@ BUDGET = {
         [refused_401(), refused_401()], [("p", "Wr0ng-pw-3"), ("restarted", "Wr0ng-pw-3")]),
     "a 401, then the same password on a second replica": (
         [refused_401(), refused_401()], [("p", "Wr0ng-pw-4"), ("replica", "Wr0ng-pw-4")]),
+    "a 302 without a token, then the same": ([_moved(302, OAUTH), login_302()], [("p", "N0-token-pw-1")] * 2),
+    "a 302 to another host, then the same": ([_moved(302, OTHER), login_302()], [("p", "N0-token-pw-2")] * 2),
+    "a 307 to another host, then the same": ([_moved(307, OTHER), login_302()], [("p", "N0-token-pw-3")] * 2),
+    "a proxy replaying a successful press to another pod": (
+        [login_302(), login_302()], [("p", ADMIN_PASSWORD), ("replica", ADMIN_PASSWORD)]),
 }
 
 
 def test_the_budget_over_the_system(tmp_path, monkeypatch, remote):
-    """SPEC_D4 §3.8's table, measured: authorize requests on the wire for each shape. One press presents the password
-    at most once, and a password the directory answered is not presented again by that process. A restart and a
-    second replica each start an empty gate: the stated scope, because nothing about a person's password is kept."""
+    """SPEC_D4 §2's table, measured: authorize requests on the wire for each shape. One press presents the password
+    at most once, and a password the directory answered is not presented again by that process. A restart, a second
+    replica and a replay to another pod each meet an empty gate: the stated scope (D4-7)."""
     host = _Host({"gsd-cluster-east": _secret()})
     east = parse_secret(_secret(), host_name="c1")
     measured = {}
@@ -2081,6 +2155,10 @@ def test_the_budget_over_the_system(tmp_path, monkeypatch, remote):
         "a 401, then the right password": (2, ["login-refused", "rejoined"]),
         "a 401, then the same password on a restarted process": (2, ["login-refused", "login-refused"]),
         "a 401, then the same password on a second replica": (2, ["login-refused", "login-refused"]),
+        "a 302 without a token, then the same": (1, ["login-failed", "login-refused"]),
+        "a 302 to another host, then the same": (1, ["login-failed", "login-refused"]),
+        "a 307 to another host, then the same": (1, ["login-failed", "login-refused"]),
+        "a proxy replaying a successful press to another pod": (2, ["rejoined", "rejoined"]),
     }, measured
 
 
@@ -2180,7 +2258,7 @@ def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it(
         page.wait_for_selector("#rejoin-dialog[open]")
         assert page.evaluate("() => !document.getElementById('main').contains(document.getElementById('rejoin-dialog'))")
         text = page.locator("#rejoin-dialog").inner_text()
-        assert "Rejoin east" in text and "are used for this one login and are not stored" in text and "decided there" in text
+        assert "Rejoin east" in text and "is used for this one login and is not saved" in text and "decided there" in text
         assert "https://api.east.example:6443" in text and "gsd-cluster-east" in text
         assert page.locator("#rejoin-password").get_attribute("type") == "password"
         assert page.locator("#rejoin-username").get_attribute("autocomplete") == "off" == page.locator("#rejoin-password").get_attribute("autocomplete")
@@ -2204,7 +2282,7 @@ def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it(
         assert page.locator("[data-cc-rejoin]").count() == 0, "absent, not disabled, where the writes are off"
 
     def test_one_press_sends_the_password_once_and_the_page_keeps_it_nowhere(self, page, cc_rig, monkeypatch):
-        """#316 (SPEC_D4 §3.6, §3.8): a press is one request carrying the typed password once. The field is emptied as the
+        """#316 (SPEC_D4 §3.6, §2): a press is one request carrying the typed password once. The field is emptied as the
         request leaves, so a double click, and a second press before it is typed again, send nothing more. A refusal
         keeps the dialog open with its sentence; a success closes it; both land on the card. The password is in no
         storage, no URL and no page state, and pagehide and the idle timeout clear what is typed."""
@@ -2273,6 +2351,37 @@ def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it(
             assert page.input_value("#rejoin-password") == ""
         finally:
             release.set()
+
+    def test_fetch_refuses_redirects_and_submits_once(self, page, cc_rig, monkeypatch):
+        """#316 (review of the spec, C1): a 307 or 308 in front of the dashboard would re-send the POST, password and
+        all, to its Location (measured in Chromium). The credential fetch refuses redirects and is sent once."""
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+
+        class _Refused(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Refused)
+        seen: list[tuple[str, str]] = []
+        page.on("request", lambda r: seen.append((r.method, r.url)))
+        page.route("**/api/clusterconfigs/east/rejoin",
+                   lambda route: route.fulfill(status=307, headers={"Location": f"{base}/elsewhere"}))
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        page.click("#cc-refresh-east"); page.wait_for_selector("#cc-rejoin-east")
+        page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+        page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-redirected")
+        page.click("#rejoin-go")
+        page.wait_for_function("() => (view.clusterRejoin.east || {}).state === 'done'")
+        assert [url for method, url in seen if url.endswith("/elsewhere")] == [], "the 307 carried the password on"
+        assert [url for method, url in seen if method == "POST" and url.endswith("/rejoin")] == [
+            f"{base}/api/clusterconfigs/east/rejoin"]
+        assert page.evaluate("() => view.clusterRejoin.east.outcome") == "unknown"
 ```
 
 <!-- block: charts/group-sync-dashboard/RUNBOOK.md | create -->
@@ -2352,8 +2461,8 @@ and password for that cluster, and press **Rejoin**.
 
 **What it does.** One login to the remote as you, and one question to the remote about you. One read of
 `group-sync-operator/group-sync-dashboard-cluster-poller-token`. The login is signed out, and the token is written to
-`gsd-cluster-<name>` here. Your password is used for that one login. It is not stored anywhere, and it is not sent
-again.
+`gsd-cluster-<name>` here. Your password is used for that one login and is not stored. The Secret records your
+username as `rejoin-account`.
 
 **How to confirm it worked.** The card's `Rejoin:` line reads `rejoined`, and **Refresh** then reads `connected`.
 The Secret carries the Rejoin's provenance:
@@ -2422,11 +2531,12 @@ wrote it or where the token came from.
 
 ## 6. What not to do
 
-- **Do not press Rejoin again and again.** Once your password is sent, the answer is final. The dashboard does not
-  send a refused password again while it is the same password. A locked directory account answers LDAP code 19,
-  which OpenShift turns into an **HTTP 500, not a 401**, so trying again only locks it further. After a 500, check the
-  account with your directory's administrators first. The dashboard holds that password back until its pod restarts,
-  even once the account is fixed; a new password works at once.
+- **Do not press Rejoin again and again.** Once your password is sent, the answer is final. The pod that sent it
+  does not send a refused password again while it is the same password. A restarted pod, or another replica behind
+  the Route, does not know that and can send it once more, so check before you press again. A locked directory
+  account answers LDAP code 19, which OpenShift turns into an **HTTP 500, not a 401**, so trying again only locks it
+  further. After a 500, check the account with your directory's administrators first. That pod holds the password
+  back until it restarts, even once the account is fixed; a new password works at once.
 - **Do not type the fleet account's password into Rejoin.** The dashboard refuses the fleet account's name, and a
   lockout of that account stops every cluster.
 - **If the dialog says the answer did not arrive, or the pod restarted during a Rejoin, do not rejoin blindly.**
@@ -2480,21 +2590,34 @@ stanza. An administrator types **their own** username and password for that clus
 logs in to the remote once as that person (`gsd/rejoin.py#RejoinLogin`), asks the remote whether that person may
 `update clusterrolebindings` there (D8, one `SelfSubjectAccessReview` with the login's own token), reads the poller's
 token Secret, signs the login out, and writes `gsd-cluster-<name>` with `token-source: rejoin` and the person's name
-(`rejoined-by`, `rejoin-account`, `rejoined-at`). **The credentials are discarded.** Nothing is stored. The route is
+(`rejoined-by`, `rejoin-account`, `rejoined-at`). **The password is discarded**: nothing about it is stored. The route is
 `POST /api/clusterconfigs/{name}/rejoin` (`local-development/API.md`), and the steps are in
 [`RUNBOOK.md`](RUNBOOK.md).
 ```
 
 <!-- block: charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md | edit -->
 ```markdown
+- Rejoin's credentials are never stored, never logged, never echoed — in the Secret, a finding, or an
+  error.
+- The credential gate still applies to Rejoin: once a password is on the wire the outcome is
+  terminal. No retry on a 401, and **none on the HTTP 500 a locked directory returns** — a locked
+  389-ds account answers LDAP code 19, which OpenShift surfaces as a 500, so "it failed, try again"
   is wrong precisely when the account is already locked.
 - Both are admin-tier only.
 ```
 
 ```markdown
+- Rejoin's password is never stored, never logged, never echoed — in the Secret, a finding, or an
+  error. The Secret records the username as provenance (`rejoin-account`).
+- The credential gate still applies to Rejoin: once a password is on the wire the outcome is
+  terminal. No retry on a 401, and **none on the HTTP 500 a locked directory returns** — a locked
+  389-ds account answers LDAP code 19, which OpenShift surfaces as a 500, so "it failed, try again"
   is wrong precisely when the account is already locked. A Rejoin sends the password at most once per
-  press, and the poller's gate holds a refused password back in that pod until it restarts: in memory
-  only, because anything durable would keep a fingerprint of a person's password.
+  press, and the poller's gate holds a refused password back in that pod until it restarts. The gate
+  lives in memory, so a press that reaches a restarted pod or another replica can send the same
+  password once more. A durable hold keyed by the username alone was declined for its operating cost:
+  any failure would block that account's Rejoin on every pod until someone deleted the hold by hand,
+  even after the right password (SPEC_D4, D4-7).
 - Rejoin never uses the fleet account: it refuses any name a fleet path logs in as, and it writes
   `rejoin-account`, never `lookup-account`, which the daily ping logs in as with the fleet password.
 - Both are for the cluster-admin tier only (#322), and exist only with writes on.
@@ -2567,24 +2690,25 @@ same cluster is running in this process is `409`. One `cluster-refreshed` line p
 
 `POST /api/clusterconfigs/{name}/rejoin` (#316, `docs/specs/SPEC_D4_cluster_rejoin.md`) with `{"username": "…",
 "password": "…"}` → `200 {"outcome": "rejoined", "message": "Signed in to east as alice, who may update
-clusterrolebindings there; …", "at": "2026-09-27T14:05:40Z"}`. A cluster administrator's **own** username and
-password, for ONE login to the remote: the dashboard logs in as that person, asks the remote with that login's own
-token whether the person may `update clusterrolebindings` there (the host's `visibility.clusterAdminSar` question; a
-no reads and writes nothing), reads `group-sync-operator/group-sync-dashboard-cluster-poller-token`, signs the login
-out, and writes the token to `gsd-cluster-<name>` with `token-source: rejoin`, `rejoined-by`, `rejoin-account` and
-`rejoined-at` — never `lookup-account`. **The password is never stored, logged or echoed.** It is sent at most once
-per request and never retried, and a password the directory answered is not sent again by this process while it is
-the same password (the poller's credential gate, #315). `outcome` is `rejoined` or a refusal's code: `login-refused`,
-`login-failed`, `not-cluster-admin`, `access-review-failed`, `sa-token-secret-missing`, `sa-token-unreadable`,
-`sa-token-invalidated`, `lookup-write-failed`. Refused before anything is sent: `403` below the cluster-admin tier
-or without an identity; `404` for an unknown or retired name, and with writes off (the route does not exist); `409
-not-rejoinable` where `rejoinable` is false; `409` while another Rejoin is in flight in this process, or when the
-process runs no poller; `422` for a body that is not exactly `{username, password}` as strings (an unknown key is named,
-a value never), `rejoin-username-invalid` (outside the bootstrap grammar, or ending in a newline),
-`rejoin-fleet-account` (a name a fleet path logs in as, compared stripped and casefolded), `rejoin-password-missing`
-and `rejoin-password-invalid` (a control character, which RFC 7617 forbids, or an unpaired surrogate, which UTF-8
-cannot carry). A success wakes discovery. One `cluster-rejoin-review` line carries the remote's answer, then
-`cluster-rejoined` or `cluster-rejoin-failed`; each names the person and the account and carries no credential.
+clusterrolebindings there; …", "at": "2026-09-27T14:05:40Z"}`. A cluster administrator's **own** username and password,
+for ONE login to the remote: the dashboard logs in as that person, asks the remote with that login's own token whether
+the person may `update clusterrolebindings` there (the host's `visibility.clusterAdminSar` question; a no reads and
+writes nothing), reads `group-sync-operator/group-sync-dashboard-cluster-poller-token`, signs the login out, and writes
+the token to `gsd-cluster-<name>` with `token-source: rejoin`, `rejoined-by`, `rejoin-account` and `rejoined-at` — never
+`lookup-account`. **The password is never stored, logged or echoed.** It is sent at most once per request and never
+retried, and a password the directory answered is not sent again by this process while it is the same password (the
+poller's credential gate, #315). `outcome` is `rejoined` or a refusal's code: `login-refused`, `login-failed`,
+`not-cluster-admin`, `access-review-failed`, `sa-token-secret-missing`, `sa-token-unreadable`, `sa-token-invalidated`,
+`lookup-write-failed`, or `rejoin-failed` for an error the design did not expect (fixed words: that error's own text may
+quote the password). Refused before anything is sent: `403` below the cluster-admin tier or without an identity; `404`
+for an unknown or retired name, and with writes off (the route does not exist); `409 not-rejoinable` where `rejoinable`
+is false; `409` while another Rejoin is in flight in this process, or when the process runs no poller; `422` for a body
+that is not exactly `{username, password}` as strings (fixed words: no key or value is repeated, because a key can be
+the password), `rejoin-username-invalid` (outside the bootstrap grammar), `rejoin-fleet-account` (a name a fleet path
+logs in as, compared stripped and casefolded), `rejoin-password-missing` and `rejoin-password-invalid` (a control
+character, which RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry). A success wakes discovery. One
+`cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
+the person and the account and carries no credential.
 ```
 
 <!-- block: docs/DESIGN_remote_cluster_access.md | edit -->
