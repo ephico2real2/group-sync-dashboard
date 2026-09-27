@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import shutil
 import ssl
 import subprocess
@@ -1197,6 +1198,86 @@ class TestScopeIsLoginOnly:
             pass
         assert {r.method for r in target.requests} == {"GET", "DELETE"}
         assert all(r.url.path.startswith(USER_TOKEN_API + "/") for r in target.revokes)
+
+    def test_a_delete_only_ever_names_the_object_of_the_token_that_authorises_it(self):
+        """#286: the only OAuthAccessToken the dashboard deletes is one a login response handed it. The
+        test above checks the path's prefix, so a DELETE of any other name would pass it; this one checks
+        the NAME. Each run below says which tokens its target minted: the body returned, raised an Exception
+        or a BaseException, the guard after a mint, and a malformed 302 carrying two tokens. Each run must
+        make exactly one DELETE per minted token, authorised by that token, naming the object an independent
+        oracle derives from it, and list nothing. Self-login's renewal, suspension and URL move all exit
+        through `__exit__`, the first case.
+
+        Then the source, as a guard on explicit syntax and not a proof over every spelling: no other `gsd`
+        module USES the token API (its path, or `USER_TOKEN_API` imported or read as an attribute), and
+        `fleetlogin.py` makes one DELETE call. Documentation strings, a help string that names the kind and
+        a local variable that happens to be called `USER_TOKEN_API` are not uses (review of #422)."""
+        class Abort(BaseException):
+            pass
+
+        other = "sha256~AnotherTokenTheTargetChose0000000000"
+        implicit = f"{OAUTH}/oauth/token/implicit"
+        two = [("Location", f"{implicit}#access_token={TOKEN}&expires_in=60"),
+               ("Location", f"{implicit}#access_token={other}&expires_in=60")]
+
+        def body_returns():
+            pass
+
+        def body_raises(kind):
+            def run():
+                raise kind()
+            return run
+
+        runs = [(Target(down, login_302()), body_returns, None, (TOKEN,)),
+                (Target(login_302()), body_raises(RuntimeError), RuntimeError, (TOKEN,)),
+                (Target(login_302()), body_raises(Abort), Abort, (TOKEN,)),
+                (Target(login_302(expires_in="soon")), body_returns, LoginError, (TOKEN,)),
+                (Target(httpx.Response(302, headers=two)), body_returns, LoginError, (TOKEN, other))]
+        for target, body, raised, minted in runs:
+            fl, _ = make(target)
+            try:
+                with fl:
+                    body()
+            except BaseException as exc:  # noqa: BLE001 - each run's own exception is asserted below
+                assert raised is not None and isinstance(exc, raised), exc
+            else:
+                assert raised is None
+            expected = {}
+            for token in minted:   # the measured derivation, computed here rather than by the code under test
+                digest = hashlib.sha256(token.removeprefix(TOKEN_PREFIX).encode()).digest()
+                name = TOKEN_PREFIX + base64.urlsafe_b64encode(digest).decode().rstrip("=")
+                expected[f"Bearer {token}"] = f"{USER_TOKEN_API}/{name}"
+            assert len(target.revokes) == len(minted), "exactly one revoke for each minted token"
+            assert sorted(r.headers["authorization"] for r in target.revokes) == sorted(expected)
+            for request in target.revokes:
+                assert request.url.path == expected[request.headers["authorization"]], request.url.path
+            assert all(r.method == "DELETE" or (r.method == "GET" and r.url.path in {DISCOVERY_PATH, "/oauth/authorize"})
+                       for r in target.requests), "no token listing and no other request"
+
+        uses_the_api = re.compile(r"oauth\.openshift\.io|(?:^|/)(?:user)?oauthaccesstokens(?:/|$)")
+        source = pathlib.Path(fleetlogin.__file__)
+        naming = set()
+        for path in source.parent.rglob("*.py"):
+            tree = ast.parse(path.read_text())
+            documentation = {id(n.value) for n in ast.walk(tree)
+                             if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+                             and isinstance(n.value.value, str)}
+            for node in ast.walk(tree):
+                if ((isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in documentation
+                     and uses_the_api.search(node.value))
+                        or (isinstance(node, ast.Attribute) and node.attr == "USER_TOKEN_API")
+                        or (isinstance(node, ast.alias) and node.name == "USER_TOKEN_API")):
+                    naming.add(path.relative_to(source.parent).as_posix())
+        assert naming == {"fleetlogin.py"}, naming
+        deleting = [call for call in ast.walk(ast.parse(source.read_text())) if isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and (call.func.attr == "delete"
+                         or (call.func.attr == "request"
+                             and any(isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                                     and arg.value.upper() == "DELETE"
+                                     for arg in [*call.args[:1], *(kw.value for kw in call.keywords
+                                                                 if kw.arg == "method")])))]
+        assert len(deleting) == 1, [call.lineno for call in deleting]
 
     def test_the_source_neither_writes_a_secret_nor_starts_a_timer(self):
         """Parsed, not grepped: the docstring says "schedules" and "Secret" while saying the module

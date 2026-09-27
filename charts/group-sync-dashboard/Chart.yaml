@@ -264,7 +264,9 @@ type: application
 # a userSelfLogin stanza with replicaCount > 1 is refused. RBAC: the `leases` rule is added only where election
 # is off and a fleet account is in use; nothing is removed. appVersion unchanged: the application code rides
 # Epic C's release.
-version: 0.59.0
+# CHART 0.59.1 (2026-09-27), PATCH: docs only — CLUSTER_CREDENTIALS.md §6 states the policy on the
+# OAuthAccessToken objects a login leaves (#286). No template, value or RBAC change; appVersion unchanged.
+version: 0.59.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The policy on the `OAuthAccessToken` objects a login leaves on a cluster (#286; chart 0.59.1, docs only).**
+  `charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md` §6, linked from SPEC_S4's orchestrator's notes, describes
+  fleet-session and extracted-candidate cleanup attempts, their parsing and process limits, failed-revoke
+  logging and its exceptions, and the absence of retries or an inventory sweep. It records the restricted
+  browser-token scopes and measured sign-out 403, and leaves token-policy defaults to the cluster owner.
+  A new test checks, in five mocked logins, one DELETE per supplied token, its bearer and independently
+  derived object name, and no token listing. Its source guard checks explicit token API references and
+  DELETE call syntax, not every possible spelling. No production code, value or RBAC change.
 - **The fleet account's credential lifecycle — a durable, replica-shared gate, the daily ping, and `userSelfLogin`
   (#285, `docs/specs/SPEC_S4c_credential_lifecycle.md`; chart 0.59.0; the application code rides Epic C's release).**
   Every login as the fleet account first claims the account's Lease in the release namespace
