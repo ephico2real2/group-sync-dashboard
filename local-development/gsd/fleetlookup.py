@@ -393,14 +393,17 @@ def store(host_client: ClusterClient, own_namespace: str, cluster: ClusterConfig
 
 def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClient, *, own_namespace: str,
            gate: CredentialGate, write: bool = True, sleep: Callable[[float], None] = time.sleep,
-           clock: Callable[[], datetime] | None = None, lease: FleetLease | None = None) -> LookupResult:
+           clock: Callable[[], datetime] | None = None, lease: FleetLease | None = None,
+           held: tuple[str, ...] = ()) -> LookupResult:
     """The whole retrieval for one cluster: password, login, read, revoke, and — with `write` — store.
 
     Every refusal is a `LookupRefused` carrying the finding it becomes and the secrets in play. The
     session is a context manager, so the login's token is revoked whatever the read does. With
     `write=False` (#285's ping) nothing is written and the token is returned in the result. `lease` is
     the fleet account's Lease with the caller's claim on it (SPEC_S4c §3.3); every production caller
-    passes one, and None is the process's gate alone — #284's and #293's own hermetic tests.
+    passes one, and None is the process's gate alone — #284's and #293's own hermetic tests. `held` are values this
+    process holds that the target may echo — the ping's stored token for the very cluster it logs in to, and every
+    self-login session (#419, D4) — scrubbed from every line and every refusal, and never sent.
     """
     if write and not (settings.cluster_secrets_enabled and settings.cluster_secrets_writes_enabled):
         # THE SWITCH IS CHECKED HERE, not only by the caller (review of #295, P1-4): a second caller —
@@ -414,7 +417,7 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
     account = fleet_account(settings, cluster)
     password, salt = fleet_password(host_client, settings, own_namespace)
     digest = lease_digest(account, password, salt) if lease is not None else ""
-    secrets: list[str] = [password]
+    secrets: list[str] = [password, *held]
     try:
         if lease is not None:
             # THE LEASE SEEDS THE PROCESS'S GATE (SPEC_S4c §3.3): an entry another replica, or this pod before
@@ -445,7 +448,8 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
             lease.reserve(CredentialGate._target(cluster.api_url), digest)
         knobs = {"clock": clock} if clock is not None else {}
         try:
-            with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep, **knobs) as session:
+            with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep,
+                            secrets=held, **knobs) as session:
                 if lease is not None:
                     lease.complete()   # a session came back: the attempt's entry goes, whatever the read does (#293)
                 secrets.append(session.token)

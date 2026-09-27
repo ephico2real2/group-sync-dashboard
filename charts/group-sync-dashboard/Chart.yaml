@@ -268,7 +268,9 @@ type: application
 # OAuthAccessToken objects a login leaves (#286). No template, value or RBAC change; appVersion unchanged.
 # CHART 0.59.2 (2026-09-27), PATCH: appVersion moves to application 1.0.0 (below); Epic C: keep the
 # shared fleet login account safe (#383).
-version: 0.59.2
+# CHART 0.59.3 (2026-09-27), PATCH: appVersion moves to application 1.1.0 (below); Epic C
+# composition review fixes (#383).
+version: 0.59.3
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -365,7 +367,8 @@ version: 0.59.2
 # `clusterconfig_manage`. MINOR: who may open two surfaces changes on upgrade (docs/CHANGELOG.md).
 # 0.37.0 (2026-09-26). Epic B: protect the data during upgrades (#382). MINOR.
 # 1.0.0 (2026-09-27). Epic C: keep the shared fleet login account safe (#383). MAJOR.
-appVersion: "1.0.0"
+# 1.1.0 (2026-09-27). Epic C composition review fixes (#383). MINOR.
+appVersion: "1.1.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

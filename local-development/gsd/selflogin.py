@@ -207,6 +207,11 @@ class SelfLoginSessions:
         return {"state": "renewing" if held.reauth or self._clock() >= held.renew_at else "current",
                 "expires_at": held.session.expires_at_iso, "renew_at": stamp(held.renew_at)}
 
+    def tokens(self) -> tuple[str, ...]:
+        """Every session token this process holds — what a remote may echo (#419, D4) — for any path's redaction."""
+        with self._lock:
+            return tuple(s.session.token for s in self._sessions.values())
+
     # ── the login ─────────────────────────────────────────────────────────────────────────────
 
     def _acquire(self, cluster, client, namespace, account, password, salt, key, held) -> ClusterConfig | None:
@@ -227,8 +232,7 @@ class SelfLoginSessions:
                 poller._credential_gate.refuse(entry.get("target") or "", account, password)
             # The account's refusal alone: #293's per-target SPENT mark is not a self-login refusal (#419, F2).
             answered = poller._credential_gate.account_refusal(account, password)
-            with self._lock:      # every session this process holds: the remote may echo any of them (#419, D4)
-                carried = tuple(s.session.token for s in self._sessions.values())
+            carried = self.tokens()      # every session this process holds: the remote may echo any of them (#419, D4)
             if answered is not None:
                 self._suspend(cluster, account, key, code=(entry or {}).get("code") or "login-refused", target=answered,
                               detail=_evaluated(answered, account, entry), secrets=(password, *carried))
@@ -334,9 +338,7 @@ class SelfLoginSessions:
 
     def _exit(self, login: FleetLogin, *secrets: str) -> None:
         """Revoke a session, scrubbed of `secrets` and of every token held now, a replacement's too (#419, round 2)."""
-        with self._lock:
-            held = tuple(s.session.token for s in self._sessions.values())
-        login.add_secrets(*secrets, *held)
+        login.add_secrets(*secrets, *self.tokens())
         login.__exit__(None, None, None)
 
     def _end(self, name: str, why: str | None, *, outcome: str | None = None, finding: bool = False) -> None:

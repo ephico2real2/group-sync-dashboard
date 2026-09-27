@@ -8,7 +8,16 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 1.1.0 — chart 0.59.3 — 2026-09-27
+
+- **Epic C's composition review, applied (OB2, Fable; #383).** The daily ping's login now scrubs the poller token this
+  dashboard stores for the cluster it pings, and every self-login session it holds, from every line, refusal and the
+  standing finding the API serves, if a remote echoes one (`lookup(held=…)`). When only this process's gate holds a
+  refusal (an entry cleared by hand, or the password Secret recreated), the ping stands down without stamping an
+  attempt for a login it never made, so the restarted pod pings on its first cadence. The delete-name test also
+  refuses another module calling `_revoke` or `_delete_token`. Corrections to 1.0.0's notes clarify that the Lease
+  preserves a refusal across restarts and replicas. Those notes and SPEC_S4c §3.2 B2 and §8.2 also clarify that
+  recreating the password Secret re-arms a running pod only after it restarts.
 
 - **Require an application version bump for image-changing PRs (#427).** CI reads the image paths
   from `publish.yml` and requires exactly the next MINOR or MAJOR against the PR base. Version
@@ -42,7 +51,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   across two processes, three clusters, a restart, a crash and an irrelevant edit (measured, SPEC_S4c §8.2), where a
   second process, a restart and an edit each sent it once more before. The Lease keeps a scrypt fingerprint of the
   password salted with the account and the password Secret's uid — never the fast hash the process holds — because
-  `cluster-reader` can read Leases and not that Secret; recreating the Secret (a new uid) therefore allows one login.
+  `cluster-reader` can read Leases and not that Secret; recreating the Secret (a new uid) therefore allows one login once
+  the pod restarts — a running pod keeps its own copy of the gate, as it does after a hand-cleared entry.
   A successful ConfigMap onboarding still spends only its own cluster (#293's budget, unchanged). **The daily ping**
   (`clusterConfig.fleetAccount.ping`, on, `intervalSeconds: 86400`): once per account per interval, on the leader,
   the dashboard logs in on ONE cluster the lookup retrieved (in rotation by name) and reads the poller token Secret
@@ -83,8 +93,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   API URL that answered, without any credentials the URL carries. A successful ConfigMap onboarding still
   spends only its own cluster (#293's budget, SPEC_S5 §3.3, unchanged). The price, the operator's choice at
   the review of #325: one sick cluster's 500 stops the lookup on every cluster of that account until the
-  password is rotated or the pod restarts. A restart or a second replica still starts with an empty gate,
-  until #285's account Lease.
+  password is rotated, or the refused Lease entry is cleared and the pod restarted. In this release #285's account
+  Lease (above) seeds that gate, so a restart or a second replica no longer starts with an empty one.
 
 - **The secrets-mint Job pulls Red Hat's OpenShift CLI image by default (chart 0.58.6).**
   `secretsMint.image` is now `registry.redhat.io/openshift4/ose-cli-rhel9:v4.22`, for OpenShift 4.18 and above;

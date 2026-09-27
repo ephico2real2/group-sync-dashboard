@@ -957,3 +957,53 @@ def test_a_suspension_scrubs_every_stopped_token_from_each_revoke(tmp_path, monk
         s.suspend_account(USER, PASSWORD, {"target": "https://api.a.example.com:6443", "code": "login-refused"})
     assert len(lines(caplog, "fleet-logout-failed")) == 2
     assert all(TOKEN_2 not in m and TOKEN_3 not in m for m in caplog.messages)
+
+
+# ── OB2's composition review of Epic C (1.0.0): the ping among the other paths ───────────────────────
+
+def test_the_ping_scrubs_the_token_it_holds_for_its_target_and_every_held_session(tmp_path, monkeypatch, wire, caplog):
+    """The ping logs in on a cluster whose poller token this dashboard already stores, while self-login sessions are
+    held: a remote echoing either reached the ping's login lines, the `fleet-ping-failed` line and the standing finding
+    the API serves (OB2, Epic C composition review, K2). The password, the Basic form and a token the ping itself
+    minted were already scrubbed; a token nobody holds must survive, since redaction is by value."""
+    host, now = LeaseHost(), [T0]
+    p = process(tmp_path, monkeypatch, host, self_login("s1"), discovered=[retrieved("r1")])
+    s = sessions(p, now)
+    wire.answers = [login_302(token=TOKEN_2), httpx.Response(500, text=f"echo {SA_TOKEN} and {TOKEN_2} and {TOKEN_3}")]
+    assert s.credential_for(p.settings.cluster("s1")) is not None
+    with caplog.at_level(logging.INFO, logger="gsd"):
+        p._ping_accounts()
+    assert lines(caplog, "fleet-ping-failed"), "the echo was not met"
+    for secret in (SA_TOKEN, TOKEN_2):
+        assert all(secret not in m for m in caplog.messages), secret
+        assert all(secret not in (f.detail or "") for f in p.settings.cluster_registry.findings()), secret
+    assert any(TOKEN_3 in m for m in lines(caplog, "fleet-ping-failed")), "a token nobody holds was redacted"
+
+
+@pytest.mark.parametrize("act", ["entry-removed-by-hand", "secret-recreated"])
+def test_a_refusal_held_by_the_process_alone_stamps_no_ping_attempt(tmp_path, monkeypatch, wire, act):
+    """§5 Q7's procedure and D2's recreation both end in a pod restart, because the running pod keeps its copy of the
+    gate; until then the ping stands down WITHOUT recording an attempt — or the restarted pod waits out the whole
+    interval, its `last_outcome` reading `login-refused` for a login never made (OB2, Epic C composition review, K7)."""
+    host = LeaseHost()
+    wire.answers = [refused_401()]
+    p = process(tmp_path, monkeypatch, host, stanza("l1"), discovered=[retrieved("r1")], name="p")
+    p._retrieve_pending(); p._ping_accounts()
+    assert len(wire.authorize) == 1 and PREFIX + "ping-last-attempt" not in host.leases.annotations()
+    if act == "entry-removed-by-hand":
+        obj = host.leases.objects[lease_name(USER)]
+        obj["metadata"]["annotations"].pop(PREFIX + "refused")
+        host.leases.serial += 1
+        obj["metadata"]["resourceVersion"] = str(host.leases.serial)
+    else:
+        host.secrets["/api/v1/namespaces/ns/secrets/gsd-fleet-account"] = {
+            "metadata": {"uid": "99999999-0000-4000-8000-000000000099"},
+            "data": {"password": base64.b64encode(PASSWORD.encode()).decode()}}
+    p._ping_accounts()
+    assert len(wire.authorize) == 1, "the process's gate must hold until the restart"
+    assert PREFIX + "ping-last-attempt" not in host.leases.annotations(), "an attempt stamped for a login never made"
+    # The restart the procedure names, with the directory answering the password now: the first cadence pings.
+    wire.answers = [login_302(), login_302()]
+    q = process(tmp_path, monkeypatch, host, stanza("l1"), discovered=[retrieved("r1")], name="q")
+    q._retrieve_pending(); q._ping_accounts()
+    assert host.leases.annotations()[PREFIX + "ping-last-outcome"] == "ok"
