@@ -1,0 +1,33 @@
+# GET https://group-sync-dashboard.apps-crc.testing/api/clusterconfigs, bearer = the kubeconfig's existing kubeadmin session  (2026-09-27T13:07:02Z)
+{
+  "fleet": {
+    "ping": {
+      "enabled": true,
+      "interval_seconds": 86400
+    },
+    "accounts": [
+      {
+        "username": "ocp-oauth-bind-serviceid",
+        "lease": "gsd-fleet-666f1ba7f2fdead0",
+        "last_attempt": "2026-09-27T10:27:05Z",
+        "last_ok": "2026-09-27T10:27:05Z",
+        "last_outcome": "ok",
+        "last_target": "shared-rnd",
+        "suspended": []
+      }
+    ]
+  },
+  "clusters": [
+    {
+      "id": "shared-rnd",
+      "status": "ok",
+      "credential": "bearer",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "retired": false,
+      "last_poll": "2026-09-27T13:06:29Z",
+      "session": null,
+      "error": null
+    }
+  ],
+  "findings": []
+}

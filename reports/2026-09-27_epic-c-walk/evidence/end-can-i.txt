@@ -1,0 +1,2 @@
+# oc auth can-i, after (2026-09-27T13:20:56Z)
+SA get secret/ldap-oauth-bind-secret -n openshift-config: yes

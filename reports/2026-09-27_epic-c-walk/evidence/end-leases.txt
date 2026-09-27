@@ -1,0 +1,17 @@
+# oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account  (2026-09-27T13:20:55Z)
+[
+  {
+    "name": "gsd-fleet-666f1ba7f2fdead0",
+    "resourceVersion": "5127386",
+    "annotations": {
+      "groupsync-dashboard.io/account": "ocp-oauth-bind-serviceid",
+      "groupsync-dashboard.io/ping-digest": "e23c0ea210579dde",
+      "groupsync-dashboard.io/ping-last-attempt": "2026-09-27T10:27:05Z",
+      "groupsync-dashboard.io/ping-last-ok": "2026-09-27T10:27:05Z",
+      "groupsync-dashboard.io/ping-last-outcome": "ok",
+      "groupsync-dashboard.io/ping-last-target": "shared-rnd"
+    },
+    "holder": "",
+    "renewTime": "2026-09-27T10:27:05.906118Z"
+  }
+]

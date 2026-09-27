@@ -1,0 +1,40 @@
+# oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard --show-managed-fields -o json | jq …  (2026-09-27T13:31:59Z)
+# Recorded AFTER the walk's end snapshot: the Application's syncPolicy no longer carries `automated`. At 13:20:51Z it did
+# (evidence/end-argo-application.txt). This walk wrote nothing to the Application — its only commands against it were
+# `oc get` — and no release-crc.sh, argocd-wait, helm or podman process ran on this workstation (ps, 13:31:31Z). No
+# managedFields entry below names the writer; that fits an update which only removed the field (a manager left owning
+# nothing), but this was not verified. Left as found: a pause made by another actor is theirs to end, and re-enabling
+# selfHeal under a deliberate pause would undo their work.
+{
+  "syncPolicy": {
+    "retry": {
+      "backoff": {
+        "duration": "30s",
+        "factor": 2,
+        "maxDuration": "5m"
+      },
+      "limit": 3
+    },
+    "syncOptions": [
+      "CreateNamespace=true",
+      "RespectIgnoreDifferences=true",
+      "ServerSideApply=true"
+    ]
+  },
+  "sync": "Synced",
+  "revision": "22a485c66a7fe1b93983546374b1fd1a93e1549e",
+  "health": "Healthy",
+  "resourceVersion": "5225733",
+  "managedFields": [
+    {
+      "manager": "kubectl-client-side-apply",
+      "operation": "Update",
+      "time": "2026-09-27T10:21:36Z"
+    },
+    {
+      "manager": "argocd-application-controller",
+      "operation": "Update",
+      "time": "2026-09-27T13:30:36Z"
+    }
+  ]
+}
