@@ -1,10 +1,10 @@
 # Validation — `saTokenLookup` on the reference cluster
 
-Every command below was run on the reference lab (CRC, OpenShift 4.22.7) on 2026-09-22, and every
+The commands in Cases A–F were run on the reference lab (CRC, OpenShift 4.22.7) on 2026-09-22, and every
 **Result** block is its real output. Nothing here is reconstructed.
 
-Five cases were run, in this order: a rehearsal with a throwaway account, a failure case, the real
-fleet account, a trust-store measurement, and the gaps that remain untested.
+Cases A–F cover the lookup and trust-store measurements. Case G records the later retrieved-token
+expiry observations from the issue comment, with their capture provenance stated separately.
 
 - [1. What is being validated](#1-what-is-being-validated)
 - [2. Case A — rehearsal with the `developer` account](#2-case-a--rehearsal-with-the-developer-account)
@@ -12,6 +12,7 @@ fleet account, a trust-store measurement, and the gaps that remain untested.
 - [4. Case C — the real fleet account, with trust declared (the success)](#4-case-c--the-real-fleet-account-with-trust-declared-the-success)
 - [5. Case D — which trust store verifies which host](#5-case-d--which-trust-store-verifies-which-host)
 - [5d. Making the trust bundle repeatable](#5d-making-the-trust-bundle-repeatable--refresh-cluster-wide-cash)
+- [5e. Case G — a retrieved token expiring](#5e-case-g--a-retrieved-token-expiring)
 - [6. What is NOT proven by any of this](#6-what-is-not-proven-by-any-of-this)
 - [7. Findings](#7-findings)
 
@@ -617,6 +618,86 @@ error: Internal error occurred: ... dial tcp 192.168.126.11:10250: connect: conn
 
 It returned within thirty seconds and the dashboard pod never restarted, but the script says so
 before it acts, and anyone running it on something that matters should expect it.
+
+## 5e. Case G — a retrieved token expiring
+
+Part B of [#310](https://github.com/ephico2real2/group-sync-dashboard/issues/310): the recorded runs
+on `shared-qa` from 2026-09-23. Both runs onboarded the same CRC API via a labelled Secret with a
+TokenRequest ServiceAccount token. Poll interval is 60 s, so every boundary below is measured to
+±60 s ([setup and findings capture](../reports/2026-09-27_token-expiry-310/findings.txt)).
+
+**Capture provenance:** the raw pod logs from 2026-09-23 no longer exist because the pod has
+restarted since. The comment's quoted lines ARE the capture, transcribed verbatim below and under
+[the report folder](../reports/2026-09-27_token-expiry-310/README.md). The recorded `exp` decodes
+are preserved as [claims only](../reports/2026-09-27_token-expiry-310/exp-claims.txt), never a token.
+This documentation write-up made no lab changes; `shared-qa`'s state was not touched.
+
+### Step G1 — Run 1 — 10-minute token
+
+Result ([timeline and `exp` capture](../reports/2026-09-27_token-expiry-310/run-1.txt)):
+
+```
+00:08:44   token minted, exp=00:18:44
+00:08:50   Secret created
+00:17:20   discovered, first poll OK: 106 namespaces, 199 group bindings   <- 8m30s after creation
+00:18:20   poll OK                                                          (24s BEFORE exp)
+00:19:20   poll OK                                                          (36s AFTER exp)
+00:20:20   401 Unauthorized
+```
+
+### Step G2 — Run 2 — 20-minute token, rotated into the existing Secret
+
+Result ([timeline and `exp` capture](../reports/2026-09-27_token-expiry-310/run-2.txt)):
+
+```
+01:22:38   token minted, exp=01:42:38; Secret rotated in place
+01:26:20   discovery noticed: `discovery cycle=81 ... changed=shared-qa`   <- 3m42s to notice
+01:27:20   polling resumes
+...        17 minutes of healthy polls
+01:42:20   poll OK                                                          (18s BEFORE exp)
+01:43:20   poll OK                                                          (42s AFTER exp)
+01:44:20   401 Unauthorized
+```
+
+### Finding G1 — validation leeway
+
+Measured twice: **+36 s** and **+42 s** past the `exp` claim, both accepted; rejected by the following
+poll ([Run 1](../reports/2026-09-27_token-expiry-310/run-1.txt),
+[Run 2](../reports/2026-09-27_token-expiry-310/run-2.txt)).
+
+The [recorded finding](../reports/2026-09-27_token-expiry-310/findings.txt) attributes acceptance
+for up to 60 s past `exp` to validation leeway and retracts the earlier cached-authenticator guess.
+go-jose's `DefaultLeeway` is one minute ([upstream source](https://github.com/square/go-jose/blob/v2.6.0/jwt/validation.go#L15-L18))
+and “causes the token to be deemed valid until one minute after the expiration time”
+([go-jose jwt docs, as quoted in the comment](https://pkg.go.dev/gopkg.in/square/go-jose.v2/jwt#Claims.Validate)).
+The recorded consequence for #285 is that a renewal margin computed from `exp` is correct and
+conservative: the leeway is **free slack, not budget**
+([finding capture](../reports/2026-09-27_token-expiry-310/findings.txt)).
+
+### Finding G2 — the ambiguous refusal
+
+Result ([authentication warning capture](../reports/2026-09-27_token-expiry-310/auth-failed.txt)):
+
+```
+WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=shared-qa
+  source=secret:gsd-cluster-shared-qa tls=trusted-bundle credential=bearer
+  action="the token is invalid or expired: rotate it in this cluster's Secret"
+  detail="401 Unauthorized — token invalid or expired"
+```
+
+The [recorded interpretation](../reports/2026-09-27_token-expiry-310/findings.txt) is that an expired
+token, a revoked token and a withdrawn grant are all a bare 401. The warning names the Secret,
+credential kind and TLS mode, but cannot distinguish **expiry, revocation, and a withdrawn grant**.
+These runs observed expiry; the other causes are the comment's ambiguity finding, not separate
+experiments in this case.
+
+### Finding G3 — discovery latency
+
+Measured: **8m30s** to discover a new Secret, **3m42s** to notice a rotated credential
+([Run 1](../reports/2026-09-27_token-expiry-310/run-1.txt),
+[Run 2](../reports/2026-09-27_token-expiry-310/run-2.txt)). Filed as
+[#311](https://github.com/ephico2real2/group-sync-dashboard/issues/311), a force-refresh endpoint
+and its UI control ([finding capture](../reports/2026-09-27_token-expiry-310/findings.txt)).
 
 ## 6. What is NOT proven by any of this
 
