@@ -8,7 +8,7 @@
 | Version on release | app 1.1.0, chart 0.59.3 |
 | Issue | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) |
 | Status | specified |
-| Source | OB1-lite's specification of 2026-09-27, written before any code from issue #410 in full (the body, OB2's PreSync input, the operator's direction and go-ahead of 2026-09-27), main `05e32c8` (application 1.0.0, chart 0.59.2), the upstream documents cited in §3, and read-only measurements of quay.io, GitHub and the lab. §8's blocks were cut from a copy of `05e32c8` with the design implemented, and applied back to a clean copy for the proof in §6. No cluster, branch or GitHub setting was changed |
+| Source | OB1-lite's specification of 2026-09-27, written before any code from issue #410 in full (the body, OB2's PreSync input, the operator's direction and go-ahead of 2026-09-27), main `05e32c8` (application 1.0.0, chart 0.59.2), the upstream documents cited in §3, and read-only measurements of quay.io, GitHub and the lab. §8's blocks were cut from a copy of `05e32c8` with the design implemented, and applied back to a clean copy for the proof in §6. No cluster, branch or GitHub setting was changed. Revised the same day: main `1cd67d5` (#428, #427's app-version check) was merged in, every block re-cut against it, and the figure corrected on the orchestrator's review (Orchestrator's notes) |
 
 ## How to read this spec
 
@@ -19,12 +19,24 @@ change as implementation blocks (`docs/specs/README.md`, "Implementation blocks"
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_P1_promote_release_branch.md . --apply
 
-Line citations are plain text, file:line, at `05e32c8`. This spec's index row and its header's Status move by hand:
+Line citations are plain text, file:line, at `05e32c8`; none of the cited files changed in `1cd67d5`. This spec's index row and its header's Status move by hand:
 the implementing commit sets both to `merged` beside the applied blocks.
 
 ## Orchestrator's notes
 
-None yet.
+The orchestrator's review of the rendered figure (2026-09-27), applied:
+
+- **#427 has shipped** (PR #428, `1cd67d5`; "App image changes bump the app version" is a required check on `main`).
+  Main was merged in and every block re-cut against it. The figure's dashed "planned" box is now the fourth and fifth
+  lines of the solid `ci.yml` box ("image change → next MINOR or MAJOR"); `docs/CICD.md` lists the check by its job
+  name and points to `docs/RELEASING.md`'s rules; the text twin says the same. Two blocks changed shape with the merge:
+  the CHANGELOG entry now goes first under #428's `## Unreleased` instead of creating the heading, and `RELEASING.md`'s
+  "Neither" section keeps #428's new paragraph and adds one line pointing to `docs/CICD.md`.
+- **Dashed meant two things.** This repository's figures use dashed for "proposed, not built". The alternate paths
+  that ship (the chart-only merge, the rollback) are now thin solid lines in the muted colour, the failure path thin
+  and red, and a key inside the figure says so under "Everything drawn ships in #410." No dashed stroke remains.
+- **Why 1.1.0 holds:** the blocks edit `local-development/README.md`, an image input, so #427's check requires exactly
+  the next MINOR; 1.0.0 → 1.1.0 is that. #425 moves to 1.2.0.
 
 ## 1. The requirement
 
@@ -194,7 +206,7 @@ not match the pinned version and commit, **through any path this repository auto
 
 ## 6. Tests, before and after
 
-Three new or changed test files; no other test is edited. "Before" is `05e32c8` with this spec plus §8's three test
+Three new or changed test files; no other test is edited. "Before" is `1cd67d5` with this spec plus §8's three test
 blocks only; "after" is the same tree with every block applied. Where "before" fails only because a new file is
 missing, the right-hand column adds a mutation run on the "after" tree: one rule of `promote.py` switched off, or
 `release-crc.sh` put back to `05e32c8`, to show the test fails for the reason it names.
@@ -227,14 +239,15 @@ The gates, on the applied copy:
 | Gate | Command | Result |
 |---|---|---|
 | the blocks | `apply-spec-blocks.py docs/specs/SPEC_P1_promote_release_branch.md <copy>`, then `--apply` | `34 blocks check out across 18 files`; the applied files are byte-equal to the proof tree's |
-| the hermetic suite, before | `pytest -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` on `05e32c8` | `5409 passed, 20 skipped, 610 deselected` |
-| the hermetic suite, after | the same, on the applied copy | `5434 passed, 19 skipped, 610 deselected` |
-| the workflows | actionlint v1.7.12 | no finding in `promote.yml`; the other files' findings are unchanged from `05e32c8` (mock-cluster.yml, SC2034) |
+| the hermetic suite, main | `pytest -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` on `1cd67d5` | `5453 passed, 19 skipped, 610 deselected` |
+| the hermetic suite, main + this spec | the same | `5456 passed, 19 skipped, 610 deselected` |
+| the hermetic suite, after | the same, on the applied copy | `5477 passed, 19 skipped, 610 deselected` |
+| the workflows | actionlint v1.7.12 | no finding in `promote.yml`; the other two findings (ci.yml SC2086, mock-cluster.yml SC2034) are `1cd67d5`'s |
 | the script | `bash -n` and `shellcheck -S warning` on `release-crc.sh` | clean |
 | the render | `helm template … -f environments/crc.yaml -f promotion.yaml` | every dashboard and report image is `repository@sha256:…` |
 | RBAC | Roles, ClusterRoles and their bindings, rendered with `crc.yaml`, before and after | 70 and 70; REMOVED 0, ADDED 0 |
 | the figure | `docs/diagrams/render.py … promotion-pipeline` | two PNGs written; `375 px viewport: scrollWidth 375` |
-| Markdown | `markdownlint-cli2` on every edited `.md` | no new finding (the counts per file equal `05e32c8`'s) |
+| Markdown | `markdownlint-cli2` on every edited `.md` | no new finding (the counts per file equal `1cd67d5`'s) |
 
 ## 7. On the lab, for the implementing pull request
 
@@ -261,8 +274,8 @@ Nothing here was run for this spec. The implementer runs it, with the lab's kube
 Thirty-four blocks over eighteen files, in apply order: the workflow, the script, the Application, `release-crc.sh`,
 the tests, the figure's page, the docs, the versions, the CHANGELOG. Lines added / removed per file (§6's proof
 tree): `promote.yml` +75, `promote.py` +229, `test_promote.py` +215, `test_promote_workflow.py` +64,
-`docs/CICD.md` +201, `docs/diagrams/cicd/source.html` +150; `release-crc.sh` +50 −9, `test_release_crc.py` +51 −3,
-`gitops/argocd-application-dashboard.yaml` +9 −5, the chart README +18, `RELEASING.md` +9 −1, the CHANGELOG +13,
+`docs/CICD.md` +204, `docs/diagrams/cicd/source.html` +155; `release-crc.sh` +50 −9, `test_release_crc.py` +51 −3,
+`gitops/argocd-application-dashboard.yaml` +9 −5, the chart README +18, `RELEASING.md` +9, the CHANGELOG +10,
 `Chart.yaml` +5 −2, `local-development/README.md` +3 −2, `docs/README.md` +1, `gitops/README.md` +1,
 `pyproject.toml` and `gsd/__init__.py` +1 −1 each.
 
@@ -1204,11 +1217,12 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
 
   <figure>
     <div class="fig-scroll">
-      <svg viewBox="0 0 1100 720" role="img" aria-label="The pipeline in five lanes, time flowing down. A pull request passes ci.yml and is merged to main. publish.yml builds, pushes and signs the image 1.1.0 dash sha10 on quay.io, and moves the 1.1.0 alias only on a version bump. If publish fails, nothing is promoted. When publish succeeds, or a chart-only merge lands, promote.yml reads both images back from quay.io, checking labels, digest and signature, then commits the chart and promotion.yaml with the digests to the release branch. Argo CD syncs release and pulls the images by digest. A rollback is a manual run of promote.yml with an older commit.">
+      <svg viewBox="0 0 1100 720" role="img" aria-label="The pipeline in five lanes, time flowing down. A pull request passes ci.yml, including the chart-version and app-version bump checks, and is merged to main. publish.yml builds, pushes and signs the image 1.1.0 dash sha10 on quay.io, and moves the 1.1.0 alias only on a version bump. If publish fails, nothing is promoted. When publish succeeds, or a chart-only merge lands, promote.yml reads both images back from quay.io, checking labels, digest and signature, then commits the chart and promotion.yaml with the digests to the release branch. Argo CD syncs release and pulls the images by digest. A rollback is a manual run of promote.yml with an older commit.">
         <defs>
           <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
           <marker id="ah-ship" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ship)"/></marker>
           <marker id="ah-build" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--build)"/></marker>
+          <marker id="ah-alt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker>
           <marker id="ah-gap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--gap)"/></marker>
         </defs>
         <!-- lanes: one trust boundary each -->
@@ -1223,22 +1237,26 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
           <text x="770" y="30">RELEASE BRANCH</text>
           <text x="990" y="30">CLUSTER · ARGO CD</text>
         </g>
-        <text x="1090" y="706" text-anchor="end" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--muted)">time flows down</text>
+        <g font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--muted)">
+          <text x="1090" y="706" text-anchor="end">time flows down</text>
+          <line x1="675" y1="660" x2="705" y2="660" stroke="var(--ship)" stroke-width="1.5"/><text x="712" y="664">the main path</text>
+          <line x1="675" y1="680" x2="705" y2="680" stroke="var(--muted)" stroke-width="1"/><text x="712" y="684">an alternate path: chart-only merge, manual rollback</text>
+          <line x1="675" y1="700" x2="705" y2="700" stroke="var(--gap)" stroke-width="1"/><text x="712" y="704">a failure: nothing is promoted</text>
+          <text x="675" y="642" font-weight="600">Everything drawn ships in #410.</text>
+        </g>
 
         <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor" text-anchor="middle">
           <!-- pull request -->
           <rect x="15" y="60" width="190" height="40" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
           <text x="110" y="85" font-weight="600">you open a pull request</text>
-          <rect x="15" y="124" width="190" height="72" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="15" y="124" width="190" height="104" rx="6" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
           <text x="110" y="146" font-weight="600">ci.yml checks the PR</text>
           <text x="110" y="164">tests · chart · image scan</text>
-          <text x="110" y="182">chart change → version bump</text>
-          <rect x="15" y="214" width="190" height="44" rx="6" fill="none" stroke="var(--none)" stroke-dasharray="5 4" stroke-width="1.2"/>
-          <text x="110" y="232" fill="var(--none)">image changed → app version</text>
-          <text x="110" y="249" fill="var(--none)">bumped (#427, planned)</text>
+          <text x="110" y="182">chart change → chart bump</text>
+          <text x="110" y="200">image change → next</text>
+          <text x="110" y="217">MINOR or MAJOR</text>
           <line x1="110" y1="100" x2="110" y2="120" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
-          <path d="M110,196 L110,210" stroke="var(--none)" stroke-dasharray="3 3" fill="none"/>
-          <path d="M110,258 L110,292 L231,292" stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#ah)"/>
+          <path d="M110,228 L110,292 L231,292" stroke="currentColor" stroke-width="1.2" fill="none" marker-end="url(#ah)"/>
           <text x="118" y="284" text-anchor="start" fill="var(--muted)">reviewed, merged</text>
 
           <!-- main: merge, publish -->
@@ -1259,10 +1277,10 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
           <text x="550" y="418" fill="var(--muted)">signed · SBOM attached</text>
           <line x1="395" y1="368" x2="451" y2="368" stroke="var(--build)" stroke-width="1.5" marker-end="url(#ah-build)"/>
           <text x="423" y="360" fill="var(--build)" font-size="11.5">builds</text>
-          <rect x="455" y="264" width="190" height="44" rx="6" fill="var(--gap-wash)" stroke="var(--gap)" stroke-dasharray="5 4" stroke-width="1.3"/>
+          <rect x="455" y="264" width="190" height="44" rx="6" fill="var(--gap-wash)" stroke="var(--gap)" stroke-width="1"/>
           <text x="550" y="283" font-weight="600" fill="var(--gap)">publish failed</text>
           <text x="550" y="300" fill="var(--gap)">nothing is promoted</text>
-          <path d="M395,352 L451,300" stroke="var(--gap)" stroke-dasharray="4 3" stroke-width="1.3" fill="none" marker-end="url(#ah-gap)"/>
+          <path d="M395,352 L451,300" stroke="var(--gap)" stroke-width="1" fill="none" marker-end="url(#ah-gap)"/>
 
           <!-- main: promote, and its three ways in -->
           <rect x="235" y="540" width="190" height="64" rx="6" fill="var(--ship-wash)" stroke="var(--ship)" stroke-width="1.5"/>
@@ -1271,16 +1289,16 @@ figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
           <text x="330" y="597">then commits</text>
           <line x1="330" y1="408" x2="330" y2="536" stroke="var(--ship)" stroke-width="1.5" marker-end="url(#ah-ship)"/>
           <text x="322" y="500" text-anchor="end" fill="var(--ship)">succeeds</text>
-          <path d="M250,312 L250,536" stroke="currentColor" stroke-dasharray="5 4" stroke-width="1.2" fill="none" marker-end="url(#ah)"/>
+          <path d="M250,312 L250,536" stroke="var(--muted)" stroke-width="1" fill="none" marker-end="url(#ah-alt)"/>
           <text x="258" y="440" text-anchor="start" fill="var(--muted)">chart-only</text>
           <text x="258" y="455" text-anchor="start" fill="var(--muted)">merge</text>
           <path d="M500,424 L410,536" stroke="var(--ship)" stroke-width="1.3" fill="none" marker-end="url(#ah-ship)"/>
           <text x="505" y="470" text-anchor="start" fill="var(--ship)">read back: labels,</text>
           <text x="505" y="486" text-anchor="start" fill="var(--ship)">digest, signature</text>
-          <rect x="235" y="650" width="190" height="44" rx="6" fill="none" stroke="currentColor" stroke-dasharray="5 4" stroke-width="1.2"/>
+          <rect x="235" y="650" width="190" height="44" rx="6" fill="var(--surface)" stroke="var(--muted)" stroke-width="1"/>
           <text x="330" y="669">rollback: run promote.yml</text>
           <text x="330" y="686">with an older sha</text>
-          <line x1="330" y1="650" x2="330" y2="608" stroke="currentColor" stroke-dasharray="5 4" stroke-width="1.2" marker-end="url(#ah)"/>
+          <line x1="330" y1="650" x2="330" y2="608" stroke="var(--muted)" stroke-width="1" marker-end="url(#ah-alt)"/>
 
           <!-- release, then the cluster -->
           <rect x="675" y="532" width="190" height="80" rx="6" fill="var(--ship-wash)" stroke="var(--ship)" stroke-width="1.5"/>
@@ -1351,29 +1369,30 @@ Nothing builds on `release`, and nothing but `promote.yml` writes to it.
 
 *Figure 1. Five lanes, time flowing down. `publish.yml` builds on quay.io; `promote.yml` reads back and commits to
 `release`; Argo CD syncs `release`. A failed publish stops the line. A chart-only merge goes straight to
-`promote.yml` and reuses the last image. A rollback is a manual run of `promote.yml`. The app-version check is dashed
-because it is #427's, not built yet.*
+`promote.yml` and reuses the last image. A rollback is a manual run of `promote.yml`. Thick lines are the main path,
+thin grey lines an alternate path, red a failure. Everything drawn ships.*
 
 ````text
 GITHUB PR            GITHUB MAIN          QUAY.IO               RELEASE BRANCH        CLUSTER (ARGO CD)
 open a PR
-ci.yml checks
-(#427 app-version
- check: planned)
+ci.yml checks:
+tests, chart,
+chart bump, app
+MINOR/MAJOR bump
     | merged
     +----------------> merge to main
-                         |          \ chart-only merge (skips publish)
+                         |          \ chart-only merge (skips publish)  [alternate]
                        publish.yml --builds--> 1.1.0-<sha10>
                          |    \                :1.1.0 on a version bump
                          |     \               signed, SBOM
-                         |      `--fails--> "publish failed: nothing is promoted"
+                         |      `--fails--> "publish failed: nothing is promoted"  [failure]
                          | succeeds
                        promote.yml <--reads back: labels, digest, signature--
                          |
                          +--commits the pinned artifact--> release: chart,
                          ^                                 environments/,
                          |                                 promotion.yaml ----syncs----> pulls both
-                  rollback: run promote.yml                                              images by digest
+                  rollback: run promote.yml  [alternate]                                 images by digest
                   with an older sha
 ````
 
@@ -1390,9 +1409,11 @@ ci.yml checks
 | `chart` | the chart must lint and render |
 | `diagrams` | the diagrams must render |
 | `Chart changes bump the chart version` | a change under `charts/` without a new `Chart.yaml` `version` |
+| `App image changes bump the app version` | a change to an image input without exactly the next MINOR or MAJOR application version |
 | `image` | builds the image and scans it for CVEs; not a required check, and the CVE report is advisory |
 
-Planned, #427: a check that a change to the image also bumps the application version. It is not built yet.
+The app-version check (#427) reads the image inputs from `publish.yml`'s `paths:` list, so
+`local-development/README.md` counts. `docs/RELEASING.md` gives its exact rules.
 
 ### 2. The merge
 
@@ -1524,12 +1545,14 @@ If this page's flow changes, change the figure, its text twin and this page toge
 
 <!-- block: docs/RELEASING.md | edit -->
 ```markdown
-human changed the application version.
+publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme are unchanged.
+
+---
 
 ```
 
 ```markdown
-human changed the application version.
+publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme are unchanged.
 
 ## Promotion: what the lab deploys
 
@@ -1538,16 +1561,21 @@ the chart with the images pinned by digest to the `release` branch, which the la
 merge is promoted with the image of the last commit that changed an image input; a failed publish is never
 promoted. [CICD.md](CICD.md) is the walk-through, with the picture, the rollback and the one-time setup.
 
+---
+
 ```
 
 <!-- block: docs/RELEASING.md | edit -->
 ```markdown
-appVersion. That is the deliberate-release model: merging is not shipping.
+
+**A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
 ```
 
 ```markdown
-appVersion. That is the deliberate-release model: merging is not shipping. The lab is the exception: it
-tracks `release`, and `promote.yml` deploys the new image there ([CICD.md](CICD.md)).
+
+The lab tracks `release`, not `main`: [CICD.md](CICD.md) says what each kind of merge deploys there.
+
+**A migration is never "neither".** A merge that adds a `_MIGRATIONS` entry (`local-development/gsd/store.py`)
 ```
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
@@ -1655,14 +1683,11 @@ appVersion: "1.1.0"
 
 <!-- block: docs/CHANGELOG.md | edit -->
 ```markdown
-which `local-development/prepare-release.py` does when the release is cut.
 
+- **Require an application version bump for image-changing PRs (#427).** CI reads the image paths
 ```
 
 ```markdown
-which `local-development/prepare-release.py` does when the release is cut.
-
-## Unreleased
 
 - **Build once, promote the artifact: the lab tracks `release` (#410, Epic E, `docs/specs/SPEC_P1_promote_release_branch.md`;
   app 1.1.0, chart 0.59.3).** A new workflow, `promote.yml`, runs after a successful `publish.yml` and after a
@@ -1674,5 +1699,5 @@ which `local-development/prepare-release.py` does when the release is cut.
   reads the pinned digests back before pointing the lab at `release`; `--argocd <branch>` keeps working for tests.
   New operator guide: `docs/CICD.md`, with the pipeline figure. The `release` branch is created once by hand
   (`docs/CICD.md`, Rollback and setup).
-
+- **Require an application version bump for image-changing PRs (#427).** CI reads the image paths
 ```
