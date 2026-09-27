@@ -8,6 +8,7 @@ evidence in the review record was produced that way).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -20,6 +21,8 @@ LOCAL_DEV = Path(__file__).resolve().parents[1]
 REPO = LOCAL_DEV.parent
 SCRIPT = Path(os.environ.get("RELEASE_CRC_UNDER_TEST", LOCAL_DEV / "release-crc.sh"))
 WAITER = Path(os.environ.get("ARGOCD_WAIT_UNDER_TEST", LOCAL_DEV / "argocd-wait.sh"))
+REAL_OC = shutil.which("oc")   # found before the stubs go on PATH
+LINUX_IMAGES = "--filter-by-os=linux/.* --show-multiarch -o json"   # how release-crc.sh asks oc for every Linux image
 
 STUB = r'''#!/usr/bin/env bash
 # Every call is logged as one line: <tool> <args>. Answers come from STUB_* variables.
@@ -39,6 +42,8 @@ case "$(basename "$0") $*" in
       esac ;;
   "oc get application "*) exit 0 ;;
   "oc image info "*)     # the registry: STUB_IMAGES is "<ref>=<org.opencontainers.image.version> ..."; an unlisted ref is absent
+      # STUB_OCI_DIR: the real oc reads a manifest list from its on-disk registry instead, same flags.
+      [ -n "${STUB_OCI_DIR:-}" ] && exec "$STUB_REAL_OC" image info --dir "$STUB_OCI_DIR" file://review/multi:good "${@:4}"
       for entry in $STUB_IMAGES; do
         case "$entry" in "${3}="*) printf '{"digest":"sha256:stub","config":{"config":{"Labels":{"org.opencontainers.image.version":"%s"}}}}\n' "${entry#*=}"; exit 0 ;; esac
       done
@@ -340,14 +345,20 @@ def test_argocd_branch_refuses_an_alias_publish_has_not_pushed_yet(lab):
     assert "oc apply" not in calls(lab)
 
 
+def _pin_on_branch(lab, branch: str, dashboard_tag: str, report_tag: str) -> None:
+    """Commit values.yaml with these two tags on origin/<branch>, the checkout left on main."""
+    _git(lab["repo"], "checkout", "-qb", branch)
+    (lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
+        f'image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: "{dashboard_tag}"\n'
+        f'reporting:\n  image:\n    repository: quay.io/example/group-sync-dashboard-report\n    tag: "{report_tag}"\n')
+    _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", branch); _git(lab["repo"], "push", "-q", "origin", branch)
+    _git(lab["repo"], "checkout", "-q", "main")
+    synced_status(lab, _git(lab["repo"], "rev-parse", branch))
+
+
 def test_argocd_branch_reads_the_chart_at_the_branch_not_the_checkout(lab):
     """A pin on origin/<branch> is the operator's choice: deployed as pinned, whatever the local tree says."""
-    _git(lab["repo"], "checkout", "-qb", "pin")
-    (lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml").write_text(
-        'image:\n  repository: quay.io/example/group-sync-dashboard\n  tag: "0.9.9-abcdef1234"\n')
-    _git(lab["repo"], "add", "-A"); _git(lab["repo"], "commit", "-qm", "pin"); _git(lab["repo"], "push", "-q", "origin", "pin")
-    _git(lab["repo"], "checkout", "-q", "main")
-    synced_status(lab, _git(lab["repo"], "rev-parse", "pin"))
+    _pin_on_branch(lab, "pin", "0.9.9-abcdef1234", "0.9.9-abcdef1234")
     r = run(lab, "--argocd", "pin", STUB_IMAGES="")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "pinned in values.yaml" in r.stdout
@@ -359,9 +370,80 @@ def test_argocd_branch_deploys_when_both_aliases_are_the_release(lab):
     r = run(lab, "--argocd", "main")
     assert r.returncode == 0, r.stdout + r.stderr
     log = calls(lab)
-    assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} -o json" in log
-    assert f"oc image info quay.io/example/group-sync-dashboard-report:{_version()} -o json" in log
+    assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} {LINUX_IMAGES}" in log
+    assert f"oc image info quay.io/example/group-sync-dashboard-report:{_version()} {LINUX_IMAGES}" in log
     assert log.index("oc image info") < log.index("oc patch --local"), "the registry is read before the Application is written"
+
+
+def test_argocd_branch_still_checks_report_when_only_the_dashboard_tag_is_pinned(lab):
+    """image.tag pinned is the operator's choice for the dashboard only; the report still resolves appVersion."""
+    _pin_on_branch(lab, "dashpin", "0.9.9-abcdef1234", "")
+    _stale_alias(lab, "group-sync-dashboard-report", "0.24.0")
+    r = run(lab, "--argocd", "dashpin")
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"group-sync-dashboard-report:{_version()} is application 0.24.0" in r.stderr
+    assert "oc apply" not in calls(lab)
+
+
+def test_argocd_branch_skips_only_the_pinned_report_alias(lab):
+    """reporting.image.tag pinned, image.tag empty: check the dashboard alias, not the unused report alias."""
+    _pin_on_branch(lab, "reppin", "", "0.9.9-abcdef1234")
+    r = run(lab, "--argocd", "reppin", STUB_IMAGES=f"quay.io/example/group-sync-dashboard:{_version()}={_version()}")
+    assert r.returncode == 0, r.stdout + r.stderr
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard:{_version()} {LINUX_IMAGES}" in log
+    assert "group-sync-dashboard-report" not in log
+    assert "pinned in values.yaml" in r.stdout
+
+
+def test_argocd_branch_reads_the_shipped_values_file(lab):
+    """The real values.yaml (150 KB, reporting.image.tag commented, secretsMint's tag first): both aliases checked."""
+    shipped = (REPO / "charts" / "group-sync-dashboard" / "values.yaml").read_text()
+    (lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml").write_text(shipped.replace("quay.io/ephico2real/", "quay.io/example/"))
+    _git(lab["repo"], "commit", "-qam", "shipped values"); _git(lab["repo"], "push", "-q", "origin", "main")
+    synced_status(lab, _git(lab["repo"], "rev-parse", "HEAD"))
+    r = run(lab, "--argocd", "main")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"group-sync-dashboard-report:{_version()} is application {_version()}" in r.stdout
+
+
+def _manifest_list(directory: Path, arm64_version: str) -> Path:
+    """oc's on-disk registry (`--dir`, file://review/multi:good): a linux/amd64 + linux/arm64 manifest list."""
+    root = directory / "v2" / "review" / "multi"
+    (root / "manifests").mkdir(parents=True)
+    (root / "blobs").mkdir()
+
+    def blob(obj: dict, kind: str) -> dict:
+        data = json.dumps(obj, separators=(",", ":")).encode()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        (root / kind / digest).write_bytes(data)
+        return {"mediaType": obj.get("mediaType", "application/vnd.docker.container.image.v1+json"),
+                "size": len(data), "digest": digest}
+
+    children = []
+    for arch, version in (("amd64", _version()), ("arm64", arm64_version)):
+        config = blob({"architecture": arch, "os": "linux", "rootfs": {"type": "layers", "diff_ids": []},
+                       "config": {"Labels": {"org.opencontainers.image.version": version}}}, "blobs")
+        child = blob({"schemaVersion": 2, "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                      "config": config, "layers": []}, "manifests")
+        children.append({**child, "platform": {"architecture": arch, "os": "linux"}})
+    index = blob({"schemaVersion": 2, "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+                  "manifests": children}, "manifests")
+    (root / "manifests" / "good").symlink_to(index["digest"])
+    return directory
+
+
+@pytest.mark.skipif(REAL_OC is None, reason="oc is not installed")
+@pytest.mark.parametrize("arm64_version, deploys", [(None, True), ("0.24.0", False)], ids=["every-child-is-the-release", "stale-arm64-child"])
+def test_argocd_branch_reads_every_linux_image_of_a_manifest_list(lab, arm64_version, deploys):
+    """The real oc refuses a manifest list without --filter-by-os, and a workstation is not the node's OS."""
+    synced_status(lab, lab["full"])
+    oci = _manifest_list(lab["tmp"] / "oci", arm64_version or _version())
+    r = run(lab, "--argocd", "main", STUB_OCI_DIR=str(oci), STUB_REAL_OC=REAL_OC)
+    assert (r.returncode == 0) is deploys, r.stdout + r.stderr
+    if not deploys:
+        assert "0.24.0" in next(line for line in r.stderr.splitlines() if "is application" in line)
+        assert "oc apply" not in calls(lab)
 
 
 # --- the waiter on its own ----------------------------------------------------------------------

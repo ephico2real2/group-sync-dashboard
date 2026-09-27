@@ -209,28 +209,57 @@ fi
 # anyway (`oc image info` reads a public tag with no login), and each must carry the chart's
 # appVersion as its org.opencontainers.image.version label — the label every build stamps — or
 # nothing is deployed. The chart is read at the revision Argo will read it from, with the same sed
-# forms helm.yaml uses on the same files; a pinned image.tag is the operator's choice and is deployed
-# as pinned.
+# forms helm.yaml uses on the same files. Each image is checked against its own pin: a pinned
+# image.tag or reporting.image.tag is the operator's choice for THAT image and is deployed as pinned,
+# and the other image is still checked. oc is asked for every Linux image of the tag (a manifest
+# list is refused without --filter-by-os, and this workstation's OS is not the node's), and every one
+# must carry the label. A repository overridden in values, or a digest pin, is not resolved: the
+# default repository is checked.
 published_image_is_the_release() {
-  local revision="$1" chart values app_version pinned repo ref version
+  local revision="$1" chart values app_version pinned report_pinned repo spec name this_pin ref version
   chart=$(git show "${revision}:charts/group-sync-dashboard/Chart.yaml") || return 1
   values=$(git show "${revision}:charts/group-sync-dashboard/values.yaml") || return 1
   app_version=$(printf '%s\n' "$chart" | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1)
   pinned=$(printf '%s\n' "$values" | sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' | head -1)
   repo=$(printf '%s\n' "$values" | sed -n 's/^  repository: \([^[:blank:]]*\)[[:blank:]]*$/\1/p' | head -1)
+  # reporting.image.tag is four spaces deep and carries a trailing comment in the shipped values.yaml;
+  # a 4-space sed would meet secretsMint's `tag: latest` first, so walk the reporting.image mapping.
+  report_pinned=$(printf '%s\n' "$values" | python3 -c '
+import sys
+in_reporting = in_image = False
+for raw in sys.stdin.read().splitlines():   # read it all: an early exit would SIGPIPE printf under pipefail
+    line = raw.split("#", 1)[0].rstrip()
+    if line == "reporting:":
+        in_reporting, in_image = True, False
+        continue
+    if in_reporting and line and not line.startswith(" "):
+        in_reporting = in_image = False
+    if in_reporting and line == "  image:":
+        in_image = True
+        continue
+    if in_image and line.startswith("    tag:"):
+        print(line.split(":", 1)[1].strip().strip("\"'\''"))
+        break
+    if in_image and line.startswith("  ") and not line.startswith("    "):
+        in_image = False
+')
   if [ -z "$app_version" ] || [ -z "$repo" ]; then
     echo "ERROR: cannot read appVersion and image.repository from the chart at origin/${revision}." >&2
     return 1
   fi
-  if [ -n "$pinned" ]; then
-    echo "image   : ${repo}:${pinned} (pinned in values.yaml; not checked against appVersion)"
-    return 0
-  fi
-  for ref in "${repo}:${app_version}" "${repo}-report:${app_version}"; do
-    if ! version=$(oc image info "$ref" -o json 2>/dev/null | python3 -c '
+  for spec in "${repo}|${pinned}" "${repo}-report|${report_pinned}"; do
+    name="${spec%%|*}" this_pin="${spec#*|}"
+    if [ -n "$this_pin" ]; then
+      echo "image   : ${name}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      continue
+    fi
+    ref="${name}:${app_version}"
+    # oc answers one object for a single manifest and an array for a list; a mixed list prints both.
+    if ! version=$(oc image info "$ref" --filter-by-os='linux/.*' --show-multiarch -o json 2>/dev/null | python3 -c '
 import json, sys
-labels = json.load(sys.stdin).get("config", {}).get("config", {}).get("Labels") or {}
-print(labels.get("org.opencontainers.image.version", ""))'); then
+images = json.load(sys.stdin)
+images = [images] if isinstance(images, dict) else images
+print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or {}).get("org.opencontainers.image.version", "") for i in images})))'); then
       echo "ERROR: ${ref} is not in the registry, or cannot be read. Argo CD would pull it." >&2
       echo "       publish.yml pushes the :${app_version} aliases on the merge that moved pyproject's version;" >&2
       echo "       wait for that run, or publish them by hand: ./build-and-push-external.sh --release-tags" >&2

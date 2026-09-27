@@ -285,12 +285,14 @@ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/ver
 Expected: `{"leader": true, "version": "0.15.0", …}` (with `oauthProxy.enabled` the app binds
 loopback; `curl` from inside the pod is the honest check).
 
-**The report pod stays NotReady for one poll cycle** after a restore from a newer image. The newest copy under
+**The report pod stays NotReady until a new copy is written** after a restore from a newer image. The newest copy under
 `/data/report` is the one the previous image wrote, and the report service refuses a snapshot newer than it
 understands (`snapshot schema N is newer…`, `/report/readyz` 503). The leader's first poll after this start writes a
 new copy (`gsd/poller.py#_maybe_report_snapshot`: at once on the first cycle, then every
-`reporting.snapshot.intervalSeconds`), and the report pod becomes Ready. Nothing to do; it clears itself (measured by
-OB2's composition review of Epics A and B).
+`reporting.snapshot.intervalSeconds`), and when that write succeeds the report pod becomes Ready (measured by OB2's
+composition review of Epics A and B). If it is still NotReady after the leader's first poll, no copy was written:
+the leader's log says `report snapshot was not written` or `report snapshot failed`, and the next attempt waits a
+full interval. Fix what that names (the volume's space or permissions) rather than waiting.
 
 **A copy newer than the image is refused (#305).** When the restored file's `user_version` (§1) is
 above the highest migration the running image carries, the dashboard does not start: the container
