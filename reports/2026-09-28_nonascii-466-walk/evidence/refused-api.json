@@ -1,0 +1,112 @@
+{
+  "fetched_at": "2026-09-28T11:31:13Z",
+  "as": "developer",
+  "api_clusters_status": 200,
+  "api_clusterconfigs_status": 200,
+  "clusters": [
+    {
+      "id": "dashboard",
+      "status": "ok",
+      "reachable": true,
+      "last_poll": "2026-09-28T11:30:59Z",
+      "error": null
+    },
+    {
+      "id": "mock-privateca",
+      "status": "ok",
+      "reachable": true,
+      "last_poll": "2026-09-28T11:30:58Z",
+      "error": null
+    },
+    {
+      "id": "mock-selfsigned",
+      "status": "ok",
+      "reachable": true,
+      "last_poll": "2026-09-28T11:30:58Z",
+      "error": null
+    },
+    {
+      "id": "mock-trusted",
+      "status": "ok",
+      "reachable": true,
+      "last_poll": "2026-09-28T11:30:58Z",
+      "error": null
+    },
+    {
+      "id": "shared-qa",
+      "status": "ok",
+      "reachable": true,
+      "last_poll": "2026-09-28T11:30:59Z",
+      "error": null
+    },
+    {
+      "id": "shared-rnd",
+      "status": "ok",
+      "reachable": true,
+      "last_poll": "2026-09-28T11:30:59Z",
+      "error": null
+    }
+  ],
+  "discovery": {
+    "namespace": "group-sync-dashboard",
+    "label": "groupsync-dashboard.io/secret-type=cluster",
+    "last_discovery": "2026-09-28T11:26:40Z",
+    "error": null
+  },
+  "clusterconfigs": [
+    {
+      "id": "dashboard",
+      "source": "values",
+      "status": "ok",
+      "last_poll": "2026-09-28T11:30:59Z",
+      "error": null
+    },
+    {
+      "id": "mock-privateca",
+      "source": "secret:gsd-cluster-mock-privateca",
+      "status": "ok",
+      "last_poll": "2026-09-28T11:30:58Z",
+      "error": null
+    },
+    {
+      "id": "mock-selfsigned",
+      "source": "secret:gsd-cluster-mock-selfsigned",
+      "status": "ok",
+      "last_poll": "2026-09-28T11:30:58Z",
+      "error": null
+    },
+    {
+      "id": "mock-trusted",
+      "source": "secret:gsd-cluster-mock-trusted",
+      "status": "ok",
+      "last_poll": "2026-09-28T11:30:58Z",
+      "error": null
+    },
+    {
+      "id": "shared-qa",
+      "source": "secret:gsd-cluster-shared-qa",
+      "status": "ok",
+      "last_poll": "2026-09-28T11:30:59Z",
+      "error": null
+    },
+    {
+      "id": "shared-rnd",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "status": "ok",
+      "last_poll": "2026-09-28T11:30:59Z",
+      "error": null
+    }
+  ],
+  "findings": [
+    {
+      "secret": "gsd-cluster-mock-refusal",
+      "code": "insecure-with-ca",
+      "detail": "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"
+    },
+    {
+      "secret": "gsd-cluster-walk-466",
+      "code": "ca-data-invalid",
+      "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"
+    }
+  ]
+}

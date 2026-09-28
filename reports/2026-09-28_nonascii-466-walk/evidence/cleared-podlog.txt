@@ -1,0 +1,29 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-86c97cbf49-2ps6w -c dashboard --timestamps --since-time=2026-09-28T11:31:30Z  (captured 2026-09-28T11:43:21Z)
+# lines in the window: 484
+# discovery and secret-refused lines, and every line naming walk-466:
+2026-09-28T11:36:41.136721640Z 2026-09-28 07:36:41,136-0400 INFO    gsd.clusterconfig discovery cycle=10 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 refused_cleared=gsd-cluster-walk-466:ca-data-invalid
+# discovery lines: 1
+# secret-refused lines: 0
+# lines naming walk-466: 1
+# 'polled <cluster>:' lines per cluster (one per successful poll):
+  12 dashboard:
+  12 mock-privateca:
+  12 mock-selfsigned:
+  12 mock-trusted:
+  12 shared-qa:
+  12 shared-rnd:
+# the last 'polled <cluster>:' line per cluster:
+2026-09-28T11:42:59.201793766Z 2026-09-28 07:42:59,201-0400 INFO    gsd.poller polled dashboard: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.799527572Z 2026-09-28 07:42:58,799-0400 INFO    gsd.poller polled mock-privateca: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.521144691Z 2026-09-28 07:42:58,520-0400 INFO    gsd.poller polled mock-selfsigned: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.702620872Z 2026-09-28 07:42:58,702-0400 INFO    gsd.poller polled mock-trusted: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.995774940Z 2026-09-28 07:42:58,995-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:59.317078835Z 2026-09-28 07:42:59,316-0400 INFO    gsd.poller polled shared-rnd: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+# cluster-unreachable lines: 0
+# fleet-login lines: 0
+# Traceback lines: 0
+# TypeError lines, all: 0
+# TypeError lines other than a secret-refused finding's detail: 0
+# 'TypeError:' (an exception's own line): 0
+# 'unhandled error discovering' lines: 0
+# ERROR lines: 0

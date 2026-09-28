@@ -1,0 +1,30 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-86c97cbf49-2ps6w -c dashboard --timestamps --since-time=2026-09-28T10:56:27Z  (captured 2026-09-28T11:20:21Z)
+# lines in the window: 1132
+# discovery and secret-refused lines, and every line naming walk-466:
+2026-09-28T10:56:38.028846319Z 2026-09-28 06:56:38,028-0400 INFO    gsd.clusterconfig discovery cycle=1 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 added=mock-privateca,mock-selfsigned,mock-trusted,shared-qa,shared-rnd refused_now=gsd-cluster-mock-refusal:insecure-with-ca
+2026-09-28T10:56:38.029132654Z 2026-09-28 06:56:38,029-0400 WARNING gsd.clusterconfig secret-refused phase=parse outcome=insecure-with-ca cycle=1 secret=gsd-cluster-mock-refusal action="choose one: caData to trust a bundle, or insecure to verify nothing" detail="tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"
+# discovery lines: 1
+# secret-refused lines: 1
+# lines naming walk-466: 0
+# 'polled <cluster>:' lines per cluster (one per successful poll):
+  24 dashboard:
+  24 mock-privateca:
+  24 mock-selfsigned:
+  24 mock-trusted:
+  24 shared-qa:
+  24 shared-rnd:
+# the last 'polled <cluster>:' line per cluster:
+2026-09-28T11:19:59.120807501Z 2026-09-28 07:19:59,120-0400 INFO    gsd.poller polled dashboard: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:19:58.818212715Z 2026-09-28 07:19:58,818-0400 INFO    gsd.poller polled mock-privateca: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:19:58.621310108Z 2026-09-28 07:19:58,621-0400 INFO    gsd.poller polled mock-selfsigned: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:19:58.513105374Z 2026-09-28 07:19:58,512-0400 INFO    gsd.poller polled mock-trusted: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:19:59.309133685Z 2026-09-28 07:19:59,308-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:19:58.796331134Z 2026-09-28 07:19:58,796-0400 INFO    gsd.poller polled shared-rnd: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+# cluster-unreachable lines: 0
+# fleet-login lines: 0
+# Traceback lines: 0
+# TypeError lines, all: 0
+# TypeError lines other than a secret-refused finding's detail: 0
+# 'TypeError:' (an exception's own line): 0
+# 'unhandled error discovering' lines: 0
+# ERROR lines: 0

@@ -1,0 +1,3 @@
+# oc get secrets gsd-cluster-shared-qa -n group-sync-dashboard -o jsonpath='resourceVersion={.metadata.resourceVersion}{"\n"}'
+# at 2026-09-28T11:31:42Z
+resourceVersion=2981054

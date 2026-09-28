@@ -1,0 +1,9 @@
+2026-09-28T11:31:13Z whoami                            : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-28T11:31:13Z status                            : {"/api/clusters": 200, "/api/clusterconfigs": 200}
+2026-09-28T11:31:13Z PASS developer holds the cluster-admin tier: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-28T11:31:13Z wrote                             : evidence/refused-api.json
+2026-09-28T11:31:13Z served poll status                : {"dashboard": "ok", "mock-privateca": "ok", "mock-selfsigned": "ok", "mock-trusted": "ok", "shared-qa": "ok", "shared-rnd": "ok"}
+2026-09-28T11:31:13Z findings                          : [{"secret": "gsd-cluster-mock-refusal", "code": "insecure-with-ca", "detail": "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}, {"secret": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:13Z PASS the route guard blocked no request: []
+2026-09-28T11:31:13Z failures                          : []
+exit=0

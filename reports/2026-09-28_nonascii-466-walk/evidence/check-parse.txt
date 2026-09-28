@@ -1,0 +1,6 @@
+# GSD_VENV_PYTHON=local-development/.venv/bin/python scripts/secret-466.sh check   (git HEAD f7fa9c5ebc)
+# at 2026-09-28T11:18:58Z
+# manifest mode: 600, directory mode: 700
+# CA: subject=CN=walk-466 notAfter=Oct 28 11:18:58 2026 GMT 
+# gsd imported from <this checkout>/local-development/gsd/__init__.py version 1.12.0
+# parse_secret: {'secret': 'gsd-cluster-walk-466', 'code': 'ca-data-invalid', 'detail': 'tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError'}
