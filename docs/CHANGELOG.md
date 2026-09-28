@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A finding's detail wraps between words on a phone (#473).** At 375 px the Cluster Configurations Findings card
+  broke `tlsClientConfig.insecure=true` after `tru`. The value cell already wrapped at spaces: a word breaks only when
+  it is wider than its line, and the 34% label column left 166 px for that 171 px token. Below 520 px a finding's
+  label now sits above its value, which takes the card's width. The cluster cards, and every width above 520 px,
+  are unchanged. Application **1.13.0**, chart 0.59.15.
+
 - Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
 
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
