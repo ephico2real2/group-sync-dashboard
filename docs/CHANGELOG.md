@@ -20,6 +20,18 @@ which `local-development/prepare-release.py` does when the release is cut.
   #404's count, the by-source chips and the switched-off line are unchanged, and the line shows no value from
   a Secret.
 
+- **Rejoin, Rotate and Delete keep IDs of their own (#462).** Their per-cluster IDs now follow Refresh's scheme,
+  `cc-<kind>_<cluster id>`, so a cluster named `result-x`, `token-x`, `go-x` or `msg-x` no longer takes one of
+  cluster `x`'s IDs. Cancelling a Rejoin after a repaint returns the focus to that card's own button, and Rotate's
+  label, draft and Overwrite use that card's own token field. Every control's label, order and `data-cc-*`
+  attribute is unchanged. Application **1.14.0**, chart 0.59.16.
+
+- **A finding's detail wraps between words on a phone (#473).** At 375 px the Cluster Configurations Findings card
+  broke `tlsClientConfig.insecure=true` after `tru`. The value cell already wrapped at spaces: a word breaks only when
+  it is wider than its line, and the 34% label column left 166 px for that 171 px token. Below 520 px a finding's
+  label now sits above its value, which takes the card's width. The cluster cards, and every width above 520 px,
+  are unchanged. Application **1.13.0**, chart 0.59.15.
+
 - Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
 
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will

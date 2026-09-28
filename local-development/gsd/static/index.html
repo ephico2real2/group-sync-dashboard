@@ -6091,6 +6091,7 @@ function ccConnection(c) {
    states, each a word: idle, in flight, succeeded (`ok`, shown as connected) and refused (the poller's word). */
 function ccRefreshButton(c) {
   const busy = (view.clusterRefresh[c.id] || {}).state === "flight";
+  // A per-cluster id is `cc-<kind>_<cluster id>` (#462): no kind holds "_", so the first "_" ends the kind and no two controls share an id.
   return `<button type="button" class="btn" id="cc-refresh_${esc(c.id)}" data-cc-refresh="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Refreshing…" : "Refresh"}</button>`;
 }
 function ccRefreshLine(c) {
@@ -6115,12 +6116,12 @@ function ccRejoinButton(c) {
   const r = view.clusterRefresh[c.id] || {};
   if (!c.rejoinable || !(["auth_failed", "pending"].includes(r.outcome) || view.clusterRejoin[c.id])) return "";
   const busy = (view.clusterRejoin[c.id] || {}).state === "flight";
-  return `<button type="button" class="btn cc-btn-acc" id="cc-rejoin-${esc(c.id)}" data-cc-rejoin="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Rejoining…" : "Rejoin…"}</button>`;
+  return `<button type="button" class="btn cc-btn-acc" id="cc-rejoin_${esc(c.id)}" data-cc-rejoin="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Rejoining…" : "Rejoin…"}</button>`;
 }
 function ccRejoinLine(c) {
   const r = view.clusterRejoin[c.id];
   if (!r) return "";
-  const head = `<div class="cc-consq" id="cc-rejoin-result-${esc(c.id)}"><strong>Rejoin:</strong> `;
+  const head = `<div class="cc-consq" id="cc-rejoin-result_${esc(c.id)}"><strong>Rejoin:</strong> `;
   if (r.state === "flight") return `${head}signing in once and reading the poller's token…</div>`;
   const shape = r.outcome === "rejoined" ? "ok" : r.outcome === "unknown" ? "unknown" : "critical";
   let out = `${head}${ccBadge(shape, r.outcome)}`;
@@ -6139,12 +6140,12 @@ function ccCredential(c) {
     out += ` <span class="cc-hint">managed by ConfigMap ${esc(c.onboarding_configmap)} — edit the stanza there</span>`;
   } else if (secretRow && !c.retired && ccWritesOn()) {
     const open = view.clusterRotate === c.id;
-    out += ` <button type="button" class="linkish" id="cc-rotate-${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
+    out += ` <button type="button" class="linkish" id="cc-rotate_${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
     if (open) {
-      out += `<div class="cc-panel"><label for="cc-rotate-token-${esc(c.id)}">New bearer token</label>
-        <input id="cc-rotate-token-${esc(c.id)}" type="password" autocomplete="new-password" value="${esc(view.clusterRotateDraft[c.id] || "")}">
-        <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go-${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
-        <p class="filterbar-note" id="cc-rotate-msg-${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
+      out += `<div class="cc-panel"><label for="cc-rotate-token_${esc(c.id)}">New bearer token</label>
+        <input id="cc-rotate-token_${esc(c.id)}" type="password" autocomplete="new-password" value="${esc(view.clusterRotateDraft[c.id] || "")}">
+        <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go_${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
+        <p class="filterbar-note" id="cc-rotate-msg_${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
     }
   } else if (c.host) {
     out += ` <span class="cc-hint">read-only — the pod's own ServiceAccount</span>`;
@@ -6206,8 +6207,8 @@ function ccClusterCard(c) {
       ? "changing cluster configuration is reserved to cluster configuration administrators"
       : "this deployment's writes are off"}</div>`;
   } else if (secretRow) {
-    foot = `<div class="cc-acts">${refresh}<button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
-      <span class="cc-hint" id="cc-delete-msg-${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
+    foot = `<div class="cc-acts">${refresh}<button type="button" class="btn" id="cc-delete_${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
+      <span class="cc-hint" id="cc-delete-msg_${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
   } else if (c.host) {
     foot = `<div class="cc-foot">the pod's own in-cluster ServiceAccount — not a Secret</div>`;
   } else {
@@ -6488,14 +6489,14 @@ function wireClusterConfig() {
       render();
     };
   });
-  const rotateField = view.clusterRotate && $(`cc-rotate-token-${view.clusterRotate}`);
+  const rotateField = view.clusterRotate && $(`cc-rotate-token_${view.clusterRotate}`);
   if (rotateField) {
     rotateField.oninput = () => { view.clusterRotateDraft[view.clusterRotate] = rotateField.value; };
   }
   document.querySelectorAll("[data-cc-rotate-go]").forEach((el) => {
     el.onclick = async () => {
       const id = el.dataset.ccRotateGo;
-      const field = $(`cc-rotate-token-${id}`);
+      const field = $(`cc-rotate-token_${id}`);
       const token = field ? field.value : "";
       if (!token) { view.clusterMsg[`rotate:${id}`] = "a bearer token is required."; render(); return; }
       try {
@@ -6531,7 +6532,7 @@ function wireClusterConfig() {
     $("rejoin-password").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); sendRejoin(); } };
     rejoinDlg.onclose = () => {
       clearRejoin();
-      const b = $(`cc-rejoin-${rejoinDlg.dataset.cluster}`);   // by id: a repaint replaced the button that opened it
+      const b = $(`cc-rejoin_${rejoinDlg.dataset.cluster}`);   // by id: a repaint replaced the button that opened it
       if (b) b.focus();
     };
   }

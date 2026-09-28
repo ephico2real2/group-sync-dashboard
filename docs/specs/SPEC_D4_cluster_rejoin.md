@@ -35,6 +35,18 @@ never as the fleet account. The tests use made-up names against a fake remote.
 
 ## Orchestrator's notes
 
+- **The per-cluster ids moved to the `_` scheme (#462).** Every per-cluster id on the Cluster Configurations page is
+  now `cc-<kind>_<cluster id>`, the scheme #441 gave Refresh: `cc-rejoin_<id>`, `cc-rejoin-result_<id>`,
+  `cc-rotate_<id>`, `cc-rotate-token_<id>`, `cc-rotate-go_<id>`, `cc-rotate-msg_<id>`, `cc-delete_<id>` and
+  `cc-delete-msg_<id>`. No kind holds `_`, so an id's first `_` ends its kind, and one cluster's id can no longer
+  equal another's whatever the clusters are called. A Secret's cluster name cannot hold `_`
+  (`gsd/clusterconfig/parser.py#_NAME`), but a values entry's name may (`gsd/config.py#parse_cluster_entries` refuses
+  only `/` and duplicates), so the rule rests on the kinds, not on the names. Joined with `-`, the Rejoin button of a
+  cluster named `result-x` had the id of x's result line, and `token-x`'s Rotate link had the id of x's token field,
+  so the lookups by id landed on the wrong card. Appendix E's #316 blocks, for the page and for its tests, still
+  spell the ids from before #441 and #462 (`cc-refresh-<id>`, `cc-rejoin-<id>`); the page
+  (`gsd/static/index.html#cc-<kind>_<cluster id>`) and its tests are the reference. The card's own id,
+  `cc-cluster-<id>`, is unchanged.
 - **A password inside the username (#447).** Refuse a Rejoin when the password, stripped and casefolded, is the
   username or lies inside it, in `gsd/rejoin.py#check`, before any request or credential-gate change. Answer `422`
   with the fixed detail `rejoin-password-within-username: the password must not be the username or a part of it,
