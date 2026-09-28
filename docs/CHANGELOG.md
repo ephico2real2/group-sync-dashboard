@@ -10,6 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Refresh keeps its button and result IDs separate (#441).** Clusters named `east` and `result-east`
+  can share the page without a button using another card's result ID. The four Refresh states, results
+  surviving a repaint, and one probe in flight per cluster are unchanged.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only
