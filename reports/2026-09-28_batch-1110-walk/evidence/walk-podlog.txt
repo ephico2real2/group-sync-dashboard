@@ -1,0 +1,14 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-644f6884db-hdbr7 -c dashboard --timestamps --since-time=2026-09-28T05:52:01Z  (captured 2026-09-28T05:57:33Z)
+# lines in the window: 244
+# cluster-refreshed lines:
+2026-09-28T05:54:55.902206483Z 2026-09-28 01:54:55,901-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=shared-rnd credential=bearer by=developer outcome=ok
+2026-09-28T05:54:56.377569975Z 2026-09-28 01:54:56,377-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-privateca credential=bearer by=developer outcome=unreachable
+2026-09-28T05:54:56.442147080Z 2026-09-28 01:54:56,441-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-selfsigned credential=bearer by=developer outcome=unreachable
+2026-09-28T05:54:56.509081953Z 2026-09-28 01:54:56,508-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-trusted credential=bearer by=developer outcome=unreachable
+2026-09-28T05:56:07.708040250Z 2026-09-28 01:56:07,707-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=shared-rnd credential=bearer by=developer outcome=ok
+2026-09-28T05:57:18.110568835Z 2026-09-28 01:57:18,110-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=shared-rnd credential=bearer by=developer outcome=ok
+# cluster-refreshed lines: 6, of them by=developer: 6
+# fleet-login lines: 0
+# cluster-rejoin / cluster-rejoined lines: 0
+# cluster-unreachable lines: 0
+# ERROR or Traceback lines: 0

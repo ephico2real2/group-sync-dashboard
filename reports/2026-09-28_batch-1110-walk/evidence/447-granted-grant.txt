@@ -1,0 +1,7 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=batch-1110-447-2026-09-28 -o wide
+# at 2026-09-28T06:09:37Z
+NAME                                                        CREATED AT
+clusterrole.rbac.authorization.k8s.io/gsd-walk-crb-update   2026-09-28T06:09:37Z
+
+NAME                                                                         ROLE                              AGE   USERS       GROUPS   SERVICEACCOUNTS
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-crb-update-developer   ClusterRole/gsd-walk-crb-update   0s    developer            

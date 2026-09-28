@@ -1,0 +1,66 @@
+2026-09-28T06:10:27Z whoami                            : {"user": "developer", "cluster_admin": true}
+2026-09-28T06:10:27Z PASS developer holds the cluster-admin tier: {"user": "developer", "cluster_admin": true}
+2026-09-28T06:10:29Z PASS [1280] the walk-447 card is listed: 1
+2026-09-28T06:10:29Z [1280] walk-447 heading           : walk-447 Secret gsd-cluster-walk-447 enabled shared API URL
+2026-09-28T06:10:29Z PASS [1280] no Rejoin before Refresh: null
+2026-09-28T06:10:29Z [1280] refresh answered           : Refresh: auth_failed · 2026-09-28T06:10:29Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.
+2026-09-28T06:10:29Z PASS [1280] Refresh answers auth_failed and the card offers Rejoin: {"line": "Refresh: auth_failed \u00b7 2026-09-28T06:10:29Z \u2014 401 Unauthorized \u2014 token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.", "rejoin_button": "Rejoin\u2026"}
+2026-09-28T06:10:30Z shot                              : 19-1280-447-refused-rejoin-offered.png
+2026-09-28T06:10:30Z [1280] dialog typed               : {"open": true, "cluster": "walk-447", "msg": "", "username_is_typed": true, "username_length": 14, "password_length": 9, "password_type": "password"}
+2026-09-28T06:10:30Z PASS [1280] the dialog is open on walk-447, the password masked: {"open": true, "cluster": "walk-447", "msg": "", "username_is_typed": true, "username_length": 14, "password_length": 9, "password_type": "password"}
+2026-09-28T06:10:30Z [1280] dialog answered            : {"open": true, "cluster": "walk-447", "msg": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent", "username_is_typed": true, "username_length": 14, "password_length": 0, "password_type": "password"}
+2026-09-28T06:10:30Z [1280] card Rejoin line           : Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-28T06:10:30Z [1280] rejoin POST statuses       : [422]
+2026-09-28T06:10:30Z PASS [1280] the dialog reads the exact 422 sentence, the password field is empty: {"msg_is_sentence": true, "password_length": 0}
+2026-09-28T06:10:30Z PASS [1280] the card's Rejoin line reads the same: Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-28T06:10:30Z PASS [1280] one POST …/rejoin, answered 422: [422]
+2026-09-28T06:10:30Z shot                              : 20-1280-447-dialog-422.png
+2026-09-28T06:10:30Z PASS [1280] Cancel closes the dialog and clears both fields: {"open": false, "cluster": "walk-447", "msg": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent", "username_is_typed": false, "username_length": 0, "password_length": 0, "password_type": "password"}
+2026-09-28T06:10:31Z shot                              : 21-1280-447-card-rejoin-line.png
+2026-09-28T06:10:31Z PASS [1280] no sideways page scroll (scrollWidth, innerWidth): [1280, 1280]
+2026-09-28T06:10:31Z PASS [1280] no 'Dashboard API error': null
+2026-09-28T06:10:31Z PASS [1280] no uncaught page errors: []
+2026-09-28T06:10:33Z PASS [768] the walk-447 card is listed: 1
+2026-09-28T06:10:33Z [768] walk-447 heading            : walk-447 Secret gsd-cluster-walk-447 enabled shared API URL
+2026-09-28T06:10:33Z PASS [768] no Rejoin before Refresh: null
+2026-09-28T06:10:33Z [768] refresh answered            : Refresh: auth_failed · 2026-09-28T06:10:33Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.
+2026-09-28T06:10:33Z PASS [768] Refresh answers auth_failed and the card offers Rejoin: {"line": "Refresh: auth_failed \u00b7 2026-09-28T06:10:33Z \u2014 401 Unauthorized \u2014 token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.", "rejoin_button": "Rejoin\u2026"}
+2026-09-28T06:10:34Z shot                              : 22-768-447-refused-rejoin-offered.png
+2026-09-28T06:10:34Z [768] dialog typed                : {"open": true, "cluster": "walk-447", "msg": "", "username_is_typed": true, "username_length": 14, "password_length": 9, "password_type": "password"}
+2026-09-28T06:10:34Z PASS [768] the dialog is open on walk-447, the password masked: {"open": true, "cluster": "walk-447", "msg": "", "username_is_typed": true, "username_length": 14, "password_length": 9, "password_type": "password"}
+2026-09-28T06:10:34Z [768] dialog answered             : {"open": true, "cluster": "walk-447", "msg": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent", "username_is_typed": true, "username_length": 14, "password_length": 0, "password_type": "password"}
+2026-09-28T06:10:34Z [768] card Rejoin line            : Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-28T06:10:34Z [768] rejoin POST statuses        : [422]
+2026-09-28T06:10:34Z PASS [768] the dialog reads the exact 422 sentence, the password field is empty: {"msg_is_sentence": true, "password_length": 0}
+2026-09-28T06:10:34Z PASS [768] the card's Rejoin line reads the same: Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-28T06:10:34Z PASS [768] one POST …/rejoin, answered 422: [422]
+2026-09-28T06:10:34Z shot                              : 23-768-447-dialog-422.png
+2026-09-28T06:10:34Z PASS [768] Cancel closes the dialog and clears both fields: {"open": false, "cluster": "walk-447", "msg": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent", "username_is_typed": false, "username_length": 0, "password_length": 0, "password_type": "password"}
+2026-09-28T06:10:35Z shot                              : 24-768-447-card-rejoin-line.png
+2026-09-28T06:10:35Z PASS [768] no sideways page scroll (scrollWidth, innerWidth): [768, 768]
+2026-09-28T06:10:35Z PASS [768] no 'Dashboard API error': null
+2026-09-28T06:10:35Z PASS [768] no uncaught page errors: []
+2026-09-28T06:10:37Z PASS [375] the walk-447 card is listed: 1
+2026-09-28T06:10:37Z [375] walk-447 heading            : walk-447 Secret gsd-cluster-walk-447 enabled shared API URL
+2026-09-28T06:10:37Z PASS [375] no Rejoin before Refresh: null
+2026-09-28T06:10:37Z [375] refresh answered            : Refresh: auth_failed · 2026-09-28T06:10:37Z — 401 Unauthorized — token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.
+2026-09-28T06:10:37Z PASS [375] Refresh answers auth_failed and the card offers Rejoin: {"line": "Refresh: auth_failed \u00b7 2026-09-28T06:10:37Z \u2014 401 Unauthorized \u2014 token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.", "rejoin_button": "Rejoin\u2026"}
+2026-09-28T06:10:38Z shot                              : 25-375-447-refused-rejoin-offered.png
+2026-09-28T06:10:38Z [375] dialog typed                : {"open": true, "cluster": "walk-447", "msg": "", "username_is_typed": true, "username_length": 14, "password_length": 9, "password_type": "password"}
+2026-09-28T06:10:38Z PASS [375] the dialog is open on walk-447, the password masked: {"open": true, "cluster": "walk-447", "msg": "", "username_is_typed": true, "username_length": 14, "password_length": 9, "password_type": "password"}
+2026-09-28T06:10:38Z [375] dialog answered             : {"open": true, "cluster": "walk-447", "msg": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent", "username_is_typed": true, "username_length": 14, "password_length": 0, "password_type": "password"}
+2026-09-28T06:10:38Z [375] card Rejoin line            : Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-28T06:10:38Z [375] rejoin POST statuses        : [422]
+2026-09-28T06:10:38Z PASS [375] the dialog reads the exact 422 sentence, the password field is empty: {"msg_is_sentence": true, "password_length": 0}
+2026-09-28T06:10:38Z PASS [375] the card's Rejoin line reads the same: Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-28T06:10:38Z PASS [375] one POST …/rejoin, answered 422: [422]
+2026-09-28T06:10:38Z shot                              : 26-375-447-dialog-422.png
+2026-09-28T06:10:38Z PASS [375] Cancel closes the dialog and clears both fields: {"open": false, "cluster": "walk-447", "msg": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent", "username_is_typed": false, "username_length": 0, "password_length": 0, "password_type": "password"}
+2026-09-28T06:10:39Z shot                              : 27-375-447-card-rejoin-line.png
+2026-09-28T06:10:39Z PASS [375] no sideways page scroll (scrollWidth, innerWidth): [375, 375]
+2026-09-28T06:10:39Z PASS [375] no 'Dashboard API error': null
+2026-09-28T06:10:39Z PASS [375] no uncaught page errors: []
+2026-09-28T06:10:39Z PASS the route guard blocked no request: []
+2026-09-28T06:10:39Z rejoin POST statuses, all         : [422, 422, 422]
+2026-09-28T06:10:39Z failures                          : []
+walk exit=0

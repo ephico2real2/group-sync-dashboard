@@ -1,0 +1,44 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-644f6884db-hdbr7 -c dashboard --timestamps --since-time=2026-09-28T06:08:28Z  (captured 2026-09-28T06:15:09Z)
+# lines in the window: 276
+# discovery, cluster-refreshed, fleet-*, cluster-rejoin*, and every line naming walk-447 or /rejoin, except its poll-cycle timing:
+2026-09-28T06:09:55.227875458Z 2026-09-28 02:09:55,227-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-447 state=appeared cycle=8
+2026-09-28T06:09:55.228693881Z 2026-09-28 02:09:55,228-0400 INFO    gsd.clusterconfig discovery cycle=8 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=walk-447
+2026-09-28T06:09:55.229009258Z 2026-09-28 02:09:55,228-0400 INFO    gsd.clusterconfig cluster-resolved cycle=8 cluster=walk-447 source=secret:gsd-cluster-walk-447 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T06:09:55.231277525Z 2026-09-28 02:09:55,231-0400 INFO    gsd.poller cluster walk-447: polling started (secret:gsd-cluster-walk-447)
+2026-09-28T06:09:55.298514817Z 2026-09-28 02:09:55,298-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-447 source=secret:gsd-cluster-walk-447 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T06:09:55.318509507Z 2026-09-28 02:09:55,318-0400 WARNING gsd.auditlog walk-447: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T06:09:55.422839033Z 2026-09-28 02:09:55,422-0400 WARNING gsd.poller binding refresh for walk-447 failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
+2026-09-28T06:10:25.638997953Z 2026-09-28 02:10:25,638-0400 WARNING gsd.kube walk-447: visibility tier for 'developer' is indeterminate (auth_failed: 401 Unauthorized — token invalid or expired) — failing closed to the self view for this request
+2026-09-28T06:10:29.783063385Z 2026-09-28 02:10:29,782-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=walk-447 credential=bearer by=developer outcome=auth_failed
+2026-09-28T06:10:33.827964955Z 2026-09-28 02:10:33,827-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=walk-447 credential=bearer by=developer outcome=auth_failed
+2026-09-28T06:10:37.917927569Z 2026-09-28 02:10:37,917-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=walk-447 credential=bearer by=developer outcome=auth_failed
+2026-09-28T06:10:55.252793187Z 2026-09-28 02:10:55,252-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-447 source=secret:gsd-cluster-walk-447 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T06:10:55.279225134Z 2026-09-28 02:10:55,278-0400 WARNING gsd.auditlog walk-447: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T06:11:55.252951710Z 2026-09-28 02:11:55,252-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-447 source=secret:gsd-cluster-walk-447 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T06:11:55.269123713Z 2026-09-28 02:11:55,268-0400 WARNING gsd.auditlog walk-447: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T06:12:55.250673365Z 2026-09-28 02:12:55,250-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-447 source=secret:gsd-cluster-walk-447 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T06:12:55.266441491Z 2026-09-28 02:12:55,266-0400 WARNING gsd.auditlog walk-447: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T06:13:55.252079039Z 2026-09-28 02:13:55,251-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-447 source=secret:gsd-cluster-walk-447 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T06:13:55.268336418Z 2026-09-28 02:13:55,268-0400 WARNING gsd.auditlog walk-447: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T06:14:55.253767757Z 2026-09-28 02:14:55,253-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-447 source=secret:gsd-cluster-walk-447 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T06:14:55.269263381Z 2026-09-28 02:14:55,269-0400 WARNING gsd.auditlog walk-447: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T06:14:55.345626662Z 2026-09-28 02:14:55,345-0400 INFO    gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-447 state=cleared cycle=9
+2026-09-28T06:14:55.346388166Z 2026-09-28 02:14:55,346-0400 INFO    gsd.clusterconfig discovery cycle=9 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 removed=walk-447
+2026-09-28T06:14:56.302620460Z 2026-09-28 02:14:56,302-0400 INFO    gsd.poller walk-447: its Secret is gone; the poll thread stops (history kept)
+# 'walk-447 poll cycle' lines: 6
+# fleet-lookup lines: 0
+# fleet-lookup-failed lines: 0
+# fleet-ping lines: 0
+# fleet-ping-failed lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# cluster-rejoin-review lines: 0
+# cluster-rejoined lines: 0
+# cluster-rejoin-failed lines: 0
+# cluster-refreshed lines: 3
+# cluster-refreshed cluster=walk-447 by=developer outcome=auth_failed: 3
+# lines naming /rejoin: 0
+# lines naming the fleet account: 0
+# ERROR or Traceback lines: 0

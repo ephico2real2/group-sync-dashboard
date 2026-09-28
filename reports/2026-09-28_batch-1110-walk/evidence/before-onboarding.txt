@@ -1,0 +1,3 @@
+# oc get configmaps -n group-sync-dashboard -l 'groupsync-dashboard.io/config-type in (onboard,sideload)' -o wide
+# at 2026-09-28T05:49:38Z
+No resources found in group-sync-dashboard namespace.

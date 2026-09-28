@@ -1,0 +1,8 @@
+# oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import sqlite3; c = sqlite3.connect("file:/data/backup/gsd-20260928T054014.212287Z.db?mode=ro&immutable=1", uri=True); [print(*r, sep="  ") for r in c.execute("SELECT p.cluster_id, p.observed_at, p.status, substr(coalesce(p.message, \"\"), 1, 120) FROM poll_outcome p JOIN cluster c ON c.id = p.cluster_id WHERE c.enabled = 1 ORDER BY 1")]'
+# at 2026-09-28T05:49:39Z
+dashboard  2026-09-28T05:40:13Z  ok  
+mock-privateca  2026-09-28T05:40:13Z  ok  
+mock-selfsigned  2026-09-28T05:40:13Z  ok  
+mock-trusted  2026-09-28T05:40:13Z  ok  
+shared-qa  2026-09-28T05:40:14Z  ok  
+shared-rnd  2026-09-28T05:40:13Z  ok  
