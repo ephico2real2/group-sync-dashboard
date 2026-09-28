@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The thirty-two specifications
+## The thirty-three specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -98,6 +98,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | D2b | [`SPEC_D2b_remote_sar_for_every_join.md`](SPEC_D2b_remote_sar_for_every_join.md) — `remote-sar` for every way a cluster is joined, and `remote-sar` + `same-as-host` the default for a remote (design D1, D2) | D — architecture | — | app and chart minor bumps at the PR | [#338](https://github.com/ephico2real2/group-sync-dashboard/issues/338) | released |
 | U1 | [`SPEC_U1_unmanaged_subjects.md`](SPEC_U1_unmanaged_subjects.md) — the unmanaged finding on ServiceAccount and User subjects: the platform's own (`platformNamespaces`, `is_platform_user`, OpenShift's three per-project controller bindings (two by exact shape, `system:image-pullers` by the `system:` group rule)) built-in, the rest silenced only by the operator's `rbac.ocp.io/config-source` label or the exception annotation on the binding; schema migration 20 | U — unmanaged-grant discovery | — | app 0.33.0, chart 0.54.0 | [#353](https://github.com/ephico2real2/group-sync-dashboard/issues/353) | released |
 | S4e | [`SPEC_S4e_ping_account_scope.md`](SPEC_S4e_ping_account_scope.md) — the fleet password is presented only as an account the configuration names: the daily ping stops taking its account from a retrieved Secret's `lookup-account`, and SPEC_S4c §3.12's walk names only `developer` | S — cluster configuration | — | app 1.4.0, chart 0.59.6 | [#432](https://github.com/ephico2real2/group-sync-dashboard/issues/432) | merged |
+| D5 | [`SPEC_D5_ca_visibility.md`](SPEC_D5_ca_visibility.md) — CA visibility: is this the enterprise root, and is it still valid? A warning thirty days before expiry, on #314's channel | D — reconnect | — | app and chart minor bumps, assigned at the implementing PR | [#244](https://github.com/ephico2real2/group-sync-dashboard/issues/244) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
