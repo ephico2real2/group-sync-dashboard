@@ -1,0 +1,41 @@
+2026-09-28T09:40:43Z whoami                            : {"user": "developer", "cluster_admin": true}
+2026-09-28T09:40:43Z PASS developer holds the cluster-admin tier for the walk: {"user": "developer", "cluster_admin": true, "/api/clusterconfigs": 200}
+2026-09-28T09:40:46Z PASS [1280] no sideways page scroll (scrollWidth, innerWidth): [1280, 1280]
+2026-09-28T09:40:46Z [1280] header                     : {"count": "30 clusters", "by_source": "in-cluster 1 values 4 Secret 24 ConfigMap 1", "configmap_selector": "groupsync-dashboard.io/config-type in (onboard,sideload)", "discovery": "6 Secrets carry the discovery label · last read 2026-09-28 09:39", "configmap_cards": [["gitops-404", "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404"]]}
+2026-09-28T09:40:46Z PASS [1280] by source counts the map's cluster: ConfigMap 1: in-cluster 1 values 4 Secret 24 ConfigMap 1
+2026-09-28T09:40:46Z PASS [1280] the only ConfigMap-sourced card is gitops-404, with its chip: [["gitops-404", "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404"]]
+2026-09-28T09:40:46Z [1280] discovery line (#467)      : 6 Secrets carry the discovery label · last read 2026-09-28 09:39
+2026-09-28T09:40:47Z shot                              : 01-1280-header.png
+2026-09-28T09:40:47Z [1280] gitops-404 card            : {"chip": "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404", "heading": "gitops-404 ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404 enabled shared API URL", "credential": "bearerToken set managed by ConfigMap cluster-onboarding-404 — edit the stanza there", "server": "https://api.crc.testing:6443", "connection": "ok reachable 2026-09-28 09:40", "foot": "declared in ConfigMap cluster-onboarding-404 — remove the stanza there; its Secret is cleaned up automatically", "rotate": 0, "delete": 0, "buttons": ["Refresh"]}
+2026-09-28T09:40:47Z PASS [1280] the chip reads `ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404`: ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404
+2026-09-28T09:40:47Z PASS [1280] no Rotate and no Delete on the generated row: {"rotate": 0, "delete": 0, "buttons": ["Refresh"]}
+2026-09-28T09:40:47Z shot                              : 02-1280-card-gitops-404.png
+2026-09-28T09:40:47Z PASS [1280] no 'Dashboard API error': 0
+2026-09-28T09:40:47Z PASS [1280] no uncaught page errors: []
+2026-09-28T09:40:50Z PASS [768] no sideways page scroll (scrollWidth, innerWidth): [768, 768]
+2026-09-28T09:40:50Z [768] header                      : {"count": "30 clusters", "by_source": "in-cluster 1 values 4 Secret 24 ConfigMap 1", "configmap_selector": "groupsync-dashboard.io/config-type in (onboard,sideload)", "discovery": "6 Secrets carry the discovery label · last read 2026-09-28 09:39", "configmap_cards": [["gitops-404", "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404"]]}
+2026-09-28T09:40:50Z PASS [768] by source counts the map's cluster: ConfigMap 1: in-cluster 1 values 4 Secret 24 ConfigMap 1
+2026-09-28T09:40:50Z PASS [768] the only ConfigMap-sourced card is gitops-404, with its chip: [["gitops-404", "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404"]]
+2026-09-28T09:40:50Z [768] discovery line (#467)       : 6 Secrets carry the discovery label · last read 2026-09-28 09:39
+2026-09-28T09:40:51Z shot                              : 03-768-header.png
+2026-09-28T09:40:51Z [768] gitops-404 card             : {"chip": "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404", "heading": "gitops-404 ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404 enabled shared API URL", "credential": "bearerToken set managed by ConfigMap cluster-onboarding-404 — edit the stanza there", "server": "https://api.crc.testing:6443", "connection": "ok reachable 2026-09-28 09:40", "foot": "declared in ConfigMap cluster-onboarding-404 — remove the stanza there; its Secret is cleaned up automatically", "rotate": 0, "delete": 0, "buttons": ["Refresh"]}
+2026-09-28T09:40:51Z PASS [768] the chip reads `ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404`: ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404
+2026-09-28T09:40:51Z PASS [768] no Rotate and no Delete on the generated row: {"rotate": 0, "delete": 0, "buttons": ["Refresh"]}
+2026-09-28T09:40:51Z shot                              : 04-768-card-gitops-404.png
+2026-09-28T09:40:51Z PASS [768] no 'Dashboard API error': 0
+2026-09-28T09:40:51Z PASS [768] no uncaught page errors: []
+2026-09-28T09:40:54Z PASS [375] no sideways page scroll (scrollWidth, innerWidth): [375, 375]
+2026-09-28T09:40:54Z [375] header                      : {"count": "30 clusters", "by_source": "in-cluster 1 values 4 Secret 24 ConfigMap 1", "configmap_selector": "groupsync-dashboard.io/config-type in (onboard,sideload)", "discovery": "6 Secrets carry the discovery label · last read 2026-09-28 09:39", "configmap_cards": [["gitops-404", "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404"]]}
+2026-09-28T09:40:54Z PASS [375] by source counts the map's cluster: ConfigMap 1: in-cluster 1 values 4 Secret 24 ConfigMap 1
+2026-09-28T09:40:54Z PASS [375] the only ConfigMap-sourced card is gitops-404, with its chip: [["gitops-404", "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404"]]
+2026-09-28T09:40:54Z [375] discovery line (#467)       : 6 Secrets carry the discovery label · last read 2026-09-28 09:39
+2026-09-28T09:40:54Z shot                              : 05-375-header.png
+2026-09-28T09:40:54Z [375] gitops-404 card             : {"chip": "ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404", "heading": "gitops-404 ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404 enabled shared API URL", "credential": "bearerToken set managed by ConfigMap cluster-onboarding-404 — edit the stanza there", "server": "https://api.crc.testing:6443", "connection": "ok reachable 2026-09-28 09:40", "foot": "declared in ConfigMap cluster-onboarding-404 — remove the stanza there; its Secret is cleaned up automatically", "rotate": 0, "delete": 0, "buttons": ["Refresh"]}
+2026-09-28T09:40:54Z PASS [375] the chip reads `ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404`: ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404
+2026-09-28T09:40:54Z PASS [375] no Rotate and no Delete on the generated row: {"rotate": 0, "delete": 0, "buttons": ["Refresh"]}
+2026-09-28T09:40:55Z shot                              : 06-375-card-gitops-404.png
+2026-09-28T09:40:55Z PASS [375] no 'Dashboard API error': 0
+2026-09-28T09:40:55Z PASS [375] no uncaught page errors: []
+2026-09-28T09:40:55Z PASS no write request was attempted (the route guard blocked none): []
+2026-09-28T09:40:55Z failures                          : []
+walk exit=0

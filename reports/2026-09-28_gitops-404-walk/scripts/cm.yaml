@@ -1,0 +1,18 @@
+# examples/cluster-onboarding/configmap.yaml with three values changed for the lab (the map's name, the cluster's
+# name, apiUrl) and the walk's run label added. Applying it makes the dashboard log in once as the fleet account,
+# read the remote poller token and write gsd-cluster-gitops-404; deleting it (by the label) prunes that Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-onboarding-404
+  namespace: group-sync-dashboard
+  labels:
+    groupsync-dashboard.io/config-type: onboard
+    walk.gsd.lab/run: gitops-404-2026-09-28
+data:
+  clusters.yaml: |
+    clusters:
+      - name: gitops-404
+        apiUrl: https://api.crc.testing:6443
+        saTokenLookup: true
+        enabled: true

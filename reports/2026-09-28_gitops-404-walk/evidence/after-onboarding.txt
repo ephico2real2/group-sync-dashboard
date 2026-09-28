@@ -1,0 +1,4 @@
+# oc get configmaps -n group-sync-dashboard -l 'groupsync-dashboard.io/config-type in (onboard,sideload)' -o wide; oc get configmaps -n group-sync-dashboard -l walk.gsd.lab/run=gitops-404-2026-09-28 -o wide
+# at 2026-09-28T09:45:15Z
+No resources found in group-sync-dashboard namespace.
+No resources found in group-sync-dashboard namespace.
