@@ -28,6 +28,44 @@ index row and the tests that hold the document; it applies no block.
 - **The operator's rulings (comments of 2026-09-27) are not re-opened.** A CA is public PKI. A Secret
   or a ConfigMap is equally fine. What counts: is it the enterprise's valid root, and is it inside
   its validity dates? The warning before expiry reuses #314's `warnings` channel.
+- **Review of the spec (OB2, 2026-09-28), the blocks applied to a copy and the suite run.** Six
+  corrections, each a block here, none a design change: (1) `gsd/api.py`'s verify-failure hunk bound a
+  local named `store`, which shadowed the closure's `store` read earlier in `list_cluster_configs` —
+  every `GET /api/clusterconfigs` raised `UnboundLocalError`; (2) `test_ca_visibility.py` imported
+  `test_connection` by name, which pytest collects as a test; (3) its empty-pin test generated a
+  30-day certificate, which is `expiring` by §3.3's own rule; (4) its log assertion read `store=…`
+  where `events._format_value` quotes a value with a space (`store="the system trust store"`);
+  (5) two existing exact-shape assertions (`test_clusterconfig_tab.py`'s Test answer,
+  `test_clusterconfig.py`'s row) needed the new keys; (6) `apiSend` rendered the §3.6 object detail as
+  `[object Object]`, and no block painted `certificates` on the Test panel §5 promised. Added: a
+  bundle-file cache in `ca.py` (a 128-block bundle costs 17 ms to decode and the API decoded it
+  twice per live cluster per read), a three-mode test for the action text (the DoD names three
+  modes), and a phase-aware `test_ca_visibility_spec.py` (after the apply it holds the tree to the
+  blocks instead of failing on the created file).
+- **Review of the spec (Codex, 2026-09-28), applied on top of OB2's patch.** Accepted: (1) the
+  trusted-bundle summary must be the store the verifier actually uses — `gsd/config.py#_trusted_ca_context`
+  starts from `ssl.create_default_context()` and loads every mounted path on top, so the count is
+  that union, deduplicated by sha256, and a system root gets a real fingerprint from its DER so a
+  pin can match it (OB2's `summarise_file` cache is kept for the mounted paths); (2) a bundle that
+  is not UTF-8 must not break the inventory — `summarise_file` treats `UnicodeDecodeError` and
+  `ValueError` like `OSError`, returns `[]` for that file, and never caches a failure; (3) the
+  warning threshold compares remaining seconds, not floored days — "thirty days or fewer remain"
+  means remaining ≤ 30 days exactly, and 30 days + 1 second is still `valid`; (4) §4 no longer
+  claims every behaviour already has a fail-before/pass-after result — phase 1 holds the document,
+  the behaviour tests are specified here and run in phase 2, and an anchor check is not behavioural
+  evidence. Four of Codex's regressions live in the `test_ca_visibility.py` block:
+  `test_system_root_can_match_enterprise_fingerprint`,
+  `test_mounted_bundle_count_includes_system_roots` (compares against the real verifier's count),
+  `test_non_text_bundle_does_not_crash_inventory`,
+  `test_warning_does_not_start_a_fractional_day_early`. Rejected: Codex's phase-1 DoD ledger and
+  `test_phase_one_lists_every_pending_dod_gate`, because the issue's Definition of Done already
+  tracks those gates; Codex's store-shadow rename, `test_connection` alias, empty-pin isolation,
+  quoted-store parse, exact-shape assertion edits, and Node UI test, because OB2's patch already
+  covers each (one-line `store` assignment, `probe_connection` alias, a 365-day empty-pin cert,
+  quoted-or-plain store assertion, shape-not-count trust keys, and a Playwright Test-panel test).
+  Threshold disagreement: OB2 read `(end - now).days <= 30` as designed (30 days 23:59:59 left is
+  `expiring`); Codex read it as a day early. Ruled by §3.3's own sentence: "Do not warn the day
+  before that window" — remaining is compared in seconds, so 30 days + 1 second is `valid`.
 
 ## 1. The point, in one table
 
@@ -141,6 +179,13 @@ path, so each PEM block is written to a temp file and unlinked. That is the fall
 A 219-certificate public bundle is cheap to read (four milliseconds) and too noisy to print. The
 card for `trusted-bundle` names the store and the **count**. It lists a certificate only when that
 certificate is the configured enterprise root.
+
+Summarising is dearer than loading: one `create_default_context(cadata=block)` per block, 128
+blocks of `/etc/ssl/cert.pem`, measured **0.017 s** (the leaf fallback: 100 decodes in 0.026 s).
+`GET /api/clusterconfigs` summarises every live cluster twice (the row's `trust` and `ca_warnings`),
+and the poller once per cycle, so `ca.py#summarise_file` caches a bundle file's list on its
+`(mtime_ns, size)`, the way `config.py#_trusted_ca_context` caches its context. A pasted `caData` is
+small and is decoded each time.
 
 ### 2.5 #314's warnings channel
 
@@ -287,6 +332,9 @@ A refusal that decoded nothing keeps today's string `ca-data-invalid: …`, so e
 read `detail.startswith("ca-data-invalid:")` still pass for an empty or non-PEM paste. The one
 test that covers every refusal accepts either a string or that object.
 
+The page's `apiSend` turns an object detail into the message `code: message` and keeps the object
+on `err.detail`; the Test panel paints `certificates` the way the card does (`.cc-ca-cert`).
+
 ### 3.7 Must not change
 
 - The three modes and their refusals (`insecure-with-ca`, `ca-data-invalid`, empty `caData`), at
@@ -318,8 +366,9 @@ flowchart TD
 
 ## 4. Tests
 
-**Every behaviour has a test that fails before the implementing apply and passes after. Phase 1
-holds the document. Phase 2 holds the code.**
+**The table describes proposed behavioural coverage, not measured fail-before/pass-after
+results. Phase 1 holds the document. The behaviour tests are specified here and run in
+phase 2. An anchor check is not behavioural evidence.**
 
 | behaviour | test |
 |---|---|
@@ -336,6 +385,13 @@ holds the document. Phase 2 holds the code.**
 | Test response carries the summary | `test_ca_visibility.py::test_the_test_response_carries_the_certificate_summary` |
 | `ca-data-invalid` with a decoded block carries the summary | `test_ca_visibility.py::test_ca_data_invalid_returns_what_decoded` |
 | Secret and ConfigMap are equal sources | `test_ca_visibility.py::test_a_secret_and_a_configmap_are_equal_sources` |
+| a bundle file is decoded once until it changes | `test_ca_visibility.py::test_a_bundle_file_is_decoded_once_until_it_changes` |
+| action and store agree in the log and the API for `trusted-bundle`, `caData` and a file | `test_ca_visibility.py::test_the_action_and_store_agree_in_the_log_and_the_api_for_every_mode` |
+| a system-trusted enterprise root can match the pin | `test_ca_visibility.py::test_system_root_can_match_enterprise_fingerprint` |
+| a mounted bundle's count is the verifier's union with the system roots | `test_ca_visibility.py::test_mounted_bundle_count_includes_system_roots` |
+| a non-UTF-8 bundle file does not crash the inventory | `test_ca_visibility.py::test_non_text_bundle_does_not_crash_inventory` |
+| the warning does not start a fractional day early | `test_ca_visibility.py::test_warning_does_not_start_a_fractional_day_early` |
+| the Test panel paints the certificates; an object refusal reads as text | `test_ui.py::test_the_test_result_paints_the_certificates_and_a_refusal_object_reads_as_text` |
 | card shows action and store per mode | `test_ui.py::test_a_verify_failure_shows_the_store_and_the_fix` |
 | card lists a pasted CA | `test_ui.py::test_a_cadata_card_lists_subject_and_expiry` |
 | banner uses the warnings channel | `test_ui.py::test_ca_expiring_uses_the_warnings_banner` |
@@ -465,14 +521,35 @@ def summarise_pem(pem: str) -> list[dict]:
     return out
 
 
+_BUNDLE_CACHE: dict[str, tuple[tuple[int, int], list[dict]]] = {}
+
+
+def summarise_file(path: str) -> list[dict]:
+    """One bundle file's certificates, cached on (mtime_ns, size) the way `config._trusted_ca_context`
+    caches its context: the API summarises every live cluster on every read and the poller on every
+    cycle, and a 128-block bundle costs 17 ms to decode (measured, Python 3.14.7 / OpenSSL 3.6.4).
+    A stale hit is impossible without a same-size same-mtime rewrite; a race between the API thread
+    and the poller costs one redundant decode, never a wrong list."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _BUNDLE_CACHE.get(path)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        certs = summarise_pem(Path(path).read_text())
+    except (OSError, UnicodeDecodeError, ValueError):
+        return []  # never cache a failure: a later readable file must be retried
+    _BUNDLE_CACHE[path] = (key, certs)
+    return certs
+
+
 def summarise_paths(paths: list[str]) -> list[dict]:
     out, seen = [], set()
     for path in paths:
-        try:
-            text = Path(path).read_text()
-        except OSError:
-            continue
-        for cert in summarise_pem(text):
+        for cert in summarise_file(path):
             if cert["sha256"] in seen:
                 continue
             seen.add(cert["sha256"])
@@ -508,7 +585,7 @@ def validity_word(not_before: str, not_after: str, now: datetime, warn_days: int
         return NOT_YET
     if now > end:
         return EXPIRED
-    if (end - now).days <= warn_days:
+    if (end - now).total_seconds() <= warn_days * 86400:
         return EXPIRING
     return VALID
 
@@ -576,9 +653,17 @@ def summarise_cluster(cluster: ClusterConfig, settings: Settings,
     elif cluster.ca_bundle_file:
         certs = summarise_paths([cluster.ca_bundle_file])
     else:
-        paths = trusted_paths()
-        certs = summarise_paths(paths) if paths else [
-            _from_info(info, None) for info in ssl.create_default_context().get_ca_certs()]
+        # verify() merges the default store with these mounted paths. Preserve
+        # that union and each root's DER fingerprint in the displayed inventory.
+        context = ssl.create_default_context()
+        by_digest = {}
+        for der in context.get_ca_certs(binary_form=True):
+            cert = decode_one(ssl.DER_cert_to_PEM_cert(der))
+            if cert:
+                by_digest[cert["sha256"]] = cert
+        for cert in summarise_paths(trusted_paths()):
+            by_digest[cert["sha256"]] = cert
+        certs = list(by_digest.values())
     shown = annotate(certs, settings, now)
     pinned = bool(settings.enterprise_ca_sha256 or settings.enterprise_ca_subject)
     enterprise = any(c["enterpriseRoot"] for c in shown) if pinned else None
@@ -812,8 +897,8 @@ def _ca_expiry_days(raw: dict) -> int:
                 "rejoinable": rejoin_refusal(c, settings) is None,
             })
             if row.get("message") and is_verify_failure(row["message"]) and not c.insecure_skip_verify:
-                action, store = tls_verify_failure(c)
-                clusters[-1]["action"], clusters[-1]["store"] = action, store
+                # one line, no local named `store`: list_cluster_configs reads the closure's `store` above
+                clusters[-1]["action"], clusters[-1]["store"] = tls_verify_failure(c)
 ```
 
 <!-- block: local-development/gsd/api.py | edit -->
@@ -871,6 +956,29 @@ def _ca_expiry_days(raw: dict) -> int:
 ```
 ```javascript
     ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${({ "shared-api-url": "Shared API URL.", "ca-expiring": "CA expiring.", "ca-expired": "CA expired.", "ca-not-yet-valid": "CA not yet valid.", "ca-not-enterprise": "Not the enterprise root." }[w.code] || "Configuration warning.")}</strong> ${esc(w.detail)}</div>`).join("")}
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+    const err = new Error(payload && payload.detail ? String(payload.detail) : `${res.status} ${res.statusText}`);
+    err.status = res.status; throw err;
+```
+```javascript
+    // #244: a `ca-data-invalid` refusal that decoded some blocks answers an object {code, message, certificates};
+    // every other refusal is still a string. The message reads the same either way; the object stays on `err.detail`.
+    const detail = payload && payload.detail;
+    const text = detail && typeof detail === "object" ? `${detail.code}: ${detail.message}` : detail ? String(detail) : `${res.status} ${res.statusText}`;
+    const err = new Error(text);
+    err.status = res.status; err.detail = detail; throw err;
+```
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+        ${test.error ? `<div class="err">${esc(test.error)}</div>` : ""}</div>`;
+```
+```javascript
+        ${test.error ? `<div class="err">${esc(test.error)}</div>` : ""}
+        ${(test.certificates || []).map((cert) => `<div class="cc-hint cc-ca-cert" data-cc-ca="${esc(cert.sha256 || "")}">${esc(cert.subject)} · issuer ${esc(cert.issuer)} · ${esc(cert.notAfter)}</div>`).join("")}</div>`;
 ```
 
 <!-- block: charts/group-sync-dashboard/values.yaml | after:     subjectHash: "" -->
@@ -945,6 +1053,31 @@ A retired row has no `trust`.
         detail = r.json()["detail"]
         text = detail if isinstance(detail, str) else f"{detail.get('code')}: {detail.get('message')}"
         assert r.status_code == status and text.startswith(code + ":"), r.text
+```
+
+<!-- block: local-development/tests/test_clusterconfig_tab.py | edit -->
+```python
+        assert out == {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:reader", "error": None}
+```
+```python
+        assert out == {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:reader", "error": None,
+                       "certificates": []}   # #244: the Test response carries the pasted PEM's summary; a bearer request pastes none
+```
+
+<!-- block: local-development/tests/test_clusterconfig.py | edit -->
+```python
+        by = {x["id"]: x for x in body["clusters"]}
+        assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
+        assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,
+```
+```python
+        by = {x["id"]: x for x in body["clusters"]}
+        assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
+        # #244: every live row carries `trust`; its count is the host's own store, so the shape is held, not the number
+        trust = by["east"].pop("trust")
+        assert trust["sourceKind"] in ("system", "configmap") and trust["certificates"] == [] and trust["enterpriseRoot"] is None
+        assert isinstance(trust["count"], int) and trust["count"] >= 0 and trust["store"]
+        assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,
 ```
 
 <!-- block: local-development/tests/test_ui.py | edit -->
@@ -1024,6 +1157,35 @@ class TestKyvernoPage:
         assert "soon-root" in banner.inner_text()
         assert "ca-expiring" not in page.locator("#cc-findings").inner_text()
 
+    def test_the_test_result_paints_the_certificates_and_a_refusal_object_reads_as_text(self, page, cc_rig):
+        """#244 (OB2, not asked): the Test panel lists what the pasted PEM resolved to, and a `ca-data-invalid`
+        refusal that answers an object {code, message, certificates} reads as `code: message`, never
+        `[object Object]`."""
+        base, _, _settings = cc_rig
+        cert = {"subject": "CN=form-ca", "issuer": "CN=form-ca", "notBefore": "2026-01-01T00:00:00Z",
+                "notAfter": "2036-01-01T00:00:00Z", "sha256": "ab" * 32, "enterpriseRoot": None, "validity": "valid"}
+        answers = iter([
+            (200, {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:sa",
+                   "error": None, "certificates": [cert]}),
+            (422, {"detail": {"code": "ca-data-invalid", "message": "tlsClientConfig.caData does not decode to a PEM "
+                              "bundle that loads: SSLError", "certificates": [cert]}}),
+        ])
+        import json
+        page.route("**/api/clusterconfigs/test", lambda route: (lambda status, body: route.fulfill(
+            status=status, content_type="application/json", body=json.dumps(body)))(*next(answers)))
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "tok-west-1234"); page.click("#cc-ca-trustedBundle")
+        page.click("#cc-test")
+        page.wait_for_selector("#cc-test-result .cc-ca-cert")
+        assert "CN=form-ca · issuer CN=form-ca · 2036-01-01T00:00:00Z" in page.locator("#cc-test-result").inner_text()
+        page.click("#cc-test")
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('ca-data-invalid')")
+        msg = page.locator("#cc-form-msg").inner_text()
+        assert msg.startswith("ca-data-invalid: tlsClientConfig.caData does not decode"), msg
+        assert "[object Object]" not in msg
+
 
 class TestKyvernoPage:
 ```
@@ -1036,6 +1198,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 import ssl
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -1048,7 +1211,8 @@ from gsd.clusterconfig import FINDING_CODES
 from gsd.clusterconfig.ca import (match_enterprise, sha256_of_pem, summarise_cluster,
                                   summarise_pem, tls_verify_failure, validity_word)
 from gsd.clusterconfig.warnings import ca_warnings
-from gsd.clusterconfig.writer import CreateRequest, WriteRefused, test_connection, validate
+from gsd.clusterconfig.writer import CreateRequest, WriteRefused, validate
+from gsd.clusterconfig.writer import test_connection as probe_connection   # not a test: pytest would collect the name
 from gsd.config import ClusterConfig, Settings
 from gsd.kube import ClusterError, UNREACHABLE
 from gsd.poller import _log_poll_failure
@@ -1127,7 +1291,7 @@ def test_enterprise_root_matches_fingerprint_not_a_colliding_subject(tmp_path):
 
 
 def test_an_empty_pin_does_not_claim_an_enterprise_root(tmp_path):
-    crt = _cert(tmp_path, "any", 30)
+    crt = _cert(tmp_path, "any", 365)
     cluster = ClusterConfig("east", "https://api.east.example:6443", token_env="X",
                             ca_data=crt.read_text())
     trust = summarise_cluster(cluster, Settings())
@@ -1158,7 +1322,7 @@ def test_trusted_bundle_expiry_watches_only_the_enterprise_root(tmp_path, monkey
     settings = Settings(enterprise_ca_sha256=sha256_of_pem(root.read_text()), ca_expiry_warning_days=30)
     cluster = ClusterConfig("east", "https://api.east.example:6443", token_env="X")
     trust = summarise_cluster(cluster, settings)
-    assert trust["count"] == 2
+    assert trust["count"] == len(cluster.verify().get_ca_certs())
     assert [c["subject"] for c in trust["certificates"]] == ["CN=enterprise"]
     codes = {w["code"] for w in ca_warnings([cluster], settings)}
     assert codes == {"ca-expiring"}
@@ -1178,7 +1342,8 @@ def test_the_action_text_is_identical_in_the_log_and_the_api(tmp_path, caplog):
         _log_poll_failure(cluster, ClusterError(
             UNREACHABLE, "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
     line = caplog.messages[-1]
-    assert action in line and f"store={store}" in line
+    # events._format_value quotes a value with a space: store="the system trust store", store=/a/path
+    assert action in line and (f"store={store}" in line or f'store="{store}"' in line)
     db = str(tmp_path / "a.db")
     store_db = Store(db)
     store_db.upsert_cluster("east", "https://api.east.example:6443", True,
@@ -1206,7 +1371,7 @@ def test_the_test_response_carries_the_certificate_summary(tmp_path, monkeypatch
     monkeypatch.setattr(writer, "_probe",
                         lambda *a, **k: ({"reachable": True, "server_version": "v1.0",
                                           "identity": "system:serviceaccount:ns:sa"}, None))
-    out = test_connection(req, "ns", host_name="host", timeout=1, viewer="root")
+    out = probe_connection(req, "ns", host_name="host", timeout=1, viewer="root")
     assert [c["subject"] for c in out["certificates"]] == ["CN=form-ca"]
     assert out["certificates"][0]["notAfter"].endswith("Z")
 
@@ -1242,4 +1407,99 @@ def test_a_secret_and_a_configmap_are_equal_sources(tmp_path, monkeypatch):
     assert a["certificates"][0]["sha256"] == b["certificates"][0]["sha256"] == digest
     assert a["sourceKind"] == "secret" and b["sourceKind"] == "configmap"
     assert a["certificates"][0]["subject"] == b["certificates"][0]["subject"] == "CN=shared-root"
+
+
+def test_a_bundle_file_is_decoded_once_until_it_changes(tmp_path, monkeypatch):
+    """Not asked (OB2): the API summarises every live cluster on every read; a bundle is decoded once per
+    (mtime, size), like config._trusted_ca_context, and again when the file changes."""
+    import os
+    import gsd.clusterconfig.ca as ca
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_text(_cert(tmp_path, "first", 365).read_text())
+    os.utime(bundle, ns=(1_000_000_000, 1_000_000_000))
+    decoded = []
+    real = ca.summarise_pem
+    monkeypatch.setattr(ca, "summarise_pem", lambda pem: decoded.append(1) or real(pem))
+    monkeypatch.setattr(ca, "_BUNDLE_CACHE", {}, raising=False)
+    first = ca.summarise_paths([str(bundle)])
+    again = ca.summarise_paths([str(bundle)])
+    assert [c["subject"] for c in first] == ["CN=first"] and again == first
+    assert len(decoded) == 1, "the second read of an unchanged bundle decodes nothing"
+    bundle.write_text(_cert(tmp_path, "second", 365).read_text())
+    os.utime(bundle, ns=(2_000_000_000, 2_000_000_000))
+    assert [c["subject"] for c in ca.summarise_paths([str(bundle)])] == ["CN=second"]
+    assert len(decoded) == 2, "a changed bundle is decoded again"
+
+
+def test_the_action_and_store_agree_in_the_log_and_the_api_for_every_mode(tmp_path, caplog):
+    """Not asked (OB2): the DoD names three modes (trusted-bundle, caData, a file); the spec's test held only
+    the first. Each mode's poller line carries exactly the pair the API row carries."""
+    pem = _cert(tmp_path, "pin", 365).read_text()
+    modes = {
+        "trusted-bundle": ClusterConfig("east", "https://api.east.example:6443", token_env="X",
+                                        source="secret:gsd-cluster-east"),
+        "caData": ClusterConfig("east", "https://api.east.example:6443", token_env="X",
+                                source="secret:gsd-cluster-east", ca_data=pem),
+        "caBundleFile": ClusterConfig("east", "https://api.east.example:6443", token_env="X",
+                                      source="values", ca_bundle_file=str(tmp_path / "pin.crt")),
+    }
+    for mode, cluster in modes.items():
+        assert cluster.tls_mode["ca"] == mode
+        action, store = tls_verify_failure(cluster)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="gsd.poller"):
+            _log_poll_failure(cluster, ClusterError(
+                UNREACHABLE, "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))
+        line = caplog.messages[-1]
+        assert action in line and (f"store={store}" in line or f'store="{store}"' in line), mode
+        db = str(tmp_path / f"{mode}.db")
+        store_db = Store(db)
+        store_db.upsert_cluster("east", "https://api.east.example:6443", True,
+                                source=cluster.source, credential="bearer")
+        store_db.record_poll("east", "unreachable",
+                             "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+        settings = Settings(clusters=[cluster], db_path=db, oauth_proxy_enabled=True)
+        app = build_app(settings, run_poller=False)
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
+        app.state.tier_resolver = _MapResolver({"root": "all"})
+        with TestClient(app) as client:
+            east = next(c for c in client.get("/api/clusterconfigs", headers=H("root")).json()["clusters"]
+                        if c["id"] == "east")
+        assert (east["action"], east["store"]) == (action, store), mode
+
+
+def test_system_root_can_match_enterprise_fingerprint(tmp_path, monkeypatch):
+    root = _cert(tmp_path, "system-root", 365)
+    monkeypatch.delenv("GSD_TRUSTED_CA_FILE", raising=False)
+    monkeypatch.setenv("SSL_CERT_FILE", str(root))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "absent"))
+    settings = Settings(enterprise_ca_sha256=sha256_of_pem(root.read_text()))
+    cluster = ClusterConfig("east", "https://unused.invalid")
+    trust = summarise_cluster(cluster, settings)
+    assert trust["enterpriseRoot"] is True
+    assert trust["certificates"][0]["sha256"] == settings.enterprise_ca_sha256
+
+
+def test_mounted_bundle_count_includes_system_roots(tmp_path, monkeypatch):
+    system = _cert(tmp_path, "system", 365)
+    mounted = _cert(tmp_path, "mounted", 365)
+    monkeypatch.setenv("SSL_CERT_FILE", str(system))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "absent"))
+    monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(mounted))
+    cluster = ClusterConfig("east", "https://unused.invalid")
+    trust = summarise_cluster(cluster, Settings())
+    assert trust["count"] == len(cluster.verify().get_ca_certs()) == 2
+
+
+def test_non_text_bundle_does_not_crash_inventory(tmp_path):
+    path = tmp_path / "malformed-ca.pem"
+    path.write_bytes(bytes([255]))
+    cluster = ClusterConfig("east", "https://unused.invalid", ca_bundle_file=str(path))
+    assert summarise_cluster(cluster, Settings())["count"] == 0
+
+
+def test_warning_does_not_start_a_fractional_day_early():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = now + timedelta(days=30, seconds=1)
+    assert validity_word("2020-01-01T00:00:00Z", end.isoformat(), now, 30) == "valid"
 ```

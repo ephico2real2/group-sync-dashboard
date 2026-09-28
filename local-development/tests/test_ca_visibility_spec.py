@@ -84,12 +84,29 @@ def test_one_function_builds_the_action_text():
 
 
 def test_implementation_blocks_check_out_against_this_tree():
-    done = subprocess.run(
-        [sys.executable, str(TOOL), str(SPEC), str(REPO)],
-        capture_output=True, text=True,
-    )
-    assert done.returncode == 0, done.stderr or done.stdout
-    assert "blocks check out" in done.stdout
+    """Phase 1: every block applies cleanly to this tree. Phase 2 (the module the first block creates
+    exists): every block is already in the tree — a create's file is its fence, an edit's New text and
+    an insertion's text occur in their file — so the spec and the code cannot drift apart silently."""
+    import importlib.util
+    loader = importlib.util.spec_from_file_location("apply_spec_blocks", TOOL)
+    tool = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(tool)
+    blocks = tool.blocks(SPEC.read_text())
+    created = [b for b in blocks if b["kind"] == "create"]
+    assert created, "the spec creates at least one file"
+    if not (REPO / created[0]["path"]).exists():
+        done = subprocess.run([sys.executable, str(TOOL), str(SPEC), str(REPO)], capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr or done.stdout
+        assert "blocks check out" in done.stdout
+        return
+    for b in blocks:
+        text = (REPO / b["path"]).read_text()
+        if b["kind"] == "create":
+            assert text == b["fences"][0], f"block {b['n']}: {b['path']} is not the spec's file"
+        elif b["kind"] == "edit":
+            assert b["fences"][1] in text, f"block {b['n']}: {b['path']} lacks the New text"
+        else:
+            assert b["fences"][0].strip("\n") in text, f"block {b['n']}: {b['path']} lacks the inserted text"
 
 
 def test_no_block_edits_a_version_field():
