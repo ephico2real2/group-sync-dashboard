@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A half-typed Rotate token survives the minute's repaint (#390).** The Cluster Configurations
+  Rotate field is recreated whenever a poll changes the card. The draft now lives in the page's
+  view state, the same way Refresh keeps each card's answer, and is cleared on submit or when
+  the panel is closed. The token is never written to browser storage. Application **1.8.0**, chart 0.59.10.
+
 - **Refuse cluster URL userinfo at both egress points (#435, Epic C).** `local-development/gsd/kube.py#ClusterClient._client`
   and the fleet login's own client (`local-development/gsd/fleetlogin.py#FleetLogin._build_client`, added on OB2's
   review) now refuse an `apiUrl` carrying userinfo before any request is built. The outcome is `unreachable`, and the
