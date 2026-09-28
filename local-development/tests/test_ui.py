@@ -7484,6 +7484,52 @@ class TestClusterConfigPage:
         page.evaluate("() => refresh({ auto: true })")
         page.wait_for_function("() => document.getElementById('cc-findings').innerText.includes('gsd-cluster-bad')")
 
+    @pytest.mark.parametrize("width", [320, 375])
+    def test_a_finding_detail_wraps_between_words_on_a_phone(self, page, cc_rig, width):
+        """#473, seen on the lab at 375 px: the insecure-with-ca detail read `…tlsClientConfig.insecure=tru` / `e are
+        both set`. The value cell breaks a word only when the word is wider than the line, and the 171 px
+        `tlsClientConfig.insecure=true` was wider than its 166 px column (114 px at 320). The lines are read from the
+        text's client rects, never a screenshot."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        base, host, settings = cc_rig
+        finding = parse_secret(_secret(name="gsd-cluster-mock-refusal", cluster="mock-refusal", config={
+            "bearerToken": "t", "tlsClientConfig": {"caData": "bm90IGEgcGVt", "insecure": True}}), host_name=None)
+        assert finding.code == "insecure-with-ca" and "insecure=true" in finding.detail, finding
+        settings.cluster_registry.replace(settings.cluster_registry.discovered(), [finding], at="2026-09-28T09:00:00Z")
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.set_viewport_size({"width": width, "height": 812})
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.locator("#cc-findings .cc-finding", has_text="insecure-with-ca").wait_for()
+        # The web fonts swap in (font-display: swap) and a break follows the glyph widths: measure once they are in.
+        assert page.evaluate("() => document.fonts.ready.then(() => document.fonts.check('12px \"Space Grotesk\"'))")
+        lines = page.evaluate("""() => {
+            const row = [...document.querySelectorAll('#cc-findings .cc-finding .cc-kv')]
+              .find(r => r.querySelector('.k').textContent === 'detail');
+            const text = row.querySelector('.v').firstChild, range = document.createRange(), lines = [];
+            let top = null;
+            for (let i = 0; i < text.length; i++) {
+              range.setStart(text, i); range.setEnd(text, i + 1);
+              const rect = range.getClientRects()[0];
+              if (!rect) continue;
+              if (top === null || Math.abs(rect.top - top) > 2) { lines.push(''); top = rect.top; }
+              lines[lines.length - 1] += text.data[i];
+            }
+            return lines;
+        }""")
+        assert "".join(lines) == finding.detail, lines   # every character was read, and the content is unchanged
+        ends = [sum(map(len, lines[:i])) for i in range(1, len(lines))]
+        at = finding.detail.index("insecure=true")
+        assert not [e for e in ends if at < e < at + len("insecure=true")], lines
+        assert all(" " in finding.detail[e - 1:e + 1] for e in ends), lines   # each line ends between words
+        assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"), "the page scrolls sideways"
+        # the cluster cards keep their label beside the value
+        assert page.locator("#cc-cluster-east .cc-kv").first.evaluate(
+            "el => getComputedStyle(el).gridTemplateColumns.split(' ').length") == 2
+        assert not errors
+
     def test_a_null_whoami_on_a_poll_paints_loading_on_the_tab_never_the_refusal(self, page, cc_rig):
         """Round 2 (OB2 C3): `whoami: get(...).catch(() => null)` is assigned unconditionally, so a poll
         whose whoami failed left `data.whoami` null — and render() painted the refusal card for an
