@@ -7077,7 +7077,9 @@ class TestClusterConfigPage:
         assert "<img" in page.locator('#cc-head [data-cc-warning]').inner_text()
         assert "<img" in page.locator('#cc-cluster-east .cc-shared-api-hint').inner_text()
 
-    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig):
+    @pytest.mark.parametrize("check", ["count", "chip"])
+    @pytest.mark.parametrize("width", [375, 393, 768, 1280])
+    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig, check, width):
         import dataclasses
         from gsd.clusterconfig.parser import Finding
         from gsd.config import ClusterConfig
@@ -7088,16 +7090,58 @@ class TestClusterConfigPage:
         pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
                                 source="configmap:fleet:1", onboarding=owner)
         settings.cluster_registry.replace([east, pending], [Finding("configmap:fleet:2", "onboarding-invalid", "invalid stanza")], at="now")
-        page.set_viewport_size({"width": 375, "height": 812})
+        page.set_viewport_size({"width": width, "height": 812})
         page.set_extra_http_headers({"X-Forwarded-User": "root"})
         page.goto(f"{base}/#page=clusters")
         page.wait_for_selector("#cc-cluster-pending")
+        if check == "count":
+            source = page.locator("#cc-head .cc-kv", has_text="by source").inner_text()
+            assert "ConfigMap 2" in source and "Secret 0" in source
+        else:
+            chip = page.locator("#cc-cluster-east h2 .rp-chip").inner_text()
+            assert chip == "ConfigMap fleet → Secret gsd-cluster-east"
+            assert page.locator("#cc-cluster-east .cc-src-configmap").count() == 1
+        assert page.locator("#cc-cluster-pending .cc-src-configmap").inner_text() == "ConfigMap fleet"
+        assert page.locator("#cc-cluster-east .cc-src-configmap").evaluate(
+            "el => getComputedStyle(el).whiteSpace") == "normal"
         assert "ConfigMap fleet" in page.locator("#cc-cluster-pending").inner_text()
         assert "ConfigMap fleet" in page.locator("#cc-cluster-east").inner_text()
         assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 0
         assert "configmap:fleet:2" in page.locator("#cc-findings").inner_text()
         assert "onboard,sideload" in page.locator("#cc-head").inner_text()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+    def test_discovery_counts_live_secret_storage_independently_of_declaration(self, page, cc_rig):
+        import dataclasses
+        from gsd.config import ClusterConfig
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        generated = dataclasses.replace(east, name="gitops", source="secret:gsd-cluster-gitops",
+                                        onboarding=("fleet", "cm-uid", "a" * 64))
+        pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
+                                source="configmap:fleet:1")
+        # Disabled configurations still have a live labelled Secret.
+        settings.cluster_registry.replace([dataclasses.replace(east, enabled=False), generated, pending], [], at="now")
+
+        def append_retired(route):
+            response = route.fetch()
+            payload = response.json()
+            payload["clusters"].append({
+                **next(c for c in payload["clusters"] if c["id"] == "east"),
+                "id": "retired", "source": "secret:gsd-cluster-retired", "retired": True,
+            })
+            route.fulfill(response=response, json=payload)
+
+        page.route("**/api/clusterconfigs", append_retired)
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-retired")
+        discovery = page.locator("#cc-head .cc-kv").filter(has=page.locator(".k", has_text=re.compile("^discovery$")))
+        assert "2 Secrets carry the discovery label" in discovery.inner_text()
+        assert page.locator("#cc-cluster-east .cc-src-secret").inner_text() == "Secret gsd-cluster-east"
+        assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 2
+        assert page.locator("#cc-rotate-gitops, #cc-delete-gitops, #cc-rotate-retired, #cc-delete-retired").count() == 0
+        assert page.locator("#cc-refresh_gitops").count() == 1
 
     def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
         """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster
@@ -7268,7 +7312,78 @@ class TestClusterConfigPage:
         beyond = page.evaluate("() => [...document.querySelectorAll('#main *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).length")
         assert beyond == 0
 
+    def test_a_half_typed_rotate_token_survives_a_poll_repaint(self, page, cc_rig):
+        """#390: the Rotate field is recreated when discovery moves; the draft lives in view, so the
+        typed token and focus stay. Never browser storage."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-rotate-east")
+        page.click("#cc-rotate-east"); page.wait_for_selector("#cc-rotate-token-east")
+        page.focus("#cc-rotate-token-east"); page.keyboard.type("tok-half")
+        east = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(east, [], at="2026-09-20T16:09:09Z")   # the next discovery: last_discovery moves
+        before = page.evaluate("() => lastFingerprint")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_function("(b) => lastFingerprint !== b", arg=before)      # a repaint really happened
+        assert page.evaluate("() => [document.activeElement.id, document.getElementById('cc-rotate-token-east').value]") \
+            == ["cc-rotate-token-east", "tok-half"]
+
+    def test_a_rotate_draft_is_view_state_and_clears_on_close_and_submit(self, page, cc_rig):
+        """#390: the draft is JavaScript memory only, and is gone after close (the Rotate toggle) or
+        submit — the same moments the field is emptied, never written to browser storage."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-rotate-east")
+        page.click("#cc-rotate-east"); page.wait_for_selector("#cc-rotate-token-east")
+        page.focus("#cc-rotate-token-east"); page.keyboard.type("tok-half")
+        assert page.evaluate("() => view.clusterRotateDraft.east") == "tok-half"
+        leaked = page.evaluate(
+            """() => {
+                const hit = (store) => { try { return Object.values(store).some((v) => String(v).includes('tok-half')); }
+                                         catch (e) { return false; } };
+                return { local: hit(localStorage), session: hit(sessionStorage) };
+            }""")
+        assert leaked == {"local": False, "session": False}, leaked
+        page.click("#cc-rotate-east")   # close
+        page.wait_for_function("() => !document.getElementById('cc-rotate-token-east')")
+        assert page.evaluate("() => view.clusterRotateDraft.east") in (None, "")
+        page.click("#cc-rotate-east"); page.wait_for_selector("#cc-rotate-token-east")
+        assert page.evaluate("() => document.getElementById('cc-rotate-token-east').value") == ""
+        page.fill("#cc-rotate-token-east", "tok-submit-1")
+        page.click("#cc-rotate-go-east")
+        page.wait_for_function("() => (document.getElementById('cc-rotate-msg-east') || {innerText: ''}).innerText.includes('overwritten')")
+        assert page.evaluate("() => document.getElementById('cc-rotate-token-east').value") == ""
+        assert page.evaluate("() => view.clusterRotateDraft.east") in (None, "")
+
     # ── the tier on the page (#230): two levels, and the tab's very existence is the first one ────
+
+    def test_rotate_constructor_starts_and_reopens_empty(self, page, cc_rig):
+        """A cluster may be named `constructor`; a plain `{}` draft map inherited Object's constructor there, so an
+        untouched Overwrite wrote it as a credential (review of #456, Codex). The draft map has no prototype."""
+        import dataclasses
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(
+            [dataclasses.replace(east, name="constructor", source="secret:gsd-cluster-constructor")],
+            [], at="2026-09-27T00:00:00Z",
+        )
+        _open_as(page, base, "root")
+        page.click("#tab-clusters")
+        page.click("#cc-rotate-constructor")
+        field = page.locator("#cc-rotate-token-constructor")
+        assert field.input_value() == ""
+        puts = []
+        page.route("**/api/clusterconfigs/constructor/credential", lambda route: (
+            puts.append(route.request.method),
+            route.fulfill(status=200, content_type="application/json", body="{}"),
+        ))
+        page.click("#cc-rotate-go-constructor")
+        page.wait_for_function("() => document.getElementById('cc-rotate-msg-constructor').textContent === 'a bearer token is required.'")
+        assert puts == []
+        page.fill("#cc-rotate-token-constructor", "synthetic-draft")
+        page.click("#cc-rotate-constructor")
+        page.click("#cc-rotate-constructor")
+        assert field.input_value() == ""
     def test_the_auditor_gets_no_tab_no_page_and_makes_no_request_for_it(self, page, cc_rig):
         """The operator's rule: the auditor must not see this surface OR learn that it exists. So the
         tab button is absent, a pasted #page=clusters shows the refusal card, and — the part a hidden
@@ -7408,6 +7523,78 @@ class TestClusterConfigPage:
         assert beyond == [], beyond
 
 
+    @pytest.mark.parametrize("order", [("east", "result-east"), ("result-east", "east")])
+    def test_refresh_ids_are_unique_and_results_stay_on_their_own_cards(self, page, cc_rig, order):
+        """#441: a cluster name must not turn its button ID into another card's result ID."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        base, host, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        other = parse_secret(_secret("gsd-cluster-result-east", cluster="result-east",
+                                     server="https://api.result-east.example:6443"), host_name="crc-local")
+        settings.cluster_registry.replace([east, other], [], at="2026-09-27T14:00:00Z")
+        answers = {
+            "east": {"outcome": "auth_failed", "message": "east credential refused", "at": "2026-09-27T14:01:00Z"},
+            "result-east": {"outcome": "ok", "message": "result-east credential accepted", "at": "2026-09-27T14:02:00Z"},
+        }
+        posts = []
+
+        def answer(route):
+            name = route.request.url.split("/")[-2]
+            assert route.request.method == "POST"
+            posts.append(name)
+            route.fulfill(json=answers[name])
+
+        page.route("**/api/clusterconfigs/*/refresh", answer)
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-result-east")
+        for index, name in enumerate(order):
+            page.locator(f"#cc-cluster-{name} [data-cc-refresh='{name}']").click()
+            page.wait_for_function("name => (view.clusterRefresh[name] || {}).state === 'done'", arg=name)
+            for completed in order[:index + 1]:
+                card = page.locator(f"#cc-cluster-{completed}")
+                result = card.locator(".cc-consq").filter(has_text=answers[completed]["message"])
+                assert result.count() == 1
+                assert answers[completed]["at"] in result.inner_text()
+                assert result.locator(".badge").inner_text() == ("auth_failed" if completed == "east" else "connected")
+                assert card.locator("[data-cc-refresh]").inner_text() == "Refresh"
+                assert not card.locator("[data-cc-refresh]").is_disabled()
+                other_name = "result-east" if completed == "east" else "east"
+                assert answers[other_name]["message"] not in card.inner_text()
+            # Unique IDs keep document-wide lookups on the same element as a card-scoped lookup.
+            assert page.evaluate("""() => {
+                const ids = [...document.querySelectorAll('[id]')].map(el => el.id);
+                return ids.length === new Set(ids).size;
+            }""")
+        assert posts == list(order)
+
+    def test_refresh_ids_never_equal_another_family_so_the_rejoin_dialog_returns_focus_to_its_own_card(self, page, cc_rig):
+        """#441: the Refresh ids must be disjoint from EVERY other `cc-<kind>-<id>` family, not only from each other.
+        `rejoin-z`'s Refresh button and `z-refresh`'s Rejoin button share an id under `cc-<id>-refresh`, and
+        index.html's dialog `onclose` looks the Rejoin button up by id to give it the focus back."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        base, host, settings = cc_rig
+        rows = [parse_secret(_secret(f"gsd-cluster-{n}", cluster=n, server=f"https://api.{n}.example:6443"), host_name="crc-local")
+                for n in ("rejoin-z", "z-refresh")]          # discovery order: Secrets sorted by name (reader.py)
+        settings.cluster_registry.replace(rows, [], at="2026-09-27T15:00:00Z")
+        page.route("**/api/clusterconfigs/z-refresh/refresh", lambda route: route.fulfill(
+            json={"outcome": "auth_failed", "message": "401 Unauthorized", "at": "2026-09-27T15:01:00Z"}))
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-z-refresh")
+        page.locator("#cc-cluster-z-refresh [data-cc-refresh]").click()
+        page.wait_for_selector("#cc-cluster-z-refresh [data-cc-rejoin]")
+        # the consequence: cancelling z-refresh's Rejoin dialog must hand the focus back to z-refresh's own button
+        page.locator("#cc-cluster-z-refresh [data-cc-rejoin]").click(); page.wait_for_selector("#rejoin-dialog[open]")
+        # the page's own `onclose` runs first (registered at render); this listener marks that it has acted
+        page.evaluate("() => { window.__closed = false; document.getElementById('rejoin-dialog')"
+                      ".addEventListener('close', () => { window.__closed = true; }, { once: true }); }")
+        page.click("#rejoin-cancel"); page.wait_for_function("() => window.__closed")
+        focused = page.evaluate("() => { const a = document.activeElement; return [a.closest('.cc-cluster').id, a.dataset.ccRejoin || a.dataset.ccRefresh, a.textContent]; }")
+        assert focused == ["cc-cluster-z-refresh", "z-refresh", "Rejoin…"], focused
+        ids = page.evaluate("() => [...document.querySelectorAll('[id]')].map(el => el.id)")
+        assert len(ids) == len(set(ids)), sorted(i for i in ids if ids.count(i) > 1)
+
     def test_refresh_shows_four_states_that_survive_a_repaint_with_one_probe_in_flight(self, page, cc_rig, monkeypatch):
         """#311 (SPEC_D3 §4): idle, in flight, refused and succeeded, each a word; the state lives in
         view.clusterRefresh, so a poll's repaint keeps it; a click on the old or the repainted button while the
@@ -7435,45 +7622,45 @@ class TestClusterConfigPage:
         monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Probe)
         posts: list[str] = []
         page.on("request", lambda r: posts.append(r.url) if r.method == "POST" and r.url.endswith("/refresh") else None)
-        repaint = """() => { const b = document.getElementById('cc-refresh-east'); b.dataset.old = '1'; window.__old = b;
+        repaint = """() => { const b = document.getElementById('cc-refresh_east'); b.dataset.old = '1'; window.__old = b;
                              lastFingerprint = null; return refresh({ auto: true }); }"""
-        fresh = "() => !document.getElementById('cc-refresh-east').dataset.old"
-        line = lambda: page.locator("#cc-refresh-result-east").inner_text().replace("\n", " ")   # noqa: E731
+        fresh = "() => !document.getElementById('cc-refresh_east').dataset.old"
+        line = lambda: page.locator("#cc-refresh-result_east").inner_text().replace("\n", " ")   # noqa: E731
         try:
             _open_as(page, base, "root")
             page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
             # idle, on every live row: the Secret row beside Delete, the host and the values rows on their own
-            assert page.locator("#cc-refresh-east").inner_text() == "Refresh" and page.locator("#cc-refresh-result-east").count() == 0
-            assert page.locator("#cc-cluster-east .cc-acts #cc-refresh-east + #cc-delete-east").count() == 1
-            assert page.locator("#cc-refresh-crc-local, #cc-refresh-prod-east").count() == 2
+            assert page.locator("#cc-refresh_east").inner_text() == "Refresh" and page.locator("#cc-refresh-result_east").count() == 0
+            assert page.locator("#cc-cluster-east .cc-acts #cc-refresh_east + #cc-delete-east").count() == 1
+            assert page.locator("#cc-refresh_crc-local, #cc-refresh_prod-east").count() == 2
             # in flight: labelled and disabled, and it survives a repaint
-            page.click("#cc-refresh-east")
-            page.wait_for_selector("#cc-refresh-east[disabled][aria-busy='true']")
+            page.click("#cc-refresh_east")
+            page.wait_for_selector("#cc-refresh_east[disabled][aria-busy='true']")
             page.evaluate(repaint); page.wait_for_function(fresh)
-            assert page.locator("#cc-refresh-east").inner_text() == "Refreshing…" and page.locator("#cc-refresh-east").is_disabled()
+            assert page.locator("#cc-refresh_east").inner_text() == "Refreshing…" and page.locator("#cc-refresh_east").is_disabled()
             assert "probing /version and users/~" in line()
             # one in flight: the old button's handler and the repainted one's both do nothing
-            page.evaluate("() => { window.__old.onclick(); document.getElementById('cc-refresh-east').onclick(); }")
+            page.evaluate("() => { window.__old.onclick(); document.getElementById('cc-refresh_east').onclick(); }")
             page.wait_for_timeout(300)
             assert len(posts) == 1, posts
             # refused: the poller's word, the instant as stamped, the message and the next step as text
             gate.set()
-            page.wait_for_function("() => (document.getElementById('cc-refresh-result-east') || {innerText: ''}).innerText.includes('auth_failed')")
+            page.wait_for_function("() => (document.getElementById('cc-refresh-result_east') || {innerText: ''}).innerText.includes('auth_failed')")
             refused = line()
             assert re.search(r"auth_failed · \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ — 401 Unauthorized", refused), refused
             # #316 (SPEC_D4): the next step is Rejoin, drawn where the route accepts it — the Secret row here
             assert "use Rejoin" in refused and page.locator("#cc-cluster-east [data-cc-rejoin]").count() == 1
-            assert page.locator("#cc-refresh-result-east .badge.critical").count() == 1
-            assert page.locator("#cc-refresh-east").inner_text() == "Refresh" and not page.locator("#cc-refresh-east").is_disabled()
+            assert page.locator("#cc-refresh-result_east .badge.critical").count() == 1
+            assert page.locator("#cc-refresh_east").inner_text() == "Refresh" and not page.locator("#cc-refresh_east").is_disabled()
             page.evaluate(repaint); page.wait_for_function(fresh)
             assert line() == refused, "the refused state survives the repaint"
             # succeeded: `ok` reads connected, with the instant, and survives the repaint too
             answer["v"] = None
-            page.click("#cc-refresh-east")
-            page.wait_for_function("() => (document.getElementById('cc-refresh-result-east') || {innerText: ''}).innerText.includes('connected')")
+            page.click("#cc-refresh_east")
+            page.wait_for_function("() => (document.getElementById('cc-refresh-result_east') || {innerText: ''}).innerText.includes('connected')")
             ok = line()
             assert re.search(r"connected · \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ — authenticated as system:serviceaccount:gso:poller", ok), ok
-            assert "Rejoin" not in ok and page.locator("#cc-refresh-result-east .badge.ok").count() == 1
+            assert "Rejoin" not in ok and page.locator("#cc-refresh-result_east .badge.ok").count() == 1
             page.evaluate(repaint); page.wait_for_function(fresh)
             assert line() == ok
             assert [p for _, p in dialled].count("/version") == 2 and len(posts) == 2, (dialled, posts)
@@ -7505,15 +7692,15 @@ class TestClusterConfigPage:
         _open_as(page, base, "root")
         page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
         assert page.locator("[data-cc-rejoin]").count() == 0, "no Rejoin before Refresh has said anything"
-        page.click("#cc-refresh-east")
+        page.click("#cc-refresh_east")
         page.wait_for_selector("#cc-rejoin-east")
-        assert page.locator("#cc-cluster-east .cc-acts #cc-refresh-east + #cc-rejoin-east + #cc-delete-east").count() == 1
-        assert "use Rejoin" in page.locator("#cc-refresh-result-east").inner_text()
+        assert page.locator("#cc-cluster-east .cc-acts #cc-refresh_east + #cc-rejoin-east + #cc-delete-east").count() == 1
+        assert "use Rejoin" in page.locator("#cc-refresh-result_east").inner_text()
         # the host and the values entry are refused by the route, so they are never offered it, refused or not
-        page.click("#cc-refresh-crc-local"); page.click("#cc-refresh-prod-east")
+        page.click("#cc-refresh_crc-local"); page.click("#cc-refresh_prod-east")
         page.wait_for_function("() => ['crc-local', 'prod-east'].every((id) => (view.clusterRefresh[id] || {}).state === 'done')")
         assert page.locator("#cc-rejoin-crc-local, #cc-rejoin-prod-east").count() == 0
-        assert "Replace the credential where it is written" in page.locator("#cc-refresh-result-prod-east").inner_text()
+        assert "Replace the credential where it is written" in page.locator("#cc-refresh-result_prod-east").inner_text()
         page.click("#cc-rejoin-east")
         page.wait_for_selector("#rejoin-dialog[open]")
         assert page.evaluate("() => !document.getElementById('main').contains(document.getElementById('rejoin-dialog'))")
@@ -7580,7 +7767,7 @@ class TestClusterConfigPage:
         try:
             _open_as(page, base, "root")
             page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
-            page.click("#cc-refresh-east"); page.wait_for_selector("#cc-rejoin-east")
+            page.click("#cc-refresh_east"); page.wait_for_selector("#cc-rejoin-east")
             page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
             page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-once")
             page.dblclick("#rejoin-go")
@@ -7612,6 +7799,46 @@ class TestClusterConfigPage:
         finally:
             release.set()
 
+    def test_a_password_inside_the_username_is_refused_in_words_the_admin_can_read(self, page, cc_rig, monkeypatch):
+        """#447: the refusal reaches the person who pressed Rejoin as a sentence, in the dialog and on the card — so
+        they know why, and what to type instead — and nothing is sent: no login runs and the field is emptied."""
+        from gsd.fleetlookup import CredentialGate
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+        calls = []
+
+        class _Refused(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+
+        class _Poller:
+            _credential_gate = CredentialGate()
+
+            def request_discovery(self):
+                pass
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Refused)
+        monkeypatch.setattr(_SCOPED_APP.state, "poller", _Poller(), raising=False)
+        monkeypatch.setattr("gsd.rejoin.rejoin", lambda *a, **k: calls.append(k) or {"outcome": "rejoined"})
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        page.click("#cc-refresh_east"); page.wait_for_selector("#cc-rejoin-east")
+        page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+        page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "alice")
+        page.click("#rejoin-go")
+        page.wait_for_function("() => document.getElementById('rejoin-msg').innerText.includes('must not be the username')")
+        said = page.inner_text("#rejoin-msg")
+        assert said == ("HTTP 422 — rejoin-password-within-username: the password must not be the username or a part "
+                        "of it, ignoring case and surrounding spaces; it was not sent"), said
+        assert page.evaluate("() => document.getElementById('rejoin-dialog').open"), "the dialog stays open to try again"
+        assert page.input_value("#rejoin-password") == "", "the refused password is not kept in the field"
+        assert "must not be the username" in page.inner_text("#cc-rejoin-result-east")
+        assert calls == [], "a refused press runs no login"
+
     def test_fetch_refuses_redirects_and_submits_once(self, page, cc_rig, monkeypatch):
         """#316 (review of the spec, C1): a 307 or 308 in front of the dashboard would re-send the POST, password and
         all, to its Location (measured in Chromium). The credential fetch refuses redirects and is sent once."""
@@ -7633,7 +7860,7 @@ class TestClusterConfigPage:
                    lambda route: route.fulfill(status=307, headers={"Location": f"{base}/elsewhere"}))
         _open_as(page, base, "root")
         page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
-        page.click("#cc-refresh-east"); page.wait_for_selector("#cc-rejoin-east")
+        page.click("#cc-refresh_east"); page.wait_for_selector("#cc-rejoin-east")
         page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
         page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "Adm1n-pw-redirected")
         page.click("#rejoin-go")

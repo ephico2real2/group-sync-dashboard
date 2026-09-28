@@ -713,6 +713,13 @@ class ClusterClient:
             params = {"limit": PAGE_SIZE, "continue": token}
 
     def _client(self) -> httpx.Client:
+        # Refuse at egress because httpx replaces the bearer token with URL userinfo as Basic auth.
+        if "@" in self.cluster.api_url.split("://", 1)[-1].split("/", 1)[0]:
+            raise ClusterError(
+                UNREACHABLE,
+                "apiUrl must carry no userinfo — httpx sends userinfo as Basic auth; the value is not "
+                "repeated here, in case it holds a credential",
+            )
         try:
             token = self.cluster.resolve_token()
         except ConfigError as exc:

@@ -1293,3 +1293,32 @@ class TestScopeIsLoginOnly:
         called = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
         assert called.isdisjoint({"post", "put", "patch", "request", "stream", "Timer", "Thread"}), called
         assert {"get", "delete"} <= called
+
+
+# ── #435 at the fleet login's own exit ─────────────────────────────────────────────────────────
+
+class TestTheFleetLoginRefusesUrlUserinfo:
+    def test_a_cluster_url_carrying_userinfo_is_refused_before_discovery(self, monkeypatch):
+        """#435's rule at THIS exit too: `_build_client` is the login's own httpx.Client, which the
+        ClusterClient guard never sees. Measured on httpx 0.28.1: URL userinfo becomes Basic auth on
+        the discovery GET, and REPLACES the Bearer header on the revoke DELETE, so a token minted through
+        such a URL is never revoked. No request may leave, and the refusal names no password."""
+        target = Target(discovery=down)
+        cluster = ClusterConfig("east", "https://user:hunter2@api.example.com:6443", insecure_skip_verify=True)
+
+        class TransportClient(httpx.Client):
+            def __init__(self, **kwargs):
+                super().__init__(transport=httpx.MockTransport(target), **kwargs)
+
+        monkeypatch.setattr(httpx, "Client", TransportClient)
+        fl = FleetLogin(cluster, USER, PASSWORD, policy=RetryPolicy(attempts=1, base_seconds=0.0, max_wait_seconds=0.0),
+                        sleep=lambda s: None, clock=lambda: T0)
+        with pytest.raises(LoginError) as raised:
+            with fl:
+                pass
+        wire = [(r.url.path, r.headers.get("authorization")) for r in target.requests]
+        assert wire == [], f"a request left with URL userinfo on it: {[(p, a and a[:6]) for p, a in wire]}"
+        exc = raised.value
+        assert exc.outcome == UNREACHABLE and exc.retryable is False and exc.bound is False
+        assert "apiUrl" in exc.message and "userinfo" in exc.message
+        assert "hunter2" not in str(exc) and cluster.api_url not in str(exc)

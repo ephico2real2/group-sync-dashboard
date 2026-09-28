@@ -144,6 +144,12 @@ def check(cluster: ClusterConfig, settings: Settings, username: str, password: s
         raise WriteRefused("rejoin-password-invalid", "the password holds a control character, which RFC 7617 forbids, "
                                                       "or an unpaired surrogate, which UTF-8 cannot carry; it was not "
                                                       "sent")
+    # #447: the scrub replaces the password wherever it occurs, the username included, so a password inside the
+    # username leaves a redacted span that IS the password. Stripped, because `redact_text` strips what it matches.
+    folded = password.strip().casefold()
+    if folded and folded in username.casefold():
+        raise WriteRefused("rejoin-password-within-username", "the password must not be the username or a part of it, "
+                                                             "ignoring case and surrounding spaces; it was not sent")
 
 
 def question(settings: Settings) -> dict[str, str]:

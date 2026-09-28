@@ -1,0 +1,4 @@
+2026-09-28T02:23:24Z whoami                                  : {"user": "developer", "tier": null, "cluster_admin": false}
+2026-09-28T02:23:24Z /api/clusterconfigs                     : 403
+2026-09-28T02:23:24Z PASS after the binding's removal: no cluster-admin tier, /api/clusterconfigs 403: [{"user": "developer", "tier": null, "cluster_admin": false}, 403]
+2026-09-28T02:23:24Z failures                                : []

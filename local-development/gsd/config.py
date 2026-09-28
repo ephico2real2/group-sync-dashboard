@@ -1475,6 +1475,7 @@ def parse_cluster_entries(entries: list, path: str | Path, *, remote_host: Clust
         # header that REPLACES the poller's bearer token, the httpx request line logs it, and
         # /api/clusters serves api_url to every tier. Split by hand, not urlsplit, which raises on
         # inputs this check must leave to the parse they get today. The value is never repeated.
+        # kube.py#ClusterClient._client is the second line of defence: it refuses userinfo at egress.
         if "@" in api_url.split("://", 1)[1].split("/", 1)[0] or "?" in api_url or "#" in api_url:
             raise ConfigError(f"{where}: apiUrl must carry no userinfo (user:password@), query or fragment — it is "
                               "served to every reader and httpx sends userinfo as Basic auth; the value is not "

@@ -1,0 +1,47 @@
+# a copy of the tree at 0683da6 (git archive 0683da6), outside the worktree; the test file copied from 268ea63
+# at 2026-09-28T02:13:14Z
+# cd <copy>/local-development && PYTHONPATH=<copy>/local-development python -m pytest -q -p no:cacheprovider -W ignore::DeprecationWarning tests/test_epic_c_composition_2.py::test_rejoin_over_a_declaring_secret_with_an_explicit_account_keeps_the_cluster_loadable
+# gsd imported from <copy>/gsd/__init__.py version 1.5.0
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_rejoin_over_a_declaring_secret_with_an_explicit_account_keeps_the_cluster_loadable _
+
+tmp_path = PosixPath('/private/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/pytest-of-olasumbo/pytest-1842/test_rejoin_over_a_declaring_s0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10aff62c0>
+remote = <test_cluster_rejoin.RemoteTarget object at 0x10afaaba0>
+
+    def test_rejoin_over_a_declaring_secret_with_an_explicit_account_keeps_the_cluster_loadable(tmp_path, monkeypatch, remote):
+        """S4e (#438) made the parser keep `ldapConnectionBootstrap` on a bearer Secret only when `token-source` is
+        `remote-lookup`; D4 (#446) writes `token-source: rejoin` and leaves the explicit account in `config`. Composed: the
+        Secret a person's Rejoin just wrote does not parse, the cluster is a finding and leaves the served set — the recovery
+        action retires the cluster."""
+        remote.answers = directory({ADMIN: ADMIN_PASSWORD})
+        from test_clusterconfig_tab import _Host
+        host = _Host({"gsd-cluster-east": declaring_secret()})
+        east = parse_secret(declaring_secret(), host_name="c1")
+        assert not isinstance(east, Finding) and east.credential_kind == "remote-lookup" and east.ldap_connection_bootstrap == EAST_ACCOUNT
+        app, settings = _app(tmp_path, monkeypatch, host, east)
+        with TestClient(app) as c:
+            r = _rejoin(c)
+        assert r.status_code == 200 and r.json()["outcome"] == "rejoined", r.text
+        assert presented(remote) == [(ADMIN, ADMIN_PASSWORD)]
+        stored = host.secrets["gsd-cluster-east"]
+        assert stored["metadata"]["annotations"][TOKEN_SOURCE_ANNOTATION] == "rejoin"
+        config = json.loads(base64.b64decode(stored["data"]["config"]))
+        parsed = parse_secret(copy.deepcopy(stored), host_name="c1")
+>       assert not isinstance(parsed, Finding), f"the rejoined Secret does not load: {parsed!r}; config={config}"
+E       AssertionError: the rejoined Secret does not load: Finding(secret='gsd-cluster-east', code='unsupported-config-key', detail='config.ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen'); config={'ldapConnectionBootstrap': 'svc-east-bind', 'bearerToken': 'eyJhbGciOiJSUzI1NiJ9.sa-token-that-must-never-reach-a-log.sig'}
+E       assert not True
+E        +  where True = isinstance(Finding(secret='gsd-cluster-east', code='unsupported-config-key', detail='config.ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen'), Finding)
+
+tests/test_epic_c_composition_2.py:86: AssertionError
+=============================== warnings summary ===============================
+../../../../../../../../..<main checkout>/local-development/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  <main checkout>/local-development/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_epic_c_composition_2.py::test_rejoin_over_a_declaring_secret_with_an_explicit_account_keeps_the_cluster_loadable
+1 failed, 1 warning in 0.23s
+# exit 1
