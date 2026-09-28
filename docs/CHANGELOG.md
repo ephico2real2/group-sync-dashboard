@@ -10,10 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
-- **Rejoin refuses a password equal to the username, ignoring case (#447).** The input check answers `422` in
-  fixed words before any request is sent. A scrubbed username in the answer or logs can no longer reveal that
-  equality. Every existing password scrub, the request budget and the per-pod credential gate stay unchanged
-  (`docs/specs/SPEC_D4_cluster_rejoin.md`).
+- **Rejoin refuses a password that is the username or a part of it, ignoring case and surrounding spaces (#447).**
+  The input check answers `422` in fixed words before any request is sent. A scrubbed username in the answer or logs
+  can no longer reveal the password, whole or in part. Every existing password scrub, the request budget and the
+  per-pod credential gate stay unchanged (`docs/specs/SPEC_D4_cluster_rejoin.md`).
 
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
