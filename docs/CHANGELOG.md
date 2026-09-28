@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Refuse cluster URL userinfo at egress (#435, Epic C).** `local-development/gsd/kube.py#ClusterClient._client`
+  now refuses an `apiUrl` carrying userinfo before any request is built. The outcome is `unreachable`, and the
+  message names the key without repeating the value. This backs up the entry checks: httpx cannot replace the
+  poller's bearer token with a URL's credential as Basic auth. The URL is never repaired or stripped.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only
