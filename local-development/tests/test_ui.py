@@ -7137,11 +7137,42 @@ class TestClusterConfigPage:
         page.goto(f"{base}/#page=clusters")
         page.wait_for_selector("#cc-cluster-retired")
         discovery = page.locator("#cc-head .cc-kv").filter(has=page.locator(".k", has_text=re.compile("^discovery$")))
-        assert "2 Secrets carry the discovery label" in discovery.inner_text()
+        assert "2 served from Secrets" in discovery.inner_text()
         assert page.locator("#cc-cluster-east .cc-src-secret").inner_text() == "Secret gsd-cluster-east"
         assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 2
         assert page.locator("#cc-rotate-gitops, #cc-delete-gitops, #cc-rotate-retired, #cc-delete-retired").count() == 0
         assert page.locator("#cc-refresh_gitops").count() == 1
+
+    def test_the_discovery_line_counts_served_and_refused_labelled_secrets_apart(self, page, cc_rig):
+        """#467: one Secret served and one labelled Secret refused, the lab's `mock-refusal` shape. The line names both
+        counts, the refused one from the findings the tab already has, and only where a finding's source is a refused
+        labelled Secret. No value from a Secret is on the line; 375 px."""
+        from gsd.clusterconfig import parse_secret
+        from gsd.clusterconfig.parser import Finding
+        from test_clusterconfig import TOKEN, _secret
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        refused = parse_secret(_secret("gsd-cluster-mock-refusal", cluster="mock-refusal", config={
+            "bearerToken": TOKEN, "tlsClientConfig": {"caData": "Zm9v", "insecure": True}}), host_name="crc-local")
+        assert isinstance(refused, Finding) and refused.code == "insecure-with-ca"
+        settings.cluster_registry.replace([east], [
+            refused,
+            # the tab's other findings, none of them a refused labelled Secret: a ConfigMap stanza, a Secret that is
+            # served all the same, and a lookup's finding on the Secret it has not written
+            Finding("configmap:fleet:2", "onboarding-invalid", "invalid stanza"),
+            Finding("gsd-cluster-east", "shadows-values-entry", "east is also a values entry; the Secret wins"),
+            Finding("gsd-cluster-west", "login-refused", "the fleet account was refused"),
+        ], at="2026-09-28T09:40:00Z")
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-east")
+        discovery = page.locator("#cc-head .cc-kv").filter(has=page.locator(".k", has_text=re.compile("^discovery$")))
+        line = discovery.locator(".v").inner_text()
+        assert line.startswith("1 served from a Secret · 1 labelled Secret refused (see Findings) · last read "), line
+        assert "mock-refusal" not in line
+        assert "gsd-cluster-mock-refusal" in page.locator("#cc-findings").inner_text()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
     def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
         """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster

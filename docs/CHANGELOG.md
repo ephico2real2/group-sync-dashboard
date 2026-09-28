@@ -10,6 +10,16 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The Cluster Configurations discovery line says what its number counts (#467).** On the lab it read
+  `5 Secrets carry the discovery label` while six did: the number is #404's count of live clusters served
+  from a Secret, and a labelled Secret that discovery refuses is a finding, not a cluster. With one Secret
+  served and one refused, the line now reads
+  `1 served from a Secret · 1 labelled Secret refused (see Findings) · last read …`; with none refused, that
+  clause is left out. The refused count comes from the findings the tab already has, only those whose source
+  is a labelled Secret, each Secret once (`local-development/gsd/static/index.html#function clusterConfigPage`).
+  #404's count, the by-source chips and the switched-off line are unchanged, and the line shows no value from
+  a Secret.
+
 - Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
 
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
