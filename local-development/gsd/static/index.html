@@ -193,11 +193,12 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.
                    #311: each card's Refresh state by cluster id — in flight, or the answer — so the repaint keeps it.
-                   #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage. */
+                   #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage.
+                   #459: a map keyed by a bare cluster id has no prototype — `constructor` is a valid name, and {} answers it. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
-                clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
-                clusterRejoin: {},   // #316: each card's Rejoin answer by cluster id — never a username or a password
+                clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: Object.create(null),
+                clusterRejoin: Object.create(null),   // #316: each card's Rejoin answer by cluster id — never a username or a password
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
                 libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
@@ -459,12 +460,13 @@ function goBack() {
    reachable from Access granted, RBAC policy and Logins, "← overview" was about to start
    appearing on a button that returns to one of those three. The tab bar's own wording, lower-cased
    — a reader matches the label to a tab, so a second vocabulary for the same six places would be
-   its own small lie. */
-const PAGE_LABEL = {
+   its own small lie.
+   No prototype (#459): the page comes from the URL, and `#page=constructor` read Object's own as its label. */
+const PAGE_LABEL = Object.assign(Object.create(null), {
   home: "home", overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
   reports: "reports", reporting: "reporting status", lookup: "search", kpi: "KPIs",
-};
+});
 
 function backLabel() {
   const prev = backTarget();
@@ -2768,8 +2770,10 @@ function reportFormCard(spec, cat) {
   // P2 multi-dimension selector: one multi-select per configured dimension (company.net/mnemonic AND
   // company.net/app-environment). Prefer namespaceSelectorDimensions; fall back to the old single-field
   // namespaceSelectors shape while a report pod still sends only that (rolling upgrade).
-  const dims = (cat.namespaceSelectorDimensions && cat.namespaceSelectorDimensions[view.cluster])
-    || (() => { const s = cat.namespaceSelectors && cat.namespaceSelectors[view.cluster];
+  // By OWN key, like `selectedFor` below (#459): a cluster named `constructor` absent from the maps read Object's own.
+  const ownEntry = (map) => (map && Object.prototype.hasOwnProperty.call(map, view.cluster) ? map[view.cluster] : undefined);
+  const dims = ownEntry(cat.namespaceSelectorDimensions)
+    || (() => { const s = ownEntry(cat.namespaceSelectors);
                 return s && s.values && s.values.length ? [{ label: s.label, values: s.values }] : []; })();
   // An OLD report pod has no `selectors` ParamSpec, so the form must keep rendering the single
   // `mnemonics` control (new frontend + old pod, review PR #129 C7-A). `selectedFor` reads the chosen
@@ -3027,7 +3031,8 @@ function lookupMenuBody(name, values, chosen, typed, members) {
 // The discovered lookups for the cluster in the nav, fetched once per cluster when a form opens.
 function ensureDiscovered() {
   if (!view.cluster || !reportingEnabled()) return;
-  data.reportDiscovered = data.reportDiscovered || {};
+  // No prototype (#459): `"constructor" in {}` is true, so a cluster of that name was never fetched.
+  data.reportDiscovered = data.reportDiscovered || Object.create(null);
   // Presence, not truthiness: whatever the answer's shape, one fetch settles the cluster — a stubbed or
   // odd reply that left the key unset re-fetched on every paint (an infinite render loop, measured).
   if (view.cluster in data.reportDiscovered || data.reportDiscovered[`pending:${view.cluster}`]) return;
@@ -3311,7 +3316,7 @@ function libraryRunCard(run, featured) {
 }
 
 function libraryClusterBlocks(runs, key) {
-  const byCluster = {};
+  const byCluster = Object.create(null);   // #459: on {}, a cluster named `constructor` read Object, and .push threw
   runs.forEach((r) => { (byCluster[r.cluster] = byCluster[r.cluster] || []).push(r); });
   const groups = Object.keys(byCluster).sort().map((c) => ({ cluster: c, runs: byCluster[c].sort(libraryNewestFirst) }));
   const many = groups.length > 1;
@@ -6091,6 +6096,7 @@ function ccConnection(c) {
    states, each a word: idle, in flight, succeeded (`ok`, shown as connected) and refused (the poller's word). */
 function ccRefreshButton(c) {
   const busy = (view.clusterRefresh[c.id] || {}).state === "flight";
+  // A per-cluster id is `cc-<kind>_<cluster id>` (#462): no kind holds "_", so the first "_" ends the kind and no two controls share an id.
   return `<button type="button" class="btn" id="cc-refresh_${esc(c.id)}" data-cc-refresh="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Refreshing…" : "Refresh"}</button>`;
 }
 function ccRefreshLine(c) {
@@ -6115,12 +6121,12 @@ function ccRejoinButton(c) {
   const r = view.clusterRefresh[c.id] || {};
   if (!c.rejoinable || !(["auth_failed", "pending"].includes(r.outcome) || view.clusterRejoin[c.id])) return "";
   const busy = (view.clusterRejoin[c.id] || {}).state === "flight";
-  return `<button type="button" class="btn cc-btn-acc" id="cc-rejoin-${esc(c.id)}" data-cc-rejoin="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Rejoining…" : "Rejoin…"}</button>`;
+  return `<button type="button" class="btn cc-btn-acc" id="cc-rejoin_${esc(c.id)}" data-cc-rejoin="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Rejoining…" : "Rejoin…"}</button>`;
 }
 function ccRejoinLine(c) {
   const r = view.clusterRejoin[c.id];
   if (!r) return "";
-  const head = `<div class="cc-consq" id="cc-rejoin-result-${esc(c.id)}"><strong>Rejoin:</strong> `;
+  const head = `<div class="cc-consq" id="cc-rejoin-result_${esc(c.id)}"><strong>Rejoin:</strong> `;
   if (r.state === "flight") return `${head}signing in once and reading the poller's token…</div>`;
   const shape = r.outcome === "rejoined" ? "ok" : r.outcome === "unknown" ? "unknown" : "critical";
   let out = `${head}${ccBadge(shape, r.outcome)}`;
@@ -6139,12 +6145,12 @@ function ccCredential(c) {
     out += ` <span class="cc-hint">managed by ConfigMap ${esc(c.onboarding_configmap)} — edit the stanza there</span>`;
   } else if (secretRow && !c.retired && ccWritesOn()) {
     const open = view.clusterRotate === c.id;
-    out += ` <button type="button" class="linkish" id="cc-rotate-${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
+    out += ` <button type="button" class="linkish" id="cc-rotate_${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
     if (open) {
-      out += `<div class="cc-panel"><label for="cc-rotate-token-${esc(c.id)}">New bearer token</label>
-        <input id="cc-rotate-token-${esc(c.id)}" type="password" autocomplete="new-password" value="${esc(view.clusterRotateDraft[c.id] || "")}">
-        <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go-${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
-        <p class="filterbar-note" id="cc-rotate-msg-${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
+      out += `<div class="cc-panel"><label for="cc-rotate-token_${esc(c.id)}">New bearer token</label>
+        <input id="cc-rotate-token_${esc(c.id)}" type="password" autocomplete="new-password" value="${esc(view.clusterRotateDraft[c.id] || "")}">
+        <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go_${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
+        <p class="filterbar-note" id="cc-rotate-msg_${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
     }
   } else if (c.host) {
     out += ` <span class="cc-hint">read-only — the pod's own ServiceAccount</span>`;
@@ -6206,8 +6212,8 @@ function ccClusterCard(c) {
       ? "changing cluster configuration is reserved to cluster configuration administrators"
       : "this deployment's writes are off"}</div>`;
   } else if (secretRow) {
-    foot = `<div class="cc-acts">${refresh}<button type="button" class="btn" id="cc-delete-${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
-      <span class="cc-hint" id="cc-delete-msg-${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
+    foot = `<div class="cc-acts">${refresh}<button type="button" class="btn" id="cc-delete_${esc(c.id)}" data-cc-delete="${esc(c.id)}">${armed ? "Confirm delete" : "Delete"}</button>
+      <span class="cc-hint" id="cc-delete-msg_${esc(c.id)}">${esc(armed ? "Removes the Secret. Cluster history stays, disabled." : (view.clusterMsg[`delete:${c.id}`] || ""))}</span></div>`;
   } else if (c.host) {
     foot = `<div class="cc-foot">the pod's own in-cluster ServiceAccount — not a Secret</div>`;
   } else {
@@ -6359,6 +6365,19 @@ function clusterConfigPage() {
   clusters.forEach((c) => { n[ccSourceKind(c)] += 1; });
   // Discovery counts live Secret storage, including generated outputs, regardless of declaration.
   const discoveredSecrets = clusters.filter((c) => !c.retired && !c.host && String(c.source || "").startsWith("secret:")).length;
+  // #467: a labelled Secret discovery refused serves no cluster, so the findings count it, by code: a finding's `secret`
+  // can also be a ConfigMap stanza, the values list, the cluster a lookup or a login is about, or a Secret that is still
+  // served (shadows-values-entry, oauth-exchange-not-built, lookup-write-failed). The codes: every one parse_secret
+  // returns, then discovery's three. Onboarding writes a Secret as `secret:<name>`, so each Secret counts once, and it
+  // spells the values list `values` under duplicate-cluster-name only — under any other code, `values` is a Secret's name.
+  const refusalCodes = new Set(["name-missing", "name-invalid", "server-missing", "server-invalid", "config-missing",
+    "config-not-json", "unsupported-config-key", "credential-missing", "credential-ambiguous", "ca-data-invalid",
+    "insecure-with-ca", "visibility-invalid", "identity-invalid", "enabled-invalid", "host-cluster-not-from-secret",
+    "duplicate-cluster-name", "onboarding-cleanup-pending", "onboarding-ownership-conflict"]);
+  const refusedSecrets = new Set((d.findings || [])
+    .filter((f) => refusalCodes.has(f.code) && !/^configmap:/.test(f.secret)
+      && !(f.code === "duplicate-cluster-name" && f.secret === "values"))
+    .map((f) => String(f.secret).replace(/^secret:/, ""))).size;
   const s = d.secrets || {};
   const head = `<section class="card" id="cc-head">
     <h2>Cluster Configurations <span class="rp-chip rp-count">${clusters.length} cluster${clusters.length === 1 ? "" : "s"}</span></h2>
@@ -6372,7 +6391,7 @@ function clusterConfigPage() {
       <span class="rp-chip">ConfigMap ${n.configmap}</span></span></div>
     <div class="cc-kv"><span class="k">ConfigMap selector</span><span class="v mono">${esc((d.configmaps || {}).label || "")}</span></div>
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
-      : `${discoveredSecrets} Secret${discoveredSecrets === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
+      : `${discoveredSecrets} served from ${discoveredSecrets === 1 ? "a Secret" : "Secrets"}${refusedSecrets ? ` · ${refusedSecrets} labelled Secret${refusedSecrets === 1 ? "" : "s"} refused (see Findings)` : ""} · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
     ${ccFleetRows(d.fleet)}
     ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${w.code === "shared-api-url" ? "Shared API URL." : "Configuration warning."}</strong> ${esc(w.detail)}</div>`).join("")}
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
@@ -6475,14 +6494,14 @@ function wireClusterConfig() {
       render();
     };
   });
-  const rotateField = view.clusterRotate && $(`cc-rotate-token-${view.clusterRotate}`);
+  const rotateField = view.clusterRotate && $(`cc-rotate-token_${view.clusterRotate}`);
   if (rotateField) {
     rotateField.oninput = () => { view.clusterRotateDraft[view.clusterRotate] = rotateField.value; };
   }
   document.querySelectorAll("[data-cc-rotate-go]").forEach((el) => {
     el.onclick = async () => {
       const id = el.dataset.ccRotateGo;
-      const field = $(`cc-rotate-token-${id}`);
+      const field = $(`cc-rotate-token_${id}`);
       const token = field ? field.value : "";
       if (!token) { view.clusterMsg[`rotate:${id}`] = "a bearer token is required."; render(); return; }
       try {
@@ -6518,7 +6537,7 @@ function wireClusterConfig() {
     $("rejoin-password").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); sendRejoin(); } };
     rejoinDlg.onclose = () => {
       clearRejoin();
-      const b = $(`cc-rejoin-${rejoinDlg.dataset.cluster}`);   // by id: a repaint replaced the button that opened it
+      const b = $(`cc-rejoin_${rejoinDlg.dataset.cluster}`);   // by id: a repaint replaced the button that opened it
       if (b) b.focus();
     };
   }
@@ -6653,7 +6672,8 @@ function whoCell(row) {
 }
 
 const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
-const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
+// No prototype (#459): a role is named on the cluster, and one named `constructor` sorted as NaN.
+const PRIVILEGE_RANK = Object.assign(Object.create(null), { "cluster-admin": 4, admin: 3, edit: 2, view: 1 });
 
 /* The flat grant list's sort, at module scope so the table and its export share it. */
 const GRANT_SORT = {

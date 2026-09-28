@@ -16,6 +16,34 @@ which `local-development/prepare-release.py` does when the release is cut.
   The spec refuses such a password before any request, and shows a quoted text that holds a secret as fixed words,
   whole. Spec only; no production code.
 
+- **The page's lookup maps no longer answer `constructor` with Object's own property (#459).** A cluster of that
+  name, a valid one, starts with Refresh idle and is offered Rejoin only once Refresh answers `auth_failed`. Its
+  Reports lookups are fetched, its namespace-access form renders before the catalogue lists it, and a run on it no
+  longer turns the Library into an error. A role named `constructor` sorts by risk like any unranked role, and
+  `#page=constructor` backs to the overview like any unknown page. Application **1.16.0**, chart 0.59.18.
+
+- **The Cluster Configurations discovery line says what its number counts (#467).** On the lab it read
+  `5 Secrets carry the discovery label` while six did: the number is #404's count of live clusters served
+  from a Secret, and a labelled Secret that discovery refuses is a finding, not a cluster. With one Secret
+  served and one refused, the line now reads
+  `1 served from a Secret · 1 labelled Secret refused (see Findings) · last read …`; with none refused, that
+  clause is left out. The refused count comes from the findings the tab already has, only those whose source
+  is a labelled Secret, each Secret once (`local-development/gsd/static/index.html#function clusterConfigPage`).
+  #404's count, the by-source chips and the switched-off line are unchanged, and the line shows no value from
+  a Secret. Application **1.15.0**, chart 0.59.17.
+
+- **Rejoin, Rotate and Delete keep IDs of their own (#462).** Their per-cluster IDs now follow Refresh's scheme,
+  `cc-<kind>_<cluster id>`, so a cluster named `result-x`, `token-x`, `go-x` or `msg-x` no longer takes one of
+  cluster `x`'s IDs. Cancelling a Rejoin after a repaint returns the focus to that card's own button, and Rotate's
+  label, draft and Overwrite use that card's own token field. Every control's label, order and `data-cc-*`
+  attribute is unchanged. Application **1.14.0**, chart 0.59.16.
+
+- **A finding's detail wraps between words on a phone (#473).** At 375 px the Cluster Configurations Findings card
+  broke `tlsClientConfig.insecure=true` after `tru`. The value cell already wrapped at spaces: a word breaks only when
+  it is wider than its line, and the 34% label column left 166 px for that 171 px token. Below 520 px a finding's
+  label now sits above its value, which takes the card's width. The cluster cards, and every width above 520 px,
+  are unchanged. Application **1.13.0**, chart 0.59.15.
+
 - Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
 
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
