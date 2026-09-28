@@ -66,6 +66,18 @@ index row and the tests that hold the document; it applies no block.
   Threshold disagreement: OB2 read `(end - now).days <= 30` as designed (30 days 23:59:59 left is
   `expiring`); Codex read it as a day early. Ruled by §3.3's own sentence: "Do not warn the day
   before that window" — remaining is compared in seconds, so 30 days + 1 second is `valid`.
+- **Round 2 (OB1-lite and OB3, 2026-09-28), re-review of `0e3de63`.** Every round-1 fix was
+  confirmed closed. Six new findings, all accepted: F1 (OB3) — `decode_one` skips a non-ASCII
+  block so a mounted bundle no longer 500s the read or the start; F2 (OB3, OB1-lite) — with
+  nothing mounted, count and pin against `httpx.create_ssl_context()`, the store httpx verifies
+  with; F3 (OB3, OB1-lite) — `_decode_der`, an `lru_cache` keyed on the DER; F4 (OB3, OB1-lite)
+  — the cache key is `(st_ino, st_mtime_ns, st_size)`; F5 (OB3, OB1-lite) — only a
+  `ca-data-invalid` refusal carries `certificates`; F6 (OB3) — `read_text(errors="replace")`,
+  so a Latin-1 comment no longer hides a bundle the verifier loads. F7 (OB3: a non-ASCII
+  `caData` raises TypeError out of `parse_secret`) is live code on main and was moved to #466;
+  it is not in this spec. The httpx premise was verified here:
+  `gsd/config.py#ClusterConfig.verify` ends with `_trusted_ca_context() or True`, and httpx
+  0.28.1 turns `True` into certifi unless `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
 
 ## 1. The point, in one table
 
@@ -90,7 +102,7 @@ raw TLS error stays as evidence.**
 | place | what it does |
 |---|---|
 | `gsd/config.py#_trusted_ca_context` | Loads every path in `GSD_TRUSTED_CA_FILE` (colon-separated) in turn. Cached on the env value plus each file's inode, mtime and size. A missing path is skipped. An empty result is not cached. |
-| `gsd/config.py#ClusterConfig.verify` | `insecure` → `False`. `ca_data` → `ssl.create_default_context(cadata=…)`. `ca_bundle_file` → that file. Else the trusted-CA context, else Python's default store (`True`). |
+| `gsd/config.py#ClusterConfig.verify` | `insecure` → `False`. `ca_data` → `ssl.create_default_context(cadata=…)`. `ca_bundle_file` → that file. Else the trusted-CA context, else `True`, which httpx 0.28 turns into its own default store: certifi's bundle unless `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, not OpenSSL's. |
 | `gsd/config.py#ClusterConfig.tls_mode` | The word the API already serves: `caData`, `caBundleFile`, `serviceAccount`, `trusted-bundle`, or `insecure`. Never the PEM. |
 | `gsd/kube.py#ClusterClient._client` | Calls `cluster.verify()` and passes the result to httpx. An unreadable bundle is `UNREACHABLE`, not `AUTH_FAILED`. |
 | `gsd/clusterconfig/parser.py#parse_secret` | Decodes `tlsClientConfig.caData` and runs `ssl.create_default_context(cadata=…)` at parse. A bundle that does not load is `ca-data-invalid`. |
@@ -184,7 +196,10 @@ Summarising is dearer than loading: one `create_default_context(cadata=block)` p
 blocks of `/etc/ssl/cert.pem`, measured **0.017 s** (the leaf fallback: 100 decodes in 0.026 s).
 `GET /api/clusterconfigs` summarises every live cluster twice (the row's `trust` and `ca_warnings`),
 and the poller once per cycle, so `ca.py#summarise_file` caches a bundle file's list on its
-`(mtime_ns, size)`, the way `config.py#_trusted_ca_context` caches its context. A pasted `caData` is
+`(inode, mtime_ns, size)`, the key `config.py#_trusted_ca_context` uses (kubelet's `..data` swap makes a
+changed bundle a new inode), and `ca.py#_decode_der` decodes each root of the verifier's store once
+per process, keyed on its DER bytes. Uncached, the union's 193 default roots cost 25 ms per summary,
+and one read with ten `trusted-bundle` clusters took 0.52 s (measured by OB3). A pasted `caData` is
 small and is decoded each time.
 
 ### 2.5 #314's warnings channel
@@ -391,6 +406,12 @@ phase 2. An anchor check is not behavioural evidence.**
 | a mounted bundle's count is the verifier's union with the system roots | `test_ca_visibility.py::test_mounted_bundle_count_includes_system_roots` |
 | a non-UTF-8 bundle file does not crash the inventory | `test_ca_visibility.py::test_non_text_bundle_does_not_crash_inventory` |
 | the warning does not start a fractional day early | `test_ca_visibility.py::test_warning_does_not_start_a_fractional_day_early` |
+| a non-ASCII character in a mounted block breaks neither the read nor the poller's start | `test_ca_visibility.py::test_a_non_ascii_character_in_a_mounted_block_breaks_neither_the_read_nor_the_start` |
+| a bundle kubelet swaps at the same size and mtime is read again | `test_ca_visibility.py::test_a_bundle_swapped_by_kubelet_is_read_again_at_the_same_size_and_mtime` |
+| with nothing mounted the summary is the store httpx verifies with | `test_ca_visibility.py::test_without_a_mounted_bundle_the_summary_is_the_store_httpx_verifies_with` |
+| the verifier's store is decoded once per certificate | `test_ca_visibility.py::test_the_trust_store_is_decoded_once_per_certificate` |
+| only a `ca-data-invalid` refusal answers with the certificates | `test_ca_visibility.py::test_only_a_ca_data_invalid_refusal_carries_the_certificates` |
+| a non-UTF-8 comment does not hide a bundle the verifier loads | `test_ca_visibility.py::test_a_non_utf8_comment_does_not_hide_a_bundle_the_verifier_loads` |
 | the Test panel paints the certificates; an object refusal reads as text | `test_ui.py::test_the_test_result_paints_the_certificates_and_a_refusal_object_reads_as_text` |
 | card shows action and store per mode | `test_ui.py::test_a_verify_failure_shows_the_store_and_the_fix` |
 | card lists a pasted CA | `test_ui.py::test_a_cadata_card_lists_subject_and_expiry` |
@@ -423,6 +444,7 @@ A CA is public PKI. A Secret and a ConfigMap are equal sources. Nothing here is 
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import re
@@ -430,6 +452,8 @@ import ssl
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+import httpx
 
 from ..config import SA_CA_PATH, ClusterConfig, Settings
 
@@ -491,7 +515,13 @@ def decode_one(pem: str) -> dict | None:
     create_default_context(cadata=) with a CA:FALSE leaf returns an empty list
     (measured on Python 3.14.7 / OpenSSL 3.6.4). _test_decode_cert is the same
     decoder getpeercert uses; it needs a path, so the block is written to a temp file.
+
+    A block holding a non-ASCII character is not a certificate (RFC 7468 text is ASCII), and ssl
+    raises TypeError, not SSLError, for such a cadata: it is skipped here, because a summary runs
+    in the API, in the poller's start and in every discovery cycle, and must never raise.
     """
+    if not pem.isascii():
+        return None
     try:
         listed = ssl.create_default_context(cadata=pem).get_ca_certs()
     except ssl.SSLError:
@@ -521,25 +551,37 @@ def summarise_pem(pem: str) -> list[dict]:
     return out
 
 
-_BUNDLE_CACHE: dict[str, tuple[tuple[int, int], list[dict]]] = {}
+@functools.lru_cache(maxsize=1024)
+def _decode_der(der: bytes) -> dict | None:
+    """One root of the store the verifier uses, decoded once per process: the DER bytes are the
+    certificate, so a hit is never stale. Uncached, 193 roots cost 25 ms per summary (measured,
+    OpenSSL 3.6.4), and the API makes two summaries per live cluster per read. Callers copy, never mutate."""
+    return decode_one(ssl.DER_cert_to_PEM_cert(der))
+
+
+_BUNDLE_CACHE: dict[str, tuple[tuple[int, int, int], list[dict]]] = {}
 
 
 def summarise_file(path: str) -> list[dict]:
-    """One bundle file's certificates, cached on (mtime_ns, size) the way `config._trusted_ca_context`
-    caches its context: the API summarises every live cluster on every read and the poller on every
-    cycle, and a 128-block bundle costs 17 ms to decode (measured, Python 3.14.7 / OpenSSL 3.6.4).
-    A stale hit is impossible without a same-size same-mtime rewrite; a race between the API thread
-    and the poller costs one redundant decode, never a wrong list."""
+    """One bundle file's certificates, cached on (inode, mtime_ns, size), the key
+    `config._trusted_ca_context` uses: kubelet updates a mounted ConfigMap by swapping the `..data`
+    symlink to a new directory (#340), so a changed bundle is a new inode even when its size and
+    mtime equal the old one's. The API summarises every live cluster on every read and the poller
+    on every cycle, and a 128-block bundle costs 17 ms to decode (measured, Python 3.14.7 /
+    OpenSSL 3.6.4). A race between the API thread and the poller costs one redundant decode,
+    never a wrong list."""
     try:
         st = os.stat(path)
     except OSError:
         return []
-    key = (st.st_mtime_ns, st.st_size)
+    key = (st.st_ino, st.st_mtime_ns, st.st_size)
     hit = _BUNDLE_CACHE.get(path)
     if hit is not None and hit[0] == key:
         return hit[1]
     try:
-        certs = summarise_pem(Path(path).read_text())
+        # A PEM block is ASCII; OpenSSL skips whatever lies between blocks, so a comment in another
+        # encoding must not hide the certificates the verifier loads from this file.
+        certs = summarise_pem(Path(path).read_text(errors="replace"))
     except (OSError, UnicodeDecodeError, ValueError):
         return []  # never cache a failure: a later readable file must be retried
     _BUNDLE_CACHE[path] = (key, certs)
@@ -653,15 +695,18 @@ def summarise_cluster(cluster: ClusterConfig, settings: Settings,
     elif cluster.ca_bundle_file:
         certs = summarise_paths([cluster.ca_bundle_file])
     else:
-        # verify() merges the default store with these mounted paths. Preserve
-        # that union and each root's DER fingerprint in the displayed inventory.
-        context = ssl.create_default_context()
+        # The store verify() hands httpx (kube.py#ClusterClient._client): every mounted path loaded
+        # over OpenSSL's default store (config._trusted_ca_context), or, with none mounted, `True`,
+        # which httpx turns into its own default: certifi's bundle unless SSL_CERT_FILE or
+        # SSL_CERT_DIR is set. Count and pin against that store, each root fingerprinted from its DER.
+        paths = trusted_paths()
+        context = ssl.create_default_context() if paths else httpx.create_ssl_context()
         by_digest = {}
         for der in context.get_ca_certs(binary_form=True):
-            cert = decode_one(ssl.DER_cert_to_PEM_cert(der))
+            cert = _decode_der(der)
             if cert:
                 by_digest[cert["sha256"]] = cert
-        for cert in summarise_paths(trusted_paths()):
+        for cert in summarise_paths(paths):
             by_digest[cert["sha256"]] = cert
         certs = list(by_digest.values())
     shown = annotate(certs, settings, now)
@@ -858,7 +903,9 @@ def _ca_expiry_days(raw: dict) -> int:
 ```
 ```python
     if isinstance(parsed, Finding):
-        raise WriteRefused(parsed.code, parsed.detail, certificates=summary)
+        # §3.6: only a `ca-data-invalid` refusal answers with what decoded; every other refusal keeps its string.
+        raise WriteRefused(parsed.code, parsed.detail,
+                           certificates=summary if parsed.code == "ca-data-invalid" else None)
 ```
 
 <!-- block: local-development/gsd/clusterconfig/writer.py | after:     out["error"] = None if exc is None else _scrub(f"{exc.outcome}: {exc.message}", req.token) -->
@@ -1215,7 +1262,7 @@ from gsd.clusterconfig.writer import CreateRequest, WriteRefused, validate
 from gsd.clusterconfig.writer import test_connection as probe_connection   # not a test: pytest would collect the name
 from gsd.config import ClusterConfig, Settings
 from gsd.kube import ClusterError, UNREACHABLE
-from gsd.poller import _log_poll_failure
+from gsd.poller import Poller, _log_poll_failure
 from gsd.store import Store
 from test_visibility import H, _MapResolver
 
@@ -1502,4 +1549,135 @@ def test_warning_does_not_start_a_fractional_day_early():
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     end = now + timedelta(days=30, seconds=1)
     assert validity_word("2020-01-01T00:00:00Z", end.isoformat(), now, 30) == "valid"
+
+
+def test_a_non_ascii_character_in_a_mounted_block_breaks_neither_the_read_nor_the_start(tmp_path, monkeypatch):
+    """Not asked (OB3): one pasted no-break space inside a PEM block of a mounted bundle. OpenSSL refuses the
+    bundle and the poller says so (`cannot load trusted CA bundle`), but ssl raises TypeError, not SSLError,
+    for a non-ASCII cadata: it escaped summarise_cluster, GET /api/clusterconfigs answered 500, and
+    poller.start() raised before its first poll, so the app did not start."""
+    system = _cert(tmp_path, "system-root", 365)
+    monkeypatch.setenv("SSL_CERT_FILE", str(system))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "absent"))
+    pasted = _cert(tmp_path, "pasted", 365).read_text()
+    bundle = tmp_path / "ca-bundle.crt"
+    bundle.write_text(pasted.replace("-----END CERTIFICATE-----", " \n-----END CERTIFICATE-----"))
+    monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(bundle))
+    cluster = ClusterConfig("east", "https://api.east.example:6443", token_env="X")
+    assert summarise_cluster(cluster, Settings())["count"] == 1  # the system root; the pasted block is skipped
+    db = str(tmp_path / "p.db")
+    settings = Settings(clusters=[cluster], db_path=db, oauth_proxy_enabled=True)
+    Poller(Store(db), settings)._announce_shared_api_urls()  # what poller.start() runs before its first poll
+    app = build_app(settings, run_poller=False)
+    app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
+    app.state.tier_resolver = _MapResolver({"root": "all"})
+    with TestClient(app) as client:
+        assert client.get("/api/clusterconfigs", headers=H("root")).status_code == 200
+
+
+def test_a_bundle_swapped_by_kubelet_is_read_again_at_the_same_size_and_mtime(tmp_path, monkeypatch):
+    """Not asked (OB3): kubelet updates a mounted ConfigMap by pointing `..data` at a new timestamped
+    directory (#340), so the changed file is a new inode. config._trusted_ca_context keys on the inode; a
+    summary keyed on (mtime_ns, size) alone served the old list while the verifier trusted the new one."""
+    import gsd.clusterconfig.ca as ca
+    monkeypatch.setattr(ca, "_BUNDLE_CACHE", {}, raising=False)
+    before = _cert(tmp_path, "swap-before", 365).read_text()
+    after = _cert(tmp_path, "swap-after-x", 365).read_text()
+    size = max(len(before), len(after)) + 8
+
+    def padded(pem):
+        return pem + "#" * (size - len(pem) - 1) + "\n"  # text between PEM blocks is ignored
+
+    volume = tmp_path / "volume"
+    first = volume / "..2026_01_01_00_00_00.000000001"
+    first.mkdir(parents=True)
+    (first / "ca-bundle.crt").write_text(padded(before))
+    (volume / "..data").symlink_to(first.name)
+    (volume / "ca-bundle.crt").symlink_to("..data/ca-bundle.crt")
+    path = str(volume / "ca-bundle.crt")
+    assert [c["subject"] for c in ca.summarise_file(path)] == ["CN=swap-before"]
+    old = os.stat(path)
+    second = volume / "..2026_01_01_00_00_01.000000002"
+    second.mkdir()
+    (second / "ca-bundle.crt").write_text(padded(after))
+    os.utime(second / "ca-bundle.crt", ns=(old.st_atime_ns, old.st_mtime_ns))  # written in the same tick
+    (volume / "..data_tmp").symlink_to(second.name)
+    os.rename(volume / "..data_tmp", volume / "..data")  # AtomicWriter's swap
+    new = os.stat(path)
+    assert (new.st_mtime_ns, new.st_size) == (old.st_mtime_ns, old.st_size) and new.st_ino != old.st_ino
+    assert [c["subject"] for c in ca.summarise_file(path)] == ["CN=swap-after-x"]
+
+
+def test_without_a_mounted_bundle_the_summary_is_the_store_httpx_verifies_with(tmp_path, monkeypatch):
+    """Not asked (OB3): with GSD_TRUSTED_CA_FILE unset, or naming nothing that exists, verify() returns True and
+    httpx builds its own default store (certifi's bundle unless SSL_CERT_FILE or SSL_CERT_DIR), not OpenSSL's:
+    measured, 193 OpenSSL roots were counted and pinnable while the verifier loaded certifi's 121."""
+    import certifi
+    import httpx
+    root = _cert(tmp_path, "certifi-only-root", 365)
+    for var in ("GSD_TRUSTED_CA_FILE", "SSL_CERT_FILE", "SSL_CERT_DIR"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(certifi, "where", lambda: str(root))
+    settings = Settings(enterprise_ca_sha256=sha256_of_pem(root.read_text()))
+    cluster = ClusterConfig("east", "https://unused.invalid")
+    for configured in (None, str(tmp_path / "absent" / "ca-bundle.crt")):
+        if configured:
+            monkeypatch.setenv("GSD_TRUSTED_CA_FILE", configured)
+        assert cluster.verify() is True
+        trust = summarise_cluster(cluster, settings)
+        assert trust["count"] == len(httpx.create_ssl_context().get_ca_certs()) == 1
+        assert trust["enterpriseRoot"] is True
+
+
+def test_the_trust_store_is_decoded_once_per_certificate(tmp_path, monkeypatch):
+    """Not asked (OB3): the union decodes every root of the verifier's store. Uncached that is 25 ms per
+    summary (193 roots), two summaries per live cluster per read: one read with ten trusted-bundle clusters
+    took 0.52 s, the cost the bundle cache was added to remove. A root is decoded once per process."""
+    import gsd.clusterconfig.ca as ca
+    system = tmp_path / "system.pem"
+    system.write_text(_cert(tmp_path, "sys-a", 365).read_text() + _cert(tmp_path, "sys-b", 365).read_text())
+    monkeypatch.setenv("SSL_CERT_FILE", str(system))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "absent"))
+    monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(_cert(tmp_path, "mounted-c", 365)))
+    if hasattr(ca, "_decode_der"):
+        ca._decode_der.cache_clear()
+    decoded = []
+    real = ca.decode_one
+    monkeypatch.setattr(ca, "decode_one", lambda pem: decoded.append(1) or real(pem))
+    cluster = ClusterConfig("east", "https://unused.invalid")
+    first = summarise_cluster(cluster, Settings())
+    after_first = len(decoded)
+    again = summarise_cluster(cluster, Settings())
+    assert first == again and first["count"] == 3
+    assert after_first == 3 and len(decoded) == after_first, "a second summary of an unchanged store decodes nothing"
+
+
+def test_only_a_ca_data_invalid_refusal_carries_the_certificates(tmp_path):
+    """Not asked (OB3): §3.6 gives the object answer {code, message, certificates} to a `ca-data-invalid`
+    refusal that decoded a block; every other refusal keeps today's string. The writer attached what decoded
+    to ANY parser refusal of a caData request, so a `server-invalid` answered an object too."""
+    pem = _cert(tmp_path, "form-ca", 365).read_text()
+    req = CreateRequest(name="west", server="https://api.west.example:6443/some/path",
+                        credential_kind="bearerToken", token="t" * 20, tls_mode="caData",
+                        ca_data=base64.b64encode(pem.encode()).decode())
+    try:
+        validate(req, "ns", host_name="host", taken={})
+    except WriteRefused as exc:
+        assert exc.code == "server-invalid" and exc.certificates == []
+    else:
+        raise AssertionError("expected WriteRefused")
+
+
+def test_a_non_utf8_comment_does_not_hide_a_bundle_the_verifier_loads(tmp_path):
+    """Not asked (OB3): OpenSSL skips what lies between PEM blocks, so a bundle with a Latin-1 comment loads
+    and verifies; read as UTF-8 it summarised to nothing, and a pinned root in it read `ca-not-enterprise`."""
+    root = _cert(tmp_path, "latin1-root", 365).read_text()
+    bundle = tmp_path / "corp-bundle.crt"
+    bundle.write_bytes("# Société Générale\n".encode("latin-1") + root.encode())
+    cluster = ClusterConfig("west", "https://api.west.example:6443", token_env="X", ca_bundle_file=str(bundle))
+    assert len(cluster.verify().get_ca_certs()) == 1
+    settings = Settings(enterprise_ca_sha256=sha256_of_pem(root))
+    trust = summarise_cluster(cluster, settings)
+    assert trust["count"] == 1 and trust["enterpriseRoot"] is True
+    assert ca_warnings([cluster], settings) == []
 ```
