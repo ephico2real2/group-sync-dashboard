@@ -6360,6 +6360,19 @@ function clusterConfigPage() {
   clusters.forEach((c) => { n[ccSourceKind(c)] += 1; });
   // Discovery counts live Secret storage, including generated outputs, regardless of declaration.
   const discoveredSecrets = clusters.filter((c) => !c.retired && !c.host && String(c.source || "").startsWith("secret:")).length;
+  // #467: a labelled Secret discovery refused serves no cluster, so the findings count it, by code: a finding's `secret`
+  // can also be a ConfigMap stanza, the values list, the cluster a lookup or a login is about, or a Secret that is still
+  // served (shadows-values-entry, oauth-exchange-not-built, lookup-write-failed). The codes: every one parse_secret
+  // returns, then discovery's three. Onboarding writes a Secret as `secret:<name>`, so each Secret counts once, and it
+  // spells the values list `values` under duplicate-cluster-name only — under any other code, `values` is a Secret's name.
+  const refusalCodes = new Set(["name-missing", "name-invalid", "server-missing", "server-invalid", "config-missing",
+    "config-not-json", "unsupported-config-key", "credential-missing", "credential-ambiguous", "ca-data-invalid",
+    "insecure-with-ca", "visibility-invalid", "identity-invalid", "enabled-invalid", "host-cluster-not-from-secret",
+    "duplicate-cluster-name", "onboarding-cleanup-pending", "onboarding-ownership-conflict"]);
+  const refusedSecrets = new Set((d.findings || [])
+    .filter((f) => refusalCodes.has(f.code) && !/^configmap:/.test(f.secret)
+      && !(f.code === "duplicate-cluster-name" && f.secret === "values"))
+    .map((f) => String(f.secret).replace(/^secret:/, ""))).size;
   const s = d.secrets || {};
   const head = `<section class="card" id="cc-head">
     <h2>Cluster Configurations <span class="rp-chip rp-count">${clusters.length} cluster${clusters.length === 1 ? "" : "s"}</span></h2>
@@ -6373,7 +6386,7 @@ function clusterConfigPage() {
       <span class="rp-chip">ConfigMap ${n.configmap}</span></span></div>
     <div class="cc-kv"><span class="k">ConfigMap selector</span><span class="v mono">${esc((d.configmaps || {}).label || "")}</span></div>
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
-      : `${discoveredSecrets} Secret${discoveredSecrets === 1 ? "" : "s"} carry the discovery label · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
+      : `${discoveredSecrets} served from ${discoveredSecrets === 1 ? "a Secret" : "Secrets"}${refusedSecrets ? ` · ${refusedSecrets} labelled Secret${refusedSecrets === 1 ? "" : "s"} refused (see Findings)` : ""} · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
     ${ccFleetRows(d.fleet)}
     ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${w.code === "shared-api-url" ? "Shared API URL." : "Configuration warning."}</strong> ${esc(w.detail)}</div>`).join("")}
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
