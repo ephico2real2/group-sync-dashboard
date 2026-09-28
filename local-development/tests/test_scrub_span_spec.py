@@ -82,6 +82,15 @@ def test_what_must_not_change_is_listed():
         assert needle in must, needle
 
 
+def test_the_over_refusal_is_broken_down_by_cause():
+    """§5.5: the 58 over-refusals are three causes, not one (OB2's re-measurement on the design's `check` over the same
+    list: 21 by case only, 27 words of text the fifteen paths did not write, 10 under a line's floor; 21 + 27 + 10 = 58),
+    and a case-sensitive compare would leave 26 of the 100,000, not 19."""
+    five = prose().split("**Over-refusal.**", 1)[1].split("\n6. ", 1)[0]
+    for number in ("58", "21", "27", "10", "26"):
+        assert re.search(rf"\b{number}\b", five), number
+
+
 def test_the_issues_two_cases_are_tests_in_the_blocks():
     test_file = next(b for b in blocks() if b["path"] == CREATED)["fences"][0]
     assert '@pytest.mark.parametrize("password", ["update", "a"])' in test_file
@@ -113,3 +122,24 @@ def test_implementation_blocks_check_out_against_this_tree():
             assert b["fences"][1] in text, f"block {b['n']}: {b['path']} lacks the New text"
         else:
             assert b["fences"][0].strip("\n") in text, f"block {b['n']}: {b['path']} lacks the inserted text"
+
+
+def test_emit_callsite_measurement():
+    import ast
+    repo = REPO
+    counts = {}
+    for path in (repo / 'local-development/gsd').rglob('*.py'):
+        tree = ast.parse(path.read_text())
+        emitters = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.endswith('events')
+            for alias in node.names if alias.name in ('event', 'failure')
+        }
+        count = sum(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in emitters for node in ast.walk(tree))
+        if count:
+            counts[str(path.relative_to(repo))] = count
+    expected = f"{sum(counts.values())} call sites in {len(counts)} consuming modules"
+    body = (repo / 'docs/specs/SPEC_D6_scrub_span.md').read_text().split('## 6. Implementation blocks')[0]
+    assert expected in body, (expected, counts)

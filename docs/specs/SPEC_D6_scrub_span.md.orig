@@ -342,13 +342,8 @@ spec was taken on (its `gsd/rejoin.py`, `gsd/api.py`, the new test file, `API.md
    carry the same evidence, so a press says it once. Measured by pressing, main against §6: `admins` inside D8's reason
    on a success, `grant` inside the write's refusal and `mission` inside the token read's 403 sentence were each a
    class of one on main, and leave 478, 7,277 and 26,670 candidates with §6 applied.
-5. **Over-refusal.** 58 of the 100,000 are refused though the fifteen measured paths would not have cut them, for
-   three reasons, measured: 21 only because the refusal compares ignoring case while the scrub does not (`Password`,
-   `Admin`, single upper-case letters; #447 made the same choice, and it is what refuses seven more letters of the
-   token name in point 2 — a case-sensitive compare leaves 26 there, not 19); 27 are words of text those paths did
-   not write but Rejoin can (`stopped`'s sentence, `held-elsewhere`, the phases, the lookup's codes, the discovery
-   path); 10 occur only in a line's name or a field under the emit helper's floor of four, where the scrub would not
-   cut them.
+5. **Over-refusal.** 58 of the 100,000 are refused though main would not have cut them; the refusal compares ignoring
+   case, while the scrub does not. #447 made the same choice.
 6. **The fleet password** meets the same mechanism in the fleet's own paths (orchestrator's notes, (3)).
 
 ## 6. Implementation blocks
