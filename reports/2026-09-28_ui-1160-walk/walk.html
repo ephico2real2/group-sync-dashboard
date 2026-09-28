@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>#473, #467, #462 and #459 on the lab — 2026-09-28</title><style>:root{--fg:#1d1d1f;--muted:#5a5a60;--rule:#d9d6cf;--bg:#fbfaf7;--code:#f0ede6}@media (prefers-color-scheme:dark){:root{--fg:#ecebe8;--muted:#a9a8a3;--rule:#3a3935;--bg:#161615;--code:#24231f}}body{font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg);max-width:1000px;margin:32px auto;padding:0 16px}h1{font-size:1.6em;line-height:1.25}h2{margin-top:2em;border-bottom:1px solid var(--rule);padding-bottom:.2em}table{border-collapse:collapse;width:100%;font-size:.9em;margin:1em 0;display:block;overflow-x:auto}th,td{border:1px solid var(--rule);padding:6px 8px;vertical-align:top;text-align:left}th{background:var(--code)}code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:.88em;word-break:break-word}pre{background:var(--code);padding:12px;overflow-x:auto;border-radius:4px}pre code{background:none;padding:0}figure{margin:1.2em 0;break-inside:avoid}img{max-width:100%;border:1px solid var(--rule);border-radius:4px}figcaption{color:var(--muted);font-size:.85em;margin-top:.3em}@media print{body{margin:0;max-width:none;font-size:11px}h2{break-after:avoid}table{display:table}}</style></head><body>
+<h1>#473, #467, #462 and #459 on the lab: the Cluster Configurations tab at 1.16.0 — 2026-09-28</h1>
+<p><strong>Outcome.</strong> On the CRC lab, running application 1.16.0 at <code>b10828cf0c</code> (<code>evidence/before-version.txt</code>), <code>developer</code> walked
+the Cluster Configurations tab. It was given the cluster-admin tier for the walk. The page had three throwaway cluster
+Secrets, <code>gsd-cluster-w462</code>, <code>gsd-cluster-result-w462</code> and <code>gsd-cluster-constructor</code>, each with a bearer token no server
+ever issued. The walk ran at 1280, 768 and 375 px, then at 320 px for #473 alone. <code>scripts/walk.py walk</code> logged 79 <code>PASS</code>
+lines, 0 <code>FAIL</code> lines and <code>failures : []</code> at 17:09:20Z (<code>evidence/walk-output.txt</code>, <code>screenshots/</code>).</p>
+<ul>
+<li><strong>#473:</strong> the <code>gsd-cluster-mock-refusal</code> finding's detail keeps two columns at 1280 and 768 px. At 375 and 320 px it
+is one column with the label above the value, and every line ends between words.</li>
+<li><strong>#467:</strong> the discovery line reads <code>8 served from Secrets · 1 labelled Secret refused (see Findings)</code> at 1280, 768
+and 375 px. Both numbers match discovery's <code>accepted=8 refused=1</code> and the page's own data.</li>
+<li><strong>#462:</strong> at 1280, 768 and 375 px, no id is duplicated and every per-cluster id follows <code>cc-&lt;kind&gt;_&lt;its own card&gt;</code>. Cancel
+on a repainted Rejoin dialog returns the focus to that card's own button. A Rotate draft survives the minute's
+repaint on its own card.</li>
+<li><strong>#459:</strong> the card named <code>constructor</code> shows no phantom <code>Refresh:</code> or <code>Rejoin:</code> line and no Rejoin button until its
+own Refresh answers. After that, it offers Rejoin like any other card.</li>
+</ul>
+<p><strong>The walker stopped before its cleanup step.</strong> The agent running the walk ended at an API error (HTTP 403,
+<code>oauth_org_not_allowed</code>) after the walk had finished and before it removed the grant and the Secrets. The orchestrator
+found both still present, with <code>can-i</code> <code>yes</code>. It deleted them by the run label <code>walk.gsd.lab/run=ui-1160-2026-09-28</code>.
+The delete's own output carries no instant; the folder's first capture after it is <code>evidence/after-cani.txt</code>, <code>no</code> at
+17:12:29Z. The grant was therefore live from 17:00:12Z to at most 17:12:29Z, not only for the walk
+(17:05:39Z–17:09:20Z). The orchestrator then ran the plan's after-phase with the
+walk's own scripts: the captures at 17:12:28–30Z, a fresh login at 17:12:42Z, and discovery's removal of the three
+entries at 17:15:08Z.</p>
+<p>The walk made two temporary changes to the lab, the grant and the three Secrets, and both were removed. It ran no Helm,
+<code>release-crc.sh</code> or Argo CD command. <code>/api/version</code> read 1.16.0 at <code>b10828cf0c</code> before and after. Nobody logged in as
+the fleet account, and no Rejoin, Rotate or Delete was submitted. The kept PVCs have the same UIDs before and after. The
+fleet Lease stayed at <code>resourceVersion</code> 5922168 with no holder, and <code>shared-qa</code>'s Secret stayed at 2981054.</p>
+<h2>Definition of Done</h2>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Row</th>
+<th>Verdict</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>#473</td>
+<td>At 375 and 320 px the <code>gsd-cluster-mock-refusal</code> detail wraps between words, with the label above the value (read from the text's Range client rects); at 768 and 1280 px two columns; no sideways scroll</td>
+<td>PASS</td>
+<td>The detail is <code>tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one</code>, every character read with the fonts loaded. 1280: <code>{&quot;columns&quot;: 2, &quot;label_right&quot;: 468, &quot;value_left&quot;: 478, &quot;tops&quot;: [11498, 11498]}</code>, one line. 768: <code>{&quot;columns&quot;: 2, &quot;label_right&quot;: 278, &quot;value_left&quot;: 288, &quot;tops&quot;: [11811, 11811]}</code>, two lines, a line end at 71. 375: <code>{&quot;columns&quot;: 1, &quot;label_bottom&quot;: 15677, &quot;value_top&quot;: 15683}</code>, three lines, line ends <code>[27, 71]</code>. 320: <code>{&quot;columns&quot;: 1, &quot;label_bottom&quot;: 18740, &quot;value_top&quot;: 18746}</code>, three lines <code>[&quot;tlsClientConfig.caData and &quot;, &quot;tlsClientConfig.insecure=true are &quot;, &quot;both set: choose one&quot;]</code>. At every width <code>inside_a_word: []</code> and <code>inside_insecure=true: []</code>. <code>scrollWidth, innerWidth</code> was <code>[1280, 1280]</code>, <code>[768, 768]</code>, <code>[375, 375]</code> and <code>[320, 320]</code> (<code>evidence/walk-output.txt</code>, <code>screenshots/02-1280-473-finding.png</code>, <code>10-768-…</code>, <code>18-375-…</code>, <code>25-320-…</code>).</td>
+</tr>
+<tr>
+<td>#467</td>
+<td>The discovery line reads <code>N served from Secrets · M labelled Secret(s) refused (see Findings)</code>; N and M match discovery's <code>seen/accepted/refused</code> line and the Findings card</td>
+<td>PASS</td>
+<td>The last discovery line before the walk: <code>discovery cycle=5 … seen=9 accepted=8 refused=1 added=constructor,result-w462,w462</code> at 17:05:07Z (<code>evidence/walk-discovery.txt</code>). At 1280, 768 and 375 px the line read <code>8 served from Secrets · 1 labelled Secret refused (see Findings) · last read …</code>. N: <code>{&quot;N&quot;: 8, &quot;served_from_secret&quot;: 8, &quot;discovery accepted&quot;: 8}</code>, where <code>served_from_secret</code> counts the page's clusters that are not retired, not the host, and sourced <code>secret:</code>. M: <code>{&quot;M&quot;: 1, &quot;findings card Secrets&quot;: [&quot;gsd-cluster-mock-refusal&quot;], &quot;discovery refused&quot;: 1}</code> (<code>evidence/walk-output.txt</code>, <code>screenshots/03-1280-467-header.png</code>, <code>11-768-…</code>, <code>19-375-…</code>).</td>
+</tr>
+<tr>
+<td>#462</td>
+<td>No duplicate id, every per-cluster id on the <code>_</code> scheme; Refresh on <code>w462</code> and <code>result-w462</code> offers Rejoin; Cancel on <code>result-w462</code>'s Rejoin returns the focus to its own button; <code>w462</code>'s Rotate draft survives the minute's repaint on <code>w462</code>'s card</td>
+<td>PASS</td>
+<td>The id check ran three times at each of the three widths: idle <code>{&quot;ids&quot;: 150, &quot;per_card_ids&quot;: 33, &quot;duplicates&quot;: [], &quot;off_scheme&quot;: [], &quot;old_scheme&quot;: []}</code>, after both Refresh answers 154 / 37, and at the end, all three refreshed, 156 / 39, each with <code>duplicates</code>, <code>off_scheme</code> and <code>old_scheme</code> empty. The 18 ids on the throwaway cards are <code>cc-{rotate,refresh-result,refresh,rejoin,delete,delete-msg}_&lt;card&gt;</code>. Refresh on <code>w462</code> and on <code>result-w462</code> answered <code>auth_failed</code>, and each card offered <code>Rejoin…</code>. Rejoin on <code>result-w462</code> was opened with nothing typed. <code>the opener's node was replaced</code> under the dialog, and after Cancel <code>document.activeElement</code> was <code>{&quot;active_id&quot;: &quot;cc-rejoin_result-w462&quot;, &quot;tag&quot;: &quot;BUTTON&quot;, &quot;data_cc_rejoin&quot;: &quot;result-w462&quot;, &quot;card&quot;: &quot;result-w462&quot;}</code>. Rotate on <code>w462</code>: 14 characters typed into <code>cc-rotate-token_w462</code>, <code>type: password</code>, one <code>&lt;label for&gt;</code>. After 65 s and one <code>GET /api/clusterconfigs</code> <code>200</code>, <code>{&quot;repainted&quot;: true, &quot;card&quot;: &quot;w462&quot;, &quot;equals_draft&quot;: true, &quot;length&quot;: 14}</code>, and the only Rotate field on the page was <code>[&quot;cc-rotate-token_w462&quot;, &quot;w462&quot;]</code>. The panel was then closed without Overwrite (<code>evidence/walk-output.txt</code>, <code>screenshots/04–07</code>, <code>12–15</code>, <code>20–23</code>).</td>
+</tr>
+<tr>
+<td>#459</td>
+<td><code>constructor</code>, idle: no <code>Refresh:</code> line, no <code>Rejoin:</code> line, no Rejoin button; after Refresh (<code>auth_failed</code>) Rejoin is offered; no page error</td>
+<td>PASS</td>
+<td>Idle, at 1280, 768 and 375 px: <code>{&quot;refresh_line&quot;: false, &quot;rejoin_line&quot;: false, &quot;rejoin_button&quot;: false, &quot;text_has_refresh_colon&quot;: false, &quot;text_has_rejoin_colon&quot;: false, &quot;text_has_rejoin_button&quot;: false, &quot;refresh_button&quot;: &quot;Refresh&quot;}</code>. After its Refresh answered <code>Refresh: auth_failed · … — 401 Unauthorized — token invalid or expired</code>: <code>{&quot;refresh_line&quot;: true, &quot;rejoin_line&quot;: false, &quot;rejoin_button&quot;: true, …}</code>. <code>no uncaught page errors: []</code> and <code>no 'Dashboard API error'</code> at every width (<code>evidence/walk-output.txt</code>, <code>screenshots/01-1280-459-constructor-idle.png</code>, <code>08-1280-459-constructor-refreshed.png</code>, <code>09</code>, <code>16</code>, <code>17</code>, <code>24</code>).</td>
+</tr>
+<tr>
+<td>walk</td>
+<td>The pod log: <code>cluster-refreshed … by=developer</code> for the throwaway cards; 0 <code>fleet-login</code>, 0 <code>cluster-rejoin</code>, 0 Traceback</td>
+<td>PASS</td>
+<td>From 17:00:12Z to the 17:12:30Z capture (<code>evidence/after-podlog.txt</code>): 9 <code>cluster-refreshed</code> lines, all <code>by=developer</code> and all <code>outcome=auth_failed</code>, 3 for each of <code>w462</code>, <code>result-w462</code> and <code>constructor</code>. There were 0 lines for each of the eight <code>fleet-*</code> events the capture counts (<code>fleet-lookup</code>, <code>fleet-lookup-failed</code>, <code>fleet-ping</code>, <code>fleet-ping-failed</code>, <code>fleet-login</code>, <code>fleet-login-refused</code>, <code>fleet-login-failed</code>, <code>fleet-logout</code>) and for each of the three <code>cluster-rejoin*</code> events. <code>lines matching 'fleet-login': 0</code>, <code>lines matching 'cluster-rejoin': 0</code>, <code>lines naming /rejoin: 0</code>, <code>lines naming the fleet account: 0</code>, <code>Traceback lines: 0</code>, <code>ERROR lines: 0</code>.</td>
+</tr>
+<tr>
+<td>walk</td>
+<td>End state</td>
+<td>PASS, with the grant's longer window noted above</td>
+<td><code>can-i</code> <code>no</code> → <code>yes</code> → <code>no</code> (<code>evidence/before-cani.txt</code> 17:00:03Z, <code>granted-cani.txt</code> 17:00:13Z, <code>after-cani.txt</code> 17:12:29Z). No object carries the run label (<code>evidence/after-grant.txt</code> <code>No resources found</code>, <code>evidence/after-secrets.txt</code> <code>[]</code>). A fresh login as <code>developer</code> at 17:12:42Z: <code>&quot;cluster_admin&quot;: false</code>, <code>/api/clusterconfigs</code> <code>403</code>, no Cluster Configurations tab, <code>walk exit=0</code> (<code>evidence/after-walk.txt</code>). Discovery cycle 7 at 17:15:08Z: <code>seen=6 accepted=5 refused=1 removed=constructor,result-w462,w462</code>, the counts cycle 1 logged at 16:49:59Z (<code>evidence/cleared-discovery.txt</code>, <code>evidence/before-discovery.txt</code>). PVC UIDs <code>f065b7a4-535c-4ef1-868c-58f5afee4953</code> (data) and <code>08c7d45c-a3eb-47be-8506-f24ea7a3e0e3</code> (report-artifacts) before and after. The fleet Lease <code>resourceVersion=5922168 holderIdentity=&quot;&quot;</code>, <code>shared-qa</code> <code>resourceVersion=2981054</code> (<code>evidence/before-*.txt</code>, <code>evidence/after-*.txt</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2>How the walk ran</h2>
+<table>
+<thead>
+<tr>
+<th>When (UTC)</th>
+<th>Step</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>16:49:30</td>
+<td>The 1.16.0 ReplicaSets, <code>group-sync-dashboard-6747c4ddd9</code> and <code>group-sync-dashboard-report-758b8d9545</code>, were created with the images <code>quay.io/ephico2real/group-sync-dashboard:1.16.0</code> and <code>…-report:1.16.0</code></td>
+<td><code>evidence/after-rollout.txt</code></td>
+</tr>
+<tr>
+<td>16:49:59</td>
+<td>Discovery cycle 1 on the 1.16.0 pod: <code>seen=6 accepted=5 refused=1</code></td>
+<td><code>evidence/before-discovery.txt</code></td>
+</tr>
+<tr>
+<td>17:00:01–04</td>
+<td>Before: <code>/api/version</code> <code>&quot;version&quot;:&quot;1.16.0&quot;,&quot;commit&quot;:&quot;b10828cf0c&quot;</code>; the PVC UIDs; <code>can-i</code> <code>no</code>; no grant and no Secret with the run label; the fleet Lease at <code>resourceVersion=5922168</code>, <code>holderIdentity=&quot;&quot;</code>; <code>shared-qa</code> at <code>resourceVersion=2981054</code></td>
+<td><code>evidence/before-*.txt</code></td>
+</tr>
+<tr>
+<td>17:00:12</td>
+<td>The grant (<code>scripts/grant.yaml</code>): ClusterRole <code>gsd-walk-crb-update</code> (<code>update clusterrolebindings</code>) and ClusterRoleBinding <code>gsd-walk-crb-update-developer</code>, both labelled with the run label. The three Secrets (<code>scripts/secrets.sh create</code>), from a mode-600 manifest, with <code>tlsClientConfig</code> copied from <code>shared-qa</code>'s (<code>{&quot;insecure&quot;:false}</code>)</td>
+<td><code>evidence/t0.txt</code>, <code>evidence/grant-create.txt</code>, <code>evidence/secrets-create.txt</code></td>
+</tr>
+<tr>
+<td>17:00:13</td>
+<td><code>can-i</code>: <code>yes</code>. The Secrets as created: data keys, <code>name</code>, <code>server</code> <code>https://api.crc.testing:6443</code>, and the config's keys, never the token</td>
+<td><code>evidence/granted-*.txt</code></td>
+</tr>
+<tr>
+<td>17:05:07</td>
+<td>Discovery cycle 5: <code>seen=9 accepted=8 refused=1 added=constructor,result-w462,w462</code>; each resolved <code>credential=bearer tls=trusted-bundle visibility=remote-sar</code></td>
+<td><code>evidence/walk-discovery.txt</code></td>
+</tr>
+<tr>
+<td>17:05:39</td>
+<td>The login as <code>developer</code>: <code>&quot;cluster_admin&quot;: true</code>, <code>/api/clusterconfigs</code> <code>200</code></td>
+<td><code>evidence/walk-output.txt</code></td>
+</tr>
+<tr>
+<td>17:05:41 → 17:09:20</td>
+<td>The tab at 1280 (to 17:06:51), 768 (to 17:08:04), 375 (to 17:09:16) and 320 px; <code>failures : []</code></td>
+<td><code>evidence/walk-output.txt</code>, <code>screenshots/</code></td>
+</tr>
+<tr>
+<td>after 17:09:20</td>
+<td>The agent running the walk ended at an API error (HTTP 403, <code>oauth_org_not_allowed</code>) before its cleanup step. The file's last line, <code>walk exit=</code>, carries no value, and the walk's own summary line is <code>failures : []</code></td>
+<td><code>evidence/walk-output.txt</code></td>
+</tr>
+<tr>
+<td>before 17:12:29</td>
+<td>The orchestrator found the grant and the Secrets present (<code>can-i</code> <code>yes</code>) and deleted them by the run label: the ClusterRoleBinding, the ClusterRole, then the three Secrets. The delete's output carries no instant; <code>can-i</code> read <code>no</code> at 17:12:29Z</td>
+<td><code>evidence/after-cani.txt</code></td>
+</tr>
+<tr>
+<td>17:12:28–30</td>
+<td>After: the version unchanged, the PVC UIDs, <code>can-i</code> <code>no</code>, no labelled object, the Lease and <code>shared-qa</code> unchanged, and the pod log from 17:00:12Z</td>
+<td><code>evidence/after-*.txt</code></td>
+</tr>
+<tr>
+<td>17:12:42</td>
+<td>A fresh login as <code>developer</code>: <code>&quot;cluster_admin&quot;: false</code>, <code>/api/clusterconfigs</code> <code>403</code>, no tab</td>
+<td><code>evidence/after-walk.txt</code></td>
+</tr>
+<tr>
+<td>17:15:08</td>
+<td>Discovery cycle 7 removed the three entries: <code>seen=6 accepted=5 refused=1 removed=constructor,result-w462,w462</code>, and the shared API URL warning cleared</td>
+<td><code>evidence/cleared-discovery.txt</code></td>
+</tr>
+</tbody>
+</table>
+<p>Between the delete and cycle 7, the poller kept polling the three entries once a minute, with <code>cluster-unreachable … outcome=auth_failed</code>. The last such line was at 17:15:07Z (<code>evidence/cleared-discovery.txt</code>). Discovery reads the
+Secrets every five minutes, so a deleted Secret keeps its card until the next cycle.</p>
+<h2>The throwaway Secrets</h2>
+<p><code>scripts/secrets.sh</code> follows the #447 walk's <code>reports/2026-09-28_batch-1110-walk/scripts/secret-447.sh</code>:</p>
+<ul>
+<li>Each token is <code>sha256~</code> plus 44 random hex characters, generated in the script and never printed. No server
+issued it, so each Refresh answers <code>401</code> and each card reaches <code>auth_failed</code>, the state in which the page offers
+Rejoin.</li>
+<li><code>tlsClientConfig</code> is copied read-only from <code>gsd-cluster-shared-qa</code> (jq selects that field alone, never the token
+beside it).</li>
+<li>There is no annotation, <code>saTokenLookup</code>, <code>ldapConnectionBootstrap</code> or password. No fleet path can take these
+Secrets.</li>
+<li><code>oc create</code> writes no last-applied annotation.</li>
+</ul>
+<p><code>constructor</code> is the name #459 is about. Before 1.16.0 the page's Refresh and Rejoin state maps were plain objects, so
+<code>view.clusterRefresh['constructor']</code> and <code>view.clusterRejoin['constructor']</code> resolved to Object's inherited
+<code>constructor</code> function, and the card was offered Rejoin with no <code>auth_failed</code> (#459, read from the code). <code>w462</code> and
+<code>result-w462</code> are #462's pair: before 1.14.0, <code>result-w462</code>'s Rejoin button had the id <code>cc-rejoin-result-w462</code>, the same
+id as <code>w462</code>'s Rejoin result line.</p>
+<h2>Observation, outside these issues</h2>
+<p>The tab's header shows <code>BY SOURCE … Secret 28</code> beside <code>8 served from Secrets</code> (<code>screenshots/19-375-467-header.png</code>). The
+two counts measure different things. The <code>by source</code> chip counts every card whose source is a Secret, including
+retired cards (<code>ccSourceKind</code> over all <code>clusters</code>, <code>local-development/gsd/static/index.html</code>). A retired card is a
+store row that no source names any more, such as a Secret deleted after an earlier walk
+(<code>local-development/gsd/api.py</code>, the <code>&quot;retired&quot;: True</code> block). The discovery line counts only clusters served now.
+The difference, 20, is arithmetic on the two numbers shown; the walk did not count the retired cards separately.
+Issue #467 was about the discovery line only, and this report changes nothing.</p>
+<h2>What the lab did not do</h2>
+<ul>
+<li>The walk submitted no Rejoin, Overwrite or Delete. The route guard lets through only <code>GET</code> and
+<code>POST /api/clusterconfigs/&lt;throwaway&gt;/refresh</code>, and blocked nothing (<code>the route guard blocked no request: []</code>).</li>
+<li>No password went to any cluster. The Rejoin dialog was opened with nothing typed and cancelled.</li>
+<li>The pre-1.16.0 defects were not reproduced on the lab. The fail-before evidence is each PR's tests.</li>
+</ul>
+<h2>Files</h2>
+<ul>
+<li><code>scripts/walk.py</code>: the walk (<code>walk &lt;discovery evidence&gt;</code>, <code>after</code>).</li>
+<li><code>scripts/capture.sh</code>: the read-only captures. It redacts any <code>sha256~</code> value and replaces the fleet account's name,
+read from its Lease, with <code>&lt;fleet account&gt;</code>.</li>
+<li><code>scripts/secrets.sh</code>, <code>scripts/grant.yaml</code>: the two temporary changes.</li>
+<li><code>evidence/</code>: every capture, its command line first and the instant it ran.</li>
+<li><code>screenshots/</code>: 25 element screenshots. The fleet account's name is masked in each.</li>
+</ul>
+
+<h2 id="screenshots">Screenshots</h2>
+<figure><img src="screenshots/01-1280-459-constructor-idle.png" alt="01-1280-459-constructor-idle.png"><figcaption>01-1280-459-constructor-idle.png</figcaption></figure>
+<figure><img src="screenshots/02-1280-473-finding.png" alt="02-1280-473-finding.png"><figcaption>02-1280-473-finding.png</figcaption></figure>
+<figure><img src="screenshots/03-1280-467-header.png" alt="03-1280-467-header.png"><figcaption>03-1280-467-header.png</figcaption></figure>
+<figure><img src="screenshots/04-1280-462-w462-refused.png" alt="04-1280-462-w462-refused.png"><figcaption>04-1280-462-w462-refused.png</figcaption></figure>
+<figure><img src="screenshots/05-1280-462-result-w462-refused.png" alt="05-1280-462-result-w462-refused.png"><figcaption>05-1280-462-result-w462-refused.png</figcaption></figure>
+<figure><img src="screenshots/06-1280-462-result-w462-focus-after-cancel.png" alt="06-1280-462-result-w462-focus-after-cancel.png"><figcaption>06-1280-462-result-w462-focus-after-cancel.png</figcaption></figure>
+<figure><img src="screenshots/07-1280-462-w462-rotate-after-repaint.png" alt="07-1280-462-w462-rotate-after-repaint.png"><figcaption>07-1280-462-w462-rotate-after-repaint.png</figcaption></figure>
+<figure><img src="screenshots/08-1280-459-constructor-refreshed.png" alt="08-1280-459-constructor-refreshed.png"><figcaption>08-1280-459-constructor-refreshed.png</figcaption></figure>
+<figure><img src="screenshots/09-768-459-constructor-idle.png" alt="09-768-459-constructor-idle.png"><figcaption>09-768-459-constructor-idle.png</figcaption></figure>
+<figure><img src="screenshots/10-768-473-finding.png" alt="10-768-473-finding.png"><figcaption>10-768-473-finding.png</figcaption></figure>
+<figure><img src="screenshots/11-768-467-header.png" alt="11-768-467-header.png"><figcaption>11-768-467-header.png</figcaption></figure>
+<figure><img src="screenshots/12-768-462-w462-refused.png" alt="12-768-462-w462-refused.png"><figcaption>12-768-462-w462-refused.png</figcaption></figure>
+<figure><img src="screenshots/13-768-462-result-w462-refused.png" alt="13-768-462-result-w462-refused.png"><figcaption>13-768-462-result-w462-refused.png</figcaption></figure>
+<figure><img src="screenshots/14-768-462-result-w462-focus-after-cancel.png" alt="14-768-462-result-w462-focus-after-cancel.png"><figcaption>14-768-462-result-w462-focus-after-cancel.png</figcaption></figure>
+<figure><img src="screenshots/15-768-462-w462-rotate-after-repaint.png" alt="15-768-462-w462-rotate-after-repaint.png"><figcaption>15-768-462-w462-rotate-after-repaint.png</figcaption></figure>
+<figure><img src="screenshots/16-768-459-constructor-refreshed.png" alt="16-768-459-constructor-refreshed.png"><figcaption>16-768-459-constructor-refreshed.png</figcaption></figure>
+<figure><img src="screenshots/17-375-459-constructor-idle.png" alt="17-375-459-constructor-idle.png"><figcaption>17-375-459-constructor-idle.png</figcaption></figure>
+<figure><img src="screenshots/18-375-473-finding.png" alt="18-375-473-finding.png"><figcaption>18-375-473-finding.png</figcaption></figure>
+<figure><img src="screenshots/19-375-467-header.png" alt="19-375-467-header.png"><figcaption>19-375-467-header.png</figcaption></figure>
+<figure><img src="screenshots/20-375-462-w462-refused.png" alt="20-375-462-w462-refused.png"><figcaption>20-375-462-w462-refused.png</figcaption></figure>
+<figure><img src="screenshots/21-375-462-result-w462-refused.png" alt="21-375-462-result-w462-refused.png"><figcaption>21-375-462-result-w462-refused.png</figcaption></figure>
+<figure><img src="screenshots/22-375-462-result-w462-focus-after-cancel.png" alt="22-375-462-result-w462-focus-after-cancel.png"><figcaption>22-375-462-result-w462-focus-after-cancel.png</figcaption></figure>
+<figure><img src="screenshots/23-375-462-w462-rotate-after-repaint.png" alt="23-375-462-w462-rotate-after-repaint.png"><figcaption>23-375-462-w462-rotate-after-repaint.png</figcaption></figure>
+<figure><img src="screenshots/24-375-459-constructor-refreshed.png" alt="24-375-459-constructor-refreshed.png"><figcaption>24-375-459-constructor-refreshed.png</figcaption></figure>
+<figure><img src="screenshots/25-320-473-finding.png" alt="25-320-473-finding.png"><figcaption>25-320-473-finding.png</figcaption></figure>
+</body></html>

@@ -1,0 +1,6 @@
+2026-09-28T17:12:42Z whoami                                  : {"user": "developer", "cluster_admin": false}
+2026-09-28T17:12:42Z status                                  : {"/api/whoami": 200, "/api/clusterconfigs": 403}
+2026-09-28T17:12:42Z PASS after the grant's removal: no cluster-admin tier, the tab absent, /api/clusterconfigs 403: {"cluster_admin": false, "tab": false, "status": 403}
+2026-09-28T17:12:42Z PASS the route guard blocked no request : []
+2026-09-28T17:12:42Z failures                                : []
+walk exit=0

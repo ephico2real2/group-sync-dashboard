@@ -1,0 +1,5 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-6747c4ddd9-wh7n9 -c dashboard --timestamps --since-time=2026-09-28T16:45:00Z  (captured 2026-09-28T17:00:04Z)
+# lines in the window: 587
+# discovery cycle lines:
+2026-09-28T16:49:59.328307407Z 2026-09-28 12:49:59,327-0400 INFO    gsd.clusterconfig discovery cycle=1 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 added=mock-privateca,mock-selfsigned,mock-trusted,shared-qa,shared-rnd refused_now=gsd-cluster-mock-refusal:insecure-with-ca
+# lines naming a throwaway entry, except poll-cycle timing:

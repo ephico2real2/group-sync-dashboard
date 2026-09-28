@@ -1,0 +1,22 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-6747c4ddd9-wh7n9 -c dashboard --timestamps --since-time=2026-09-28T17:00:12Z  (captured 2026-09-28T17:05:23Z)
+# lines in the window: 226
+# discovery cycle lines:
+2026-09-28T17:05:07.204472467Z 2026-09-28 13:05:07,204-0400 INFO    gsd.clusterconfig discovery cycle=5 namespace=group-sync-dashboard seen=9 accepted=8 refused=1 added=constructor,result-w462,w462
+# lines naming a throwaway entry, except poll-cycle timing:
+2026-09-28T17:05:07.203546712Z 2026-09-28 13:05:07,203-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=constructor,result-w462,shared-qa,shared-rnd,w462 state=appeared cycle=5
+2026-09-28T17:05:07.204472467Z 2026-09-28 13:05:07,204-0400 INFO    gsd.clusterconfig discovery cycle=5 namespace=group-sync-dashboard seen=9 accepted=8 refused=1 added=constructor,result-w462,w462
+2026-09-28T17:05:07.204786260Z 2026-09-28 13:05:07,204-0400 INFO    gsd.clusterconfig cluster-resolved cycle=5 cluster=constructor source=secret:gsd-cluster-constructor credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T17:05:07.205059762Z 2026-09-28 13:05:07,204-0400 INFO    gsd.clusterconfig cluster-resolved cycle=5 cluster=result-w462 source=secret:gsd-cluster-result-w462 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T17:05:07.205322638Z 2026-09-28 13:05:07,205-0400 INFO    gsd.clusterconfig cluster-resolved cycle=5 cluster=w462 source=secret:gsd-cluster-w462 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T17:05:07.211401295Z 2026-09-28 13:05:07,211-0400 INFO    gsd.poller cluster constructor: polling started (secret:gsd-cluster-constructor)
+2026-09-28T17:05:07.214185852Z 2026-09-28 13:05:07,214-0400 INFO    gsd.poller cluster result-w462: polling started (secret:gsd-cluster-result-w462)
+2026-09-28T17:05:07.214984856Z 2026-09-28 13:05:07,214-0400 INFO    gsd.poller cluster w462: polling started (secret:gsd-cluster-w462)
+2026-09-28T17:05:07.298749880Z 2026-09-28 13:05:07,298-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=constructor source=secret:gsd-cluster-constructor tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T17:05:07.303754073Z 2026-09-28 13:05:07,303-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=w462 source=secret:gsd-cluster-w462 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T17:05:07.304474535Z 2026-09-28 13:05:07,304-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=result-w462 source=secret:gsd-cluster-result-w462 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T17:05:07.409570255Z 2026-09-28 13:05:07,409-0400 WARNING gsd.auditlog constructor: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T17:05:07.501739740Z 2026-09-28 13:05:07,501-0400 WARNING gsd.auditlog w462: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T17:05:07.502910829Z 2026-09-28 13:05:07,502-0400 WARNING gsd.auditlog result-w462: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T17:05:07.721701898Z 2026-09-28 13:05:07,721-0400 WARNING gsd.poller binding refresh for result-w462 failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
+2026-09-28T17:05:07.795443619Z 2026-09-28 13:05:07,794-0400 WARNING gsd.poller binding refresh for constructor failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
+2026-09-28T17:05:07.799420765Z 2026-09-28 13:05:07,799-0400 WARNING gsd.poller binding refresh for w462 failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
