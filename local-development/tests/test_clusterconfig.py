@@ -37,6 +37,17 @@ def _secret(name="gsd-cluster-east", *, cluster="east", server="https://api.east
             "data": {k: base64.b64encode(v.encode()).decode() for k, v in d.items() if v is not None}}
 
 
+@pytest.fixture
+def ca_pem(tmp_path):
+    import shutil, subprocess
+    if not shutil.which("openssl"):
+        pytest.skip("openssl not on PATH")
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                    "-keyout", str(tmp_path / "k.pem"), "-out", str(tmp_path / "ca.pem"), "-days", "2", "-subj", "/CN=test-ca"],
+                   check=True, capture_output=True)
+    return (tmp_path / "ca.pem").read_text()
+
+
 # ── the parser: one test per contract row (C1/C2) ────────────────────────────────────────────────────────
 
 class TestParser:
@@ -117,6 +128,20 @@ class TestParser:
         assert isinstance(c.verify(), ssl.SSLContext) and c.ca_data == pem
         c = parse_secret(_secret(config={"bearerToken": "t", "tlsClientConfig": {"insecure": True}}), host_name=None)
         assert c.verify() is False
+
+    def test_a_non_ascii_cadata_is_refused_at_parse_not_raised(self, ca_pem):
+        pem = "# pasted\u00a0CA-comment-sentinel\n" + ca_pem
+        ca_data = base64.b64encode(pem.encode("utf-8")).decode("ascii")
+        secret = _secret(config={"bearerToken": TOKEN, "tlsClientConfig": {"caData": ca_data}})
+
+        finding = parse_secret(secret, host_name="host")
+
+        assert isinstance(finding, Finding) and finding.code == "ca-data-invalid"
+        assert finding.detail == "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"
+        for value in (TOKEN, pem, ca_pem, ca_data, "CA-comment-sentinel", secret["metadata"]["name"],
+                      *secret["data"].values(),
+                      *(base64.b64decode(value).decode("utf-8") for value in secret["data"].values())):
+            assert value not in finding.detail
 
     def test_the_three_trust_modes_and_the_refusal_that_names_both_fields(self, tmp_path, monkeypatch):
         """The operator's ruling (2026-09-20): no caData → the dashboard's own trust store; caData → that bundle
@@ -199,6 +224,21 @@ class TestRegistryAndReader:
         dup = {f.secret: f.detail for f in findings if f.code == "duplicate-cluster-name"}
         assert "b-dup" in dup["a-first"] and "a-first" in dup["b-dup"], "each names the other"
         assert "neither is loaded" in dup["a-first"]
+
+    def test_the_reader_keeps_a_good_cluster_beside_non_ascii_cadata(self, ca_pem):
+        bad_ca = base64.b64encode(("# pasted\u00a0CA-comment-sentinel\n" + ca_pem).encode("utf-8")).decode("ascii")
+        good_ca = base64.b64encode(ca_pem.encode("ascii")).decode("ascii")
+        bad = _secret("a-bad", cluster="bad", config={"bearerToken": TOKEN, "tlsClientConfig": {"caData": bad_ca}})
+        good = _secret("b-good", cluster="good", config={"bearerToken": TOKEN, "tlsClientConfig": {"caData": good_ca}})
+        path = "/api/v1/namespaces/ns/secrets"
+        client = _FakeClient({path: {"items": [bad, good]}})
+
+        clusters, findings = discover(client, "ns", host_name="host")
+
+        assert client.calls == [path]
+        assert [(c.name, c.source, c.ca_data) for c in clusters] == [("good", "secret:b-good", ca_pem)]
+        assert [(f.secret, f.code) for f in findings] == [("a-bad", "ca-data-invalid")]
+        assert findings[0].detail == "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"
 
     def test_argos_scope_and_routing_keys_are_refused_with_the_key_named(self):
         """A Secret copied from Argo CD carrying `namespaces: team-a` declares a NARROWED cluster;

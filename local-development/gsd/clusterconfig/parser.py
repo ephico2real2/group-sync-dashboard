@@ -247,7 +247,8 @@ def parse_secret(obj: dict, *, host_name: str | None) -> ClusterConfig | Finding
         try:
             ca_data = base64.b64decode(str(tls["caData"]), validate=True).decode("utf-8")
             ssl.create_default_context(cadata=ca_data)    # load it now: a bundle that does not load is a finding here
-        except (binascii.Error, UnicodeDecodeError, ValueError, ssl.SSLError) as exc:
+        # ssl raises TypeError, not SSLError, for non-ASCII cadata.
+        except (binascii.Error, UnicodeDecodeError, ValueError, ssl.SSLError, TypeError) as exc:
             return finding("ca-data-invalid", f"tlsClientConfig.caData does not decode to a PEM bundle that loads: {type(exc).__name__}")
 
     # Every visibility, remote-sar included (SPEC_D2b §3.3): the resolver is found per request from the
