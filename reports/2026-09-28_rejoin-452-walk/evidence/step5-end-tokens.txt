@@ -1,0 +1,24 @@
+# oc get oauthaccesstokens.oauth.openshift.io -o json | jq --arg fa "$(oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o jsonpath='{.items[0].metadata.annotations.groupsync-dashboard\.io/account}')" '{developer: ([.items[] | select(.userName == "developer") | .clientName] | group_by(.) | map({client: .[0], n: length})), fleet_account: ([.items[] | select(.userName == $fa) | .clientName] | group_by(.) | map({client: .[0], n: length}))}'
+# at 2026-09-28T02:18:52Z
+{
+  "developer": [
+    {
+      "client": "console",
+      "n": 5
+    },
+    {
+      "client": "openshift-challenging-client",
+      "n": 3
+    },
+    {
+      "client": "system:serviceaccount:group-sync-dashboard:group-sync-dashboard",
+      "n": 22
+    }
+  ],
+  "fleet_account": [
+    {
+      "client": "openshift-challenging-client",
+      "n": 2
+    }
+  ]
+}

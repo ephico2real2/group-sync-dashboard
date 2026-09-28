@@ -7077,7 +7077,9 @@ class TestClusterConfigPage:
         assert "<img" in page.locator('#cc-head [data-cc-warning]').inner_text()
         assert "<img" in page.locator('#cc-cluster-east .cc-shared-api-hint').inner_text()
 
-    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig):
+    @pytest.mark.parametrize("check", ["count", "chip"])
+    @pytest.mark.parametrize("width", [375, 393, 768, 1280])
+    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig, check, width):
         import dataclasses
         from gsd.clusterconfig.parser import Finding
         from gsd.config import ClusterConfig
@@ -7088,16 +7090,58 @@ class TestClusterConfigPage:
         pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
                                 source="configmap:fleet:1", onboarding=owner)
         settings.cluster_registry.replace([east, pending], [Finding("configmap:fleet:2", "onboarding-invalid", "invalid stanza")], at="now")
-        page.set_viewport_size({"width": 375, "height": 812})
+        page.set_viewport_size({"width": width, "height": 812})
         page.set_extra_http_headers({"X-Forwarded-User": "root"})
         page.goto(f"{base}/#page=clusters")
         page.wait_for_selector("#cc-cluster-pending")
+        if check == "count":
+            source = page.locator("#cc-head .cc-kv", has_text="by source").inner_text()
+            assert "ConfigMap 2" in source and "Secret 0" in source
+        else:
+            chip = page.locator("#cc-cluster-east h2 .rp-chip").inner_text()
+            assert chip == "ConfigMap fleet → Secret gsd-cluster-east"
+            assert page.locator("#cc-cluster-east .cc-src-configmap").count() == 1
+        assert page.locator("#cc-cluster-pending .cc-src-configmap").inner_text() == "ConfigMap fleet"
+        assert page.locator("#cc-cluster-east .cc-src-configmap").evaluate(
+            "el => getComputedStyle(el).whiteSpace") == "normal"
         assert "ConfigMap fleet" in page.locator("#cc-cluster-pending").inner_text()
         assert "ConfigMap fleet" in page.locator("#cc-cluster-east").inner_text()
         assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 0
         assert "configmap:fleet:2" in page.locator("#cc-findings").inner_text()
         assert "onboard,sideload" in page.locator("#cc-head").inner_text()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+    def test_discovery_counts_live_secret_storage_independently_of_declaration(self, page, cc_rig):
+        import dataclasses
+        from gsd.config import ClusterConfig
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        generated = dataclasses.replace(east, name="gitops", source="secret:gsd-cluster-gitops",
+                                        onboarding=("fleet", "cm-uid", "a" * 64))
+        pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
+                                source="configmap:fleet:1")
+        # Disabled configurations still have a live labelled Secret.
+        settings.cluster_registry.replace([dataclasses.replace(east, enabled=False), generated, pending], [], at="now")
+
+        def append_retired(route):
+            response = route.fetch()
+            payload = response.json()
+            payload["clusters"].append({
+                **next(c for c in payload["clusters"] if c["id"] == "east"),
+                "id": "retired", "source": "secret:gsd-cluster-retired", "retired": True,
+            })
+            route.fulfill(response=response, json=payload)
+
+        page.route("**/api/clusterconfigs", append_retired)
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-retired")
+        discovery = page.locator("#cc-head .cc-kv").filter(has=page.locator(".k", has_text=re.compile("^discovery$")))
+        assert "2 Secrets carry the discovery label" in discovery.inner_text()
+        assert page.locator("#cc-cluster-east .cc-src-secret").inner_text() == "Secret gsd-cluster-east"
+        assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 2
+        assert page.locator("#cc-rotate-gitops, #cc-delete-gitops, #cc-rotate-retired, #cc-delete-retired").count() == 0
+        assert page.locator("#cc-refresh-gitops").count() == 1
 
     def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
         """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster
@@ -7268,7 +7312,78 @@ class TestClusterConfigPage:
         beyond = page.evaluate("() => [...document.querySelectorAll('#main *')].filter(e => e.getBoundingClientRect().right > innerWidth + 1).length")
         assert beyond == 0
 
+    def test_a_half_typed_rotate_token_survives_a_poll_repaint(self, page, cc_rig):
+        """#390: the Rotate field is recreated when discovery moves; the draft lives in view, so the
+        typed token and focus stay. Never browser storage."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-rotate-east")
+        page.click("#cc-rotate-east"); page.wait_for_selector("#cc-rotate-token-east")
+        page.focus("#cc-rotate-token-east"); page.keyboard.type("tok-half")
+        east = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(east, [], at="2026-09-20T16:09:09Z")   # the next discovery: last_discovery moves
+        before = page.evaluate("() => lastFingerprint")
+        page.evaluate("() => refresh({ auto: true })")
+        page.wait_for_function("(b) => lastFingerprint !== b", arg=before)      # a repaint really happened
+        assert page.evaluate("() => [document.activeElement.id, document.getElementById('cc-rotate-token-east').value]") \
+            == ["cc-rotate-token-east", "tok-half"]
+
+    def test_a_rotate_draft_is_view_state_and_clears_on_close_and_submit(self, page, cc_rig):
+        """#390: the draft is JavaScript memory only, and is gone after close (the Rotate toggle) or
+        submit — the same moments the field is emptied, never written to browser storage."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-rotate-east")
+        page.click("#cc-rotate-east"); page.wait_for_selector("#cc-rotate-token-east")
+        page.focus("#cc-rotate-token-east"); page.keyboard.type("tok-half")
+        assert page.evaluate("() => view.clusterRotateDraft.east") == "tok-half"
+        leaked = page.evaluate(
+            """() => {
+                const hit = (store) => { try { return Object.values(store).some((v) => String(v).includes('tok-half')); }
+                                         catch (e) { return false; } };
+                return { local: hit(localStorage), session: hit(sessionStorage) };
+            }""")
+        assert leaked == {"local": False, "session": False}, leaked
+        page.click("#cc-rotate-east")   # close
+        page.wait_for_function("() => !document.getElementById('cc-rotate-token-east')")
+        assert page.evaluate("() => view.clusterRotateDraft.east") in (None, "")
+        page.click("#cc-rotate-east"); page.wait_for_selector("#cc-rotate-token-east")
+        assert page.evaluate("() => document.getElementById('cc-rotate-token-east').value") == ""
+        page.fill("#cc-rotate-token-east", "tok-submit-1")
+        page.click("#cc-rotate-go-east")
+        page.wait_for_function("() => (document.getElementById('cc-rotate-msg-east') || {innerText: ''}).innerText.includes('overwritten')")
+        assert page.evaluate("() => document.getElementById('cc-rotate-token-east').value") == ""
+        assert page.evaluate("() => view.clusterRotateDraft.east") in (None, "")
+
     # ── the tier on the page (#230): two levels, and the tab's very existence is the first one ────
+
+    def test_rotate_constructor_starts_and_reopens_empty(self, page, cc_rig):
+        """A cluster may be named `constructor`; a plain `{}` draft map inherited Object's constructor there, so an
+        untouched Overwrite wrote it as a credential (review of #456, Codex). The draft map has no prototype."""
+        import dataclasses
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(
+            [dataclasses.replace(east, name="constructor", source="secret:gsd-cluster-constructor")],
+            [], at="2026-09-27T00:00:00Z",
+        )
+        _open_as(page, base, "root")
+        page.click("#tab-clusters")
+        page.click("#cc-rotate-constructor")
+        field = page.locator("#cc-rotate-token-constructor")
+        assert field.input_value() == ""
+        puts = []
+        page.route("**/api/clusterconfigs/constructor/credential", lambda route: (
+            puts.append(route.request.method),
+            route.fulfill(status=200, content_type="application/json", body="{}"),
+        ))
+        page.click("#cc-rotate-go-constructor")
+        page.wait_for_function("() => document.getElementById('cc-rotate-msg-constructor').textContent === 'a bearer token is required.'")
+        assert puts == []
+        page.fill("#cc-rotate-token-constructor", "synthetic-draft")
+        page.click("#cc-rotate-constructor")
+        page.click("#cc-rotate-constructor")
+        assert field.input_value() == ""
     def test_the_auditor_gets_no_tab_no_page_and_makes_no_request_for_it(self, page, cc_rig):
         """The operator's rule: the auditor must not see this surface OR learn that it exists. So the
         tab button is absent, a pasted #page=clusters shows the refusal card, and — the part a hidden

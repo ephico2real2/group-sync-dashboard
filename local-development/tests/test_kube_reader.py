@@ -13,7 +13,43 @@ import httpx
 import pytest
 
 from gsd.config import ClusterConfig
-from gsd.kube import ClusterClient, _access_group_from_ldap_url
+from gsd.kube import ClusterClient, ClusterError, UNREACHABLE, _access_group_from_ldap_url
+
+
+def test_client_refuses_url_userinfo_before_building_a_request(monkeypatch):
+    cluster = ClusterConfig("c", "https://user:password@host", token_env="X")
+    monkeypatch.setenv("X", "a-bearer-token")
+    seen = []
+    built = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json={"items": []})
+
+    class TransportClient(httpx.Client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx.MockTransport(handler), **kwargs)
+
+        def build_request(self, *args, **kwargs):
+            built.append((args, kwargs))
+            return super().build_request(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", TransportClient)
+    refusal = None
+    try:
+        with ClusterClient(cluster)._client() as client:
+            client.get("/version")
+    except ClusterError as exc:
+        refusal = exc
+
+    assert seen == [], f"transport received Authorization: {seen}"
+    assert built == []
+    assert refusal is not None
+    assert refusal.outcome == UNREACHABLE
+    assert "apiUrl" in refusal.message and "userinfo" in refusal.message
+    assert "password" not in str(refusal)
+    assert cluster.api_url not in str(refusal)
+    assert cluster.api_url == "https://user:password@host"
 
 
 def test_group_view_reads_exactly_the_silence_annotation():

@@ -1,0 +1,5 @@
+# PYTHONPATH=<a copy of 268ea63>/local-development python scripts/shape.py   (at 2026-09-28T02:13:36Z)
+# gsd 1.6.0; lookup kind 'remote-lookup', self-login kind 'self-login'
+token-source=remote-lookup  -> loads: credential_kind='bearer' connection_mode=None credential_pending=None lookup_account=None ldap_connection_bootstrap='walk-bootstrap-452'
+token-source=rejoin         -> finding unsupported-config-key: config.ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen
+token-source=None           -> finding unsupported-config-key: config.ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen
