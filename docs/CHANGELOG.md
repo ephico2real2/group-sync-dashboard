@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The page's lookup maps no longer answer `constructor` with Object's own property (#459).** A cluster of that
+  name, a valid one, starts with Refresh idle and is offered Rejoin only once Refresh answers `auth_failed`. Its
+  Reports lookups are fetched, its namespace-access form renders before the catalogue lists it, and a run on it no
+  longer turns the Library into an error. A role named `constructor` sorts by risk like any unranked role, and
+  `#page=constructor` backs to the overview like any unknown page.
+
 - Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
 
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will

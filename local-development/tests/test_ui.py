@@ -908,6 +908,21 @@ class TestNavigationTrail:
         dash.wait_for_selector("text=Membership changes")
         assert "app-ocp-rbac-alpha-ns-admin" in dash.locator("h2").first.inner_text()
 
+    def test_a_hash_naming_no_page_backs_to_the_overview_whatever_its_spelling(self, dash):
+        """#459: the page comes from the URL, and PAGE_LABEL was a plain {}, so `#page=constructor` — no page, like
+        any other unknown name — labelled its back control with Object's source instead of the overview."""
+        errors: list[str] = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        labels = {}
+        for name in ("nosuchpage", "constructor"):
+            # the position moves at once and the repaint follows the fetch: read only a back control drawn after it
+            dash.evaluate("() => document.querySelectorAll('button.back').forEach((b) => { b.dataset.old = '1'; })")
+            dash.evaluate(f"() => {{ location.hash = '#page={name}'; }}")
+            dash.wait_for_function(f"() => view.page === {name!r} && !!document.querySelector('button.back:not([data-old])')")
+            labels[name] = dash.locator("button.back:not([data-old])").first.inner_text()
+        assert labels == {"nosuchpage": "← overview", "constructor": "← overview"}, labels
+        assert not errors, errors
+
 
 class TestDeletedGroup:
     def test_deleted_group_renders_its_history_instead_of_404(self, dash):
@@ -3690,6 +3705,27 @@ class TestNamespaceAuditPage:
                 assert bg == bare, f"row {pos} ({tier}) is striped — the zebra the audit table drops: {painted}"
         tints = {tier: {bg for _, t, bg in painted if t == tier} for tier in ("risk-critical", "risk-high")}
         assert all(len(v) == 1 for v in tints.values()), f"a tier paints differently on odd and even rows: {tints}"
+
+    def test_a_role_named_constructor_sorts_by_risk_like_any_unranked_role(self, dash):
+        """#459: a role is named on the cluster, and PRIVILEGE_RANK was a plain {}, so a role named `constructor`
+        ranked as Object × 10 = NaN and the risk sort left its row where it arrived. Unranked, like any role the
+        table does not name, it is the lowest risk: first ascending, last descending. It arrives last on the wire."""
+        def with_a_constructor_grant(route):
+            resp = route.fetch()
+            body = resp.json()
+            body["bindings"].append({"binding_kind": "RoleBinding", "binding_namespace": "dev-ns", "binding_name": "dave-ctor",
+                                     "role_kind": "ClusterRole", "role_name": "constructor", "user_name": "dave", "is_platform": 0})
+            route.fulfill(response=resp, json=body)
+
+        dash.route(re.compile(r"/api/clusters/crc-local/user-bindings\?"), with_a_constructor_grant)
+        self._open(dash)
+        dash.click("[data-ns-grants]")
+        dash.wait_for_function("() => document.querySelectorAll('#every-grant tbody tr').length === 4")
+        roles = lambda: dash.evaluate("() => [...document.querySelectorAll('#every-grant tbody code.priv')].map(c => c.textContent)")  # noqa: E731
+        assert roles() == ["cluster-admin", "admin", "edit", "constructor"], roles()   # the default: risk, descending
+        dash.click('#every-grant [data-sort-group="grant"][data-sort-key="risk"]')
+        dash.wait_for_function("() => view.nsGrantDir === 'asc'")
+        assert roles() == ["constructor", "edit", "admin", "cluster-admin"], roles()
 
 
 class TestUsagePage:
@@ -7568,6 +7604,31 @@ class TestClusterConfigPage:
             }""")
         assert posts == list(order)
 
+    def test_a_cluster_named_constructor_starts_idle_like_any_other(self, page, cc_rig):
+        """#459: `constructor` is a valid DNS label and the one name that `{}[name]` answers with Object.prototype's own
+        property: the Refresh and Rejoin maps must not mistake it for a state. Rejoin is offered once Refresh answers
+        `auth_failed`, as for any other cluster."""
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        base, host, settings = cc_rig
+        row = parse_secret(_secret("gsd-cluster-constructor", cluster="constructor", server="https://api.constructor.example:6443"), host_name="crc-local")
+        settings.cluster_registry.replace([row], [], at="2026-09-27T15:00:00Z")
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-constructor")
+        card = page.locator("#cc-cluster-constructor")
+        # the "never polled" line is every fresh card's; a Refresh or a Rejoin line is not
+        assert card.locator(".cc-consq", has_text="Refresh:").count() == 0, card.inner_text()
+        assert card.locator(".cc-consq", has_text="Rejoin:").count() == 0, card.inner_text()
+        assert card.locator("[data-cc-rejoin]").count() == 0, card.inner_text()
+        assert card.locator("[data-cc-refresh]").inner_text() == "Refresh" and not card.locator("[data-cc-refresh]").is_disabled()
+        # and the map still takes the name as a key: a refused Refresh offers Rejoin
+        page.route("**/api/clusterconfigs/constructor/refresh", lambda route: route.fulfill(
+            json={"outcome": "auth_failed", "message": "401 Unauthorized", "at": "2026-09-27T15:01:00Z"}))
+        card.locator("[data-cc-refresh]").click()
+        page.wait_for_selector("#cc-cluster-constructor [data-cc-rejoin]")
+        assert "auth_failed" in card.locator(".cc-consq", has_text="Refresh:").inner_text()
+        assert card.locator("[data-cc-rejoin]").inner_text() == "Rejoin…"
+
     def test_refresh_ids_never_equal_another_family_so_the_rejoin_dialog_returns_focus_to_its_own_card(self, page, cc_rig):
         """#441: the Refresh ids must be disjoint from EVERY other `cc-<kind>-<id>` family, not only from each other.
         `rejoin-z`'s Refresh button and `z-refresh`'s Rejoin button share an id under `cc-<id>-refresh`, and
@@ -8181,6 +8242,35 @@ class TestReportsTab:
                 return {keys: Object.keys(m), value: m["__proto__"], nullProto: Object.getPrototypeOf(m) === null};
             }""")
             assert result == {"keys": ["__proto__"], "value": ["prod"], "nullProto": True}
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_cluster_named_constructor_the_selector_maps_do_not_list_still_renders_the_form(self, browser, reporting_server):
+        # #459: the catalogue's selector maps are keyed by cluster id and follow the snapshot, which can lag a new
+        # cluster (a missing snapshot sends them {}); one named `constructor` read Object's own there and the form
+        # threw. Both ways in: the current pod's dimensions, then an older pod's single-field map.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            guarded = "() => { try { render(); return null; } catch (e) { return String(e); } }"   # a throw, as an answer
+            for older in (False, True):
+                page.evaluate("""(older) => {
+                    if (older) {
+                        const spec = data.reportCatalog.reports.find((r) => r.name === "namespace-access");
+                        spec.params = spec.params.filter((p) => p.name !== "selectors");   // old pod: no selectors spec
+                        delete data.reportCatalog.namespaceSelectorDimensions;
+                        data.reportCatalog.namespaceSelectors = {"crc-local": {label: "company.net/mnemonic", values: ["demo"]}};
+                    } else {
+                        data.reportCatalog.namespaceSelectorDimensions = {"crc-local": [{label: "company.net/mnemonic", values: ["demo"]}]};
+                    }
+                    navigate({ cluster: "constructor", report: "namespace-access", groupsync: null, group: null, user: null });
+                }""", older)
+                assert page.evaluate(guarded) is None, (older, page.evaluate(guarded))
+                assert page.locator("#report-form").count() == 1
+                assert page.locator('[data-param="selectors"], #report-mnemonics').count() == 0, "no values listed for it, no control"
             assert not errors, errors
         finally:
             ctx.close()
@@ -9319,6 +9409,27 @@ class TestReportFormsReview:
         finally:
             ctx.close()
 
+    def test_a_cluster_named_constructor_asks_for_its_own_lookups(self, browser, reporting_server):
+        # #459: `"constructor" in {}` is true, so the page took a cluster of that name as answered and never asked:
+        # its menus said "none discovered" of lookups nobody had requested
+        base, _, _ = reporting_server
+        ctx, page, errors = self._open(browser, base)
+        asked: list[str] = []
+        page.on("request", lambda r: asked.append(r.url) if "/api/discovered?cluster=constructor" in r.url else None)
+        page.route(re.compile(r"/report/api/discovered\?cluster=constructor$"), lambda route: route.fulfill(
+            json={"cluster": "constructor", "discovered": {"users": {"values": ["ada"], "truncated": False}}}))
+        try:
+            # the nav's select goes through navigate(); the repaint wires the form, which asks for the lookups
+            page.evaluate("() => { navigate({ cluster: 'constructor', groupsync: null, group: null, user: null }); render(); }")
+            head = "() => document.querySelector('#report-lookup-access-matrix-users-menu .rp-menu-head').textContent"
+            page.wait_for_function(f"() => !({head})().endsWith('loading…')")
+            assert len(asked) == 1, asked
+            assert page.evaluate(head).endswith("· 1 discovered"), page.evaluate(head)
+            assert self._options(page) == ["ada"], self._options(page)
+            assert not errors, errors
+        finally:
+            ctx.close()
+
 
     def test_the_certification_reviewer_defaults_to_the_signed_in_reader(self, browser, reporting_server):
         # R7: "reviewer/users (ocp_user, default = the signed-in user for a manual run)" — the field was a bare
@@ -9648,6 +9759,34 @@ class TestLibraryPage:
             page.wait_for_selector("#library-drawer")
             assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
             assert page.evaluate("() => document.getElementById('library-drawer').scrollWidth <= document.getElementById('library-drawer').clientWidth")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_run_on_a_cluster_named_constructor_is_listed_like_any_other(self, browser, reporting_server):
+        """#459: the runs were grouped by cluster in a plain {}, so a run on a cluster named `constructor` read Object as
+        its list and `.push` threw: the whole Library became a "Dashboard API error". The run arrives on the wire, so the
+        store the class's other tests count is left as it is."""
+        base, _, report_app = reporting_server
+        self._seed(report_app)
+        ctx, page, errors = _reports_page(browser, base, "root")
+
+        def with_a_constructor_run(route):
+            resp = route.fetch()
+            body = resp.json()
+            run = next(r for r in body["runs"] if r["id"] == "20990201T000000.000000Z-lib1")
+            body["runs"].append({**run, "id": "20990203T000000.000000Z-ctor", "cluster": "constructor", "requested_at": "2099-02-03T00:00:00Z"})
+            body["total"] = body.get("total", 0) + 1
+            route.fulfill(response=resp, json=body)
+
+        page.route(re.compile(r"/report/api/runs\?limit=1000$"), with_a_constructor_run)
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_function("() => !!document.getElementById('library-lead') || /Dashboard API error/.test(document.getElementById('main').innerText)")
+            assert "Dashboard API error" not in page.locator("#main").inner_text(), page.locator("#main").inner_text()[:200]
+            assert page.locator("#sec-weekly [id='run-20990203T000000.000000Z-ctor']").count() == 1   # a run id carries a dot
+            heads = page.evaluate("() => [...document.querySelectorAll('#sec-weekly .cluster-head')].map(h => h.textContent)")
+            assert "constructor" in heads and "crc-local" in heads, heads
             assert not errors, errors
         finally:
             ctx.close()
