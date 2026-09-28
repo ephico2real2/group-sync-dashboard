@@ -1,0 +1,9 @@
+# oc adm node-logs --role=master --path=oauth-server/<every audit*.log>, events at or after 2026-09-28T06:08:28Z
+# captured 2026-09-28T06:15:09Z; the raw log is read through a pipe and never written
+annotated login events since 2026-09-28T06:08:28Z: 2
+developer-walk, all: 0; authorize: 0
+developer, all: 2; authorize: 1
+fleet account, all: 0; authorize: 0
+developer rows (instant, kind, decision, status):
+  2026-09-28T06:10:25Z  credential  allow  302
+  2026-09-28T06:10:25Z  session  allow  302
