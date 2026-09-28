@@ -1,0 +1,21 @@
+# oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o json | jq '.items[0] | {name: .metadata.name, resourceVersion: .metadata.resourceVersion, spec, annotations: (.metadata.annotations | with_entries(if .key == "groupsync-dashboard.io/ping-digest" then .value = "<withheld>" else . end))}'
+# at 2026-09-28T00:02:45Z
+{
+  "name": "gsd-fleet-666f1ba7f2fdead0",
+  "resourceVersion": "5127386",
+  "spec": {
+    "acquireTime": "2026-09-27T10:27:05.906118Z",
+    "holderIdentity": "",
+    "leaseDurationSeconds": 195,
+    "renewTime": "2026-09-27T10:27:05.906118Z"
+  },
+  "annotations": {
+    "groupsync-dashboard.io/account": "<fleet account>",
+    "groupsync-dashboard.io/ping-digest": "<withheld>",
+    "groupsync-dashboard.io/ping-last-attempt": "2026-09-27T10:27:05Z",
+    "groupsync-dashboard.io/ping-last-ok": "2026-09-27T10:27:05Z",
+    "groupsync-dashboard.io/ping-last-outcome": "ok",
+    "groupsync-dashboard.io/ping-last-target": "shared-rnd"
+  }
+}
+sha256 of the whole Lease minus managedFields: 96e3727807355ca16f9299e067bada4e3a1e83f3a335410ac432f78f85ea9d45

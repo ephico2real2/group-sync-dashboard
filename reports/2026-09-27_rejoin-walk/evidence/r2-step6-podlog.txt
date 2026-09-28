@@ -1,0 +1,63 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-678694cf45-8bg98 -c dashboard --timestamps --since-time=2026-09-27T23:57:14Z  (captured 2026-09-28T00:01:09Z)
+# lines in the window: 225
+# discovery, cluster-refreshed, fleet-login*, fleet-logout*, cluster-rejoin*, and every line naming rejoin-walk except its poll-cycle timing:
+2026-09-27T23:57:18.829633411Z 2026-09-27 19:57:18,829-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=rejoin-walk-2 credential=bearer by=developer outcome=auth_failed
+2026-09-27T23:57:27.028497964Z 2026-09-27 19:57:27,028-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=rejoin-walk-2 source=secret:gsd-cluster-rejoin-walk-2 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-27T23:57:27.043752704Z 2026-09-27 19:57:27,043-0400 WARNING gsd.auditlog rejoin-walk-2: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-27T23:57:27.074901063Z 2026-09-27 19:57:27,074-0400 DEBUG   gsd.poller rejoin-walk-2 poll cycle took 0.07s; next binding refresh in 3541s
+2026-09-27T23:57:27.368611523Z 2026-09-27 19:57:27,368-0400 INFO    gsd.fleetlogin fleet-login cluster=rejoin-walk-2 account=<redacted> tls=trusted-bundle rejoin_by=<redacted> oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-27T23:57:27Z
+2026-09-27T23:57:27.385300645Z 2026-09-27 19:57:27,385-0400 INFO    gsd.rejoin cluster-rejoin-review cluster=rejoin-walk-2 by=<redacted> account=<redacted> question="update clusterrolebindings" allowed=true reason="RBAC: allowed by ClusterRoleBinding 'rejoin-walk-cluster-admin' of ClusterRole 'cluster-admin' to User '<redacted>'"
+2026-09-27T23:57:27.406751915Z 2026-09-27 19:57:27,406-0400 INFO    gsd.fleetlogin fleet-logout cluster=rejoin-walk-2 account=<redacted> tls=trusted-bundle rejoin_by=<redacted> token=sha256~<redacted> outcome=revoked
+2026-09-27T23:57:27.430245195Z 2026-09-27 19:57:27,429-0400 INFO    gsd.clusterconfig.writer cluster-secret-rotated secret=gsd-cluster-rejoin-walk-2 namespace=group-sync-dashboard cluster=rejoin-walk-2 by=developer
+2026-09-27T23:57:27.430584739Z 2026-09-27 19:57:27,430-0400 INFO    gsd.rejoin cluster-rejoined cluster=rejoin-walk-2 by=<redacted> account=<redacted> secret=gsd-cluster-rejoin-walk-2 written=updated revoked=true
+2026-09-27T23:57:27.598997927Z 2026-09-27 19:57:27,598-0400 INFO    gsd.clusterconfig discovery cycle=10 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 changed=rejoin-walk-2
+2026-09-27T23:57:27.609798854Z 2026-09-27 19:57:27,609-0400 INFO    gsd.clusterconfig cluster-resolved cycle=10 cluster=rejoin-walk-2 source=secret:gsd-cluster-rejoin-walk-2 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-27T23:58:27.061042791Z 2026-09-27 19:58:27,060-0400 DEBUG   gsd.kube fetched 61 users from rejoin-walk-2, 61 with an identity, 8 with a display name
+2026-09-27T23:58:27.066307524Z 2026-09-27 19:58:27,066-0400 INFO    gsd.poller rejoin-walk-2: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-27T23:58:27.066757610Z 2026-09-27 19:58:27,066-0400 INFO    gsd.poller rejoin-walk-2/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-27T23:30:00Z (44 groups)
+2026-09-27T23:58:27.067067945Z 2026-09-27 19:58:27,066-0400 INFO    gsd.poller rejoin-walk-2/autobahnusers-onboarding-groupsync: new sync observed at 2026-09-27T22:00:00Z (1 groups)
+2026-09-27T23:58:27.067418446Z 2026-09-27 19:58:27,067-0400 INFO    gsd.poller rejoin-walk-2/bdp-oud-group-rbac-groupsync: new sync observed at 2026-09-27T23:00:00Z (21 groups)
+2026-09-27T23:58:27.106713136Z 2026-09-27 19:58:27,106-0400 DEBUG   gsd.kube rejoin-walk-2: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-27T23:58:27.120088951Z 2026-09-27 19:58:27,119-0400 INFO    gsd.poller polled rejoin-walk-2: 3 CRs, 66 groups, 3 new sync event(s), 95 membership change(s)
+2026-09-27T23:58:28.512513300Z 2026-09-27 19:58:28,512-0400 DEBUG   gsd.auditlog rejoin-walk-2: crc: audit.log read 8388608 byte(s) from offset 0 (first sight: backfill) — 9948 line(s), 321 login event(s), 321 inside retention, 317 after the identity filter
+2026-09-27T23:58:28.625402929Z 2026-09-27 19:58:28,625-0400 INFO    gsd.auditlog rejoin-walk-2: recorded 317 login attempt(s) from the audit log on crc (audit.log)
+2026-09-27T23:58:28.633077966Z 2026-09-27 19:58:28,632-0400 INFO    gsd.kpi.rollup rejoin-walk-2: daily KPI rollup written for 2026-09-27 (8 metrics)
+2026-09-27T23:58:28.696988108Z 2026-09-27 19:58:28,696-0400 DEBUG   gsd.poller rejoin-walk-2 poll cycle took 1.69s; next binding refresh in 3479s
+2026-09-27T23:58:30.624711792Z 2026-09-27 19:58:30,624-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=rejoin-walk-2 credential=bearer by=developer outcome=ok
+2026-09-27T23:59:27.128576453Z 2026-09-27 19:59:27,128-0400 DEBUG   gsd.kube fetched 61 users from rejoin-walk-2, 61 with an identity, 8 with a display name
+2026-09-27T23:59:27.203471732Z 2026-09-27 19:59:27,193-0400 INFO    gsd.poller rejoin-walk-2: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-27T23:59:27.234247089Z 2026-09-27 19:59:27,233-0400 DEBUG   gsd.kube rejoin-walk-2: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-27T23:59:27.298380398Z 2026-09-27 19:59:27,298-0400 INFO    gsd.poller polled rejoin-walk-2: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-27T23:59:28.621004494Z 2026-09-27 19:59:28,620-0400 DEBUG   gsd.auditlog rejoin-walk-2: crc: audit.log read 8388608 byte(s) from offset 8387795 — 8458 line(s), 3 login event(s), 3 inside retention, 3 after the identity filter
+2026-09-27T23:59:28.622787211Z 2026-09-27 19:59:28,622-0400 INFO    gsd.auditlog rejoin-walk-2: recorded 3 login attempt(s) from the audit log on crc (audit.log)
+2026-09-27T23:59:28.662951196Z 2026-09-27 19:59:28,662-0400 DEBUG   gsd.poller rejoin-walk-2 poll cycle took 1.65s; next binding refresh in 3419s
+2026-09-27T23:59:29.326113316Z 2026-09-27 19:59:29,325-0400 WARNING gsd.fleetlogin fleet-login-refused phase=credential outcome=login-refused cluster=rejoin-walk-2 account=developer tls=trusted-bundle rejoin_by=developer action="the target refused the password for developer: check the username and password — it is not sent again by this pod while it is the same password, because each refused try counts toward the directory's lockout of the account" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-27T23:59:29.327566073Z 2026-09-27 19:59:29,327-0400 WARNING gsd.rejoin cluster-rejoin-failed phase=credential outcome=login-refused cluster=rejoin-walk-2 by=developer account=developer action="rejoin-walk-2 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-27T23:59:44.010404438Z 2026-09-27 19:59:44,010-0400 WARNING gsd.rejoin cluster-rejoin-failed phase=credential outcome=login-refused cluster=rejoin-walk-2 by=developer account=developer action="https://api.crc.testing:6443 already refused this password for developer, so it was not sent: type the right password (this pod holds a refused password back until it restarts)"
+2026-09-28T00:00:27.121499381Z 2026-09-27 20:00:27,121-0400 DEBUG   gsd.kube fetched 61 users from rejoin-walk-2, 61 with an identity, 8 with a display name
+2026-09-28T00:00:27.126847490Z 2026-09-27 20:00:27,126-0400 INFO    gsd.poller rejoin-walk-2: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T00:00:27.127305909Z 2026-09-27 20:00:27,127-0400 INFO    gsd.poller rejoin-walk-2/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-28T00:00:01Z (44 groups)
+2026-09-28T00:00:27.127633660Z 2026-09-27 20:00:27,127-0400 INFO    gsd.poller rejoin-walk-2/autobahnusers-onboarding-groupsync: new sync observed at 2026-09-28T00:00:00Z (1 groups)
+2026-09-28T00:00:27.127962870Z 2026-09-27 20:00:27,127-0400 INFO    gsd.poller rejoin-walk-2/bdp-oud-group-rbac-groupsync: new sync observed at 2026-09-28T00:00:00Z (21 groups)
+2026-09-28T00:00:27.207773839Z 2026-09-27 20:00:27,207-0400 DEBUG   gsd.kube rejoin-walk-2: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T00:00:27.302550547Z 2026-09-27 20:00:27,302-0400 INFO    gsd.poller polled rejoin-walk-2: 3 CRs, 66 groups, 3 new sync event(s), 0 membership change(s)
+2026-09-28T00:00:29.623846298Z 2026-09-27 20:00:29,623-0400 DEBUG   gsd.auditlog rejoin-walk-2: crc: audit.log read 7858746 byte(s) from offset 16776336 — 9212 line(s), 130 login event(s), 130 inside retention, 124 after the identity filter
+2026-09-28T00:00:29.826529277Z 2026-09-27 20:00:29,826-0400 INFO    gsd.auditlog rejoin-walk-2: recorded 124 login attempt(s) from the audit log on crc (audit.log)
+2026-09-28T00:00:29.894850190Z 2026-09-27 20:00:29,894-0400 INFO    gsd.kpi.rollup rejoin-walk-2: daily KPI rollup written for 2026-09-28 (8 metrics)
+2026-09-28T00:00:29.927176971Z 2026-09-27 20:00:29,926-0400 DEBUG   gsd.poller rejoin-walk-2 poll cycle took 2.92s; next binding refresh in 3358s
+2026-09-28T00:01:01.691713369Z 2026-09-27 20:01:01,691-0400 INFO    gsd.fleetlogin fleet-login cluster=rejoin-walk-2 account=<redacted> tls=trusted-bundle rejoin_by=<redacted> oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-28T00:01:01Z
+2026-09-28T00:01:01.712967639Z 2026-09-27 20:01:01,712-0400 INFO    gsd.rejoin cluster-rejoin-review cluster=rejoin-walk-2 by=<redacted> account=<redacted> question="update clusterrolebindings" allowed=false
+2026-09-28T00:01:01.719998381Z 2026-09-27 20:01:01,719-0400 INFO    gsd.fleetlogin fleet-logout cluster=rejoin-walk-2 account=<redacted> tls=trusted-bundle rejoin_by=<redacted> token=sha256~<redacted> outcome=revoked
+2026-09-28T00:01:01.720782135Z 2026-09-27 20:01:01,720-0400 WARNING gsd.rejoin cluster-rejoin-failed phase=credential outcome=not-cluster-admin cluster=rejoin-walk-2 by=<redacted> account=<redacted> action="rejoin-walk-2 says <redacted> may not update clusterrolebindings there, so nothing was read or written: Rejoin needs a cluster administrator of rejoin-walk-2; the login was signed out"
+# 'rejoin-walk poll cycle' lines: 0
+# fleet-login lines: 2
+# fleet-login-refused lines: 1
+# fleet-login-failed lines: 0
+# fleet-logout lines: 2
+# fleet-logout-failed lines: 0
+# cluster-rejoin-review lines: 2
+# cluster-rejoined lines: 1
+# cluster-rejoin-failed lines: 3
+# cluster-refreshed lines: 2
+# lines naming the fleet account: 0
+# ERROR or Traceback lines: 0
