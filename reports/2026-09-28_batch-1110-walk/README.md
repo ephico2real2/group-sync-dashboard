@@ -7,10 +7,12 @@ walked the Cluster Configurations tab in Chromium at 1280, 768 and 375 px. `scri
   the field's node, at all three widths. Closing and reopening the panel emptied it. Overwrite was never pressed.
 - #441: no two elements on the page shared an id (134 ids; 137 after four Refresh answers). Every `cc-refresh_<id>`
   and `cc-refresh-result_<id>` sat on its own card. Refresh on `shared-rnd` answered on `shared-rnd`'s card.
-- #435: the six enabled clusters polled `ok` on 1.10.0 and polled `ok` on 1.11.0. The pod log since the 1.11.0 pod
-  started has 0 `cluster-unreachable` lines.
-- #404 was not run. The lab has no ConfigMap-declared cluster, and no ConfigMap stanza could be created without a
-  fleet login (the section below quotes the code).
+- #435: the six enabled clusters polled `ok` on 1.10.0 and polled `ok` on 1.11.0. The pod log from the 1.11.0 pod's
+  start at 05:39:41Z to the capture at 05:57:33Z has 0 `cluster-unreachable` lines (`evidence/deploy-podlog.txt`). The
+  only ones later are the #447 follow-up's own: 6 for the throwaway `walk-447` (`evidence/447-walk-podlog447.txt`).
+- #404 was not run. The lab has no ConfigMap-declared cluster, and the brief's safe shape, a stanza with no
+  `saTokenLookup`, is one the code refuses; every stanza it accepts declares `saTokenLookup: true`, and an enabled one
+  is handed to the fleet lookup (the section below quotes the code).
 - #447, in a follow-up run on a throwaway entry, `walk-447`: its Refresh answered `auth_failed` and the card offered
   Rejoin. `developer-walk`, with a password that lies inside it, was refused with the exact sentence
   `HTTP 422 — rejoin-password-within-username: …`, in the dialog and on the card, at all three widths. The password
@@ -31,11 +33,11 @@ Argo CD change, and no other object was created. The kept PVCs have the same UID
 
 | Issue | Row | Verdict | Evidence |
 |---|---|---|---|
-| #390 | A half-typed Rotate token survives the minute's repaint, and a close and reopen empties it | PASS | `evidence/walk-output.txt`, per width: typed `{"equals_draft": true, "length": 22, "type": "password"}`. After 65 s: one `GET /api/clusterconfigs` `[200]`, and the marker set on the field's node was gone, so the node had been replaced. The new node read `{"repainted": true, "equals_draft": true, "length": 22, "type": "password"}`. Closed: `null`, meaning no field. Reopened: `{"length": 0}`. Screenshots `02`–`04`, `10`–`12`, `15`–`17-*-rotate-*.png`. The field is `type=password` in every capture. The value was read through the DOM, as a comparison and a length, and was never printed. Overwrite was never pressed: `no write request was attempted (the route guard blocked none): []`, and the `gsd-cluster-mock-trusted` Secret stayed at `resourceVersion` 993483 (`evidence/after-secret-rvs.txt`). |
+| #390 | A half-typed Rotate token survives the minute's repaint, and a close and reopen empties it | PASS | `evidence/walk-output.txt`, per width: typed `{"equals_draft": true, "length": 22, "type": "password"}`. After 65 s: one `GET /api/clusterconfigs` `[200]`, and the marker set on the field's node was gone, so the node had been replaced. The new node read `{"repainted": true, "equals_draft": true, "length": 22, "type": "password"}`. Closed: `null`, meaning no field. Reopened: `{"length": 0}`. Screenshots `02`–`04`, `10`–`12`, `15`–`17-*-rotate-*.png`. The field is `type=password` in every capture. The value was read through the DOM, as a comparison and a length, and was never printed. Overwrite was never pressed: `no write request was attempted (the route guard blocked none): []`, and the `gsd-cluster-mock-trusted` Secret's `resourceVersion` read 993483 after the walk (`evidence/after-secret-rvs.txt`), the value every read of the 2026-09-27 walk recorded (`../2026-09-27_epic-c-walk-432/evidence/end-secrets.txt`, `rv=993483`); this walk took no read of it before the grant. |
 | #404 | The header counts a ConfigMap-declared (GitOps) cluster under ConfigMap, with its chip `ConfigMap <name> → Secret <name>` and the discovery line | NOT RUN | The lab has no ConfigMap-declared cluster: `oc get configmaps -l 'groupsync-dashboard.io/config-type in (onboard,sideload)'` answered `No resources found` before and after (`evidence/*-onboarding.txt`). The header reads `in-cluster 1 values 4 Secret 23 ConfigMap 0`, with no ConfigMap chip on any card (`"configmap_cards": []`) (`01`, `09`, `14-*-header.png`). No throwaway ConfigMap was created, because the code allows no stanza that avoids a fleet login: see "Why #404 has no throwaway ConfigMap". |
 | #441 | Refresh ids are unique, and Refresh on `shared-rnd` lands on its own card | PASS | `id check` at each width: `"duplicates": []` over 134 ids. Buttons: `cc-refresh_dashboard`, `…_mock-privateca`, `…_mock-selfsigned`, `…_mock-trusted`, `…_shared-qa`, `…_shared-rnd`, each on the card of the same name. Result: `cc-refresh-result_shared-rnd` on `shared-rnd`, reading `Refresh: connected · 2026-09-28T05:54:55Z — authenticated as system:serviceaccount:group-sync-operator:group-sync-dashboard-cluster-poller, server v1.35.6`. At 1280, after four answers: 137 ids, `"duplicates": []`, `"mismatched": []`, 4 results. Screenshots `05`, `13`, `18-*-refresh-shared-rnd.png`. |
 | #447 | The refused admin reads why: `HTTP 422 — rejoin-password-within-username: …` | PASS | The follow-up run on the throwaway `walk-447` (`evidence/447-walk-output.txt`, at 1280, 768 and 375 px):<br>• Refresh answered `Refresh: auth_failed · 2026-09-28T06:10:29Z — 401 Unauthorized — token invalid or expired`, and the card offered `Rejoin…` (`19`, `22`, `25-*-447-refused-rejoin-offered.png`).<br>• With `developer-walk` and a password inside it typed, the dialog read exactly `HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent`. The password field was then empty (`"password_length": 0`), and the username stayed (`20`, `23`, `26-*-447-dialog-422.png`).<br>• The card's line read `Rejoin: HTTP 422 — ` followed by the same sentence (`21`, `24`, `27-*-447-card-rejoin-line.png`).<br>• The three POSTs to `/rejoin` answered `[422, 422, 422]`.<br>Nothing was sent. From 06:08:28Z the pod log has 0 `fleet-login`, 0 `cluster-rejoin-review`, 0 `cluster-rejoined`, 0 `cluster-rejoin-failed` and 0 `fleet-lookup` lines, 0 lines naming the fleet account, and 3 `cluster-refreshed cluster=walk-447 … by=developer outcome=auth_failed` (`evidence/447-walk-podlog447.txt`). The OAuth audit log since 06:08:28Z has `developer-walk, all: 0; authorize: 0` and `fleet account, all: 0`; `developer` has 1 authorize, the walk's own login at 06:10:25Z (`evidence/447-after-audit.txt`). The same read over the main walk's window found its two `developer` logins, so the read works (`evidence/447-sanity-audit.txt`). The main walk found no card that offered Rejoin, with `shared-qa` left alone: `cards offering Rejoin (#447 needs one): []`. |
-| #435 | The lab's clusters still poll as before the deploy | PASS | On 1.10.0, all six enabled clusters were `ok` at `2026-09-28T04:54:01Z` (`evidence/before-1.10.0-polls.txt`). On 1.11.0 they were `ok` at the first poll, `05:40:13Z`–`05:40:14Z` (`evidence/before-1.11.0-first-polls.txt`), and `ok` as served at `05:54:12Z`–`05:54:13Z` (`evidence/walk-api-polls.json`). The six are `dashboard`, `mock-privateca`, `mock-selfsigned`, `mock-trusted`, `shared-qa` and `shared-rnd`. The pod log since the 1.11.0 pod was created at 05:39:41Z has 894 lines, with 0 `cluster-unreachable`, 0 `fleet-login` and 0 `ERROR or Traceback` lines (`evidence/deploy-podlog.txt`). No status changed, so there is no finding. See "Where the 1.10.0 status comes from" for what the store keeps. |
+| #435 | The lab's clusters still poll as before the deploy | PASS | On 1.10.0, all six enabled clusters were `ok` at `2026-09-28T04:54:01Z` (`evidence/before-1.10.0-polls.txt`). On 1.11.0 they were `ok` at the first poll, `05:40:13Z`–`05:40:14Z` (`evidence/before-1.11.0-first-polls.txt`), and `ok` as served at `05:54:12Z`–`05:54:13Z` (`evidence/walk-api-polls.json`). The six are `dashboard`, `mock-privateca`, `mock-selfsigned`, `mock-trusted`, `shared-qa` and `shared-rnd`. The pod log from the 1.11.0 pod's creation at 05:39:41Z to the capture at 05:57:33Z has 894 lines, with 0 `cluster-unreachable`, 0 `fleet-login` and 0 `ERROR or Traceback` lines (`evidence/deploy-podlog.txt`); the 6 `cluster-unreachable` lines after 06:09:55Z are the #447 follow-up's throwaway `walk-447` (`evidence/447-walk-podlog447.txt`). The six were `ok` in each of these three snapshots, so there is no finding; the store keeps no poll between them (see below). See "Where the 1.10.0 status comes from" for what the store keeps. |
 | walk | The pod log: `cluster-refreshed` lines `by=developer`, and no `fleet-login` | PASS | `evidence/walk-podlog.txt`, from 05:52:01Z: `cluster-refreshed lines: 6, of them by=developer: 6` (3 × `shared-rnd outcome=ok`, 3 × mock `outcome=unreachable`); `fleet-login lines: 0`; `cluster-rejoin / cluster-rejoined lines: 0`; `ERROR or Traceback lines: 0` |
 | walk | No page error, no sideways scroll | PASS | `no uncaught page errors: []` and `no 'Dashboard API error'` at each width; `scrollWidth, innerWidth` `[1280, 1280]`, `[768, 768]`, `[375, 375]` |
 
@@ -50,8 +52,9 @@ Argo CD change, and no other object was created. The kept PVCs have the same UID
 | 05:53:45 → 05:57:18 | The walk: `whoami` `"cluster_admin": true`, `/api/clusterconfigs` `200`, then the three widths | `evidence/walk-output.txt`, `screenshots/` |
 | 05:57:31 | The grant removed by its label. Then: `can-i` `no`; `oc get … -l walk.gsd.lab/run=batch-1110-2026-09-28` `No resources found`; PVC UIDs; the Lease; `shared-qa`; no onboarding ConfigMap; 1.11.0 still serving | `evidence/grant-delete.txt`, `evidence/after-*.txt` |
 | 05:57:33 | The pod log for the walk window (from 05:52:01Z) and since the pod's creation (from 05:39:41Z) | `evidence/walk-podlog.txt`, `evidence/deploy-podlog.txt` |
-| 05:58:49 | The cluster Secrets' `resourceVersion`s, which match the pre-flight read | `evidence/after-secret-rvs.txt` |
+| 05:58:49 | The cluster Secrets' `resourceVersion`s after the walk. This folder holds no pre-flight read of them; the comparison is with the 2026-09-27 walk's `end-secrets.txt` (`mock-trusted` `rv=993483`, `shared-qa` `rv=2981054`) | `evidence/after-secret-rvs.txt` |
 | 05:58:57 | A fresh login as `developer` after the tier cache had expired: `"cluster_admin": false`, `/api/clusterconfigs` `403`, no Cluster Configurations tab | `evidence/after-tier.txt` |
+| 06:01:49–50 | The end state, once more: `can-i` `no`; no object with the walk's label; the same PVC UIDs; the Lease at 5127386 with no holder; `shared-qa` at 2981054; no onboarding ConfigMap; the pod log from 05:52:01Z still 6 `cluster-refreshed` (all `by=developer`), 0 `fleet-login`, 0 `cluster-rejoin` | `evidence/final-*.txt` |
 | 06:08:28 | #447 follow-up, before: `can-i` `no`; no object with `walk.gsd.lab/run=batch-1110-447-2026-09-28`; the same PVC UIDs; the Lease at 5127386 with no holder; `shared-qa` at 2981054; 0 audit events | `evidence/447-before-*.txt` |
 | 06:09:37 | The grant again (`scripts/grant-447.yaml`, the new label); `can-i`: `yes`. `scripts/secret-447.sh apply` created `gsd-cluster-walk-447` (uid `c5f436d0-b5b7-4f22-b89e-a6c5e06935f9`) from a mode-600 manifest: config keys `bearerToken` and `tlsClientConfig` (`{"insecure":false}`) | `evidence/447-grant-create.txt`, `evidence/447-granted-*.txt`, `evidence/447-secret-apply.txt`, `evidence/447-applied-secret.txt` |
 | 06:09:55 | Discovery cycle 8: `added=walk-447`, `credential=bearer`. The first poll answered `auth_failed` (401) | `evidence/447-walk-podlog447.txt` |
@@ -60,7 +63,6 @@ Argo CD change, and no other object was created. The kept PVCs have the same UID
 | 06:14:55–56 | Discovery cycle 9: `removed=walk-447`; `walk-447: its Secret is gone; the poll thread stops (history kept)` | `evidence/447-walk-podlog447.txt` |
 | 06:15:09 | The pod log and the OAuth audit log from 06:08:28Z | `evidence/447-walk-podlog447.txt`, `evidence/447-after-audit.txt` |
 | 06:15:26 | A fresh login as `developer`: `"cluster_admin": false`, `/api/clusterconfigs` `403` | `evidence/447-after-tier.txt` |
-| 06:01:49–50 | The end state, once more: `can-i` `no`; no object with the walk's label; the same PVC UIDs; the Lease at 5127386 with no holder; `shared-qa` at 2981054; no onboarding ConfigMap; the pod log from 05:52:01Z still 6 `cluster-refreshed` (all `by=developer`), 0 `fleet-login`, 0 `cluster-rejoin` | `evidence/final-*.txt` |
 
 **The repaint (#390).** The walk sets a data attribute on the Rotate field's node before leaving the page alone. The
 page's 60-second timer re-fetched `/api/clusterconfigs` and replaced `#main`, so the node that carried the attribute
@@ -76,8 +78,10 @@ else, so pressing Overwrite, Delete or Rejoin could not have reached the dashboa
 ## Why #404 has no throwaway ConfigMap
 
 The brief allowed one throwaway onboarding ConfigMap, but only in a shape that causes no login of any kind and no
-fleet-password read: no `saTokenLookup` and no `ldapConnectionBootstrap`. The code refuses every such stanza, and
-turns every stanza it accepts into a fleet login:
+fleet-password read: no `saTokenLookup` and no `ldapConnectionBootstrap`. The code refuses every such stanza. Every
+stanza it accepts declares `saTokenLookup: true`; an enabled one is handed to the fleet lookup. A disabled one
+(`enabled: false`) is accepted and never looked up, but it never gets the generated Secret either, and the row's chip
+`ConfigMap <name> → Secret <name>` names that Secret, which only the lookup writes:
 - A ConfigMap stanza must declare `saTokenLookup: true` and may carry no credential
   (`local-development/gsd/config.py#parse_cluster_entries`):
   ```python
@@ -100,7 +104,8 @@ turns every stanza it accepts into a fleet login:
   same method. `lookup` is "the whole retrieval for one cluster: password, login, read, revoke"
   (`local-development/gsd/fleetlookup.py#lookup`).
 
-So the safe shape does not exist, and the row is NOT RUN. The header still shows the #404 layout on this lab:
+So the safe shape does not exist, and the one shape that avoids a login, `enabled: false`, could never show the row's
+`→ Secret <name>`; the row is NOT RUN. The header still shows the #404 layout on this lab:
 `by source` `in-cluster 1 values 4 Secret 23 ConfigMap 0`, and the discovery line
 `5 Secrets carry the discovery label · last read …`.
 
@@ -228,8 +233,9 @@ for k in version pvcs cani grant lease sharedqa secret; do "$F/scripts/capture.s
 "$F/scripts/capture.sh" audit 447-before "${T0}"                  # T0: the instant before the grant, RFC 3339
 oc create -f "$F/scripts/grant-447.yaml"
 "$F/scripts/secret-447.sh" apply                # then wait for `discovery … added=walk-447` (up to 300 s)
-GSD_UI_PASSWORD="$(crc console --credentials -o json | jq -r .clusterConfig.developerCredentials.password)" \
-  local-development/.venv/bin/python "$F/scripts/walk_447.py" walk
+GSD_WALK_REJOIN_PASSWORD=walk \
+  GSD_UI_PASSWORD="$(crc console --credentials -o json | jq -r .clusterConfig.developerCredentials.password)" \
+  local-development/.venv/bin/python "$F/scripts/walk_447.py" walk   # the Rejoin password: any part of developer-walk
 "$F/scripts/secret-447.sh" delete
 oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io \
   -l walk.gsd.lab/run=batch-1110-447-2026-09-28
