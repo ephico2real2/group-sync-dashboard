@@ -7141,7 +7141,7 @@ class TestClusterConfigPage:
         assert page.locator("#cc-cluster-east .cc-src-secret").inner_text() == "Secret gsd-cluster-east"
         assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 2
         assert page.locator("#cc-rotate-gitops, #cc-delete-gitops, #cc-rotate-retired, #cc-delete-retired").count() == 0
-        assert page.locator("#cc-refresh-gitops").count() == 1
+        assert page.locator("#cc-refresh_gitops").count() == 1
 
     def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
         """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster
