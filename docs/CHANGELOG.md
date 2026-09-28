@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
+  answer whether a cluster's trusted CA is this estate's root and whether it is inside its dates.
+  A CA is public PKI; a Secret or a ConfigMap is equally fine. The pin is
+  `trustedCA.enterpriseRoot.sha256` (empty by default). The warning before expiry reuses #314's
+  `warnings` channel. Spec only; no production code.
+
 - **Rejoin refuses a password that is the username or a part of it, ignoring case and surrounding spaces (#447).**
   The input check answers `422` in fixed words before any request is sent. A scrubbed username in the answer or logs
   can no longer reveal the password, whole or in part. Every existing password scrub, the request budget and the
