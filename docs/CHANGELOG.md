@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Scrub spans specified (#465, Epic D #384, `docs/specs/SPEC_D6_scrub_span.md`).** Rejoin's scrub cuts a password
+  out of text wherever it occurs, so a password that is part of the words or names around it is spelled back by its
+  `<redacted>` spans: measured, `update` and `a`, and 406 of the NCSC's 100,000 most common passwords on some path.
+  The spec refuses such a password before any request, and shows a quoted text that holds a secret as fixed words,
+  whole. Spec only; no production code.
+
 - **The page's lookup maps no longer answer `constructor` with Object's own property (#459).** A cluster of that
   name, a valid one, starts with Refresh idle and is offered Rejoin only once Refresh answers `auth_failed`. Its
   Reports lookups are fetched, its namespace-access form renders before the catalogue lists it, and a run on it no
