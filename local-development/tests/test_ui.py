@@ -7826,7 +7826,7 @@ class TestClusterConfigPage:
         monkeypatch.setattr("gsd.rejoin.rejoin", lambda *a, **k: calls.append(k) or {"outcome": "rejoined"})
         _open_as(page, base, "root")
         page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
-        page.click("#cc-refresh-east"); page.wait_for_selector("#cc-rejoin-east")
+        page.click("#cc-refresh_east"); page.wait_for_selector("#cc-rejoin-east")
         page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
         page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "alice")
         page.click("#rejoin-go")
