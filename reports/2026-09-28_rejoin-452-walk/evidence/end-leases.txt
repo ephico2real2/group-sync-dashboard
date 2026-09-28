@@ -1,0 +1,3 @@
+# oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o name | wc -l
+# at 2026-09-28T02:23:26Z
+       1
