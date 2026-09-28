@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import re
+import textwrap
 
 import pytest
 
@@ -27,13 +28,19 @@ _STEP6 = re.compile(
     r"^6\. \*\*.*?(?=^7\. \*\*)",
     re.M | re.S,
 )
-_PYTHON = re.compile(r"^```(?:python|py)\n(.*?)^```", re.S | re.M)
+# The program the walk runs: the body of the `oc exec … python3.14 - <<'PY' … PY` command.
+# ONE copy, the one that runs — a second copy in a fence is the one that drifts (OB2's review of #461).
+_HEREDOC = re.compile(r"<<'PY'\n(.*?)\n[ \t]*PY\n", re.S)
+
+
+def live_walk() -> str:
+    walk = _LIVE_WALK.search(SPEC.read_text())
+    assert walk, "SPEC_S4c has no live §3.12 walk before §3.13"
+    return walk.group(0)
 
 
 def live_step6() -> str:
-    walk = _LIVE_WALK.search(SPEC.read_text())
-    assert walk, "SPEC_S4c has no live §3.12 walk before §3.13"
-    step = _STEP6.search(walk.group(0))
+    step = _STEP6.search(live_walk())
     assert step, "§3.12 has no step 6"
     return step.group(0)
 
@@ -80,12 +87,16 @@ def test_step6_names_the_counts_and_the_aborts():
 
 
 def test_step6_script_claims_and_never_reads_a_password():
-    """The in-pod script is real Python, calls claim(), and cannot present a password."""
-    blocks = _PYTHON.findall(live_step6())
-    assert blocks, "step 6 has no Python fence for the in-pod processes"
-    tree = ast.parse(blocks[0])
+    """The in-pod program — the heredoc the walk runs — is real Python, calls claim(), and cannot present a password."""
+    bodies = _HEREDOC.findall(live_step6())
+    assert bodies, "step 6 has no <<'PY' heredoc for the in-pod processes"
+    tree = ast.parse(textwrap.dedent(bodies[0]))
+    worker = next(node.value.value for node in tree.body
+                  if isinstance(node, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "WORKER" for t in node.targets))
+    worker_tree = ast.parse(worker)
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in [*ast.walk(tree), *ast.walk(worker_tree)]:
         if isinstance(node, ast.Import):
             names.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -98,3 +109,13 @@ def test_step6_script_claims_and_never_reads_a_password():
     assert "FleetLease" in names and "ClaimHeld" in names and "claim" in names
     for forbidden in ("fleet_password", "FleetLogin", "lookup", "FleetSession"):
         assert forbidden not in names, f"step 6's script can present a password: {forbidden}"
+
+
+def test_walk_stays_one_numbered_list():
+    """A fence at column 0 under a step closes the step AND the list, and the next step then renders as
+    text inside the previous paragraph (CommonMark: an ordered list that interrupts a paragraph must
+    start at 1 — "7. **The end.**" became running text under #461's first head). Every code block under
+    a step is indented to the step's content, as the walk's `oc` blocks are."""
+    walk = live_walk()
+    fences = [m.start() for m in re.finditer(r"^```", walk, re.M)]
+    assert not fences, "a fence at column 0 inside the §3.12 walk breaks its numbered list"

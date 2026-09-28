@@ -379,6 +379,16 @@ Decisions taken at review, recorded first and then applied:
   and a second replica cannot run on this lab (ReadWriteOnce, and the chart refuses `replicaCount > 1`
   with election on). SPEC_S4e's copy of the walk is the #432 text and is left as that record.
   `local-development/tests/test_s4c_step6_walk.py` holds the live step to that procedure.
+- **#445, PR #461 revision (2026-09-27): review of the first head, decisions D1–D4.** Codex
+  found that process A ran in the foreground, slept 20 s and released before the operator
+  could start B, so a sequential walk never observed ClaimHeld (**accepted**: one in-pod
+  coordinator starts A, waits for A's HELD line, runs B — which must print ClaimHeld naming
+  walk-step6-a — then tells A to release). OB2 found that a fence at column 0 inside step 6
+  closed the numbered list, so "7. The end." rendered as running text (**accepted**: the
+  coordinator command is an indented code block, 7 spaces, matching steps 1, 2, 6.0 and 6.4,
+  and the program exists once in the heredoc the walk runs). Codex's offline execution test
+  (sitecustomize, an sqlite transport and an oc stub) and a pending report under reports/
+  were **rejected**: too heavy for a document test; the lab walk is the acceptance.
 
 ## 0. The requirement, in business terms
 
@@ -1364,105 +1374,103 @@ and the release presents the password only as an account the configuration names
    Record `STEP6_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)`, the two challenging-client counts (step 1's
    `jq`), and the fleet account Lease's sha256 (`jq -S -c . | shasum -a 256`).
 
-   **6.1 Process A holds.** The heredoc expands on the workstation; the pod runs `python3.14` only.
-   The program is this one; argument `a` or `b` selects the role.
+   **6.1–6.3 Hold, challenge, release.** Run this single command from the workstation after 6.0.
+   The heredoc is supplied to Python inside the pod; no shell is needed in the image. A coordinator
+   starts two independent claim-only Python processes, `walk-step6-a` and `walk-step6-b`, without
+   a `LeaderElector`. It waits for A's
+   `HELD` before starting B and tells A to release only after B finishes. Do not run either role
+   separately. The account under test remains `developer`; API access uses the pod's mounted
+   ServiceAccount. No password is read.
 
-```python
-"""Two claim()s on developer. No password is read."""
-import os
-import sys
-import time
-
-from gsd.config import load_settings
-from gsd.fleetstate import ClaimHeld, FleetLease, claim_seconds
-from gsd.kube import ClusterClient
-
-ACCOUNT = "developer"
-settings = load_settings(os.environ["GSD_CONFIG"])
-host = settings.host_cluster()
-if host is None:
-    sys.exit("ABORT: no host cluster")
-client = ClusterClient(host, timeout=settings.request_timeout_seconds)
-ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8").read().strip()
-role = sys.argv[1] if len(sys.argv) > 1 else ""
-lease = FleetLease(client, ns, ACCOUNT, claim_seconds=claim_seconds(settings),
-                   identity=f"walk-step6-{role}")
-if role == "a":
-    lease.claim()
-    print("HELD", lease.record.holder, lease.name, flush=True)
-    time.sleep(20)
-    lease.release()
-    print("RELEASED", flush=True)
-elif role == "b":
-    try:
-        lease.claim()
-    except ClaimHeld as exc:
-        print("ClaimHeld", exc, flush=True)
-        sys.exit(0)
-    print("ABORT: process B did not raise ClaimHeld", flush=True)
-    lease.release()
-    sys.exit(2)
-else:
-    sys.exit("ABORT: role is a or b")
-```
-
-       oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- \
-         python3.14 -c "$(cat <<'PY'
-       """Two claim()s on developer. No password is read."""
-       import os
+       oc exec -i -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 - <<'PY'
+       import select
+       import subprocess
        import sys
-       import time
-
+       
+       WORKER = r'''
+       import os
+       import select
+       import sys
        from gsd.config import load_settings
        from gsd.fleetstate import ClaimHeld, FleetLease, claim_seconds
        from gsd.kube import ClusterClient
-
-       ACCOUNT = "developer"
+       
        settings = load_settings(os.environ["GSD_CONFIG"])
        host = settings.host_cluster()
        if host is None:
            sys.exit("ABORT: no host cluster")
        client = ClusterClient(host, timeout=settings.request_timeout_seconds)
-       ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8").read().strip()
-       role = sys.argv[1] if len(sys.argv) > 1 else ""
-       lease = FleetLease(client, ns, ACCOUNT, claim_seconds=claim_seconds(settings),
+       with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8") as stream:
+           ns = stream.read().strip()
+       role = sys.argv[1]
+       lease = FleetLease(client, ns, "developer", claim_seconds=claim_seconds(settings),
                           identity=f"walk-step6-{role}")
        if role == "a":
            lease.claim()
-           print("HELD", lease.record.holder, lease.name, flush=True)
-           time.sleep(20)
-           lease.release()
+           try:
+               print("HELD", lease.record.holder, lease.name, flush=True)
+               if not select.select([sys.stdin], [], [], 30)[0] or sys.stdin.readline().strip() != "release":
+                   sys.exit("ABORT: coordinator did not request release")
+           finally:
+               released = lease.release()
+               if released is None or released.holder or lease.read().holder:
+                   sys.exit("ABORT: process A did not release")
            print("RELEASED", flush=True)
        elif role == "b":
            try:
                lease.claim()
            except ClaimHeld as exc:
+               expected = f"walk-step6-a holds {lease.name} until "
+               if not str(exc).startswith(expected):
+                   sys.exit("ABORT: process B did not observe A's held claim")
                print("ClaimHeld", exc, flush=True)
-               sys.exit(0)
-           print("ABORT: process B did not raise ClaimHeld", flush=True)
-           lease.release()
-           sys.exit(2)
+           else:
+               lease.release()
+               sys.exit("ABORT: process B did not raise ClaimHeld")
        else:
            sys.exit("ABORT: role is a or b")
+       '''
+       
+       a = subprocess.Popen([sys.executable, "-u", "-c", WORKER, "a"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, text=True)
+       ok = False
+       try:
+           if not select.select([a.stdout], [], [], 10)[0]:
+               raise RuntimeError("ABORT: process A did not hold")
+           held = a.stdout.readline().strip()
+           if held != "HELD walk-step6-a gsd-fleet-88fa0d759f845b47":
+               raise RuntimeError("ABORT: process A did not hold")
+           print(held, flush=True)
+           b = subprocess.run([sys.executable, "-u", "-c", WORKER, "b"],
+                              capture_output=True, text=True, timeout=15)
+           expected = "ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until "
+           if b.returncode != 0 or not b.stdout.strip().startswith(expected):
+               raise RuntimeError("ABORT: process B did not raise ClaimHeld")
+           print(b.stdout.strip(), flush=True)
+           ok = True
+       except (RuntimeError, subprocess.TimeoutExpired) as exc:
+           print(str(exc) if isinstance(exc, RuntimeError) else "ABORT: process B timed out", file=sys.stderr)
+       finally:
+           try:
+               tail, _ = a.communicate("release\n", timeout=10)
+               if a.returncode != 0 or tail.strip() != "RELEASED":
+                   ok = False
+                   print("ABORT: process A did not release", file=sys.stderr)
+               else:
+                   print("RELEASED", flush=True)
+           except subprocess.TimeoutExpired:
+               a.kill()
+               a.communicate()
+               ok = False
+               print("ABORT: process A did not release; wait for Lease expiry before retrying", file=sys.stderr)
+       sys.exit(0 if ok else 2)
        PY
-       )" a
 
-   Expect `HELD walk-step6-a gsd-fleet-88fa0d759f845b47`. Then:
-
-       oc get leases.coordination.k8s.io gsd-fleet-88fa0d759f845b47 -n group-sync-dashboard \
-         -o jsonpath='{.spec.holderIdentity}{"\n"}'
-
-   Expect `walk-step6-a`. If A did not print `HELD`, or the holder is not `walk-step6-a`:
-   **ABORT: process A did not hold.**
-
-   **6.2 Process B is `ClaimHeld`.** Same command, last argument `b` (identity `walk-step6-b`),
-   while A still sleeps.
-
-   Expect one line `ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until …` and exit 0.
-   If B prints `ABORT: process B did not raise ClaimHeld` or takes the claim:
-   **ABORT: process B did not raise ClaimHeld.**
-
-   **6.3 A lets go.** Wait for A's `RELEASED`. Holder is empty. Do not start B again.
+   Expect `HELD walk-step6-a gsd-fleet-88fa0d759f845b47`, then one line
+   `ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until …`, then `RELEASED`, and exit 0.
+   Any nonzero exit or missing line is an abort. On a disconnect or timeout, inspect the Lease using
+   6.0 and wait for its holder to clear or its actual duration to expire before retrying. Do not
+   delete the Lease or its refusal annotations to recover. Continue to 6.4 only on success.
 
    **6.4 Counts.** Same derived audit as step 3: `ResponseComplete` `GET /oauth/authorize` for
    `openshift-challenging-client` in `[STEP6_SINCE, now)`, `developer` and the fleet account only
