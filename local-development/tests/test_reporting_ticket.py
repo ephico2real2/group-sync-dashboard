@@ -6,6 +6,13 @@ from gsd.reporting.ticket import TicketError, mint, verify
 SECRET = b"x" * 48
 
 
+def _tampered(ticket: str) -> str:
+    """Change one signature character to a different one. Overwriting the last two with "AA" was a no-op once in
+    ~1,000 mints (the nonce makes the signature random), and the test then failed at random (main run 36362295306)."""
+    i = len(ticket) - 5    # inside the signature, and not its last character, whose low bits are fixed padding
+    return ticket[:i] + ("B" if ticket[i] == "A" else "A") + ticket[i + 1:]
+
+
 def test_round_trip_binds_viewer_and_tier():
     t = mint(SECRET, "root", "all", 300, now=1_000)
     claims = verify(SECRET, t, "root", now=1_100)
@@ -17,7 +24,7 @@ def test_round_trip_binds_viewer_and_tier():
     ("expired", lambda t: (SECRET, t, "root", 1_400)),
     ("other viewer", lambda t: (SECRET, t, "alice", 1_100)),
     ("no viewer header", lambda t: (SECRET, t, None, 1_100)),
-    ("tampered", lambda t: (SECRET, t[:-2] + "AA", "root", 1_100)),
+    ("tampered", lambda t: (SECRET, _tampered(t), "root", 1_100)),
     ("malformed", lambda t: (SECRET, "nope", "root", 1_100)),
 ])
 def test_every_refusal_is_a_ticket_error(bad):
@@ -66,3 +73,12 @@ def test_a_ticket_has_exactly_one_spelling():
         with pytest.raises(TicketError):
             verify(SECRET, malformed, "root", now=1_100)
     assert verify(SECRET, ticket, "root", now=1_100)["viewer"] == "root"
+
+
+def test_tampering_always_changes_the_ticket_and_is_refused():
+    for _ in range(5_000):
+        ticket = mint(SECRET, "root", "all", 300, now=1_000)
+        bad = _tampered(ticket)
+        assert bad != ticket
+        with pytest.raises(TicketError):
+            verify(SECRET, bad, "root", now=1_100)
