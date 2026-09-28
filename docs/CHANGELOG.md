@@ -10,6 +10,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **SPEC_S4c §3.12 step 6 is a lab procedure a walk can run (#445).** The #444 walk stopped on the
+  step as written: a leader-election standby never calls `claim()`, and a dashboard process on the
+  workstation that carries the pod's ServiceAccount token can read the fleet password through the
+  walk's keep-grant. The step now runs two claim-only processes inside the already-running pod, as
+  `developer`, and expects `ClaimHeld` plus 0 authorizes for `developer` and for the fleet account.
+  No application code.
+
 - **Refresh keeps its button and result IDs separate (#441).** Clusters named `east` and `result-east`
   can share the page without a button using another card's result ID. The four Refresh states, results
   surviving a repaint, and one probe in flight per cluster are unchanged. Application **1.10.0**, chart 0.59.12.
