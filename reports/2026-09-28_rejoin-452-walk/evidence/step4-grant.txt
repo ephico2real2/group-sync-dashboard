@@ -1,0 +1,4 @@
+# oc get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=walk-452-2026-09-28 -o wide
+# at 2026-09-28T02:15:18Z
+NAME                     ROLE                        AGE   USERS       GROUPS   SERVICEACCOUNTS
+walk-452-cluster-admin   ClusterRole/cluster-admin   1s    developer            
