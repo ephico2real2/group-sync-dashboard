@@ -194,9 +194,10 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.
                    #311: each card's Refresh state by cluster id — in flight, or the answer — so the repaint keeps it.
                    #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage.
-                   #459: a map keyed by a bare cluster id has no prototype — `constructor` is a valid name, and {} answers it. */
+                   #459: a map keyed by a bare cluster id has no prototype — `constructor` is a valid name, and {} answers it.
+                   #478: nor do the form's labels — on {}, a key typed as `__proto__` ran Object.prototype's setter and vanished. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
-                               labels: {}, labelKey: "", labelVal: "", test: null },
+                               labels: Object.create(null), labelKey: "", labelVal: "", test: null },
                 clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: Object.create(null),
                 clusterRejoin: Object.create(null),   // #316: each card's Rejoin answer by cluster id — never a username or a password
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
@@ -777,6 +778,13 @@ async function guard403(promise) {
    only the second is checkable from the screen. Driven by whoami's `visibility`, which
    the server computes — hidden entirely when the wire declares nothing (an older build,
    or no authenticated identity worth reporting). */
+/* whoami's `visibility.clusters[id]` by OWN key (#478): the id comes from the URL, and a stale link naming
+   `constructor` or `toString` read Object.prototype's function off the parsed map — `.scope` undefined, so a wide
+   reader was painted narrowed ("Your view", the Overview's refusal) above a cluster that does not exist. */
+function clusterVisibility(vis, cluster) {
+  const m = vis && vis.clusters;
+  return m && cluster && Object.prototype.hasOwnProperty.call(m, cluster) ? m[cluster] : undefined;
+}
 function renderScopePill() {
   const pill = $("scope-pill");
   if (!pill) return;
@@ -785,7 +793,7 @@ function renderScopePill() {
   if (!vis) { pill.hidden = true; pill.textContent = ""; return; }
   // The SELECTED cluster's decision when whoami carries one, the headline otherwise: the
   // pill sits above a cluster-scoped page and must describe that cluster's view.
-  const forCluster = vis.clusters && view.cluster && vis.clusters[view.cluster];
+  const forCluster = clusterVisibility(vis, view.cluster);
   // `!== "all"`, the same fail-closed rule as narrowedFor: a missing or junk scope painted
   // "Full view" above a layout that was narrowed (review of D2, Codex).
   const self = (forCluster ? forCluster.scope : vis.scope) !== "all";
@@ -856,7 +864,7 @@ function readerTierKnown() {
 function scopeFor(w, cluster) {
   const vis = w && w.visibility;
   if (!vis) return null;
-  const c = vis.clusters && cluster && vis.clusters[cluster];
+  const c = clusterVisibility(vis, cluster);
   return c ? c.scope : vis.scope;
 }
 function narrowedFor(w) {
@@ -884,7 +892,7 @@ function narrowedOnHost() {
 function scopeWhy(w, cluster) {
   const vis = w && w.authenticated && w.visibility;
   if (!vis || vis.enabled === false || !cluster) return "";
-  const c = vis.clusters && vis.clusters[cluster];
+  const c = clusterVisibility(vis, cluster);
   if (!c) return "";
   if (c.policy === "inherit") return "The host decides your view of this cluster.";
   if (c.policy === "remote-sar") {
@@ -5272,6 +5280,9 @@ function policyPage() {
 /* #167 — namespaces are entities, not a filter: every one the poller sees, findable by name OR
    by a label value with the same AND contract as the other boxes, and each one a page. */
 const labelShort = (key) => String(key).split("/").pop();
+/* A namespace's label by OWN key, like `selectedFor` (#478): a configured key such as `constructor` or `toString` is
+   a valid label name, and a namespace without it read Object.prototype's function — shown, and matched by the search. */
+const labelValue = (labels, key) => (labels && Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : undefined);
 
 /* THE FOLD'S THRESHOLD AND THE PAGE SIZE ARE THE SAME NUMBER, and that is deliberate (#261): a row is
    about 34 px at 1280, so 25 rows is roughly one screen. A reader learns one number instead of two, and
@@ -5302,7 +5313,7 @@ function namespacesCard() {
   // ~1,900 px away from the rows once the page is scrolled. A namespace shows when it matches BOTH,
   // and neither box clears the other.
   const ownQ = (view.nsIndexSearch || "").trim();
-  const fieldsOf = (n) => [n.name, ...keys.map((k) => (n.labels || {})[k])];
+  const fieldsOf = (n) => [n.name, ...keys.map((k) => labelValue(n.labels, k))];
   const matches = (n) => matchesSearch(fieldsOf(n), q) && matchesSearch(fieldsOf(n), ownQ);
   const shown = inScope.filter(matches);
   // THE DEFAULT IS DECIDED BY WHAT THE SECTION HOLDS, never by what a search narrowed it to: keying it
@@ -5469,7 +5480,7 @@ function namespacesCard() {
           <th class="num">Via groups</th><th class="num">Direct grants</th></tr></thead>
         <tbody>${paged.map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
           <td><button type="button" class="drill" id="ns-row-${esc(n.name)}">${esc(n.name)}</button></td>
-          ${keys.map((k) => `<td class="mono muted">${esc((n.labels || {})[k] || "—")}</td>`).join("")}
+          ${keys.map((k) => `<td class="mono muted">${esc(labelValue(n.labels, k) || "—")}</td>`).join("")}
           <td class="num ${n.via_groups ? "" : "muted"}">${n.via_groups}</td>
           <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td>
         </tr>`).join("")}</tbody></table></div>`
@@ -5567,8 +5578,8 @@ function nsDetail() {
   const wideOpen = !!view.nsWideOpen;
   const kpi = (label, value, cls) => `<div class="kpi"><div class="label">${label}</div><div class="value ${cls || ""}">${value}</div></div>`;
   const labelledNote = keys.length
-    ? (keys.some((k) => labels[k])
-        ? `Labelled ${keys.filter((k) => labels[k]).map((k) => `<code>${esc(k)}=${esc(labels[k])}</code>`).join(" and ")}.`
+    ? (keys.some((k) => labelValue(labels, k))
+        ? `Labelled ${keys.filter((k) => labelValue(labels, k)).map((k) => `<code>${esc(k)}=${esc(labelValue(labels, k))}</code>`).join(" and ")}.`
         : `Carries none of the captured labels (${keys.map((k) => `<code>${esc(k)}</code>`).join(", ")}) — outside the naming convention,
            so no mnemonic-based report will ever pick it up.`)
     : "";
@@ -5576,7 +5587,7 @@ function nsDetail() {
     <button class="back" id="back">${backLabel()}</button>
     <h2>${esc(d.name)}${d.present ? "" : ` <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>no longer on the cluster</span>`}</h2>
     <div class="kpis">
-      ${keys.map((k) => kpi(esc(labelShort(k)), esc(labels[k] || "— none —"), labels[k] ? "sm mono" : "sm muted")).join("")}
+      ${keys.map((k) => kpi(esc(labelShort(k)), esc(labelValue(labels, k) || "— none —"), labelValue(labels, k) ? "sm mono" : "sm muted")).join("")}
       ${self ? "" : kpi("People who reach it", d.people == null ? "—" : d.people)}
       ${kpi(self ? "Via your groups" : "Via groups", viaReal.length, viaReal.length ? "" : "muted")}
       ${kpi(self ? "Your direct grants" : "Direct grants", people.length, people.length ? "err" : "muted")}
@@ -5634,8 +5645,8 @@ function nsDetail() {
         <td class="muted">${esc(x.binding_kind)} <code>${esc(x.binding_name)}</code></td></tr>`).join("")}</tbody></table></div>
   </section>` : ""}
   ${(d.siblings || []).length ? `<section class="card">
-    <h2>Same ${esc(labelShort(d.sibling_key))} <span class="muted fw-normal">· ${esc(labels[d.sibling_key])}</span></h2>
-    <div class="filterbar-note mb-4">Sibling namespaces sharing <code>${esc(d.sibling_key)}=${esc(labels[d.sibling_key])}</code>. Typing the value in the
+    <h2>Same ${esc(labelShort(d.sibling_key))} <span class="muted fw-normal">· ${esc(labelValue(labels, d.sibling_key))}</span></h2>
+    <div class="filterbar-note mb-4">Sibling namespaces sharing <code>${esc(d.sibling_key)}=${esc(labelValue(labels, d.sibling_key))}</code>. Typing the value in the
       box finds all ${d.siblings.length + 1} at once.</div>
     <div>${d.siblings.map((n) => `<button type="button" class="drill mt-2" data-ns="${esc(n)}">${esc(n)}</button>`).join(" ")}</div>
   </section>` : ""}
@@ -5715,7 +5726,7 @@ function lookupMatches(q) {
   const users = ((data.users && data.users.users) || []).filter((u) => matchesSearch([u.user_name, u.full_name], q));
   const keys = (data.namespaces && data.namespaces.label_keys) || [];
   const namespaces = ((data.namespaces && data.namespaces.namespaces) || [])
-    .filter((n) => matchesSearch([n.name, ...keys.map((k) => (n.labels || {})[k])], q));
+    .filter((n) => matchesSearch([n.name, ...keys.map((k) => labelValue(n.labels, k))], q));
   return { groups, users, namespaces, keys };
 }
 /* On a list page: the door to the other two kinds for what was typed. Counts only for a kind this
@@ -5799,7 +5810,7 @@ function lookupPage() {
       <td class="num">${u.group_count || 0}</td></tr>`).join("")}</tbody></table></div>${more(m.users, ((data.users || {}).users || []).length, "users")}`;
   const nT = `<div class="scroll-x"><table><thead><tr><th>Namespace</th>${m.keys.map((k) => `<th>${esc(labelShort(k))}</th>`).join("")}<th class="num">Direct grants</th></tr></thead>
     <tbody>${m.namespaces.slice(0, LOOKUP_PER_KIND).map((n) => `<tr class="rowlink" data-ns="${esc(n.name)}">
-      <td><button type="button" class="drill">${hl(n.name, q)}</button></td>${m.keys.map((k) => `<td class="mono muted">${hl((n.labels || {})[k] || "—", q)}</td>`).join("")}
+      <td><button type="button" class="drill">${hl(n.name, q)}</button></td>${m.keys.map((k) => `<td class="mono muted">${hl(labelValue(n.labels, k) || "—", q)}</td>`).join("")}
       <td class="num ${n.direct_grants ? "err" : "muted"}">${n.direct_grants}</td></tr>`).join("")}</tbody></table></div>${more(m.namespaces, ((data.namespaces || {}).namespaces || []).length, "nsaudit")}`;
   // The zero-denominator honesty of the list pages: "the search is hiding it" is a claim about the
   // data, and on a cluster with nothing recorded (a failed poll, a fresh one) it was false — the
@@ -6556,7 +6567,7 @@ function wireClusterConfig() {
 }
 function ccEmptyForm() {
   return { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
-           labels: {}, labelKey: "", labelVal: "", test: null };
+           labels: Object.create(null), labelKey: "", labelVal: "", test: null };   // no prototype, as in `view` (#478)
 }
 /* #316 (SPEC_D4 §3.6): the Rejoin dialog. What is typed lives only in its two fields: never in `view`, storage or a URL. */
 function openRejoin(id) {
