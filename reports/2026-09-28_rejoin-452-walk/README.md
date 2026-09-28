@@ -23,7 +23,7 @@ binding (SPEC_D4 D4-18).
 | OB2's test fails before and passes after | **PASS** (re-run for this walk) | `evidence/step3-hermetic-0683da6.txt`: `1 failed`, `AssertionError: the rejoined Secret does not load: Finding(… code='unsupported-config-key', detail='config.ldapConnectionBootstrap without saTokenLookup or userSelfLogin configures a login that would never happen')`, gsd 1.5.0 imported from the copy. `evidence/step3-hermetic-268ea63.txt`: `1 passed`, gsd 1.6.0 |
 | The full suite is green | not this walk | the implementing PR (#453) |
 | Reviewed by two seats other than the author: Grok and Codex | not this walk | the implementing PR (#453) |
-| Deployed; the next Rejoin walk shows a rejoined declaring Secret still served | **PASS** | 1.6.0 at `268ea63935`. Before: `config_keys` `bearerToken`, `ldapConnectionBootstrap`, `tlsClientConfig`, and `token-source: remote-lookup` (`evidence/step2-secret.txt`). Rejoin `rejoined · 2026-09-28T02:16:58Z`. After: `config_keys` `bearerToken`, `tlsClientConfig`, and `token-source: rejoin`, with no `lookup-account` (`evidence/step5-end-secret.txt`). `discovery cycle=8 … refused=1 changed=walk-452` (the one refusal is `gsd-cluster-mock-refusal:insecure-with-ca`, standing since cycle 1). Row `status: ok`, `retired: false`, `findings: []`. Refresh `connected`, CONNECTION `ok` (`evidence/walk-output.txt`, `16`–`18-*-step5-card-served.png`) |
+| Deployed; the next Rejoin walk shows a rejoined declaring Secret still served | **PASS** | 1.6.0 at `268ea63935`. Before: `config_keys` `bearerToken`, `ldapConnectionBootstrap`, `tlsClientConfig`, and `token-source: remote-lookup` (`evidence/step2-secret.txt`). Rejoin `rejoined · 2026-09-28T02:16:58Z`. After: `config_keys` `bearerToken`, `tlsClientConfig`, and `token-source: rejoin`, with no `lookup-account` (`evidence/step5-end-secret.txt`). `discovery cycle=8 … refused=1 changed=walk-452` (a global count: cycles 7, 8 and 9 each report `refused=1` and no `refused_now`; this walk's captures do not name that refusal). Row `status: ok`, `retired: false`, `findings: []`. Refresh `connected`, CONNECTION `ok` (`evidence/walk-output.txt`, `16`–`18-*-step5-card-served.png`) |
 
 **Must not change** (#452): the Rejoin provenance annotations are all present on the rewritten Secret
 (`rejoined-by`, `rejoin-account`, `rejoined-at`, source namespace and ServiceAccount). The lookup's own write keeping
@@ -117,9 +117,13 @@ from 02:13:57Z).
    (`Signed in to walk-452 as <redacted>`, `account=<redacted> rejoin_by=<redacted>`). This is #316's item 1, seen
    again: CRC's `developer` password is the same as its username, and the application scrubs the password by value
    (`reports/2026-09-27_rejoin-walk/README.md`). The Secret's `rejoined-by`/`rejoin-account` and the
-   `cluster-secret-rotated … by=developer` line name `developer` as written. No password is captured anywhere: it
-   was read from `crc console` into the walk's environment only. No bearer token or unredacted `sha256~` value is in
-   this folder. The fleet account's login name is not in this folder either.
+   `cluster-secret-rotated … by=developer` line name `developer` as written. Password fields are empty in every
+   captured dialog, and no live bearer-token value or unredacted `sha256~` token appears in this report. The scripts
+   read the password from `crc console` into the walk's environment only. The literal string `developer` is
+   retained as a username in scripts, evidence and screenshot text; because it also equals this lab account's
+   reported CRC-default password, the password value is not absent from the report. Two synthetic tokens are: the
+   test fixture quoted in `evidence/step3-hermetic-0683da6.txt`, and the all-zero dummy `scripts/shape.py` builds.
+   The fleet account's login name is not in this folder.
 2. **After `rejoined`, the closed dialog's message element still read `Signing in once…`**
    (`dialog after the answer` in `evidence/walk-output.txt`). The dialog was closed with both fields empty. Whether
    the next open clears it was not measured in this walk.
