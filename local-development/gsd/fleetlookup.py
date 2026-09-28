@@ -449,9 +449,10 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
             # the caller's, as they are for the claim.
             lease.reserve(CredentialGate._target(cluster.api_url), digest)
         knobs = {"clock": clock} if clock is not None else {}
+        login = FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep,
+                           secrets=held, **knobs)
         try:
-            with FleetLogin(cluster, account, password, timeout=settings.request_timeout_seconds, sleep=sleep,
-                            secrets=held, **knobs) as session:
+            with login as session:
                 if lease is not None:
                     lease.complete()   # a session came back: the attempt's entry goes, whatever the read does (#293)
                 secrets.append(session.token)
@@ -460,7 +461,16 @@ def lookup(cluster: ClusterConfig, settings: Settings, host_client: ClusterClien
                     # Keep the SAME process-lifetime gate used by every existing lookup caller — THIS
                     # target's entry only: a success elsewhere must not gate another cluster (#315).
                     gate.spend(cluster.api_url, account, password)
-                sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
+                # THE TOKEN READ IS HANDED TO THE LOGIN BEFORE THE REVOKE RUNS (#440): leaving `with` revokes the
+                # session, and that line quotes the remote's answer — which may echo the token this process now
+                # holds. A read the lookup REFUSED after decoding the token carries it on `exc.secrets` (P1-1) and
+                # reaches the same revoke: both are scrubbed there, as Rejoin does (`gsd/rejoin.py#_exchange`).
+                try:
+                    sa_token = read_sa_token(session.token, cluster, source, timeout=settings.request_timeout_seconds)
+                except LookupRefused as exc:
+                    login.add_secrets(*exc.secrets)
+                    raise
+                login.add_secrets(sa_token.token)
         except LoginError as exc:
             which = f" against {exc.host}" if exc.host else ""
             if exc.bound:
