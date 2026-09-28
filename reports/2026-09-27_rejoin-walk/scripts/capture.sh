@@ -8,7 +8,7 @@
 #   capture.sh tokens <label>           OAuth access tokens, counted: developer's by client, the fleet account's by client
 #   capture.sh cani <label>             `oc auth can-i update clusterrolebindings --as=developer`
 #   capture.sh grant <label>            the walk's binding, selected by its label (empty once removed)
-#   capture.sh secret <label>           gsd-cluster-rejoin-walk: metadata, annotations, data KEYS only
+#   capture.sh secret <label>           gsd-cluster-${GSD_WALK_ENTRY:-rejoin-walk}: metadata, annotations, data KEYS only
 #   capture.sh audit <label> <since>    the oauth-server audit log since <since> (RFC 3339), as COUNTS and derived rows
 #                                       (instant, kind, decision, status) for developer; counts only for the fleet account
 #   capture.sh tiers <label>            the pod's gsd_visibility_tier_checks_total{threshold="cluster_admin"} lines
@@ -22,6 +22,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 out="${here}/evidence/${label}-${kind}.txt"
 ns=group-sync-dashboard
 run_label=walk.gsd.lab/run=rejoin-2026-09-27
+entry="${GSD_WALK_ENTRY:-rejoin-walk}"       # run 1: rejoin-walk; run 2: rejoin-walk-2
 lease_label=groupsync-dashboard.io/lease-type=fleet-account
 : "${KUBECONFIG:?KUBECONFIG must name the lab kubeconfig}"
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -53,7 +54,7 @@ case "${kind}" in
   cani) run "oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer || true" > "${out}" ;;
   grant) run "oc get clusterrolebindings.rbac.authorization.k8s.io -l ${run_label} -o wide" > "${out}" ;;
   secret)
-    run "oc get secrets -n ${ns} -l groupsync-dashboard.io/secret-type=cluster -o json | jq '[.items[] | select(.metadata.name == \"gsd-cluster-rejoin-walk\") | {name: .metadata.name, uid: .metadata.uid, resourceVersion: .metadata.resourceVersion, created: .metadata.creationTimestamp, labels: .metadata.labels, annotations: .metadata.annotations, data_keys: (.data | keys), stringData_name: (.data.name | @base64d), stringData_server: (.data.server | @base64d), config_keys: (.data.config | @base64d | fromjson | keys), tlsClientConfig: (.data.config | @base64d | fromjson | .tlsClientConfig)}]'" > "${out}"
+    run "oc get secrets -n ${ns} -l groupsync-dashboard.io/secret-type=cluster -o json | jq '[.items[] | select(.metadata.name == \"gsd-cluster-${entry}\") | {name: .metadata.name, uid: .metadata.uid, resourceVersion: .metadata.resourceVersion, created: .metadata.creationTimestamp, labels: .metadata.labels, annotations: .metadata.annotations, data_keys: (.data | keys), stringData_name: (.data.name | @base64d), stringData_server: (.data.server | @base64d), config_keys: (.data.config | @base64d | fromjson | keys), tlsClientConfig: (.data.config | @base64d | fromjson | .tlsClientConfig)}]'" > "${out}"
     ;;
   tiers) run "$(loopback /metrics) | grep 'gsd_visibility_tier_checks_total{.*threshold=\"cluster_admin\"}' | grep -E 'allowed|denied'" > "${out}" ;;
   audit)

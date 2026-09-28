@@ -22,7 +22,8 @@ from playwright.sync_api import sync_playwright
 
 BASE = os.environ.get("GSD_BASE", "https://group-sync-dashboard.apps-crc.testing")
 USER = "developer"
-CID = "rejoin-walk"
+CID = os.environ.get("GSD_WALK_ENTRY", "rejoin-walk")      # run 1: rejoin-walk; run 2: rejoin-walk-2
+RUN = os.environ.get("GSD_RUN", "")                        # run 2 prefixes its captures and screenshots with r2-
 SERVER = "https://api.crc.testing:6443"
 HOST = "dashboard"
 RUN_LABEL = ("walk.gsd.lab/run", "rejoin-2026-09-27")
@@ -69,7 +70,7 @@ def sh(*args: str) -> str:
 
 
 def capture(kind: str, label: str, *extra: str) -> None:
-    say("capture", sh(str(HERE / "capture.sh"), kind, label, *extra).splitlines()[-1])
+    say("capture", sh(str(HERE / "capture.sh"), kind, RUN + label, *extra).splitlines()[-1])
 
 
 def login(page) -> None:
@@ -94,7 +95,8 @@ def whoami(page) -> dict:
 
 
 def api_row(page) -> dict | None:
-    return page.evaluate("""async (cid) => { const r = await fetch('/api/clusterconfigs', { credentials: 'same-origin' });
+    # `?walk=1` marks the walk's own reads, so observation (b) can tell the page's poll from them
+    return page.evaluate("""async (cid) => { const r = await fetch('/api/clusterconfigs?walk=1', { credentials: 'same-origin' });
         if (!r.ok) return { http: r.status };
         const c = ((await r.json()).clusters || []).find((x) => x.id === cid);
         return c ? { id: c.id, enabled: c.enabled, retired: c.retired, api_url: c.api_url, source: c.source,
@@ -130,7 +132,7 @@ def shot(page, selector: str, name: str) -> None:
         el = page.locator(selector)
         el.scroll_into_view_if_needed(); page.wait_for_timeout(200)
         shot_n[0] += 1
-        fname = f"{shot_n[0]:02d}-{width}-{name}.png"
+        fname = f"{RUN}{shot_n[0]:02d}-{width}-{name}.png"
         el.screenshot(path=str(SHOTS / fname))
         say("shot", fname)
     page.set_viewport_size({"width": 1280, "height": 900})
@@ -202,9 +204,77 @@ def logins_shot(page, at: str) -> None:
     for name, el in (("logins-header", row.locator("xpath=ancestor::table[1]/thead")), ("logins-cli-row", row)):
         el.scroll_into_view_if_needed(); page.wait_for_timeout(300)
         shot_n[0] += 1
-        fname = f"{shot_n[0]:02d}-1280-step4-{name}.png"
+        fname = f"{RUN}{shot_n[0]:02d}-1280-step4-{name}.png"
         el.screenshot(path=str(SHOTS / fname))
         say("shot", fname)
+
+
+def dialog_reach(page) -> dict:
+    """Where the dialog's two buttons are, and whether a tap at each one's centre lands on it."""
+    return page.evaluate("""() => { const d = document.getElementById('rejoin-dialog'), cs = getComputedStyle(d);
+        const at = (id) => { const b = document.getElementById(id), r = b.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          const inView = r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
+          const hit = inView ? document.elementFromPoint(x, y) : null;
+          return { top: Math.round(r.top), bottom: Math.round(r.bottom), in_viewport: inView, tap_lands: !!hit && (hit === b || b.contains(hit)) }; };
+        const r = d.getBoundingClientRect();
+        return { viewport: [innerWidth, innerHeight], dialog_top: Math.round(r.top), dialog_bottom: Math.round(r.bottom),
+                 overflow_y: cs.overflowY, max_height: cs.maxHeight, scroll_height: d.scrollHeight, client_height: d.clientHeight,
+                 scroll_top: Math.round(d.scrollTop), page_scroll_y: Math.round(scrollY),
+                 cancel: at('rejoin-cancel'), rejoin: at('rejoin-go') }; }""")
+
+
+def observe_dialog_reach(page) -> None:
+    """Observation (a): at 375 px, can a person reach Cancel and Rejoin? A wheel scroll over the open dialog, as a
+    finger would, then a hit test at each button's centre. The dialog is empty throughout (asserted)."""
+    for width, height in ((375, 812), (375, 667)):
+        page.set_viewport_size({"width": width, "height": height}); page.wait_for_timeout(500)
+        assert dialog_facts(page)["password_length"] == 0
+        before = dialog_reach(page)
+        say(f"obs (a) {width}x{height} before scrolling", before)
+        shot_n[0] += 1; name = f"{RUN}{shot_n[0]:02d}-{width}x{height}-obs-a-dialog-before-scroll.png"
+        page.screenshot(path=str(SHOTS / name)); say("shot", name)
+        page.mouse.move(width / 2, height / 2)
+        page.mouse.wheel(0, 3000); page.wait_for_timeout(800)
+        after = dialog_reach(page)
+        say(f"obs (a) {width}x{height} after a wheel scroll", after)
+        shot_n[0] += 1; name = f"{RUN}{shot_n[0]:02d}-{width}x{height}-obs-a-dialog-after-scroll.png"
+        page.screenshot(path=str(SHOTS / name)); say("shot", name)
+        reach = after["cancel"]["tap_lands"] and after["rejoin"]["tap_lands"]
+        say(f"obs (a) {width}x{height}: Cancel and Rejoin reachable", reach)
+        page.evaluate("() => { document.getElementById('rejoin-dialog').scrollTop = 0; }")
+    page.set_viewport_size({"width": 1280, "height": 900}); page.wait_for_timeout(400)
+
+
+def connection_text(page) -> str | None:
+    return page.evaluate("""(cid) => { const c = document.getElementById('cc-cluster-' + cid); if (!c) return null;
+        const kv = [...c.querySelectorAll('.cc-kv')].find((k) => k.querySelector('.k').textContent.trim() === 'connection');
+        if (!kv) return null;
+        const t = kv.querySelector('.v').innerText.replace(/\\s+/g, ' ').trim();
+        return t.split(' Refresh:')[0]; }""", CID)
+
+
+def observe_connection_redraw(page, answered: float) -> None:
+    """Observation (b): after `rejoined`, does the card's CONNECTION row leave `auth_failed` on the page's next poll?
+    Watched without any reload for two POLL_INTERVAL_MS (60 s) plus 15 s from the answer; the page's own GET
+    /api/clusterconfigs are told from the walk's (`?walk=1`) and listed with their instants."""
+    polls: list[str] = []
+    def on_response(r):
+        u = r.url
+        if r.request.method == "GET" and "/api/clusterconfigs" in u and "walk=1" not in u and "/api/clusterconfigs/" not in u:
+            polls.append(utc())
+    page.on("response", on_response)
+    deadline = answered + 135
+    seen = connection_text(page)
+    say("obs (b) CONNECTION row now", seen)
+    while time.time() < deadline and "auth_failed" in (seen or ""):
+        page.wait_for_timeout(5_000)
+        seen = connection_text(page)
+    page.remove_listener("response", on_response)
+    say("obs (b) the page's own GET /api/clusterconfigs since watching", polls)
+    say("obs (b) CONNECTION row at the end", [utc(), round(time.time() - answered, 1), seen])
+    say("obs (b) redrawn from auth_failed within two poll intervals", "auth_failed" not in (seen or ""))
+    shot(page, f"#cc-cluster-{CID}", "obs-b-connection-after-poll")
 
 
 def tier_allowed() -> int:
@@ -215,15 +285,9 @@ def tier_allowed() -> int:
     return int(m.group(1)) if m else -1
 
 
-def walk(page, errors: list) -> None:
-    walk_start = utc()
-    who = whoami(page)
-    say("whoami", who)
-    expect("developer holds the cluster-admin tier for the walk", who["cluster_admin"] is True, who)
-
-    # --- step 2: the throwaway entry, through the Add form -------------------------------------------------
-    open_clusters(page)
-    expect("no rejoin-walk entry before the walk", api_row(page) is None, api_row(page))
+def add_entry(page) -> None:
+    """Step 2: the Add form writes the entry — the server, the random wrong token, the trusted bundle, the label."""
+    expect(f"no {CID} entry before the walk", api_row(page) is None, api_row(page))
     page.fill("#cc-name", CID)
     page.fill("#cc-server", SERVER)
     page.fill("#cc-token", os.environ["GSD_WALK_TOKEN"])
@@ -233,15 +297,32 @@ def walk(page, errors: list) -> None:
     say("the form's YAML twin", page.locator("#cc-yaml").inner_text())
     form = page.locator("#cc-add")
     form.scroll_into_view_if_needed(); shot_n[0] += 1
-    form.screenshot(path=str(SHOTS / f"{shot_n[0]:02d}-1280-step2-add-form.png"))
-    say("shot", f"{shot_n[0]:02d}-1280-step2-add-form.png")
+    form.screenshot(path=str(SHOTS / f"{RUN}{shot_n[0]:02d}-1280-step2-add-form.png"))
+    say("shot", f"{RUN}{shot_n[0]:02d}-1280-step2-add-form.png")
     page.click("#cc-create")
     page.wait_for_function("() => !/Creating/.test(document.getElementById('cc-form-msg').innerText)"
                            " && document.getElementById('cc-form-msg').innerText.trim() !== ''", timeout=30_000)
     msg = page.locator("#cc-form-msg").inner_text().strip()
     say("Create Secret answered", msg)
-    expect("the Add form created gsd-cluster-rejoin-walk", msg.startswith("Secret gsd-cluster-rejoin-walk created"), msg)
+    expect(f"the Add form created gsd-cluster-{CID}", msg.startswith(f"Secret gsd-cluster-{CID} created"), msg)
     capture("secret", "step2")
+
+
+def walk(page, errors: list) -> None:
+    walk_start = utc()
+    who = whoami(page)
+    say("whoami", who)
+    expect("developer holds the cluster-admin tier for the walk", who["cluster_admin"] is True, who)
+
+    # --- step 2: the throwaway entry, through the Add form -------------------------------------------------
+    open_clusters(page)
+    if os.environ.get("GSD_STEP2_DONE") == "1":
+        # A previous invocation's Add form already wrote the entry (its output and step-2 capture record it):
+        # this one resumes at the poll, and a re-run's shot numbers continue after that invocation's.
+        shot_n[0] = int(os.environ.get("GSD_SHOT_FROM", "0"))
+        say("step 2 done by the previous invocation; the row now", api_row(page))
+    else:
+        add_entry(page)
     deadline, row = time.time() + 420, None
     while time.time() < deadline:
         row = api_row(page)
@@ -267,7 +348,9 @@ def walk(page, errors: list) -> None:
            d["open"] and d["cluster"] == CID and d["username_length"] == 0 and d["password_length"] == 0
            and d["password_type"] == "password", d)
     shot(page, "#rejoin-dialog", "step3-dialog-empty")
+    observe_dialog_reach(page)
     card, dlg = press_rejoin(page, "GSD_UI_PASSWORD")
+    answered = time.time()
     expect("Rejoin answers rejoined and the dialog closes",
            (card["rejoin"] or "").startswith("Rejoin: rejoined") and not dlg["open"]
            and dlg["password_length"] == 0 and dlg["username_length"] == 0, [card["rejoin"], dlg])
@@ -286,6 +369,7 @@ def walk(page, errors: list) -> None:
            bool(re.match(r"^Refresh: connected · \d{4}-\d{2}-\d{2}T", f["refresh"] or ""))
            and (f["rejoin"] or "").startswith("Rejoin: rejoined"), f)
     shot(page, f"#cc-cluster-{CID}", "step3-refresh-connected")
+    observe_connection_redraw(page, answered)
 
     # --- step 4: the evidence --------------------------------------------------------------------------------
     for kind in ("secret", "tokens"):
@@ -294,15 +378,15 @@ def walk(page, errors: list) -> None:
     rejoin_at = walk_start
     deadline, rows = time.time() + 420, []
     while time.time() < deadline:
-        got = page.evaluate("""async ([host, since]) => { const out = {};
-            for (const id of [host, 'rejoin-walk']) {
+        got = page.evaluate("""async ([host, since, cid]) => { const out = {};
+            for (const id of [host, cid]) {
               const r = await fetch('/api/clusters/' + id + '/logins', { credentials: 'same-origin' });
               if (!r.ok) { out[id] = { http: r.status }; continue; }
               const d = await r.json();
               out[id] = { http: r.status, rows: (d.attempts || []).filter((x) => x.user_name === 'developer'
                 && x.at >= since && /cli allow via openshift-challenging-client/.test(x.detail || ''))
                 .map((x) => ({ at: x.at, outcome: x.outcome, provider: x.provider, detail: x.detail })) }; }
-            return out; }""", [HOST, rejoin_at])
+            return out; }""", [HOST, rejoin_at, CID])
         rows = (got.get(HOST) or {}).get("rows") or []
         if rows:
             break
@@ -342,8 +426,8 @@ def walk(page, errors: list) -> None:
     capture("secret", "step6-before"); capture("tokens", "step6-before")
     fresh_at = None
     for _ in range(20):
+        t0 = time.time()                  # before the read: the fresh check can be no earlier than this
         before = tier_allowed()
-        t0 = time.time()
         page.evaluate("async () => (await fetch('/api/whoami', { credentials: 'same-origin' })).status")
         after = tier_allowed()
         say("cluster_admin allowed checks around a /api/whoami", [before, after])
@@ -354,15 +438,15 @@ def walk(page, errors: list) -> None:
     expect("a fresh cluster-admin tier check seen (the 60 s cache starts now)", fresh_at is not None, fresh_at)
     say("fresh tier check at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(fresh_at)))
     out = sh("oc", "delete", "clusterrolebindings.rbac.authorization.k8s.io", "-l", "=".join(RUN_LABEL))
-    (EVIDENCE / "step6-grant-delete.txt").write_text(f"# oc delete clusterrolebindings.rbac.authorization.k8s.io -l "
+    (EVIDENCE / f"{RUN}step6-grant-delete.txt").write_text(f"# oc delete clusterrolebindings.rbac.authorization.k8s.io -l "
                                                      f"{'='.join(RUN_LABEL)}\n# at {utc()}\n{out}\n")
     say("binding removed", out)
     for _ in range(10):
         cani = sh("oc", "auth", "can-i", "update", "clusterrolebindings.rbac.authorization.k8s.io", "--as=developer")
-        if cani.splitlines()[-1].strip() == "no":
+        if "no" in [line.strip() for line in cani.splitlines()]:   # stdout's answer; stderr's warning follows it
             break
         time.sleep(1)
-    say("can-i update clusterrolebindings --as=developer", cani.splitlines()[-1])
+    say("can-i update clusterrolebindings --as=developer", [line for line in cani.splitlines() if line.strip()])
     elapsed = time.time() - fresh_at
     expect("still inside the host's cached tier (under 40 s since the fresh check)", elapsed < 40, round(elapsed, 1))
     open_dialog(page)
@@ -375,6 +459,7 @@ def walk(page, errors: list) -> None:
     close_dialog(page)
     shot(page, f"#cc-cluster-{CID}", "step6-not-cluster-admin-card")
     capture("secret", "step6-after"); capture("tokens", "step6-after"); capture("tiers", "step6-after")
+    capture("podlog", "step6", walk_start)
     expect("no uncaught page errors", not errors, errors)
 
 

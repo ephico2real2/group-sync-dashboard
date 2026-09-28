@@ -1,0 +1,27 @@
+2026-09-27T23:56:22Z whoami                                  : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T23:56:22Z PASS developer holds the cluster-admin tier for the walk: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-27T23:56:25Z PASS no rejoin-walk entry before the walk: null
+2026-09-27T23:56:26Z the form's YAML twin                    : apiVersion: v1
+kind: Secret
+metadata:
+  name: "gsd-cluster-rejoin-walk-2"
+  namespace: "group-sync-dashboard"
+  labels:
+    "walk.gsd.lab/run": "rejoin-2026-09-27"
+    "groupsync-dashboard.io/secret-type": "cluster"
+  annotations:
+    groupsync-dashboard.io/managed-by: "ui"
+type: Opaque
+stringData:
+  name: "rejoin-walk-2"
+  server: "https://api.crc.testing:6443"
+  config: |-
+    {"tlsClientConfig":{"insecure":false},"bearerToken":"<redacted>"}
+  visibility: "remote-sar"
+  identity: "same-as-host"
+  enabled: "true"
+2026-09-27T23:56:26Z shot                                    : r2-01-1280-step2-add-form.png
+2026-09-27T23:56:26Z Create Secret answered                  : Secret gsd-cluster-rejoin-walk-2 created — discovery requested; the card appears when the next read lands.
+2026-09-27T23:56:26Z FAIL the Add form created gsd-cluster-rejoin-walk: Secret gsd-cluster-rejoin-walk-2 created — discovery requested; the card appears when the next read lands.
+2026-09-27T23:56:26Z STOPPED at                              : the Add form created gsd-cluster-rejoin-walk
+2026-09-27T23:56:26Z failures                                : ["the Add form created gsd-cluster-rejoin-walk"]
