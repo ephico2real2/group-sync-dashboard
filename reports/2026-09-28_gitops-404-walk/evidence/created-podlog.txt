@@ -1,0 +1,49 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-644f6884db-hdbr7 -c dashboard --timestamps --since-time=2026-09-28T09:35:04Z  (captured 2026-09-28T09:40:38Z)
+# lines in the window: 291
+# discovery, fleet-*, cluster-secret-*, and every line naming gitops-404 except its per-minute poll lines:
+2026-09-28T09:39:59.453041318Z 2026-09-28 05:39:59,452-0400 INFO    gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd state=cleared cycle=50
+2026-09-28T09:39:59.453233985Z 2026-09-28 05:39:59,453-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=gitops-404,shared-qa,shared-rnd state=appeared cycle=50
+2026-09-28T09:39:59.453960071Z 2026-09-28 05:39:59,453-0400 INFO    gsd.clusterconfig discovery cycle=50 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=gitops-404
+2026-09-28T09:39:59.454256113Z 2026-09-28 05:39:59,454-0400 INFO    gsd.clusterconfig cluster-resolved cycle=50 cluster=gitops-404 source=configmap:cluster-onboarding-404:0 credential=remote-lookup tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T09:39:59.667201456Z 2026-09-28 05:39:59,666-0400 INFO    gsd.fleetlogin fleet-login cluster=gitops-404 account=<fleet account> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-28T09:39:59Z
+2026-09-28T09:39:59.716761447Z 2026-09-28 05:39:59,716-0400 INFO    gsd.fleetlogin fleet-logout cluster=gitops-404 account=<fleet account> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-28T09:39:59.739400477Z 2026-09-28 05:39:59,739-0400 INFO    gsd.clusterconfig.writer cluster-secret-created secret=gsd-cluster-gitops-404 namespace=group-sync-dashboard cluster=gitops-404 by=sa-token-lookup
+2026-09-28T09:39:59.799963378Z 2026-09-28 05:39:59,799-0400 INFO    gsd.clusterconfig fleet-lookup cluster=gitops-404 account=<fleet account> secret=gsd-cluster-gitops-404 written=created source=group-sync-operator/group-sync-dashboard-cluster-poller last_used=2026-09-28 attempt=1/5
+2026-09-28T09:39:59.926741530Z 2026-09-28 05:39:59,926-0400 INFO    gsd.clusterconfig discovery cycle=51 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 changed=gitops-404
+2026-09-28T09:39:59.927050156Z 2026-09-28 05:39:59,926-0400 INFO    gsd.clusterconfig cluster-resolved cycle=51 cluster=gitops-404 source=secret:gsd-cluster-gitops-404 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T09:39:59.929030371Z 2026-09-28 05:39:59,928-0400 INFO    gsd.poller cluster gitops-404: polling started (secret:gsd-cluster-gitops-404)
+2026-09-28T09:40:00.100785583Z 2026-09-28 05:40:00,100-0400 DEBUG   gsd.kube fetched 61 users from gitops-404, 61 with an identity, 8 with a display name
+2026-09-28T09:40:00.106948228Z 2026-09-28 05:40:00,106-0400 INFO    gsd.poller gitops-404: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T09:40:00.107605980Z 2026-09-28 05:40:00,107-0400 INFO    gsd.poller gitops-404/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-28T09:30:00Z (44 groups)
+2026-09-28T09:40:00.108063106Z 2026-09-28 05:40:00,107-0400 INFO    gsd.poller gitops-404/autobahnusers-onboarding-groupsync: new sync observed at 2026-09-28T08:00:00Z (1 groups)
+2026-09-28T09:40:00.108899984Z 2026-09-28 05:40:00,108-0400 INFO    gsd.poller gitops-404/bdp-oud-group-rbac-groupsync: new sync observed at 2026-09-28T09:00:01Z (21 groups)
+2026-09-28T09:40:00.139396039Z 2026-09-28 05:40:00,138-0400 DEBUG   gsd.kube gitops-404: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T09:40:01.738461950Z 2026-09-28 05:40:01,737-0400 DEBUG   gsd.auditlog gitops-404: crc: audit.log read 8388608 byte(s) from offset 0 (first sight: backfill) — 9948 line(s), 321 login event(s), 321 inside retention, 317 after the identity filter
+2026-09-28T09:40:01.926501756Z 2026-09-28 05:40:01,926-0400 INFO    gsd.auditlog gitops-404: recorded 317 login attempt(s) from the audit log on crc (audit.log)
+2026-09-28T09:40:01.940571675Z 2026-09-28 05:40:01,940-0400 INFO    gsd.kpi.rollup gitops-404: daily KPI rollup written for 2026-09-28 (8 metrics)
+2026-09-28T09:40:02.220172313Z 2026-09-28 05:40:02,219-0400 DEBUG   gsd.kube fetched 946 binding subject rows from gitops-404
+2026-09-28T09:40:02.407913784Z 2026-09-28 05:40:02,407-0400 INFO    gsd.poller gitops-404: 214 group binding(s) added, 0 removed since the last refresh
+2026-09-28T09:40:02.628829903Z 2026-09-28 05:40:02,628-0400 DEBUG   gsd.kube fetched 36 direct-user binding rows from gitops-404
+2026-09-28T09:40:02.634326503Z 2026-09-28 05:40:02,634-0400 INFO    gsd.poller gitops-404: 36 user binding(s) added, 0 removed since the last refresh
+2026-09-28T09:40:02.634491254Z 2026-09-28 05:40:02,634-0400 INFO    gsd.poller gitops-404: 36 direct-user binding(s), 12 naming a person
+2026-09-28T09:40:02.712217751Z 2026-09-28 05:40:02,711-0400 DEBUG   gsd.kube fetched 118 namespaces from gitops-404
+2026-09-28T09:40:02.721082529Z 2026-09-28 05:40:02,720-0400 DEBUG   gsd.poller gitops-404: 118 namespace(s) recorded
+2026-09-28T09:40:02.802485204Z 2026-09-28 05:40:02,802-0400 INFO    gsd.poller refreshed 6 operator config(s) for gitops-404
+2026-09-28T09:40:03.010594698Z 2026-09-28 05:40:03,010-0400 INFO    gsd.poller gitops-404: kyverno — 1 ValidatingPolicy/MutatingPolicy/GeneratingPolicy/DeletingPolicy/ImageValidatingPolicy policy, 9 CEL result(s) from 127 report(s), 749 legacy result(s) not shown, 0 appeared / 0 cleared
+2026-09-28T09:40:03.012020119Z 2026-09-28 05:40:03,011-0400 INFO    gsd.poller refreshed 946 bindings for gitops-404 (214 Group, 696 ServiceAccount, 36 User subjects)
+2026-09-28T09:40:03.124016308Z 2026-09-28 05:40:03,123-0400 INFO    gsd.poller gitops-404: unmanaged-grant discovery — 50 outside the policy system (20 listed below, 30 held back by the per-cycle cap), 0 resolved since the last cycle. Full detail: GET /api/clusters/gitops-404/bindings/findings
+# per-minute poll lines for gitops-404 ('polled gitops-404:'): 1
+# 'UNMANAGED GRANT DISCOVERED — gitops-404' lines (the first poll's binding findings, not listed): 20
+# fleet-login lines: 1
+# fleet-logout lines: 1
+# fleet-lookup lines: 1
+# fleet-lookup-failed lines: 0
+# fleet-ping lines: 0
+# fleet-ping-failed lines: 0
+# cluster-secret-created lines: 1
+# cluster-secret-deleted lines: 0
+# fleet-logout ... outcome=revoked: 1
+# cluster-secret-created ... cluster=gitops-404 ... by=sa-token-lookup: 1
+# 'cluster gitops-404: polling started': 1
+# discovery ... removed=gitops-404: 0
+# ERROR or Traceback lines: 0

@@ -1,0 +1,3 @@
+# oc get oauthaccesstokens.oauth.openshift.io -o json | jq -c --arg fa '<fleet account>' '[.items[] | select(.userName == $fa) | .clientName] | group_by(.) | map({client: .[0], n: length})'
+# at 2026-09-28T09:35:07Z
+[{"client":"openshift-challenging-client","n":2}]
