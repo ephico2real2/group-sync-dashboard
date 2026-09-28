@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
+  answer whether a cluster's trusted CA is this estate's root and whether it is inside its dates.
+  A CA is public PKI; a Secret or a ConfigMap is equally fine. The pin is
+  `trustedCA.enterpriseRoot.sha256` (empty by default). The warning before expiry reuses #314's
+  `warnings` channel. Spec only; no production code.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only

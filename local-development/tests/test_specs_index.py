@@ -47,7 +47,7 @@ def _index_rows() -> dict[str, dict[str, str]]:
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
     # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 32, f"expected thirty-two index rows, including D3 (#311), S4e (#432) and D4 (#316); matched {sorted(rows)}"
+    assert len(rows) == 33, f"expected thirty-three index rows, including D3 (#311), S4e (#432), D4 (#316) and D5 (#244); matched {sorted(rows)}"
     return rows
 
 
@@ -94,7 +94,9 @@ def test_every_spec_file_has_an_index_row() -> None:
 def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     """The issues were created in ladder order, so the numbers rise down the table. The programme's
     thirteen have one issue each; the S batch is one issue (#230) in three steps, so its rows share it."""
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids()]
+    # D5 (#244) is specified after later work (D3/D4, S4e) because the operator's rulings
+    # arrived later; it sits at the end of the table and is excluded from the rising-number assert.
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244"]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S")]
     assert len(set(programme)) == len(programme), programme
