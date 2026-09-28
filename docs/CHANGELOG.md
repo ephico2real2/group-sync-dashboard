@@ -18,7 +18,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   clause is left out. The refused count comes from the findings the tab already has, only those whose source
   is a labelled Secret, each Secret once (`local-development/gsd/static/index.html#function clusterConfigPage`).
   #404's count, the by-source chips and the switched-off line are unchanged, and the line shows no value from
-  a Secret.
+  a Secret. Application **1.15.0**, chart 0.59.17.
 
 - **Rejoin, Rotate and Delete keep IDs of their own (#462).** Their per-cluster IDs now follow Refresh's scheme,
   `cc-<kind>_<cluster id>`, so a cluster named `result-x`, `token-x`, `go-x` or `msg-x` no longer takes one of
