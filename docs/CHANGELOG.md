@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Rejoin, Rotate and Delete keep IDs of their own (#462).** Their per-cluster IDs now follow Refresh's scheme,
+  `cc-<kind>_<cluster id>`, so a cluster named `result-x`, `token-x`, `go-x` or `msg-x` no longer takes one of
+  cluster `x`'s IDs. Cancelling a Rejoin after a repaint returns the focus to that card's own button, and Rotate's
+  label, draft and Overwrite use that card's own token field. Every control's label, order and `data-cc-*`
+  attribute is unchanged.
+
 - Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
 
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
