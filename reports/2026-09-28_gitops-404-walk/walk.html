@@ -7,12 +7,14 @@ dashboard do what GitOps onboarding is built to do. Discovery read the stanza. T
 the fleet account, read the remote poller token and revoked its session. It wrote <code>gsd-cluster-gitops-404</code>, polled
 the cluster, and pruned the Secret when the map was deleted. The Cluster Configurations tab counted the cluster under
 <strong>ConfigMap</strong> and drew its chip <code>ConfigMap cluster-onboarding-404 → Secret gsd-cluster-gitops-404</code>, which is #404's
-point. Every Definition-of-Done row below passes.</p>
+point. Every #404 Definition-of-Done row below passes; the discovery line's count (#467) is noted beside them and is not a
+row of #404.</p>
 <p>The walk was run by OB1-lite as <code>developer</code> with a temporary, labelled <code>update clusterrolebindings</code> grant. The walker
 captured every file under <code>evidence/</code> and <code>screenshots/</code> and cleaned the lab up. Its session then ended on an API
 usage limit before it wrote this README. The orchestrator wrote this README from those files and checked the lab's
-end state again at 10:03:00Z: no grant (<code>can-i</code> <code>no</code>), no onboarding ConfigMap, no <code>gsd-cluster-gitops-404</code>, the
-fleet Lease with no holder, <code>shared-qa</code> at 2981054, and the same PVC UIDs.</p>
+end state again with <code>scripts/capture.sh</code> at 10:25:42Z (<code>evidence/recheck-*.txt</code>): no grant (<code>can-i</code> <code>no</code>), no
+onboarding ConfigMap, no <code>gsd-cluster-gitops-404</code>, the fleet Lease with no holder, <code>shared-qa</code> at 2981054, and the
+same PVC UIDs.</p>
 <p><strong>The operator's ruling this walk follows (2026-09-28):</strong> <em>&quot;This is our goal and part of my design. There is nothing
 risky about this. This is the intention.&quot;</em> A ConfigMap-declared cluster makes the dashboard log in with the fleet
 account's correct password; the walk exercises that and measures its budget. No person or script logged in as the
@@ -40,7 +42,7 @@ fleet account, and no wrong password was placed.</p>
 <tr>
 <td>The generated row is managed by its ConfigMap</td>
 <td>PASS</td>
-<td>No Rotate and no Delete on it: <code>{&quot;rotate&quot;: 0, &quot;delete&quot;: 0, &quot;buttons&quot;: [&quot;Refresh&quot;]}</code>. The card says <code>managed by ConfigMap cluster-onboarding-404 — edit the stanza there</code> and <code>declared in ConfigMap cluster-onboarding-404 — remove the stanza there; its Secret is cleaned up automatically</code> (<code>02-1280-card-gitops-404.png</code>).</td>
+<td>No Rotate and no Delete on it: <code>{&quot;rotate&quot;: 0, &quot;delete&quot;: 0, &quot;buttons&quot;: [&quot;Refresh&quot;]}</code>. The card says <code>managed by ConfigMap cluster-onboarding-404 — edit the stanza there</code> and <code>declared in ConfigMap cluster-onboarding-404 — remove the stanza there; its Secret is cleaned up automatically</code> (<code>evidence/walk-output.txt</code>; <code>02-1280-card-gitops-404.png</code>).</td>
 </tr>
 <tr>
 <td>The discovery line (#467)</td>
@@ -60,7 +62,7 @@ fleet account, and no wrong password was placed.</p>
 <tr>
 <td>The generated Secret, then its prune</td>
 <td>PASS</td>
-<td>The map was created at 09:35:57Z (<code>evidence/cm-create.txt</code>). <code>gsd-cluster-gitops-404</code> was created at 09:39:59Z, 247 s later, within one discovery interval (<code>evidence/created-wait.txt</code>). Its annotations are <code>managed-by: configmap-onboarding</code>, <code>source-configmap: cluster-onboarding-404</code>, <code>token-source: remote-lookup</code>, and data keys only <code>config</code>, <code>enabled</code>, <code>identity</code>, <code>name</code>, <code>server</code>, <code>visibility</code> (<code>evidence/created-secret.txt</code>). Discovery logged <code>added=gitops-404 … credential=remote-lookup</code>, then <code>changed=gitops-404 … credential=bearer</code>, then <code>polling started</code>, and 61 users recorded. The map was deleted at 09:41:04Z; the Secret was gone 238 s later (<code>evidence/cm-delete.txt</code>, <code>evidence/pruned-wait.txt</code>, <code>evidence/after-secret.txt</code>).</td>
+<td>The map was created at 09:35:57Z (<code>evidence/cm-create.txt</code>). <code>gsd-cluster-gitops-404</code> was created at 09:39:59Z, 242 s later and within one discovery interval (300 s: cycles 50 and 52 are 09:39:59Z and 09:45:00Z in <code>evidence/window-podlog.txt</code>); the wait, reading every 5 s, saw it at 09:40:04Z, 247 s after the apply (<code>evidence/created-secret.txt</code>, <code>evidence/created-wait.txt</code>). Its annotations include <code>managed-by: configmap-onboarding</code>, <code>source-configmap: cluster-onboarding-404</code>, <code>token-source: remote-lookup</code> and <code>lookup-account: &lt;fleet account&gt;</code>, and its data keys are only <code>config</code>, <code>enabled</code>, <code>identity</code>, <code>name</code>, <code>server</code>, <code>visibility</code> (<code>evidence/created-secret.txt</code>). Discovery logged <code>added=gitops-404</code> and <code>credential=remote-lookup</code>, then <code>changed=gitops-404</code> and <code>credential=bearer</code>, then <code>polling started</code>, and 61 users recorded (<code>evidence/created-podlog.txt</code>). The map was deleted at 09:41:04Z; the pod logged <code>cluster-secret-deleted … by=configmap-onboarding</code> at 09:45:00Z, 236 s later, and the wait saw the Secret gone at 09:45:02Z, 238 s after the delete (<code>evidence/cm-delete.txt</code>, <code>evidence/window-podlog.txt</code>, <code>evidence/pruned-wait.txt</code>, <code>evidence/after-secret.txt</code>).</td>
 </tr>
 <tr>
 <td>Nothing else changed</td>
@@ -101,6 +103,11 @@ fleet account, and no wrong password was placed.</p>
 <td><code>evidence/before-*.txt</code></td>
 </tr>
 <tr>
+<td>09:35:32</td>
+<td><code>oc create -f scripts/grant.yaml</code>; the Lease watch started; <code>can-i</code> <code>yes</code> at 09:35:33</td>
+<td><code>evidence/grant-create.txt</code>, <code>evidence/lease-watch.txt</code>, <code>evidence/granted-cani.txt</code>, <code>evidence/granted-grant.txt</code></td>
+</tr>
+<tr>
 <td>09:35:57</td>
 <td><code>oc create -f scripts/cm.yaml</code></td>
 <td><code>evidence/cm-create.txt</code></td>
@@ -111,12 +118,17 @@ fleet account, and no wrong password was placed.</p>
 <td><code>evidence/created-podlog.txt</code>, <code>evidence/lease-watch.txt</code></td>
 </tr>
 <tr>
-<td>09:40:12</td>
-<td>The generated Secret read</td>
-<td><code>evidence/created-secret.txt</code></td>
+<td>09:40:04</td>
+<td>The wait saw the Secret, 247 s after the apply</td>
+<td><code>evidence/created-wait.txt</code></td>
 </tr>
 <tr>
-<td>09:40:43 → 09:40:54</td>
+<td>09:40:12</td>
+<td>The generated Secret and the Lease read</td>
+<td><code>evidence/created-secret.txt</code>, <code>evidence/created-lease.txt</code></td>
+</tr>
+<tr>
+<td>09:40:43 → 09:40:55</td>
 <td>The walk at 1280, 768 and 375 px, as <code>developer</code> with the grant</td>
 <td><code>evidence/walk-output.txt</code>, <code>screenshots/</code></td>
 </tr>
@@ -126,19 +138,39 @@ fleet account, and no wrong password was placed.</p>
 <td><code>evidence/cm-delete.txt</code></td>
 </tr>
 <tr>
+<td>09:41:23</td>
+<td>The grant removed by its label</td>
+<td><code>evidence/grant-delete.txt</code></td>
+</tr>
+<tr>
+<td>09:41:34 → 09:42:25</td>
+<td>The labelled Secrets and the store's cluster rows read, the Secret still present</td>
+<td><code>evidence/walk-labelled-secrets.txt</code>, <code>evidence/walk-clusterrows.txt</code></td>
+</tr>
+<tr>
+<td>09:45:00</td>
+<td>Cycle 52 <code>removed=gitops-404</code>, <code>cluster-secret-deleted</code>, the poll thread stopped</td>
+<td><code>evidence/window-podlog.txt</code></td>
+</tr>
+<tr>
 <td>09:45:02</td>
-<td>The generated Secret gone (238 s)</td>
+<td>The wait saw the Secret gone, 238 s after the delete</td>
 <td><code>evidence/pruned-wait.txt</code></td>
 </tr>
 <tr>
-<td>after</td>
-<td>The grant removed; end state; the audit window (1 fleet authorize)</td>
-<td><code>evidence/after-*.txt</code>, <code>evidence/final-*.txt</code>, <code>evidence/window-audit.txt</code></td>
+<td>09:45:13 → 09:45:18</td>
+<td>After: version, <code>can-i</code> <code>no</code>, no grant, no onboarding map, no Secret, the Lease, <code>shared-qa</code>, tokens (2), the audit count (11) and the window (1 fleet authorize), the pod log, the cluster rows</td>
+<td><code>evidence/after-*.txt</code>, <code>evidence/window-audit.txt</code>, <code>evidence/window-podlog.txt</code></td>
 </tr>
 <tr>
-<td>10:03:00</td>
-<td>The orchestrator's independent re-check of the end state</td>
-<td>this README</td>
+<td>09:46:01</td>
+<td>Final: the Lease (5895075, no holder), <code>shared-qa</code> 2981054, the PVC UIDs</td>
+<td><code>evidence/final-*.txt</code></td>
+</tr>
+<tr>
+<td>10:25:42</td>
+<td>The orchestrator's re-check of the end state, captured with <code>scripts/capture.sh</code></td>
+<td><code>evidence/recheck-*.txt</code></td>
 </tr>
 </tbody>
 </table>
@@ -147,7 +179,8 @@ fleet account, and no wrong password was placed.</p>
 <code>sha256~&lt;redacted&gt;</code> in every file it writes. The header screenshots cover the fleet account row's value with a grey
 box. <code>developer</code>'s CRC password reaches Playwright only through the environment.</p>
 <h2>Re-running</h2>
-<p>From the repository root, with <code>KUBECONFIG</code> set to a CRC admin kubeconfig. Writes must be enabled
+<p>From the repository root, on macOS (<code>scripts/wait-secret.sh</code> uses BSD <code>date</code>), with <code>KUBECONFIG</code> set to a CRC admin
+kubeconfig. Writes must be enabled
 (<code>clusterSecretsWritesEnabled: true</code> in the release's ConfigMap).</p>
 <pre><code class="language-sh">F=reports/2026-09-28_gitops-404-walk
 oc create -f &quot;$F/scripts/grant.yaml&quot;
@@ -164,7 +197,9 @@ oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.author
   -l walk.gsd.lab/run=gitops-404-2026-09-28
 </code></pre>
 <p><code>scripts/capture.sh</code> takes the before, after and final captures, and <code>scripts/lease-watch.sh</code> records the Lease's
-changes during the lookup.</p>
+changes during the lookup. <code>evidence/walk-labelled-secrets.txt</code> was a one-off
+<code>oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster</code> (its first line), not a
+<code>capture.sh</code> kind.</p>
 
 <h2 id="screenshots">Screenshots</h2>
 <figure><img src="screenshots/01-1280-header.png" alt="The header at 1280 px: by source ConfigMap 1 (the fleet account's name covered)"><figcaption>The header at 1280 px: by source ConfigMap 1 (the fleet account's name covered)</figcaption></figure>
