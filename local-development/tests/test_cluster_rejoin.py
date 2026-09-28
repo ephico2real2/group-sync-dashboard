@@ -311,6 +311,38 @@ def test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value(tmp_pat
     assert gate._refused == {} and gate._spent == set(), "a refusal before the wire records nothing"
 
 
+@pytest.mark.parametrize("username,password", [
+    ("alice.admin", "alice.admin"),
+    ("alice.admin", "ALICE.ADMIN"),
+    ("ALICE.ADMIN", "alice.admin"),
+    ("alice.admin", " alice.admin"),     # `redact_text` strips: the answer read `as <redacted>` and the line `account=alice.admin`
+    ("alice.admin", "alice.admin "),
+    ("alice.admin", "alice"),            # the raw scrub, any length: `account=<redacted>.admin` named the password
+    ("alice.admin", "admin"),            # `account=alice.<redacted>`
+    ("alice.admin", "ce.adm"),           # `account=ali<redacted>in`
+    ("alice.admin", "ali"),              # under the emit helper's four: the answer read `as <redacted>ce.admin`
+    ("alice.admin", " alice"),           # the answer read `as<redacted>.admin`
+    ("alice.admin", "ALICE"),            # the scrub is case-sensitive, so no oracle: refused for the issue's rule
+], ids=["equal", "uppercase-password", "uppercase-username", "leading-space", "trailing-space", "prefix", "suffix",
+        "middle", "three-characters", "spaced-prefix", "uppercase-prefix"])
+def test_password_equal_to_username_is_refused_before_any_request(rig, caplog, username, password):
+    """Refuse before the scrub can turn a username into evidence of its password (#447): the username, or a part of
+    it, ignoring case and the surrounding spaces `redact_text` strips."""
+    c, app, settings, host, remote = rig
+    with caplog.at_level(logging.DEBUG):
+        r = _rejoin(c, username=username, password=password)
+    assert r.status_code == 422, r.text
+    assert r.json() == {"detail": "rejoin-password-within-username: the password must not be the username or a part "
+                                  "of it, ignoring case and surrounding spaces; it was not sent"}
+    assert remote.requests == [] and host.calls == []
+    assert username not in r.text + caplog.text and password not in r.text + caplog.text
+    assert "<redacted>" not in r.text + caplog.text
+    assert not any(m.startswith(("fleet-login", "cluster-rejoin")) for m in caplog.messages)
+    gate = app.state.poller._credential_gate
+    assert gate._refused == {} and gate._spent == set()
+    assert app.state.poller.woke == 0
+
+
 def test_below_the_cluster_admin_tier_is_403_and_nothing_is_sent(rig):
     c, app, settings, host, remote = rig
     assert _rejoin(c, who="auditor").status_code == 403       # the wide tier, not the cluster-admin tier

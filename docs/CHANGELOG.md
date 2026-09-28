@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Rejoin refuses a password that is the username or a part of it, ignoring case and surrounding spaces (#447).**
+  The input check answers `422` in fixed words before any request is sent. A scrubbed username in the answer or logs
+  can no longer reveal the password, whole or in part. Every existing password scrub, the request budget and the
+  per-pod credential gate stay unchanged (`docs/specs/SPEC_D4_cluster_rejoin.md`). Application **1.11.0**, chart 0.59.13.
+
 - **SPEC_S4c §3.12 step 6 is a lab procedure a walk can run (#445).** The #444 walk stopped on the
   step as written: a leader-election standby never calls `claim()`, and a dashboard process on the
   workstation that carries the pod's ServiceAccount token can read the fleet password through the

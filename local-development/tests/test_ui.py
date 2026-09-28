@@ -7799,6 +7799,46 @@ class TestClusterConfigPage:
         finally:
             release.set()
 
+    def test_a_password_inside_the_username_is_refused_in_words_the_admin_can_read(self, page, cc_rig, monkeypatch):
+        """#447: the refusal reaches the person who pressed Rejoin as a sentence, in the dialog and on the card — so
+        they know why, and what to type instead — and nothing is sent: no login runs and the field is emptied."""
+        from gsd.fleetlookup import CredentialGate
+        from gsd.kube import AUTH_FAILED, ClusterClient, ClusterError
+        base, host, settings = cc_rig
+        calls = []
+
+        class _Refused(ClusterClient):
+            def _client(self):
+                import contextlib
+                return contextlib.nullcontext(object())
+
+            def _get(self, client, path, params):
+                raise ClusterError(AUTH_FAILED, "401 Unauthorized — token invalid or expired")
+
+        class _Poller:
+            _credential_gate = CredentialGate()
+
+            def request_discovery(self):
+                pass
+
+        monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Refused)
+        monkeypatch.setattr(_SCOPED_APP.state, "poller", _Poller(), raising=False)
+        monkeypatch.setattr("gsd.rejoin.rejoin", lambda *a, **k: calls.append(k) or {"outcome": "rejoined"})
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-cluster-east")
+        page.click("#cc-refresh_east"); page.wait_for_selector("#cc-rejoin-east")
+        page.click("#cc-rejoin-east"); page.wait_for_selector("#rejoin-dialog[open]")
+        page.fill("#rejoin-username", "alice.admin"); page.fill("#rejoin-password", "alice")
+        page.click("#rejoin-go")
+        page.wait_for_function("() => document.getElementById('rejoin-msg').innerText.includes('must not be the username')")
+        said = page.inner_text("#rejoin-msg")
+        assert said == ("HTTP 422 — rejoin-password-within-username: the password must not be the username or a part "
+                        "of it, ignoring case and surrounding spaces; it was not sent"), said
+        assert page.evaluate("() => document.getElementById('rejoin-dialog').open"), "the dialog stays open to try again"
+        assert page.input_value("#rejoin-password") == "", "the refused password is not kept in the field"
+        assert "must not be the username" in page.inner_text("#cc-rejoin-result-east")
+        assert calls == [], "a refused press runs no login"
+
     def test_fetch_refuses_redirects_and_submits_once(self, page, cc_rig, monkeypatch):
         """#316 (review of the spec, C1): a 307 or 308 in front of the dashboard would re-send the POST, password and
         all, to its Location (measured in Chromium). The credential fetch refuses redirects and is sent once."""

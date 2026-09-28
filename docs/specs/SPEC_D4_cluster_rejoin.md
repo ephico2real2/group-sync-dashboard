@@ -35,6 +35,19 @@ never as the fleet account. The tests use made-up names against a fake remote.
 
 ## Orchestrator's notes
 
+- **A password inside the username (#447).** Refuse a Rejoin when the password, stripped and casefolded, is the
+  username or lies inside it, in `gsd/rejoin.py#check`, before any request or credential-gate change. Answer `422`
+  with the fixed detail `rejoin-password-within-username: the password must not be the username or a part of it,
+  ignoring case and surrounding spaces; it was not sent`. No submitted value is repeated. Why wider than equality
+  (OB2's review of #463, measured on the suite's rig): the scrub replaces the raw password at any length wherever it
+  occurs, so a password inside the username left `account=<redacted>.admin` — the redacted span IS the password, and
+  the name is in plain text in the Secret's annotations and on the Logins tab; and `redact_text` strips, so a password
+  padded with spaces left `as <redacted>` in the answer beside `account=alice.admin` in the line. Not refused, and a
+  stated residual: a password that is the username plus a neighbour the sentence has (`alice.admin,`) leaves
+  `as <redacted> who may` — refusing every password that contains the username would close it, but NIST SP 800-63B-4
+  §3.1.1.2 compares the entire password against the blocklist, "not substrings or words that might be contained
+  therein", so that wider rule was not taken. This is smaller than always scrubbing usernames. Every password spelling
+  in §3.7 stays scrubbed. The budget and D4-7's per-pod memory are unchanged.
 - **The id and the file.** The issue proposed `SPEC_R1_rejoin.md`; the brief names `SPEC_D4_cluster_rejoin.md`, the
   next step of batch D after SPEC_D3. The index row sits between S4d (#315) and L1 (#321), in issue order.
 - **The versions are the orchestrator's**, as for S4e. The release commit moves `pyproject.toml`, `gsd/__init__.py`
@@ -209,7 +222,7 @@ The route is `rejoin_cluster_config` inside `gsd/api.py#build_app`, beside Refre
 | 2 | `_writes_gate`: a proxy-verified identity and the cluster-admin tier (#322) — the **host's gate** | `403` | no |
 | 3 | the body is exactly `{"username": <string>, "password": <string>}` | `422` in fixed words: a key can be the password, so none is repeated | no |
 | 4 | the name is a live cluster | `404` | no |
-| 5 | `gsd/rejoin.py#check`: the row is rejoinable (§3.2); the username fits the shared grammar; it is not a fleet account; the password is present, with no control character and no unpaired surrogate | `409 not-rejoinable`, or `422 rejoin-username-invalid`, `rejoin-fleet-account`, `rejoin-password-missing`, `rejoin-password-invalid` | no |
+| 5 | `gsd/rejoin.py#check`: the row is rejoinable (§3.2); the username fits the shared grammar; it is not a fleet account; the password is present, with no control character and no unpaired surrogate, and, stripped, is neither the username nor a part of it, ignoring case | `409 not-rejoinable`, or `422 rejoin-username-invalid`, `rejoin-fleet-account`, `rejoin-password-missing`, `rejoin-password-invalid`, `rejoin-password-within-username` | no |
 | 6 | this process runs a poller, whose credential gate Rejoin uses | `409` | no |
 | 7 | no other Rejoin is running in this process | `409`, never queued | no |
 | 8 | `gsd/rejoin.py#rejoin` (§3.3) | `200` with an outcome (§3.4) | at most one login |
@@ -2960,8 +2973,9 @@ with writes off (the route does not exist); `409 not-rejoinable` where `rejoinab
 is in flight in this process, or when the process runs no poller; `422` for a body that is not exactly `{username,
 password}` as strings (fixed words: no key or value is repeated, because a key can be the password),
 `rejoin-username-invalid` (outside the bootstrap grammar), `rejoin-fleet-account` (a name a fleet path logs in as,
-compared stripped and casefolded), `rejoin-password-missing` and `rejoin-password-invalid` (a control character, which
-RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry). A success wakes discovery. One
+compared stripped and casefolded), `rejoin-password-missing`, `rejoin-password-invalid` (a control character, which
+RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry) and `rejoin-password-within-username` (the
+password, stripped and casefolded, is the username or lies inside it; #447). A success wakes discovery. One
 `cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
 the person and the account and carries no credential.
 ```
