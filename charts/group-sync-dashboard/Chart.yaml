@@ -279,7 +279,9 @@ type: application
 # and values.yaml comments name Rejoin (#316). No template, value or RBAC change.
 # CHART 0.59.8 (2026-09-27), PATCH: appVersion moves to application 1.6.0 (below); Epic C's second composition
 # review fixes (#452, #440). No template, value or RBAC change.
-version: 0.59.8
+# CHART 0.59.9 (2026-09-28), PATCH: appVersion moves to application 1.7.0 (below); #435.
+# CHART 0.59.10 (2026-09-28), PATCH: appVersion moves to application 1.8.0 (below); #390.
+version: 0.59.10
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -386,7 +388,9 @@ version: 0.59.8
 # dashboard fetches a fresh poller token (#316, SPEC_D4). MINOR.
 # 1.6.0 (2026-09-27). Epic C's second composition review (OB2): a Rejoin keeps a declaring Secret loadable (#452),
 # and the lookup's revoke line never quotes the token it read (#440). MINOR.
-appVersion: "1.6.0"
+# 1.7.0 (2026-09-28). Refuse cluster URL userinfo at both egress points (#435). MINOR.
+# 1.8.0 (2026-09-28). The Rotate token draft survives the poll's repaint (#390). MINOR.
+appVersion: "1.8.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

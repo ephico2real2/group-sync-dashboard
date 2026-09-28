@@ -1,0 +1,76 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-57d8b885fd-j2jsl -c dashboard --timestamps --since-time=2026-09-28T02:13:57Z  (captured 2026-09-28T02:23:30Z)
+# lines in the window: 467
+# discovery, cluster-refreshed, fleet-*, cluster-rejoin*, cluster-secret-*, unsupported-config-key, and every line naming walk-452 except its poll-cycle timing:
+2026-09-28T02:14:55.539738956Z 2026-09-27 22:14:55,539-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-452 state=appeared cycle=7
+2026-09-28T02:14:55.540551459Z 2026-09-27 22:14:55,540-0400 INFO    gsd.clusterconfig discovery cycle=7 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=walk-452
+2026-09-28T02:14:55.540899252Z 2026-09-27 22:14:55,540-0400 INFO    gsd.clusterconfig cluster-resolved cycle=7 cluster=walk-452 source=secret:gsd-cluster-walk-452 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T02:14:55.545955603Z 2026-09-27 22:14:55,545-0400 INFO    gsd.poller cluster walk-452: polling started (secret:gsd-cluster-walk-452)
+2026-09-28T02:14:55.600625382Z 2026-09-27 22:14:55,599-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-452 source=secret:gsd-cluster-walk-452 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T02:14:55.624464676Z 2026-09-27 22:14:55,624-0400 WARNING gsd.auditlog walk-452: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T02:14:55.739925422Z 2026-09-27 22:14:55,739-0400 WARNING gsd.poller binding refresh for walk-452 failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
+2026-09-28T02:15:55.569283940Z 2026-09-27 22:15:55,568-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-452 source=secret:gsd-cluster-walk-452 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T02:15:55.590958518Z 2026-09-27 22:15:55,590-0400 WARNING gsd.auditlog walk-452: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T02:16:45.436980782Z 2026-09-27 22:16:45,436-0400 WARNING gsd.kube walk-452: visibility tier for 'developer' is indeterminate (auth_failed: 401 Unauthorized — token invalid or expired) — failing closed to the self view for this request
+2026-09-28T02:16:52.924695233Z 2026-09-27 22:16:52,923-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=walk-452 credential=bearer by=developer outcome=auth_failed
+2026-09-28T02:16:55.598998800Z 2026-09-27 22:16:55,598-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-452 source=secret:gsd-cluster-walk-452 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T02:16:55.649678106Z 2026-09-27 22:16:55,648-0400 WARNING gsd.auditlog walk-452: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T02:16:58.291652723Z 2026-09-27 22:16:58,291-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-452 account=<redacted> tls=trusted-bundle rejoin_by=<redacted> oauth=https://oauth-openshift.apps-crc.testing expires_at=2027-09-28T02:16:58Z
+2026-09-28T02:16:58.319490115Z 2026-09-27 22:16:58,318-0400 INFO    gsd.rejoin cluster-rejoin-review cluster=walk-452 by=<redacted> account=<redacted> question="update clusterrolebindings" allowed=true reason="RBAC: allowed by ClusterRoleBinding 'walk-452-cluster-admin' of ClusterRole 'cluster-admin' to User '<redacted>'"
+2026-09-28T02:16:58.375188606Z 2026-09-27 22:16:58,374-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-452 account=<redacted> tls=trusted-bundle rejoin_by=<redacted> token=sha256~<redacted> outcome=revoked
+2026-09-28T02:16:58.499003882Z 2026-09-27 22:16:58,498-0400 INFO    gsd.clusterconfig.writer cluster-secret-rotated secret=gsd-cluster-walk-452 namespace=group-sync-dashboard cluster=walk-452 by=developer
+2026-09-28T02:16:58.500113969Z 2026-09-27 22:16:58,499-0400 INFO    gsd.rejoin cluster-rejoined cluster=walk-452 by=<redacted> account=<redacted> secret=gsd-cluster-walk-452 written=updated revoked=true
+2026-09-28T02:16:58.710339388Z 2026-09-27 22:16:58,709-0400 INFO    gsd.clusterconfig discovery cycle=8 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 changed=walk-452
+2026-09-28T02:16:58.714637487Z 2026-09-27 22:16:58,710-0400 INFO    gsd.clusterconfig cluster-resolved cycle=8 cluster=walk-452 source=secret:gsd-cluster-walk-452 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T02:17:55.600664809Z 2026-09-27 22:17:55,600-0400 DEBUG   gsd.kube fetched 61 users from walk-452, 61 with an identity, 8 with a display name
+2026-09-28T02:17:55.608481962Z 2026-09-27 22:17:55,608-0400 INFO    gsd.poller walk-452: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T02:17:55.609318048Z 2026-09-27 22:17:55,609-0400 INFO    gsd.poller walk-452/app-ocp-rbac-group-groupsync: new sync observed at 2026-09-28T02:00:01Z (44 groups)
+2026-09-28T02:17:55.610373927Z 2026-09-27 22:17:55,610-0400 INFO    gsd.poller walk-452/autobahnusers-onboarding-groupsync: new sync observed at 2026-09-28T02:00:01Z (1 groups)
+2026-09-28T02:17:55.610891596Z 2026-09-27 22:17:55,610-0400 INFO    gsd.poller walk-452/bdp-oud-group-rbac-groupsync: new sync observed at 2026-09-28T02:00:00Z (21 groups)
+2026-09-28T02:17:55.628710909Z 2026-09-27 22:17:55,628-0400 DEBUG   gsd.kube walk-452: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T02:17:55.648360313Z 2026-09-27 22:17:55,648-0400 INFO    gsd.poller polled walk-452: 3 CRs, 66 groups, 3 new sync event(s), 95 membership change(s)
+2026-09-28T02:17:57.104354896Z 2026-09-27 22:17:57,103-0400 DEBUG   gsd.auditlog walk-452: crc: audit.log read 8388608 byte(s) from offset 0 (first sight: backfill) — 9948 line(s), 321 login event(s), 321 inside retention, 317 after the identity filter
+2026-09-28T02:17:57.132589622Z 2026-09-27 22:17:57,132-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=walk-452 credential=bearer by=developer outcome=ok
+2026-09-28T02:17:57.238250584Z 2026-09-27 22:17:57,237-0400 INFO    gsd.auditlog walk-452: recorded 317 login attempt(s) from the audit log on crc (audit.log)
+2026-09-28T02:17:57.303634318Z 2026-09-27 22:17:57,303-0400 INFO    gsd.kpi.rollup walk-452: daily KPI rollup written for 2026-09-28 (8 metrics)
+2026-09-28T02:18:55.601322190Z 2026-09-27 22:18:55,600-0400 DEBUG   gsd.kube fetched 61 users from walk-452, 61 with an identity, 8 with a display name
+2026-09-28T02:18:55.609383677Z 2026-09-27 22:18:55,609-0400 INFO    gsd.poller walk-452: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T02:18:55.630540711Z 2026-09-27 22:18:55,630-0400 DEBUG   gsd.kube walk-452: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T02:18:55.638785907Z 2026-09-27 22:18:55,638-0400 INFO    gsd.poller polled walk-452: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T02:18:56.832152384Z 2026-09-27 22:18:56,831-0400 DEBUG   gsd.auditlog walk-452: crc: audit.log read 8388608 byte(s) from offset 8387795 — 8458 line(s), 3 login event(s), 3 inside retention, 3 after the identity filter
+2026-09-28T02:18:56.837248819Z 2026-09-27 22:18:56,837-0400 INFO    gsd.auditlog walk-452: recorded 3 login attempt(s) from the audit log on crc (audit.log)
+2026-09-28T02:19:55.601114484Z 2026-09-27 22:19:55,600-0400 DEBUG   gsd.kube fetched 61 users from walk-452, 61 with an identity, 8 with a display name
+2026-09-28T02:19:55.607019089Z 2026-09-27 22:19:55,606-0400 INFO    gsd.poller walk-452: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T02:19:55.627443412Z 2026-09-27 22:19:55,627-0400 DEBUG   gsd.kube walk-452: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T02:19:55.634650979Z 2026-09-27 22:19:55,634-0400 INFO    gsd.poller polled walk-452: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T02:19:56.918918156Z 2026-09-27 22:19:56,918-0400 DEBUG   gsd.auditlog walk-452: crc: audit.log read 7912647 byte(s) from offset 16776336 — 9298 line(s), 136 login event(s), 136 inside retention, 130 after the identity filter
+2026-09-28T02:19:56.998946276Z 2026-09-27 22:19:56,998-0400 INFO    gsd.auditlog walk-452: recorded 130 login attempt(s) from the audit log on crc (audit.log)
+2026-09-28T02:20:55.605434961Z 2026-09-27 22:20:55,605-0400 DEBUG   gsd.kube fetched 61 users from walk-452, 61 with an identity, 8 with a display name
+2026-09-28T02:20:55.610770314Z 2026-09-27 22:20:55,610-0400 INFO    gsd.poller walk-452: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T02:20:55.629865882Z 2026-09-27 22:20:55,629-0400 DEBUG   gsd.kube walk-452: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T02:20:55.636852990Z 2026-09-27 22:20:55,636-0400 INFO    gsd.poller polled walk-452: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T02:20:55.754166368Z 2026-09-27 22:20:55,753-0400 DEBUG   gsd.auditlog walk-452: crc: audit.log read 0 byte(s) from offset 24688983 — 0 line(s), 0 login event(s), 0 inside retention, 0 after the identity filter
+2026-09-28T02:21:55.599735153Z 2026-09-27 22:21:55,599-0400 DEBUG   gsd.kube fetched 61 users from walk-452, 61 with an identity, 8 with a display name
+2026-09-28T02:21:55.605203047Z 2026-09-27 22:21:55,604-0400 INFO    gsd.poller walk-452: 61 user(s) recorded, 8 with a display name, 0 with an Identity creation time
+2026-09-28T02:21:55.623987614Z 2026-09-27 22:21:55,623-0400 DEBUG   gsd.kube walk-452: login-gate group discovered from identity provider 'ldap-local': cn=app-ssb-autobahnusers,ou=Groups,dc=ephico2real,dc=com
+2026-09-28T02:21:55.630944764Z 2026-09-27 22:21:55,630-0400 INFO    gsd.poller polled walk-452: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T02:21:55.745109381Z 2026-09-27 22:21:55,744-0400 DEBUG   gsd.auditlog walk-452: crc: audit.log read 0 byte(s) from offset 24688983 — 0 line(s), 0 login event(s), 0 inside retention, 0 after the identity filter
+2026-09-28T02:21:59.036286862Z 2026-09-27 22:21:59,035-0400 INFO    gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-452 state=cleared cycle=9
+2026-09-28T02:21:59.037209366Z 2026-09-27 22:21:59,037-0400 INFO    gsd.clusterconfig discovery cycle=9 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 removed=walk-452
+2026-09-28T02:21:59.807655038Z 2026-09-27 22:21:59,807-0400 INFO    gsd.poller walk-452: its Secret is gone; the poll thread stops (history kept)
+# 'walk-452 poll cycle' lines: 8
+# unsupported-config-key lines: 0
+# fleet-lookup lines: 0
+# fleet-lookup-failed lines: 0
+# fleet-ping lines: 0
+# fleet-ping-failed lines: 0
+# fleet-login lines: 1
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 1
+# fleet-logout-failed lines: 0
+# cluster-rejoin-review lines: 1
+# cluster-rejoined lines: 1
+# cluster-rejoin-failed lines: 0
+# cluster-refreshed lines: 2
+# lines naming the fleet account: 0
+# ERROR or Traceback lines: 0

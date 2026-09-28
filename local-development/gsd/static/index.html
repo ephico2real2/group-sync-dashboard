@@ -192,10 +192,11 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.
-                   #311: each card's Refresh state by cluster id — in flight, or the answer — so the repaint keeps it. */
+                   #311: each card's Refresh state by cluster id — in flight, or the answer — so the repaint keeps it.
+                   #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
-                clusterRotate: null, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
+                clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
                 clusterRejoin: {},   // #316: each card's Rejoin answer by cluster id — never a username or a password
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
                 libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
@@ -6141,7 +6142,7 @@ function ccCredential(c) {
     out += ` <button type="button" class="linkish" id="cc-rotate-${esc(c.id)}" data-cc-rotate="${esc(c.id)}">Rotate</button>`;
     if (open) {
       out += `<div class="cc-panel"><label for="cc-rotate-token-${esc(c.id)}">New bearer token</label>
-        <input id="cc-rotate-token-${esc(c.id)}" type="password" autocomplete="new-password">
+        <input id="cc-rotate-token-${esc(c.id)}" type="password" autocomplete="new-password" value="${esc(view.clusterRotateDraft[c.id] || "")}">
         <div class="cc-acts"><button type="button" class="btn" id="cc-rotate-go-${esc(c.id)}" data-cc-rotate-go="${esc(c.id)}">Overwrite token</button></div>
         <p class="filterbar-note" id="cc-rotate-msg-${esc(c.id)}">${esc(view.clusterMsg[`rotate:${c.id}`] || "")}</p></div>`;
     }
@@ -6466,8 +6467,18 @@ function wireClusterConfig() {
     render(); refresh();
   };
   document.querySelectorAll("[data-cc-rotate]").forEach((el) => {
-    el.onclick = () => { view.clusterRotate = view.clusterRotate === el.dataset.ccRotate ? null : el.dataset.ccRotate; render(); };
+    el.onclick = () => {
+      const id = el.dataset.ccRotate;
+      // close or switch: the draft belongs to the open panel, so dropping it is cancel
+      if (view.clusterRotate) delete view.clusterRotateDraft[view.clusterRotate];
+      view.clusterRotate = view.clusterRotate === id ? null : id;
+      render();
+    };
   });
+  const rotateField = view.clusterRotate && $(`cc-rotate-token-${view.clusterRotate}`);
+  if (rotateField) {
+    rotateField.oninput = () => { view.clusterRotateDraft[view.clusterRotate] = rotateField.value; };
+  }
   document.querySelectorAll("[data-cc-rotate-go]").forEach((el) => {
     el.onclick = async () => {
       const id = el.dataset.ccRotateGo;
@@ -6478,6 +6489,7 @@ function wireClusterConfig() {
         await apiSend(`/api/clusterconfigs/${encodeURIComponent(id)}/credential`, "PUT", { token });
         view.clusterMsg[`rotate:${id}`] = "token overwritten in place — the old token is gone from the cluster on the write. The value is never shown.";
       } catch (e) { view.clusterMsg[`rotate:${id}`] = e.message; }
+      delete view.clusterRotateDraft[id];
       if (field) field.value = "";
       render(); refresh();
     };

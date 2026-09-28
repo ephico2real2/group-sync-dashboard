@@ -1,0 +1,27 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-57d8b885fd-j2jsl -c dashboard --timestamps --since-time=2026-09-28T02:14:20Z  (captured 2026-09-28T02:15:18Z)
+# lines in the window: 48
+# discovery, cluster-refreshed, fleet-*, cluster-rejoin*, cluster-secret-*, unsupported-config-key, and every line naming walk-452 except its poll-cycle timing:
+2026-09-28T02:14:55.539738956Z 2026-09-27 22:14:55,539-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,walk-452 state=appeared cycle=7
+2026-09-28T02:14:55.540551459Z 2026-09-27 22:14:55,540-0400 INFO    gsd.clusterconfig discovery cycle=7 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=walk-452
+2026-09-28T02:14:55.540899252Z 2026-09-27 22:14:55,540-0400 INFO    gsd.clusterconfig cluster-resolved cycle=7 cluster=walk-452 source=secret:gsd-cluster-walk-452 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-28T02:14:55.545955603Z 2026-09-27 22:14:55,545-0400 INFO    gsd.poller cluster walk-452: polling started (secret:gsd-cluster-walk-452)
+2026-09-28T02:14:55.600625382Z 2026-09-27 22:14:55,599-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=walk-452 source=secret:gsd-cluster-walk-452 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-28T02:14:55.624464676Z 2026-09-27 22:14:55,624-0400 WARNING gsd.auditlog walk-452: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-28T02:14:55.739925422Z 2026-09-27 22:14:55,739-0400 WARNING gsd.poller binding refresh for walk-452 failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
+# 'walk-452 poll cycle' lines: 1
+# unsupported-config-key lines: 0
+# fleet-lookup lines: 0
+# fleet-lookup-failed lines: 0
+# fleet-ping lines: 0
+# fleet-ping-failed lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# fleet-logout-failed lines: 0
+# cluster-rejoin-review lines: 0
+# cluster-rejoined lines: 0
+# cluster-rejoin-failed lines: 0
+# cluster-refreshed lines: 0
+# lines naming the fleet account: 0
+# ERROR or Traceback lines: 0

@@ -1,0 +1,6 @@
+# oc delete secrets -n group-sync-dashboard -l walk.gsd.lab/run=walk-452-2026-09-28 --ignore-not-found
+# at 2026-09-28T02:19:21Z
+secret "gsd-cluster-walk-452" deleted from group-sync-dashboard namespace
+# oc delete clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=walk-452-2026-09-28 --ignore-not-found
+# at 2026-09-28T02:19:21Z
+clusterrolebinding.rbac.authorization.k8s.io "walk-452-cluster-admin" deleted
