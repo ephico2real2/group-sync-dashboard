@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Cluster Configurations counts generated clusters under their ConfigMap declaration (#404).**
+  The source chip names both the ConfigMap to edit and its generated Secret. The discovery line
+  counts live Secret-backed clusters separately, including generated Secrets and excluding retired
+  rows. UI-written and hand-written Secrets keep their source classification and controls.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only

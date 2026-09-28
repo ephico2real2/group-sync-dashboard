@@ -7077,7 +7077,9 @@ class TestClusterConfigPage:
         assert "<img" in page.locator('#cc-head [data-cc-warning]').inner_text()
         assert "<img" in page.locator('#cc-cluster-east .cc-shared-api-hint').inner_text()
 
-    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig):
+    @pytest.mark.parametrize("check", ["count", "chip"])
+    @pytest.mark.parametrize("width", [375, 393, 768, 1280])
+    def test_configmap_pending_and_generated_rows_name_the_source_and_offer_no_secret_controls(self, page, cc_rig, check, width):
         import dataclasses
         from gsd.clusterconfig.parser import Finding
         from gsd.config import ClusterConfig
@@ -7088,16 +7090,58 @@ class TestClusterConfigPage:
         pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
                                 source="configmap:fleet:1", onboarding=owner)
         settings.cluster_registry.replace([east, pending], [Finding("configmap:fleet:2", "onboarding-invalid", "invalid stanza")], at="now")
-        page.set_viewport_size({"width": 375, "height": 812})
+        page.set_viewport_size({"width": width, "height": 812})
         page.set_extra_http_headers({"X-Forwarded-User": "root"})
         page.goto(f"{base}/#page=clusters")
         page.wait_for_selector("#cc-cluster-pending")
+        if check == "count":
+            source = page.locator("#cc-head .cc-kv", has_text="by source").inner_text()
+            assert "ConfigMap 2" in source and "Secret 0" in source
+        else:
+            chip = page.locator("#cc-cluster-east h2 .rp-chip").inner_text()
+            assert chip == "ConfigMap fleet → Secret gsd-cluster-east"
+            assert page.locator("#cc-cluster-east .cc-src-configmap").count() == 1
+        assert page.locator("#cc-cluster-pending .cc-src-configmap").inner_text() == "ConfigMap fleet"
+        assert page.locator("#cc-cluster-east .cc-src-configmap").evaluate(
+            "el => getComputedStyle(el).whiteSpace") == "normal"
         assert "ConfigMap fleet" in page.locator("#cc-cluster-pending").inner_text()
         assert "ConfigMap fleet" in page.locator("#cc-cluster-east").inner_text()
         assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 0
         assert "configmap:fleet:2" in page.locator("#cc-findings").inner_text()
         assert "onboard,sideload" in page.locator("#cc-head").inner_text()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+    def test_discovery_counts_live_secret_storage_independently_of_declaration(self, page, cc_rig):
+        import dataclasses
+        from gsd.config import ClusterConfig
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        generated = dataclasses.replace(east, name="gitops", source="secret:gsd-cluster-gitops",
+                                        onboarding=("fleet", "cm-uid", "a" * 64))
+        pending = ClusterConfig("pending", "https://api.pending:6443", sa_token_lookup=True,
+                                source="configmap:fleet:1")
+        # Disabled configurations still have a live labelled Secret.
+        settings.cluster_registry.replace([dataclasses.replace(east, enabled=False), generated, pending], [], at="now")
+
+        def append_retired(route):
+            response = route.fetch()
+            payload = response.json()
+            payload["clusters"].append({
+                **next(c for c in payload["clusters"] if c["id"] == "east"),
+                "id": "retired", "source": "secret:gsd-cluster-retired", "retired": True,
+            })
+            route.fulfill(response=response, json=payload)
+
+        page.route("**/api/clusterconfigs", append_retired)
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-retired")
+        discovery = page.locator("#cc-head .cc-kv").filter(has=page.locator(".k", has_text=re.compile("^discovery$")))
+        assert "2 Secrets carry the discovery label" in discovery.inner_text()
+        assert page.locator("#cc-cluster-east .cc-src-secret").inner_text() == "Secret gsd-cluster-east"
+        assert page.locator("#cc-rotate-east, #cc-delete-east").count() == 2
+        assert page.locator("#cc-rotate-gitops, #cc-delete-gitops, #cc-rotate-retired, #cc-delete-retired").count() == 0
+        assert page.locator("#cc-refresh-gitops").count() == 1
 
     def test_the_fleet_account_rows_and_a_self_login_expiry_are_instants(self, page, cc_rig):
         """SPEC_S4c §3.10 (#285): one head row per fleet account — when the daily ping last confirmed it, which cluster
