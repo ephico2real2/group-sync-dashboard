@@ -14,7 +14,6 @@ from gsd.config import ClusterConfig
 from gsd.fleetlookup import CredentialGate, LookupRefused
 from gsd.poller import Poller, _LookupState
 from gsd.store import Store
-from test_fleet_login import refused_401
 from test_fleet_lookup import PASSWORD, USER, run, settings, wire  # noqa: F401
 
 
@@ -25,12 +24,11 @@ def fail(cluster: ClusterConfig, gate: CredentialGate) -> LookupRefused:
 
 
 def test_gated_target_never_exports_url_credentials(wire, tmp_path, caplog):
-    # The ClusterConfig the values parser built for this stanza before #415 refused it at load.
+    # Since #435 both egress points refuse a userinfo URL before the wire, so no login can record one now; a
+    # refusal recorded earlier (a Lease entry from an older version) still can, and the strip must hold for it.
     url = "https://url-user:url-secret@api.a.example.com:6443"
-    first = ClusterConfig("a", url, sa_token_lookup=True, ldap_connection_bootstrap=USER)
-    wire.answers = [refused_401()]
     gate = CredentialGate()
-    fail(first, gate)
+    gate.refuse(url, USER, PASSWORD)
     second = ClusterConfig("b", "https://api.b.example.com:6443", sa_token_lookup=True, ldap_connection_bootstrap=USER)
     exc = fail(second, gate)
     s = settings(second)
@@ -39,7 +37,7 @@ def test_gated_target_never_exports_url_credentials(wire, tmp_path, caplog):
         poller._lookup_failed(_LookupState(), "b", "gsd-cluster-b", exc, 0)
     public = json.dumps([f.public() for f in s.cluster_registry.findings()])
     combined = f"{exc}\n{exc.detail}\n{public}\n{caplog.text}"
-    assert (exc.code, exc.gated, exc.spent) == ("login-refused", True, False) and len(wire.authorize) == 1
+    assert (exc.code, exc.gated, exc.spent) == ("login-refused", True, False) and len(wire.authorize) == 0
     for secret in ("url-user", "url-secret", PASSWORD):
         assert secret not in combined, secret
     assert exc.detail.startswith("https://api.a.example.com:6443"), exc.detail
