@@ -13,7 +13,7 @@ which `local-development/prepare-release.py` does when the release is cut.
 - **Cluster Configurations counts generated clusters under their ConfigMap declaration (#404).**
   The source chip names both the ConfigMap to edit and its generated Secret. The discovery line
   counts live Secret-backed clusters separately, including generated Secrets and excluding retired
-  rows. UI-written and hand-written Secrets keep their source classification and controls.
+  rows. UI-written and hand-written Secrets keep their source classification and controls. Application **1.9.0**, chart 0.59.11.
 
 - **A half-typed Rotate token survives the minute's repaint (#390).** The Cluster Configurations
   Rotate field is recreated whenever a poll changes the card. The draft now lives in the page's
