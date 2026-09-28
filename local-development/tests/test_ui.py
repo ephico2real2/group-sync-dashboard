@@ -7312,6 +7312,34 @@ class TestClusterConfigPage:
         assert page.evaluate("() => view.clusterRotateDraft.east") in (None, "")
 
     # ── the tier on the page (#230): two levels, and the tab's very existence is the first one ────
+
+    def test_rotate_constructor_starts_and_reopens_empty(self, page, cc_rig):
+        """A cluster may be named `constructor`; a plain `{}` draft map inherited Object's constructor there, so an
+        untouched Overwrite wrote it as a credential (review of #456, Codex). The draft map has no prototype."""
+        import dataclasses
+        base, _, settings = cc_rig
+        east, = settings.cluster_registry.discovered()
+        settings.cluster_registry.replace(
+            [dataclasses.replace(east, name="constructor", source="secret:gsd-cluster-constructor")],
+            [], at="2026-09-27T00:00:00Z",
+        )
+        _open_as(page, base, "root")
+        page.click("#tab-clusters")
+        page.click("#cc-rotate-constructor")
+        field = page.locator("#cc-rotate-token-constructor")
+        assert field.input_value() == ""
+        puts = []
+        page.route("**/api/clusterconfigs/constructor/credential", lambda route: (
+            puts.append(route.request.method),
+            route.fulfill(status=200, content_type="application/json", body="{}"),
+        ))
+        page.click("#cc-rotate-go-constructor")
+        page.wait_for_function("() => document.getElementById('cc-rotate-msg-constructor').textContent === 'a bearer token is required.'")
+        assert puts == []
+        page.fill("#cc-rotate-token-constructor", "synthetic-draft")
+        page.click("#cc-rotate-constructor")
+        page.click("#cc-rotate-constructor")
+        assert field.input_value() == ""
     def test_the_auditor_gets_no_tab_no_page_and_makes_no_request_for_it(self, page, cc_rig):
         """The operator's rule: the auditor must not see this surface OR learn that it exists. So the
         tab button is absent, a pasted #page=clusters shows the refusal card, and — the part a hidden

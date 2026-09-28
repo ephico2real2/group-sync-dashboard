@@ -196,7 +196,7 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                    #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
-                clusterRotate: null, clusterRotateDraft: {}, clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
+                clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
                 clusterRejoin: {},   // #316: each card's Rejoin answer by cluster id — never a username or a password
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
                 libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
