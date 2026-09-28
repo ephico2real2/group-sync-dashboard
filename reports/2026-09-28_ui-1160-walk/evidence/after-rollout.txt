@@ -1,0 +1,11 @@
+# oc get replicasets.apps -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp,READY:.status.readyReplicas,IMAGE:.spec.template.spec.containers[0].image
+# at 2026-09-28T17:15:34Z
+NAME                                                CREATED                READY    IMAGE
+grafana-openshift-grafana-deployment-cc8d47b67      2026-09-20T00:56:44Z   1        docker.io/grafana/grafana@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a
+grafana-operator-controller-manager-v5-58748cb7d4   2026-09-20T00:53:05Z   1        ghcr.io/grafana/grafana-operator@sha256:e72d11ac579a000fe0ddcc0c3341a5103a1c93a28fbc394dc7c7009ed071d1a7
+group-sync-dashboard-6747c4ddd9                     2026-09-28T16:49:30Z   1        quay.io/ephico2real/group-sync-dashboard:1.16.0
+group-sync-dashboard-report-758b8d9545              2026-09-28T16:49:30Z   1        quay.io/ephico2real/group-sync-dashboard-report:1.16.0
+mock-openshift-7777cc654b                           2026-09-19T03:38:49Z   1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+mock-privateca-757657f7cf                           2026-09-20T16:54:05Z   1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+mock-selfsigned-79f8c4f48f                          2026-09-20T16:54:05Z   1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+mock-trusted-756fbcdb8c                             2026-09-20T16:54:05Z   1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test

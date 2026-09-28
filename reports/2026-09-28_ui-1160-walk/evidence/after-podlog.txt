@@ -1,0 +1,33 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-6747c4ddd9-wh7n9 -c dashboard --timestamps --since-time=2026-09-28T17:00:12Z  (captured 2026-09-28T17:12:30Z)
+# lines in the window: 591
+# cluster-refreshed lines:
+2026-09-28T17:05:43.254625070Z 2026-09-28 13:05:43,253-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=w462 credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:05:43.331340140Z 2026-09-28 13:05:43,331-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=result-w462 credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:06:51.365102319Z 2026-09-28 13:06:51,364-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=constructor credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:06:55.610337078Z 2026-09-28 13:06:55,609-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=w462 credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:06:55.690768918Z 2026-09-28 13:06:55,690-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=result-w462 credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:08:03.675346750Z 2026-09-28 13:08:03,674-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=constructor credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:08:07.921064433Z 2026-09-28 13:08:07,920-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=w462 credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:08:08.037643990Z 2026-09-28 13:08:08,037-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=result-w462 credential=bearer by=developer outcome=auth_failed
+2026-09-28T17:09:16.350494314Z 2026-09-28 13:09:16,347-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=constructor credential=bearer by=developer outcome=auth_failed
+# cluster-refreshed cluster=w462 by=developer: 3
+# cluster-refreshed cluster=result-w462 by=developer: 3
+# cluster-refreshed cluster=constructor by=developer: 3
+# cluster-refreshed lines, all: 9, of them by=developer: 9
+# fleet-lookup lines: 0
+# fleet-lookup-failed lines: 0
+# fleet-ping lines: 0
+# fleet-ping-failed lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# cluster-rejoin-review lines: 0
+# cluster-rejoined lines: 0
+# cluster-rejoin-failed lines: 0
+# lines matching 'fleet-login': 0
+# lines matching 'cluster-rejoin': 0
+# lines naming /rejoin: 0
+# lines naming the fleet account: 0
+# Traceback lines: 0
+# ERROR lines: 0
