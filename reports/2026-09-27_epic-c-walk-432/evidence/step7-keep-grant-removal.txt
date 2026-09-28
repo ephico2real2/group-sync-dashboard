@@ -1,0 +1,7 @@
+# 2026-09-27T22:52:04Z the chart's grant is back: ServiceAccount get openshift-config/ldap-oauth-bind-secret = yes, through:
+{"name":"group-sync-dashboard-fleet-account","rules":[{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]}
+{"name":"group-sync-dashboard-fleet-account","roleRef":"group-sync-dashboard-fleet-account","subjects":[{"kind":"ServiceAccount","name":"group-sync-dashboard","namespace":"group-sync-dashboard"}]}
+# 2026-09-27T22:52:05Z oc delete roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -n openshift-config -l walk.gsd.lab/run=epic-c-walk-432-2026-09-27
+role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace
+rolebinding.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace
+# 2026-09-27T22:52:05Z after: ServiceAccount get openshift-config/ldap-oauth-bind-secret = yes

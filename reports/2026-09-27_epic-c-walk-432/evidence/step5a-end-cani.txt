@@ -1,0 +1,14 @@
+# echo "ServiceAccount get openshift-config/ldap-oauth-bind-secret: $(oc auth can-i get secrets/ldap-oauth-bind-secret -n openshift-config --as=system:serviceaccount:group-sync-dashboard:group-sync-dashboard || true)"
+   echo "ServiceAccount get group-sync-dashboard/gsd-walk-developer-password: $(oc auth can-i get secrets/gsd-walk-developer-password -n group-sync-dashboard --as=system:serviceaccount:group-sync-dashboard:group-sync-dashboard || true)"
+   echo "developer get group-sync-operator/group-sync-dashboard-cluster-poller-token: $(oc auth can-i get secrets/group-sync-dashboard-cluster-poller-token -n group-sync-operator --as=developer || true)"
+   echo "developer list groups.user.openshift.io (the poller ClusterRole): $(oc auth can-i list groups.user.openshift.io --as=developer 2>/dev/null || true)"
+   echo "developer update clusterrolebindings (the dashboard's cluster-admin tier): $(oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true)"
+   oc get roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -n openshift-config -o json | jq -r '.items[] | select(.metadata.name | test("group-sync-dashboard|gsd-walk")) | "openshift-config \(.kind) \(.metadata.name)"'
+# at 2026-09-27T22:34:41Z
+ServiceAccount get openshift-config/ldap-oauth-bind-secret: yes
+ServiceAccount get group-sync-dashboard/gsd-walk-developer-password: yes
+developer get group-sync-operator/group-sync-dashboard-cluster-poller-token: yes
+developer list groups.user.openshift.io (the poller ClusterRole): yes
+developer update clusterrolebindings (the dashboard's cluster-admin tier): no
+openshift-config Role gsd-walk-keep-fleet-password-get
+openshift-config RoleBinding gsd-walk-keep-fleet-password-get

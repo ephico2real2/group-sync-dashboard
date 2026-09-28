@@ -1,0 +1,6 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-c9664c7c4-cxs9b -c dashboard --timestamps | grep the standby, the takeover and the first discovery  (captured 2026-09-27T23:04:36Z)
+# pod started: 2026-09-27T22:50:46Z
+2026-09-27T22:50:54.698565475Z 2026-09-27 18:50:54,698-0400 INFO    gsd.leader leader election: lease held by 'group-sync-dashboard-79944d6c8f-8vzjm' has expired, taking it
+2026-09-27T22:50:54.710659788Z 2026-09-27 18:50:54,710-0400 INFO    gsd.leader became leader (group-sync-dashboard/group-sync-dashboard as group-sync-dashboard-c9664c7c4-cxs9b)
+2026-09-27T22:50:54.726898831Z 2026-09-27 18:50:54,726-0400 INFO    gsd.clusterconfig discovery cycle=1 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 added=mock-privateca,mock-selfsigned,mock-trusted,shared-qa,shared-rnd refused_now=gsd-cluster-mock-refusal:insecure-with-ca
+2026-09-27T22:50:54.737125384Z 2026-09-27 18:50:54,736-0400 INFO    gsd.poller retired 2 cluster(s) no longer in the configuration

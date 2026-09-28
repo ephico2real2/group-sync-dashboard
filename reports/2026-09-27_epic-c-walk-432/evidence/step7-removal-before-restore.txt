@@ -1,0 +1,12 @@
+# 2026-09-27T22:50:17Z oc delete secrets -n group-sync-dashboard -l walk.gsd.lab/run=epic-c-walk-432-2026-09-27   (the walk Secret: no password is readable from here on)
+secret "gsd-walk-developer-password" deleted from group-sync-dashboard namespace
+# 2026-09-27T22:50:17Z oc delete secrets -n group-sync-dashboard gsd-cluster-walk-lookup   (the lookup's Secret, product-made, unlabelled: by name)
+secret "gsd-cluster-walk-lookup" deleted from group-sync-dashboard namespace
+# 2026-09-27T22:50:17Z developer's two grants, by label
+rolebinding.rbac.authorization.k8s.io "gsd-walk-developer-token-reader" deleted from group-sync-operator namespace
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-developer-poller" deleted
+# 2026-09-27T22:50:17Z what remains labelled (the keep-grant, removed after the restore):
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+developer get the poller token Secret: no
+developer list groups: no

@@ -1,0 +1,36 @@
+# cm=$(oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json)
+   echo "ConfigMap group-sync-dashboard-config resourceVersion $(printf '%s' "${cm}" | jq -r .metadata.resourceVersion); clusters.yaml: the fleet, cadence and election keys, then the whole clusters list"
+   printf '%s' "${cm}" | jq -r '.data["clusters.yaml"]' | awk '/^clusters:/{p=1} p || /^(fleet|saTokenLookup|discoveryIntervalSeconds|pollIntervalSeconds|requestTimeoutSeconds|replicaCount|leaderElection|clusterSecrets)/'
+   echo "onboarding ConfigMaps (label key groupsync-dashboard.io/config-type): $(oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o name | wc -l | tr -d ' ')"
+# at 2026-09-27T22:28:27Z
+ConfigMap group-sync-dashboard-config resourceVersion 5500085; clusters.yaml: the fleet, cadence and election keys, then the whole clusters list
+pollIntervalSeconds: 60
+discoveryIntervalSeconds: 300
+requestTimeoutSeconds: 15
+clusterSecretsEnabled: true
+clusterSecretsWritesEnabled: true
+fleetAccountUsername: "developer"
+fleetPasswordSecretNamespace: "group-sync-dashboard"
+fleetPasswordSecretName: "gsd-walk-developer-password"
+fleetPasswordSecretKey: "password"
+fleetPingEnabled: true
+fleetPingIntervalSeconds: 300
+saTokenLookupSourceNamespace: "group-sync-operator"
+saTokenLookupSourceServiceAccount: "group-sync-dashboard-cluster-poller"
+saTokenLookupTokenSecretName: ""
+replicaCount: 1
+leaderElection: true
+clusters:
+  - apiUrl: https://kubernetes.default.svc
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    dashboardController: true
+    enabled: true
+    name: dashboard
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+  - apiUrl: https://api.crc.testing:6443
+    enabled: true
+    ldapConnectionBootstrap: developer
+    name: walk-lookup
+    saTokenLookup: true
+
+onboarding ConfigMaps (label key groupsync-dashboard.io/config-type): 0

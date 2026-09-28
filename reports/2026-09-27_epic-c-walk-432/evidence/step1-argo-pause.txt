@@ -1,0 +1,6 @@
+# the Application's .spec.syncPolicy before the pause (2026-09-27T21:41:27Z):
+{"automated":{"prune":true,"selfHeal":true},"retry":{"backoff":{"duration":"30s","factor":2,"maxDuration":"5m"},"limit":3},"syncOptions":["CreateNamespace=true","RespectIgnoreDifferences=true","ServerSideApply=true"]}
+# oc patch applications.argoproj.io group-sync-dashboard -n openshift-gitops --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'  (2026-09-27T21:41:28Z)
+application.argoproj.io/group-sync-dashboard patched
+# after (2026-09-27T21:41:28Z):
+{"syncPolicy":{"retry":{"backoff":{"duration":"30s","factor":2,"maxDuration":"5m"},"limit":3},"syncOptions":["CreateNamespace=true","RespectIgnoreDifferences=true","ServerSideApply=true"]},"sync":"Synced","rev":"6fe404c34004351b1dd89f687dd3b0ef3fcf9a7f","health":"Healthy","op":"Succeeded"}

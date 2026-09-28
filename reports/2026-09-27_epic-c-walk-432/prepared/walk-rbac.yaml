@@ -1,0 +1,76 @@
+# SPEC_S4c §3.12's three temporary grants (step 7 names them), for the #432 walk on 2026-09-27. All are labelled
+# walk.gsd.lab/run=epic-c-walk-432-2026-09-27, so each removal is one label selector and provable.
+#
+# Applied before the walk's values are deployed. Removed in this order at the end:
+#   - 2 and 3 (`developer`'s grants) before `release-crc.sh --argocd main`, once the walk Secret is gone;
+#   - 1 (the ServiceAccount's) only after `oc auth can-i` shows the chart's own grant back, so the dashboard
+#     ServiceAccount's permissions never drop (the operator's rule of 2026-09-25).
+
+# 1. KEEP the dashboard ServiceAccount's `get` on the fleet password Secret while the walk's values point the chart's
+#    fleet-account Role at the walk-only Secret instead. The same subject, resourceName and verb as the chart's own
+#    group-sync-dashboard-fleet-account Role in openshift-config. Nothing in the walk's configuration reads this
+#    Secret: the grant only keeps what the ServiceAccount already has.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gsd-walk-keep-fleet-password-get
+  namespace: openshift-config
+  labels:
+    walk.gsd.lab/run: epic-c-walk-432-2026-09-27
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["ldap-oauth-bind-secret"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gsd-walk-keep-fleet-password-get
+  namespace: openshift-config
+  labels:
+    walk.gsd.lab/run: epic-c-walk-432-2026-09-27
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gsd-walk-keep-fleet-password-get
+subjects:
+  - kind: ServiceAccount
+    name: group-sync-dashboard
+    namespace: group-sync-dashboard
+---
+# 2. Step 2: `developer` may read what the lookup reads on the target — the estate's existing token-reader Role in
+#    group-sync-operator, which binds the fleet account today (S4b's rehearsal, docs/VALIDATION_satokenlookup.md
+#    Case A). A binding to the existing Role, not a new or broader one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gsd-walk-developer-token-reader
+  namespace: group-sync-operator
+  labels:
+    walk.gsd.lab/run: epic-c-walk-432-2026-09-27
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: group-sync-dashboard-cluster-poller-token-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer
+---
+# 3. Step 4: a self-login cluster polls as `developer`'s own session, so `developer` reads what the estate's remote
+#    poller identity reads — the ClusterRole the poller ServiceAccount is bound to, no wider.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-developer-poller
+  labels:
+    walk.gsd.lab/run: epic-c-walk-432-2026-09-27
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: group-sync-dashboard-cluster-poller
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

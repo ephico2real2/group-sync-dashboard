@@ -1,0 +1,106 @@
+# WALK-ONLY VALUES: SPEC_S4c §3.12 steps 1-3 as corrected by SPEC_S4e §5 (#432), Epic C (#383), 2026-09-27.
+# The daily ping runs as the htpasswd `developer`, every 300 s, against the walk's own retrieved cluster.
+# Deployed with `local-development/release-crc.sh --values <this file>` (Helm mode). Replaced at the end by
+# `release-crc.sh --argocd main`. Not a release file: nothing here outlives the walk.
+#
+# Everything below is environments/crc.yaml at 6a83e3e (application 1.4.0, chart 0.59.6), verbatim, except two
+# blocks, each marked WALK:
+#   1. `clusters` is the Argo CD Application's own override (gitops/argocd-application-dashboard.yaml,
+#      helm.valuesObject: `dashboard` alone), plus the walk's one saTokenLookup stanza. shared-rnd keeps polling
+#      through its retrieved Secret, as it does under Argo.
+#   2. `clusterConfig.fleetAccount`: the chart-level username is `developer`, the password Secret is a walk-only
+#      Secret in the release namespace, and the ping runs every 300 s.
+#
+# NOTHING HERE NAMES THE FLEET ACCOUNT (SPEC_S4c §3.12 step 0). Since 1.4.0 the release presents the password only
+# as an account the configuration names (SPEC_S4e §3.1): this file's chart username and its one stanza's
+# ldapConnectionBootstrap, both `developer`. The fleet account's Lease, which gsd-cluster-shared-rnd's
+# `lookup-account` still records, is history: read and served, never pinged, and no password is read for it.
+
+oauthProxy:
+  apiTokenAccess:
+    enabled: true
+
+config:
+  unmanagedAudit:
+    mode: "log"
+
+logLevel: DEBUG
+
+loginCapture:
+  enabled: true
+  source: audit-log
+
+rbac:
+  namespaces: true
+
+kyverno:
+  metricsUrl: "http://kyverno-svc-metrics.kyverno.svc:8000/metrics,http://kyverno-reports-controller-metrics.kyverno.svc:8000/metrics,http://kyverno-background-controller-metrics.kyverno.svc:8000/metrics"
+
+reporting:
+  namespaceMetadata:
+    labels:
+      - company.net/mnemonic
+      - company.net/app-environment
+  namespaceGroupLabel: company.net/oud-group
+  namespaceSelector:
+    labels:
+      - company.net/mnemonic
+      - company.net/app-environment
+  window:
+    enabled: true
+    timezone: "America/New_York"
+    start: "22:00"
+    end: "06:00"
+    days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+  schedules:
+    - name: nightly-namespace-access
+      schedule: "0 22 * * *"
+      report: namespace-access
+      params:
+        selectors:
+          company.net/mnemonic: [demo, beta]
+    - name: quarterly-compliance
+      schedule: "0 6 1 1,4,7,10 *"
+      report: compliance-snapshot
+      retention: {keepPerSchedule: 12, days: 2555}
+    - name: biweekly-groups
+      schedule: "0 6 1,16 * *"
+      report: groups
+      enabled: false
+
+# WALK 1 of 2: the Argo Application's clusters override, plus the walk's one saTokenLookup stanza.
+clusters:
+  - name: dashboard
+    dashboardController: true
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true
+  # SPEC_S4c §3.12 step 2: retrieved as `developer`, who is bound to the estate's token-reader Role in
+  # group-sync-operator for the walk (prepared/walk-rbac.yaml). No CA declared: the injected trusted bundle
+  # verifies api.crc.testing and the OAuth route, as it does for shared-rnd.
+  - name: walk-lookup
+    apiUrl: https://api.crc.testing:6443
+    saTokenLookup: true
+    ldapConnectionBootstrap: developer
+    enabled: true
+
+# WALK 2 of 2: `developer`, a walk-only password Secret, and the ping every 300 s (it rides the 300 s discovery
+# cadence, so it runs at most once a cadence).
+clusterConfig:
+  secrets:
+    writes:
+      enabled: true
+  fleetAccount:
+    username: developer
+    passwordSecret:
+      namespace: group-sync-dashboard
+      name: gsd-walk-developer-password
+      key: password
+    ping:
+      enabled: true
+      intervalSeconds: 300
+
+platformNamespaces:
+  additionalSuffixes: ["-operator", "-manager", "-provisioner"]
+  additionalNames: ["kyverno", "group-sync-dashboard"]

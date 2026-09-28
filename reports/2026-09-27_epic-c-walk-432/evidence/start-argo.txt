@@ -1,0 +1,46 @@
+# oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq '{syncPolicy: .spec.syncPolicy, targetRevision: .spec.source.targetRevision, helm: .spec.source.helm, sync: .status.sync.status, syncedRevision: .status.sync.revision, health: .status.health.status, operation: .status.operationState.phase}' || echo '(no Application)'
+# at 2026-09-27T21:39:46Z
+{
+  "syncPolicy": {
+    "automated": {
+      "prune": true,
+      "selfHeal": true
+    },
+    "retry": {
+      "backoff": {
+        "duration": "30s",
+        "factor": 2,
+        "maxDuration": "5m"
+      },
+      "limit": 3
+    },
+    "syncOptions": [
+      "CreateNamespace=true",
+      "RespectIgnoreDifferences=true",
+      "ServerSideApply=true"
+    ]
+  },
+  "targetRevision": "main",
+  "helm": {
+    "releaseName": "group-sync-dashboard",
+    "valueFiles": [
+      "../../environments/crc.yaml"
+    ],
+    "valuesObject": {
+      "clusters": [
+        {
+          "apiUrl": "https://kubernetes.default.svc",
+          "caBundleFile": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+          "dashboardController": true,
+          "enabled": true,
+          "name": "dashboard",
+          "tokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      ]
+    }
+  },
+  "sync": "Synced",
+  "syncedRevision": "6fe404c34004351b1dd89f687dd3b0ef3fcf9a7f",
+  "health": "Healthy",
+  "operation": "Succeeded"
+}
