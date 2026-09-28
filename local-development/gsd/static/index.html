@@ -778,6 +778,13 @@ async function guard403(promise) {
    only the second is checkable from the screen. Driven by whoami's `visibility`, which
    the server computes — hidden entirely when the wire declares nothing (an older build,
    or no authenticated identity worth reporting). */
+/* whoami's `visibility.clusters[id]` by OWN key (#478): the id comes from the URL, and a stale link naming
+   `constructor` or `toString` read Object.prototype's function off the parsed map — `.scope` undefined, so a wide
+   reader was painted narrowed ("Your view", the Overview's refusal) above a cluster that does not exist. */
+function clusterVisibility(vis, cluster) {
+  const m = vis && vis.clusters;
+  return m && cluster && Object.prototype.hasOwnProperty.call(m, cluster) ? m[cluster] : undefined;
+}
 function renderScopePill() {
   const pill = $("scope-pill");
   if (!pill) return;
@@ -786,7 +793,7 @@ function renderScopePill() {
   if (!vis) { pill.hidden = true; pill.textContent = ""; return; }
   // The SELECTED cluster's decision when whoami carries one, the headline otherwise: the
   // pill sits above a cluster-scoped page and must describe that cluster's view.
-  const forCluster = vis.clusters && view.cluster && vis.clusters[view.cluster];
+  const forCluster = clusterVisibility(vis, view.cluster);
   // `!== "all"`, the same fail-closed rule as narrowedFor: a missing or junk scope painted
   // "Full view" above a layout that was narrowed (review of D2, Codex).
   const self = (forCluster ? forCluster.scope : vis.scope) !== "all";
@@ -857,7 +864,7 @@ function readerTierKnown() {
 function scopeFor(w, cluster) {
   const vis = w && w.visibility;
   if (!vis) return null;
-  const c = vis.clusters && cluster && vis.clusters[cluster];
+  const c = clusterVisibility(vis, cluster);
   return c ? c.scope : vis.scope;
 }
 function narrowedFor(w) {
@@ -885,7 +892,7 @@ function narrowedOnHost() {
 function scopeWhy(w, cluster) {
   const vis = w && w.authenticated && w.visibility;
   if (!vis || vis.enabled === false || !cluster) return "";
-  const c = vis.clusters && vis.clusters[cluster];
+  const c = clusterVisibility(vis, cluster);
   if (!c) return "";
   if (c.policy === "inherit") return "The host decides your view of this cluster.";
   if (c.policy === "remote-sar") {

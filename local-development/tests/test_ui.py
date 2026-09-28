@@ -11408,6 +11408,53 @@ class TestTheRuleBesideTheSelector:
         assert p.evaluate("() => document.getElementById('scope-why').getBoundingClientRect().right <= innerWidth")
 
 
+class TestAStaleLinkNamingAnObjectMemberAsTheCluster:
+    """#478 (OB2's review of #482, site C5): whoami's `visibility.clusters` is the plain object the payload parses to,
+    and the three reads keyed it by the URL's cluster id. A stale link naming `constructor` or `toString` read
+    Object.prototype's function — `.scope` undefined, and `!== "all"` is fail-closed — so a WIDE reader on a cluster
+    that does not exist was painted narrowed: measured on head 2e18c379, the pill said "Your view — root" (class
+    `self`) and the Overview painted its "Withheld, not empty … for administrators only" refusal, where `zzz-unknown`
+    gets "Full view" and the detour card. With restrictions off it said "Your view" on a deployment that never
+    restricted anything. Fresh load and an in-app hash edit alike."""
+
+    SETTLED = "() => data.whoami !== null && /No cluster by that id|Withheld/.test(document.getElementById('main').innerText)"
+
+    def _check(self, page, cid, pill_text):
+        page.wait_for_function(self.SETTLED, timeout=10_000)
+        assert page.evaluate("() => view.cluster") == cid
+        # What the reader sees first: the pill and the card. Then the three readers' own answers.
+        pill = page.locator("#scope-pill")
+        assert (pill.inner_text(), pill.get_attribute("class")) == (pill_text, "scope-pill full")
+        assert "No cluster by that id is configured" in page.locator("#main").inner_text()
+        assert page.evaluate("(c) => scopeFor(data.whoami, c)", cid) == "all"
+        assert page.evaluate("() => narrowedReader()") is False
+        assert page.evaluate("(c) => scopeWhy(data.whoami, c)", cid) == ""
+
+    @pytest.mark.parametrize("cid", ["constructor", "toString"])
+    def test_a_wide_reader_stays_wide_on_a_fresh_load_and_after_a_hash_edit(self, page, why_server, cid):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{why_server}/#page=overview&cluster={cid}")
+        self._check(page, cid, "Full view — you are seeing everything")
+        # Control: an unknown id that names nothing on Object.prototype reads the same.
+        page.goto(f"{why_server}/#page=overview&cluster=zzz-unknown")
+        self._check(page, "zzz-unknown", "Full view — you are seeing everything")
+        # In-app: a good load, then the hash edited under it — whoami is held from the good cycle.
+        _home(page, why_server, "root")
+        page.evaluate("(c) => { location.hash = `#page=overview&cluster=${c}`; }", cid)
+        self._check(page, cid, "Full view — you are seeing everything")
+        assert not errors
+
+    def test_with_restrictions_off_nobody_is_told_their_view_is_narrowed(self, page, idle_server):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.set_extra_http_headers({"X-Forwarded-User": "alice"})
+        page.goto(f"{idle_server}/#page=overview&cluster=constructor")
+        self._check(page, "constructor", "Full view — restrictions are off for this deployment")
+        assert not errors
+
+
 class TestTheLoginsCaveatFollowsItsSource:
     """#346: the Logins page said "the oauth-server's log dies with its pod" whatever the source — on the lab, beside
     an audit-log record whose oldest attempt predated capture by five days. Every source-specific sentence now comes
