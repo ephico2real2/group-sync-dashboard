@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A half-typed Rotate token survives the minute's repaint (#390).** The Cluster Configurations
+  Rotate field is recreated whenever a poll changes the card. The draft now lives in the page's
+  view state, the same way Refresh keeps each card's answer, and is cleared on submit or when
+  the panel is closed. The token is never written to browser storage.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only
