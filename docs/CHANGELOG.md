@@ -10,6 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Refresh keeps its button and result IDs separate (#441).** Clusters named `east` and `result-east`
+  can share the page without a button using another card's result ID. The four Refresh states, results
+  surviving a repaint, and one probe in flight per cluster are unchanged. Application **1.10.0**, chart 0.59.12.
+
 - **Cluster Configurations counts generated clusters under their ConfigMap declaration (#404).**
   The source chip names both the ConfigMap to edit and its generated Secret. The discovery line
   counts live Secret-backed clusters separately, including generated Secrets and excluding retired

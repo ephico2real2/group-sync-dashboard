@@ -6091,12 +6091,12 @@ function ccConnection(c) {
    states, each a word: idle, in flight, succeeded (`ok`, shown as connected) and refused (the poller's word). */
 function ccRefreshButton(c) {
   const busy = (view.clusterRefresh[c.id] || {}).state === "flight";
-  return `<button type="button" class="btn" id="cc-refresh-${esc(c.id)}" data-cc-refresh="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Refreshing…" : "Refresh"}</button>`;
+  return `<button type="button" class="btn" id="cc-refresh_${esc(c.id)}" data-cc-refresh="${esc(c.id)}"${busy ? ` disabled aria-busy="true"` : ""}>${busy ? "Refreshing…" : "Refresh"}</button>`;
 }
 function ccRefreshLine(c) {
   const r = view.clusterRefresh[c.id];
   if (!r) return "";
-  const head = `<div class="cc-consq" id="cc-refresh-result-${esc(c.id)}"><strong>Refresh:</strong> `;
+  const head = `<div class="cc-consq" id="cc-refresh-result_${esc(c.id)}"><strong>Refresh:</strong> `;
   if (r.state === "flight") return `${head}probing /version and users/~ with the stored credential…</div>`;
   // nothing was asked of the cluster for these two, so nothing was refused: the grey badge, never the red one
   const shape = r.outcome === "ok" ? "ok" : r.outcome === "pending" || r.outcome === "not-probed" ? "unknown" : "critical";
