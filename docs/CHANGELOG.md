@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Rejoin, Rotate and Delete keep IDs of their own (#462).** Their per-cluster IDs now follow Refresh's scheme,
+  `cc-<kind>_<cluster id>`, so a cluster named `result-x`, `token-x`, `go-x` or `msg-x` no longer takes one of
+  cluster `x`'s IDs. Cancelling a Rejoin after a repaint returns the focus to that card's own button, and Rotate's
+  label, draft and Overwrite use that card's own token field. Every control's label, order and `data-cc-*`
+  attribute is unchanged. Application **1.14.0**, chart 0.59.16.
+
 - **A finding's detail wraps between words on a phone (#473).** At 375 px the Cluster Configurations Findings card
   broke `tlsClientConfig.insecure=true` after `tru`. The value cell already wrapped at spaces: a word breaks only when
   it is wider than its line, and the 34% label column left 166 px for that 171 px token. Below 520 px a finding's
