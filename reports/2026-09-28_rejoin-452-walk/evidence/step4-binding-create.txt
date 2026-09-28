@@ -1,0 +1,6 @@
+# oc create clusterrolebinding walk-452-cluster-admin --clusterrole=cluster-admin --user=developer
+# at 2026-09-28T02:15:18Z
+clusterrolebinding.rbac.authorization.k8s.io/walk-452-cluster-admin created
+# oc label clusterrolebindings.rbac.authorization.k8s.io walk-452-cluster-admin walk.gsd.lab/run=walk-452-2026-09-28
+# at 2026-09-28T02:15:18Z
+clusterrolebinding.rbac.authorization.k8s.io/walk-452-cluster-admin labeled
