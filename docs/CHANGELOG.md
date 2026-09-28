@@ -10,6 +10,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- Discovery no longer stops on a cluster Secret whose caData holds a non-ASCII character; that Secret is refused as ca-data-invalid and the others are read (#466). Application **1.12.0**, chart 0.59.14.
+
 - **CA visibility specified (#244, Epic D #384, `docs/specs/SPEC_D5_ca_visibility.md`).** The page will
   answer whether a cluster's trusted CA is this estate's root and whether it is inside its dates.
   A CA is public PKI; a Secret or a ConfigMap is equally fine. The pin is

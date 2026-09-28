@@ -284,7 +284,8 @@ type: application
 # CHART 0.59.11 (2026-09-28), PATCH: appVersion moves to application 1.9.0 (below); #404.
 # CHART 0.59.12 (2026-09-28), PATCH: appVersion moves to application 1.10.0 (below); #441.
 # CHART 0.59.13 (2026-09-28), PATCH: appVersion moves to application 1.11.0 (below); #447.
-version: 0.59.13
+# CHART 0.59.14 (2026-09-28), PATCH: appVersion moves to application 1.12.0 (below); #466.
+version: 0.59.14
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -396,7 +397,8 @@ version: 0.59.13
 # 1.9.0 (2026-09-28). The Clusters tab counts a ConfigMap-generated cluster under ConfigMap (#404). MINOR.
 # 1.10.0 (2026-09-28). Each Refresh button and result line has an id no other card can take (#441). MINOR.
 # 1.11.0 (2026-09-28). Rejoin refuses a password that is the username or a part of it, and says why (#447). MINOR.
-appVersion: "1.11.0"
+# 1.12.0 (2026-09-28). Discovery reads the other clusters when one Secret's caData holds a non-ASCII character (#466). MINOR.
+appVersion: "1.12.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
