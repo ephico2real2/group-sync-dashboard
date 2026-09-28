@@ -193,11 +193,12 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.
                    #311: each card's Refresh state by cluster id — in flight, or the answer — so the repaint keeps it.
-                   #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage. */
+                   #390: the open Rotate field's draft, by cluster id — JavaScript memory only, never browser storage.
+                   #459: a map keyed by a bare cluster id has no prototype — `constructor` is a valid name, and {} answers it. */
                 clusterForm: { name: "", server: "", token: "", caMode: "caData", caPem: "", visibility: "remote-sar", identity: "same-as-host",
                                labels: {}, labelKey: "", labelVal: "", test: null },
-                clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: {},
-                clusterRejoin: {},   // #316: each card's Rejoin answer by cluster id — never a username or a password
+                clusterRotate: null, clusterRotateDraft: Object.create(null), clusterDeleteArmed: null, clusterMsg: {}, clusterCreating: false, clusterRefresh: Object.create(null),
+                clusterRejoin: Object.create(null),   // #316: each card's Rejoin answer by cluster id — never a username or a password
                 run: null,   // #229: the Library page's open run — a position (`#page=library&run=<id>`), like `report` on Reports
                 libraryOpen: {},   // #229: which "all N →" lists are expanded — view state, not a position
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
@@ -459,12 +460,13 @@ function goBack() {
    reachable from Access granted, RBAC policy and Logins, "← overview" was about to start
    appearing on a button that returns to one of those three. The tab bar's own wording, lower-cased
    — a reader matches the label to a tab, so a second vocabulary for the same six places would be
-   its own small lie. */
-const PAGE_LABEL = {
+   its own small lie.
+   No prototype (#459): the page comes from the URL, and `#page=constructor` read Object's own as its label. */
+const PAGE_LABEL = Object.assign(Object.create(null), {
   home: "home", overview: "overview", groups: "all groups", users: "all users", bindings: "access granted",
   policy: "RBAC policy", nsaudit: "namespace audit", logins: "logins", usage: "usage",
   reports: "reports", reporting: "reporting status", lookup: "search", kpi: "KPIs",
-};
+});
 
 function backLabel() {
   const prev = backTarget();
@@ -2768,8 +2770,10 @@ function reportFormCard(spec, cat) {
   // P2 multi-dimension selector: one multi-select per configured dimension (company.net/mnemonic AND
   // company.net/app-environment). Prefer namespaceSelectorDimensions; fall back to the old single-field
   // namespaceSelectors shape while a report pod still sends only that (rolling upgrade).
-  const dims = (cat.namespaceSelectorDimensions && cat.namespaceSelectorDimensions[view.cluster])
-    || (() => { const s = cat.namespaceSelectors && cat.namespaceSelectors[view.cluster];
+  // By OWN key, like `selectedFor` below (#459): a cluster named `constructor` absent from the maps read Object's own.
+  const ownEntry = (map) => (map && Object.prototype.hasOwnProperty.call(map, view.cluster) ? map[view.cluster] : undefined);
+  const dims = ownEntry(cat.namespaceSelectorDimensions)
+    || (() => { const s = ownEntry(cat.namespaceSelectors);
                 return s && s.values && s.values.length ? [{ label: s.label, values: s.values }] : []; })();
   // An OLD report pod has no `selectors` ParamSpec, so the form must keep rendering the single
   // `mnemonics` control (new frontend + old pod, review PR #129 C7-A). `selectedFor` reads the chosen
@@ -3027,7 +3031,8 @@ function lookupMenuBody(name, values, chosen, typed, members) {
 // The discovered lookups for the cluster in the nav, fetched once per cluster when a form opens.
 function ensureDiscovered() {
   if (!view.cluster || !reportingEnabled()) return;
-  data.reportDiscovered = data.reportDiscovered || {};
+  // No prototype (#459): `"constructor" in {}` is true, so a cluster of that name was never fetched.
+  data.reportDiscovered = data.reportDiscovered || Object.create(null);
   // Presence, not truthiness: whatever the answer's shape, one fetch settles the cluster — a stubbed or
   // odd reply that left the key unset re-fetched on every paint (an infinite render loop, measured).
   if (view.cluster in data.reportDiscovered || data.reportDiscovered[`pending:${view.cluster}`]) return;
@@ -3311,7 +3316,7 @@ function libraryRunCard(run, featured) {
 }
 
 function libraryClusterBlocks(runs, key) {
-  const byCluster = {};
+  const byCluster = Object.create(null);   // #459: on {}, a cluster named `constructor` read Object, and .push threw
   runs.forEach((r) => { (byCluster[r.cluster] = byCluster[r.cluster] || []).push(r); });
   const groups = Object.keys(byCluster).sort().map((c) => ({ cluster: c, runs: byCluster[c].sort(libraryNewestFirst) }));
   const many = groups.length > 1;
@@ -6667,7 +6672,8 @@ function whoCell(row) {
 }
 
 const PRIVILEGE_NAME = { 4: "cluster-admin", 3: "admin", 2: "edit", 1: "view" };
-const PRIVILEGE_RANK = { "cluster-admin": 4, admin: 3, edit: 2, view: 1 };
+// No prototype (#459): a role is named on the cluster, and one named `constructor` sorted as NaN.
+const PRIVILEGE_RANK = Object.assign(Object.create(null), { "cluster-admin": 4, admin: 3, edit: 2, view: 1 });
 
 /* The flat grant list's sort, at module scope so the table and its export share it. */
 const GRANT_SORT = {

@@ -288,7 +288,8 @@ type: application
 # CHART 0.59.15 (2026-09-28), PATCH: appVersion moves to application 1.13.0 (below); #473.
 # CHART 0.59.16 (2026-09-28), PATCH: appVersion moves to application 1.14.0 (below); #462.
 # CHART 0.59.17 (2026-09-28), PATCH: appVersion moves to application 1.15.0 (below); #467.
-version: 0.59.17
+# CHART 0.59.18 (2026-09-28), PATCH: appVersion moves to application 1.16.0 (below); #459.
+version: 0.59.18
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -404,7 +405,8 @@ version: 0.59.17
 # 1.13.0 (2026-09-28). On a phone a finding's label sits above its value, so its detail wraps between words (#473). MINOR.
 # 1.14.0 (2026-09-28). Every per-cluster control's id is cc-<kind>_<id>, so one cluster's control can never take another's (#462). MINOR.
 # 1.15.0 (2026-09-28). The discovery line says what it counts: the served Secrets, and the refused labelled Secrets beside them (#467). MINOR.
-appVersion: "1.15.0"
+# 1.16.0 (2026-09-28). Maps keyed by an external name have no prototype: a cluster, page or role named constructor reads nothing inherited (#459). MINOR.
+appVersion: "1.16.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

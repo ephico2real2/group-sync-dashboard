@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The page's lookup maps no longer answer `constructor` with Object's own property (#459).** A cluster of that
+  name, a valid one, starts with Refresh idle and is offered Rejoin only once Refresh answers `auth_failed`. Its
+  Reports lookups are fetched, its namespace-access form renders before the catalogue lists it, and a run on it no
+  longer turns the Library into an error. A role named `constructor` sorts by risk like any unranked role, and
+  `#page=constructor` backs to the overview like any unknown page. Application **1.16.0**, chart 0.59.18.
+
 - **The Cluster Configurations discovery line says what its number counts (#467).** On the lab it read
   `5 Secrets carry the discovery label` while six did: the number is #404's count of live clusters served
   from a Secret, and a labelled Secret that discovery refuses is a finding, not a cluster. With one Secret
