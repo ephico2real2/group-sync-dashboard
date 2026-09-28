@@ -1386,7 +1386,7 @@ and the release presents the password only as an account the configuration names
        import select
        import subprocess
        import sys
-       
+
        WORKER = r'''
        import os
        import select
@@ -1394,7 +1394,7 @@ and the release presents the password only as an account the configuration names
        from gsd.config import load_settings
        from gsd.fleetstate import ClaimHeld, FleetLease, claim_seconds
        from gsd.kube import ClusterClient
-       
+
        settings = load_settings(os.environ["GSD_CONFIG"])
        host = settings.host_cluster()
        if host is None:
@@ -1430,7 +1430,7 @@ and the release presents the password only as an account the configuration names
        else:
            sys.exit("ABORT: role is a or b")
        '''
-       
+
        a = subprocess.Popen([sys.executable, "-u", "-c", WORKER, "a"], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, text=True)
        ok = False
@@ -1445,6 +1445,7 @@ and the release presents the password only as an account the configuration names
                               capture_output=True, text=True, timeout=15)
            expected = "ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until "
            if b.returncode != 0 or not b.stdout.strip().startswith(expected):
+               print(b.stdout + b.stderr, end="", file=sys.stderr)
                raise RuntimeError("ABORT: process B did not raise ClaimHeld")
            print(b.stdout.strip(), flush=True)
            ok = True

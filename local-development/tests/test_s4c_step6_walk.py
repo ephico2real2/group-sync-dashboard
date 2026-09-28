@@ -119,3 +119,17 @@ def test_walk_stays_one_numbered_list():
     walk = live_walk()
     fences = [m.start() for m in re.finditer(r"^```", walk, re.M)]
     assert not fences, "a fence at column 0 inside the §3.12 walk breaks its numbered list"
+
+
+def test_step6_coordinator_shows_why_b_failed():
+    """B's output is captured to be checked; on an abort it must reach the walker. Otherwise a 403, a 409 race and
+    B taking the claim — the failure this step exists to catch — all print the same line (OB1-lite's review of #461)."""
+    tree = ast.parse(textwrap.dedent(_HEREDOC.findall(live_step6())[0]))
+    read = {(node.value.id, node.attr) for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)}
+    assert ("b", "stderr") in read, "the coordinator discards process B's stderr on an abort"
+
+
+def test_step6_block_has_no_trailing_whitespace():
+    """The heredoc's blank lines are empty, as every other block's are (`git diff --check`)."""
+    assert not [line for line in live_step6().splitlines() if line != line.rstrip()]
