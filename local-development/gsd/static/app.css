@@ -1587,6 +1587,12 @@ html:has(.report-actions) { scroll-padding-bottom: calc(var(--report-actions-h, 
   border-bottom: 1px solid var(--gridline); font-size: var(--text-sm); min-width: 0; }
 .cc-kv .k { color: var(--text-muted); font-size: var(--text-xs); letter-spacing: .04em; text-transform: uppercase; overflow-wrap: anywhere; min-width: 0; }
 .cc-kv .v { overflow-wrap: anywhere; min-width: 0; }
+/* #473: at 375 px a finding's detail broke inside a word — `tlsClientConfig.insecure=tru` / `e`. The value
+   already wraps at spaces (`overflow-wrap: anywhere`, `word-break: normal`), so a word breaks only when it is
+   wider than the line: the `minmax(88px, 34%)` label column left the value 166 px for a 171 px
+   `tlsClientConfig.insecure=true` (114 px at 320). Below 520 px a finding's label sits above its value, which
+   then has the row's width, 267 px at 375 and 212 at 320, measured; the cluster cards keep their two columns. */
+@media (max-width: 520px) { .cc-finding .cc-kv { grid-template-columns: minmax(0, 1fr); } }
 .rp-chip.cc-chip, .cc-chips .rp-chip { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 .rp-chip.cc-src-values { color: var(--k-rbac); }
 .rp-chip.cc-src-secret { color: var(--k-identity); }
