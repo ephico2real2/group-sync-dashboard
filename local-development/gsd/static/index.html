@@ -6360,15 +6360,17 @@ function clusterConfigPage() {
   // Discovery counts live Secret storage, including generated outputs, regardless of declaration.
   const discoveredSecrets = clusters.filter((c) => !c.retired && !c.host && String(c.source || "").startsWith("secret:")).length;
   // #467: a labelled Secret discovery refused serves no cluster, so the findings count it, by code: a finding's `secret`
-  // can also be a ConfigMap stanza, `values`, the cluster a lookup or a login is about, or a Secret that is still served
-  // (shadows-values-entry, oauth-exchange-not-built, lookup-write-failed). The codes: every one parse_secret returns,
-  // then discovery's three. Onboarding writes a Secret as `secret:<name>`, so each Secret counts once.
+  // can also be a ConfigMap stanza, the values list, the cluster a lookup or a login is about, or a Secret that is still
+  // served (shadows-values-entry, oauth-exchange-not-built, lookup-write-failed). The codes: every one parse_secret
+  // returns, then discovery's three. Onboarding writes a Secret as `secret:<name>`, so each Secret counts once, and it
+  // spells the values list `values` under duplicate-cluster-name only — under any other code, `values` is a Secret's name.
   const refusalCodes = new Set(["name-missing", "name-invalid", "server-missing", "server-invalid", "config-missing",
     "config-not-json", "unsupported-config-key", "credential-missing", "credential-ambiguous", "ca-data-invalid",
     "insecure-with-ca", "visibility-invalid", "identity-invalid", "enabled-invalid", "host-cluster-not-from-secret",
     "duplicate-cluster-name", "onboarding-cleanup-pending", "onboarding-ownership-conflict"]);
   const refusedSecrets = new Set((d.findings || [])
-    .filter((f) => refusalCodes.has(f.code) && !/^configmap:|^values$/.test(f.secret))
+    .filter((f) => refusalCodes.has(f.code) && !/^configmap:/.test(f.secret)
+      && !(f.code === "duplicate-cluster-name" && f.secret === "values"))
     .map((f) => String(f.secret).replace(/^secret:/, ""))).size;
   const s = d.secrets || {};
   const head = `<section class="card" id="cc-head">

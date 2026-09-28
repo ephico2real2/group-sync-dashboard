@@ -137,3 +137,18 @@ def test_the_pages_refusal_codes_are_the_parsers_and_discoverys_three():
               and node.args and isinstance(node.args[0], ast.Constant)}
     assert page == parser | {"duplicate-cluster-name", "onboarding-cleanup-pending", "onboarding-ownership-conflict"}
     assert page <= set(FINDING_CODES)
+
+
+def test_a_labelled_secret_named_values_counts_unless_it_is_onboardings_values_list(render):
+    # #467 review (OB2): onboarding spells the values list `values` under duplicate-cluster-name only
+    # (gsd/clusterconfig/onboarding.py:120 → :142). Under any other code, `values` is the name of a labelled Secret the
+    # parser or the cleanup refused — the very undercount #467 fixed, so it is counted. A reader duplicate pair with a
+    # Secret named `values` stays indistinguishable from the values list and is not counted; that one is documented.
+    served = [{"source": "secret:manual"}]
+    assert "1 served from a Secret · 1 labelled Secret refused (see Findings) · last read" in render(
+        served, [_finding("values", "server-invalid")])["page"]
+    assert "1 served from a Secret · 1 labelled Secret refused (see Findings) · last read" in render(
+        served, [_finding("values", "onboarding-cleanup-pending")])["page"]
+    page = render(served, [_finding("values", "duplicate-cluster-name"),
+                           _finding("configmap:fleet:0", "duplicate-cluster-name")])["page"]
+    assert "1 served from a Secret · last read" in page and "refused (see Findings)" not in page
