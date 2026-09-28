@@ -1,0 +1,13 @@
+# oc get replicasets.apps -n group-sync-dashboard -l app.kubernetes.io/name=group-sync-dashboard -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}  {.metadata.name}  {.spec.template.spec.containers[0].image}  replicas={.status.replicas}{"\n"}{end}' | sort
+# at 2026-09-28T11:20:46Z
+2026-09-27T22:50:46Z  group-sync-dashboard-c9664c7c4  quay.io/ephico2real/group-sync-dashboard:1.4.0  replicas=0
+2026-09-27T23:30:22Z  group-sync-dashboard-678694cf45  quay.io/ephico2real/group-sync-dashboard:1.5.0  replicas=0
+2026-09-28T01:49:42Z  group-sync-dashboard-57d8b885fd  quay.io/ephico2real/group-sync-dashboard:1.6.0  replicas=0
+2026-09-28T03:23:39Z  group-sync-dashboard-f9749c758  quay.io/ephico2real/group-sync-dashboard:1.7.0  replicas=0
+2026-09-28T03:48:24Z  group-sync-dashboard-7d44c49ff6  quay.io/ephico2real/group-sync-dashboard:1.8.0  replicas=0
+2026-09-28T04:18:01Z  group-sync-dashboard-68f7b4d9d9  quay.io/ephico2real/group-sync-dashboard:1.9.0  replicas=0
+2026-09-28T04:53:38Z  group-sync-dashboard-7874bb6bbc  quay.io/ephico2real/group-sync-dashboard:1.10.0  replicas=0
+2026-09-28T05:39:41Z  group-sync-dashboard-644f6884db  quay.io/ephico2real/group-sync-dashboard:1.11.0  replicas=0
+2026-09-28T10:56:27Z  group-sync-dashboard-86c97cbf49  quay.io/ephico2real/group-sync-dashboard:1.12.0  replicas=1
+# oc get applications.argoproj.io group-sync-dashboard -n openshift-gitops -o jsonpath='sync={.status.sync.status} rev={.status.sync.revision} health={.status.health.status} op.startedAt={.status.operationState.startedAt} op.finishedAt={.status.operationState.finishedAt} op.phase={.status.operationState.phase} op.revision={.status.operationState.syncResult.revision}{"\n"}'
+sync=Synced rev=f7fa9c5ebc3652f8d9317e9c49d0de3a7602a905 health=Healthy op.startedAt=2026-09-28T10:56:10Z op.finishedAt=2026-09-28T10:56:26Z op.phase=Succeeded op.revision=523e5d07becd47f59cd86814393f1e51e821c429

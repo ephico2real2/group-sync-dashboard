@@ -1,0 +1,33 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-86c97cbf49-2ps6w -c dashboard --timestamps --since-time=2026-09-28T10:56:27Z  (captured 2026-09-28T11:43:21Z)
+# lines in the window: 2061
+# discovery and secret-refused lines, and every line naming walk-466:
+2026-09-28T10:56:38.028846319Z 2026-09-28 06:56:38,028-0400 INFO    gsd.clusterconfig discovery cycle=1 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 added=mock-privateca,mock-selfsigned,mock-trusted,shared-qa,shared-rnd refused_now=gsd-cluster-mock-refusal:insecure-with-ca
+2026-09-28T10:56:38.029132654Z 2026-09-28 06:56:38,029-0400 WARNING gsd.clusterconfig secret-refused phase=parse outcome=insecure-with-ca cycle=1 secret=gsd-cluster-mock-refusal action="choose one: caData to trust a bundle, or insecure to verify nothing" detail="tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"
+2026-09-28T11:26:40.937618377Z 2026-09-28 07:26:40,936-0400 INFO    gsd.clusterconfig discovery cycle=8 namespace=group-sync-dashboard seen=7 accepted=5 refused=2 refused_now=gsd-cluster-walk-466:ca-data-invalid
+2026-09-28T11:26:40.937973963Z 2026-09-28 07:26:40,937-0400 WARNING gsd.clusterconfig secret-refused phase=parse outcome=ca-data-invalid cycle=8 secret=gsd-cluster-walk-466 action="tlsClientConfig.caData must be base64 of a PEM bundle that loads" detail="tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"
+2026-09-28T11:36:41.136721640Z 2026-09-28 07:36:41,136-0400 INFO    gsd.clusterconfig discovery cycle=10 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 refused_cleared=gsd-cluster-walk-466:ca-data-invalid
+# discovery lines: 3
+# secret-refused lines: 2
+# lines naming walk-466: 3
+# 'polled <cluster>:' lines per cluster (one per successful poll):
+  47 dashboard:
+  47 mock-privateca:
+  47 mock-selfsigned:
+  47 mock-trusted:
+  47 shared-qa:
+  47 shared-rnd:
+# the last 'polled <cluster>:' line per cluster:
+2026-09-28T11:42:59.201793766Z 2026-09-28 07:42:59,201-0400 INFO    gsd.poller polled dashboard: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.799527572Z 2026-09-28 07:42:58,799-0400 INFO    gsd.poller polled mock-privateca: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.521144691Z 2026-09-28 07:42:58,520-0400 INFO    gsd.poller polled mock-selfsigned: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.702620872Z 2026-09-28 07:42:58,702-0400 INFO    gsd.poller polled mock-trusted: 1 CRs, 7 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:58.995774940Z 2026-09-28 07:42:58,995-0400 INFO    gsd.poller polled shared-qa: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-28T11:42:59.317078835Z 2026-09-28 07:42:59,316-0400 INFO    gsd.poller polled shared-rnd: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+# cluster-unreachable lines: 0
+# fleet-login lines: 0
+# Traceback lines: 0
+# TypeError lines, all: 1
+# TypeError lines other than a secret-refused finding's detail: 0
+# 'TypeError:' (an exception's own line): 0
+# 'unhandled error discovering' lines: 0
+# ERROR lines: 0

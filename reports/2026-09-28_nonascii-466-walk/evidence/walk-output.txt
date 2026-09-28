@@ -1,0 +1,30 @@
+2026-09-28T11:31:17Z whoami                            : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-28T11:31:17Z status                            : {"/api/clusters": 200, "/api/clusterconfigs": 200}
+2026-09-28T11:31:17Z PASS developer holds the cluster-admin tier: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-28T11:31:20Z [1280] findings on the tab        : [{"source": "gsd-cluster-mock-refusal", "code": "insecure-with-ca", "detail": "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}, {"source": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:20Z PASS [1280] one finding for gsd-cluster-walk-466: code ca-data-invalid, the exact detail: [{"source": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:20Z PASS [1280] every enabled cluster still has its card: {"missing": [], "cards": 30}
+2026-09-28T11:31:20Z PASS [1280] no card for walk-466 (it was refused, never loaded): null
+2026-09-28T11:31:20Z shot                              : 01-1280-findings-walk-466.png
+2026-09-28T11:31:20Z PASS [1280] no sideways page scroll (scrollWidth, innerWidth): [1280, 1280]
+2026-09-28T11:31:20Z PASS [1280] no 'Dashboard API error': null
+2026-09-28T11:31:20Z PASS [1280] no uncaught page errors: []
+2026-09-28T11:31:23Z [768] findings on the tab         : [{"source": "gsd-cluster-mock-refusal", "code": "insecure-with-ca", "detail": "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}, {"source": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:23Z PASS [768] one finding for gsd-cluster-walk-466: code ca-data-invalid, the exact detail: [{"source": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:23Z PASS [768] every enabled cluster still has its card: {"missing": [], "cards": 30}
+2026-09-28T11:31:23Z PASS [768] no card for walk-466 (it was refused, never loaded): null
+2026-09-28T11:31:23Z shot                              : 02-768-findings-walk-466.png
+2026-09-28T11:31:23Z PASS [768] no sideways page scroll (scrollWidth, innerWidth): [768, 768]
+2026-09-28T11:31:23Z PASS [768] no 'Dashboard API error': null
+2026-09-28T11:31:23Z PASS [768] no uncaught page errors: []
+2026-09-28T11:31:26Z [375] findings on the tab         : [{"source": "gsd-cluster-mock-refusal", "code": "insecure-with-ca", "detail": "tlsClientConfig.caData and tlsClientConfig.insecure=true are both set: choose one"}, {"source": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:26Z PASS [375] one finding for gsd-cluster-walk-466: code ca-data-invalid, the exact detail: [{"source": "gsd-cluster-walk-466", "code": "ca-data-invalid", "detail": "tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError"}]
+2026-09-28T11:31:26Z PASS [375] every enabled cluster still has its card: {"missing": [], "cards": 30}
+2026-09-28T11:31:26Z PASS [375] no card for walk-466 (it was refused, never loaded): null
+2026-09-28T11:31:26Z shot                              : 03-375-findings-walk-466.png
+2026-09-28T11:31:26Z PASS [375] no sideways page scroll (scrollWidth, innerWidth): [375, 375]
+2026-09-28T11:31:26Z PASS [375] no 'Dashboard API error': null
+2026-09-28T11:31:26Z PASS [375] no uncaught page errors: []
+2026-09-28T11:31:26Z PASS the route guard blocked no request: []
+2026-09-28T11:31:26Z failures                          : []
+walk exit=0
