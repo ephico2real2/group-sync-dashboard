@@ -170,8 +170,10 @@ during implementation is written back under "Orchestrator's notes", in the same 
   gets the refusal card, and the fetch is skipped for a reader already known to be narrowed.
 - One payload, `GET /api/clusterconfigs` (S1 C5), fetched only on this page; `data.clusterconfigs` in
   the auto-refresh fingerprint (the omission #157/#167/#228 each fixed); the page repaints from
-  `view.clusterForm` / `view.clusterRotate` state so a poll never destroys what the reader typed
-  (the Reports form's rule, `view.reportForm`); focus and caret survive by id (`render()`'s rule).
+  `view.clusterForm` / `view.clusterRotate` / `view.clusterRotateDraft` state so a poll never destroys
+  what the reader typed (the Reports form's rule, `view.reportForm`; #390 keeps the Rotate draft in
+  view, never browser storage, and clears it on submit or close); focus and caret survive by id
+  (`render()`'s rule).
 - The page's parts, in the mock's order: the head card (namespace, the label selector, the count by
   source — `in-cluster` = the host, `values`, `Secret` —, "N Secrets carry the discovery label" from
   `secrets.last_discovery`'s cycle, **Add cluster**); a card per cluster; **Findings** (S1's
@@ -351,7 +353,8 @@ carries the poller so a route can request a discovery (set in `build_app`; `None
 
 ### S2.5 `gsd/static/index.html`, `gsd/static/app.css`
 
-`view.clusterForm` (the form's state), `view.clusterRotate` (the open rotate panel's name), the tab, the
+`view.clusterForm` (the form's state), `view.clusterRotate` (the open rotate panel's name),
+`view.clusterRotateDraft` (the open Rotate field's draft, #390), the tab, the
 dispatch (`clusterConfigPage()` + `wireClusterConfig()`), the fetch plan and the landing (the KPI
 pattern with `narrowedOnHost()`), the fingerprint entry, the page functions ported from the mock
 (`ccSourceChip`, `ccClusterCard`, `ccFindings`, `ccAddForm`, `ccYaml`), the writes through `api()`'s

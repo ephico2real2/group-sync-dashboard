@@ -15,6 +15,34 @@ which `local-development/prepare-release.py` does when the release is cut.
   can no longer reveal the password, whole or in part. Every existing password scrub, the request budget and the
   per-pod credential gate stay unchanged (`docs/specs/SPEC_D4_cluster_rejoin.md`).
 
+- **SPEC_S4c §3.12 step 6 is a lab procedure a walk can run (#445).** The #444 walk stopped on the
+  step as written: a leader-election standby never calls `claim()`, and a dashboard process on the
+  workstation that carries the pod's ServiceAccount token can read the fleet password through the
+  walk's keep-grant. The step now runs two claim-only processes inside the already-running pod, as
+  `developer`, and expects `ClaimHeld` plus 0 authorizes for `developer` and for the fleet account.
+  No application code.
+
+- **Refresh keeps its button and result IDs separate (#441).** Clusters named `east` and `result-east`
+  can share the page without a button using another card's result ID. The four Refresh states, results
+  surviving a repaint, and one probe in flight per cluster are unchanged. Application **1.10.0**, chart 0.59.12.
+
+- **Cluster Configurations counts generated clusters under their ConfigMap declaration (#404).**
+  The source chip names both the ConfigMap to edit and its generated Secret. The discovery line
+  counts live Secret-backed clusters separately, including generated Secrets and excluding retired
+  rows. UI-written and hand-written Secrets keep their source classification and controls. Application **1.9.0**, chart 0.59.11.
+
+- **A half-typed Rotate token survives the minute's repaint (#390).** The Cluster Configurations
+  Rotate field is recreated whenever a poll changes the card. The draft now lives in the page's
+  view state, the same way Refresh keeps each card's answer, and is cleared on submit or when
+  the panel is closed. The token is never written to browser storage. Application **1.8.0**, chart 0.59.10.
+
+- **Refuse cluster URL userinfo at both egress points (#435, Epic C).** `local-development/gsd/kube.py#ClusterClient._client`
+  and the fleet login's own client (`local-development/gsd/fleetlogin.py#FleetLogin._build_client`, added on OB2's
+  review) now refuse an `apiUrl` carrying userinfo before any request is built. The outcome is `unreachable`, and the
+  message names the key without repeating the value. This backs up the entry checks: httpx cannot replace the
+  poller's bearer token, or the fleet login's revoke Bearer, with a URL's credential as Basic auth. The URL is never
+  repaired or stripped. Application **1.7.0**, chart 0.59.9.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only
