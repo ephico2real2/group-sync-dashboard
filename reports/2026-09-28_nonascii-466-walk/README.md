@@ -20,8 +20,9 @@ space (U+00A0) and an em dash (U+2014) on a comment line above a real PEM certif
 
 The pre-1.12.0 behaviour, where `TypeError` stopped discovery of every cluster, was **not** reproduced on the lab.
 The hermetic tests cover it (see "What the lab did not do"). The walk made two temporary changes to the lab: the
-throwaway Secret and a grant (`can-i` `no` → `yes` → `no`). Both were removed. Nothing was done with Helm or
-`release-crc.sh`, and Argo CD was not changed. Nobody logged in as the fleet account. The kept PVCs have the same
+throwaway Secret and a grant (`can-i` `no` → `yes` → `no`). Both were removed. The walk ran no Helm, `release-crc.sh` or Argo CD command; after the deletes, `/api/version` still read
+1.12.0 at `523e5d07be` (`evidence/after-version.txt`, 11:31:42Z). The Argo Application was captured before the walk
+only (`evidence/before-rollout.txt`). Nobody logged in as the fleet account. The kept PVCs have the same
 UIDs before and after. The fleet Lease stayed at `resourceVersion` 5922168 with no holder. `shared-qa`'s Secret
 stayed at 2981054.
 
@@ -40,9 +41,9 @@ stayed at 2981054.
 
 | When (UTC) | Step | File |
 |---|---|---|
-| 11:18:58 | Hermetic, before touching the lab: `scripts/secret-466.sh check` built the manifest and ran this checkout's parser on it (`gsd` 1.12.0, imported from this checkout). The result: `{'secret': 'gsd-cluster-walk-466', 'code': 'ca-data-invalid', 'detail': 'tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError'}` | `evidence/check-parse.txt` |
+| 11:18:58 | Hermetic, before touching the lab: `scripts/secret-466.sh check` built the manifest and ran this checkout's parser on it (`gsd` 1.12.0, imported from this checkout, at git HEAD `f7fa9c5ebc`, ahead of the image's `523e5d07be`). The result: `{'secret': 'gsd-cluster-walk-466', 'code': 'ca-data-invalid', 'detail': 'tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError'}` | `evidence/check-parse.txt` |
 | 11:20:18–21 | Before: `/api/version` `"version":"1.12.0","commit":"523e5d07be"`; the PVC UIDs; `can-i` `no`; no object and no Secret with the run label; the fleet Lease at `resourceVersion=5922168`, `holderIdentity=""`; `shared-qa` at `resourceVersion=2981054`. The pod log since the 1.12.0 pod's creation (10:56:27Z) had one `discovery` line, `cycle=1 … seen=6 accepted=5 refused=1 … refused_now=gsd-cluster-mock-refusal:insecure-with-ca`, and 24 `polled <cluster>:` lines for each of the six clusters. It had 0 `cluster-unreachable`, 0 `Traceback`, 0 `TypeError`, 0 `unhandled error discovering` and 0 `ERROR` lines | `evidence/before-*.txt` |
-| 11:20:32 | The rollout: the 1.12.0 ReplicaSet was created at 10:56:27Z. Argo CD's last operation on `group-sync-dashboard` ran from 10:56:10Z to 10:56:26Z at `523e5d07be…`, `Succeeded`. It is `Synced` at `f7fa9c5ebc…` | `evidence/before-rollout.txt` |
+| 11:20:46 | The rollout: the 1.12.0 ReplicaSet was created at 10:56:27Z. Argo CD's last operation on `group-sync-dashboard` ran from 10:56:10Z to 10:56:26Z at `523e5d07be…`, `Succeeded`. It is `Synced` at `f7fa9c5ebc…` | `evidence/before-rollout.txt` |
 | 11:20:55 | The grant (`scripts/grant.yaml`): ClusterRole `gsd-walk-crb-update` and ClusterRoleBinding `gsd-walk-crb-update-developer`, both labelled `walk.gsd.lab/run=nonascii-466-2026-09-28`. `can-i`: `yes` | `evidence/grant-create.txt`, `evidence/granted-*.txt` |
 | 11:20:55 → 11:22:19 | A 70 s wait before the login. The dashboard caches each tier decision for `visibilityTierTtlSeconds: 60` | — |
 | 11:22:19 | Before, through the API as `developer` (`"cluster_admin": true`): the six enabled clusters `ok`, one finding (`gsd-cluster-mock-refusal`, `insecure-with-ca`), `last_discovery` `2026-09-28T11:21:40Z` | `evidence/before-api-output.txt`, `evidence/before-api.json` |

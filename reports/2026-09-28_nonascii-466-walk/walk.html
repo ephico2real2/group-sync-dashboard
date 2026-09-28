@@ -22,8 +22,9 @@ before the walk (<code>evidence/cleared-podlog.txt</code>, <code>evidence/before
 </ul>
 <p>The pre-1.12.0 behaviour, where <code>TypeError</code> stopped discovery of every cluster, was <strong>not</strong> reproduced on the lab.
 The hermetic tests cover it (see &quot;What the lab did not do&quot;). The walk made two temporary changes to the lab: the
-throwaway Secret and a grant (<code>can-i</code> <code>no</code> → <code>yes</code> → <code>no</code>). Both were removed. Nothing was done with Helm or
-<code>release-crc.sh</code>, and Argo CD was not changed. Nobody logged in as the fleet account. The kept PVCs have the same
+throwaway Secret and a grant (<code>can-i</code> <code>no</code> → <code>yes</code> → <code>no</code>). Both were removed. The walk ran no Helm, <code>release-crc.sh</code> or Argo CD command; after the deletes, <code>/api/version</code> still read
+1.12.0 at <code>523e5d07be</code> (<code>evidence/after-version.txt</code>, 11:31:42Z). The Argo Application was captured before the walk
+only (<code>evidence/before-rollout.txt</code>). Nobody logged in as the fleet account. The kept PVCs have the same
 UIDs before and after. The fleet Lease stayed at <code>resourceVersion</code> 5922168 with no holder. <code>shared-qa</code>'s Secret
 stayed at 2981054.</p>
 <h2>Definition of Done</h2>
@@ -87,7 +88,7 @@ stayed at 2981054.</p>
 <tbody>
 <tr>
 <td>11:18:58</td>
-<td>Hermetic, before touching the lab: <code>scripts/secret-466.sh check</code> built the manifest and ran this checkout's parser on it (<code>gsd</code> 1.12.0, imported from this checkout). The result: <code>{'secret': 'gsd-cluster-walk-466', 'code': 'ca-data-invalid', 'detail': 'tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError'}</code></td>
+<td>Hermetic, before touching the lab: <code>scripts/secret-466.sh check</code> built the manifest and ran this checkout's parser on it (<code>gsd</code> 1.12.0, imported from this checkout, at git HEAD <code>f7fa9c5ebc</code>, ahead of the image's <code>523e5d07be</code>). The result: <code>{'secret': 'gsd-cluster-walk-466', 'code': 'ca-data-invalid', 'detail': 'tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError'}</code></td>
 <td><code>evidence/check-parse.txt</code></td>
 </tr>
 <tr>
@@ -96,7 +97,7 @@ stayed at 2981054.</p>
 <td><code>evidence/before-*.txt</code></td>
 </tr>
 <tr>
-<td>11:20:32</td>
+<td>11:20:46</td>
 <td>The rollout: the 1.12.0 ReplicaSet was created at 10:56:27Z. Argo CD's last operation on <code>group-sync-dashboard</code> ran from 10:56:10Z to 10:56:26Z at <code>523e5d07be…</code>, <code>Succeeded</code>. It is <code>Synced</code> at <code>f7fa9c5ebc…</code></td>
 <td><code>evidence/before-rollout.txt</code></td>
 </tr>
