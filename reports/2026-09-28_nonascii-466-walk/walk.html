@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>#466 non-ASCII caData walk</title><style>:root{--fg:#1d1d1f;--muted:#5a5a60;--rule:#d9d6cf;--bg:#fbfaf7;--code:#f0ede6}@media (prefers-color-scheme:dark){:root{--fg:#ecebe8;--muted:#a9a8a3;--rule:#3a3935;--bg:#161615;--code:#24231f}}body{font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg);max-width:1000px;margin:32px auto;padding:0 16px}h1{font-size:1.6em;line-height:1.25}h2{margin-top:2em;border-bottom:1px solid var(--rule);padding-bottom:.2em}table{border-collapse:collapse;width:100%;font-size:.9em;margin:1em 0;display:block;overflow-x:auto}th,td{border:1px solid var(--rule);padding:6px 8px;vertical-align:top;text-align:left}th{background:var(--code)}code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:.88em;word-break:break-word}pre{background:var(--code);padding:12px;overflow-x:auto;border-radius:4px}pre code{background:none;padding:0}figure{margin:1.2em 0;break-inside:avoid}img{max-width:100%;border:1px solid var(--rule);border-radius:4px}figcaption{color:var(--muted);font-size:.85em;margin-top:.3em}@media print{body{margin:0;max-width:none;font-size:11px}h2{break-after:avoid}table{display:table}}</style></head><body>
+<h1>#466 on the lab: a non-ASCII <code>caData</code> is one Secret's finding — 2026-09-28</h1>
+<p><strong>Outcome.</strong> On the CRC lab, running application 1.12.0 at <code>523e5d07be</code> (<code>evidence/before-version.txt</code>), a throwaway
+cluster Secret, <code>gsd-cluster-walk-466</code>, was created with a <code>tlsClientConfig.caData</code> whose text holds a no-break
+space (U+00A0) and an em dash (U+2014) on a comment line above a real PEM certificate (<code>evidence/created-secret.txt</code>).</p>
+<ul>
+<li>Discovery cycle 8, at 11:26:40Z, logged <code>seen=7 accepted=5 refused=2 refused_now=gsd-cluster-walk-466:ca-data-invalid</code>
+and the finding's detail <code>tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError</code>. The pod log
+from 11:22:30Z to 11:30:58Z has 0 <code>Traceback</code>, 0 <code>'TypeError:'</code> and 0 <code>unhandled error discovering</code> lines. Its one
+line containing <code>TypeError</code> is that finding's own <code>secret-refused</code> line (<code>evidence/refused-podlog.txt</code>).</li>
+<li>The other clusters kept working. In that window each of the six enabled clusters has 8 <code>polled &lt;cluster&gt;:</code> lines
+and there are 0 <code>cluster-unreachable</code> lines (<code>evidence/refused-podlog.txt</code>). At 11:31:13Z the API served the same
+six, from the same sources, all <code>ok</code>, with <code>last_poll</code> from 11:30:58Z to 11:30:59Z
+(<code>evidence/refused-api.json</code>).</li>
+<li>As <code>developer</code>, the Cluster Configurations tab's Findings card listed <code>gsd-cluster-walk-466</code>, <code>ca-data-invalid</code>, with
+the exact detail, at 1280, 768 and 375 px. All six clusters kept their cards. <code>scripts/walk_466.py walk</code> finished
+with <code>failures : []</code> and <code>walk exit=0</code> (<code>evidence/walk-output.txt</code>, <code>screenshots/</code>).</li>
+<li>The Secret and the grant were deleted by the run label at 11:31:41Z. Discovery cycle 10, at 11:36:41Z, logged
+<code>seen=6 accepted=5 refused=1 refused_cleared=gsd-cluster-walk-466:ca-data-invalid</code>, the counts cycle 1 had logged
+before the walk (<code>evidence/cleared-podlog.txt</code>, <code>evidence/before-podlog.txt</code>).</li>
+</ul>
+<p>The pre-1.12.0 behaviour, where <code>TypeError</code> stopped discovery of every cluster, was <strong>not</strong> reproduced on the lab.
+The hermetic tests cover it (see &quot;What the lab did not do&quot;). The walk made two temporary changes to the lab: the
+throwaway Secret and a grant (<code>can-i</code> <code>no</code> → <code>yes</code> → <code>no</code>). Both were removed. Nothing was done with Helm or
+<code>release-crc.sh</code>, and Argo CD was not changed. Nobody logged in as the fleet account. The kept PVCs have the same
+UIDs before and after. The fleet Lease stayed at <code>resourceVersion</code> 5922168 with no holder. <code>shared-qa</code>'s Secret
+stayed at 2981054.</p>
+<h2>Definition of Done</h2>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Row</th>
+<th>Verdict</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>#466</td>
+<td>Deployed to CRC and walked: a throwaway Secret with a non-ASCII comment in its <code>caData</code> shows as a finding</td>
+<td>PASS</td>
+<td>The Secret (<code>evidence/created-secret.txt</code>): <code>name_value</code> <code>walk-466</code>, <code>server</code> <code>https://api.crc.testing:6443</code>, <code>config_keys</code> <code>[&quot;bearerToken&quot;, &quot;tlsClientConfig&quot;]</code>, <code>tlsClientConfig_keys</code> <code>[&quot;caData&quot;]</code>, <code>annotations</code> <code>{}</code>. The decoded <code>caData</code> has <code>caData_non_ascii_code_points</code> <code>[8212, 160]</code> and one <code>-----BEGIN CERTIFICATE-----</code> / <code>-----END CERTIFICATE-----</code> pair. The pod log (<code>evidence/refused-podlog.txt</code>): <code>discovery cycle=8 … seen=7 accepted=5 refused=2 refused_now=gsd-cluster-walk-466:ca-data-invalid</code>, then <code>secret-refused phase=parse outcome=ca-data-invalid cycle=8 secret=gsd-cluster-walk-466 … detail=&quot;tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError&quot;</code>. Before, the last <code>discovery</code> line was <code>cycle=1 … seen=6 accepted=5 refused=1</code> (<code>evidence/before-podlog.txt</code>). The API's findings at 11:31:13Z were <code>gsd-cluster-mock-refusal</code> <code>insecure-with-ca</code> and <code>gsd-cluster-walk-466</code> <code>ca-data-invalid</code>, with the exact detail (<code>evidence/refused-api.json</code>). At 1280, 768 and 375 px the tab reads <code>PASS … one finding for gsd-cluster-walk-466: code ca-data-invalid, the exact detail</code> (<code>evidence/walk-output.txt</code>, <code>screenshots/01-1280-findings-walk-466.png</code>, <code>02-768-…</code>, <code>03-375-…</code>).</td>
+</tr>
+<tr>
+<td>#466</td>
+<td>No <code>TypeError</code> escapes discovery</td>
+<td>PASS</td>
+<td>From 11:22:30Z to the 11:30:58Z capture (<code>evidence/refused-podlog.txt</code>): <code>Traceback lines: 0</code>, <code>'TypeError:' (an exception's own line): 0</code>, <code>TypeError lines other than a secret-refused finding's detail: 0</code>, <code>'unhandled error discovering' lines: 0</code>, <code>ERROR lines: 0</code>. Over the whole 1.12.0 pod, from 10:56:27Z to the 11:43:21Z capture: the same, and <code>TypeError lines, all: 1</code>, which is the finding's own line (<code>evidence/whole-podlog.txt</code>).</td>
+</tr>
+<tr>
+<td>#466</td>
+<td>… and the other clusters stay served</td>
+<td>PASS</td>
+<td>Before the Secret, at 11:22:19Z, the API served <code>dashboard</code> (<code>values</code>), <code>mock-privateca</code>, <code>mock-selfsigned</code>, <code>mock-trusted</code>, <code>shared-qa</code> and <code>shared-rnd</code> (<code>secret:gsd-cluster-&lt;id&gt;</code>), all <code>ok</code> (<code>evidence/before-api.json</code>). With the Secret refused, at 11:31:13Z, it served the same six, from the same sources, all <code>ok</code>. <code>last_poll</code> was 11:30:58Z–11:30:59Z, and <code>/api/clusters</code> gave <code>reachable: true</code> for each (<code>evidence/refused-api.json</code>). In the pod log from 11:22:30Z there are 8 <code>polled &lt;cluster&gt;:</code> lines for each of the six, the last at 11:29:58Z–11:29:59Z, and 0 <code>cluster-unreachable</code> (<code>evidence/refused-podlog.txt</code>). The tab kept all six cards at each width (<code>every enabled cluster still has its card: {&quot;missing&quot;: []</code>) and drew no card for <code>walk-466</code> (<code>evidence/walk-output.txt</code>).</td>
+</tr>
+<tr>
+<td>walk</td>
+<td>Cleanup: the finding is gone and the refused count is back</td>
+<td>PASS</td>
+<td>The Secret and the grant were deleted by <code>walk.gsd.lab/run=nonascii-466-2026-09-28</code> at 11:31:41Z (<code>evidence/secret-delete.txt</code>, <code>evidence/grant-delete.txt</code>). The next <code>discovery</code> line: <code>cycle=10 … seen=6 accepted=5 refused=1 refused_cleared=gsd-cluster-walk-466:ca-data-invalid</code> at 11:36:41Z. From 11:31:30Z to 11:43:21Z there are 0 <code>secret-refused</code> lines, 12 <code>polled &lt;cluster&gt;:</code> lines for each of the six, and 0 <code>cluster-unreachable</code> (<code>evidence/cleared-podlog.txt</code>).</td>
+</tr>
+<tr>
+<td>walk</td>
+<td>End state</td>
+<td>PASS</td>
+<td><code>can-i</code> <code>no</code> → <code>yes</code> → <code>no</code> (<code>evidence/before-cani.txt</code>, <code>granted-cani.txt</code>, <code>after-cani.txt</code>, <code>final-cani.txt</code>). No object carries the run label (<code>evidence/final-grant.txt</code> <code>No resources found</code>, <code>evidence/final-secret.txt</code> <code>[]</code>). A fresh login as <code>developer</code> at 11:33:10Z: <code>&quot;cluster_admin&quot;: false</code>, <code>/api/clusterconfigs</code> <code>403</code>, no Cluster Configurations tab (<code>evidence/after-tier.txt</code>). PVC UIDs <code>f065b7a4-535c-4ef1-868c-58f5afee4953</code> (data) and <code>08c7d45c-a3eb-47be-8506-f24ea7a3e0e3</code> (report-artifacts) before and after. The fleet Lease stayed at <code>resourceVersion=5922168 holderIdentity=&quot;&quot;</code>, and <code>shared-qa</code> at <code>resourceVersion=2981054</code> (<code>evidence/before-*.txt</code>, <code>evidence/final-*.txt</code>). <code>fleet-login lines: 0</code> over the whole pod (<code>evidence/whole-podlog.txt</code>).</td>
+</tr>
+<tr>
+<td>walk</td>
+<td>No page error, no sideways scroll, reads only</td>
+<td>PASS</td>
+<td><code>no uncaught page errors: []</code> and <code>no 'Dashboard API error'</code> at each width. <code>scrollWidth, innerWidth</code> was <code>[1280, 1280]</code>, <code>[768, 768]</code> and <code>[375, 375]</code>. <code>the route guard blocked no request: []</code> (<code>evidence/walk-output.txt</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2>How the walk ran</h2>
+<table>
+<thead>
+<tr>
+<th>When (UTC)</th>
+<th>Step</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11:18:58</td>
+<td>Hermetic, before touching the lab: <code>scripts/secret-466.sh check</code> built the manifest and ran this checkout's parser on it (<code>gsd</code> 1.12.0, imported from this checkout). The result: <code>{'secret': 'gsd-cluster-walk-466', 'code': 'ca-data-invalid', 'detail': 'tlsClientConfig.caData does not decode to a PEM bundle that loads: TypeError'}</code></td>
+<td><code>evidence/check-parse.txt</code></td>
+</tr>
+<tr>
+<td>11:20:18–21</td>
+<td>Before: <code>/api/version</code> <code>&quot;version&quot;:&quot;1.12.0&quot;,&quot;commit&quot;:&quot;523e5d07be&quot;</code>; the PVC UIDs; <code>can-i</code> <code>no</code>; no object and no Secret with the run label; the fleet Lease at <code>resourceVersion=5922168</code>, <code>holderIdentity=&quot;&quot;</code>; <code>shared-qa</code> at <code>resourceVersion=2981054</code>. The pod log since the 1.12.0 pod's creation (10:56:27Z) had one <code>discovery</code> line, <code>cycle=1 … seen=6 accepted=5 refused=1 … refused_now=gsd-cluster-mock-refusal:insecure-with-ca</code>, and 24 <code>polled &lt;cluster&gt;:</code> lines for each of the six clusters. It had 0 <code>cluster-unreachable</code>, 0 <code>Traceback</code>, 0 <code>TypeError</code>, 0 <code>unhandled error discovering</code> and 0 <code>ERROR</code> lines</td>
+<td><code>evidence/before-*.txt</code></td>
+</tr>
+<tr>
+<td>11:20:32</td>
+<td>The rollout: the 1.12.0 ReplicaSet was created at 10:56:27Z. Argo CD's last operation on <code>group-sync-dashboard</code> ran from 10:56:10Z to 10:56:26Z at <code>523e5d07be…</code>, <code>Succeeded</code>. It is <code>Synced</code> at <code>f7fa9c5ebc…</code></td>
+<td><code>evidence/before-rollout.txt</code></td>
+</tr>
+<tr>
+<td>11:20:55</td>
+<td>The grant (<code>scripts/grant.yaml</code>): ClusterRole <code>gsd-walk-crb-update</code> and ClusterRoleBinding <code>gsd-walk-crb-update-developer</code>, both labelled <code>walk.gsd.lab/run=nonascii-466-2026-09-28</code>. <code>can-i</code>: <code>yes</code></td>
+<td><code>evidence/grant-create.txt</code>, <code>evidence/granted-*.txt</code></td>
+</tr>
+<tr>
+<td>11:20:55 → 11:22:19</td>
+<td>A 70 s wait before the login. The dashboard caches each tier decision for <code>visibilityTierTtlSeconds: 60</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>11:22:19</td>
+<td>Before, through the API as <code>developer</code> (<code>&quot;cluster_admin&quot;: true</code>): the six enabled clusters <code>ok</code>, one finding (<code>gsd-cluster-mock-refusal</code>, <code>insecure-with-ca</code>), <code>last_discovery</code> <code>2026-09-28T11:21:40Z</code></td>
+<td><code>evidence/before-api-output.txt</code>, <code>evidence/before-api.json</code></td>
+</tr>
+<tr>
+<td>11:22:38–39</td>
+<td><code>scripts/secret-466.sh create</code>: <code>secret/gsd-cluster-walk-466 created</code>, uid <code>424a5469-8e6d-48fb-bb9b-f64143a5add1</code>, from a mode-600 manifest in a mode-700 directory. The CA was <code>subject=CN=walk-466</code>, with <code>notAfter=Oct 28 11:22:38 2026 GMT</code></td>
+<td><code>evidence/secret-create.txt</code>, <code>evidence/created-secret.txt</code></td>
+</tr>
+<tr>
+<td>11:26:40</td>
+<td>Discovery cycle 8 refused the Secret as <code>ca-data-invalid</code></td>
+<td><code>evidence/refused-podlog.txt</code></td>
+</tr>
+<tr>
+<td>11:30:58</td>
+<td>The pod log from 11:22:30Z</td>
+<td><code>evidence/refused-podlog.txt</code></td>
+</tr>
+<tr>
+<td>11:31:13</td>
+<td>Through the API, with the Secret refused</td>
+<td><code>evidence/refused-api-output.txt</code>, <code>evidence/refused-api.json</code></td>
+</tr>
+<tr>
+<td>11:31:17–26</td>
+<td>The tab at 1280, 768 and 375 px</td>
+<td><code>evidence/walk-output.txt</code>, <code>screenshots/</code></td>
+</tr>
+<tr>
+<td>11:31:41</td>
+<td>The Secret, then the grant, deleted by the run label. Afterwards there was no Secret and no grant with the label, and <code>can-i</code> read <code>no</code>. The PVC UIDs were unchanged. The Lease stayed at <code>5922168</code> with no holder, <code>shared-qa</code> at <code>2981054</code>, and the version at 1.12.0, <code>523e5d07be</code></td>
+<td><code>evidence/secret-delete.txt</code>, <code>evidence/grant-delete.txt</code>, <code>evidence/after-*.txt</code></td>
+</tr>
+<tr>
+<td>11:33:10</td>
+<td>A fresh login as <code>developer</code> after the tier cache had expired: <code>&quot;cluster_admin&quot;: false</code>, <code>/api/clusterconfigs</code> <code>403</code>, no tab</td>
+<td><code>evidence/after-tier.txt</code></td>
+</tr>
+<tr>
+<td>11:36:41</td>
+<td>Discovery cycle 10 cleared the finding: <code>refused=1 refused_cleared=gsd-cluster-walk-466:ca-data-invalid</code></td>
+<td><code>evidence/cleared-podlog.txt</code></td>
+</tr>
+<tr>
+<td>11:43:21–22</td>
+<td>The end state, once more, and the pod log over the whole 1.12.0 pod</td>
+<td><code>evidence/final-*.txt</code>, <code>evidence/whole-podlog.txt</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Cycle numbers.</strong> The two lines the walk depends on are <code>cycle=8</code> at 11:26:40Z and <code>cycle=10</code> at 11:36:41Z. The
+dashboard logs a <code>discovery</code> line only when the set of clusters or findings changes
+(<code>local-development/gsd/poller.py#Poller._discover_once</code>, &quot;TRANSITIONS, NOT STATES&quot;). No line between 11:31:30Z and
+11:36:41Z names <code>walk-466</code> (<code>evidence/cleared-podlog.txt</code>). That is consistent with cycle 9 having run before the
+11:31:41Z delete took effect, but the log does not record cycle 9's instant, so this README does not claim one.</p>
+<h2>The throwaway Secret</h2>
+<p><code>scripts/secret-466.sh</code> follows the shape of the #447 walk's
+<code>reports/2026-09-28_batch-1110-walk/scripts/secret-447.sh</code>. It uses <code>oc create</code>, not <code>oc apply</code>, so no
+<code>last-applied-configuration</code> annotation copies the manifest into the object (<code>&quot;annotations&quot;: {}</code> in
+<code>evidence/created-secret.txt</code>). The script:</p>
+<ul>
+<li>generates a CA with <code>openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 -subj /CN=walk-466</code>
+into a mode-700 <code>mktemp -d</code> directory, which the exit trap removes. The key is never used again and never leaves
+that directory;</li>
+<li>sets <code>caData</code> to the base64 of <code># lab walk #466 — non-breaking space here:</code> + U+00A0 + a newline + the certificate;</li>
+<li>sets the token to <code>sha256~</code> + 44 random hex characters. It is never printed, and a <code>sed</code> redacts any <code>sha256~</code> value
+from the evidence;</li>
+<li>declares no <code>saTokenLookup</code>, no <code>ldapConnectionBootstrap</code> and no <code>insecure</code>. The config keys are
+<code>bearerToken</code> and <code>tlsClientConfig</code>, and <code>tlsClientConfig</code> holds <code>caData</code> alone. No fleet path can take this
+Secret, and it never loaded at all: it was refused at parse.</li>
+</ul>
+<h2>What the lab did not do</h2>
+<p>The walk did not reproduce the &quot;before&quot; of #466. Before 1.12.0, <code>ssl.create_default_context(cadata=…)</code> raised
+<code>TypeError</code> for non-ASCII text, which the parser's <code>except</code> did not catch. The exception left <code>discover</code> and stopped
+discovery of every cluster Secret. 1.12.0 adds <code>TypeError</code> to that <code>except</code>
+(<code>local-development/gsd/clusterconfig/parser.py#parse_secret</code>, the comment
+<code>ssl raises TypeError, not SSLError, for non-ASCII cadata.</code>). Two hermetic tests cover it:
+<code>test_a_non_ascii_cadata_is_refused_at_parse_not_raised</code> and <code>test_the_reader_keeps_a_good_cluster_beside_non_ascii_cadata</code>
+(<code>local-development/tests/test_clusterconfig.py</code>). They are the evidence for the &quot;before&quot;. This folder shows only
+the &quot;after&quot;, on the deployed image.</p>
+<h2>Redaction</h2>
+<p><code>scripts/capture.sh</code> reads the fleet account's name from its Lease into a variable and writes <code>&lt;fleet account&gt;</code> in
+its place. It also redacts every <code>sha256~</code> value. <code>scripts/walk_466.py</code> leaves out the <code>fleet</code> section of
+<code>/api/clusterconfigs</code>, which names the account, and redacts <code>sha256~</code> values. After the walk, a search of this folder
+found 0 files containing the fleet account's name and 0 <code>sha256~</code> tokens, and the text <code>PRIVATE KEY</code> only in this
+sentence.</p>
+<h2>How to repeat</h2>
+<pre><code class="language-sh">export KUBECONFIG=&lt;the lab kubeconfig&gt;
+R=reports/2026-09-28_nonascii-466-walk
+GSD_VENV_PYTHON=local-development/.venv/bin/python bash &quot;$R/scripts/secret-466.sh&quot; check   # hermetic
+for k in version pvcs cani grant lease sharedqa secret; do bash &quot;$R/scripts/capture.sh&quot; &quot;$k&quot; before; done
+bash &quot;$R/scripts/capture.sh&quot; podlog before &lt;the pod's creationTimestamp&gt;
+oc create -f &quot;$R/scripts/grant.yaml&quot;            # then wait 70 s for the tier cache
+GSD_UI_PASSWORD=… python &quot;$R/scripts/walk_466.py&quot; api before
+bash &quot;$R/scripts/secret-466.sh&quot; create           # then wait for the discovery line naming walk-466
+bash &quot;$R/scripts/capture.sh&quot; podlog refused &lt;the create instant&gt;
+GSD_UI_PASSWORD=… python &quot;$R/scripts/walk_466.py&quot; api refused
+GSD_UI_PASSWORD=… python &quot;$R/scripts/walk_466.py&quot; walk
+bash &quot;$R/scripts/secret-466.sh&quot; delete
+oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=nonascii-466-2026-09-28
+GSD_UI_PASSWORD=… python &quot;$R/scripts/walk_466.py&quot; after    # after 70 s
+bash &quot;$R/scripts/capture.sh&quot; podlog cleared &lt;the delete instant&gt;   # after the next discovery line
+</code></pre>
+<p><code>GSD_UI_PASSWORD</code> is <code>developer</code>'s password, taken from <code>crc console --credentials -o json</code> into the environment only.</p>
+
+<h2 id="screenshots">Screenshots</h2>
+<figure><img src="screenshots/01-1280-findings-walk-466.png" alt="01-1280-findings-walk-466.png"><figcaption>01-1280-findings-walk-466.png</figcaption></figure>
+<figure><img src="screenshots/02-768-findings-walk-466.png" alt="02-768-findings-walk-466.png"><figcaption>02-768-findings-walk-466.png</figcaption></figure>
+<figure><img src="screenshots/03-375-findings-walk-466.png" alt="03-375-findings-walk-466.png"><figcaption>03-375-findings-walk-466.png</figcaption></figure>
+</body></html>
