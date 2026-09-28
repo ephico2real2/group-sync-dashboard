@@ -1,0 +1,4 @@
+# oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/metrics").read().decode())' | grep 'gsd_visibility_tier_checks_total{.*threshold="cluster_admin"}' | grep -E 'allowed|denied'
+# at 2026-09-27T23:54:48Z
+gsd_visibility_tier_checks_total{outcome="allowed",threshold="cluster_admin"} 4.0
+gsd_visibility_tier_checks_total{outcome="denied",threshold="cluster_admin"} 1.0

@@ -1,0 +1,5 @@
+# oc delete secrets -n group-sync-dashboard gsd-cluster-rejoin-walk-2 --ignore-not-found
+# at 2026-09-28T00:01:26Z
+secret "gsd-cluster-rejoin-walk-2" deleted from group-sync-dashboard namespace
+# oc delete clusterrolebindings.rbac.authorization.k8s.io rejoin-walk-cluster-admin --ignore-not-found
+# at 2026-09-28T00:01:26Z
