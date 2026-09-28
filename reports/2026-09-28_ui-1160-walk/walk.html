@@ -9,9 +9,9 @@ lines, 0 <code>FAIL</code> lines and <code>failures : []</code> at 17:09:20Z (<c
 <ul>
 <li><strong>#473:</strong> the <code>gsd-cluster-mock-refusal</code> finding's detail keeps two columns at 1280 and 768 px. At 375 and 320 px it
 is one column with the label above the value, and every line ends between words.</li>
-<li><strong>#467:</strong> the discovery line reads <code>8 served from Secrets · 1 labelled Secret refused (see Findings)</code> at every
-width. Both numbers match discovery's <code>accepted=8 refused=1</code> and the page's own data.</li>
-<li><strong>#462:</strong> at every width, no id is duplicated and every per-cluster id follows <code>cc-&lt;kind&gt;_&lt;its own card&gt;</code>. Cancel
+<li><strong>#467:</strong> the discovery line reads <code>8 served from Secrets · 1 labelled Secret refused (see Findings)</code> at 1280, 768
+and 375 px. Both numbers match discovery's <code>accepted=8 refused=1</code> and the page's own data.</li>
+<li><strong>#462:</strong> at 1280, 768 and 375 px, no id is duplicated and every per-cluster id follows <code>cc-&lt;kind&gt;_&lt;its own card&gt;</code>. Cancel
 on a repainted Rejoin dialog returns the focus to that card's own button. A Rotate draft survives the minute's
 repaint on its own card.</li>
 <li><strong>#459:</strong> the card named <code>constructor</code> shows no phantom <code>Refresh:</code> or <code>Rejoin:</code> line and no Rejoin button until its
@@ -19,9 +19,10 @@ own Refresh answers. After that, it offers Rejoin like any other card.</li>
 </ul>
 <p><strong>The walker stopped before its cleanup step.</strong> The agent running the walk ended at an API error (HTTP 403,
 <code>oauth_org_not_allowed</code>) after the walk had finished and before it removed the grant and the Secrets. The orchestrator
-found both still present, with <code>can-i</code> <code>yes</code>. It deleted them by the run label <code>walk.gsd.lab/run=ui-1160-2026-09-28</code>
-before 17:12:00Z, the first time stamped after the delete. The grant was therefore live from 17:00:12Z to at most
-17:12:00Z, not only for the walk (17:05:39Z–17:09:20Z). The orchestrator then ran the plan's after-phase with the
+found both still present, with <code>can-i</code> <code>yes</code>. It deleted them by the run label <code>walk.gsd.lab/run=ui-1160-2026-09-28</code>.
+The delete's own output carries no instant; the folder's first capture after it is <code>evidence/after-cani.txt</code>, <code>no</code> at
+17:12:29Z. The grant was therefore live from 17:00:12Z to at most 17:12:29Z, not only for the walk
+(17:05:39Z–17:09:20Z). The orchestrator then ran the plan's after-phase with the
 walk's own scripts: the captures at 17:12:28–30Z, a fresh login at 17:12:42Z, and discovery's removal of the three
 entries at 17:15:08Z.</p>
 <p>The walk made two temporary changes to the lab, the grant and the three Secrets, and both were removed. It ran no Helm,
@@ -67,7 +68,7 @@ fleet Lease stayed at <code>resourceVersion</code> 5922168 with no holder, and <
 <td>walk</td>
 <td>The pod log: <code>cluster-refreshed … by=developer</code> for the throwaway cards; 0 <code>fleet-login</code>, 0 <code>cluster-rejoin</code>, 0 Traceback</td>
 <td>PASS</td>
-<td>From 17:00:12Z to the 17:12:30Z capture (<code>evidence/after-podlog.txt</code>): 9 <code>cluster-refreshed</code> lines, all <code>by=developer</code> and all <code>outcome=auth_failed</code>, 3 for each of <code>w462</code>, <code>result-w462</code> and <code>constructor</code>. There were 0 lines for each <code>fleet-*</code> and <code>cluster-rejoin*</code> event. <code>lines matching 'fleet-login': 0</code>, <code>lines matching 'cluster-rejoin': 0</code>, <code>lines naming /rejoin: 0</code>, <code>lines naming the fleet account: 0</code>, <code>Traceback lines: 0</code>, <code>ERROR lines: 0</code>.</td>
+<td>From 17:00:12Z to the 17:12:30Z capture (<code>evidence/after-podlog.txt</code>): 9 <code>cluster-refreshed</code> lines, all <code>by=developer</code> and all <code>outcome=auth_failed</code>, 3 for each of <code>w462</code>, <code>result-w462</code> and <code>constructor</code>. There were 0 lines for each of the eight <code>fleet-*</code> events the capture counts (<code>fleet-lookup</code>, <code>fleet-lookup-failed</code>, <code>fleet-ping</code>, <code>fleet-ping-failed</code>, <code>fleet-login</code>, <code>fleet-login-refused</code>, <code>fleet-login-failed</code>, <code>fleet-logout</code>) and for each of the three <code>cluster-rejoin*</code> events. <code>lines matching 'fleet-login': 0</code>, <code>lines matching 'cluster-rejoin': 0</code>, <code>lines naming /rejoin: 0</code>, <code>lines naming the fleet account: 0</code>, <code>Traceback lines: 0</code>, <code>ERROR lines: 0</code>.</td>
 </tr>
 <tr>
 <td>walk</td>
@@ -133,9 +134,9 @@ fleet Lease stayed at <code>resourceVersion</code> 5922168 with no holder, and <
 <td><code>evidence/walk-output.txt</code></td>
 </tr>
 <tr>
-<td>before 17:12:00</td>
-<td>The orchestrator found the grant and the Secrets present (<code>can-i</code> <code>yes</code>) and deleted them by the run label: the ClusterRoleBinding, the ClusterRole, then the three Secrets</td>
-<td>—</td>
+<td>before 17:12:29</td>
+<td>The orchestrator found the grant and the Secrets present (<code>can-i</code> <code>yes</code>) and deleted them by the run label: the ClusterRoleBinding, the ClusterRole, then the three Secrets. The delete's output carries no instant; <code>can-i</code> read <code>no</code> at 17:12:29Z</td>
+<td><code>evidence/after-cani.txt</code></td>
 </tr>
 <tr>
 <td>17:12:28–30</td>
@@ -171,7 +172,7 @@ Secrets.</li>
 <p><code>constructor</code> is the name #459 is about. Before 1.16.0 the page's Refresh and Rejoin state maps were plain objects, so
 <code>view.clusterRefresh['constructor']</code> and <code>view.clusterRejoin['constructor']</code> resolved to Object's inherited
 <code>constructor</code> function, and the card was offered Rejoin with no <code>auth_failed</code> (#459, read from the code). <code>w462</code> and
-<code>result-w462</code> are #462's pair: before 1.16.0, <code>result-w462</code>'s Rejoin button had the id <code>cc-rejoin-result-w462</code>, the same
+<code>result-w462</code> are #462's pair: before 1.14.0, <code>result-w462</code>'s Rejoin button had the id <code>cc-rejoin-result-w462</code>, the same
 id as <code>w462</code>'s Rejoin result line.</p>
 <h2>Observation, outside these issues</h2>
 <p>The tab's header shows <code>BY SOURCE … Secret 28</code> beside <code>8 served from Secrets</code> (<code>screenshots/19-375-467-header.png</code>). The

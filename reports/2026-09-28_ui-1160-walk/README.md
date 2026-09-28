@@ -7,9 +7,9 @@ ever issued. The walk ran at 1280, 768 and 375 px, then at 320 px for #473 alone
 lines, 0 `FAIL` lines and `failures : []` at 17:09:20Z (`evidence/walk-output.txt`, `screenshots/`).
 - **#473:** the `gsd-cluster-mock-refusal` finding's detail keeps two columns at 1280 and 768 px. At 375 and 320 px it
   is one column with the label above the value, and every line ends between words.
-- **#467:** the discovery line reads `8 served from Secrets · 1 labelled Secret refused (see Findings)` at every
-  width. Both numbers match discovery's `accepted=8 refused=1` and the page's own data.
-- **#462:** at every width, no id is duplicated and every per-cluster id follows `cc-<kind>_<its own card>`. Cancel
+- **#467:** the discovery line reads `8 served from Secrets · 1 labelled Secret refused (see Findings)` at 1280, 768
+  and 375 px. Both numbers match discovery's `accepted=8 refused=1` and the page's own data.
+- **#462:** at 1280, 768 and 375 px, no id is duplicated and every per-cluster id follows `cc-<kind>_<its own card>`. Cancel
   on a repainted Rejoin dialog returns the focus to that card's own button. A Rotate draft survives the minute's
   repaint on its own card.
 - **#459:** the card named `constructor` shows no phantom `Refresh:` or `Rejoin:` line and no Rejoin button until its
@@ -17,9 +17,10 @@ lines, 0 `FAIL` lines and `failures : []` at 17:09:20Z (`evidence/walk-output.tx
 
 **The walker stopped before its cleanup step.** The agent running the walk ended at an API error (HTTP 403,
 `oauth_org_not_allowed`) after the walk had finished and before it removed the grant and the Secrets. The orchestrator
-found both still present, with `can-i` `yes`. It deleted them by the run label `walk.gsd.lab/run=ui-1160-2026-09-28`
-before 17:12:00Z, the first time stamped after the delete. The grant was therefore live from 17:00:12Z to at most
-17:12:00Z, not only for the walk (17:05:39Z–17:09:20Z). The orchestrator then ran the plan's after-phase with the
+found both still present, with `can-i` `yes`. It deleted them by the run label `walk.gsd.lab/run=ui-1160-2026-09-28`.
+The delete's own output carries no instant; the folder's first capture after it is `evidence/after-cani.txt`, `no` at
+17:12:29Z. The grant was therefore live from 17:00:12Z to at most 17:12:29Z, not only for the walk
+(17:05:39Z–17:09:20Z). The orchestrator then ran the plan's after-phase with the
 walk's own scripts: the captures at 17:12:28–30Z, a fresh login at 17:12:42Z, and discovery's removal of the three
 entries at 17:15:08Z.
 
@@ -36,7 +37,7 @@ fleet Lease stayed at `resourceVersion` 5922168 with no holder, and `shared-qa`'
 | #467 | The discovery line reads `N served from Secrets · M labelled Secret(s) refused (see Findings)`; N and M match discovery's `seen/accepted/refused` line and the Findings card | PASS | The last discovery line before the walk: `discovery cycle=5 … seen=9 accepted=8 refused=1 added=constructor,result-w462,w462` at 17:05:07Z (`evidence/walk-discovery.txt`). At 1280, 768 and 375 px the line read `8 served from Secrets · 1 labelled Secret refused (see Findings) · last read …`. N: `{"N": 8, "served_from_secret": 8, "discovery accepted": 8}`, where `served_from_secret` counts the page's clusters that are not retired, not the host, and sourced `secret:`. M: `{"M": 1, "findings card Secrets": ["gsd-cluster-mock-refusal"], "discovery refused": 1}` (`evidence/walk-output.txt`, `screenshots/03-1280-467-header.png`, `11-768-…`, `19-375-…`). |
 | #462 | No duplicate id, every per-cluster id on the `_` scheme; Refresh on `w462` and `result-w462` offers Rejoin; Cancel on `result-w462`'s Rejoin returns the focus to its own button; `w462`'s Rotate draft survives the minute's repaint on `w462`'s card | PASS | The id check ran three times at each of the three widths: idle `{"ids": 150, "per_card_ids": 33, "duplicates": [], "off_scheme": [], "old_scheme": []}`, after both Refresh answers 154 / 37, and at the end, all three refreshed, 156 / 39, each with `duplicates`, `off_scheme` and `old_scheme` empty. The 18 ids on the throwaway cards are `cc-{rotate,refresh-result,refresh,rejoin,delete,delete-msg}_<card>`. Refresh on `w462` and on `result-w462` answered `auth_failed`, and each card offered `Rejoin…`. Rejoin on `result-w462` was opened with nothing typed. `the opener's node was replaced` under the dialog, and after Cancel `document.activeElement` was `{"active_id": "cc-rejoin_result-w462", "tag": "BUTTON", "data_cc_rejoin": "result-w462", "card": "result-w462"}`. Rotate on `w462`: 14 characters typed into `cc-rotate-token_w462`, `type: password`, one `<label for>`. After 65 s and one `GET /api/clusterconfigs` `200`, `{"repainted": true, "card": "w462", "equals_draft": true, "length": 14}`, and the only Rotate field on the page was `["cc-rotate-token_w462", "w462"]`. The panel was then closed without Overwrite (`evidence/walk-output.txt`, `screenshots/04–07`, `12–15`, `20–23`). |
 | #459 | `constructor`, idle: no `Refresh:` line, no `Rejoin:` line, no Rejoin button; after Refresh (`auth_failed`) Rejoin is offered; no page error | PASS | Idle, at 1280, 768 and 375 px: `{"refresh_line": false, "rejoin_line": false, "rejoin_button": false, "text_has_refresh_colon": false, "text_has_rejoin_colon": false, "text_has_rejoin_button": false, "refresh_button": "Refresh"}`. After its Refresh answered `Refresh: auth_failed · … — 401 Unauthorized — token invalid or expired`: `{"refresh_line": true, "rejoin_line": false, "rejoin_button": true, …}`. `no uncaught page errors: []` and `no 'Dashboard API error'` at every width (`evidence/walk-output.txt`, `screenshots/01-1280-459-constructor-idle.png`, `08-1280-459-constructor-refreshed.png`, `09`, `16`, `17`, `24`). |
-| walk | The pod log: `cluster-refreshed … by=developer` for the throwaway cards; 0 `fleet-login`, 0 `cluster-rejoin`, 0 Traceback | PASS | From 17:00:12Z to the 17:12:30Z capture (`evidence/after-podlog.txt`): 9 `cluster-refreshed` lines, all `by=developer` and all `outcome=auth_failed`, 3 for each of `w462`, `result-w462` and `constructor`. There were 0 lines for each `fleet-*` and `cluster-rejoin*` event. `lines matching 'fleet-login': 0`, `lines matching 'cluster-rejoin': 0`, `lines naming /rejoin: 0`, `lines naming the fleet account: 0`, `Traceback lines: 0`, `ERROR lines: 0`. |
+| walk | The pod log: `cluster-refreshed … by=developer` for the throwaway cards; 0 `fleet-login`, 0 `cluster-rejoin`, 0 Traceback | PASS | From 17:00:12Z to the 17:12:30Z capture (`evidence/after-podlog.txt`): 9 `cluster-refreshed` lines, all `by=developer` and all `outcome=auth_failed`, 3 for each of `w462`, `result-w462` and `constructor`. There were 0 lines for each of the eight `fleet-*` events the capture counts (`fleet-lookup`, `fleet-lookup-failed`, `fleet-ping`, `fleet-ping-failed`, `fleet-login`, `fleet-login-refused`, `fleet-login-failed`, `fleet-logout`) and for each of the three `cluster-rejoin*` events. `lines matching 'fleet-login': 0`, `lines matching 'cluster-rejoin': 0`, `lines naming /rejoin: 0`, `lines naming the fleet account: 0`, `Traceback lines: 0`, `ERROR lines: 0`. |
 | walk | End state | PASS, with the grant's longer window noted above | `can-i` `no` → `yes` → `no` (`evidence/before-cani.txt` 17:00:03Z, `granted-cani.txt` 17:00:13Z, `after-cani.txt` 17:12:29Z). No object carries the run label (`evidence/after-grant.txt` `No resources found`, `evidence/after-secrets.txt` `[]`). A fresh login as `developer` at 17:12:42Z: `"cluster_admin": false`, `/api/clusterconfigs` `403`, no Cluster Configurations tab, `walk exit=0` (`evidence/after-walk.txt`). Discovery cycle 7 at 17:15:08Z: `seen=6 accepted=5 refused=1 removed=constructor,result-w462,w462`, the counts cycle 1 logged at 16:49:59Z (`evidence/cleared-discovery.txt`, `evidence/before-discovery.txt`). PVC UIDs `f065b7a4-535c-4ef1-868c-58f5afee4953` (data) and `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3` (report-artifacts) before and after. The fleet Lease `resourceVersion=5922168 holderIdentity=""`, `shared-qa` `resourceVersion=2981054` (`evidence/before-*.txt`, `evidence/after-*.txt`). |
 
 ## How the walk ran
@@ -52,7 +53,7 @@ fleet Lease stayed at `resourceVersion` 5922168 with no holder, and `shared-qa`'
 | 17:05:39 | The login as `developer`: `"cluster_admin": true`, `/api/clusterconfigs` `200` | `evidence/walk-output.txt` |
 | 17:05:41 → 17:09:20 | The tab at 1280 (to 17:06:51), 768 (to 17:08:04), 375 (to 17:09:16) and 320 px; `failures : []` | `evidence/walk-output.txt`, `screenshots/` |
 | after 17:09:20 | The agent running the walk ended at an API error (HTTP 403, `oauth_org_not_allowed`) before its cleanup step. The file's last line, `walk exit=`, carries no value, and the walk's own summary line is `failures : []` | `evidence/walk-output.txt` |
-| before 17:12:00 | The orchestrator found the grant and the Secrets present (`can-i` `yes`) and deleted them by the run label: the ClusterRoleBinding, the ClusterRole, then the three Secrets | — |
+| before 17:12:29 | The orchestrator found the grant and the Secrets present (`can-i` `yes`) and deleted them by the run label: the ClusterRoleBinding, the ClusterRole, then the three Secrets. The delete's output carries no instant; `can-i` read `no` at 17:12:29Z | `evidence/after-cani.txt` |
 | 17:12:28–30 | After: the version unchanged, the PVC UIDs, `can-i` `no`, no labelled object, the Lease and `shared-qa` unchanged, and the pod log from 17:00:12Z | `evidence/after-*.txt` |
 | 17:12:42 | A fresh login as `developer`: `"cluster_admin": false`, `/api/clusterconfigs` `403`, no tab | `evidence/after-walk.txt` |
 | 17:15:08 | Discovery cycle 7 removed the three entries: `seen=6 accepted=5 refused=1 removed=constructor,result-w462,w462`, and the shared API URL warning cleared | `evidence/cleared-discovery.txt` |
@@ -76,7 +77,7 @@ Secrets every five minutes, so a deleted Secret keeps its card until the next cy
 `constructor` is the name #459 is about. Before 1.16.0 the page's Refresh and Rejoin state maps were plain objects, so
 `view.clusterRefresh['constructor']` and `view.clusterRejoin['constructor']` resolved to Object's inherited
 `constructor` function, and the card was offered Rejoin with no `auth_failed` (#459, read from the code). `w462` and
-`result-w462` are #462's pair: before 1.16.0, `result-w462`'s Rejoin button had the id `cc-rejoin-result-w462`, the same
+`result-w462` are #462's pair: before 1.14.0, `result-w462`'s Rejoin button had the id `cc-rejoin-result-w462`, the same
 id as `w462`'s Rejoin result line.
 
 ## Observation, outside these issues
