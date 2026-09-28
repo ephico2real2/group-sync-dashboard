@@ -35,6 +35,12 @@ never as the fleet account. The tests use made-up names against a fake remote.
 
 ## Orchestrator's notes
 
+- **Equal username and password (#447).** Refuse a Rejoin when the password and username match after
+  `casefold()`, in `gsd/rejoin.py#check`, before any request or credential-gate change. Answer `422` with the fixed
+  detail `rejoin-password-equals-username: the password must differ from the username, ignoring case; it was not sent`.
+  No submitted value is repeated. This is smaller than always scrubbing usernames: it prevents the exchange from
+  producing a redacted username that can be compared with the name recorded elsewhere. Every password spelling in
+  §3.7 stays scrubbed. The budget and D4-7's per-pod memory are unchanged.
 - **The id and the file.** The issue proposed `SPEC_R1_rejoin.md`; the brief names `SPEC_D4_cluster_rejoin.md`, the
   next step of batch D after SPEC_D3. The index row sits between S4d (#315) and L1 (#321), in issue order.
 - **The versions are the orchestrator's**, as for S4e. The release commit moves `pyproject.toml`, `gsd/__init__.py`
@@ -209,7 +215,7 @@ The route is `rejoin_cluster_config` inside `gsd/api.py#build_app`, beside Refre
 | 2 | `_writes_gate`: a proxy-verified identity and the cluster-admin tier (#322) — the **host's gate** | `403` | no |
 | 3 | the body is exactly `{"username": <string>, "password": <string>}` | `422` in fixed words: a key can be the password, so none is repeated | no |
 | 4 | the name is a live cluster | `404` | no |
-| 5 | `gsd/rejoin.py#check`: the row is rejoinable (§3.2); the username fits the shared grammar; it is not a fleet account; the password is present, with no control character and no unpaired surrogate | `409 not-rejoinable`, or `422 rejoin-username-invalid`, `rejoin-fleet-account`, `rejoin-password-missing`, `rejoin-password-invalid` | no |
+| 5 | `gsd/rejoin.py#check`: the row is rejoinable (§3.2); the username fits the shared grammar; it is not a fleet account; the password is present, with no control character and no unpaired surrogate, and differs from the username ignoring case | `409 not-rejoinable`, or `422 rejoin-username-invalid`, `rejoin-fleet-account`, `rejoin-password-missing`, `rejoin-password-invalid`, `rejoin-password-equals-username` | no |
 | 6 | this process runs a poller, whose credential gate Rejoin uses | `409` | no |
 | 7 | no other Rejoin is running in this process | `409`, never queued | no |
 | 8 | `gsd/rejoin.py#rejoin` (§3.3) | `200` with an outcome (§3.4) | at most one login |

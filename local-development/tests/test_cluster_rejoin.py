@@ -311,6 +311,28 @@ def test_each_refusal_before_the_wire_sends_nothing_and_repeats_no_value(tmp_pat
     assert gate._refused == {} and gate._spent == set(), "a refusal before the wire records nothing"
 
 
+@pytest.mark.parametrize("username,password", [
+    ("alice.admin", "alice.admin"),
+    ("alice.admin", "ALICE.ADMIN"),
+    ("ALICE.ADMIN", "alice.admin"),
+], ids=["equal", "uppercase-password", "uppercase-username"])
+def test_password_equal_to_username_is_refused_before_any_request(rig, caplog, username, password):
+    """Refuse before the scrub can turn a username into evidence of its password (#447)."""
+    c, app, settings, host, remote = rig
+    with caplog.at_level(logging.DEBUG):
+        r = _rejoin(c, username=username, password=password)
+    assert r.status_code == 422, r.text
+    assert r.json() == {"detail": "rejoin-password-equals-username: the password must differ from the username, "
+                                  "ignoring case; it was not sent"}
+    assert remote.requests == [] and host.calls == []
+    assert username not in r.text + caplog.text and password not in r.text + caplog.text
+    assert "<redacted>" not in r.text + caplog.text
+    assert not any(m.startswith(("fleet-login", "cluster-rejoin")) for m in caplog.messages)
+    gate = app.state.poller._credential_gate
+    assert gate._refused == {} and gate._spent == set()
+    assert app.state.poller.woke == 0
+
+
 def test_below_the_cluster_admin_tier_is_403_and_nothing_is_sent(rig):
     c, app, settings, host, remote = rig
     assert _rejoin(c, who="auditor").status_code == 403       # the wide tier, not the cluster-admin tier

@@ -144,6 +144,9 @@ def check(cluster: ClusterConfig, settings: Settings, username: str, password: s
         raise WriteRefused("rejoin-password-invalid", "the password holds a control character, which RFC 7617 forbids, "
                                                       "or an unpaired surrogate, which UTF-8 cannot carry; it was not "
                                                       "sent")
+    if password.casefold() == username.casefold():
+        raise WriteRefused("rejoin-password-equals-username", "the password must differ from the username, ignoring "
+                                                             "case; it was not sent")
 
 
 def question(settings: Settings) -> dict[str, str]:
