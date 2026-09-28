@@ -367,6 +367,18 @@ Decisions taken at review, recorded first and then applied:
   password only as an account the configuration names, and still lists an account it no longer pings; SPEC_S4e §3.2
   states the budget over the system. §3.12 is rewritten: nothing the walk deploys names the fleet account, and the
   lab is re-checked read-only before any password is placed.
+- **#445 (2026-09-27): §3.12 step 6 rewritten so a lab walk can run it.** The #444 walk
+  (`reports/2026-09-27_epic-c-walk-432/README.md`) stopped on the step as #432 left it. A leader-election
+  standby never calls `claim()`: `gsd/poller.py#Poller._run_cluster`, `gsd/poller.py#Poller._retrieve_pending`
+  and `gsd/poller.py#Poller._ping_accounts` all return before it. A process on the workstation with no
+  ServiceAccount mount assumes leadership (`gsd/leader.py#LeaderElector.start`,
+  `gsd/leader.py#_in_cluster`). Copying the pod's token to that process can read the fleet password
+  through the walk's keep-grant. The step now proves the Lease's `ClaimHeld` across two processes that
+  skip election and call `gsd/fleetstate.py#FleetLease.claim` only, inside the already-running pod, as
+  `developer`. It does not prove "leadership plus the Lease": that pair is already what a standby does,
+  and a second replica cannot run on this lab (ReadWriteOnce, and the chart refuses `replicaCount > 1`
+  with election on). SPEC_S4e's copy of the walk is the #432 text and is left as that record.
+  `local-development/tests/test_s4c_step6_walk.py` holds the live step to that procedure.
 
 ## 0. The requirement, in business terms
 
@@ -1318,9 +1330,157 @@ and the release presents the password only as an account the configuration names
    poll green again — and no refusal recorded. Then, after the lab check, a wrong password + the same deletion: the
    re-authentication is refused once, `fleet-credential-suspended … scope=self-login stopped=1`, the
    card critical, and no second authorize.
-6. **Two processes.** With the pod running, run a second copy of the app out of cluster against the
-   same namespace (`GSD_NAMESPACE`, the pod's ServiceAccount token), started from the same walk values:
-   the second `claim()` on a held Lease is `ClaimHeld`; the authorize count moves by the leader's binds only.
+6. **Two processes, `ClaimHeld` on `developer`'s Lease, inside the pod.** This step proves the
+   durable Lease's `ClaimHeld` across two processes, not leadership plus the Lease. A standby never
+   reaches `gsd/fleetstate.py#FleetLease.claim`: `gsd/poller.py#Poller._run_cluster` skips the poll,
+   `gsd/poller.py#Poller._retrieve_pending` returns before any lookup, and
+   `gsd/poller.py#Poller._ping_accounts` pings only as leader. That is why the #444 walk could not
+   observe the second `claim()` (`reports/2026-09-27_epic-c-walk-432/README.md`). A second dashboard
+   replica cannot run here: the volume is ReadWriteOnce, and the chart refuses `replicaCount > 1` with
+   election on. Do not start another dashboard process on the workstation. Do not copy the
+   ServiceAccount token off the pod. The two processes below have no `LeaderElector`; they call
+   `claim()` only, as `developer`, and they never read a password.
+
+   The kubeconfig is the same one steps 1 and 5 already use for `oc get` and `oc delete oauthaccesstoken`.
+   The account under test is `developer`. Do not `oc login` as the fleet account. Do not pass `--token`
+   from the pod. The image has no shell: `oc exec … -- python3.14` is the command, as step 1's version
+   read already is.
+
+   **6.0 Abort checks before any `claim()`.** Run the lab check. Step 6 places no password; the check
+   is the abort that the lab has not drifted. Stop unless it prints `0 0 0`. Then wait until
+   `developer`'s Lease `gsd-fleet-88fa0d759f845b47` is not in flight — `holderIdentity` empty, or
+   `now` past `renewTime + leaseDurationSeconds`. After step 5 the ping and self-login have stood
+   down, so the running pod should not hold this claim. If it still holds after three minutes, stop.
+
+       F=ocp-oauth-bind-serviceid
+       oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c "${F}"
+       oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json \
+         | jq --arg f "${F}" '[.items[] | (.data.config // "" | @base64d | fromjson? // {}) | select(.ldapConnectionBootstrap == $f)] | length'
+       oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json \
+         | jq --arg f "${F}" '[.items[] | .data // {} | to_entries[] | select(.value | contains($f))] | length'
+       oc get leases.coordination.k8s.io gsd-fleet-88fa0d759f845b47 -n group-sync-dashboard \
+         -o jsonpath='{.spec.holderIdentity} {.spec.renewTime} {.spec.leaseDurationSeconds}{"\n"}'
+
+   Record `STEP6_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)`, the two challenging-client counts (step 1's
+   `jq`), and the fleet account Lease's sha256 (`jq -S -c . | shasum -a 256`).
+
+   **6.1 Process A holds.** The heredoc expands on the workstation; the pod runs `python3.14` only.
+   The program is this one; argument `a` or `b` selects the role.
+
+```python
+"""Two claim()s on developer. No password is read."""
+import os
+import sys
+import time
+
+from gsd.config import load_settings
+from gsd.fleetstate import ClaimHeld, FleetLease, claim_seconds
+from gsd.kube import ClusterClient
+
+ACCOUNT = "developer"
+settings = load_settings(os.environ["GSD_CONFIG"])
+host = settings.host_cluster()
+if host is None:
+    sys.exit("ABORT: no host cluster")
+client = ClusterClient(host, timeout=settings.request_timeout_seconds)
+ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8").read().strip()
+role = sys.argv[1] if len(sys.argv) > 1 else ""
+lease = FleetLease(client, ns, ACCOUNT, claim_seconds=claim_seconds(settings),
+                   identity=f"walk-step6-{role}")
+if role == "a":
+    lease.claim()
+    print("HELD", lease.record.holder, lease.name, flush=True)
+    time.sleep(20)
+    lease.release()
+    print("RELEASED", flush=True)
+elif role == "b":
+    try:
+        lease.claim()
+    except ClaimHeld as exc:
+        print("ClaimHeld", exc, flush=True)
+        sys.exit(0)
+    print("ABORT: process B did not raise ClaimHeld", flush=True)
+    lease.release()
+    sys.exit(2)
+else:
+    sys.exit("ABORT: role is a or b")
+```
+
+       oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- \
+         python3.14 -c "$(cat <<'PY'
+       """Two claim()s on developer. No password is read."""
+       import os
+       import sys
+       import time
+
+       from gsd.config import load_settings
+       from gsd.fleetstate import ClaimHeld, FleetLease, claim_seconds
+       from gsd.kube import ClusterClient
+
+       ACCOUNT = "developer"
+       settings = load_settings(os.environ["GSD_CONFIG"])
+       host = settings.host_cluster()
+       if host is None:
+           sys.exit("ABORT: no host cluster")
+       client = ClusterClient(host, timeout=settings.request_timeout_seconds)
+       ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8").read().strip()
+       role = sys.argv[1] if len(sys.argv) > 1 else ""
+       lease = FleetLease(client, ns, ACCOUNT, claim_seconds=claim_seconds(settings),
+                          identity=f"walk-step6-{role}")
+       if role == "a":
+           lease.claim()
+           print("HELD", lease.record.holder, lease.name, flush=True)
+           time.sleep(20)
+           lease.release()
+           print("RELEASED", flush=True)
+       elif role == "b":
+           try:
+               lease.claim()
+           except ClaimHeld as exc:
+               print("ClaimHeld", exc, flush=True)
+               sys.exit(0)
+           print("ABORT: process B did not raise ClaimHeld", flush=True)
+           lease.release()
+           sys.exit(2)
+       else:
+           sys.exit("ABORT: role is a or b")
+       PY
+       )" a
+
+   Expect `HELD walk-step6-a gsd-fleet-88fa0d759f845b47`. Then:
+
+       oc get leases.coordination.k8s.io gsd-fleet-88fa0d759f845b47 -n group-sync-dashboard \
+         -o jsonpath='{.spec.holderIdentity}{"\n"}'
+
+   Expect `walk-step6-a`. If A did not print `HELD`, or the holder is not `walk-step6-a`:
+   **ABORT: process A did not hold.**
+
+   **6.2 Process B is `ClaimHeld`.** Same command, last argument `b` (identity `walk-step6-b`),
+   while A still sleeps.
+
+   Expect one line `ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until …` and exit 0.
+   If B prints `ABORT: process B did not raise ClaimHeld` or takes the claim:
+   **ABORT: process B did not raise ClaimHeld.**
+
+   **6.3 A lets go.** Wait for A's `RELEASED`. Holder is empty. Do not start B again.
+
+   **6.4 Counts.** Same derived audit as step 3: `ResponseComplete` `GET /oauth/authorize` for
+   `openshift-challenging-client` in `[STEP6_SINCE, now)`, `developer` and the fleet account only
+   (`reports/2026-09-27_epic-c-walk-432/scripts/capture.sh`). Expect exactly:
+
+       #   developer authorize records, any decision: 0
+       #   ocp-oauth-bind-serviceid authorize records, any decision: 0
+
+   Token counts, same `jq` as step 1: `developer, openshift-challenging-client` equals the start;
+   `ocp-oauth-bind-serviceid, openshift-challenging-client: 2`. The fleet account Lease's sha256
+   equals step 6.0's. If any authorize line appeared: **ABORT: an authorize ran in the window.**
+   Neither process bound; the running pod was stood down at step 5; a bind here is a drifted lab.
+
+   **6.5 What the walk must not do.** Do not `oc exec … -- cat` the ServiceAccount token. Do not
+   `oc get secret … -o yaml` or `-o jsonpath='{.data…}'` for `ldap-oauth-bind-secret` or the walk
+   Secret. Do not `oc whoami -t` inside the pod. If any of those ran: **ABORT: a credential left the cluster.**
+   The fleet account is never presented: the script does not import `fleet_password`,
+   `FleetLogin` or `lookup`, and the audit count for `ocp-oauth-bind-serviceid` is 0.
 7. **The end.** The `developer` token count equals the start. The fleet account's is **untouched at 2** (the
    pre-existing pair, #286's). The audit log holds **0** authorizes for the fleet account since step 1's instant, and
    its Lease is byte-identical to step 1's. Remove what the walk created — the walk Secret, its three grants (the two

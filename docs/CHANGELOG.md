@@ -10,6 +10,13 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **SPEC_S4c §3.12 step 6 is a lab procedure a walk can run (#445).** The #444 walk stopped on the
+  step as written: a leader-election standby never calls `claim()`, and a dashboard process on the
+  workstation that carries the pod's ServiceAccount token can read the fleet password through the
+  walk's keep-grant. The step now runs two claim-only processes inside the already-running pod, as
+  `developer`, and expects `ClaimHeld` plus 0 authorizes for `developer` and for the fleet account.
+  No application code.
+
 - **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
   declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
   rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only
