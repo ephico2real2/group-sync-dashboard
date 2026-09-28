@@ -10,6 +10,15 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A namespace label key named like one of Object's members reads as absent (#478).** With
+  `namespaceMetadataLabels` holding `constructor` or `toString`, both valid label names, a namespace without that
+  label showed `function Object() { [native code] }` where `—` belongs, on the namespace list, its page and the
+  lookup, and a search for `native` matched it. Those pages now read a label by its own key only
+  (`local-development/gsd/static/index.html#const labelValue`). In the Add cluster form, a label typed as `__proto__`
+  was dropped without a word and Create wrote the Secret without it; it is now kept, and Create is refused with the
+  server's `label-invalid` sentence naming it, as for any other invalid key. Ordinary keys, the empty mark and the
+  pages' order and searches are unchanged.
+
 - **Scrub spans specified (#465, Epic D #384, `docs/specs/SPEC_D6_scrub_span.md`).** Rejoin's scrub cuts a password
   out of text wherever it occurs, so a password that is part of the words or names around it is spelled back by its
   `<redacted>` spans: measured, `update` and `a`, and 406 of the NCSC's 100,000 most common passwords on some path.

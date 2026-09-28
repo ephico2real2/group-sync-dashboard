@@ -7353,6 +7353,36 @@ class TestClusterConfigPage:
         page.wait_for_function("() => (document.getElementById('cc-delete-msg_west') || {innerText: ''}).innerText.includes('deleted')")
         assert "gsd-cluster-west" not in host.secrets
 
+    def test_a_label_named_proto_is_kept_and_refused_by_the_server_not_dropped(self, page, cc_rig):
+        """#478's audit: the form's labels were a plain {}, so `labels["__proto__"] = v` ran Object.prototype's setter, a
+        no-op for a string, and the label vanished. Measured on main 628510e: no chip, no line in the YAML twin, and
+        Create wrote the Secret without it and said "created". Kept as an own key, it meets the server's label check
+        like any other invalid key, by name; removed, the rest writes as before, `constructor` included."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "tok-west-1234"); page.click("#cc-ca-trustedBundle")
+        for key, value in (("constructor", "c"), ("__proto__", "p")):
+            page.fill("#cc-label-key", key); page.fill("#cc-label-val", value); page.click("#cc-label-add")
+            page.wait_for_function("() => document.getElementById('cc-label-key').value === ''")
+        assert page.locator("#cc-label-chips").inner_text().split() == ["constructor=c", "remove", "__proto__=p", "remove"]
+        yaml = page.locator("#cc-yaml").inner_text()
+        assert '"constructor": "c"' in yaml and '"__proto__": "p"' in yaml, yaml
+        page.click("#cc-create")
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.startsWith('label-invalid')")
+        assert "label key '__proto__'" in page.locator("#cc-form-msg").inner_text()
+        assert "gsd-cluster-west" not in host.secrets
+        page.click('[data-cc-drop-label="__proto__"]')
+        page.wait_for_function("() => !document.getElementById('cc-label-chips').innerText.includes('__proto__')")
+        page.click("#cc-create")
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('created')")
+        assert host.secrets["gsd-cluster-west"]["metadata"]["labels"] == {"groupsync-dashboard.io/secret-type": "cluster", "constructor": "c"}
+        # The form a create leaves behind (ccEmptyForm) keeps it too.
+        page.fill("#cc-label-key", "__proto__"); page.fill("#cc-label-val", "q"); page.click("#cc-label-add")
+        page.wait_for_function("() => document.getElementById('cc-label-key').value === ''")
+        assert page.locator("#cc-label-chips").inner_text().split() == ["__proto__=q", "remove"]
+
     def test_the_page_fits_375_and_focus_survives_a_poll(self, page, cc_rig):
         base, host, settings = cc_rig
         # A FINDING IS MOUNTED for this one: the findings card renders a Secret name, a code and a
@@ -10906,6 +10936,131 @@ class TestTheIndexOnAnEstateBigEnoughToNeedIt:
         page.locator("#f-ns-search").press("Escape")
         page.wait_for_function("() => document.querySelectorAll('[data-index-page]').length === 7")
         assert page.evaluate("() => view.nsIndexPage") == 1
+
+
+def _seed_inherited_label_keys(db_path: str) -> None:
+    """#478: three namespaces under label keys that are also Object.prototype's own names — `constructor` and
+    `toString`, both valid Kubernetes label names: one with neither label, one with both, one with `constructor`
+    alone, so a present label sits beside an absent one and the first key has a sibling."""
+    now = datetime.now(UTC)
+    store = Store(db_path)
+    try:
+        store.upsert_cluster("crc-local", "https://api.crc.testing:6443", True)
+        store.record_poll("crc-local", "ok", None)
+        store.replace_namespaces("crc-local", [
+            {"name": "alpha-bare", "created_at": _iso(now), "phase": "Active", "metadata": {}},
+            {"name": "beta-both", "created_at": _iso(now), "phase": "Active",
+             "metadata": {"constructor": "ctor-b", "toString": "ts-b"}},
+            {"name": "gamma-one", "created_at": _iso(now), "phase": "Active", "metadata": {"constructor": "ctor-b"}},
+        ], _iso(now))
+    finally:
+        store.close()
+
+
+@pytest.fixture(scope="module")
+def inherited_keys_server(tmp_path_factory):
+    db = str(tmp_path_factory.mktemp("gsd") / "inherited-keys.db")
+    _seed_inherited_label_keys(db)
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db,
+        login_capture_enabled=True,
+        namespace_metadata_labels=("constructor", "toString"),
+        view_restrictions_enabled=False,
+    )
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(build_app(settings, run_poller=False), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("inherited-keys server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestALabelKeyNamedLikeAnObjectMember:
+    """#478: a namespace's label was read by the configured key off the plain object the payload parses to, so for
+    a key named `constructor` or `toString` a namespace WITHOUT that label read Object.prototype's function. Measured
+    on main 628510e: alpha-bare's cells said `function Object() { [native code] }` and `function toString() { [native
+    code] }`, its page said "Labelled constructor=function Object() …", and `native` matched it in every search box."""
+
+    ROWS = "els => els.map(e => [...e.querySelectorAll('td')].map(td => td.textContent.trim()))"
+
+    def _open(self, page, base, where=""):
+        errors: list[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/#page=nsaudit&cluster=crc-local{where}")
+        return errors
+
+    def test_the_list_shows_the_empty_mark_for_an_absent_label_and_the_value_for_a_present_one(self, page, inherited_keys_server):
+        errors = self._open(page, inherited_keys_server)
+        page.wait_for_selector("#f-index-search")
+        heads = page.eval_on_selector_all("h2:text-is('Namespaces') ~ div th", "els => els.map(e => e.textContent.trim())")
+        assert heads[:3] == ["Namespace", "constructor", "toString"], heads
+        # In the server's order (ORDER BY name): the index sorts nothing itself.
+        assert page.eval_on_selector_all("tr[data-ns]", self.ROWS) == [
+            ["alpha-bare", "—", "—", "0", "0"],
+            ["beta-both", "ctor-b", "ts-b", "0", "0"],
+            ["gamma-one", "ctor-b", "—", "0", "0"],
+        ]
+        assert not errors
+
+    def test_every_search_treats_an_inherited_name_as_absent_and_still_finds_a_value(self, page, inherited_keys_server):
+        """The index's own box, the bar's box and the lookup search the same label fields: a word of Object's function
+        source matched every namespace missing a label, and a real value must still find its namespaces."""
+        errors = self._open(page, inherited_keys_server)
+        page.wait_for_selector("#f-index-search")
+        names = lambda: page.eval_on_selector_all("tr[data-ns]", "els => els.map(e => e.dataset.ns)")
+        for q, want in (("native", []), ("function", []), ("ctor-b", ["beta-both", "gamma-one"]), ("ts-b", ["beta-both"])):
+            page.fill("#f-index-search", q)
+            page.wait_for_function("q => view.nsIndexSearch === q", arg=q)
+            assert names() == want, (q, names())
+        page.fill("#f-index-search", "")
+        for q, want in (("native", []), ("ctor-b", ["beta-both", "gamma-one"])):
+            page.fill("#f-ns-search", q)
+            page.wait_for_function("q => view.nsSearch === q", arg=q)
+            assert names() == want, (q, names())
+        page.goto(f"{inherited_keys_server}/#page=lookup&cluster=crc-local")
+        page.wait_for_selector("#f-lookup-search")
+        page.wait_for_function("() => data.namespaces && data.namespaces.namespaces")
+        page.fill("#f-lookup-search", "native")
+        page.wait_for_function("() => view.lookupSearch === 'native'")
+        assert names() == [], names()
+        page.fill("#f-lookup-search", "alpha")
+        page.wait_for_selector("tr[data-ns='alpha-bare']")
+        assert page.eval_on_selector_all("tr[data-ns]", self.ROWS) == [["alpha-bare", "—", "—", "0"]]
+        assert not errors
+
+    def test_the_namespace_page_says_none_for_an_absent_label_and_the_value_for_a_present_one(self, page, inherited_keys_server):
+        kpis = lambda: page.eval_on_selector_all("#main .kpi", "els => els.slice(0, 2).map(e => [e.querySelector('.label').textContent,"
+                                                 " e.querySelector('.value').textContent, e.querySelector('.value').classList.contains('muted')])")
+        note = lambda: " ".join(page.locator("#main .filterbar-note").first.text_content().split())
+        errors = self._open(page, inherited_keys_server, "&ns=alpha-bare")
+        page.wait_for_selector("h2:text-is('alpha-bare')")
+        assert kpis() == [["constructor", "— none —", True], ["toString", "— none —", True]]
+        assert note().startswith("Carries none of the captured labels (constructor, toString)"), note()
+        page.goto(f"{inherited_keys_server}/#page=nsaudit&cluster=crc-local&ns=gamma-one")
+        page.wait_for_selector("h2:text-is('gamma-one')")
+        assert kpis() == [["constructor", "ctor-b", False], ["toString", "— none —", True]]
+        assert note().startswith("Labelled constructor=ctor-b. "), note()
+        page.goto(f"{inherited_keys_server}/#page=nsaudit&cluster=crc-local&ns=beta-both")
+        page.wait_for_selector("h2:text-is('beta-both')")
+        assert kpis() == [["constructor", "ctor-b", False], ["toString", "ts-b", False]]
+        assert note().startswith("Labelled constructor=ctor-b and toString=ts-b. "), note()
+        # The sibling under the first key, `constructor`: the server sends it only for a namespace carrying that label.
+        assert " ".join(page.locator("#main h2", has_text="Same ").inner_text().split()) == "Same constructor · ctor-b"
+        assert page.locator("button.drill[data-ns='gamma-one']").count() == 1
+        assert not errors
+
+
 class TestReportClusterControl:
     """#267: the cluster control in every report form. It defaults from the nav's cluster and writes back to it,
     so the two never disagree; the nav's cluster is the primary — the discovered lookups and the totals preview
