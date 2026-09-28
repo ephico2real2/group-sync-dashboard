@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Epic C's second composition review, applied (OB2, Fable; 1.1.0 → 1.5.0; #452, #440).** A Rejoin over a Secret that
+  declares `saTokenLookup` with its own `ldapConnectionBootstrap` now drops that account with the mode keys, so the
+  rejoined Secret still parses and the cluster stays served; before, the parser refused it (S4e keeps the key only
+  under `token-source: remote-lookup`) and the recovery action retired the cluster (#452). The lookup now hands the
+  login the ServiceAccount token it read, and a refused read's token, before the revoke runs, so a remote that echoes
+  either in the revoke's answer cannot put it on `fleet-logout-failed` (#440). The review measured Epic C's guarantees
+  as holding across the four paths with a Rejoin composed. Application **1.6.0**, chart 0.59.8.
+
 - **Rejoin: an administrator signs in to a remote cluster as themselves, once, and the dashboard fetches a fresh
   poller token (#316, Epic D #384, `docs/specs/SPEC_D4_cluster_rejoin.md`).** When Refresh answers `auth_failed`, or
   `pending` for a token that was never fetched, a Secret-sourced card or a `saTokenLookup` stanza offers **Rejoin…**.
