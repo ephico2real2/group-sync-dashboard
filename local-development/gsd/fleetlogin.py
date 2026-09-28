@@ -392,6 +392,13 @@ class FleetLogin:
         """One client for discovery, the login and the logout, verifying the target exactly as the
         poller does — `ClusterConfig.verify()` is the one TLS decision (SPEC_S3 §6) — and NEVER
         following a redirect, because the token is in the redirect."""
+        # #435's rule at THIS exit too, measured on httpx 0.28.1: URL userinfo becomes Basic auth on the
+        # discovery GET and REPLACES the Bearer header on the revoke DELETE, so a token minted through such
+        # a URL is never revoked. Refused before anything is built, never repaired; the value is not repeated.
+        if "@" in self.cluster.api_url.split("://", 1)[-1].split("/", 1)[0]:
+            raise LoginError(UNREACHABLE, "apiUrl must carry no userinfo — httpx sends userinfo as Basic auth; "
+                             "the value is not repeated here, in case it holds a credential",
+                             phase="connect", retryable=False)
         try:
             verify = self.cluster.verify()
         except ConfigError as exc:
