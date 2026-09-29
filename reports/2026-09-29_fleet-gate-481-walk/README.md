@@ -1,7 +1,7 @@
 # #481 on the lab: a `crc start` deletes the fleet Lease and the dashboard puts it back — 2026-09-29
 
 **Outcome.** On the CRC lab at application 1.18.0 (`4e19d976a2`, `evidence/before-version.txt`; chart 0.59.20 at that
-commit, `charts/group-sync-dashboard/Chart.yaml#version: 0.59.20`, synced from `main` by Argo CD,
+commit (the #481 release commit's `Chart.yaml`), synced from `main` by Argo CD,
 `gitops/argocd-application-dashboard.yaml#targetRevision: main`), the dashboard kept a copy of the fleet Lease's
 annotations in `/data/fleet-gate.json` on its data volume, equal to the Lease (`evidence/before-file.txt`:
 `equal_to_lease {'gsd-fleet-666f1ba7f2fdead0': True}`). The orchestrator then ran `crc stop` and `crc start`, on the
