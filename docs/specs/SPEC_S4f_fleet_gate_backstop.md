@@ -67,16 +67,15 @@ database. `crc start` is starting a stopped CodeReady Containers cluster.
      reservation was already on the Lease, `{"code": "login-failed", "uncertain": true}`, and gated the account until
      §5 Q7's clear. Now `complete()` removes it first: the password was provably not sent.
   3. *The warning*, the operator's addition: one `fleet-lease-absent` line when a Lease is put back, said once (§3.7).
-- **The code, measured against the prototype.** Code lines only — docstrings, comments and blank lines left out,
-  `difflib` over each file's token lines. The prototype's option (c2) added 60 to `gsd/fleetstate.py`; this spec adds
-  113 and removes 10. By construct: imports 3; `GATE_FILE` and `KEPT` 3; the warning's two texts 6; `FleetRecord.seed`
-  and `_absent()` 3; `FleetLease.__init__`'s copy 3; `_keep()` 17; `read()` 11; `claim()` 10 (the seed on create 2,
-  the copy after the write 2, the `kept=true` line 6); `restore()` 9 (its `kept=false` line 3); `reserve()`'s strict
-  keep and `complete()` 5; `_put()`'s copy 1; `FileBackstop` 39 (the shape check 3, the directory flush 5, the
-  `action=` text 3, `failing` 1); `__all__` 3. The prototype had none of the warning (15 lines), `restore()`, the
-  `complete()` on a failed keep, the shape check, the directory flush, or the failure said once. `gsd/poller.py` adds
-  10 and removes 2: the copy's path, once (4); the one factory every path uses (3, replacing 2); the sweep's restore
-  (3). `gsd/selflogin.py` adds 2 and removes 2: it builds its Lease through that factory.
+- **The code, measured against the prototype.** The original blocks add 113 code lines and remove 10 in
+  `gsd/fleetstate.py`; the option (c2) prototype adds 60 and removes 8 (other storage variants excluded).
+  The reviewed replacement adds 114 and removes 12 against the original tree: **one fewer production code line**
+  than the original blocks. It removes distributed `_keep` calls and the one-use `FileBackstop.load` wrapper,
+  and serializes each API response with its save in `_call`. The strict reservation still calls `complete()` on a
+  failed keep. The warning, restore, shape check, atomic rename, directory flush, and failure-transition logging stay.
+  Two thread-interleaving tests catch a stale read erasing a refusal or undoing an observed clear; two direct tests
+  hold restore's clear handling and POST arbitration. Two per-pod-copy cases measure the replica residual, and two
+  document assertions hold the proof wording and runbook. No RBAC, schema, poller, or self-login behavior is added.
 - **SPEC_D6 gets a note too.** `tests/test_scrub_span_spec.py#test_emit_callsite_measurement` holds SPEC_D6's prose to
   the live count of `event` and `failure` call sites, and this change adds three, all in `gsd/fleetstate.py`: 42 → 45
   in 6 consuming modules (measured on both trees). D6's §2.3 keeps its 42, the count at `ece9298`; an orchestrator's
@@ -114,6 +113,7 @@ orchestrator's notes).
 | what | why the copy cannot cover it | cost, per event (§4) |
 |---|---|---|
 | persistence off (`persistence.enabled: false`) | the copy lives on the pod's `emptyDir`, and a new pod starts without it | +1 bind per refused password, +1 ping |
+| two replicas with independent copies | a winning replica can restore a stale copy before it has observed the other replica's refusal or ping | +1 bind or +1 ping in the measured interleaving (§3.9) |
 | an etcd restore to a time before the refusal | the restored Lease exists, so it is read and the copy is not; the copy is then overwritten from it | +1 (derived) |
 | a reinstall into another namespace | a new release has a new data volume and no copy | +1 (derived) |
 | a clear by hand made while no pod read the Lease, then a `crc start` | the copy still holds the entry and puts it back: the clear is undone — an over-block, the safe direction | 0, until the runbook's second clear (+1) |
@@ -292,9 +292,11 @@ follows a hand-clear within one cadence, and a sweep that changes nothing writes
 
 **How.** To `fleet-gate.json.tmp` beside it; flushed and `fsync`ed; renamed over the file with `os.replace`; then the
 directory `fsync`ed — the order `gsd/store.py#_pre_upgrade_copy` already uses (gsd/store.py:1262-1267), so a reader sees
-the old file or the new one, never half of one, and a host crash followed by `crc start` finds the rename. One lock per
-process (`gsd/fleetstate.py#FileBackstop`), shared by the threads that claim: discovery, and each self-login poll
-thread. One process writes it: one replica with `Recreate`, or one directory per pod above one.
+the old file or the new one, never half of one, and a host crash followed by `crc start` finds the rename. One reentrant
+lock per process (`gsd/fleetstate.py#FileBackstop`) covers the API request, response, and save together in
+`FleetLease._call`, across discovery and self-login threads. An older response therefore cannot overwrite a newer saved
+reservation, refusal, ping, or observed clear. A 404 reads the atomically renamed file directly. One process writes it:
+one replica with `Recreate`, or one directory per pod above one (whose stale-copy residual is in §3.9).
 
 ### 3.4 When it is read
 
@@ -375,9 +377,14 @@ until now the procedure was only in SPEC_S4c.
 - **Above one replica** (election off, `/data/$(POD_NAME)/gsd.db`), each pod keeps its own copy. The lookup and
   self-login do not run there (gsd/poller.py:1622-1638 refuses the lookup without an elector above one replica;
   self-login is refused at render, charts/group-sync-dashboard/templates/_helpers.tpl:1047-1048, and at run time,
-  gsd/selflogin.py:118-123); only the ping does, on every replica, and each keeps its own copy of
-  what it reads every cadence. A Deployment's new pod has a new name and so a new directory: the copy covers a pod
-  restarted in place — the `crc start` case (§2.2) — not a replaced one. Derived; not measured at two replicas.
+  gsd/selflogin.py:118-123); only the ping does. **A stale per-pod copy can allow +1 bind or +1 ping after a Lease deletion**:
+  pod B can keep an empty Lease, pod A can then record a refusal or ping, and `crc start` can delete the Lease before B's
+  next read. B's create wins legitimately, with its older copy. The API server still admits just one create; that does
+  not make the winning copy current. Reproduced with two independent pod directories by
+  `test_independent_pod_copy_can_miss_a_refusal_before_crc` (two answer variants: refusal and success).
+  Therefore the +0 guarantee below is for **one replica**, with its data volume kept. Above one replica, a copy protects
+  only the state that pod has observed; deployment-wide +0 is not guaranteed, even for pods restarted in place.
+  A replaced pod also gets a new name and directory, so it has no copy (derived from the chart).
 - **With persistence off**, `/data` is an `emptyDir` (charts/group-sync-dashboard/templates/deployment.yaml:476-477):
   the copy lives as long as the pod object. A new pod starts without it and says `kept=false` for an account with
   retrieved clusters. Measured by modelling the copy as lost (§4). Not measured: whether a node reboot keeps a
@@ -391,7 +398,8 @@ fake OAuth server, and each row names the test that measures it, or says derived
 
 The scopes. SPEC_S4c's B1 (the claim), B4 and B5 are unchanged. B2 and B3 were scoped "across every target, replica and
 restart" and hold on the Lease; this spec extends the scope to a **deletion of the Lease**, with the data volume kept,
-on one replica or on each replica's own pod.
+on one replica with its data volume kept. Per-pod copies above one replica may be stale (§3.9);
+deployment-wide +0 is not guaranteed there.
 
 ### 4.1 B2 — at most one answered failed authorize per (account, password)
 
@@ -407,7 +415,7 @@ on one replica or on each replica's own pod.
 | §5 Q7's clear read by the running pod, then a `crc start` | +1 | +1 | `test_a_clear_the_running_pod_has_read_survives_a_crc_start` |
 | §5 Q7's clear made while no pod read the Lease, then a `crc start` | +1: the clear stands (3 and 2 authorizes in all; the lookup variant's third is the day's first ping) | **0**, an over-block said once; +1 after the runbook's second clear | `test_a_clear_by_hand_then_a_crc_start_before_any_read_is_undone_and_said[lookup]`, `[ping]` |
 | the Lease present, its copy stale (an entry the Lease no longer holds) | +1 | +1: the Lease decides, and the copy follows it | `test_the_lease_stays_the_authority_whenever_it_exists` |
-| two processes after a `crc start` | 2 | **1**, and one line | `test_the_restore_is_said_once_by_the_process_that_creates_it` |
+| two sequential process instances sharing one kept copy after a `crc start` | 2 | **1**, and one line | `test_the_restore_is_said_once_by_the_process_that_creates_it` |
 | the Lease absent and its copy unreadable | 1 (no copy exists) | **0**, fail closed, no Lease written | `test_an_unreadable_copy_behind_an_absent_lease_binds_nothing` |
 | the copy unwritable at the reservation | 1 | **0**, fail closed, no entry stranded, one line in three cycles | `test_a_copy_that_cannot_be_written_at_the_reservation_binds_nothing_and_strands_no_entry` |
 | a first install (no Lease, nothing kept) | 1 | 1, nothing said | `test_a_first_install_binds_once_and_says_nothing` |
@@ -443,9 +451,9 @@ ADDED 0, REMOVED 0. #293's success mark stays off the Lease and off the copy. No
 
 ## 5. The documents, and the proof
 
-**Four documents move and SPEC_D6 gains a note; §6's blocks reproduce the implemented copy byte for byte; the new tests
-fail on `696ddc9` on their assertions and pass with the blocks; every design decision reverted but one is caught; and
-the chart renders the same.**
+**Four documents move and SPEC_D6 gains a note. The original 28-test proof has 22 assertion failures and 6 passing
+controls on `696ddc9`, and 28 passes with the blocks. The six controls cover behavior that must remain unchanged;
+there is no claim that all 28 fail before implementation. The chart renders the same.**
 
 ### 5.1 The documents
 
@@ -473,18 +481,22 @@ All of it run on this machine from `local-development/`, `PYTHONDONTWRITEBYTECOD
 
 1. **The blocks apply.** On a copy of the phase-2 tree (`696ddc9` with this spec, its index row, its CHANGELOG line and
    its tests): `python3 local-development/apply-spec-blocks.py docs/specs/SPEC_S4f_fleet_gate_backstop.md <copy>
-   --apply` printed `28 blocks check out across 11 files`. The ten files the blocks change besides the CHANGELOG are
+   --apply` printed `28 blocks check out across 11 files` for the original blocks. The ten files the blocks change besides the CHANGELOG are
    byte-identical (`cmp`) to the copy every measurement here was taken on; the CHANGELOG differs from it only by phase
    2's own line, which the implementation's line sits above.
-2. **The new tests fail before and pass after.** `tests/test_fleet_gate_backstop.py`, 28 cases. With the three code
+2. **The original regression tests fail before and pass after.** The original `tests/test_fleet_gate_backstop.py`
+   had 28 cases; the following is the original proof, before the eight review cases were added. With the three code
    files put back to `696ddc9`'s bytes and every other block applied: **22 failed, 6 passed** — every failure an
    `AssertionError` carrying the count it met (the "before" column of §4), none at import. The six that pass on both
    trees are the rows this change must leave as they are: §5 Q7's re-arm, a clear the running pod has read, persistence
-   off (two), a first install, and a database in memory. With every block applied: **28 passed**.
+   off (two), a first install, and a database in memory. With every original block applied: **28 passed**. The eight added review cases give **6 failed, 2 passed** against
+   the original applied copy and **8 passed** after the code and document fixes; the full revised file has **36 passes**.
+   The two concurrency failures assert real bind counts. Two replica cases assert the measured +1 residual and its
+   explicit scope in §3.9; two document cases require the corrected proof wording and runbook.
 3. **Each design decision, reverted, is caught.** Eighteen mutants of the applied copy, one text replacement each, run
    against the new file and seven shipped fleet test files: **17 of 18 caught**. The one not caught is the directory
    flush after the rename, which only a host crash between the rename and the journal's commit would show.
-4. **Nothing else moves.** On the applied copy, after the by-hand status move the implementing commit makes: the new
+4. **Original implementer proof (before review fixes).** On the original applied copy, after the by-hand status move the implementing commit makes: the new
    file, this spec's document test, the fleet files (`test_fleet_lifecycle.py`, `…_round3.py`, `test_fleet_lookup.py`,
    `test_fleet_login.py`, `test_ping_account_scope.py`, `test_credential_gate_account.py`,
    `test_credential_gate_diagnostics.py`, `test_configmap_onboarding.py`, `test_s4c_step6_walk.py`), the Rejoin file
@@ -503,12 +515,9 @@ All of it run on this machine from `local-development/`, `PYTHONDONTWRITEBYTECOD
 
 ## 6. Implementation blocks
 
-**Twenty-eight blocks, in apply order: fifteen for `gsd/fleetstate.py`, three for `gsd/poller.py`, two for
-`gsd/selflogin.py`, the new test file, the runbook's section pin in `tests/test_cluster_rejoin.py`, then `.gitignore`,
-`CLUSTER_CREDENTIALS.md`, `RUNBOOK.md`, SPEC_S4c's note, SPEC_D6's note and the CHANGELOG line.** They were cut from the
-diff between `696ddc9` and a copy with the design implemented, two lines of context each, widened until each Old text
-occurs once where it applies, so every Old text is main's own bytes. Applied to a clean copy of `696ddc9` they reproduce
-the implemented copy byte for byte (§5.2).
+**27 blocks, in apply order.** These replace the original §6 in full. They contain the original behavior plus the
+review fixes and eight regression checks, cut against the unchanged phase-2 head. No production code is applied by
+this spec-only change; Status and the index row still move to `merged` in the implementing commit.
 
 <!-- block: local-development/gsd/fleetstate.py | edit -->
 ```python
@@ -554,18 +563,7 @@ import os
 import socket
 import uuid
 from collections.abc import Callable
-```
-
-```python
-import os
-import socket
-import threading
-import uuid
-from collections.abc import Callable
-```
-
-<!-- block: local-development/gsd/fleetstate.py | edit -->
-```python
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from .clusterconfig.events import failure
@@ -574,6 +572,13 @@ from .kube import ClusterClient, ClusterError
 ```
 
 ```python
+import os
+import socket
+import threading
+import uuid
+from collections.abc import Callable
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from .clusterconfig.events import event, failure
@@ -684,6 +689,41 @@ class FleetLease:
 
 <!-- block: local-development/gsd/fleetstate.py | edit -->
 ```python
+        self._lost = False
+
+    def _call(self, method: str, obj: dict | None = None) -> dict | None:
+        path = LEASE_API.format(ns=self.namespace)
+        with self.host._client() as client:
+            if method == "GET":
+                return self.host._get(client, f"{path}/{self.name}", {})
+            return self.host._send(client, method, path if method == "POST" else f"{path}/{self.name}", json=obj)
+
+    def _unavailable(self, what: str, exc: ClusterError) -> FleetStateUnavailable:
+```
+
+```python
+        self._lost = False
+
+    def _call(self, method: str, obj: dict | None = None, *, strict: bool = False) -> dict | None:
+        # Serialize the API response AND its copy: a delayed read must not overwrite a later reservation or clear.
+        path = LEASE_API.format(ns=self.namespace)
+        with self.backstop._lock if self.backstop else nullcontext():
+            with self.host._client() as client:
+                result = (self.host._get(client, f"{path}/{self.name}", {}) if method == "GET" else
+                          self.host._send(client, method, path if method == "POST" else f"{path}/{self.name}", json=obj))
+                if result is None and method != "GET":
+                    result = self.host._get(client, f"{path}/{self.name}", {})
+            if self.backstop is not None and isinstance(result, dict):
+                if strict:
+                    self.record = _record(self.account, result)  # complete() needs the reservation if keeping it fails
+                self._keep(result, strict=strict)
+            return result
+
+    def _unavailable(self, what: str, exc: ClusterError) -> FleetStateUnavailable:
+```
+
+<!-- block: local-development/gsd/fleetstate.py | edit -->
+```python
                                      f"{exc.message.split(': ', 1)[0]}")
 
     def read(self) -> FleetRecord:
@@ -696,21 +736,18 @@ class FleetLease:
             raise self._unavailable("read", exc) from exc
         return _record(self.account, obj)
 
-    def claim(self, read: FleetRecord | None = None, **changes: str | None) -> FleetRecord:
 ```
 
 ```python
                                      f"{exc.message.split(': ', 1)[0]}")
 
-    def _keep(self, record: FleetRecord, *, strict: bool = False) -> FleetRecord:
+    def _keep(self, obj: dict, *, strict: bool = False) -> None:
         """The Lease as this process just read or wrote it, kept beside the database (#481) — so a hand-clear is
         followed within one discovery cadence and a deletion loses nothing. A copy that cannot be written never
         replaces the Lease's outcome: one line when the copy starts failing; `strict` raises instead, for the
         reservation, which must not bind unkept."""
-        if self.backstop is None or record.raw is None:
-            return record
         try:
-            self.backstop.save(self.name, (record.raw.get("metadata") or {}).get("annotations") or {})
+            self.backstop.save(self.name, (obj.get("metadata") or {}).get("annotations") or {})
         except Exception as exc:  # noqa: BLE001 - the copy never replaces the Lease's own outcome
             detail = (f"cannot keep Lease {self.namespace}/{self.name} in {self.backstop.path}: "
                       f"{type(exc).__name__}: {exc}")
@@ -720,9 +757,8 @@ class FleetLease:
                 failure(log, "fleet-state-unavailable", phase="credential", outcome=FleetStateUnavailable.code,
                         account=self.account, lease=self.name, action=self.backstop.action, detail=detail)
             self.backstop.failing = True
-            return record
-        self.backstop.failing = False
-        return record
+        else:
+            self.backstop.failing = False
 
     def read(self) -> FleetRecord:
         """The Lease without a claim. An absent one reads as its copy beside the database when there is one (#481),
@@ -736,15 +772,14 @@ class FleetLease:
             if self.backstop is None:
                 return _record(self.account, None)
             try:
-                kept = self.backstop.load(self.name)
+                kept = self.backstop._all().get(self.name)
             except Exception as err:  # noqa: BLE001 - absent AND unknown: fail closed, as for an unreadable Lease
                 raise FleetStateUnavailable(f"Lease {self.namespace}/{self.name} is absent and its copy in "
                                             f"{self.backstop.path} cannot be read: {type(err).__name__}: {err}",
                                             self.backstop.action) from err
             return _record(self.account, None) if kept is None else _absent(self.account, kept)
-        return self._keep(_record(self.account, obj))
+        return _record(self.account, obj)
 
-    def claim(self, read: FleetRecord | None = None, **changes: str | None) -> FleetRecord:
 ```
 
 <!-- block: local-development/gsd/fleetstate.py | edit -->
@@ -773,7 +808,6 @@ class FleetLease:
 
 <!-- block: local-development/gsd/fleetstate.py | edit -->
 ```python
-                raise ClaimHeld(f"{self.name} changed since it was read") from exc
             raise self._unavailable("claim", exc) from exc
         self.record, self._lost = (_record(self.account, written) if isinstance(written, dict) else self.read()), False
         return self.record
@@ -782,10 +816,8 @@ class FleetLease:
 ```
 
 ```python
-                raise ClaimHeld(f"{self.name} changed since it was read") from exc
             raise self._unavailable("claim", exc) from exc
-        self.record, self._lost = (self._keep(_record(self.account, written)) if isinstance(written, dict)
-                                   else self.read()), False
+        self.record, self._lost = (_record(self.account, written) if isinstance(written, dict) else self.read()), False
         if record.seed is not None:
             # Said once per deletion: only one create is admitted, and it is this one.
             entry = self.record.refused or {}
@@ -813,41 +845,32 @@ class FleetLease:
 
 <!-- block: local-development/gsd/fleetstate.py | edit -->
 ```python
+                            "uncertain": True, "attempt": uuid.uuid4().hex}, sort_keys=True)
+        try:
+            written = self._call("PUT", _applied(self.record.raw, {"refused": entry}))
+        except ClusterError as exc:
+            if exc.message.startswith("HTTP 409"):
+                raise ClaimHeld(f"{self.name} changed since it was claimed") from exc
             raise self._unavailable("reserve", exc) from exc
         self.record = _record(self.account, written) if isinstance(written, dict) else self.read()
 
-    def complete(self) -> None:
 ```
 
 ```python
-            raise self._unavailable("reserve", exc) from exc
-        self.record = _record(self.account, written) if isinstance(written, dict) else self.read()
+                            "uncertain": True, "attempt": uuid.uuid4().hex}, sort_keys=True)
         try:
-            self._keep(self.record, strict=True)
+            written = self._call("PUT", _applied(self.record.raw, {"refused": entry}), strict=True)
+        except ClusterError as exc:
+            if exc.message.startswith("HTTP 409"):
+                raise ClaimHeld(f"{self.name} changed since it was claimed") from exc
+            raise self._unavailable("reserve", exc) from exc
         except FleetStateUnavailable:
             # Kept on the Lease but not beside the database: nothing is sent, so the entry goes again rather than
             # gate a password the directory never saw (#481).
             self.complete()
             raise
+        self.record = _record(self.account, written) if isinstance(written, dict) else self.read()
 
-    def complete(self) -> None:
-```
-
-<!-- block: local-development/gsd/fleetstate.py | edit -->
-```python
-                    changes = {k: v for k, v in changes.items() if k != "refused"}
-                continue
-            self.record = _record(self.account, written) if isinstance(written, dict) else self.read()
-            return self.record
-        raise FleetStateUnavailable(f"Lease {self.namespace}/{self.name} changed under each of {CAS_TRIES} writes")
-```
-
-```python
-                    changes = {k: v for k, v in changes.items() if k != "refused"}
-                continue
-            self.record = self._keep(_record(self.account, written)) if isinstance(written, dict) else self.read()
-            return self.record
-        raise FleetStateUnavailable(f"Lease {self.namespace}/{self.name} changed under each of {CAS_TRIES} writes")
 ```
 
 <!-- block: local-development/gsd/fleetstate.py | edit -->
@@ -867,11 +890,12 @@ class FileBackstop:
     volume outlives what deletes Leases — `crc start`, a hand — and nothing that copies the database (a backup, a
     report snapshot) copies this file. Written only when what it keeps changed, to a `.tmp` beside it, flushed and
     renamed over it, then the directory flushed (`gsd/store.py#_pre_upgrade_copy`'s order), so a reader never sees half
-    of it. One per process; the lock covers the threads that claim (discovery and each self-login poll thread)."""
+    of it. One per process; the lock covers each Lease API response and its save, including discovery and self-login threads.
+    A 404 reads the atomically renamed file directly; it never observes a partly written file."""
 
     def __init__(self, path: str):
         self.path = path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         #: The last write of the copy failed: its line was said, and is said again only after a write succeeds.
         self.failing = False
         #: What a `fleet-state-unavailable` about this file tells the operator to do.
@@ -889,11 +913,6 @@ class FileBackstop:
                 isinstance(kept, dict) and all(isinstance(v, str) for v in kept.values()) for kept in state.values()):
             raise ValueError(f"{self.path} is not a map of Lease names to their annotations")
         return state
-
-    def load(self, name: str) -> dict | None:
-        """The Lease's kept annotations, or None when this volume never kept it."""
-        with self._lock:
-            return self._all().get(name)
 
     def save(self, name: str, annotations: dict) -> None:
         kept = {key: value for key, value in annotations.items() if key in KEPT}
@@ -1493,6 +1512,168 @@ def test_a_database_in_memory_keeps_no_copy(tmp_path, monkeypatch, wire):
     crc_start(host)
     memory_pod()._retrieve_pending()
     assert len(wire.authorize) == 2 and list(tmp_path.iterdir()) == []
+
+
+# Reviewer regressions: test_review_backstop.py
+"""Deterministic interleavings of the discovery reader and a self-login writer."""
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+from test_fleet_gate_backstop import api_host, estate, clear_by_hand, crc_start
+from test_fleet_lifecycle import process, stanza
+from test_fleet_login import USER, refused_401, login_302
+from test_fleet_lookup import wire
+from gsd.fleetstate import FleetLease
+
+
+def overlap(monkeypatch, observer, newer):
+    """An old response pauses immediately before it reaches the file; newer work runs meanwhile."""
+    paused, release, started = threading.Event(), threading.Event(), threading.Event()
+    original = FleetLease._keep
+    def delayed(self, record, **kw):
+        if self is observer:
+            paused.set()
+            assert release.wait(5), "reader was never released"
+        return original(self, record, **kw)
+    monkeypatch.setattr(FleetLease, "_keep", delayed)
+    def newer_work():
+        started.set()
+        return newer()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        old = pool.submit(observer.read)
+        assert paused.wait(5), "reader did not reach the file"
+        new = pool.submit(newer_work)
+        assert started.wait(5)
+        # Old code lets the newer response reach the file first. Serialized code blocks it.
+        try:
+            new.result(timeout=0.2)
+        except TimeoutError:
+            pass
+        finally:
+            release.set()
+        old.result(timeout=5)
+        new.result(timeout=5)
+
+
+def test_delayed_read_cannot_erase_a_reserved_and_refused_password(tmp_path, monkeypatch, wire):
+    host = estate(api_host())
+    p = process(tmp_path, monkeypatch, host, stanza("l1"), name="pod")
+    observer = p._fleet_lease(host, "ns", USER)
+    wire.answers = [refused_401(), refused_401()]
+    overlap(monkeypatch, observer, p._retrieve_pending)
+    crc_start(host)
+    process(tmp_path, monkeypatch, host, stanza("l1"), name="restarted")._retrieve_pending()
+    assert len(wire.authorize) == 1, "a late empty snapshot erased the durable gate: second bind"
+
+
+def test_delayed_read_cannot_undo_a_clear_another_reader_observed(tmp_path, monkeypatch, wire):
+    host = api_host()
+    p = process(tmp_path, monkeypatch, host, stanza("l1"), name="pod")
+    wire.answers = [refused_401(), login_302()]
+    p._retrieve_pending()
+    observer = p._fleet_lease(host, "ns", USER)
+    def observe_clear():
+        clear_by_hand(host)
+        p._fleet_lease(host, "ns", USER).read()
+    overlap(monkeypatch, observer, observe_clear)
+    crc_start(host)
+    process(tmp_path, monkeypatch, host, stanza("l1"), name="restarted")._retrieve_pending()
+    assert len(wire.authorize) == 2, "a late refused snapshot undid an observed Q7 clear"
+
+
+def test_restore_preserves_a_q7_clear_during_its_release(tmp_path, monkeypatch, wire):
+    from test_fleet_gate_backstop import REFUSED, kept
+    from gsd.fleetstate import lease_name
+    host = api_host()
+    p = process(tmp_path, monkeypatch, host, stanza("l1"), name="pod")
+    wire.answers = [refused_401()]
+    p._retrieve_pending()
+    crc_start(host)
+    lease = p._fleet_lease(host, "ns", USER)
+    record = lease.read()
+    original = host._send
+    def clear_before_release(client, method, path, **kw):
+        if method == "PUT":
+            monkeypatch.setattr(host, "_send", original)
+            clear_by_hand(host)
+        return original(client, method, path, **kw)
+    monkeypatch.setattr(host, "_send", clear_before_release)
+    restored = lease.restore(record)
+    assert restored.refused is None
+    assert REFUSED not in host.leases.annotations()
+    assert REFUSED not in kept(tmp_path)[lease_name(USER)]
+    assert len(wire.authorize) == 1, "restore caused a bind"
+
+
+def test_two_absent_readers_have_only_one_successful_create(tmp_path, monkeypatch, wire, caplog):
+    import pytest
+    from gsd.fleetstate import ClaimHeld
+    from test_fleet_lifecycle import lines
+    host = api_host()
+    p = process(tmp_path, monkeypatch, host, stanza("l1"), name="pod")
+    wire.answers = [refused_401()]
+    p._retrieve_pending()
+    crc_start(host)
+    a = p._fleet_lease(host, "ns", USER, identity="a")
+    b = p._fleet_lease(host, "ns", USER, identity="b")
+    ar, br = a.read(), b.read()
+    a.claim(ar)
+    with pytest.raises(ClaimHeld):
+        b.claim(br)
+    assert len(lines(caplog, "fleet-lease-absent")) == 1
+    assert len(wire.authorize) == 1
+
+
+# Reviewer regressions: test_review_scope.py
+from pathlib import Path
+import pytest
+from test_fleet_gate_backstop import api_host, estate, crc_start
+from test_fleet_lifecycle import process, retrieved
+from test_fleet_login import USER, refused_401, login_302
+from test_fleet_lookup import wire
+
+
+@pytest.mark.parametrize("answer", [refused_401, login_302])
+def test_independent_pod_copy_can_miss_a_refusal_before_crc(tmp_path, monkeypatch, wire, answer):
+    host = estate(api_host())
+    a, b = tmp_path / "pod-a", tmp_path / "pod-b"
+    a.mkdir(); b.mkdir()
+    first = process(a, monkeypatch, host, discovered=[retrieved("r1")], name="pod-a")
+    second = process(b, monkeypatch, host, discovered=[retrieved("r1")], name="pod-b")
+    second._fleet_lease(host, "ns", USER).read()  # B has not yet seen A's later refusal.
+    wire.answers = [answer(), answer()]
+    first._ping_accounts()
+    assert len(wire.authorize) == 1
+    crc_start(host)
+    process(b, monkeypatch, host, discovered=[retrieved("r1")], name="pod-b")._ping_accounts()
+    assert len(wire.authorize) == 2
+    # The code's residual is accepted explicitly, rather than described as covered at each pod.
+    import gsd
+    spec = Path(gsd.__file__).resolve().parents[2] / "docs/specs/SPEC_S4f_fleet_gate_backstop.md"
+    scope = spec.read_text().split("### 3.9 Above one replica, and with persistence off", 1)[1].split("## 4.", 1)[0]
+    assert "A stale per-pod copy can allow +1 bind or +1 ping after a Lease deletion" in scope
+
+
+# Reviewer regressions: test_review_docs.py
+from pathlib import Path
+import gsd
+
+ROOT = Path(gsd.__file__).resolve().parents[2]
+
+def test_proof_heading_distinguishes_regressions_from_unchanged_controls():
+    spec = (ROOT / 'docs/specs/SPEC_S4f_fleet_gate_backstop.md').read_text()
+    section = spec.split('## 5. The documents, and the proof', 1)[1].split('### 5.1', 1)[0]
+    text = ' '.join(section.split())
+    assert '22 assertion failures and 6 passing controls' in text
+    assert '28 passes with the blocks' in text
+
+
+def test_runbook_describes_reservation_failures_and_present_lease_saves():
+    runbook = (ROOT / 'charts/group-sync-dashboard/RUNBOOK.md').read_text()
+    text = ' '.join(runbook.split('## 7.', 1)[1].split())
+    assert "a path already gated need not attempt a reservation or publish another finding" in text
+    assert "Saving a present Lease also parses the existing file" in text
+    assert "Run one replica for the +0 guarantee" in text
 ```
 
 <!-- block: local-development/tests/test_cluster_rejoin.py | edit -->
@@ -1585,22 +1766,26 @@ oc rollout restart deployment.apps/$REL -n $NS      # the running pod keeps its 
 **After a `crc start`, or a Lease deleted by hand.** `crc start` deletes every Lease on the cluster. The dashboard keeps
 each fleet Lease's entry and its daily ping's instants beside its database, in `/data/fleet-gate.json`
 (`/data/<pod>/fleet-gate.json` above one replica), and puts a deleted Lease back from it within one discovery interval,
-saying so once:
+saying so once. Run one replica for the +0 guarantee: independent per-pod copies may be stale, so the replica that
+recreates the Lease can still allow another bind or ping (SPEC_S4f §3.9):
 
 ~~~sh
 oc logs -n $NS deployment.apps/$REL -c dashboard --since=15m | grep fleet-lease-absent
 ~~~
 
 So deleting the Lease does not clear its entry; removing the annotation does. One order undoes a clear: the entry
-removed while no dashboard pod was running, then a `crc start` before any pod had read the Lease. The copy still held
-the entry and puts it back, and the line says `kept=true refused=<code>`. Wait until `oc get leases.coordination.k8s.io
-"$LEASE" -n $NS` finds the Lease again, then remove the entry and restart the pod, as above. With
+removed, then a `crc start` before any dashboard pod had read the Lease again — a running pod reads it once per
+discovery interval (300 s by default), and `crc start` restarts the pod without that read. The copy still held the
+entry and puts it back, and the line says `kept=true refused=<code>`. Wait until `oc get leases.coordination.k8s.io
+"$LEASE" -n $NS` finds the Lease again, then remove the entry and restart the pod with `oc rollout restart`, as above. With
 `persistence.enabled: false` the copy lives only as long as the pod: a new pod whose Lease was deleted says
 `kept=false`, and a password the entry held back may be sent once more.
 
-**If the copy cannot be read or written**, nothing binds, and every path reports `fleet-state-unavailable` naming the
-file. Free space on the data volume. A copy that cannot be parsed is read only when a Lease is absent, so move it aside
-only after checking that every fleet Lease exists:
+**If an absent Lease's copy cannot be read, or a reservation cannot be kept**, nothing binds and the attempting path
+reports `fleet-state-unavailable` naming the file. Other saves log the failure while the Lease remains authoritative;
+a path already gated need not attempt a reservation or publish another finding. Free space on the data volume. Saving
+a present Lease also parses the existing file. Move an unreadable file aside only after checking that every fleet
+Lease exists:
 
 ~~~sh
 oc get leases.coordination.k8s.io -n $NS -l groupsync-dashboard.io/lease-type=fleet-account
@@ -1626,10 +1811,11 @@ oc exec -n $NS deployment.apps/$REL -c dashboard -- mv /data/fleet-gate.json /da
   pkg/crc/cluster/cluster.go:509, since crc 2.29.0), and no operator decides it. A namespace `admin` or `edit` can
   delete the fleet Lease without reading a password Secret kept in another namespace. Since #481 the gate and the ping's
   instants are also kept beside the database, and an absent Lease is read from that copy and put back: a deletion costs
-  +0 with persistence on. §5 Q7's clear still re-arms, +1, and the runbook entry Q7 asked for is
+  +0 with persistence on at one replica. Independent per-pod copies above one replica may be stale and can allow
+  +1 after a deletion (SPEC_S4f §3.9). §5 Q7's clear still re-arms, +1, and the runbook entry Q7 asked for is
   `charts/group-sync-dashboard/RUNBOOK.md` section 7. SPEC_S4f §4 restates B2's and B3's budgets over the system,
   scope by scope, with the rows it leaves: persistence off, an etcd restore, a reinstall into another namespace, and a
-  clear by hand followed by a `crc start`. The body above is unchanged.
+  clear by hand followed by a `crc start`. The body below is unchanged.
 
 ## 0. The requirement, in business terms
 ```
@@ -1663,10 +1849,12 @@ oc exec -n $NS deployment.apps/$REL -c dashboard -- mv /data/fleet-gate.json /da
   and 17:57:01Z). Every fleet Lease the dashboard reads or writes is now also kept, entry and ping instants only, in
   `fleet-gate.json` beside `gsd.db`: an absent Lease reads as that copy, the next claim or the leader's next discovery
   puts it back, and `fleet-lease-absent` says so once. Measured in the hermetic harness, one `crc start` cost +1 bind
-  and +1 ping on every path before, and +0 after. The Lease stays the authority whenever it exists, and a copy that
+  and +1 ping on every path before, and +0 after at one replica with persistence on. Independent per-pod copies can
+  be stale, so above one replica a deletion can still allow +1 bind or ping. The Lease stays the authority whenever it
+  exists, and a copy that
   cannot be read behind an absent Lease, or written at a reservation, binds nothing (`fleet-state-unavailable`).
   SPEC_S4c §5 Q7's clear still re-arms the gate, and `charts/group-sync-dashboard/RUNBOOK.md` section 7 now carries
   it. Not covered, as the operator accepted: persistence off, an etcd restore, a reinstall into another namespace,
-  and a clear made while no pod ran followed by a `crc start` (the entry comes back; clear it again). No RBAC or
-  schema change.
+  and a clear followed by a `crc start` before any pod had read the cleared Lease (the entry comes back; clear it
+  again). No RBAC or schema change.
 ```

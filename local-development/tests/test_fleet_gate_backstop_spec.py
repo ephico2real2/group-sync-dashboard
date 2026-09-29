@@ -181,3 +181,17 @@ def test_implementation_blocks_check_out_against_this_tree():
             assert b["fences"][1] in text, f"block {b['n']}: {b['path']} lacks the New text"
         else:
             assert b["fences"][0].strip("\n") in text, f"block {b['n']}: {b['path']} lacks the inserted text"
+
+
+def test_the_undone_clear_is_stated_as_the_spec_measures_it():
+    """OB2's review of #484 (F1): the undone clear is a clear no pod had READ before a `crc start` — the case
+    `test_a_clear_by_hand_then_a_crc_start_before_any_read_is_undone_and_said` measures, with a pod running — not "while
+    no pod was running"; and SPEC_S4c's note sits above its body."""
+    new = {b["path"]: b["fences"][-1] for b in blocks()}
+    runbook = new["charts/group-sync-dashboard/RUNBOOK.md"]
+    assert "while no dashboard pod was running" not in runbook
+    assert "before any dashboard pod had read the Lease again" in runbook and "discovery interval" in runbook
+    changelog = new["docs/CHANGELOG.md"]
+    assert "while no pod ran" not in changelog and "before any pod had read the cleared Lease" in changelog
+    note = new["docs/specs/SPEC_S4c_credential_lifecycle.md"]
+    assert "The body below is unchanged" in note and "The body above" not in note
