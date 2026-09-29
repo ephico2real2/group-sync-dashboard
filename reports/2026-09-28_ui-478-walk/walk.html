@@ -3,7 +3,7 @@
 <h1>#478 on the lab: own-key reads at application 1.17.0 — 2026-09-28</h1>
 <p><strong>Outcome.</strong> On the CRC lab, running application 1.17.0 at <code>84b1e46b6f</code> (<code>evidence/before-version.txt</code>), <code>developer</code>
 walked #478's three surfaces at 1280 and 375 px, with and without a temporary cluster-admin grant. The instants below
-are UTC as the files record them: 2026-09-29T01:47Z to 02:06Z, which is the evening of 2026-09-28 in the lab's
+are UTC as the files record them: 2026-09-29T01:47Z to 02:08Z, which is the evening of 2026-09-28 in the lab's
 <code>America/New_York</code> zone (<code>evidence/before-version.txt</code>, <code>&quot;abbrev&quot;:&quot;EDT&quot;</code>).</p>
 <ul>
 <li><strong>The stale link (C5):</strong> <code>zzz-unknown</code>, <code>constructor</code> and <code>toString</code> read the same as each other on a fresh load
@@ -20,7 +20,7 @@ at 01:54:38Z and at every later check (<code>evidence/walk-granted.txt</code>, <
 <code>beta</code>, every label cell matched the API's own value where the namespace has the key and <code>—</code> (<code>— none —</code> on a
 namespace's page) where it does not. There were no page errors (<code>evidence/walk-granted.txt</code>,
 <code>evidence/r2-walk-granted.txt</code>).</li>
-<li><strong>The pod log</strong>, from the first grant (01:52:54Z) to 02:05:59Z: 0 <code>fleet-login</code>, 0 <code>cluster-rejoin</code>, 0 Traceback,
+<li><strong>The pod log</strong>, from the first grant (01:52:54Z) to 02:05:48Z: 0 <code>fleet-login</code>, 0 <code>cluster-rejoin</code>, 0 Traceback,
 0 ERROR. The Create's refusal is not logged: the dashboard container logged no line between 01:54:30Z and
 01:54:45Z (<code>evidence/final-podlog.txt</code>, <code>evidence/create-window-podlog.txt</code>).</li>
 </ul>
@@ -66,7 +66,7 @@ read 1.17.0 at <code>84b1e46b6f</code> before and after, and the kept PVCs had t
 <td>3</td>
 <td>The namespace pages with the lab's real keys: the list, one namespace's page, the lookup by a real label value; the value where the namespace has the key, <code>—</code> where it does not; the search finds its namespace; no page error; <code>label_keys</code> recorded</td>
 <td>PASS</td>
-<td><code>label_keys</code>: <code>[&quot;company.net/mnemonic&quot;, &quot;company.net/app-environment&quot;, &quot;company.net/oud-group&quot;]</code>, over 118 namespaces, 27 with a value for one of the keys and 91 with none. On the list, 25 rows on page one (17 with a value, 8 all <code>—</code>) had <code>&quot;mismatches&quot;: []</code>, for example <code>[&quot;beta-prod&quot;, [&quot;beta&quot;, &quot;prod&quot;, &quot;—&quot;]]</code> and <code>[&quot;ca-tutorial&quot;, [&quot;—&quot;, &quot;—&quot;, &quot;—&quot;]]</code>. <code>beta-prod</code>'s page showed KPIs <code>[[&quot;mnemonic&quot;, &quot;beta&quot;], [&quot;app-environment&quot;, &quot;prod&quot;], [&quot;oud-group&quot;, &quot;— none —&quot;]]</code> and &quot;Labelled company.net/mnemonic=beta and company.net/app-environment=prod.&quot; <code>ca-tutorial</code>'s page showed all three <code>— none —</code> and &quot;Carries none of the captured labels&quot;. The lookup <code>beta</code> found <code>Namespaces · 4 of 118</code>, <code>beta-prod</code>, <code>beta-rnd</code>, <code>beta-uat</code> and <code>oud-poc-crossfamily</code>, with <code>&quot;mismatches&quot;: []</code>. <code>function_or_native_on_page</code> was <code>false</code> everywhere, with no page error, at 1280 (01:54:42Z–01:54:51Z) and 375 (02:02:55Z–02:03:06Z) (<code>evidence/walk-granted.txt</code>, <code>evidence/r2-walk-granted.txt</code>, <code>screenshots/09</code>–<code>12</code>, <code>74</code>–<code>77</code>). The query was typed into the lookup box: <code>q</code> is not one of <code>POSITION_KEYS</code> in <code>local-development/gsd/static/index.html</code>, so <code>#page=lookup&amp;q=…</code> would not carry it. <strong>No label key named <code>constructor</code> (or <code>toString</code>) is configured on the lab</strong>, so the own-key case itself is not exercised here. It is covered by the PR's browser test <code>TestALabelKeyNamedLikeAnObjectMember</code> in <code>local-development/tests/test_ui.py</code>.</td>
+<td><code>label_keys</code>: <code>[&quot;company.net/mnemonic&quot;, &quot;company.net/app-environment&quot;, &quot;company.net/oud-group&quot;]</code>, over 118 namespaces, 27 with a value for one of the keys and 91 with none. On the list, 25 rows on page one (17 with a value, 8 all <code>—</code>) had <code>&quot;mismatches&quot;: []</code>, for example <code>[&quot;beta-prod&quot;, [&quot;beta&quot;, &quot;prod&quot;, &quot;—&quot;]]</code> and <code>[&quot;ca-tutorial&quot;, [&quot;—&quot;, &quot;—&quot;, &quot;—&quot;]]</code>. <code>beta-prod</code>'s page showed KPIs <code>[[&quot;mnemonic&quot;, &quot;beta&quot;], [&quot;app-environment&quot;, &quot;prod&quot;], [&quot;oud-group&quot;, &quot;— none —&quot;]]</code> and &quot;Labelled company.net/mnemonic=beta and company.net/app-environment=prod.&quot; <code>ca-tutorial</code>'s page showed all three <code>— none —</code> and &quot;Carries none of the captured labels&quot;. The lookup <code>beta</code> found <code>Namespaces · 4 of 118</code>, <code>beta-prod</code>, <code>beta-rnd</code>, <code>beta-uat</code> and <code>oud-poc-crossfamily</code>, with <code>&quot;mismatches&quot;: []</code>. <code>function_or_native_on_page</code> was <code>false</code> everywhere, with no page error, at 1280 (01:54:42Z–01:54:51Z) and 375 (02:02:55Z–02:03:06Z) (<code>evidence/walk-granted.txt</code>, <code>evidence/r2-walk-granted.txt</code>, <code>screenshots/10</code>–<code>12</code>, <code>75</code>–<code>77</code>; the list itself has no screenshot, see &quot;What the lab did not do&quot;). The query was typed into the lookup box: <code>q</code> is not one of <code>POSITION_KEYS</code> in <code>local-development/gsd/static/index.html</code>, so <code>#page=lookup&amp;q=…</code> would not carry it. <strong>No label key named <code>constructor</code> (or <code>toString</code>) is configured on the lab</strong>, so the own-key case itself is not exercised here. It is covered by #478's browser test (PR #482) <code>TestALabelKeyNamedLikeAnObjectMember</code> in <code>local-development/tests/test_ui.py</code>.</td>
 </tr>
 <tr>
 <td>4</td>
@@ -182,6 +182,11 @@ their names. They are kept as the record of that pass; the second pass's <code>6
 <code>110</code>–<code>112</code> show the repainted pages.</li>
 <li><code>screenshots/77-granted-rerun-375-lookup.png</code> was taken 1.2 s after typing, while the lookup's Groups door still
 read &quot;loading…&quot;. The namespace section it measures had painted.</li>
+<li>The two <code>ns-list</code> captures the walk took (steps 09 and 74) are not in this folder. <code>walk.py</code> photographed the
+first <code>table</code> in <code>#main</code>, which on the Namespace audit page is the &quot;Cluster-wide direct grants&quot; card's table,
+not the namespace list, and that table names the fleet account in its &quot;Who is exposed&quot; column. The list's
+values are the JSON <code>ns list</code> lines in <code>evidence/walk-granted.txt</code> and <code>evidence/r2-walk-granted.txt</code>; there is
+no picture of it.</li>
 </ul>
 <h2>Files</h2>
 <ul>
@@ -191,12 +196,14 @@ explicitly when the granted phase ends.</li>
 <li><code>scripts/walk.py</code>: the Playwright walk (<code>granted</code>, <code>ungranted</code>, <code>granted-rerun</code>, <code>ungranted-rerun</code>).</li>
 <li><code>scripts/probe_hash.py</code>: the repaint probe (run with <code>PYTHONPATH=scripts</code>; it uses <code>walk.py</code>'s login and guard).</li>
 <li><code>scripts/capture.sh</code>: the read-only captures. It redacts any <code>sha256~</code> value and replaces the fleet account's name,
-read from its Lease, with <code>&lt;fleet account&gt;</code>. Neither appears in this folder: a search for the account's name
-and for <code>sha256~</code> found 0 files.</li>
+read from its Lease, with <code>&lt;fleet account&gt;</code>. Neither appears in any text file in this folder: a search for the
+account's name and for <code>sha256~</code> found 0 files. <code>walk.py</code> masks the name only where its selector matches (the
+fleet card on the Cluster Configurations page); the two captures that rendered it elsewhere were removed (above).</li>
 <li><code>scripts/grant.yaml</code>: the temporary grant, labelled <code>walk.gsd.lab/run=ui-478-2026-09-28</code>.</li>
 <li><code>evidence/</code>: every capture, its command line first and the instant it ran. Files prefixed <code>r2-</code> are the second
 pass's; <code>final-</code> files were captured after it.</li>
-<li><code>screenshots/</code>: 53 PNGs. The number is the step, and the name gives the phase, the width, and the case.</li>
+<li><code>screenshots/</code>: 51 PNGs. The number is the step (09 and 74 were removed, above), and the name gives the phase, the
+width, and the case.</li>
 </ul>
 
 <h2 id="screenshots">Screenshots</h2>
@@ -208,7 +215,6 @@ pass's; <code>final-</code> files were captured after it.</li>
 <figure><img src="screenshots/06-granted-1280-c5-toString-hash.png" alt="06-granted-1280-c5-toString-hash.png"><figcaption>06-granted-1280-c5-toString-hash.png</figcaption></figure>
 <figure><img src="screenshots/07-granted-1280-form-two-labels.png" alt="07-granted-1280-form-two-labels.png"><figcaption>07-granted-1280-form-two-labels.png</figcaption></figure>
 <figure><img src="screenshots/08-granted-1280-form-create-refused.png" alt="08-granted-1280-form-create-refused.png"><figcaption>08-granted-1280-form-create-refused.png</figcaption></figure>
-<figure><img src="screenshots/09-granted-1280-ns-list.png" alt="09-granted-1280-ns-list.png"><figcaption>09-granted-1280-ns-list.png</figcaption></figure>
 <figure><img src="screenshots/10-granted-1280-ns-detail-labelled.png" alt="10-granted-1280-ns-detail-labelled.png"><figcaption>10-granted-1280-ns-detail-labelled.png</figcaption></figure>
 <figure><img src="screenshots/101-ungranted-rerun-1280-c5-zzz-unknown-fresh.png" alt="101-ungranted-rerun-1280-c5-zzz-unknown-fresh.png"><figcaption>101-ungranted-rerun-1280-c5-zzz-unknown-fresh.png</figcaption></figure>
 <figure><img src="screenshots/102-ungranted-rerun-1280-c5-constructor-fresh.png" alt="102-ungranted-rerun-1280-c5-constructor-fresh.png"><figcaption>102-ungranted-rerun-1280-c5-constructor-fresh.png</figcaption></figure>
@@ -249,7 +255,6 @@ pass's; <code>final-</code> files were captured after it.</li>
 <figure><img src="screenshots/71-granted-rerun-375-c5-constructor-hash.png" alt="71-granted-rerun-375-c5-constructor-hash.png"><figcaption>71-granted-rerun-375-c5-constructor-hash.png</figcaption></figure>
 <figure><img src="screenshots/72-granted-rerun-375-c5-toString-hash.png" alt="72-granted-rerun-375-c5-toString-hash.png"><figcaption>72-granted-rerun-375-c5-toString-hash.png</figcaption></figure>
 <figure><img src="screenshots/73-granted-rerun-375-form-two-labels.png" alt="73-granted-rerun-375-form-two-labels.png"><figcaption>73-granted-rerun-375-form-two-labels.png</figcaption></figure>
-<figure><img src="screenshots/74-granted-rerun-375-ns-list.png" alt="74-granted-rerun-375-ns-list.png"><figcaption>74-granted-rerun-375-ns-list.png</figcaption></figure>
 <figure><img src="screenshots/75-granted-rerun-375-ns-detail-labelled.png" alt="75-granted-rerun-375-ns-detail-labelled.png"><figcaption>75-granted-rerun-375-ns-detail-labelled.png</figcaption></figure>
 <figure><img src="screenshots/76-granted-rerun-375-ns-detail-unlabelled.png" alt="76-granted-rerun-375-ns-detail-unlabelled.png"><figcaption>76-granted-rerun-375-ns-detail-unlabelled.png</figcaption></figure>
 <figure><img src="screenshots/77-granted-rerun-375-lookup.png" alt="77-granted-rerun-375-lookup.png"><figcaption>77-granted-rerun-375-lookup.png</figcaption></figure>
