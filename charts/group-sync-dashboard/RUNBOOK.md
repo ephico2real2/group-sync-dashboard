@@ -160,3 +160,48 @@ oc --context="$REMOTE" get useroauthaccesstokens --field-selector=clientName=ope
   --sort-by=.metadata.creationTimestamp
 oc --context="$REMOTE" delete useroauthaccesstokens <name>
 ~~~
+
+## 7. The fleet account is held back: clear its entry by hand
+
+A `saTokenLookup` cluster whose lookup reads `login-refused` or `login-failed`, a `userSelfLogin` cluster reading
+`self-login-suspended`, or a `fleet-ping-failed … gave_up=true` line all mean the same thing: the directory answered the
+fleet account's password with a failure, and the dashboard will not send that password again. The answer is recorded on
+the account's Lease in this namespace, and the finding and the line name it. A 401 is a wrong password: rotate the
+fleet password Secret, and the new password is tried by itself. Clear the entry by hand only when the password is right
+and the answer was about something else: a sick target's 500, or an account the directory has since unlocked.
+
+~~~sh
+LEASE=gsd-fleet-...   # the Lease the finding or the line names
+oc get leases.coordination.k8s.io "$LEASE" -n $NS -o jsonpath='{.metadata.annotations.groupsync-dashboard\.io/refused}{"\n"}'
+oc annotate leases.coordination.k8s.io "$LEASE" -n $NS groupsync-dashboard.io/refused-
+oc rollout restart deployment.apps/$REL -n $NS      # the running pod keeps its own copy of the refusal until it restarts
+~~~
+
+**After a `crc start`, or a Lease deleted by hand.** `crc start` deletes every Lease on the cluster. The dashboard keeps
+each fleet Lease's entry and its daily ping's instants beside its database, in `/data/fleet-gate.json`
+(`/data/<pod>/fleet-gate.json` above one replica), and puts a deleted Lease back from it within one discovery interval,
+saying so once. Run one replica for the +0 guarantee: independent per-pod copies may be stale, so the replica that
+recreates the Lease can still allow another bind or ping (SPEC_S4f §3.9):
+
+~~~sh
+oc logs -n $NS deployment.apps/$REL -c dashboard --since=15m | grep fleet-lease-absent
+~~~
+
+So deleting the Lease does not clear its entry; removing the annotation does. One order undoes a clear: the entry
+removed, then a `crc start` before any dashboard pod had read the Lease again — a running pod reads it once per
+discovery interval (300 s by default), and `crc start` restarts the pod without that read. The copy still held the
+entry and puts it back, and the line says `kept=true refused=<code>`. Wait until `oc get leases.coordination.k8s.io
+"$LEASE" -n $NS` finds the Lease again, then remove the entry and restart the pod with `oc rollout restart`, as above. With
+`persistence.enabled: false` the copy lives only as long as the pod: a new pod whose Lease was deleted says
+`kept=false`, and a password the entry held back may be sent once more.
+
+**If an absent Lease's copy cannot be read, or a reservation cannot be kept**, nothing binds and the attempting path
+reports `fleet-state-unavailable` naming the file. Other saves log the failure while the Lease remains authoritative;
+a path already gated need not attempt a reservation or publish another finding. Free space on the data volume. Saving
+a present Lease also parses the existing file. Move an unreadable file aside only after checking that every fleet
+Lease exists:
+
+~~~sh
+oc get leases.coordination.k8s.io -n $NS -l groupsync-dashboard.io/lease-type=fleet-account
+oc exec -n $NS deployment.apps/$REL -c dashboard -- mv /data/fleet-gate.json /data/fleet-gate.json.unreadable
+~~~

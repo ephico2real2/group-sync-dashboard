@@ -10,6 +10,22 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A deleted fleet Lease is put back from a copy beside the database (#481, Epic C #383,
+  `docs/specs/SPEC_S4f_fleet_gate_backstop.md`).** The fleet account's gate and daily-ping instants lived only on its
+  Lease, and `crc start` deletes every Lease on the cluster (crc 2.29.0 and later), so after each start a refused or
+  locked password was sent once more and the ping ran a second time that day (on the lab on 2026-09-28, at 10:30:01Z
+  and 17:57:01Z). Every fleet Lease the dashboard reads or writes is now also kept, entry and ping instants only, in
+  `fleet-gate.json` beside `gsd.db`: an absent Lease reads as that copy, the next claim or the leader's next discovery
+  puts it back, and `fleet-lease-absent` says so once. Measured in the hermetic harness, one `crc start` cost +1 bind
+  and +1 ping on every path before, and +0 after at one replica with persistence on. Independent per-pod copies can
+  be stale, so above one replica a deletion can still allow +1 bind or ping. The Lease stays the authority whenever it
+  exists, and a copy that
+  cannot be read behind an absent Lease, or written at a reservation, binds nothing (`fleet-state-unavailable`).
+  SPEC_S4c §5 Q7's clear still re-arms the gate, and `charts/group-sync-dashboard/RUNBOOK.md` section 7 now carries
+  it. Not covered, as the operator accepted: persistence off, an etcd restore, a reinstall into another namespace,
+  and a clear followed by a `crc start` before any pod had read the cleared Lease (the entry comes back; clear it
+  again). No RBAC or schema change.
+
 - **The fleet gate's backstop specified (#481, Epic C #383, `docs/specs/SPEC_S4f_fleet_gate_backstop.md`).** `crc start`
   deletes every Lease on the cluster, and the fleet account's gate and daily-ping instants lived only on its Lease:
   measured, each start cost one more bind for a refused, locked or uncertain password on every path, and one more ping.

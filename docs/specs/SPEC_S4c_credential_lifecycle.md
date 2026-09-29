@@ -389,6 +389,18 @@ Decisions taken at review, recorded first and then applied:
   and the program exists once in the heredoc the walk runs). Codex's offline execution test
   (sitecustomize, an sqlite transport and an oc stub) and a pending report under reports/
   were **rejected**: too heavy for a document test; the lab walk is the acceptance.
+- **#481 (`docs/specs/SPEC_S4f_fleet_gate_backstop.md`, the operator's option (c2) of 2026-09-29): a deleted Lease is
+  no longer "+1 per act".** §3.2's B2 says "the entry removed by hand, or the Lease deleted, is **+1 per act**, an
+  operator's act by a principal that can already read the password Secret", and §4's and §8.2's rows say the same.
+  Neither half held. `crc start` deletes every Lease on the cluster at every cold start (crc-org/crc
+  pkg/crc/cluster/cluster.go:509, since crc 2.29.0), and no operator decides it. A namespace `admin` or `edit` can
+  delete the fleet Lease without reading a password Secret kept in another namespace. Since #481 the gate and the ping's
+  instants are also kept beside the database, and an absent Lease is read from that copy and put back: a deletion costs
+  +0 with persistence on at one replica. Independent per-pod copies above one replica may be stale and can allow
+  +1 after a deletion (SPEC_S4f §3.9). §5 Q7's clear still re-arms, +1, and the runbook entry Q7 asked for is
+  `charts/group-sync-dashboard/RUNBOOK.md` section 7. SPEC_S4f §4 restates B2's and B3's budgets over the system,
+  scope by scope, with the rows it leaves: persistence off, an etcd restore, a reinstall into another namespace, and a
+  clear by hand followed by a `crc start`. The body below is unchanged.
 
 ## 0. The requirement, in business terms
 
