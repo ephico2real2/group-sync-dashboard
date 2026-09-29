@@ -22,7 +22,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   none that did not before, and Rejoin refuses none that main sends. Every password spelling stays scrubbed; the
   one-login budget, the per-pod credential gate and #447's refusal are unchanged.
 If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
-the existing outcome and failure sentence are still reported.
+the existing outcome and failure sentence are still reported. Application **1.19.0**, chart 0.59.21.
 
 - **A deleted fleet Lease is put back from a copy beside the database (#481, Epic C #383,
   `docs/specs/SPEC_S4f_fleet_gate_backstop.md`).** The fleet account's gate and daily-ping instants lived only on its
