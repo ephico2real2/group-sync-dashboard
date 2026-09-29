@@ -1,0 +1,14 @@
+# /data/fleet-gate.json on the dashboard pod, compared with the Lease annotations
+# at 2026-09-29T11:39:18Z
+exists True
+mode 0o644
+{
+ "gsd-fleet-666f1ba7f2fdead0": {
+  "groupsync-dashboard.io/ping-digest": "e23c0ea210579dde",
+  "groupsync-dashboard.io/ping-last-attempt": "2026-09-28T17:57:01Z",
+  "groupsync-dashboard.io/ping-last-ok": "2026-09-28T17:57:01Z",
+  "groupsync-dashboard.io/ping-last-outcome": "ok",
+  "groupsync-dashboard.io/ping-last-target": "shared-rnd"
+ }
+}
+equal_to_lease {'gsd-fleet-666f1ba7f2fdead0': True}

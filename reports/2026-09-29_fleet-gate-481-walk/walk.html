@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>#481 on the lab at 1.18.0 — 2026-09-29</title><style>:root{--fg:#1d1d1f;--muted:#5a5a60;--rule:#d9d6cf;--bg:#fbfaf7;--code:#f0ede6}@media (prefers-color-scheme:dark){:root{--fg:#ecebe8;--muted:#a9a8a3;--rule:#3a3935;--bg:#161615;--code:#24231f}}body{font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg);max-width:1000px;margin:32px auto;padding:0 16px}h1{font-size:1.6em;line-height:1.25}h2{margin-top:2em;border-bottom:1px solid var(--rule);padding-bottom:.2em}table{border-collapse:collapse;width:100%;font-size:.9em;margin:1em 0;display:block;overflow-x:auto}th,td{border:1px solid var(--rule);padding:6px 8px;vertical-align:top;text-align:left}th{background:var(--code)}code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:.88em;word-break:break-word}pre{background:var(--code);padding:12px;overflow-x:auto;border-radius:4px}pre code{background:none;padding:0}figure{margin:1.2em 0;break-inside:avoid}img{max-width:100%;border:1px solid var(--rule);border-radius:4px}figcaption{color:var(--muted);font-size:.85em;margin-top:.3em}@media print{body{margin:0;max-width:none;font-size:11px}h2{break-after:avoid}table{display:table}}</style></head><body>
+<h1>#481 on the lab: a <code>crc start</code> deletes the fleet Lease and the dashboard puts it back — 2026-09-29</h1>
+<p><strong>Outcome.</strong> On the CRC lab at application 1.18.0 (<code>4e19d976a2</code>, <code>evidence/before-version.txt</code>; chart 0.59.20 at that
+commit, <code>charts/group-sync-dashboard/Chart.yaml#version: 0.59.20</code>, synced from <code>main</code> by Argo CD,
+<code>gitops/argocd-application-dashboard.yaml#targetRevision: main</code>), the dashboard kept a copy of the fleet Lease's
+annotations in <code>/data/fleet-gate.json</code> on its data volume, equal to the Lease (<code>evidence/before-file.txt</code>:
+<code>equal_to_lease {'gsd-fleet-666f1ba7f2fdead0': True}</code>). The orchestrator then ran <code>crc stop</code> and <code>crc start</code>, on the
+operator's instruction (<code>evidence/crc-restart.txt</code>). <code>crc start</code> deleted every Lease on the cluster, as it does on every
+cold start (crc's own <code>oc delete -A lease --all</code>, read in
+<code>docs/specs/SPEC_S4f_fleet_gate_backstop.md#2.1 Who deletes the fleet Lease</code>): after it, all 58 Leases were created at
+or after 12:02:20Z (<code>evidence/after-lease.txt</code>: <code>count=58 oldest=2026-09-29T12:02:20Z</code>).</p>
+<ul>
+<li><strong>The dashboard put the fleet Lease back from its copy.</strong> At 12:03:43Z it logged <code>fleet-lease-absent … lease=gsd-fleet-666f1ba7f2fdead0 kept=true last_attempt=2026-09-28T17:57:01Z</code>
+(<code>evidence/after-podlog.txt</code>). The Lease was re-created at 12:03:43Z with a new uid (<code>e6e2daed-…</code>, where it was
+<code>b20785d0-…</code> before). Its five annotations were identical to the ones before the start, and the copy still equals the
+Lease (<code>evidence/after-lease.txt</code>, <code>evidence/after-file.txt</code>). The copy's content is unchanged; its mode is <code>0o664</code>
+where it was <code>0o644</code> before the start (<code>evidence/before-file.txt</code>, <code>evidence/after-file.txt</code>). The dashboard does not
+set that group-write bit — its writer creates the file with <code>open(tmp, &quot;w&quot;)</code> and skips an entry equal to the file's
+(<code>gsd/fleetstate.py#FileBackstop.save</code>) — so something outside the dashboard added it between the two captures. A
+kubelet fsGroup ownership pass on the volume's remount after the reboot would; it was not measured here.</li>
+<li><strong>No second fleet bind and no second ping.</strong> Over the restarted container's whole log — <code>oc logs</code> without
+<code>--previous</code>, so from its start (its leader election at 12:03:41Z) to the capture at 12:10:55Z, 503 lines:
+<code>fleet-login lines: 0</code>, <code>fleet-ping lines: 0</code>, <code>fleet-lookup lines: 0</code>, <code>fleet-state-unavailable lines: 0</code>, 0
+Traceback, 0 ERROR (<code>evidence/after-podlog.txt</code>). The container that ran from 11:38:20Z until the stop is not in
+that log. That it pinged nothing is shown by the Lease itself: a ping stamps <code>ping-last-attempt</code> with its claim
+before it binds (<code>gsd/poller.py#Poller._ping_accounts</code>), and the stamp reads <code>2026-09-28T17:57:01Z</code> before and after
+(<code>evidence/before-lease.txt</code>, <code>evidence/after-lease.txt</code>). The day's ping is not due until 2026-09-29T17:57:01Z, one
+interval after <code>ping-last-attempt</code> with the same password digest (<code>gsd/poller.py#Poller._ping_accounts</code>; the interval
+is <code>charts/group-sync-dashboard/values.yaml#intervalSeconds: 86400</code>, not overridden on the lab).</li>
+<li><strong>Without the fix,</strong> the same kind of restart on 2026-09-28 lost the Lease's ping record, and the dashboard pinged a
+second time that day: <code>fleet-login cluster=shared-rnd</code> at 17:57:02Z, then <code>fleet-ping … last_ok=2026-09-28T17:57:01Z</code>
+(#481, &quot;Where this stands&quot;).</li>
+</ul>
+<p>The walk changed nothing but the CRC restart itself and, after it, one restart of Argo CD's application controller pod
+(<code>oc delete pod</code> at 12:11:16Z, <code>evidence/argo-after-restart.txt</code>; see &quot;Argo CD after a <code>crc start</code>&quot;). The PVC UIDs and
+<code>shared-qa</code>'s <code>resourceVersion</code> 2981054 are the same before and after (<code>evidence/before-state.txt</code>,
+<code>evidence/after-state.txt</code>). Nobody logged in as the fleet account in the restarted container's log, the captures are
+read-only (<code>scripts/capture.sh</code>), and no password was placed or changed by the walk. The dashboard container restarted
+in place: the same pod, <code>restarts</code> 0 → 1 (<code>evidence/before-version.txt</code>, <code>evidence/after-version.txt</code>).</p>
+<h2>Definition of Done</h2>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>Verdict</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Before: 1.18.0 deployed, and the copy beside the database equals the fleet Lease</td>
+<td>PASS</td>
+<td><code>/api/version</code> <code>&quot;version&quot;:&quot;1.18.0&quot;,&quot;commit&quot;:&quot;4e19d976a2&quot;</code> at 11:39:17Z; the dashboard and report pods started at 11:38:20Z and 11:38:21Z (<code>evidence/before-version.txt</code>). <code>/data/fleet-gate.json</code> exists, mode <code>0o644</code>, and holds <code>ping-digest</code>, <code>ping-last-attempt</code> <code>2026-09-28T17:57:01Z</code>, <code>ping-last-ok</code>, <code>ping-last-outcome</code> <code>ok</code> and <code>ping-last-target</code> <code>shared-rnd</code> for <code>gsd-fleet-666f1ba7f2fdead0</code>; <code>equal_to_lease</code> <code>True</code> (<code>evidence/before-file.txt</code>). The Lease had uid <code>b20785d0-a5b2-42aa-a46a-a27e6344250d</code>, <code>resourceVersion</code> 6171122, created 2026-09-28T17:57:01Z, no holder; the cluster had 58 Leases, none older than 2026-09-28T17:55:17Z (<code>evidence/before-lease.txt</code>).</td>
+</tr>
+<tr>
+<td>The restart deletes every Lease</td>
+<td>PASS</td>
+<td><code>crc stop</code> at 12:01:35Z, <code>crc start</code> at 12:01:41Z, returning at 12:04:45Z (<code>evidence/crc-restart.txt</code>). The watcher saw the API go down at 12:01:48Z, and the API up with the dashboard ready at 12:03:53Z (<code>evidence/restart-observed.txt</code>). After: <code>count=58 oldest=2026-09-29T12:02:20Z</code> (<code>evidence/after-lease.txt</code>).</td>
+</tr>
+<tr>
+<td>The dashboard puts the fleet Lease back from the copy, and says so once</td>
+<td>PASS</td>
+<td>One <code>fleet-lease-absent</code> line, at 12:03:43Z: <code>account=&lt;fleet account&gt; lease=gsd-fleet-666f1ba7f2fdead0 kept=true last_attempt=2026-09-28T17:57:01Z</code>, with the action &quot;the Lease was deleted — by hand, or by <code>crc start</code>, which deletes every Lease on the cluster — and is put back from the copy kept beside the database, as this dashboard last read it; if an entry was removed by hand while no pod read the Lease, it is back: remove it again and restart the pod&quot; (<code>evidence/after-podlog.txt</code>). The Lease after: uid <code>e6e2daed-495c-411b-8a99-657e15a81eac</code>, created 2026-09-29T12:03:43Z, <code>resourceVersion</code> 6761163, no holder, and the same five annotations with the same values (<code>evidence/after-lease.txt</code>). The copy's content is unchanged and <code>equal_to_lease</code> <code>True</code>; its mode is <code>0o664</code> where it was <code>0o644</code> (<code>evidence/after-file.txt</code>; the Outcome says why).</td>
+</tr>
+<tr>
+<td>No second fleet bind and no second ping that day</td>
+<td>PASS</td>
+<td>Over the restarted container's whole log (503 lines from its leader election at 12:03:41Z, captured 12:10:55Z): <code>fleet-login lines: 0</code>, <code>fleet-logout lines: 0</code>, <code>fleet-ping lines: 0</code>, <code>fleet-lookup lines: 0</code>, <code>fleet-state-unavailable lines: 0</code>, <code>cluster-rejoin lines: 0</code>, <code>Traceback lines: 0</code>, <code>ERROR lines: 0</code> (<code>evidence/after-podlog.txt</code>). The container before the stop is not in that log; that it pinged nothing is the unchanged <code>ping-last-attempt</code> <code>2026-09-28T17:57:01Z</code> (<code>evidence/before-lease.txt</code>, <code>evidence/after-lease.txt</code>). The 2026-09-28 restart without the fix pinged again at 17:57:02Z (#481).</td>
+</tr>
+<tr>
+<td>The lab left as found</td>
+<td>PASS</td>
+<td>Version 1.18.0 at <code>4e19d976a2</code> after (<code>evidence/after-version.txt</code>). PVC UIDs <code>f065b7a4-535c-4ef1-868c-58f5afee4953</code> (data) and <code>08c7d45c-a3eb-47be-8506-f24ea7a3e0e3</code> (report-artifacts), and <code>shared-qa</code> <code>resourceVersion=2981054</code>, before and after (<code>evidence/before-state.txt</code>, <code>evidence/after-state.txt</code>). Argo CD: three Applications (<code>16-keycloak</code>, <code>20-shop-envoy</code>, <code>group-sync-dashboard</code>) came back <code>Unknown</code>/<code>ComparisonError</code> after the start and the other six <code>Synced/Healthy</code>; a restart of its application controller at 12:11:16Z — the one change the walk made beyond the CRC restart — brought every Application back to <code>Synced/Healthy</code> by 12:13:48Z (<code>evidence/after-argo.txt</code>, <code>evidence/argo-after-restart.txt</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2>What the lab did not show</h2>
+<ul>
+<li><strong>A refused password staying refused.</strong> Showing it would need a wrong fleet password placed on the lab, which is not
+done. The PR's <code>local-development/tests/test_fleet_gate_backstop.py</code> measures it: a refused (401) or locked (500)
+password on the lookup, the ping and self-login binds +0 after a <code>crc start</code>, where it bound +1 before
+(<code>test_a_refused_password_stays_refused_across_crc_starts</code>). The lab walk shows the same mechanism, the Lease put back
+from the copy with its annotations, for the ping record it carries today.</li>
+<li><strong>The warning's <code>kept=false</code> form</strong> (an account with retrieved clusters and nothing kept): the copy existed here.</li>
+<li><strong>More than one replica, persistence off, an etcd restore:</strong> out of scope, as SPEC_S4f §1.3 states.</li>
+<li><strong>A fleet bind in the container that ran before the stop</strong> (11:38:20Z to 12:01:48Z): its log was not captured, so
+nothing captured shows a lookup or a self-login bind absent for that window; a ping is shown absent by the Lease's
+unchanged <code>ping-last-attempt</code>.</li>
+</ul>
+<h2>Argo CD after a <code>crc start</code></h2>
+<p>The same <code>crc start</code> left <code>16-keycloak</code>, <code>20-shop-envoy</code> and <code>group-sync-dashboard</code> at <code>Unknown</code> with <code>ComparisonError</code>,
+as on 2026-09-28; the other six Applications were <code>Synced/Healthy</code>, <code>grafana</code> among them, whose chart also renders a
+Route (<code>charts/openshift-grafana/values.yaml#route:</code> <code>enabled: true</code>, and the Route is named in
+<code>gitops/argocd-application-grafana.yaml#name: grafana-openshift-grafana</code>), so which resource each of the three failed
+to compare is not shown by <code>evidence/after-argo.txt</code> — the ComparisonError's text was not captured. The application
+controller started at 12:02:40Z, 12 seconds before the <code>v1.route.openshift.io</code> APIService became Available at 12:02:52Z
+(<code>evidence/argo-after-restart.txt</code>); on 2026-09-28 that was read as the Route missing from its schema cache. Restarting
+the controller pod at 12:11:16Z brought all nine Applications to <code>Synced/Healthy</code> by 12:13:48Z
+(<code>evidence/argo-after-restart.txt</code>). This is the lab's GitOps, not the dashboard. It did not delay the dashboard,
+because 1.18.0 was already deployed.</p>
+<h2>Files</h2>
+<ul>
+<li><code>scripts/capture.sh</code>: the read-only <code>before</code> and <code>after</code> captures of the version and pods, the PVCs and <code>shared-qa</code>,
+the fleet Lease and the copy. It drops the Lease's <code>account</code> annotation from the Lease capture, and pipes the copy's
+capture through a filter that replaces the fleet account's name with <code>&lt;fleet account&gt;</code> and any <code>sha256~</code> value with
+<code>sha256~&lt;redacted&gt;</code>.</li>
+<li><code>evidence/</code>: every capture, its command or source first and the instant it ran. <code>crc-restart.txt</code>,
+<code>restart-observed.txt</code>, <code>after-podlog.txt</code>, <code>after-argo.txt</code> and <code>argo-after-restart.txt</code> come from the commands their
+first lines name, not from the script; the per-event counts in <code>after-podlog.txt</code> are recorded without the command
+that produced them, and its one data line carries the same <code>&lt;fleet account&gt;</code> replacement.</li>
+</ul>
+
+</body></html>

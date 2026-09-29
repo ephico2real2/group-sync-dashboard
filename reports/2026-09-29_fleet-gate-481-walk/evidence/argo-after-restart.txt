@@ -1,0 +1,14 @@
+# Argo CD after the crc start, and the controller restart (openshift-gitops-application-controller-0)
+# controller started 2026-09-29T12:02:40Z; APIService v1.route.openshift.io Available=True 2026-09-29T12:02:52Z
+# at 12:10:55Z: 16-keycloak, 20-shop-envoy, group-sync-dashboard Unknown/Healthy ComparisonError (evidence/after-argo.txt)
+# oc delete pod -n openshift-gitops -l app.kubernetes.io/name=openshift-gitops-application-controller  (at 2026-09-29T12:11:16Z)
+# at 2026-09-29T12:13:48Z every Application Synced/Healthy, no ComparisonError:
+16-keycloak Synced/Healthy
+17-keycloak-jwt Synced/Healthy
+18-keycloak-ldap Synced/Healthy
+19-shop-gateway Synced/Healthy
+20-shop-envoy Synced/Healthy
+grafana Synced/Healthy
+group-sync Synced/Healthy
+group-sync-dashboard Synced/Healthy
+ingress-shard Synced/Healthy

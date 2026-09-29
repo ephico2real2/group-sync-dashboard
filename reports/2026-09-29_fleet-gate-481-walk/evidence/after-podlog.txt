@@ -1,0 +1,14 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-57dfd6d7f-4d7lq -c dashboard --timestamps (whole container life; captured 2026-09-29T12:10:55Z)
+# lines: 503
+# fleet-lease-absent lines:
+2026-09-29T12:03:43.106854855Z 2026-09-29 08:03:43,106-0400 WARNING gsd.fleetstate fleet-lease-absent account=<fleet account> lease=gsd-fleet-666f1ba7f2fdead0 kept=true last_attempt=2026-09-28T17:57:01Z action="the Lease was deleted — by hand, or by `crc start`, which deletes every Lease on the cluster — and is put back from the copy kept beside the database, as this dashboard last read it; if an entry was removed by hand while no pod read the Lease, it is back: remove it again and restart the pod"
+# fleet-login lines: 0
+# fleet-logout lines: 0
+# fleet-ping lines: 0
+# fleet-lookup lines: 0
+# fleet-state-unavailable lines: 0
+# cluster-rejoin lines: 0
+# leader election lines:
+2026-09-29T12:03:41.491891872Z 2026-09-29 08:03:41,489-0400 DEBUG   gsd.leader leader election: lease group-sync-dashboard/group-sync-dashboard absent, creating it as group-sync-dashboard-57dfd6d7f-4d7lq (renewTime=2026-09-29T12:03:41.489740Z, leaseDurationSeconds=30)
+# Traceback lines: 0
+# ERROR lines: 0

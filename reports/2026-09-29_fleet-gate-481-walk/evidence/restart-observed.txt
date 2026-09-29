@@ -1,0 +1,3 @@
+# the restart, observed by the watcher (oc get --raw /readyz every 10 s)
+api_down=2026-09-29T12:01:48Z
+api_up_and_dashboard_ready=2026-09-29T12:03:53Z
