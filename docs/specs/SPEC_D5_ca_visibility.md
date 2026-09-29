@@ -5,7 +5,7 @@
 | Programme | Epic D (#384), Reconnect a cluster from the screen — the CA an operator must choose, inspect and keep current |
 | Batch | D — reconnect |
 | Release | — (post-programme; Epic D, after D4) |
-| Version on release | app and chart minor bumps, assigned at the implementing PR |
+| Version on release | app 1.20.0, chart 0.59.22 |
 | Issue | [#244](https://github.com/ephico2real2/group-sync-dashboard/issues/244) |
 | Status | merged |
 | Source | Written by the implementer from #244 and its comments, measured on this machine against main `268ea63` (application 1.6.0). No cluster access. |
@@ -78,6 +78,15 @@ index row and the tests that hold the document; it applies no block.
   it is not in this spec. The httpx premise was verified here:
   `gsd/config.py#ClusterConfig.verify` ends with `_trusted_ca_context() or True`, and httpx
   0.28.1 turns `True` into certifi unless `SSL_CERT_FILE` or `SSL_CERT_DIR` is set.
+- **Phase 2 review (OB2, 2026-09-29, PR #489, head `e0b10db`).** The blocks reproduce the head exactly. Two
+  corrections, each a block here: (1) `ca.py#store_certs` keeps the verifier's store per identity (each mounted
+  file's inode, mtime_ns and size, `SSL_CERT_FILE`, `SSL_CERT_DIR`, certifi's path) — building the context cost
+  2.4–3.7 ms and the API built it twice per live `trusted-bundle` cluster per read, so ten such clusters cost a
+  read 53 ms bare and 83 ms with a mounted 128-block bundle against 0.8 ms on main; 2.0 and 3.1 ms after;
+  (2) the writer's base64 step decodes with `errors="replace"`, so a paste that is not UTF-8 keeps #466's
+  sentence (`… does not decode to a PEM bundle that loads: UnicodeDecodeError`) instead of `tls.caData must be
+  a base64 PEM bundle`, and carries the block that decoded. Added: a poller appear/clear test (§3.3 had none),
+  and the release fields (app 1.20.0, chart 0.59.22, the CHANGELOG bullet), which the head did not carry.
 
 ## 1. The point, in one table
 
@@ -412,6 +421,9 @@ phase 2. An anchor check is not behavioural evidence.**
 | the verifier's store is decoded once per certificate | `test_ca_visibility.py::test_the_trust_store_is_decoded_once_per_certificate` |
 | only a `ca-data-invalid` refusal answers with the certificates | `test_ca_visibility.py::test_only_a_ca_data_invalid_refusal_carries_the_certificates` |
 | a non-UTF-8 comment does not hide a bundle the verifier loads | `test_ca_visibility.py::test_a_non_utf8_comment_does_not_hide_a_bundle_the_verifier_loads` |
+| the verifier's store context is built once until the store changes | `test_ca_visibility.py::test_the_trust_store_context_is_built_once_until_the_store_changes` |
+| a paste that is not UTF-8 keeps the parser's sentence and carries what decoded | `test_ca_visibility.py::test_a_paste_that_is_not_utf8_keeps_the_parsers_sentence_and_carries_what_decoded` |
+| the poller announces a CA warning once on appear and once on clear | `test_ca_visibility.py::test_the_poller_announces_a_ca_warning_once_when_it_appears_and_once_when_it_clears` |
 | the Test panel paints the certificates; an object refusal reads as text | `test_ui.py::test_the_test_result_paints_the_certificates_and_a_refusal_object_reads_as_text` |
 | card shows action and store per mode | `test_ui.py::test_a_verify_failure_shows_the_store_and_the_fix` |
 | card lists a pasted CA | `test_ui.py::test_a_cadata_card_lists_subject_and_expiry` |
@@ -608,6 +620,43 @@ def trusted_paths() -> list[str]:
     return paths
 
 
+_STORE_CACHE: dict[tuple, list[dict]] = {}
+
+
+def store_certs(paths: list[str]) -> list[dict]:
+    """The roots a `trusted-bundle` cluster is verified against, decoded once per store: every mounted
+    path over OpenSSL's default store (config._trusted_ca_context), or, with none mounted, httpx's own
+    default (certifi's bundle unless SSL_CERT_FILE or SSL_CERT_DIR is set). Building either context
+    costs 2.4-3.7 ms (measured, OpenSSL 3.6.4) and the API built it twice per live cluster per read:
+    ten such clusters cost a read 53 ms bare and 83 ms with a mounted bundle, against 0.8 ms before
+    #244. The key is everything that can change the store — each file's (inode, mtime_ns, size), the
+    two OpenSSL variables and certifi's path — so a bundle kubelet swaps is a new store. One entry:
+    the previous store is never asked for again. Callers copy (annotate), never mutate."""
+    import certifi
+    identity = []
+    for path in paths:
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        identity.append((path, st.st_ino, st.st_mtime_ns, st.st_size))
+    key = (tuple(identity), os.environ.get("SSL_CERT_FILE"), os.environ.get("SSL_CERT_DIR"), certifi.where())
+    hit = _STORE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    context = ssl.create_default_context() if paths else httpx.create_ssl_context()
+    by_digest = {}
+    for der in context.get_ca_certs(binary_form=True):
+        cert = _decode_der(der)
+        if cert:
+            by_digest[cert["sha256"]] = cert
+    for cert in summarise_paths(paths):
+        by_digest[cert["sha256"]] = cert
+    _STORE_CACHE.clear()
+    _STORE_CACHE[key] = list(by_digest.values())
+    return _STORE_CACHE[key]
+
+
 def match_enterprise(cert: dict, sha256: str, subject: str) -> bool:
     want = normalise_sha256(sha256)
     if want:
@@ -699,16 +748,7 @@ def summarise_cluster(cluster: ClusterConfig, settings: Settings,
         # over OpenSSL's default store (config._trusted_ca_context), or, with none mounted, `True`,
         # which httpx turns into its own default: certifi's bundle unless SSL_CERT_FILE or
         # SSL_CERT_DIR is set. Count and pin against that store, each root fingerprinted from its DER.
-        paths = trusted_paths()
-        context = ssl.create_default_context() if paths else httpx.create_ssl_context()
-        by_digest = {}
-        for der in context.get_ca_certs(binary_form=True):
-            cert = _decode_der(der)
-            if cert:
-                by_digest[cert["sha256"]] = cert
-        for cert in summarise_paths(paths):
-            by_digest[cert["sha256"]] = cert
-        certs = list(by_digest.values())
+        certs = store_certs(trusted_paths())
     shown = annotate(certs, settings, now)
     pinned = bool(settings.enterprise_ca_sha256 or settings.enterprise_ca_subject)
     enterprise = any(c["enterpriseRoot"] for c in shown) if pinned else None
@@ -889,8 +929,10 @@ def _ca_expiry_days(raw: dict) -> int:
         if not req.ca_data:
             raise WriteRefused("ca-data-invalid", "tls.mode caData needs tls.caData (a base64 PEM bundle)")
         try:
-            pem = base64.b64decode(req.ca_data, validate=True).decode("utf-8")
-        except (binascii.Error, ValueError, UnicodeDecodeError):
+            # Read like summarise_file reads a bundle: the blocks are ASCII, and what lies between them is
+            # the parser's to refuse (#466's sentence names the cause), not this base64 check's.
+            pem = base64.b64decode(req.ca_data, validate=True).decode("utf-8", errors="replace")
+        except (binascii.Error, ValueError):
             raise WriteRefused("ca-data-invalid", "tls.caData must be a base64 PEM bundle") from None
         from .ca import summarise_pem
         summary = summarise_pem(pem)
@@ -1680,4 +1722,91 @@ def test_a_non_utf8_comment_does_not_hide_a_bundle_the_verifier_loads(tmp_path):
     trust = summarise_cluster(cluster, settings)
     assert trust["count"] == 1 and trust["enterpriseRoot"] is True
     assert ca_warnings([cluster], settings) == []
+
+
+def test_the_trust_store_context_is_built_once_until_the_store_changes(tmp_path, monkeypatch):
+    """Not asked (OB2, #489): `_decode_der` caches each root's decode, but every summary of a trusted-bundle
+    cluster still built the verifier's context — 2.4-3.7 ms (measured, OpenSSL 3.6.4), twice per live cluster
+    per read: ten such clusters cost GET /api/clusterconfigs 53 ms bare and 83 ms with a mounted 128-block
+    bundle, against 0.8 ms on main. The store's list is kept per identity — each mounted file's (inode,
+    mtime_ns, size), SSL_CERT_FILE, SSL_CERT_DIR and certifi's path — and a swapped bundle is a new store."""
+    import gsd.clusterconfig.ca as ca
+    monkeypatch.setattr(ca, "_STORE_CACHE", {}, raising=False)
+    built = []
+    real_ssl, real_httpx = ca.ssl.create_default_context, ca.httpx.create_ssl_context
+
+    def counted(*a, **k):
+        if "cadata" not in k:   # decode_one builds a context per block; only the store's build counts
+            built.append("store")
+        return real_ssl(*a, **k)
+
+    monkeypatch.setattr(ca.ssl, "create_default_context", counted)
+    monkeypatch.setattr(ca.httpx, "create_ssl_context", lambda *a, **k: built.append("store") or real_httpx(*a, **k))
+    monkeypatch.setenv("SSL_CERT_FILE", str(_cert(tmp_path, "system", 365)))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "absent"))
+    mounted = _cert(tmp_path, "mounted", 365)
+    monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(mounted))
+    cluster = ClusterConfig("east", "https://unused.invalid")
+    first = summarise_cluster(cluster, Settings())
+    assert first["count"] == 2 and built == ["store"]
+    assert summarise_cluster(cluster, Settings()) == first
+    assert built == ["store"], "a second summary of an unchanged store builds no context"
+    replacement = _cert(tmp_path, "mounted-2", 365).read_text()
+    mounted.write_text(replacement)
+    os.utime(mounted, ns=(2_000_000_000, 2_000_000_000))
+    pinned = Settings(enterprise_ca_sha256=sha256_of_pem(replacement))
+    assert summarise_cluster(cluster, pinned)["enterpriseRoot"] is True
+    assert built == ["store", "store"], "a swapped bundle is a new store"
+
+
+def test_a_paste_that_is_not_utf8_keeps_the_parsers_sentence_and_carries_what_decoded(tmp_path):
+    """Not asked (OB2, #489): #466 refuses a caData that is not UTF-8 with the cause in the sentence
+    (`… does not decode to a PEM bundle that loads: UnicodeDecodeError`). The writer's own decode answered
+    `tls.caData must be a base64 PEM bundle` for the same paste — which is base64 — and carried no
+    certificates. The summary reads the paste as summarise_file reads a bundle; the parser keeps its word."""
+    good = _cert(tmp_path, "good", 365).read_text()
+    raw = good.encode() + "# Société Générale\n".encode("latin-1")
+    req = CreateRequest(name="west", server="https://api.west.example:6443",
+                        credential_kind="bearerToken", token="t" * 20, tls_mode="caData",
+                        ca_data=base64.b64encode(raw).decode())
+    try:
+        validate(req, "ns", host_name="host", taken={})
+    except WriteRefused as exc:
+        assert exc.code == "ca-data-invalid"
+        assert exc.detail == "tlsClientConfig.caData does not decode to a PEM bundle that loads: UnicodeDecodeError"
+        assert [c["subject"] for c in exc.certificates] == ["CN=good"]
+    else:
+        raise AssertionError("expected WriteRefused")
+
+
+def test_the_poller_announces_a_ca_warning_once_when_it_appears_and_once_when_it_clears(tmp_path, caplog):
+    """Not asked (OB2, #489), coverage: §3.3 says the poller logs a CA warning on appear and on clear the way it
+    does for shared-api-url, and no test held it. One WARNING when a 10-day CA appears, nothing while it
+    stands, one INFO when a 365-day CA replaces it."""
+    from gsd.clusterconfig import parse_secret
+    from test_clusterconfig import _secret
+
+    def east(days, cn):
+        pem = _cert(tmp_path, cn, days).read_text()
+        cfg = {"bearerToken": "t" * 20, "tlsClientConfig": {"insecure": False,
+               "caData": base64.b64encode(pem.encode()).decode()}}
+        return parse_secret(_secret(config=cfg), host_name="crc-local")
+
+    db = str(tmp_path / "p.db")
+    settings = Settings(clusters=[], db_path=db, oauth_proxy_enabled=True)
+    poller = Poller(Store(db), settings)
+    settings.cluster_registry.replace([east(10, "soon-root")], [], at="now")
+
+    def said():
+        return [r for r in caplog.records if r.getMessage().startswith("ca-expiring")]
+
+    with caplog.at_level(logging.INFO, logger="gsd.clusterconfig"):
+        poller._announce_shared_api_urls()
+        assert len(said()) == 1 and said()[0].levelno == logging.WARNING
+        assert "state=appeared" in said()[0].getMessage() and "soon-root" in said()[0].getMessage()
+        poller._announce_shared_api_urls()
+        assert len(said()) == 1, "a standing warning speaks once"
+        settings.cluster_registry.replace([east(365, "fresh-root")], [], at="now")
+        poller._announce_shared_api_urls()
+    assert len(said()) == 2 and said()[1].levelno == logging.INFO and "state=cleared" in said()[1].getMessage()
 ```

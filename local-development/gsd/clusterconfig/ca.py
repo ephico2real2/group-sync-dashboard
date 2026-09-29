@@ -168,6 +168,43 @@ def trusted_paths() -> list[str]:
     return paths
 
 
+_STORE_CACHE: dict[tuple, list[dict]] = {}
+
+
+def store_certs(paths: list[str]) -> list[dict]:
+    """The roots a `trusted-bundle` cluster is verified against, decoded once per store: every mounted
+    path over OpenSSL's default store (config._trusted_ca_context), or, with none mounted, httpx's own
+    default (certifi's bundle unless SSL_CERT_FILE or SSL_CERT_DIR is set). Building either context
+    costs 2.4-3.7 ms (measured, OpenSSL 3.6.4) and the API built it twice per live cluster per read:
+    ten such clusters cost a read 53 ms bare and 83 ms with a mounted bundle, against 0.8 ms before
+    #244. The key is everything that can change the store — each file's (inode, mtime_ns, size), the
+    two OpenSSL variables and certifi's path — so a bundle kubelet swaps is a new store. One entry:
+    the previous store is never asked for again. Callers copy (annotate), never mutate."""
+    import certifi
+    identity = []
+    for path in paths:
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        identity.append((path, st.st_ino, st.st_mtime_ns, st.st_size))
+    key = (tuple(identity), os.environ.get("SSL_CERT_FILE"), os.environ.get("SSL_CERT_DIR"), certifi.where())
+    hit = _STORE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    context = ssl.create_default_context() if paths else httpx.create_ssl_context()
+    by_digest = {}
+    for der in context.get_ca_certs(binary_form=True):
+        cert = _decode_der(der)
+        if cert:
+            by_digest[cert["sha256"]] = cert
+    for cert in summarise_paths(paths):
+        by_digest[cert["sha256"]] = cert
+    _STORE_CACHE.clear()
+    _STORE_CACHE[key] = list(by_digest.values())
+    return _STORE_CACHE[key]
+
+
 def match_enterprise(cert: dict, sha256: str, subject: str) -> bool:
     want = normalise_sha256(sha256)
     if want:
@@ -259,16 +296,7 @@ def summarise_cluster(cluster: ClusterConfig, settings: Settings,
         # over OpenSSL's default store (config._trusted_ca_context), or, with none mounted, `True`,
         # which httpx turns into its own default: certifi's bundle unless SSL_CERT_FILE or
         # SSL_CERT_DIR is set. Count and pin against that store, each root fingerprinted from its DER.
-        paths = trusted_paths()
-        context = ssl.create_default_context() if paths else httpx.create_ssl_context()
-        by_digest = {}
-        for der in context.get_ca_certs(binary_form=True):
-            cert = _decode_der(der)
-            if cert:
-                by_digest[cert["sha256"]] = cert
-        for cert in summarise_paths(paths):
-            by_digest[cert["sha256"]] = cert
-        certs = list(by_digest.values())
+        certs = store_certs(trusted_paths())
     shown = annotate(certs, settings, now)
     pinned = bool(settings.enterprise_ca_sha256 or settings.enterprise_ca_subject)
     enterprise = any(c["enterpriseRoot"] for c in shown) if pinned else None

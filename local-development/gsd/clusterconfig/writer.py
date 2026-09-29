@@ -220,8 +220,10 @@ def validate(req: CreateRequest, namespace: str, *, host_name: str | None,
         if not req.ca_data:
             raise WriteRefused("ca-data-invalid", "tls.mode caData needs tls.caData (a base64 PEM bundle)")
         try:
-            pem = base64.b64decode(req.ca_data, validate=True).decode("utf-8")
-        except (binascii.Error, ValueError, UnicodeDecodeError):
+            # Read like summarise_file reads a bundle: the blocks are ASCII, and what lies between them is
+            # the parser's to refuse (#466's sentence names the cause), not this base64 check's.
+            pem = base64.b64decode(req.ca_data, validate=True).decode("utf-8", errors="replace")
+        except (binascii.Error, ValueError):
             raise WriteRefused("ca-data-invalid", "tls.caData must be a base64 PEM bundle") from None
         from .ca import summarise_pem
         summary = summarise_pem(pem)

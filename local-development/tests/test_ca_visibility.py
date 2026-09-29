@@ -439,3 +439,90 @@ def test_a_non_utf8_comment_does_not_hide_a_bundle_the_verifier_loads(tmp_path):
     trust = summarise_cluster(cluster, settings)
     assert trust["count"] == 1 and trust["enterpriseRoot"] is True
     assert ca_warnings([cluster], settings) == []
+
+
+def test_the_trust_store_context_is_built_once_until_the_store_changes(tmp_path, monkeypatch):
+    """Not asked (OB2, #489): `_decode_der` caches each root's decode, but every summary of a trusted-bundle
+    cluster still built the verifier's context — 2.4-3.7 ms (measured, OpenSSL 3.6.4), twice per live cluster
+    per read: ten such clusters cost GET /api/clusterconfigs 53 ms bare and 83 ms with a mounted 128-block
+    bundle, against 0.8 ms on main. The store's list is kept per identity — each mounted file's (inode,
+    mtime_ns, size), SSL_CERT_FILE, SSL_CERT_DIR and certifi's path — and a swapped bundle is a new store."""
+    import gsd.clusterconfig.ca as ca
+    monkeypatch.setattr(ca, "_STORE_CACHE", {}, raising=False)
+    built = []
+    real_ssl, real_httpx = ca.ssl.create_default_context, ca.httpx.create_ssl_context
+
+    def counted(*a, **k):
+        if "cadata" not in k:   # decode_one builds a context per block; only the store's build counts
+            built.append("store")
+        return real_ssl(*a, **k)
+
+    monkeypatch.setattr(ca.ssl, "create_default_context", counted)
+    monkeypatch.setattr(ca.httpx, "create_ssl_context", lambda *a, **k: built.append("store") or real_httpx(*a, **k))
+    monkeypatch.setenv("SSL_CERT_FILE", str(_cert(tmp_path, "system", 365)))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path / "absent"))
+    mounted = _cert(tmp_path, "mounted", 365)
+    monkeypatch.setenv("GSD_TRUSTED_CA_FILE", str(mounted))
+    cluster = ClusterConfig("east", "https://unused.invalid")
+    first = summarise_cluster(cluster, Settings())
+    assert first["count"] == 2 and built == ["store"]
+    assert summarise_cluster(cluster, Settings()) == first
+    assert built == ["store"], "a second summary of an unchanged store builds no context"
+    replacement = _cert(tmp_path, "mounted-2", 365).read_text()
+    mounted.write_text(replacement)
+    os.utime(mounted, ns=(2_000_000_000, 2_000_000_000))
+    pinned = Settings(enterprise_ca_sha256=sha256_of_pem(replacement))
+    assert summarise_cluster(cluster, pinned)["enterpriseRoot"] is True
+    assert built == ["store", "store"], "a swapped bundle is a new store"
+
+
+def test_a_paste_that_is_not_utf8_keeps_the_parsers_sentence_and_carries_what_decoded(tmp_path):
+    """Not asked (OB2, #489): #466 refuses a caData that is not UTF-8 with the cause in the sentence
+    (`… does not decode to a PEM bundle that loads: UnicodeDecodeError`). The writer's own decode answered
+    `tls.caData must be a base64 PEM bundle` for the same paste — which is base64 — and carried no
+    certificates. The summary reads the paste as summarise_file reads a bundle; the parser keeps its word."""
+    good = _cert(tmp_path, "good", 365).read_text()
+    raw = good.encode() + "# Société Générale\n".encode("latin-1")
+    req = CreateRequest(name="west", server="https://api.west.example:6443",
+                        credential_kind="bearerToken", token="t" * 20, tls_mode="caData",
+                        ca_data=base64.b64encode(raw).decode())
+    try:
+        validate(req, "ns", host_name="host", taken={})
+    except WriteRefused as exc:
+        assert exc.code == "ca-data-invalid"
+        assert exc.detail == "tlsClientConfig.caData does not decode to a PEM bundle that loads: UnicodeDecodeError"
+        assert [c["subject"] for c in exc.certificates] == ["CN=good"]
+    else:
+        raise AssertionError("expected WriteRefused")
+
+
+def test_the_poller_announces_a_ca_warning_once_when_it_appears_and_once_when_it_clears(tmp_path, caplog):
+    """Not asked (OB2, #489), coverage: §3.3 says the poller logs a CA warning on appear and on clear the way it
+    does for shared-api-url, and no test held it. One WARNING when a 10-day CA appears, nothing while it
+    stands, one INFO when a 365-day CA replaces it."""
+    from gsd.clusterconfig import parse_secret
+    from test_clusterconfig import _secret
+
+    def east(days, cn):
+        pem = _cert(tmp_path, cn, days).read_text()
+        cfg = {"bearerToken": "t" * 20, "tlsClientConfig": {"insecure": False,
+               "caData": base64.b64encode(pem.encode()).decode()}}
+        return parse_secret(_secret(config=cfg), host_name="crc-local")
+
+    db = str(tmp_path / "p.db")
+    settings = Settings(clusters=[], db_path=db, oauth_proxy_enabled=True)
+    poller = Poller(Store(db), settings)
+    settings.cluster_registry.replace([east(10, "soon-root")], [], at="now")
+
+    def said():
+        return [r for r in caplog.records if r.getMessage().startswith("ca-expiring")]
+
+    with caplog.at_level(logging.INFO, logger="gsd.clusterconfig"):
+        poller._announce_shared_api_urls()
+        assert len(said()) == 1 and said()[0].levelno == logging.WARNING
+        assert "state=appeared" in said()[0].getMessage() and "soon-root" in said()[0].getMessage()
+        poller._announce_shared_api_urls()
+        assert len(said()) == 1, "a standing warning speaks once"
+        settings.cluster_registry.replace([east(365, "fresh-root")], [], at="now")
+        poller._announce_shared_api_urls()
+    assert len(said()) == 2 and said()[1].levelno == logging.INFO and "state=cleared" in said()[1].getMessage()
