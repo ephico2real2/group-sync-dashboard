@@ -525,6 +525,19 @@ If that fixed mark itself contains a secret, the quoted field is omitted in both
 the existing outcome and failure sentence are still reported.
 ```
 
+- **Review correction to phase 2 (C2).** The quoted-field renderer `_quoted` omits a replaced field when
+  `_scrub(QUOTED_MARK, secrets)` would change the mark itself. `_whole` still returns the specified fixed mark;
+  `_quoted` applies the collision fallback before the answer or emitter receives it. This supersedes the notes'
+  unconditional mark claims, the `a` test's original expected mark, and the assertion that protecting the log needs
+  a shared-emitter change. For example, an echoed `eden` otherwise becomes `cr<redacted>tial` inside the logged mark,
+  while the answer's mark contains the literal password. An echoed `contained` demonstrates the same defect without
+  an existing span in `phase=credential`. Omitting that quoted field preserves the existing failure sentence and
+  introduces no refusal, login step, or new precondition. The answer also checks the composed sentence plus mark:
+  a password spanning their join causes the quoted suffix to be omitted, instead of printing or cutting it.
+  The 406/332/74/29 figures above describe PR head 30da871;
+  they are a bounded measurement of its fifteen paths, not proof of safety for other remote texts. The added tests
+  exercise both the failure and review renderers. The original spec body remains unchanged.
+
 - **Phase 1's notes, as #479 merged them, follow.** Where they describe the refusal, `known_text`, `WORDS` or `SAYS`, the
   notes above supersede them.
 - **The decision is rule (b), with rule (a) kept for the one kind of text (b) cannot see.** The issue asked the spec
@@ -563,19 +576,6 @@ the existing outcome and failure sentence are still reported.
   `fleet-lease-absent` line in `claim()` and in `restore()`, and the copy's `fleet-state-unavailable` in `_keep()`. With
   it applied, `event` and `failure` have 45 call sites in 6 consuming modules. §2.3's 42 is the count at `ece9298`, and
   `tests/test_scrub_span_spec.py#test_emit_callsite_measurement` holds this document to the live count.
-
-- **Review correction to phase 2 (C2).** The quoted-field renderer `_quoted` omits a replaced field when
-  `_scrub(QUOTED_MARK, secrets)` would change the mark itself. `_whole` still returns the specified fixed mark;
-  `_quoted` applies the collision fallback before the answer or emitter receives it. This supersedes the notes'
-  unconditional mark claims, the `a` test's original expected mark, and the assertion that protecting the log needs
-  a shared-emitter change. For example, an echoed `eden` otherwise becomes `cr<redacted>tial` inside the logged mark,
-  while the answer's mark contains the literal password. An echoed `contained` demonstrates the same defect without
-  an existing span in `phase=credential`. Omitting that quoted field preserves the existing failure sentence and
-  introduces no refusal, login step, or new precondition. The answer also checks the composed sentence plus mark:
-  a password spanning their join causes the quoted suffix to be omitted, instead of printing or cutting it.
-  The 406/332/74/29 figures above describe PR head 30da871;
-  they are a bounded measurement of its fifteen paths, not proof of safety for other remote texts. The added tests
-  exercise both the failure and review renderers. The original spec body remains unchanged.
 
 ## 1. The point, in one table
 
