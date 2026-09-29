@@ -5,7 +5,7 @@
 | Programme | Epic C (#383), keep the shared fleet login account safe — a follow-up to SPEC_S4c (#285), whose gate and daily ping live on the fleet account's Lease |
 | Batch | S — cluster configuration |
 | Release | — (post-programme; S4 step C, a follow-up) |
-| Version on release | app minor bump and a chart bump, assigned at the implementing PR |
+| Version on release | app 1.18.0, chart 0.59.20 |
 | Issue | [#481](https://github.com/ephico2real2/group-sync-dashboard/issues/481) |
 | Status | merged |
 | Source | Written by the implementer (phase 2: the spec; no production code) from #481 and its comments — the research of 2026-09-29 (phase 1) and the operator's decision of the same day — SPEC_S4c, and the research's prototype of option (c2). Measured on this machine against main `696ddc9` (application 1.17.0, chart 0.59.19) on the fleet suite's own hermetic harness (`local-development/tests/test_fleet_lifecycle.py`: a fake OAuth server that counts authorize requests, a fake API server for the Lease). The lab was read, never written, and no login was made. §6's blocks were cut from a copy of `696ddc9` with the design implemented, and applied back to a clean copy for the proof in §5. |
