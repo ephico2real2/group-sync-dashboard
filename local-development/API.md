@@ -359,6 +359,8 @@ password, stripped and casefolded, is the username or lies inside it; #447). A s
 `cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
 the person and the account and carries no credential. A failure's evidence and the remote's reason, which Rejoin only
 quotes, read `<redacted: the text contained the credential>` whole when a secret occurs in them (issue #465).
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
 
 ## GroupSync CRs
 

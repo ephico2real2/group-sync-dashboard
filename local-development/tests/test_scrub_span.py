@@ -13,6 +13,7 @@ import logging
 import httpx
 import pytest
 
+from gsd.rejoin import QUOTED_MARK, _whole, _spellings
 from gsd.fleetlookup import INVALID_SINCE_LABEL
 from test_cluster_rejoin import ADMIN_REASON, _rejoin, _writes, presented, remote, review, rig  # noqa: F401 - fixtures
 from test_fleet_login import login_302, refused_401
@@ -65,7 +66,7 @@ def test_the_issues_password_a_leaves_no_span_in_what_rejoin_quotes(rig, caplog,
     """The issue's second case: password `a`, username `bob`, cluster `east`. On main D8's reason read
     `RBAC: <redacted>llowed by ClusterRoleBinding 'cluster-<redacted>dmins' …`, and a refused login's evidence
     `401 Un<red<redacted>cted>uthorized … B<red<red<redacted>cted>cted>sic …` in the answer. Each is the whole mark
-    now, in the answer and in Rejoin's line; the mark holds `a` and is not cut. Rejoin's own sentence still loses its
+    now; because the mark itself contains `a`, that quoted field is omitted. Rejoin's own sentence still loses its
     `a`s to the scrub: the part of the leak the operator accepted with part (1)."""
     c, app, settings, host, remote = rig
     if outcome == "login-refused":
@@ -77,11 +78,11 @@ def test_the_issues_password_a_leaves_no_span_in_what_rejoin_quotes(rig, caplog,
     ours = [m for m in caplog.messages if m.startswith("cluster-rejoin")]
     if outcome == "rejoined":
         line = next(m for m in ours if m.startswith("cluster-rejoin-review "))
-        assert line.endswith(f'reason="{MARK}"'), line
+        assert ' reason=' not in line, line
     else:
-        assert r.json()["message"].endswith(f"({MARK})"), r.text
+        assert MARK not in r.json()["message"], r.text
         line = next(m for m in ours if m.startswith("cluster-rejoin-failed "))
-        assert line.endswith(f'detail="{MARK}"'), line
+        assert ' detail=' not in line, line
     assert "<red<" not in r.text + "\n".join(ours)
 
 
@@ -139,3 +140,55 @@ def test_evidence_that_holds_no_secret_is_quoted_as_it_came(rig, caplog):
     failed = next(m for m in caplog.messages if m.startswith("cluster-rejoin-failed "))
     assert '(401 Unauthorized from ' in refused.json()["message"] and 'detail="401 Unauthorized from ' in failed
     assert MARK not in allowed.text + refused.text + caplog.text
+
+
+# Regression: a fixed mark must not introduce a secret or expose it through a second scrub.
+
+@pytest.mark.parametrize('text,secrets,expected', [
+    ('unchanged remote reason', ['pW-943'], 'unchanged remote reason'),
+    ('', ['pW-943'], ''),
+    ('server echoed pW-943', ['pW-943'], QUOTED_MARK),
+    ('echo token-T54', ['pW-943','token-T54'], QUOTED_MARK),
+    ('earlier <redacted> remainder', ['pW-943'], QUOTED_MARK),
+    ('earlier <redacted: marker', [], QUOTED_MARK),
+    ('not <Redacted>', ['pW-943'], 'not <Redacted>'),
+])
+def test_whole_contract(text,secrets,expected):
+    assert _whole(text,secrets)==expected
+
+@pytest.mark.parametrize('password', ['a','contained','eden','credential','the text'])
+def test_whole_escaped_forms(password):
+    for form in {password} | _spellings(password):
+        assert _whole('remote: '+form, [password]) == QUOTED_MARK
+
+@pytest.mark.parametrize('path', ['failed','review'])
+@pytest.mark.parametrize('password', ['contained','eden'])
+def test_colliding_quote_does_not_print_or_cut_the_password(rig,caplog,path,password):
+    c,app,settings,host,remote=rig
+    if path=='failed':
+        remote.answers=[httpx.Response(500,text=f'echo {password}')]
+    else:
+        remote.review=review(reason=f'echo {password}')
+    with caplog.at_level(logging.DEBUG):
+        r=_rejoin(c,username='bob',password=password)
+    assert r.status_code==200
+    assert r.json()['outcome']==('login-failed' if path=='failed' else 'rejoined')
+    assert presented(remote)==[('bob',password)]
+    line=next(m for m in caplog.messages if m.startswith('cluster-rejoin-'+('failed ' if path=='failed' else 'review ')))
+    print('\nPASSWORD',password,'PATH',path,'\nANSWER',r.json()['message'],'\nLINE',line)
+    # The sentence/phase's existing credential span for eden is out of scope.
+    field='detail' if path=='failed' else 'reason'
+    assert f' {field}=' not in line, line
+    if path=='failed':
+        assert password not in r.json()['message'], r.json()['message']
+        assert QUOTED_MARK not in r.json()['message']
+
+
+def test_appending_marker_does_not_reintroduce_password_across_join(rig):
+    c, app, settings, host, remote = rig
+    password = 'again (<redacted:'
+    remote.answers = [httpx.Response(500, text='echo ' + password)]
+    r = _rejoin(c, username='bob', password=password)
+    assert r.status_code == 200 and r.json()['outcome'] == 'login-failed'
+    assert len(remote.authorize) == 1
+    assert password not in r.json()['message'], r.json()['message']

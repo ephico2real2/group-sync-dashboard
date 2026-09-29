@@ -167,6 +167,12 @@ def _whole(text: str, secrets) -> str:
     return QUOTED_MARK if "<redacted" in text or _scrub(text, secrets) != text else text
 
 
+def _quoted(text: str, secrets) -> str:
+    """Keep whole quoted text, omitting a mark that would itself contain a secret or be cut by the emitter."""
+    text = _whole(text, secrets)
+    return "" if text == QUOTED_MARK and _scrub(text, secrets) != text else text
+
+
 ```
 
 **C** — `gsd/rejoin.py`: `refused()`: the evidence through `_whole`, and the mark not scrubbed again in the answer.
@@ -189,11 +195,15 @@ def _whole(text: str, secrets) -> str:
     def refused(code: str, said: str, detail: str | None = None, *, phase: str = "credential") -> dict:
         """One failure line and the answer: the person's sentence, then the evidence (`_whole`); both scrubbed."""
         said = f"{said}{_logged_out(login, cluster)}"
-        detail = _whole(detail, secrets) if detail else None   # any length: the emit helper skips values under four
+        detail = (_quoted(detail, secrets) or None) if detail else None   # any length: the emit helper skips values under four
         failure(log, "cluster-rejoin-failed", phase=phase, outcome=code, **who, action=said, detail=detail,
                 secrets=secrets)
-        if detail == QUOTED_MARK:   # not scrubbed again: a cut into the mark's own words would spell the password
-            return {"outcome": code, "message": f"{_scrub(said, secrets)} ({detail})", "at": now_iso()}
+        if detail == QUOTED_MARK:   # omit a collision instead of cutting a span into the fixed mark
+            clean = _scrub(said, secrets)
+            message = f"{clean} ({detail})"
+            # The password can also straddle the sentence and the newly appended mark.
+            return {"outcome": code, "message": clean if _scrub(message, secrets) != message else message,
+                    "at": now_iso()}
         return {"outcome": code, "message": _scrub(f"{said} ({detail})" if detail else said, secrets), "at": now_iso()}
 
 ```
@@ -212,7 +222,7 @@ def _whole(text: str, secrets) -> str:
 ```python
             else:
                 event(log, logging.INFO, "cluster-rejoin-review", **who, question=asked,
-                      allowed="true" if allowed else "false", reason=_whole(reason, secrets) or None, secrets=secrets)
+                      allowed="true" if allowed else "false", reason=_quoted(reason, secrets) or None, secrets=secrets)
                 if not allowed:
                     stopped = (NOT_CLUSTER_ADMIN, f"{cluster.name} says {username} may not {asked} there, so nothing "
 ```
@@ -255,6 +265,7 @@ import logging
 import httpx
 import pytest
 
+from gsd.rejoin import QUOTED_MARK, _whole, _spellings
 from gsd.fleetlookup import INVALID_SINCE_LABEL
 from test_cluster_rejoin import ADMIN_REASON, _rejoin, _writes, presented, remote, review, rig  # noqa: F401 - fixtures
 from test_fleet_login import login_302, refused_401
@@ -307,7 +318,7 @@ def test_the_issues_password_a_leaves_no_span_in_what_rejoin_quotes(rig, caplog,
     """The issue's second case: password `a`, username `bob`, cluster `east`. On main D8's reason read
     `RBAC: <redacted>llowed by ClusterRoleBinding 'cluster-<redacted>dmins' …`, and a refused login's evidence
     `401 Un<red<redacted>cted>uthorized … B<red<red<redacted>cted>cted>sic …` in the answer. Each is the whole mark
-    now, in the answer and in Rejoin's line; the mark holds `a` and is not cut. Rejoin's own sentence still loses its
+    now; because the mark itself contains `a`, that quoted field is omitted. Rejoin's own sentence still loses its
     `a`s to the scrub: the part of the leak the operator accepted with part (1)."""
     c, app, settings, host, remote = rig
     if outcome == "login-refused":
@@ -319,11 +330,11 @@ def test_the_issues_password_a_leaves_no_span_in_what_rejoin_quotes(rig, caplog,
     ours = [m for m in caplog.messages if m.startswith("cluster-rejoin")]
     if outcome == "rejoined":
         line = next(m for m in ours if m.startswith("cluster-rejoin-review "))
-        assert line.endswith(f'reason="{MARK}"'), line
+        assert ' reason=' not in line, line
     else:
-        assert r.json()["message"].endswith(f"({MARK})"), r.text
+        assert MARK not in r.json()["message"], r.text
         line = next(m for m in ours if m.startswith("cluster-rejoin-failed "))
-        assert line.endswith(f'detail="{MARK}"'), line
+        assert ' detail=' not in line, line
     assert "<red<" not in r.text + "\n".join(ours)
 
 
@@ -381,6 +392,58 @@ def test_evidence_that_holds_no_secret_is_quoted_as_it_came(rig, caplog):
     failed = next(m for m in caplog.messages if m.startswith("cluster-rejoin-failed "))
     assert '(401 Unauthorized from ' in refused.json()["message"] and 'detail="401 Unauthorized from ' in failed
     assert MARK not in allowed.text + refused.text + caplog.text
+
+
+# Regression: a fixed mark must not introduce a secret or expose it through a second scrub.
+
+@pytest.mark.parametrize('text,secrets,expected', [
+    ('unchanged remote reason', ['pW-943'], 'unchanged remote reason'),
+    ('', ['pW-943'], ''),
+    ('server echoed pW-943', ['pW-943'], QUOTED_MARK),
+    ('echo token-T54', ['pW-943','token-T54'], QUOTED_MARK),
+    ('earlier <redacted> remainder', ['pW-943'], QUOTED_MARK),
+    ('earlier <redacted: marker', [], QUOTED_MARK),
+    ('not <Redacted>', ['pW-943'], 'not <Redacted>'),
+])
+def test_whole_contract(text,secrets,expected):
+    assert _whole(text,secrets)==expected
+
+@pytest.mark.parametrize('password', ['a','contained','eden','credential','the text'])
+def test_whole_escaped_forms(password):
+    for form in {password} | _spellings(password):
+        assert _whole('remote: '+form, [password]) == QUOTED_MARK
+
+@pytest.mark.parametrize('path', ['failed','review'])
+@pytest.mark.parametrize('password', ['contained','eden'])
+def test_colliding_quote_does_not_print_or_cut_the_password(rig,caplog,path,password):
+    c,app,settings,host,remote=rig
+    if path=='failed':
+        remote.answers=[httpx.Response(500,text=f'echo {password}')]
+    else:
+        remote.review=review(reason=f'echo {password}')
+    with caplog.at_level(logging.DEBUG):
+        r=_rejoin(c,username='bob',password=password)
+    assert r.status_code==200
+    assert r.json()['outcome']==('login-failed' if path=='failed' else 'rejoined')
+    assert presented(remote)==[('bob',password)]
+    line=next(m for m in caplog.messages if m.startswith('cluster-rejoin-'+('failed ' if path=='failed' else 'review ')))
+    print('\nPASSWORD',password,'PATH',path,'\nANSWER',r.json()['message'],'\nLINE',line)
+    # The sentence/phase's existing credential span for eden is out of scope.
+    field='detail' if path=='failed' else 'reason'
+    assert f' {field}=' not in line, line
+    if path=='failed':
+        assert password not in r.json()['message'], r.json()['message']
+        assert QUOTED_MARK not in r.json()['message']
+
+
+def test_appending_marker_does_not_reintroduce_password_across_join(rig):
+    c, app, settings, host, remote = rig
+    password = 'again (<redacted:'
+    remote.answers = [httpx.Response(500, text='echo ' + password)]
+    r = _rejoin(c, username='bob', password=password)
+    assert r.status_code == 200 and r.json()['outcome'] == 'login-failed'
+    assert len(remote.authorize) == 1
+    assert password not in r.json()['message'], r.json()['message']
 ```
 
 **G** — `local-development/API.md`: #447's code and the mark.
@@ -406,6 +469,8 @@ password, stripped and casefolded, is the username or lies inside it; #447). A s
 `cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
 the person and the account and carries no credential. A failure's evidence and the remote's reason, which Rejoin only
 quotes, read `<redacted: the text contained the credential>` whole when a secret occurs in them (issue #465).
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
 
 ## GroupSync CRs
 ```
@@ -434,6 +499,8 @@ words or names (SPEC_D6's part (1) is not applied, by the operator's decision of
 leaves spans in Rejoin's sentences and lines: `update` in `who may <redacted> clusterrolebindings`, and `a` in
 `Signed in to e<redacted>st <redacted>s bob`. Every spelling above stays scrubbed. The login's own lines, shared with
 the fleet, keep their spans (SPEC_D6 §5).
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
 
 ## 4. The decisions
 ```
@@ -454,6 +521,8 @@ the fleet, keep their spans (SPEC_D6 §5).
   Pressed with the NCSC's 100,000 most common passwords on fifteen paths: 406 left a span on main and 332 do now,
   none that did not before, and Rejoin refuses none that main sends. Every password spelling stays scrubbed; the
   one-login budget, the per-pod credential gate and #447's refusal are unchanged.
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
 ```
 
 - **Phase 1's notes, as #479 merged them, follow.** Where they describe the refusal, `known_text`, `WORDS` or `SAYS`, the
@@ -494,6 +563,19 @@ the fleet, keep their spans (SPEC_D6 §5).
   `fleet-lease-absent` line in `claim()` and in `restore()`, and the copy's `fleet-state-unavailable` in `_keep()`. With
   it applied, `event` and `failure` have 45 call sites in 6 consuming modules. §2.3's 42 is the count at `ece9298`, and
   `tests/test_scrub_span_spec.py#test_emit_callsite_measurement` holds this document to the live count.
+
+- **Review correction to phase 2 (C2).** The quoted-field renderer `_quoted` omits a replaced field when
+  `_scrub(QUOTED_MARK, secrets)` would change the mark itself. `_whole` still returns the specified fixed mark;
+  `_quoted` applies the collision fallback before the answer or emitter receives it. This supersedes the notes'
+  unconditional mark claims, the `a` test's original expected mark, and the assertion that protecting the log needs
+  a shared-emitter change. For example, an echoed `eden` otherwise becomes `cr<redacted>tial` inside the logged mark,
+  while the answer's mark contains the literal password. An echoed `contained` demonstrates the same defect without
+  an existing span in `phase=credential`. Omitting that quoted field preserves the existing failure sentence and
+  introduces no refusal, login step, or new precondition. The answer also checks the composed sentence plus mark:
+  a password spanning their join causes the quoted suffix to be omitted, instead of printing or cutting it.
+  The 406/332/74/29 figures above describe PR head 30da871;
+  they are a bounded measurement of its fifteen paths, not proof of safety for other remote texts. The added tests
+  exercise both the failure and review renderers. The original spec body remains unchanged.
 
 ## 1. The point, in one table
 

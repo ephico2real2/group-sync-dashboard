@@ -404,6 +404,8 @@ words or names (SPEC_D6's part (1) is not applied, by the operator's decision of
 leaves spans in Rejoin's sentences and lines: `update` in `who may <redacted> clusterrolebindings`, and `a` in
 `Signed in to e<redacted>st <redacted>s bob`. Every spelling above stays scrubbed. The login's own lines, shared with
 the fleet, keep their spans (SPEC_D6 §5).
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
 
 ## 4. The decisions
 

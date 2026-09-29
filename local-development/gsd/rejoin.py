@@ -92,6 +92,12 @@ def _whole(text: str, secrets) -> str:
     return QUOTED_MARK if "<redacted" in text or _scrub(text, secrets) != text else text
 
 
+def _quoted(text: str, secrets) -> str:
+    """Keep whole quoted text, omitting a mark that would itself contain a secret or be cut by the emitter."""
+    text = _whole(text, secrets)
+    return "" if text == QUOTED_MARK and _scrub(text, secrets) != text else text
+
+
 class RejoinLogin(FleetLogin):
     """#283's login as the person who pressed Rejoin: the same wire, events and rules, in a person's words."""
 
@@ -237,11 +243,15 @@ def _exchange(cluster: ClusterConfig, settings: Settings, host_client: ClusterCl
     def refused(code: str, said: str, detail: str | None = None, *, phase: str = "credential") -> dict:
         """One failure line and the answer: the person's sentence, then the evidence (`_whole`); both scrubbed."""
         said = f"{said}{_logged_out(login, cluster)}"
-        detail = _whole(detail, secrets) if detail else None   # any length: the emit helper skips values under four
+        detail = (_quoted(detail, secrets) or None) if detail else None   # any length: the emit helper skips values under four
         failure(log, "cluster-rejoin-failed", phase=phase, outcome=code, **who, action=said, detail=detail,
                 secrets=secrets)
-        if detail == QUOTED_MARK:   # not scrubbed again: a cut into the mark's own words would spell the password
-            return {"outcome": code, "message": f"{_scrub(said, secrets)} ({detail})", "at": now_iso()}
+        if detail == QUOTED_MARK:   # omit a collision instead of cutting a span into the fixed mark
+            clean = _scrub(said, secrets)
+            message = f"{clean} ({detail})"
+            # The password can also straddle the sentence and the newly appended mark.
+            return {"outcome": code, "message": clean if _scrub(message, secrets) != message else message,
+                    "at": now_iso()}
         return {"outcome": code, "message": _scrub(f"{said} ({detail})" if detail else said, secrets), "at": now_iso()}
 
     answered = gate.account_refusal(username, password)
@@ -262,7 +272,7 @@ def _exchange(cluster: ClusterConfig, settings: Settings, host_client: ClusterCl
                                           f"so nothing was read or written", f"{exc.outcome}: {exc.message}")
             else:
                 event(log, logging.INFO, "cluster-rejoin-review", **who, question=asked,
-                      allowed="true" if allowed else "false", reason=_whole(reason, secrets) or None, secrets=secrets)
+                      allowed="true" if allowed else "false", reason=_quoted(reason, secrets) or None, secrets=secrets)
                 if not allowed:
                     stopped = (NOT_CLUSTER_ADMIN, f"{cluster.name} says {username} may not {asked} there, so nothing "
                                                   f"was read or written: Rejoin needs a cluster administrator of "
