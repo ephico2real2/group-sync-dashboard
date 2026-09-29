@@ -1,0 +1,39 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-5b765fbccf-7hb5p -c dashboard --timestamps --since-time=2026-09-29T15:29:21Z  (captured 2026-09-29T15:36:59Z)
+# lines in the window: 367
+# cluster-refreshed, fleet-*, cluster-rejoin*, cluster-secret-*, discovery, and every line naming w465 except its poll-cycle timing:
+2026-09-29T15:32:28.860204039Z 2026-09-29 11:32:28,860-0400 WARNING gsd.clusterconfig shared-api-url url=https://api.crc.testing:6443 clusters=shared-qa,shared-rnd,w465 state=appeared cycle=4
+2026-09-29T15:32:28.860938501Z 2026-09-29 11:32:28,860-0400 INFO    gsd.clusterconfig discovery cycle=4 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=w465
+2026-09-29T15:32:28.861218585Z 2026-09-29 11:32:28,861-0400 INFO    gsd.clusterconfig cluster-resolved cycle=4 cluster=w465 source=secret:gsd-cluster-w465 credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host enabled=true
+2026-09-29T15:32:28.863388095Z 2026-09-29 11:32:28,863-0400 INFO    gsd.poller cluster w465: polling started (secret:gsd-cluster-w465)
+2026-09-29T15:32:28.899399592Z 2026-09-29 11:32:28,899-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=w465 source=secret:gsd-cluster-w465 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-29T15:32:28.915426665Z 2026-09-29 11:32:28,915-0400 WARNING gsd.auditlog w465: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-29T15:32:29.037531969Z 2026-09-29 11:32:29,037-0400 WARNING gsd.poller binding refresh for w465 failed: 401 Unauthorized — token invalid or expired (auth_failed) — group data is unaffected
+2026-09-29T15:33:28.882449090Z 2026-09-29 11:33:28,882-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=w465 source=secret:gsd-cluster-w465 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-29T15:33:28.898660664Z 2026-09-29 11:33:28,898-0400 WARNING gsd.auditlog w465: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-29T15:33:40.411690978Z 2026-09-29 11:33:40,411-0400 WARNING gsd.kube w465: visibility tier for 'developer' is indeterminate (auth_failed: 401 Unauthorized — token invalid or expired) — failing closed to the self view for this request
+2026-09-29T15:33:45.363179441Z 2026-09-29 11:33:45,362-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=w465 credential=bearer by=developer outcome=auth_failed
+2026-09-29T15:33:46.279436598Z 2026-09-29 11:33:46,279-0400 WARNING gsd.fleetlogin fleet-login-refused phase=credential outcome=login-refused cluster=w465 account=developer tls=trusted-bundle rejoin_by=developer action="the target refused the password for developer: check the username and password — it is not sent again by this pod while it is the same password, because each refused try counts toward the directory's lockout of the account" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-29T15:33:46.281537441Z 2026-09-29 11:33:46,281-0400 WARNING gsd.rejoin cluster-rejoin-failed phase=credential outcome=login-refused cluster=w465 by=developer account=developer action="w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-29T15:33:49.387214530Z 2026-09-29 11:33:49,386-0400 WARNING gsd.fleetlogin fleet-login-refused phase=credential outcome=login-refused cluster=w465 account=developer tls=trusted-bundle rejoin_by=developer action="the target refused the password for developer: check the username and password — it is not sent again by this pod while it is the same password, because each refused try counts toward the directory's lockout of the account" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-29T15:33:49.388882204Z 2026-09-29 11:33:49,388-0400 WARNING gsd.rejoin cluster-rejoin-failed phase=credential outcome=login-refused cluster=w465 by=developer account=developer action="w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password" detail="401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm='openshift'; body: <empty>"
+2026-09-29T15:34:28.882565665Z 2026-09-29 11:34:28,882-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=w465 source=secret:gsd-cluster-w465 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-29T15:34:28.903127009Z 2026-09-29 11:34:28,902-0400 WARNING gsd.auditlog w465: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-29T15:35:28.882894075Z 2026-09-29 11:35:28,882-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=w465 source=secret:gsd-cluster-w465 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-29T15:35:28.898763897Z 2026-09-29 11:35:28,898-0400 WARNING gsd.auditlog w465: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+2026-09-29T15:36:28.884156531Z 2026-09-29 11:36:28,883-0400 WARNING gsd.poller cluster-unreachable phase=poll outcome=auth_failed cluster=w465 source=secret:gsd-cluster-w465 tls=trusted-bundle credential=bearer action="the token is invalid or expired: rotate it in this cluster's Secret" detail="401 Unauthorized — token invalid or expired"
+2026-09-29T15:36:28.899654268Z 2026-09-29 11:36:28,899-0400 WARNING gsd.auditlog w465: audit-log capture could not list nodes: 401 Unauthorized — token invalid or expired — group data is unaffected
+# 'w465 poll cycle' lines: 5
+# fleet-lookup lines: 0
+# fleet-ping lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 2
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# fleet-logout-failed lines: 0
+# cluster-rejoin-review lines: 0
+# cluster-rejoined lines: 0
+# cluster-rejoin-failed lines: 2
+# cluster-refreshed lines: 1
+# lines naming the fleet account: 0
+# Traceback lines: 0
+# ERROR lines (the string anywhere): 0

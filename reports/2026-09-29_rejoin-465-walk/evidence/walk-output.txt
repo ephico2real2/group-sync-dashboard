@@ -1,0 +1,45 @@
+2026-09-29T15:33:41Z A's password                                    : 20 characters, letters and digits, drawn by secrets.choice; never printed
+2026-09-29T15:33:41Z whoami                                          : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-29T15:33:41Z PASS developer holds the cluster-admin tier for the walk: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-29T15:33:45Z PASS no 'Dashboard API error' (clusters tab)    : 0
+2026-09-29T15:33:45Z w465 before the Refresh                         : {"http": 200, "row": {"id": "w465", "api_url": "https://api.crc.testing:6443", "credential": "bearer", "status": "auth_failed", "rejoinable": true, "retired": false}}
+2026-09-29T15:33:45Z PASS w465 is served, polls auth_failed and is rejoinable: {"http": 200, "row": {"id": "w465", "api_url": "https://api.crc.testing:6443", "credential": "bearer", "status": "auth_failed", "rejoinable": true, "retired": false}}
+2026-09-29T15:33:45Z Refresh answered                                : {"refresh": "Refresh: auth_failed \u00b7 2026-09-29T15:33:45Z \u2014 401 Unauthorized \u2014 token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.", "rejoin": null, "rejoin_button": {"text": "Rejoin\u2026", "disabled": false}}
+2026-09-29T15:33:45Z PASS Refresh answers auth_failed and the card offers Rejoin…: {"refresh": "Refresh: auth_failed \u00b7 2026-09-29T15:33:45Z \u2014 401 Unauthorized \u2014 token invalid or expired The stored credential was refused. Refresh only probes with it; it never logs in. To fetch a new token with your own account, use Rejoin.", "rejoin": null, "rejoin_button": {"text": "Rejoin\u2026", "disabled": false}}
+2026-09-29T15:33:45Z shot                                            : 01-1280-card-offers-rejoin.png
+2026-09-29T15:33:46Z PASS A: the dialog opens for w465, both fields empty, the password field type=password: {"open": true, "cluster": "w465", "username_length": 0, "password_length": 0, "password_type": "password", "message": ""}
+2026-09-29T15:33:47Z PASS A: the password occurs nowhere in the answer's bytes (as typed, as the Basic value): {"as typed": 0, "Basic value": 0}
+2026-09-29T15:33:47Z PASS A: nor anywhere in the page's DOM once the answer is shown: {"as typed": 0, "Basic value": 0}
+2026-09-29T15:33:47Z A: pressed at                                   : 2026-09-29T15:33:46Z
+2026-09-29T15:33:47Z A: HTTP status                                  : 200
+2026-09-29T15:33:47Z A: JSON answer                                  : {"outcome":"login-refused","message":"w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)","at":"2026-09-29T15:33:46Z"}
+2026-09-29T15:33:47Z A: the card's Rejoin line                       : Rejoin: login-refused · 2026-09-29T15:33:46Z — w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm="openshift"; body: <empty>)
+2026-09-29T15:33:47Z A: the dialog after the answer                  : {"open": true, "cluster": "w465", "username_length": 9, "password_length": 0, "password_type": "password", "message": "login-refused \u2014 w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)"}
+2026-09-29T15:33:47Z PASS A: HTTP 200, outcome login-refused, the answer says w465 refused the password for developer: [200, {"outcome": "login-refused", "message": "w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)", "at": "2026-09-29T15:33:46Z"}]
+2026-09-29T15:33:47Z shot                                            : 02-1280-A-dialog-answer.png
+2026-09-29T15:33:48Z shot                                            : 03-1280-A-card-answer.png
+2026-09-29T15:33:48Z pod log since 2026-09-29T15:29:21Z, A's password (after A): {"lines": 221, "as typed": 0, "Basic value": 0}
+2026-09-29T15:33:48Z PASS A: the password occurs 0 times in the pod log since the walk began (as typed, as the Basic value): {"lines": 221, "as typed": 0, "Basic value": 0}
+2026-09-29T15:33:48Z PASS B: the dialog opens for w465, both fields empty, the password field type=password: {"open": true, "cluster": "w465", "username_length": 0, "password_length": 0, "password_type": "password", "message": ""}
+2026-09-29T15:33:50Z B: pressed at                                   : 2026-09-29T15:33:48Z
+2026-09-29T15:33:50Z B: HTTP status                                  : 200
+2026-09-29T15:33:50Z B: JSON answer                                  : {"outcome":"login-refused","message":"w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)","at":"2026-09-29T15:33:49Z"}
+2026-09-29T15:33:50Z B: the card's Rejoin line                       : Rejoin: login-refused · 2026-09-29T15:33:49Z — w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm="openshift"; body: <empty>)
+2026-09-29T15:33:50Z B: the dialog after the answer                  : {"open": true, "cluster": "w465", "username_length": 9, "password_length": 0, "password_type": "password", "message": "login-refused \u2014 w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)"}
+2026-09-29T15:33:50Z PASS B: not a 422 — sent, and CRC refuses it: HTTP 200 login-refused: [200, {"outcome": "login-refused", "message": "w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)", "at": "2026-09-29T15:33:49Z"}]
+2026-09-29T15:33:50Z shot                                            : 04-1280-B-card-answer.png
+2026-09-29T15:33:51Z PASS C: the dialog opens for w465, both fields empty, the password field type=password: {"open": true, "cluster": "w465", "username_length": 0, "password_length": 0, "password_type": "password", "message": ""}
+2026-09-29T15:33:52Z C: pressed at                                   : 2026-09-29T15:33:51Z
+2026-09-29T15:33:52Z C: HTTP status                                  : 422
+2026-09-29T15:33:52Z C: JSON answer                                  : {"detail":"rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent"}
+2026-09-29T15:33:52Z C: the card's Rejoin line                       : Rejoin: HTTP 422 — rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent
+2026-09-29T15:33:52Z C: the dialog after the answer                  : {"open": true, "cluster": "w465", "username_length": 9, "password_length": 0, "password_type": "password", "message": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent"}
+2026-09-29T15:33:52Z PASS C: HTTP 422 rejoin-password-within-username: [422, {"detail": "rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent"}]
+2026-09-29T15:33:52Z shot                                            : 05-1280-C-dialog-answer.png
+2026-09-29T15:33:53Z shot                                            : 06-1280-C-card-answer.png
+2026-09-29T15:33:53Z pod log since 2026-09-29T15:29:21Z, A's password (at the end): {"lines": 232, "as typed": 0, "Basic value": 0}
+2026-09-29T15:33:53Z PASS A's password: 0 in the pod log at the end  : {"lines": 232, "as typed": 0, "Basic value": 0}
+2026-09-29T15:33:53Z PASS A's password: 0 files under the walk's folder hold it: []
+2026-09-29T15:33:53Z PASS no 'Dashboard API error' (the end)         : 0
+2026-09-29T15:33:53Z PASS no uncaught page errors                    : []
+2026-09-29T15:33:53Z failures                                        : []

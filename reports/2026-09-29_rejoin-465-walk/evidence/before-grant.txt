@@ -1,0 +1,2 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=rejoin-465-2026-09-29 -o name
+# at 2026-09-29T15:29:23Z

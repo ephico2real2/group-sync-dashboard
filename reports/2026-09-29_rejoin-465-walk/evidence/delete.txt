@@ -1,0 +1,7 @@
+# oc delete secrets -n group-sync-dashboard -l walk.gsd.lab/run=rejoin-465-2026-09-29 --ignore-not-found
+# at 2026-09-29T15:33:54Z
+secret "gsd-cluster-w465" deleted from group-sync-dashboard namespace
+# oc delete clusterrolebindings.rbac.authorization.k8s.io,clusterroles.rbac.authorization.k8s.io -l walk.gsd.lab/run=rejoin-465-2026-09-29 --ignore-not-found
+# at 2026-09-29T15:33:54Z
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-crb-update-developer" deleted
+clusterrole.rbac.authorization.k8s.io "gsd-walk-crb-update" deleted
