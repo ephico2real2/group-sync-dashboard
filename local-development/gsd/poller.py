@@ -78,6 +78,7 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
     The credential is passed to the emit helper so a token echoed inside an error body cannot reach
     the log — `ClusterClient._redact` scrubs its own, and this is the second boundary.
     """
+    from .clusterconfig.ca import tls_verify_failure
     from .clusterconfig.events import failure, is_verify_failure
     mode = cluster.tls_mode
     tls = "insecure" if mode["insecure"] else mode["ca"]
@@ -106,22 +107,7 @@ def _log_poll_failure(cluster: ClusterConfig, exc: ClusterError) -> None:
     verify_failed = is_verify_failure(message)
 
     if verify_failed and not mode["insecure"]:
-        if mode["ca"] == "caData":
-            secret = cluster.source.split(":", 1)[-1]
-            action = (f"this cluster pins its own CA: replace tlsClientConfig.caData in Secret "
-                      f"{secret} with the CA that signs its API server")
-            store = f"secret:{secret}/tlsClientConfig.caData"
-        elif mode["ca"] == "trusted-bundle":
-            action = ("add the CA to the chart's trustedCA.existingConfigMap (fleet-wide), or set "
-                      "tlsClientConfig.caData on this cluster's Secret (this cluster only)")
-            store = os.environ.get("GSD_TRUSTED_CA_FILE") or "the system trust store"
-        else:
-            action = (f"the CA comes from {mode['ca']}: point it at the CA that signs this "
-                      f"cluster's API server")
-            # `store=` MUST name what this cluster actually used (Codex C3): reporting the
-            # fleet's colon-separated bundle for a cluster reading its own file sent the reader
-            # to the wrong object entirely.
-            store = cluster.ca_bundle_file or mode["ca"]
+        action, store = tls_verify_failure(cluster)
         failure(log, "cluster-unreachable", phase="tls", outcome="cert-verify-failed",
                 action=action, cluster=cluster.name, source=cluster.source, tls=tls,
                 store=store, detail=message, secrets=secrets)
@@ -949,6 +935,7 @@ class Poller:
         self._discovered_shape: dict[str, tuple] = {}
         self._discovery_findings: set[tuple[str, str]] = set()
         self._shared_api_urls: set[tuple[str, tuple[str, ...]]] = set()
+        self._ca_warning_keys: set[tuple] = set()
         # The discovery failure in force, so a standing one speaks once — see
         # `_announce_discovery_failure`. None means the last cycle discovered cleanly.
         self._discovery_failure: str | None = None
@@ -1456,6 +1443,16 @@ class Poller:
                       "shared-api-url", url=url, clusters=",".join(names), state=state,
                       cycle=self._discovery_cycle)
         self._shared_api_urls = groups
+        from .clusterconfig.warnings import ca_warnings
+        keys = {(w["code"], tuple(w["clusters"]), w["detail"]) for w in ca_warnings(
+            self.settings.effective_clusters(), self.settings)}
+        for state, transitions in (("cleared", self._ca_warning_keys - keys),
+                                   ("appeared", keys - self._ca_warning_keys)):
+            for code, names, detail in sorted(transitions):
+                event(discovery_log, logging.WARNING if state == "appeared" else logging.INFO,
+                      code, clusters=",".join(names), state=state, detail=detail,
+                      cycle=self._discovery_cycle)
+        self._ca_warning_keys = keys
 
     def _discover_once(self) -> None:
         """One discovery of the labelled cluster Secrets (SPEC_S1 C3): the host's client LISTs the pod's

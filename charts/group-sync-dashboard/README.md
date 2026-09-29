@@ -109,6 +109,9 @@ moves the probes behind the proxy. All automatic.
 | `trustedCA.existingConfigMap.name` | `enterprise-ca` | |
 | `trustedCA.existingConfigMap.key` | `ca-bundle.crt` | |
 | `trustedCA.existingConfigMap.subjectHash` | `""` | `openssl x509 -noout -subject_hash` of that CA, optionally with a `.N` collision suffix; when set, it is also mounted as `/etc/pki/tls/certs/<hash>.0` (or `.N`) so curl in the pod trusts it |
+| `trustedCA.enterpriseRoot.sha256` | `""` | SHA-256 of the estate's root CA (DER), 64 hex digits; empty means the page does not claim any certificate is that root |
+| `trustedCA.enterpriseRoot.subject` | `""` | fallback DN / `CN=…` when only a subject is known; ignored when sha256 is set |
+| `trustedCA.expiryWarningDays` | `30` | days before `notAfter` at which a `ca-expiring` warning is emitted |
 | `trustedCA.mountPath` | `/etc/pki/ca-trust/extracted/pem` | |
 
 Both may be on; they are loaded in turn. A cluster entry naming its own `caBundleFile`

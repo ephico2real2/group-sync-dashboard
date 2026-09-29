@@ -7,7 +7,7 @@
 | Release | — (post-programme; Epic D, after D4) |
 | Version on release | app and chart minor bumps, assigned at the implementing PR |
 | Issue | [#244](https://github.com/ephico2real2/group-sync-dashboard/issues/244) |
-| Status | specified |
+| Status | merged |
 | Source | Written by the implementer from #244 and its comments, measured on this machine against main `268ea63` (application 1.6.0). No cluster access. |
 
 ## How to read this spec

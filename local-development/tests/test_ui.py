@@ -8103,6 +8103,102 @@ class TestClusterConfigPage:
             f"{base}/api/clusterconfigs/east/rejoin"]
         assert page.evaluate("() => view.clusterRejoin.east.outcome") == "unknown"
 
+    def test_a_cadata_card_lists_subject_and_expiry(self, page, cc_rig, tmp_path):
+        """#244: a pasted CA shows subject, issuer and notAfter on the card."""
+        import subprocess
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        crt = tmp_path / "pin.crt"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "90",
+                        "-subj", "/CN=mock-privateca-root", "-keyout", str(tmp_path / "pin.key"),
+                        "-out", str(crt)], check=True, capture_output=True)
+        pem = crt.read_text()
+        import base64, json
+        cfg = {"bearerToken": "t" * 20, "tlsClientConfig": {"insecure": False,
+               "caData": base64.b64encode(pem.encode()).decode()}}
+        east = parse_secret(_secret(config=cfg), host_name="crc-local")
+        base, _, settings = cc_rig
+        settings.cluster_registry.replace([east], [], at="now")
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-east")
+        card = page.locator("#cc-cluster-east").inner_text()
+        assert "ca: caData" in card
+        assert "mock-privateca-root" in card
+        assert page.locator("#cc-cluster-east .cc-ca-cert").count() == 1
+
+    def test_a_verify_failure_shows_the_store_and_the_fix(self, page, cc_rig):
+        """#244: each mode's card shows the same action and store the log line carries."""
+        base, _, _settings = cc_rig
+        store = _SCOPED_APP.state.store
+        store.upsert_cluster("east", "https://api.east.example:6443", True,
+                             source="secret:gsd-cluster-east", credential="bearer")
+        store.record_poll(
+            "east", "unreachable",
+            "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            "self-signed certificate in certificate chain (_ssl.c:1082)")
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        page.wait_for_selector("#cc-cluster-east")
+        card = page.locator("#cc-cluster-east")
+        assert card.locator("[data-cc-tls-action]").count() == 1
+        assert "trustedCA.existingConfigMap" in card.locator("[data-cc-tls-action]").inner_text()
+        assert card.locator("[data-cc-tls-store]").count() == 1
+
+    def test_ca_expiring_uses_the_warnings_banner(self, page, cc_rig, tmp_path, monkeypatch):
+        """#244: the expiry warning reuses #314's banner, not the findings list."""
+        import subprocess
+        from datetime import datetime, timedelta, timezone
+        from gsd.clusterconfig import parse_secret
+        from test_clusterconfig import _secret
+        import base64
+        crt = tmp_path / "soon.crt"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "10",
+                        "-subj", "/CN=soon-root", "-keyout", str(tmp_path / "soon.key"),
+                        "-out", str(crt)], check=True, capture_output=True)
+        pem = crt.read_text()
+        cfg = {"bearerToken": "t" * 20, "tlsClientConfig": {"insecure": False,
+               "caData": base64.b64encode(pem.encode()).decode()}}
+        east = parse_secret(_secret(config=cfg), host_name="crc-local")
+        base, _, settings = cc_rig
+        settings.cluster_registry.replace([east], [], at="now")
+        page.set_extra_http_headers({"X-Forwarded-User": "root"})
+        page.goto(f"{base}/#page=clusters")
+        banner = page.locator('#cc-head [data-cc-warning="ca-expiring"]')
+        banner.wait_for()
+        assert "CA expiring" in banner.inner_text()
+        assert "soon-root" in banner.inner_text()
+        assert "ca-expiring" not in page.locator("#cc-findings").inner_text()
+
+    def test_the_test_result_paints_the_certificates_and_a_refusal_object_reads_as_text(self, page, cc_rig):
+        """#244 (OB2, not asked): the Test panel lists what the pasted PEM resolved to, and a `ca-data-invalid`
+        refusal that answers an object {code, message, certificates} reads as `code: message`, never
+        `[object Object]`."""
+        base, _, _settings = cc_rig
+        cert = {"subject": "CN=form-ca", "issuer": "CN=form-ca", "notBefore": "2026-01-01T00:00:00Z",
+                "notAfter": "2036-01-01T00:00:00Z", "sha256": "ab" * 32, "enterpriseRoot": None, "validity": "valid"}
+        answers = iter([
+            (200, {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:sa",
+                   "error": None, "certificates": [cert]}),
+            (422, {"detail": {"code": "ca-data-invalid", "message": "tlsClientConfig.caData does not decode to a PEM "
+                              "bundle that loads: SSLError", "certificates": [cert]}}),
+        ])
+        import json
+        page.route("**/api/clusterconfigs/test", lambda route: (lambda status, body: route.fulfill(
+            status=status, content_type="application/json", body=json.dumps(body)))(*next(answers)))
+        _open_as(page, base, "root")
+        page.click("#tab-clusters"); page.wait_for_selector("#cc-form")
+        page.fill("#cc-name", "west"); page.fill("#cc-server", "https://api.west.example:6443")
+        page.fill("#cc-token", "tok-west-1234"); page.click("#cc-ca-trustedBundle")
+        page.click("#cc-test")
+        page.wait_for_selector("#cc-test-result .cc-ca-cert")
+        assert "CN=form-ca · issuer CN=form-ca · 2036-01-01T00:00:00Z" in page.locator("#cc-test-result").inner_text()
+        page.click("#cc-test")
+        page.wait_for_function("() => document.getElementById('cc-form-msg').innerText.includes('ca-data-invalid')")
+        msg = page.locator("#cc-form-msg").inner_text()
+        assert msg.startswith("ca-data-invalid: tlsClientConfig.caData does not decode"), msg
+        assert "[object Object]" not in msg
+
 
 class TestKyvernoPage:
     """#170: the Kyverno page's three states, the deprecated-family and breaker notes, the visible

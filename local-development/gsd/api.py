@@ -1119,7 +1119,9 @@ def build_app(
                                        "and how its certificate is trusted.")
         viewer = trusted_viewer(request)
         from .clusterconfig import CONFIG_SELECTOR, LABEL_SELECTOR
-        from .clusterconfig.warnings import shared_api_warnings
+        from .clusterconfig.ca import summarise_cluster, tls_verify_failure
+        from .clusterconfig.events import is_verify_failure
+        from .clusterconfig.warnings import ca_warnings, shared_api_warnings
         from .rejoin import refusal as rejoin_refusal
         registry = settings.cluster_registry
         host = settings.host_cluster()
@@ -1135,9 +1137,13 @@ def build_app(
                 "labels": dict(c.labels), "visibility": visibility, "identity": identity, "tls": c.tls_mode,
                 "status": row.get("status"), "last_poll": row.get("last_poll"), "error": row.get("message"),
                 "retired": False, "onboarding_configmap": c.onboarding[0] if c.onboarding else None,
+                "trust": summarise_cluster(c, settings),
                 # SPEC_D4 (#316): the route's own rule, so the page offers Rejoin exactly where the route accepts it.
                 "rejoinable": rejoin_refusal(c, settings) is None,
             })
+            if row.get("message") and is_verify_failure(row["message"]) and not c.insecure_skip_verify:
+                # one line, no local named `store`: list_cluster_configs reads the closure's `store` above
+                clusters[-1]["action"], clusters[-1]["store"] = tls_verify_failure(c)
             if c.credential_kind == CREDENTIAL_SELF_LOGIN:
                 # SPEC_S4c §3.10: the session's instants — never an age; the page computes one where it repaints.
                 clusters[-1]["session"] = signals.self_login(c.name) or {"state": "none", "expires_at": None,
@@ -1167,7 +1173,7 @@ def build_app(
             "configmaps": {"enabled": settings.cluster_secrets_enabled, "label": CONFIG_SELECTOR},
             "clusters": clusters,
             "findings": [f.public() for f in registry.findings()],
-            "warnings": shared_api_warnings(effective),
+            "warnings": shared_api_warnings(effective) + ca_warnings(effective, settings),
             # SPEC_S4c §3.10: the daily ping and each fleet account's Lease, as instants.
             "fleet": {"ping": {"enabled": settings.fleet_ping_enabled,
                                "interval_seconds": settings.fleet_ping_interval_seconds},
@@ -1210,6 +1216,10 @@ def build_app(
     def _write_error(exc: Exception) -> HTTPException:
         from .clusterconfig.writer import WriteFailed, WriteRefused
         if isinstance(exc, WriteRefused):
+            if exc.certificates:
+                return HTTPException(status_code=409 if exc.conflict else 422,
+                                     detail={"code": exc.code, "message": exc.detail,
+                                             "certificates": exc.certificates})
             return HTTPException(status_code=409 if exc.conflict else 422, detail=f"{exc.code}: {exc.detail}")
         if isinstance(exc, WriteFailed):
             return HTTPException(status_code=502, detail=f"{exc.outcome}: {exc.message}")

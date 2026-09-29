@@ -684,6 +684,11 @@ class Settings:
     # discovery cadence, leader only — `clusterConfig.fleetAccount.ping.{enabled, intervalSeconds}`.
     fleet_ping_enabled: bool = True
     fleet_ping_interval_seconds: int = 86400
+    # #244: the estate's root CA, pinned by SHA-256 of the DER certificate. Empty: the page
+    # still shows dates and does not claim any certificate is the enterprise root.
+    enterprise_ca_sha256: str = ""
+    enterprise_ca_subject: str = ""
+    ca_expiry_warning_days: int = 30
     cluster_registry: "ClusterRegistry" = field(default_factory=lambda: _registry(), compare=False, repr=False)
     kyverno_metrics_url: str = ""
     kyverno_events_retention_days: int = 90
@@ -1261,6 +1266,25 @@ def _str_setting(raw: dict, env_name: str, yaml_key: str, default: str) -> str:
     return str(default if source is None else source).strip()
 
 
+def _enterprise_sha256(raw: dict) -> str:
+    """64 hex digits after stripping colons; empty is the default. A typo is refused by name."""
+    value = _str_setting(raw, "GSD_ENTERPRISE_CA_SHA256", "enterpriseCaSha256", "")
+    if not value:
+        return ""
+    hexed = re.sub(r"[^0-9a-fA-F]", "", value)
+    if len(hexed) != 64:
+        raise ConfigError("enterpriseCaSha256 must be a SHA-256 hex digest (64 digits, colons optional)")
+    return hexed.lower()
+
+
+def _ca_expiry_days(raw: dict) -> int:
+    days = _num_setting(raw, "GSD_CA_EXPIRY_WARNING_DAYS", "caExpiryWarningDays", 30, int)
+    if not 1 <= days <= 3650:
+        log.warning("caExpiryWarningDays=%r is outside 1..3650; using 30", days)
+        return 30
+    return days
+
+
 def _bool_setting(raw: dict, env_name: str, yaml_key: str, default: bool) -> bool:
     """Env wins over the ConfigMap. Accepts a real boolean or one of the YAML spellings, and NOTHING
     else, from either source.
@@ -1782,6 +1806,9 @@ def load_settings(path: str | Path) -> Settings:
         replica_count=_num_setting(raw, "GSD_REPLICA_COUNT", "replicaCount", 1, int),
         fleet_ping_enabled=_bool_setting(raw, "GSD_FLEET_PING_ENABLED", "fleetPingEnabled", True),
         fleet_ping_interval_seconds=_num_setting(raw, "GSD_FLEET_PING_INTERVAL_SECONDS", "fleetPingIntervalSeconds", 86400, int),
+        enterprise_ca_sha256=_enterprise_sha256(raw),
+        enterprise_ca_subject=_str_setting(raw, "GSD_ENTERPRISE_CA_SUBJECT", "enterpriseCaSubject", ""),
+        ca_expiry_warning_days=_ca_expiry_days(raw),
         kyverno_metrics_url=str(os.environ.get("GSD_KYVERNO_METRICS_URL") or raw.get("kyvernoMetricsUrl") or "").strip(),
         kyverno_events_retention_days=_num_setting(
             raw, "GSD_KYVERNO_EVENTS_RETENTION_DAYS", "kyvernoEventsRetentionDays", 90, int

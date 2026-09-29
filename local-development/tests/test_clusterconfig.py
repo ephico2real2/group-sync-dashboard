@@ -435,6 +435,10 @@ class TestApi:
                                    "last_discovery": "2026-09-20T16:05:12Z", "error": None}   # `writes`: S2's switch
         by = {x["id"]: x for x in body["clusters"]}
         assert by["c1"]["host"] is True and by["c1"]["source"] == "values" and by["c1"]["credential"] == "file"
+        # #244: every live row carries `trust`; its count is the host's own store, so the shape is held, not the number
+        trust = by["east"].pop("trust")
+        assert trust["sourceKind"] in ("system", "configmap") and trust["certificates"] == [] and trust["enterpriseRoot"] is None
+        assert isinstance(trust["count"], int) and trust["count"] >= 0 and trust["store"]
         assert by["east"] == {"id": "east", "source": "secret:gsd-cluster-east", "host": False,
                               "api_url": "https://api.east.example:6443", "enabled": True, "credential": "bearer",
                               "labels": {"environment": "prod"}, "visibility": "remote-sar", "identity": "same-as-host",
