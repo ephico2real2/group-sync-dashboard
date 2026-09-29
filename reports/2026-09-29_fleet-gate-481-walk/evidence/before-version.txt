@@ -1,0 +1,8 @@
+# /api/version via the pod loopback
+# at 2026-09-29T11:39:17Z
+{"leader":true,"version":"1.18.0","commit":"4e19d976a2","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+# pods
+group-sync-dashboard-57dfd6d7f-4d7lq                              2026-09-29T11:38:20Z   0
+group-sync-dashboard-report-67c58454f5-szhvf                      2026-09-29T11:38:21Z   0
+group-sync-dashboard-report-nightly-namespace-access-2984267lmn   2026-09-28T02:00:00Z   0
+group-sync-dashboard-report-nightly-namespace-access-29844jbp6z   2026-09-29T02:00:00Z   0

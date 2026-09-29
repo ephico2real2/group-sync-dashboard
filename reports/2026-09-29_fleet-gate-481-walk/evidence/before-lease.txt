@@ -1,0 +1,20 @@
+# the fleet Lease (the account annotation dropped)
+# at 2026-09-29T11:39:18Z
+[
+  {
+    "name": "gsd-fleet-666f1ba7f2fdead0",
+    "uid": "b20785d0-a5b2-42aa-a46a-a27e6344250d",
+    "resourceVersion": "6171122",
+    "created": "2026-09-28T17:57:01Z",
+    "holderIdentity": "",
+    "annotations": {
+      "groupsync-dashboard.io/ping-digest": "e23c0ea210579dde",
+      "groupsync-dashboard.io/ping-last-attempt": "2026-09-28T17:57:01Z",
+      "groupsync-dashboard.io/ping-last-ok": "2026-09-28T17:57:01Z",
+      "groupsync-dashboard.io/ping-last-outcome": "ok",
+      "groupsync-dashboard.io/ping-last-target": "shared-rnd"
+    }
+  }
+]
+# every Lease in the cluster: count, and the oldest creationTimestamp
+count=58 oldest=2026-09-28T17:55:17Z

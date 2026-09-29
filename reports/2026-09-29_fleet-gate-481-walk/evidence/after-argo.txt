@@ -1,0 +1,9 @@
+16-keycloak Unknown/Healthy ComparisonError
+17-keycloak-jwt Synced/Healthy 
+18-keycloak-ldap Synced/Healthy 
+19-shop-gateway Synced/Healthy 
+20-shop-envoy Unknown/Healthy ComparisonError
+grafana Synced/Healthy 
+group-sync Synced/Healthy 
+group-sync-dashboard Unknown/Healthy ComparisonError
+ingress-shard Synced/Healthy 
