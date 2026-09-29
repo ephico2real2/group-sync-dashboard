@@ -1,0 +1,31 @@
+# The walk's one temporary change to the lab: `developer` passes the cluster-admin tier (`visibility.clusterAdminSar`,
+# `update clusterrolebindings` on the host) for part of the walk, so the Cluster Configurations tab and its Add-cluster
+# form are served to it. `scripts/walk.sh` sets a shell `trap … EXIT` that deletes both objects by the run label BEFORE
+# it creates them, and deletes them again explicitly when the granted phase ends:
+#   oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io \
+#     -l walk.gsd.lab/run=ui-478-2026-09-28
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-crb-update
+  labels:
+    walk.gsd.lab/run: ui-478-2026-09-28
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-crb-update-developer
+  labels:
+    walk.gsd.lab/run: ui-478-2026-09-28
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

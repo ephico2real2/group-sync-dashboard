@@ -1,0 +1,3 @@
+# oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o jsonpath='{range .items[*]}name={.metadata.name} resourceVersion={.metadata.resourceVersion} holderIdentity="{.spec.holderIdentity}"{"\n"}{end}'
+# at 2026-09-29T02:05:22Z
+name=gsd-fleet-666f1ba7f2fdead0 resourceVersion=6171122 holderIdentity=""

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>#478 on the lab at 1.17.0 — 2026-09-28</title><style>:root{--fg:#1d1d1f;--muted:#5a5a60;--rule:#d9d6cf;--bg:#fbfaf7;--code:#f0ede6}@media (prefers-color-scheme:dark){:root{--fg:#ecebe8;--muted:#a9a8a3;--rule:#3a3935;--bg:#161615;--code:#24231f}}body{font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg);max-width:1000px;margin:32px auto;padding:0 16px}h1{font-size:1.6em;line-height:1.25}h2{margin-top:2em;border-bottom:1px solid var(--rule);padding-bottom:.2em}table{border-collapse:collapse;width:100%;font-size:.9em;margin:1em 0;display:block;overflow-x:auto}th,td{border:1px solid var(--rule);padding:6px 8px;vertical-align:top;text-align:left}th{background:var(--code)}code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:.88em;word-break:break-word}pre{background:var(--code);padding:12px;overflow-x:auto;border-radius:4px}pre code{background:none;padding:0}figure{margin:1.2em 0;break-inside:avoid}img{max-width:100%;border:1px solid var(--rule);border-radius:4px}figcaption{color:var(--muted);font-size:.85em;margin-top:.3em}@media print{body{margin:0;max-width:none;font-size:11px}h2{break-after:avoid}table{display:table}}</style></head><body>
+<h1>#478 on the lab: own-key reads at application 1.17.0 — 2026-09-28</h1>
+<p><strong>Outcome.</strong> On the CRC lab, running application 1.17.0 at <code>84b1e46b6f</code> (<code>evidence/before-version.txt</code>), <code>developer</code>
+walked #478's three surfaces at 1280 and 375 px, with and without a temporary cluster-admin grant. The instants below
+are UTC as the files record them: 2026-09-29T01:47Z to 02:08Z, which is the evening of 2026-09-28 in the lab's
+<code>America/New_York</code> zone (<code>evidence/before-version.txt</code>, <code>&quot;abbrev&quot;:&quot;EDT&quot;</code>).</p>
+<ul>
+<li><strong>The stale link (C5):</strong> <code>zzz-unknown</code>, <code>constructor</code> and <code>toString</code> read the same as each other on a fresh load
+and after a hash edit, at both widths. With the grant, all three read <code>Full view — you are seeing everything</code>,
+class <code>scope-pill full</code>, &quot;No cluster by that id is configured&quot;, <code>narrowedReader()</code> <code>false</code> and <code>scopeFor</code> <code>&quot;all&quot;</code>.
+Without it, all three read <code>Your view — developer</code>, class <code>scope-pill self</code>, the Overview's refusal,
+<code>narrowedReader()</code> <code>true</code> and <code>scopeFor</code> <code>&quot;self&quot;</code>. There were no page errors (<code>evidence/r2-walk-granted.txt</code>,
+<code>evidence/r2-walk-ungranted.txt</code>).</li>
+<li><strong>The Add-cluster form:</strong> the form showed both chips, <code>constructor=c</code> and <code>__proto__=p</code>. <code>Object.getPrototypeOf(view.clusterForm.labels) === null</code>
+read <code>true</code>, and the YAML twin listed both keys. Create, pressed once at 01:54:36Z, answered <code>422</code> with
+<code>label-invalid: label key '__proto__': …</code>. The form showed that sentence, and <code>gsd-cluster-walk-478</code> was <code>NotFound</code>
+at 01:54:38Z and at every later check (<code>evidence/walk-granted.txt</code>, <code>evidence/aftercreate-secret.txt</code>).</li>
+<li><strong>The namespace pages:</strong> <code>label_keys</code> is <code>[&quot;company.net/mnemonic&quot;, &quot;company.net/app-environment&quot;, &quot;company.net/oud-group&quot;]</code>. On the list, a labelled namespace's page, an unlabelled one's page and the lookup for
+<code>beta</code>, every label cell matched the API's own value where the namespace has the key and <code>—</code> (<code>— none —</code> on a
+namespace's page) where it does not. There were no page errors (<code>evidence/walk-granted.txt</code>,
+<code>evidence/r2-walk-granted.txt</code>).</li>
+<li><strong>The pod log</strong>, from the first grant (01:52:54Z) to 02:05:48Z: 0 <code>fleet-login</code>, 0 <code>cluster-rejoin</code>, 0 Traceback,
+0 ERROR. The Create's refusal is not logged: the dashboard container logged no line between 01:54:30Z and
+01:54:45Z (<code>evidence/final-podlog.txt</code>, <code>evidence/create-window-podlog.txt</code>).</li>
+</ul>
+<p><strong>The walk ran in two passes.</strong> The first pass (01:52:54Z–01:57:03Z) read each hash-edit case 1.5 s after setting
+<code>location.hash</code>, before the refresh that the edit starts had repainted. <code>#main</code> still showed Home (&quot;What changed last
+30 days&quot;). The check that compared those readings with the fresh loads failed, and the pass stopped before the granted
+phase at 375 px (<code>evidence/walk-granted.txt</code>). A probe, <code>scripts/probe_hash.py</code>, shows the same thing for real
+positions. One second after the edit, <code>#main</code> still showed Home with <code>stale</code> set, for <code>#page=groups</code> and
+<code>#page=overview&amp;cluster=dashboard</code> as well as for <code>zzz-unknown</code>. By three seconds each new page had painted and the
+<code>updated</code> stamp had moved (<code>evidence/probe-hash-repaint.txt</code>). The failure came from the walk's timing, not from the
+product. The second pass (02:00:30Z–02:05:23Z) marks Home's first card and waits until a paint replaces it and
+<code>#main</code> is no longer <code>stale</code>. It did not press Create again. The first pass's fresh-load readings, the form with its one Create, and the namespace
+pages at 1280 px stand; its hash-edit readings are superseded.</p>
+<p>The walk made one kind of temporary change to the lab: the grant, created and removed twice. It ran no Helm,
+<code>release-crc.sh</code> or Argo CD command, and it changed no chart values. Nobody logged in as the fleet account, no fleet
+password was placed, and no Rejoin was submitted. The route guard blocked no request in any phase. <code>/api/version</code>
+read 1.17.0 at <code>84b1e46b6f</code> before and after, and the kept PVCs had the same UIDs. The fleet Lease stayed at
+<code>resourceVersion</code> 6171122 with no holder, and <code>shared-qa</code>'s Secret stayed at 2981054.</p>
+<h2>Definition of Done</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Row</th>
+<th>Verdict</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>The stale link (C5): as <code>developer</code> with the grant, then without it, <code>#page=overview&amp;cluster=</code> <code>zzz-unknown</code>, <code>constructor</code>, <code>toString</code>, each on a fresh load and by editing <code>location.hash</code> after a good Home load, at 1280 and 375 px; the three ids read the same</td>
+<td>PASS (second pass)</td>
+<td><strong>With the grant</strong> (02:01:46Z–02:02:47Z): whoami <code>&quot;scope&quot;: &quot;all&quot;, &quot;cluster_admin&quot;: true</code>, <code>/api/clusterconfigs</code> <code>200</code>. At 1280 and at 375, fresh and by hash, each of the three ids read <code>pill_text</code> <code>Full view — you are seeing everything</code>, <code>pill_class</code> <code>scope-pill full</code>, <code>no_cluster_note</code> <code>true</code> with the <code>h2</code> naming the id, <code>narrowedReader</code> <code>false</code>, <code>scopeFor</code> <code>&quot;all&quot;</code>, <code>own_key_in_whoami_clusters</code> <code>false</code> and <code>page_errors</code> <code>[]</code>. Four <code>C5 (&lt;how&gt;): the three ids read the same … &quot;differs&quot;: {}</code> lines, and <code>a fresh load and a hash edit read the same: true</code> at each width (<code>evidence/r2-walk-granted.txt</code>, <code>screenshots/61</code>–<code>72</code>). <strong>Without it</strong> (02:04:21Z–02:05:20Z, after <code>can-i</code> <code>no</code> at 02:03:06Z and the wait from 02:03:06Z to 02:04:16Z): whoami <code>&quot;scope&quot;: &quot;self&quot;, &quot;cluster_admin&quot;: false</code>, <code>/api/clusterconfigs</code> <code>403</code>. Every case read <code>Your view — developer</code>, <code>scope-pill self</code>, <code>no_cluster_note</code> <code>false</code> with the <code>h2</code> <code>Overview</code> (the Overview's &quot;Withheld, not empty&quot; refusal), <code>narrowedReader</code> <code>true</code>, <code>scopeFor</code> <code>&quot;self&quot;</code> and no page error. Again <code>&quot;differs&quot;: {}</code> four times (<code>evidence/r2-walk-ungranted.txt</code>, <code>screenshots/101</code>–<code>112</code>). The first pass's fresh loads read the same values (<code>evidence/walk-granted.txt</code>, <code>evidence/walk-ungranted.txt</code>, <code>screenshots/01</code>–<code>03</code>, <code>41</code>–<code>43</code>, <code>47</code>–<code>49</code>).</td>
+</tr>
+<tr>
+<td>2</td>
+<td>The Add-cluster form with <code>__proto__</code>: name <code>walk-478</code>, server <code>https://api.crc.testing:6443</code>, a throwaway token string, labels <code>constructor=c</code> and <code>__proto__=p</code>; both chips, a null prototype, the YAML twin; Create ONCE → the server's <code>label-invalid</code> naming <code>__proto__</code>, <code>422</code>; no Secret written</td>
+<td>PASS</td>
+<td>At 1280 (01:54:36Z): <code>&quot;chips&quot;: [&quot;constructor=c&quot;, &quot;__proto__=p&quot;], &quot;proto_is_null&quot;: true, &quot;keys&quot;: [&quot;constructor&quot;, &quot;__proto__&quot;], &quot;own___proto__&quot;: true</code>, and the twin's label lines are <code>&quot;constructor&quot;: &quot;c&quot;</code>, <code>&quot;__proto__&quot;: &quot;p&quot;</code> and <code>&quot;groupsync-dashboard.io/secret-type&quot;: &quot;cluster&quot;</code>. The route guard saw the one POST with label keys <code>[&quot;constructor&quot;, &quot;__proto__&quot;]</code>. The response listener read <code>{&quot;status&quot;: 422, &quot;detail&quot;: &quot;label-invalid: label key '__proto__': an optional DNS prefix and a slash, then ≤ 63 characters of letters, digits, '-', '_' or '.', starting and ending alphanumeric&quot;}</code>, and <code>#cc-form-msg</code> showed the same sentence, with both chips still there. <code>Create POSTs sent in this phase: 1</code> (<code>evidence/walk-granted.txt</code>, <code>screenshots/07-granted-1280-form-two-labels.png</code>, <code>screenshots/08-granted-1280-form-create-refused.png</code>). <code>oc get secrets.v1. gsd-cluster-walk-478</code> answered <code>NotFound</code> at 01:47:06Z, 01:54:38Z, 01:57:02Z, 02:05:22Z and 02:05:48Z (<code>evidence/before-secret.txt</code>, <code>aftercreate-secret.txt</code>, <code>after-secret.txt</code>, <code>r2-after-secret.txt</code>, <code>final-secret.txt</code>). At 375 px (02:02:51Z) the same facts were read and Create was not pressed: <code>Create POSTs sent in this phase: 0</code> (<code>evidence/r2-walk-granted.txt</code>, <code>screenshots/73-granted-rerun-375-form-two-labels.png</code>).</td>
+</tr>
+<tr>
+<td>3</td>
+<td>The namespace pages with the lab's real keys: the list, one namespace's page, the lookup by a real label value; the value where the namespace has the key, <code>—</code> where it does not; the search finds its namespace; no page error; <code>label_keys</code> recorded</td>
+<td>PASS</td>
+<td><code>label_keys</code>: <code>[&quot;company.net/mnemonic&quot;, &quot;company.net/app-environment&quot;, &quot;company.net/oud-group&quot;]</code>, over 118 namespaces, 27 with a value for one of the keys and 91 with none. On the list, 25 rows on page one (17 with a value, 8 all <code>—</code>) had <code>&quot;mismatches&quot;: []</code>, for example <code>[&quot;beta-prod&quot;, [&quot;beta&quot;, &quot;prod&quot;, &quot;—&quot;]]</code> and <code>[&quot;ca-tutorial&quot;, [&quot;—&quot;, &quot;—&quot;, &quot;—&quot;]]</code>. <code>beta-prod</code>'s page showed KPIs <code>[[&quot;mnemonic&quot;, &quot;beta&quot;], [&quot;app-environment&quot;, &quot;prod&quot;], [&quot;oud-group&quot;, &quot;— none —&quot;]]</code> and &quot;Labelled company.net/mnemonic=beta and company.net/app-environment=prod.&quot; <code>ca-tutorial</code>'s page showed all three <code>— none —</code> and &quot;Carries none of the captured labels&quot;. The lookup <code>beta</code> found <code>Namespaces · 4 of 118</code>, <code>beta-prod</code>, <code>beta-rnd</code>, <code>beta-uat</code> and <code>oud-poc-crossfamily</code>, with <code>&quot;mismatches&quot;: []</code>. <code>function_or_native_on_page</code> was <code>false</code> everywhere, with no page error, at 1280 (01:54:42Z–01:54:51Z) and 375 (02:02:55Z–02:03:06Z) (<code>evidence/walk-granted.txt</code>, <code>evidence/r2-walk-granted.txt</code>, <code>screenshots/10</code>–<code>12</code>, <code>75</code>–<code>77</code>; the list itself has no screenshot, see &quot;What the lab did not do&quot;). The query was typed into the lookup box: <code>q</code> is not one of <code>POSITION_KEYS</code> in <code>local-development/gsd/static/index.html</code>, so <code>#page=lookup&amp;q=…</code> would not carry it. <strong>No label key named <code>constructor</code> (or <code>toString</code>) is configured on the lab</strong>, so the own-key case itself is not exercised here. It is covered by #478's browser test (PR #482) <code>TestALabelKeyNamedLikeAnObjectMember</code> in <code>local-development/tests/test_ui.py</code>.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>The pod log for the window: the create refusal line if one is logged; 0 <code>fleet-login</code>, 0 <code>cluster-rejoin</code>, 0 Traceback, 0 ERROR</td>
+<td>PASS</td>
+<td>From 01:52:54Z, 543 lines: <code>lines naming walk-478, label-invalid, __proto__ or a POST to /api/clusterconfigs:</code> none; <code>cluster-secret-created lines: 0</code>; <code>lines matching 'fleet-login': 0</code>; <code>lines matching 'cluster-rejoin': 0</code>; <code>lines naming /rejoin: 0</code>; <code>lines naming the fleet account: 0</code>; <code>Traceback lines: 0</code>; <code>ERROR lines: 0</code> (<code>evidence/final-podlog.txt</code>). No refusal line is logged: between 01:54:30Z and 01:54:45Z the container wrote <code># lines: 0</code> (<code>evidence/create-window-podlog.txt</code>). The API turns the writer's refusal into the <code>422</code> without an event line (<code>_write_error</code> in <code>local-development/gsd/api.py</code>).</td>
+</tr>
+<tr>
+<td>end</td>
+<td>End state: <code>can-i</code> no → yes → no; no grant, no <code>gsd-cluster-walk-478</code>; <code>/api/version</code>, PVC UIDs, <code>shared-qa</code>, the fleet Lease unchanged</td>
+<td>PASS</td>
+<td><code>can-i</code>: <code>no</code> at 01:47:05Z; <code>yes</code> at 01:52:54Z; <code>no</code> at 01:54:55Z and 01:57:02Z; <code>yes</code> at 02:00:30Z; <code>no</code> at 02:03:06Z, 02:05:22Z and 02:05:48Z (<code>evidence/before-cani.txt</code>, <code>granted-cani.txt</code>, <code>removed-cani.txt</code>, <code>after-cani.txt</code>, <code>r2-granted-cani.txt</code>, <code>r2-removed-cani.txt</code>, <code>r2-after-cani.txt</code>, <code>final-cani.txt</code>). The grant by the run label: <code>No resources found</code> before and at 02:05:48Z (<code>evidence/before-grant.txt</code>, <code>final-grant.txt</code>). The explicit deletes were at 01:54:55Z and 02:03:06Z, and each trap delete afterwards found <code>No resources found</code> (<code>evidence/grant-delete.txt</code>, <code>r2-grant-delete.txt</code>). <code>/api/version</code> read <code>&quot;version&quot;:&quot;1.17.0&quot;,&quot;commit&quot;:&quot;84b1e46b6f&quot;</code> before and after (<code>evidence/before-version.txt</code>, <code>r2-after-version.txt</code>). PVC UIDs <code>f065b7a4-535c-4ef1-868c-58f5afee4953</code> (data) and <code>08c7d45c-a3eb-47be-8506-f24ea7a3e0e3</code> (report-artifacts) before and after (<code>evidence/before-pvcs.txt</code>, <code>r2-after-pvcs.txt</code>). <code>shared-qa</code> <code>resourceVersion=2981054</code> before and after (<code>evidence/before-sharedqa.txt</code>, <code>r2-after-sharedqa.txt</code>). The fleet Lease <code>name=gsd-fleet-666f1ba7f2fdead0 resourceVersion=6171122 holderIdentity=&quot;&quot;</code> before and after (<code>evidence/before-lease.txt</code>, <code>r2-after-lease.txt</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2>How the walk ran</h2>
+<table>
+<thead>
+<tr>
+<th>When (UTC)</th>
+<th>Step</th>
+<th>File</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01:47:04–06</td>
+<td>Before: version, PVC UIDs, <code>can-i</code> <code>no</code>, no labelled grant, <code>gsd-cluster-walk-478</code> <code>NotFound</code>, the Lease, <code>shared-qa</code></td>
+<td><code>evidence/before-*.txt</code></td>
+</tr>
+<tr>
+<td>01:52:54</td>
+<td>First pass: the trap armed, then the grant created; <code>can-i</code> <code>yes</code>; 70 s waited, to 01:54:04</td>
+<td><code>evidence/t0.txt</code>, <code>grant-create.txt</code>, <code>granted-cani.txt</code>, <code>wait-granted.txt</code></td>
+</tr>
+<tr>
+<td>01:54:08–01:54:31</td>
+<td>C5 with the grant at 1280. The fresh loads were as in row 1. The hash edits were read before the repaint (<code>main_h2</code> <code>What changed last 30 days</code>), and the check failed</td>
+<td><code>evidence/walk-granted.txt</code></td>
+</tr>
+<tr>
+<td>01:54:36–01:54:38</td>
+<td>The form at 1280, Create pressed once: <code>422</code> <code>label-invalid</code> naming <code>'__proto__'</code>; the Secret <code>NotFound</code></td>
+<td><code>evidence/walk-granted.txt</code>, <code>aftercreate-secret.txt</code></td>
+</tr>
+<tr>
+<td>01:54:42–01:54:51</td>
+<td>The namespace pages at 1280</td>
+<td><code>evidence/walk-granted.txt</code></td>
+</tr>
+<tr>
+<td>01:54:55</td>
+<td>The walk stopped after the 375 px tier check (a failure was already recorded), <code>walk exit=1</code>; the grant deleted explicitly; <code>can-i</code> <code>no</code>; 70 s waited, to 01:56:05</td>
+<td><code>evidence/walk-granted.txt</code>, <code>grant-delete.txt</code>, <code>removed-cani.txt</code>, <code>wait-ungranted.txt</code></td>
+</tr>
+<tr>
+<td>01:56:09–01:57:00</td>
+<td>C5 without the grant at 1280 and 375. Its hash edits were read before the repaint too; the check passed only because it compared the ids with one another across the two modes and all of them read <code>self</code></td>
+<td><code>evidence/walk-ungranted.txt</code></td>
+</tr>
+<tr>
+<td>01:57:00–03</td>
+<td>After captures; the trap's delete found nothing</td>
+<td><code>evidence/after-*.txt</code>, <code>grant-delete.txt</code></td>
+</tr>
+<tr>
+<td>02:00:30</td>
+<td>Second pass (<code>scripts/walk.sh rerun</code>): the trap armed, the grant created, <code>can-i</code> <code>yes</code>, 70 s waited to 02:01:41</td>
+<td><code>evidence/r2-t0.txt</code>, <code>r2-grant-create.txt</code>, <code>r2-granted-cani.txt</code>, <code>r2-wait-granted.txt</code></td>
+</tr>
+<tr>
+<td>02:01:46–02:03:06</td>
+<td>C5 with the grant at 1280 and 375, waiting for the repaint; the form (no Create) and the namespace pages at 375; <code>failures : []</code>, <code>walk exit=0</code></td>
+<td><code>evidence/r2-walk-granted.txt</code></td>
+</tr>
+<tr>
+<td>02:03:06</td>
+<td>The grant deleted explicitly; <code>can-i</code> <code>no</code>; 70 s waited, to 02:04:16</td>
+<td><code>evidence/r2-grant-delete.txt</code>, <code>r2-removed-cani.txt</code>, <code>r2-wait-ungranted.txt</code></td>
+</tr>
+<tr>
+<td>02:04:21–02:05:21</td>
+<td>C5 without the grant at 1280 and 375; <code>failures : []</code>, <code>walk exit=0</code></td>
+<td><code>evidence/r2-walk-ungranted.txt</code></td>
+</tr>
+<tr>
+<td>02:05:21–02:05:59</td>
+<td>After captures; the trap's delete found nothing; the final <code>can-i</code>, grant, Secret and pod-log captures</td>
+<td><code>evidence/r2-after-*.txt</code>, <code>final-*.txt</code>, <code>create-window-podlog.txt</code></td>
+</tr>
+<tr>
+<td>02:07:58–02:08:24</td>
+<td>The repaint probe, without the grant: at +1 s <code>#main</code> still showed Home with <code>stale</code> <code>true</code>; at +3 s the new page was painted and <code>stale</code> <code>false</code>, for all three targets; no page error, nothing blocked</td>
+<td><code>evidence/probe-hash-repaint.txt</code></td>
+</tr>
+</tbody>
+</table>
+<h2>Why the CA mode is &quot;use the trusted bundle&quot;</h2>
+<p>The form opens on &quot;paste PEM&quot;. With no PEM, the server refuses <code>ca-data-invalid</code> before it reads a label: <code>validate()</code>
+in <code>local-development/gsd/clusterconfig/writer.py</code> checks the token, then the TLS mode, then the labels. The walk
+chose the trusted bundle so the only thing Create could be refused for was a label. The token string
+<code>walk-478-not-a-token</code> is 20 characters, above the writer's floor of 8 (<code>MIN_TOKEN_LENGTH</code>). No server issued it,
+and the refusal came before any request to a cluster.</p>
+<h2>What the lab did not do</h2>
+<ul>
+<li>The route guard on the dashboard's <code>/api/</code> let through GETs and exactly one <code>POST /api/clusterconfigs</code>, and only
+when that POST's body carried <code>__proto__</code>, so a build that dropped the key could not have written the Secret. It
+blocked nothing in any phase: four <code>the route guard blocked no request : []</code> lines (<code>evidence/walk-granted.txt</code>,
+<code>walk-ungranted.txt</code>, <code>r2-walk-granted.txt</code>, <code>r2-walk-ungranted.txt</code>).</li>
+<li>No chip was removed and Create was not pressed again.</li>
+<li>The first pass's hash-edit screenshots (<code>screenshots/04</code>–<code>06</code>, <code>44</code>–<code>46</code>, <code>50</code>–<code>52</code>) show Home, not the case in
+their names. They are kept as the record of that pass; the second pass's <code>64</code>–<code>66</code>, <code>70</code>–<code>72</code>, <code>104</code>–<code>106</code> and
+<code>110</code>–<code>112</code> show the repainted pages.</li>
+<li><code>screenshots/77-granted-rerun-375-lookup.png</code> was taken 1.2 s after typing, while the lookup's Groups door still
+read &quot;loading…&quot;. The namespace section it measures had painted.</li>
+<li>The two <code>ns-list</code> captures the walk took (steps 09 and 74) are not in this folder. <code>walk.py</code> photographed the
+first <code>table</code> in <code>#main</code>, which on the Namespace audit page is the &quot;Cluster-wide direct grants&quot; card's table,
+not the namespace list, and that table names the fleet account in its &quot;Who is exposed&quot; column. The list's
+values are the JSON <code>ns list</code> lines in <code>evidence/walk-granted.txt</code> and <code>evidence/r2-walk-granted.txt</code>; there is
+no picture of it.</li>
+</ul>
+<h2>Files</h2>
+<ul>
+<li><code>scripts/walk.sh</code>: the whole walk in order (<code>walk.sh</code> for the first pass, <code>walk.sh rerun</code> for the second). It arms
+a shell <code>trap … EXIT</code> that deletes the grant by the run label before it creates the grant, and deletes it again
+explicitly when the granted phase ends.</li>
+<li><code>scripts/walk.py</code>: the Playwright walk (<code>granted</code>, <code>ungranted</code>, <code>granted-rerun</code>, <code>ungranted-rerun</code>).</li>
+<li><code>scripts/probe_hash.py</code>: the repaint probe (run with <code>PYTHONPATH=scripts</code>; it uses <code>walk.py</code>'s login and guard).</li>
+<li><code>scripts/capture.sh</code>: the read-only captures. It redacts any <code>sha256~</code> value and replaces the fleet account's name,
+read from its Lease, with <code>&lt;fleet account&gt;</code>. Neither appears in any text file in this folder: a search for the
+account's name and for <code>sha256~</code> found 0 files. <code>walk.py</code> masks the name only where its selector matches (the
+fleet card on the Cluster Configurations page); the two captures that rendered it elsewhere were removed (above).</li>
+<li><code>scripts/grant.yaml</code>: the temporary grant, labelled <code>walk.gsd.lab/run=ui-478-2026-09-28</code>.</li>
+<li><code>evidence/</code>: every capture, its command line first and the instant it ran. Files prefixed <code>r2-</code> are the second
+pass's; <code>final-</code> files were captured after it.</li>
+<li><code>screenshots/</code>: 51 PNGs. The number is the step (09 and 74 were removed, above), and the name gives the phase, the
+width, and the case.</li>
+</ul>
+
+<h2 id="screenshots">Screenshots</h2>
+<figure><img src="screenshots/01-granted-1280-c5-zzz-unknown-fresh.png" alt="01-granted-1280-c5-zzz-unknown-fresh.png"><figcaption>01-granted-1280-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/02-granted-1280-c5-constructor-fresh.png" alt="02-granted-1280-c5-constructor-fresh.png"><figcaption>02-granted-1280-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/03-granted-1280-c5-toString-fresh.png" alt="03-granted-1280-c5-toString-fresh.png"><figcaption>03-granted-1280-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/04-granted-1280-c5-zzz-unknown-hash.png" alt="04-granted-1280-c5-zzz-unknown-hash.png"><figcaption>04-granted-1280-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/05-granted-1280-c5-constructor-hash.png" alt="05-granted-1280-c5-constructor-hash.png"><figcaption>05-granted-1280-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/06-granted-1280-c5-toString-hash.png" alt="06-granted-1280-c5-toString-hash.png"><figcaption>06-granted-1280-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/07-granted-1280-form-two-labels.png" alt="07-granted-1280-form-two-labels.png"><figcaption>07-granted-1280-form-two-labels.png</figcaption></figure>
+<figure><img src="screenshots/08-granted-1280-form-create-refused.png" alt="08-granted-1280-form-create-refused.png"><figcaption>08-granted-1280-form-create-refused.png</figcaption></figure>
+<figure><img src="screenshots/10-granted-1280-ns-detail-labelled.png" alt="10-granted-1280-ns-detail-labelled.png"><figcaption>10-granted-1280-ns-detail-labelled.png</figcaption></figure>
+<figure><img src="screenshots/101-ungranted-rerun-1280-c5-zzz-unknown-fresh.png" alt="101-ungranted-rerun-1280-c5-zzz-unknown-fresh.png"><figcaption>101-ungranted-rerun-1280-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/102-ungranted-rerun-1280-c5-constructor-fresh.png" alt="102-ungranted-rerun-1280-c5-constructor-fresh.png"><figcaption>102-ungranted-rerun-1280-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/103-ungranted-rerun-1280-c5-toString-fresh.png" alt="103-ungranted-rerun-1280-c5-toString-fresh.png"><figcaption>103-ungranted-rerun-1280-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/104-ungranted-rerun-1280-c5-zzz-unknown-hash.png" alt="104-ungranted-rerun-1280-c5-zzz-unknown-hash.png"><figcaption>104-ungranted-rerun-1280-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/105-ungranted-rerun-1280-c5-constructor-hash.png" alt="105-ungranted-rerun-1280-c5-constructor-hash.png"><figcaption>105-ungranted-rerun-1280-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/106-ungranted-rerun-1280-c5-toString-hash.png" alt="106-ungranted-rerun-1280-c5-toString-hash.png"><figcaption>106-ungranted-rerun-1280-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/107-ungranted-rerun-375-c5-zzz-unknown-fresh.png" alt="107-ungranted-rerun-375-c5-zzz-unknown-fresh.png"><figcaption>107-ungranted-rerun-375-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/108-ungranted-rerun-375-c5-constructor-fresh.png" alt="108-ungranted-rerun-375-c5-constructor-fresh.png"><figcaption>108-ungranted-rerun-375-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/109-ungranted-rerun-375-c5-toString-fresh.png" alt="109-ungranted-rerun-375-c5-toString-fresh.png"><figcaption>109-ungranted-rerun-375-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/11-granted-1280-ns-detail-unlabelled.png" alt="11-granted-1280-ns-detail-unlabelled.png"><figcaption>11-granted-1280-ns-detail-unlabelled.png</figcaption></figure>
+<figure><img src="screenshots/110-ungranted-rerun-375-c5-zzz-unknown-hash.png" alt="110-ungranted-rerun-375-c5-zzz-unknown-hash.png"><figcaption>110-ungranted-rerun-375-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/111-ungranted-rerun-375-c5-constructor-hash.png" alt="111-ungranted-rerun-375-c5-constructor-hash.png"><figcaption>111-ungranted-rerun-375-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/112-ungranted-rerun-375-c5-toString-hash.png" alt="112-ungranted-rerun-375-c5-toString-hash.png"><figcaption>112-ungranted-rerun-375-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/12-granted-1280-lookup.png" alt="12-granted-1280-lookup.png"><figcaption>12-granted-1280-lookup.png</figcaption></figure>
+<figure><img src="screenshots/41-ungranted-1280-c5-zzz-unknown-fresh.png" alt="41-ungranted-1280-c5-zzz-unknown-fresh.png"><figcaption>41-ungranted-1280-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/42-ungranted-1280-c5-constructor-fresh.png" alt="42-ungranted-1280-c5-constructor-fresh.png"><figcaption>42-ungranted-1280-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/43-ungranted-1280-c5-toString-fresh.png" alt="43-ungranted-1280-c5-toString-fresh.png"><figcaption>43-ungranted-1280-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/44-ungranted-1280-c5-zzz-unknown-hash.png" alt="44-ungranted-1280-c5-zzz-unknown-hash.png"><figcaption>44-ungranted-1280-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/45-ungranted-1280-c5-constructor-hash.png" alt="45-ungranted-1280-c5-constructor-hash.png"><figcaption>45-ungranted-1280-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/46-ungranted-1280-c5-toString-hash.png" alt="46-ungranted-1280-c5-toString-hash.png"><figcaption>46-ungranted-1280-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/47-ungranted-375-c5-zzz-unknown-fresh.png" alt="47-ungranted-375-c5-zzz-unknown-fresh.png"><figcaption>47-ungranted-375-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/48-ungranted-375-c5-constructor-fresh.png" alt="48-ungranted-375-c5-constructor-fresh.png"><figcaption>48-ungranted-375-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/49-ungranted-375-c5-toString-fresh.png" alt="49-ungranted-375-c5-toString-fresh.png"><figcaption>49-ungranted-375-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/50-ungranted-375-c5-zzz-unknown-hash.png" alt="50-ungranted-375-c5-zzz-unknown-hash.png"><figcaption>50-ungranted-375-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/51-ungranted-375-c5-constructor-hash.png" alt="51-ungranted-375-c5-constructor-hash.png"><figcaption>51-ungranted-375-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/52-ungranted-375-c5-toString-hash.png" alt="52-ungranted-375-c5-toString-hash.png"><figcaption>52-ungranted-375-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/61-granted-rerun-1280-c5-zzz-unknown-fresh.png" alt="61-granted-rerun-1280-c5-zzz-unknown-fresh.png"><figcaption>61-granted-rerun-1280-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/62-granted-rerun-1280-c5-constructor-fresh.png" alt="62-granted-rerun-1280-c5-constructor-fresh.png"><figcaption>62-granted-rerun-1280-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/63-granted-rerun-1280-c5-toString-fresh.png" alt="63-granted-rerun-1280-c5-toString-fresh.png"><figcaption>63-granted-rerun-1280-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/64-granted-rerun-1280-c5-zzz-unknown-hash.png" alt="64-granted-rerun-1280-c5-zzz-unknown-hash.png"><figcaption>64-granted-rerun-1280-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/65-granted-rerun-1280-c5-constructor-hash.png" alt="65-granted-rerun-1280-c5-constructor-hash.png"><figcaption>65-granted-rerun-1280-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/66-granted-rerun-1280-c5-toString-hash.png" alt="66-granted-rerun-1280-c5-toString-hash.png"><figcaption>66-granted-rerun-1280-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/67-granted-rerun-375-c5-zzz-unknown-fresh.png" alt="67-granted-rerun-375-c5-zzz-unknown-fresh.png"><figcaption>67-granted-rerun-375-c5-zzz-unknown-fresh.png</figcaption></figure>
+<figure><img src="screenshots/68-granted-rerun-375-c5-constructor-fresh.png" alt="68-granted-rerun-375-c5-constructor-fresh.png"><figcaption>68-granted-rerun-375-c5-constructor-fresh.png</figcaption></figure>
+<figure><img src="screenshots/69-granted-rerun-375-c5-toString-fresh.png" alt="69-granted-rerun-375-c5-toString-fresh.png"><figcaption>69-granted-rerun-375-c5-toString-fresh.png</figcaption></figure>
+<figure><img src="screenshots/70-granted-rerun-375-c5-zzz-unknown-hash.png" alt="70-granted-rerun-375-c5-zzz-unknown-hash.png"><figcaption>70-granted-rerun-375-c5-zzz-unknown-hash.png</figcaption></figure>
+<figure><img src="screenshots/71-granted-rerun-375-c5-constructor-hash.png" alt="71-granted-rerun-375-c5-constructor-hash.png"><figcaption>71-granted-rerun-375-c5-constructor-hash.png</figcaption></figure>
+<figure><img src="screenshots/72-granted-rerun-375-c5-toString-hash.png" alt="72-granted-rerun-375-c5-toString-hash.png"><figcaption>72-granted-rerun-375-c5-toString-hash.png</figcaption></figure>
+<figure><img src="screenshots/73-granted-rerun-375-form-two-labels.png" alt="73-granted-rerun-375-form-two-labels.png"><figcaption>73-granted-rerun-375-form-two-labels.png</figcaption></figure>
+<figure><img src="screenshots/75-granted-rerun-375-ns-detail-labelled.png" alt="75-granted-rerun-375-ns-detail-labelled.png"><figcaption>75-granted-rerun-375-ns-detail-labelled.png</figcaption></figure>
+<figure><img src="screenshots/76-granted-rerun-375-ns-detail-unlabelled.png" alt="76-granted-rerun-375-ns-detail-unlabelled.png"><figcaption>76-granted-rerun-375-ns-detail-unlabelled.png</figcaption></figure>
+<figure><img src="screenshots/77-granted-rerun-375-lookup.png" alt="77-granted-rerun-375-lookup.png"><figcaption>77-granted-rerun-375-lookup.png</figcaption></figure>
+</body></html>
