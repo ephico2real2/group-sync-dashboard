@@ -291,7 +291,8 @@ type: application
 # CHART 0.59.18 (2026-09-28), PATCH: appVersion moves to application 1.16.0 (below); #459.
 # CHART 0.59.19 (2026-09-28), PATCH: appVersion moves to application 1.17.0 (below); #478.
 # CHART 0.59.20 (2026-09-28), PATCH: appVersion moves to application 1.18.0 (below); #481.
-version: 0.59.20
+# CHART 0.59.21 (2026-09-28), PATCH: appVersion moves to application 1.19.0 (below); #465.
+version: 0.59.21
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -410,7 +411,8 @@ version: 0.59.20
 # 1.16.0 (2026-09-28). Maps keyed by an external name have no prototype: a cluster, page or role named constructor reads nothing inherited (#459). MINOR.
 # 1.17.0 (2026-09-28). a namespace label, and whoami's per-cluster visibility, are read by own key (#478). MINOR.
 # 1.18.0 (2026-09-28). A deleted fleet Lease is put back from the copy kept beside the database, so `crc start` sends no refused password again and pings no second time in a day (#481). MINOR.
-appVersion: "1.18.0"
+# 1.19.0 (2026-09-28). A quoted text that holds the password is shown whole as a fixed mark, and left out where the mark would meet the password; Rejoin adds no refusal (#465). MINOR.
+appVersion: "1.19.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

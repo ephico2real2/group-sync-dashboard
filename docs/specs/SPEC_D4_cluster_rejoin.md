@@ -394,6 +394,19 @@ carried) runs fourteen scenarios. In each, the fake remote plants every secret i
 test then looks for them in the answer, every log line at DEBUG, every stored Secret, the gate, the findings and the
 whole database, and on the wire outside the one authorize's `Authorization` header.
 
+**A password inside words the reader already knows (#465, SPEC_D6).** The scrub cuts a password out wherever it occurs,
+so a password that is part of text the reader knows leaves spans that spell it. A text Rejoin only quotes, which exists
+only after the password was sent (a failure's evidence, D8's reason), becomes
+`<redacted: the text contained the credential>` whole when a secret occurs in it (`gsd/rejoin.py#_whole`), and the
+answer does not scrub the mark again, so no span is cut there: with the password `a`, a refused login's evidence read
+`401 Un<red<redacted>cted>uthorized` and reads the mark now. Rejoin refuses no password for being found in its own
+words or names (SPEC_D6's part (1) is not applied, by the operator's decision of 2026-09-29), so such a password still
+leaves spans in Rejoin's sentences and lines: `update` in `who may <redacted> clusterrolebindings`, and `a` in
+`Signed in to e<redacted>st <redacted>s bob`. Every spelling above stays scrubbed. The login's own lines, shared with
+the fleet, keep their spans (SPEC_D6 §5).
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
+
 ## 4. The decisions
 
 **Each is decided as recommended; the operator rules.** One line each: the choice, and why.

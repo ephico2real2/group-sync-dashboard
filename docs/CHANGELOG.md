@@ -10,6 +10,20 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Rejoin quotes a text that holds a secret in fixed words, whole (#465, Epic D #384,
+  `docs/specs/SPEC_D6_scrub_span.md`, part (2)).** The scrub cuts a password out of text wherever it occurs, so a
+  password found in a text Rejoin only quotes — a failure's evidence, D8's reason — left `<redacted>` spans that
+  spelled it, and the scrub cut into its own marks: with the password `a`, a refused login's evidence read
+  `401 Un<red<redacted>cted>uthorized`. Such a text now reads `<redacted: the text contained the credential>` whole,
+  in the answer, in `cluster-rejoin-failed` and in `cluster-rejoin-review`. Rejoin refuses no password for being found
+  in the words it writes (SPEC_D6's part (1) is not applied, by the operator's decision of 2026-09-29): the press goes
+  to the login as before, and a password that is one of Rejoin's own words or names still leaves spans there.
+  Pressed with the NCSC's 100,000 most common passwords on fifteen paths: 406 left a span on main and 332 do now,
+  none that did not before, and Rejoin refuses none that main sends. Every password spelling stays scrubbed; the
+  one-login budget, the per-pod credential gate and #447's refusal are unchanged.
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported. Application **1.19.0**, chart 0.59.21.
+
 - **A deleted fleet Lease is put back from a copy beside the database (#481, Epic C #383,
   `docs/specs/SPEC_S4f_fleet_gate_backstop.md`).** The fleet account's gate and daily-ping instants lived only on its
   Lease, and `crc start` deletes every Lease on the cluster (crc 2.29.0 and later), so after each start a refused or

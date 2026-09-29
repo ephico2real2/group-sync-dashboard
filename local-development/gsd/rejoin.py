@@ -48,6 +48,8 @@ READ_SAYS = {
                             "and recreate it there",
     "sa-token-unreadable": "the poller token Secret on {cluster} could not be used",
 }
+#: What a quoted text becomes when a secret occurs in it (#465): the whole field, never a span (`_whole`).
+QUOTED_MARK = "<redacted: the text contained the credential>"
 
 
 _HEX = re.compile(r"\\u([0-9a-f]{4})")
@@ -81,6 +83,19 @@ def _scrub(text: str, secrets) -> str:
             layer = set().union(*map(_spellings, layer))
             forms |= layer
     return _fleet_scrub(text, list(forms))
+
+
+def _whole(text: str, secrets) -> str:
+    """A text Rejoin only quotes — a failure's evidence, D8's reason — as it came, or QUOTED_MARK when the password or
+    any secret occurs in it, or an earlier scrub already marked it (#465, SPEC_D6): the scrub cuts a secret out wherever
+    it occurs, and a span cut out of words the reader knows spells what was cut."""
+    return QUOTED_MARK if "<redacted" in text or _scrub(text, secrets) != text else text
+
+
+def _quoted(text: str, secrets) -> str:
+    """Keep whole quoted text, omitting a mark that would itself contain a secret or be cut by the emitter."""
+    text = _whole(text, secrets)
+    return "" if text == QUOTED_MARK and _scrub(text, secrets) != text else text
 
 
 class RejoinLogin(FleetLogin):
@@ -226,11 +241,17 @@ def _exchange(cluster: ClusterConfig, settings: Settings, host_client: ClusterCl
     who = dict(cluster=cluster.name, by=viewer, account=username)
 
     def refused(code: str, said: str, detail: str | None = None, *, phase: str = "credential") -> dict:
-        """One failure line and the answer: the person's sentence, then the evidence; both scrubbed."""
+        """One failure line and the answer: the person's sentence, then the evidence (`_whole`); both scrubbed."""
         said = f"{said}{_logged_out(login, cluster)}"
-        detail = _scrub(detail, secrets) if detail else None   # any length: the emit helper skips values under four
+        detail = (_quoted(detail, secrets) or None) if detail else None   # any length: the emit helper skips values under four
         failure(log, "cluster-rejoin-failed", phase=phase, outcome=code, **who, action=said, detail=detail,
                 secrets=secrets)
+        if detail == QUOTED_MARK:   # omit a collision instead of cutting a span into the fixed mark
+            clean = _scrub(said, secrets)
+            message = f"{clean} ({detail})"
+            # The password can also straddle the sentence and the newly appended mark.
+            return {"outcome": code, "message": clean if _scrub(message, secrets) != message else message,
+                    "at": now_iso()}
         return {"outcome": code, "message": _scrub(f"{said} ({detail})" if detail else said, secrets), "at": now_iso()}
 
     answered = gate.account_refusal(username, password)
@@ -251,7 +272,7 @@ def _exchange(cluster: ClusterConfig, settings: Settings, host_client: ClusterCl
                                           f"so nothing was read or written", f"{exc.outcome}: {exc.message}")
             else:
                 event(log, logging.INFO, "cluster-rejoin-review", **who, question=asked,
-                      allowed="true" if allowed else "false", reason=_scrub(reason, secrets) or None, secrets=secrets)
+                      allowed="true" if allowed else "false", reason=_quoted(reason, secrets) or None, secrets=secrets)
                 if not allowed:
                     stopped = (NOT_CLUSTER_ADMIN, f"{cluster.name} says {username} may not {asked} there, so nothing "
                                                   f"was read or written: Rejoin needs a cluster administrator of "
@@ -324,6 +345,6 @@ def _logged_out(login: FleetLogin, cluster: ClusterConfig) -> str:
             f"useroauthaccesstokens <name>, as yourself)")
 
 
-__all__ = ["NOT_CLUSTER_ADMIN", "ONE_TRY", "READ_SAYS", "REJOINED", "REVIEW_FAILED", "STOPPED", "RejoinLogin", "check",
-           "fleet_accounts", "question", "question_words", "refusal", "rejoin", "remote_says_cluster_admin",
-           "stopped_unexpectedly"]
+__all__ = ["NOT_CLUSTER_ADMIN", "ONE_TRY", "QUOTED_MARK", "READ_SAYS", "REJOINED", "REVIEW_FAILED", "STOPPED",
+           "RejoinLogin", "check", "fleet_accounts", "question", "question_words", "refusal", "rejoin",
+           "remote_says_cluster_admin", "stopped_unexpectedly"]

@@ -353,10 +353,14 @@ with writes off (the route does not exist); `409 not-rejoinable` where `rejoinab
 is in flight in this process, or when the process runs no poller; `422` for a body that is not exactly `{username,
 password}` as strings (fixed words: no key or value is repeated, because a key can be the password),
 `rejoin-username-invalid` (outside the bootstrap grammar), `rejoin-fleet-account` (a name a fleet path logs in as,
-compared stripped and casefolded), `rejoin-password-missing` and `rejoin-password-invalid` (a control character, which
-RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry). A success wakes discovery. One
+compared stripped and casefolded), `rejoin-password-missing`, `rejoin-password-invalid` (a control character, which
+RFC 7617 forbids, or an unpaired surrogate, which UTF-8 cannot carry) and `rejoin-password-within-username` (the
+password, stripped and casefolded, is the username or lies inside it; #447). A success wakes discovery. One
 `cluster-rejoin-review` line carries the remote's answer, then `cluster-rejoined` or `cluster-rejoin-failed`; each names
-the person and the account and carries no credential.
+the person and the account and carries no credential. A failure's evidence and the remote's reason, which Rejoin only
+quotes, read `<redacted: the text contained the credential>` whole when a secret occurs in them (issue #465).
+If that fixed mark itself contains a secret, the quoted field is omitted in both the answer and the log;
+the existing outcome and failure sentence are still reported.
 
 ## GroupSync CRs
 
