@@ -243,7 +243,7 @@ of those reads held them is not measured.</p>
 <code>fleet-logout</code>, <code>fleet-lookup</code>, <code>fleet-ping</code>, <code>cluster-rejoin*</code>, Traceback and ERROR each count 0. Lines naming the
 fleet account also count 0 (<code>evidence/after-podlog.txt</code>).</p>
 <h2>The credential, and why it was chosen</h2>
-<p>#448's method was Rejoin as <code>developer</code> behind a disposable <code>cluster-admin</code> binding. It cannot run on 1.19.0: CRC's
+<p>The method #448 used was Rejoin as <code>developer</code> behind a disposable <code>cluster-admin</code> binding. It cannot run on 1.19.0: CRC's
 <code>developer</code> password equals its username, and #447 refuses such a password with <code>422 rejoin-password-within-username</code> before sending anything
 (<code>reports/2026-09-29_rejoin-465-walk/README.md</code>, row C). Rejoin would also have made a second <code>developer</code> login. So
 the throwaway Secret carries a copy of <code>gsd-cluster-shared-rnd</code>'s <code>bearerToken</code> and <code>tlsClientConfig</code>. <code>scripts/lab.sh</code>

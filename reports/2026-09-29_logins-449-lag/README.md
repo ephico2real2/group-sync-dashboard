@@ -125,7 +125,7 @@ fleet account also count 0 (`evidence/after-podlog.txt`).
 
 ## The credential, and why it was chosen
 
-#448's method was Rejoin as `developer` behind a disposable `cluster-admin` binding. It cannot run on 1.19.0: CRC's
+The method #448 used was Rejoin as `developer` behind a disposable `cluster-admin` binding. It cannot run on 1.19.0: CRC's
 `developer` password equals its username, and #447 refuses such a password with `422
 rejoin-password-within-username` before sending anything
 (`reports/2026-09-29_rejoin-465-walk/README.md`, row C). Rejoin would also have made a second `developer` login. So
