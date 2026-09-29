@@ -1,0 +1,12 @@
+2026-09-29T17:31:44Z the run began: 2026-09-29T17:31:44Z
+2026-09-29T17:31:45Z the Secret was created
+2026-09-29T17:31:46Z the one login was made (started 2026-09-29T17:31:45.837912Z)
+2026-09-29T17:31:58Z after dashboard's audit read 1 since the login: control_row=true
+2026-09-29T17:32:39Z after logins-449's audit read 1: {"entry_row":false,"entry_http":200,"control_row":true}
+2026-09-29T17:33:41Z after logins-449's audit read 2: {"entry_row":false,"entry_http":200,"control_row":true}
+2026-09-29T17:34:44Z after logins-449's audit read 3: {"entry_row":false,"entry_http":200,"control_row":true}
+2026-09-29T17:35:41Z after logins-449's audit read 4: {"entry_row":true,"entry_http":200,"control_row":true}
+2026-09-29T17:35:41Z the row is on logins-449 after its audit read 4
+2026-09-29T17:35:42Z logged out and deleted by label
+2026-09-29T17:37:34Z discovery removed logins-449: 1 line(s)
+2026-09-29T17:37:36Z done

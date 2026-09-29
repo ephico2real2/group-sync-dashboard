@@ -1,0 +1,13 @@
+# KUBECONFIG=<throwaway>/kubeconfig oc login https://api.crc.testing:6443 -u developer --certificate-authority=<the lab CA> (password on stdin)
+# started at 2026-09-29T17:31:45.991829Z
+Console URL: https://api.crc.testing:6443/console
+Authentication required for https://api.crc.testing:6443 (openshift)
+Username: developer
+Password: Login successful.
+
+You don't have any projects. You can try to create a new project, by running
+
+    oc new-project <projectname>
+
+# exit 0, ended at 2026-09-29T17:31:46.169090Z
+# whoami on the throwaway kubeconfig: developer
