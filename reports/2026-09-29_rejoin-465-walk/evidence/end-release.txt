@@ -1,0 +1,6 @@
+# helm list -n group-sync-dashboard
+# at 2026-09-29T15:38:26Z
+NAME	NAMESPACE	REVISION	UPDATED	STATUS	CHART	APP VERSION
+# oc get deploy group-sync-dashboard image
+quay.io/ephico2real/group-sync-dashboard:1.19.0 registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15
+group-sync-dashboard-0.59.21

@@ -1,0 +1,3 @@
+# oc get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o json | jq -c '{fleet_account_leases: (.items | length), leases: [.items[] | {resourceVersion: .metadata.resourceVersion, holder: .spec.holderIdentity}]}'
+# at 2026-09-29T15:37:50Z
+{"fleet_account_leases":1,"leases":[{"resourceVersion":"6761163","holder":""}]}

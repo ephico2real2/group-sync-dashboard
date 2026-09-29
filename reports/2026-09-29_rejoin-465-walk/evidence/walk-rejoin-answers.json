@@ -1,0 +1,42 @@
+[
+  {
+    "case": "A",
+    "username": "developer",
+    "password": "<20 random letters and digits, not recorded>",
+    "pressed_at": "2026-09-29T15:33:46Z",
+    "http_status": 200,
+    "answer": {
+      "outcome": "login-refused",
+      "message": "w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)",
+      "at": "2026-09-29T15:33:46Z"
+    },
+    "card_rejoin_line": "Rejoin: login-refused \u00b7 2026-09-29T15:33:46Z \u2014 w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)",
+    "dialog_message": "login-refused \u2014 w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)"
+  },
+  {
+    "case": "B",
+    "username": "developer",
+    "password": "update",
+    "pressed_at": "2026-09-29T15:33:48Z",
+    "http_status": 200,
+    "answer": {
+      "outcome": "login-refused",
+      "message": "w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)",
+      "at": "2026-09-29T15:33:49Z"
+    },
+    "card_rejoin_line": "Rejoin: login-refused \u00b7 2026-09-29T15:33:49Z \u2014 w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)",
+    "dialog_message": "login-refused \u2014 w465 refused the password for developer: check the username and password; it is not sent again by this pod while it is the same password (401 Unauthorized from oauth-openshift.apps-crc.testing; Www-Authenticate: Basic realm=\"openshift\"; body: <empty>)"
+  },
+  {
+    "case": "C",
+    "username": "developer",
+    "password": "developer",
+    "pressed_at": "2026-09-29T15:33:51Z",
+    "http_status": 422,
+    "answer": {
+      "detail": "rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent"
+    },
+    "card_rejoin_line": "Rejoin: HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent",
+    "dialog_message": "HTTP 422 \u2014 rejoin-password-within-username: the password must not be the username or a part of it, ignoring case and surrounding spaces; it was not sent"
+  }
+]
