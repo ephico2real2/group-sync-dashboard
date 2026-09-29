@@ -780,10 +780,11 @@ def test_the_budget_over_the_system(tmp_path, monkeypatch, remote):
 
 # ── the runbook (the 2026-09-23 requirement) ───────────────────────────────────────────────────────────────
 
-def test_the_runbook_sits_beside_the_values_with_six_sections_and_docs_links_it():
+def test_the_runbook_sits_beside_the_values_with_seven_sections_and_docs_links_it():
+    """Six for Refresh and Rejoin (#316); the seventh clears the fleet account's entry by hand (#481, SPEC_S4f)."""
     runbook = REPO / "charts/group-sync-dashboard/RUNBOOK.md"
     headings = re.findall(r"^## (\d)\. ", runbook.read_text(), re.M)
-    assert headings == ["1", "2", "3", "4", "5", "6"], headings
+    assert headings == ["1", "2", "3", "4", "5", "6", "7"], headings
     assert "../charts/group-sync-dashboard/RUNBOOK.md" in (REPO / "docs/README.md").read_text()
     assert "(RUNBOOK.md)" in (REPO / "charts/group-sync-dashboard/README.md").read_text()
     credentials = (REPO / "charts/group-sync-dashboard/CLUSTER_CREDENTIALS.md").read_text()

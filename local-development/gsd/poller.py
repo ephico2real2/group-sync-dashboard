@@ -976,6 +976,12 @@ class Poller:
         from .selflogin import SelfLoginSessions
         self.self_login = SelfLoginSessions(self)
         self._ping_said: set[tuple[str, str]] = set()
+        # #481 (SPEC_S4f): every fleet Lease's gate, kept beside the database, where `crc start` — which deletes every
+        # Lease on the cluster — cannot reach it. A database in memory keeps no copy, as it keeps nothing else.
+        from .fleetstate import GATE_FILE, FileBackstop
+        path = getattr(store, "path", None)
+        self._fleet_backstop = (FileBackstop(os.path.join(os.path.dirname(path), GATE_FILE))
+                                if isinstance(path, str) and path != ":memory:" else None)
 
     def _maybe_backup(self) -> None:
         """Snapshot the irreplaceable history on its own slower schedule.
@@ -1693,9 +1699,12 @@ class Poller:
 
     # ── SPEC_S4c (#285): the account Lease and the daily ping ────────────────────────────────────────
 
-    def _fleet_lease(self, client: ClusterClient, namespace: str, account: str):
+    def _fleet_lease(self, client: ClusterClient, namespace: str, account: str, **kw):
+        """Every bind path's handle on the account's Lease — the lookup, the ping, self-login — with the copy kept
+        beside the database (#481), so no path can read an absent Lease as empty."""
         from .fleetstate import FleetLease, claim_seconds
-        return FleetLease(client, namespace, account, claim_seconds=claim_seconds(self.settings))
+        return FleetLease(client, namespace, account, claim_seconds=claim_seconds(self.settings),
+                          backstop=self._fleet_backstop, **kw)
 
     def _host_client(self) -> tuple[ClusterClient, str] | None:
         """The host cluster's client — the pod's own ServiceAccount — and the pod's namespace, or None."""
@@ -1757,6 +1766,11 @@ class Poller:
                 continue                                   # the last view stands: never zeroed on a failed read
             for name in names:
                 registry.set_standing_finding("lease", name, None)
+            if leader and record.resource_version is None and (
+                    record.seed is not None or (account in declared and account in targets)):
+                # AN ABSENT LEASE THIS ACCOUNT HAD (#481): kept beside the database, or implied by clusters retrieved as
+                # it. Put back now, once, so a gated account whose ping stands down has its gate on the object again.
+                record = lease.restore(record)
             if record.reservation_pending(datetime.now(UTC), lease.claim_seconds):
                 continue    # an attempt under way: its reservation is not yet an answer (#419, round 2)
             views[account] = record.view()

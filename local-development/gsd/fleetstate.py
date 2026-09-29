@@ -27,11 +27,19 @@ BEFORE the password is on the wire (#419, D1), so a crash, a lost write, a resta
 `complete()` removes it after a session or a provably unbound failure, `refuse()` turns it into the answer;
 `release()` lets the claim go — so the ping's due-ness is decided on the read its claim writes against, and
 nothing here is shared between threads.
+
+THE COPY BESIDE THE DATABASE (#481, SPEC_S4f). `crc start` deletes every Lease on the cluster (crc-org/crc
+pkg/crc/cluster/cluster.go:509, `oc delete -A lease --all`, since crc 2.29.0), and a person can delete one by hand.
+An absent Lease read as empty would send a refused password again, and ping twice in a day. So every Lease this
+process reads or writes is also kept, gate and ping instants only, in one file on the data volume (`FileBackstop`),
+and an absent Lease reads as that copy and is re-created from it by the next claim. The Lease stays the authority
+whenever it exists: the copy is read only on a 404, and overwritten from the Lease on every read.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -39,12 +47,14 @@ import logging
 import math
 import os
 import socket
+import threading
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from .clusterconfig.events import failure
+from .clusterconfig.events import event, failure
 from .fleetlogin import RETRY_POLICY
 from .kube import ClusterClient, ClusterError
 from .leader import LEASE_API
@@ -61,6 +71,20 @@ CAS_TRIES = 3
 #: The action every `fleet-state-unavailable` names: the grant the chart renders, and where.
 GRANT = ("grant get/create/update on coordination.k8s.io/leases in this namespace to the dashboard's "
          "ServiceAccount — the chart renders it under leaderElection.enabled or a fleet account in use")
+#: The file beside the database that keeps every fleet Lease's gate and ping instants (#481).
+GATE_FILE = "fleet-gate.json"
+#: What that file keeps of a Lease, annotation by annotation, each value exactly as the Lease holds it: the gate and
+#: the ping's bookkeeping. Never the claim, which must not outlive the Lease, nor the account, which a claim rewrites.
+KEPT = tuple(PREFIX + key for key in ("refused", "ping-last-attempt", "ping-last-ok", "ping-last-outcome",
+                                      "ping-last-target", "ping-digest"))
+#: What an absent Lease's line says when it is put back from that copy.
+RESTORED = ("the Lease was deleted — by hand, or by `crc start`, which deletes every Lease on the cluster — and is put "
+            "back from the copy kept beside the database, as this dashboard last read it; if an entry was removed by "
+            "hand while no pod read the Lease, it is back: remove it again and restart the pod")
+#: …and when nothing was kept to put back.
+NOTHING_KEPT = ("the Lease was absent and nothing was kept beside the database (persistence off, or a new volume), or "
+                "it was never created (clusters retrieved before #285): a password its gate held back may be sent once "
+                "more; it is created empty")
 
 _DIGESTS: dict[tuple[str, str, str], str] = {}
 
@@ -153,6 +177,8 @@ class FleetRecord:
     ping_last_target: str | None
     ping_digest: str | None                # the password the last ATTEMPT was for (B3)
     raw: dict | None = field(default=None, repr=False, compare=False)
+    #: An ABSENT Lease's annotations as the copy beside the database kept them (#481): what the next claim re-creates.
+    seed: dict | None = field(default=None, repr=False, compare=False)
 
     def gated(self, digest: str) -> dict | None:
         """The account entry when its digest matches, whatever the target — every bind path's rule (B2) — compared in
@@ -209,42 +235,87 @@ def _record(account: str, obj: dict | None) -> FleetRecord:
         ping_last_target=ann.get(PREFIX + "ping-last-target"), ping_digest=ann.get(PREFIX + "ping-digest"), raw=obj)
 
 
+def _absent(account: str, kept: dict) -> FleetRecord:
+    """An absent Lease this dashboard kept (#481) reads as it was kept, not as empty; unheld, since no claim is kept."""
+    return dataclasses.replace(_record(account, {"metadata": {"annotations": dict(kept)}}), raw=None, seed=dict(kept))
+
+
 class FleetLease:
     """One attempt's handle on an account's Lease, through the host cluster's client: the pod's own
     ServiceAccount, the identity the lookup writes the cluster Secret with. Never shared between threads."""
 
     def __init__(self, host: ClusterClient, namespace: str, account: str, *, claim_seconds: int,
-                 identity: str | None = None, clock: Callable[[], datetime] | None = None):
+                 identity: str | None = None, clock: Callable[[], datetime] | None = None,
+                 backstop: FileBackstop | None = None):
         self.host, self.namespace, self.account = host, namespace, account
         self.name = lease_name(account)
         # The pod's name, so `oc get leases.coordination.k8s.io` names the holder — the elector's rule.
         self.identity = identity or os.environ.get("POD_NAME") or socket.gethostname()
         self.claim_seconds = claim_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
+        #: The copy beside the database (#481); None where there is no database file to keep it beside.
+        self.backstop = backstop
         #: The claim this instance holds, as its last write left it; None when it holds none.
         self.record: FleetRecord | None = None
         #: A write met a 409: the claim was judged expired and taken, so its holder is no longer ours to clear.
         self._lost = False
 
-    def _call(self, method: str, obj: dict | None = None) -> dict | None:
+    def _call(self, method: str, obj: dict | None = None, *, strict: bool = False) -> dict | None:
+        # Serialize the API response AND its copy: a delayed read must not overwrite a later reservation or clear.
         path = LEASE_API.format(ns=self.namespace)
-        with self.host._client() as client:
-            if method == "GET":
-                return self.host._get(client, f"{path}/{self.name}", {})
-            return self.host._send(client, method, path if method == "POST" else f"{path}/{self.name}", json=obj)
+        with self.backstop._lock if self.backstop else nullcontext():
+            with self.host._client() as client:
+                result = (self.host._get(client, f"{path}/{self.name}", {}) if method == "GET" else
+                          self.host._send(client, method, path if method == "POST" else f"{path}/{self.name}", json=obj))
+                if result is None and method != "GET":
+                    result = self.host._get(client, f"{path}/{self.name}", {})
+            if self.backstop is not None and isinstance(result, dict):
+                if strict:
+                    self.record = _record(self.account, result)  # complete() needs the reservation if keeping it fails
+                self._keep(result, strict=strict)
+            return result
 
     def _unavailable(self, what: str, exc: ClusterError) -> FleetStateUnavailable:
         return FleetStateUnavailable(f"cannot {what} Lease {self.namespace}/{self.name}: {exc.outcome}: "
                                      f"{exc.message.split(': ', 1)[0]}")
 
+    def _keep(self, obj: dict, *, strict: bool = False) -> None:
+        """The Lease as this process just read or wrote it, kept beside the database (#481) — so a hand-clear is
+        followed within one discovery cadence and a deletion loses nothing. A copy that cannot be written never
+        replaces the Lease's outcome: one line when the copy starts failing; `strict` raises instead, for the
+        reservation, which must not bind unkept."""
+        try:
+            self.backstop.save(self.name, (obj.get("metadata") or {}).get("annotations") or {})
+        except Exception as exc:  # noqa: BLE001 - the copy never replaces the Lease's own outcome
+            detail = (f"cannot keep Lease {self.namespace}/{self.name} in {self.backstop.path}: "
+                      f"{type(exc).__name__}: {exc}")
+            if strict:
+                raise FleetStateUnavailable(detail, self.backstop.action) from exc
+            if not self.backstop.failing:                # a transition, not a state (events.py, rule 1)
+                failure(log, "fleet-state-unavailable", phase="credential", outcome=FleetStateUnavailable.code,
+                        account=self.account, lease=self.name, action=self.backstop.action, detail=detail)
+            self.backstop.failing = True
+        else:
+            self.backstop.failing = False
+
     def read(self) -> FleetRecord:
-        """The Lease without a claim; an absent one is an empty record, not an error."""
+        """The Lease without a claim. An absent one reads as its copy beside the database when there is one (#481),
+        else as an empty record — neither is an error; absent with a copy that cannot be read is FleetStateUnavailable,
+        because then the gate is unknown and nothing may bind."""
         try:
             obj = self._call("GET")
         except ClusterError as exc:
-            if exc.message.startswith("HTTP 404"):
+            if not exc.message.startswith("HTTP 404"):
+                raise self._unavailable("read", exc) from exc
+            if self.backstop is None:
                 return _record(self.account, None)
-            raise self._unavailable("read", exc) from exc
+            try:
+                kept = self.backstop._all().get(self.name)
+            except Exception as err:  # noqa: BLE001 - absent AND unknown: fail closed, as for an unreadable Lease
+                raise FleetStateUnavailable(f"Lease {self.namespace}/{self.name} is absent and its copy in "
+                                            f"{self.backstop.path} cannot be read: {type(err).__name__}: {err}",
+                                            self.backstop.action) from err
+            return _record(self.account, None) if kept is None else _absent(self.account, kept)
         return _record(self.account, obj)
 
     def claim(self, read: FleetRecord | None = None, **changes: str | None) -> FleetRecord:
@@ -256,9 +327,12 @@ class FleetLease:
         record = read if read is not None else self.read()
         if record.in_flight(now):
             raise ClaimHeld(f"{record.holder} holds {self.name} until {stamp(record.holder_until)}")
+        # An absent Lease this dashboard kept is created WITH its copy (#481): the create is the API server's to
+        # arbitrate (a second POST answers 409), exactly as a first install's is.
         obj = _applied(record.raw or {"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
                                       "metadata": {"name": self.name, "namespace": self.namespace,
-                                                   "labels": {LEASE_TYPE_LABEL: LEASE_TYPE}}},
+                                                   "labels": {LEASE_TYPE_LABEL: LEASE_TYPE},
+                                                   "annotations": dict(record.seed or {})}},
                        {"account": self.account, **changes})
         obj["spec"] = {**(obj.get("spec") or {}), "holderIdentity": self.identity,
                        "leaseDurationSeconds": self.claim_seconds, "acquireTime": _micro(now), "renewTime": _micro(now)}
@@ -269,7 +343,27 @@ class FleetLease:
                 raise ClaimHeld(f"{self.name} changed since it was read") from exc
             raise self._unavailable("claim", exc) from exc
         self.record, self._lost = (_record(self.account, written) if isinstance(written, dict) else self.read()), False
+        if record.seed is not None:
+            # Said once per deletion: only one create is admitted, and it is this one.
+            entry = self.record.refused or {}
+            event(log, logging.WARNING, "fleet-lease-absent", account=self.account, lease=self.name, kept="true",
+                  refused=entry.get("code"), since=entry.get("at") or None,
+                  last_attempt=stamp(self.record.ping_last_attempt) if self.record.ping_last_attempt else None,
+                  action=RESTORED)
         return self.record
+
+    def restore(self, record: FleetRecord) -> FleetRecord:
+        """Put an absent Lease back now, by one claim and its release (#481): from its copy when there is one, empty
+        when the caller knows the account had one (clusters were retrieved as it) and nothing was kept. So the gate is
+        on the object again, where §5 Q7's clear can reach it. Said once — one create is admitted; never raises."""
+        try:
+            self.claim(record)
+        except (ClaimHeld, FleetStateUnavailable):
+            return record                            # another process put it back, or the next cadence tries
+        if record.seed is None:
+            event(log, logging.WARNING, "fleet-lease-absent", account=self.account, lease=self.name, kept="false",
+                  action=NOTHING_KEPT)
+        return self.release() or record
 
     def reserve(self, target: str, digest: str) -> None:
         """THE ATTEMPT, ON THE LEASE BEFORE THE PASSWORD IS ON THE WIRE (#419, D1): the account entry itself, marked
@@ -281,11 +375,16 @@ class FleetLease:
         entry = json.dumps({"digest": digest, "at": stamp(self._clock()), "code": "login-failed", "target": target,
                             "uncertain": True, "attempt": uuid.uuid4().hex}, sort_keys=True)
         try:
-            written = self._call("PUT", _applied(self.record.raw, {"refused": entry}))
+            written = self._call("PUT", _applied(self.record.raw, {"refused": entry}), strict=True)
         except ClusterError as exc:
             if exc.message.startswith("HTTP 409"):
                 raise ClaimHeld(f"{self.name} changed since it was claimed") from exc
             raise self._unavailable("reserve", exc) from exc
+        except FleetStateUnavailable:
+            # Kept on the Lease but not beside the database: nothing is sent, so the entry goes again rather than
+            # gate a password the directory never saw (#481).
+            self.complete()
+            raise
         self.record = _record(self.account, written) if isinstance(written, dict) else self.read()
 
     def complete(self) -> None:
@@ -371,5 +470,56 @@ def _applied(obj: dict, changes: dict) -> dict:
     return out
 
 
-__all__ = ["CAS_TRIES", "ClaimHeld", "FleetLease", "FleetRecord", "FleetStateUnavailable", "LEASE_TYPE",
-           "LEASE_TYPE_LABEL", "claim_seconds", "lease_digest", "lease_name", "stamp"]
+class FileBackstop:
+    """Every fleet Lease's gate and ping instants, kept in ONE small file beside the database (#481, SPEC_S4f):
+    `{"<Lease name>": {"<annotation>": "<value as the Lease holds it>", …}, …}`, the KEPT annotations only. The data
+    volume outlives what deletes Leases — `crc start`, a hand — and nothing that copies the database (a backup, a
+    report snapshot) copies this file. Written only when what it keeps changed, to a `.tmp` beside it, flushed and
+    renamed over it, then the directory flushed (`gsd/store.py#_pre_upgrade_copy`'s order), so a reader never sees half
+    of it. One per process; the lock covers each Lease API response and its save, including discovery and self-login threads.
+    A 404 reads the atomically renamed file directly; it never observes a partly written file."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._lock = threading.RLock()
+        #: The last write of the copy failed: its line was said, and is said again only after a write succeeds.
+        self.failing = False
+        #: What a `fleet-state-unavailable` about this file tells the operator to do.
+        self.action = (f"the data volume must hold a readable, writable {path}; nothing binds until it does. Moving an "
+                       f"unreadable copy aside is safe only while every fleet Lease exists (oc get "
+                       f"leases.coordination.k8s.io -l {LEASE_TYPE_LABEL}={LEASE_TYPE})")
+
+    def _all(self) -> dict:
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                state = json.load(fh)
+        except FileNotFoundError:
+            return {}
+        if not isinstance(state, dict) or not all(
+                isinstance(kept, dict) and all(isinstance(v, str) for v in kept.values()) for kept in state.values()):
+            raise ValueError(f"{self.path} is not a map of Lease names to their annotations")
+        return state
+
+    def save(self, name: str, annotations: dict) -> None:
+        kept = {key: value for key, value in annotations.items() if key in KEPT}
+        with self._lock:
+            state = self._all()
+            if state.get(name) == kept:
+                return                             # the sweep reads every Lease each cadence: most reads write nothing
+            state[name] = kept
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(state, fh, sort_keys=True)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, self.path)
+            fd = os.open(os.path.dirname(self.path) or ".", os.O_RDONLY)
+            try:
+                os.fsync(fd)                       # the rename itself: a host crash then `crc start` must find it
+            finally:
+                os.close(fd)
+
+
+__all__ = ["CAS_TRIES", "GATE_FILE", "KEPT", "ClaimHeld", "FileBackstop", "FleetLease", "FleetRecord",
+           "FleetStateUnavailable", "LEASE_TYPE", "LEASE_TYPE_LABEL", "claim_seconds", "lease_digest", "lease_name",
+           "stamp"]

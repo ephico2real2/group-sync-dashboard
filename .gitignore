@@ -9,6 +9,8 @@ venv/
 *.db
 *.db-wal
 *.db-shm
+# The fleet Leases' gate, kept beside the database (#481): runtime state, like the database itself.
+fleet-gate.json*
 clusters.yaml
 .pytest_cache/
 test-results/

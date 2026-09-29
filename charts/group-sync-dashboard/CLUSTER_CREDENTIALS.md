@@ -42,7 +42,10 @@ exact configured username string: use one spelling for one directory identity. S
 the fleet account's Lease (`gsd-fleet-<sha256(username)[:16]>` in the release namespace) and records its attempt
 there before the password is sent; a session clears it and a refusal replaces it, so a restart, a crash or
 another replica reads it and does not send the password again; a success is still not recorded there. Keep one
-replica.
+replica. Since #481 the same record is also kept beside the database, in `fleet-gate.json` on the data volume, because
+`crc start` deletes every Lease on the cluster: a deleted Lease is put back from that copy, so it sends no refused
+password again and pings no second time that day, and deleting the Lease no longer clears its entry (clear it as
+[`RUNBOOK.md`](RUNBOOK.md) section 7 says). With `persistence.enabled: false` the copy lasts only as long as the pod.
 
 Companion to [`docs/CLUSTER_STANZA.md`](../../docs/CLUSTER_STANZA.md), which covers *what a stanza may
 say*. This covers *what happens to the credential afterwards* — who holds it, what fails, and how an

@@ -45,7 +45,7 @@ from .clusterconfig.parser import Finding
 from .config import CREDENTIAL_SELF_LOGIN, ClusterConfig
 from .fleetlogin import FleetLogin, FleetSession, LoginError, RetryPolicy, _without_userinfo
 from .fleetlookup import CredentialGate, LookupRefused, fleet_account, fleet_password
-from .fleetstate import ClaimHeld, FleetLease, FleetStateUnavailable, claim_seconds, lease_digest, lease_name, stamp
+from .fleetstate import ClaimHeld, FleetStateUnavailable, lease_digest, lease_name, stamp
 from .kube import AUTH_FAILED, OK, UNREACHABLE
 
 log = logging.getLogger(__name__)
@@ -216,7 +216,7 @@ class SelfLoginSessions:
 
     def _acquire(self, cluster, client, namespace, account, password, salt, key, held) -> ClusterConfig | None:
         poller = self._poller
-        lease = FleetLease(client, namespace, account, claim_seconds=claim_seconds(poller.settings), clock=self._clock)
+        lease = poller._fleet_lease(client, namespace, account, clock=self._clock)
         try:
             lease.claim()
         except ClaimHeld:

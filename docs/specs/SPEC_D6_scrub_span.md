@@ -63,6 +63,10 @@ answer and log lines on the rig: a class of one means the output names the passw
   is never substring-redacted. The fleet password is the operator's choice; a later issue.
   (4) The token read's 403 sentence says "the ServiceAccount lacks list permission here" while the reader is the
   person's own login. Wording only.
+- **#481 (`docs/specs/SPEC_S4f_fleet_gate_backstop.md`) adds three emit call sites to `gsd/fleetstate.py`**: the
+  `fleet-lease-absent` line in `claim()` and in `restore()`, and the copy's `fleet-state-unavailable` in `_keep()`. With
+  it applied, `event` and `failure` have 45 call sites in 6 consuming modules. §2.3's 42 is the count at `ece9298`, and
+  `tests/test_scrub_span_spec.py#test_emit_callsite_measurement` holds this document to the live count.
 
 ## 1. The point, in one table
 
