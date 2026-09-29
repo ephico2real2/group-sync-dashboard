@@ -1,0 +1,9 @@
+# oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=ui-478-2026-09-28 --ignore-not-found  (explicit)
+# at 2026-09-29T02:03:06Z
+clusterrole.rbac.authorization.k8s.io "gsd-walk-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-crb-update-developer" deleted
+# done at 2026-09-29T02:03:06Z
+# oc delete clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=ui-478-2026-09-28 --ignore-not-found  (trap)
+# at 2026-09-29T02:05:23Z
+No resources found
+# done at 2026-09-29T02:05:23Z

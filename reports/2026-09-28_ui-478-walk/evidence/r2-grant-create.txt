@@ -1,0 +1,4 @@
+# oc create -f scripts/grant.yaml
+# at 2026-09-29T02:00:30Z
+clusterrole.rbac.authorization.k8s.io/gsd-walk-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-crb-update-developer created

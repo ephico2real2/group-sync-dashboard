@@ -1,0 +1,21 @@
+# oc logs -n group-sync-dashboard group-sync-dashboard-f66bd8b99-2gmgr -c dashboard --timestamps --since-time=2026-09-29T01:52:54Z  (captured 2026-09-29T01:57:03Z)
+# lines in the window: 204
+# lines naming walk-478, label-invalid, __proto__ or a POST to /api/clusterconfigs:
+# cluster-secret-created lines: 0
+# fleet-lookup lines: 0
+# fleet-lookup-failed lines: 0
+# fleet-ping lines: 0
+# fleet-ping-failed lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# cluster-rejoin-review lines: 0
+# cluster-rejoined lines: 0
+# cluster-rejoin-failed lines: 0
+# lines matching 'fleet-login': 0
+# lines matching 'cluster-rejoin': 0
+# lines naming /rejoin: 0
+# lines naming the fleet account: 0
+# Traceback lines: 0
+# ERROR lines: 0
