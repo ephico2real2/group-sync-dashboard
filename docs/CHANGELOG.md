@@ -24,7 +24,7 @@ which `local-development/prepare-release.py` does when the release is cut.
   SPEC_S4c §5 Q7's clear still re-arms the gate, and `charts/group-sync-dashboard/RUNBOOK.md` section 7 now carries
   it. Not covered, as the operator accepted: persistence off, an etcd restore, a reinstall into another namespace,
   and a clear followed by a `crc start` before any pod had read the cleared Lease (the entry comes back; clear it
-  again). No RBAC or schema change.
+  again). No RBAC or schema change. Application **1.18.0**, chart 0.59.20.
 
 - **The fleet gate's backstop specified (#481, Epic C #383, `docs/specs/SPEC_S4f_fleet_gate_backstop.md`).** `crc start`
   deletes every Lease on the cluster, and the fleet account's gate and daily-ping instants lived only on its Lease:
