@@ -1,4 +1,5 @@
-"""#465 phase 1: the scrub-span spec is present, checkable, and records its measurements and its decision."""
+"""#465: the scrub-span spec is present, checkable, and records its measurements and its decisions — phase 1's, and
+phase 2's: the operator dropped part (1), the refusal, so the code is applied from the notes' blocks, not §6's."""
 from __future__ import annotations
 
 import importlib.util
@@ -11,8 +12,9 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 SPEC = REPO / "docs" / "specs" / "SPEC_D6_scrub_span.md"
 INDEX = REPO / "docs" / "specs" / "README.md"
 TOOL = pathlib.Path(__file__).resolve().parents[1] / "apply-spec-blocks.py"
-#: The file the spec's one create block writes: absent in phase 1, the spec's own in phase 2.
+#: The file the applied create block writes: absent in phase 1, the spec's own in phase 2.
 CREATED = "local-development/tests/test_scrub_span.py"
+NOTES, NOTES_END, BLOCKS = "\n## Orchestrator's notes\n", "\n## 1. The point", "\n## 6. Implementation blocks\n"
 
 
 def prose() -> str:
@@ -23,19 +25,33 @@ def prose() -> str:
     return prose_text
 
 
-def blocks() -> list[dict]:
+def blocks(text: str | None = None) -> list[dict]:
     assert SPEC.is_file(), "docs/specs/SPEC_D6_scrub_span.md is the #465 spec"
     loader = importlib.util.spec_from_file_location("apply_spec_blocks", TOOL)
     tool = importlib.util.module_from_spec(loader)
     loader.loader.exec_module(tool)
-    return tool.blocks(SPEC.read_text())
+    return tool.blocks(SPEC.read_text() if text is None else text)
+
+
+def notes() -> str:
+    text = SPEC.read_text()
+    start = text.index(NOTES)
+    return text[start:text.index(NOTES_END, start)]
+
+
+def applied() -> list[dict]:
+    """The blocks phase 2 is applied from: the notes' own. §6's are superseded (the operator's decision, 2026-09-29)."""
+    return blocks(notes())
 
 
 def test_the_spec_file_and_index_row_exist():
     assert SPEC.is_file(), "docs/specs/SPEC_D6_scrub_span.md is the #465 spec"
     row = [line for line in INDEX.read_text().splitlines() if line.startswith("| D6 |")]
     assert len(row) == 1, row
-    assert "SPEC_D6_scrub_span.md" in row[0] and "#465" in row[0] and "specified" in row[0]
+    assert "SPEC_D6_scrub_span.md" in row[0] and "#465" in row[0]
+    status = row[0].rstrip(" |").rsplit("|", 1)[1].strip()
+    expected = ("merged", "released") if (REPO / CREATED).exists() else ("specified",)
+    assert status in expected, (status, expected)
 
 
 def test_the_defect_is_measured_on_the_issues_two_cases():
@@ -92,9 +108,15 @@ def test_the_over_refusal_is_broken_down_by_cause():
 
 
 def test_the_issues_two_cases_are_tests_in_the_blocks():
-    test_file = next(b for b in blocks() if b["path"] == CREATED)["fences"][0]
-    assert '@pytest.mark.parametrize("password", ["update", "a"])' in test_file
-    assert 'username="bob"' in test_file
+    """The issue's passwords, `update` and `a` with the username `bob`, as phase 2 tests them: each is sent, as the
+    operator decided, and `a` leaves no span in what Rejoin quotes."""
+    created = [b for b in applied() if b["path"] == CREATED]
+    assert len(created) == 1, "the notes carry the one create block phase 2 is applied from"
+    test_file = created[0]["fences"][0]
+    assert '    "update",' in test_file and '    "a",' in test_file
+    assert "def test_a_password_found_in_the_words_rejoin_writes_is_sent_as_before(" in test_file
+    assert "def test_the_issues_password_a_leaves_no_span_in_what_rejoin_quotes(" in test_file
+    assert 'username="bob", password="a"' in test_file
 
 
 def test_no_block_edits_a_version_field():
@@ -103,14 +125,18 @@ def test_no_block_edits_a_version_field():
                         "charts/group-sync-dashboard/Chart.yaml"}, paths
 
 
-def test_implementation_blocks_check_out_against_this_tree():
-    """Phase 1: every block applies cleanly to this tree. Phase 2 (the file the create block writes exists): every
-    block is already in the tree — a create's file is its fence, an edit's New text and an insertion's text occur in
+def test_implementation_blocks_check_out_against_this_tree(tmp_path):
+    """Phase 2 is applied from the notes' nine blocks; §6's nineteen stay as phase 1 wrote them, superseded. Without
+    the change (the file the notes' create block writes absent), the nine apply cleanly to this tree. With it, every
+    one is already in the tree — a create's file is its fence, an edit's New text and an insertion's text occur in
     their file — so the spec and the code cannot drift apart silently."""
-    found = blocks()
-    assert [b["path"] for b in found if b["kind"] == "create"] == [CREATED]
+    found = applied()
+    assert len(found) == 9 and [b["path"] for b in found if b["kind"] == "create"] == [CREATED]
+    assert len(blocks(SPEC.read_text().split(BLOCKS, 1)[1])) == 19, "§6 is the phase-1 record, kept whole"
     if not (REPO / CREATED).exists():
-        done = subprocess.run([sys.executable, str(TOOL), str(SPEC), str(REPO)], capture_output=True, text=True)
+        (tmp_path / "notes.md").write_text(notes())
+        done = subprocess.run([sys.executable, str(TOOL), str(tmp_path / "notes.md"), str(REPO)], capture_output=True,
+                              text=True)
         assert done.returncode == 0, done.stderr or done.stdout
         assert "blocks check out" in done.stdout
         return
@@ -143,3 +169,19 @@ def test_emit_callsite_measurement():
     expected = f"{sum(counts.values())} call sites in {len(counts)} consuming modules"
     body = (repo / 'docs/specs/SPEC_D6_scrub_span.md').read_text().split('## 6. Implementation blocks')[0]
     assert expected in body, (expected, counts)
+
+
+def test_phase_2_records_the_operators_decision_and_what_it_supersedes():
+    """The operator's decision of 2026-09-29 drops part (1), the refusal. The notes quote it, say what becomes of each
+    of §6's nineteen blocks, and hold the figures re-measured by pressing: part (2) alone leaves 332 of main's 406, and
+    §6 applied would have left 29 (the body's 19 was a model's)."""
+    body = " ".join(notes().split())
+    for quote in ("So let them rejoin with their password without any hiccups.",
+                  "Just redact the password in the error logs."):
+        assert quote in body, quote
+    assert "is not applied: Rejoin refuses no password for being found in the words it writes" in body
+    table = notes().split("| §6 block | file | what it held | phase 2 |", 1)[1].split("\n\n", 1)[0]
+    numbered = [int(n) for row in table.splitlines()[2:] for n in row.split("|")[1].split(",")]
+    assert sorted(numbered) == list(range(1, 20)), numbered
+    for figure in ("| still leaving a span | 406 | 332 | 29 |", "Part (2) closes 74", "§6 applied leaves 29, not 19"):
+        assert figure in body, figure
