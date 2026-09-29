@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Thirty-four specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Thirty-five specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The thirty-four specifications
+## The thirty-five specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -100,6 +100,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | S4e | [`SPEC_S4e_ping_account_scope.md`](SPEC_S4e_ping_account_scope.md) — the fleet password is presented only as an account the configuration names: the daily ping stops taking its account from a retrieved Secret's `lookup-account`, and SPEC_S4c §3.12's walk names only `developer` | S — cluster configuration | — | app 1.4.0, chart 0.59.6 | [#432](https://github.com/ephico2real2/group-sync-dashboard/issues/432) | merged |
 | D5 | [`SPEC_D5_ca_visibility.md`](SPEC_D5_ca_visibility.md) — CA visibility: is this the enterprise root, and is it still valid? A warning thirty days before expiry, on #314's channel | D — reconnect | — | app and chart minor bumps, assigned at the implementing PR | [#244](https://github.com/ephico2real2/group-sync-dashboard/issues/244) | specified |
 | D6 | [`SPEC_D6_scrub_span.md`](SPEC_D6_scrub_span.md) — Scrub spans: a password inside the words Rejoin writes or the names it carries is refused before anything is sent, and a quoted text holding a secret is replaced whole | D — reconnect | — | app and chart minor bumps, assigned at the implementing PR | [#465](https://github.com/ephico2real2/group-sync-dashboard/issues/465) | specified |
+| S4f | [`SPEC_S4f_fleet_gate_backstop.md`](SPEC_S4f_fleet_gate_backstop.md) — the fleet gate's backstop: a deleted fleet Lease is put back from a copy beside the database, so `crc start` sends no refused password again and pings no second time in a day | S — cluster configuration | — | app minor bump and a chart bump, assigned at the implementing PR | [#481](https://github.com/ephico2real2/group-sync-dashboard/issues/481) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
@@ -238,7 +239,6 @@ identity provider across the fleet; remote ServiceAccount SAR grants).
   HTTP fallback, 90 days / 500 runs, no own-namespace reports, and no template overrides in R6.
   Questions a later spec still carries (D1's audit profile and backfill, D2's fleet identity) are
   settled the same way at implementation, with the spec's stated default unless it fails that rule.
-
 
 ## How the specs were produced
 

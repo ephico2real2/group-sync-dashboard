@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The fleet gate's backstop specified (#481, Epic C #383, `docs/specs/SPEC_S4f_fleet_gate_backstop.md`).** `crc start`
+  deletes every Lease on the cluster, and the fleet account's gate and daily-ping instants lived only on its Lease:
+  measured, each start cost one more bind for a refused, locked or uncertain password on every path, and one more ping.
+  The spec keeps both beside the database in `fleet-gate.json`, read when the Lease is absent and put back from it, with
+  one `fleet-lease-absent` line, as the operator chose on 2026-09-29 (option (c2)). Spec only; no production code.
+
 - **A namespace label key named like one of Object's members reads as absent (#478).** With
   `namespaceMetadataLabels` holding `constructor` or `toString`, both valid label names, a namespace without that
   label showed `function Object() { [native code] }` where `—` belongs, on the namespace list, its page and the
