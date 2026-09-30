@@ -1,0 +1,11 @@
+2026-09-30T04:59:03Z whoami                                                    : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-30T04:59:03Z PASS developer holds the cluster-admin tier for the walk  : {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-30T04:59:07Z PASS no 'Dashboard API error' (clusters tab)              : 0
+2026-09-30T04:59:07Z PASS GET /api/clusterconfigs answers 200                  : 200
+2026-09-30T04:59:07Z wrote                                                     : evidence/walk-clusterconfigs-entries.json
+2026-09-30T04:59:07Z wrote                                                     : evidence/A-mock-privateca-trust.json
+2026-09-30T04:59:07Z wrote                                                     : evidence/A-mock-privateca-card.json
+2026-09-30T04:59:07Z PASS A: trust is caData from the Secret, one certificate listed with subject, issuer, dates, sha256, validity: {"store": "secret:gsd-cluster-mock-privateca/tlsClientConfig.caData", "sourceKind": "secret", "count": 1, "enterpriseRoot": null, "certificates": [{"subject": "CN=mock-privateca-root", "issuer": "CN=mock-privateca-root", "notBefore": "2026-09-20T16:54:01Z", "notAfter": "2031-09-19T16:54:01Z", "sha256": "cdf9fb279a8795542554eb3fa0b26faa454c95430b67c1dff527adeda977fc66", "enterpriseRoot": null, "validity": "valid"}]}
+2026-09-30T04:59:07Z FAIL A: the card's tls row names the store and count and lists each certificate's subject, issuer and notAfter: {"tls_row": null, "trust_store": null, "certificates": [], "badges": [], "connection_error": null, "action": null, "store": null, "connection_row": null}
+2026-09-30T04:59:07Z STOPPED at                                                : A: the card's tls row names the store and count and lists each certificate's subject, issuer and notAfter
+2026-09-30T04:59:07Z failures                                                  : ["A: the card's tls row names the store and count and lists each certificate's subject, issuer and notAfter"]

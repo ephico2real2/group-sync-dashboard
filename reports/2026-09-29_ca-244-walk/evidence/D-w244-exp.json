@@ -1,0 +1,77 @@
+{
+  "entry": {
+    "id": "w244-exp",
+    "source": "secret:gsd-cluster-w244-exp",
+    "api_url": "https://mock-privateca:6443",
+    "credential": "bearer",
+    "tls": {
+      "insecure": false,
+      "ca": "caData"
+    },
+    "status": "unreachable",
+    "last_poll": "2026-09-30T05:08:53Z",
+    "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "trust": {
+      "store": "secret:gsd-cluster-w244-exp/tlsClientConfig.caData",
+      "sourceKind": "secret",
+      "count": 1,
+      "enterpriseRoot": null,
+      "certificates": [
+        {
+          "subject": "CN=walk-244 expiring CA",
+          "issuer": "CN=walk-244 expiring CA",
+          "notBefore": "2026-09-30T05:04:45Z",
+          "notAfter": "2026-10-10T05:04:45Z",
+          "sha256": "0c34b434490528e7af0d7b58e0a5332afefd76f24a8f6668d4f26d25b43b6cae",
+          "enterpriseRoot": null,
+          "validity": "expiring"
+        }
+      ]
+    },
+    "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-exp with the CA that signs its API server",
+    "store": "secret:gsd-cluster-w244-exp/tlsClientConfig.caData"
+  },
+  "card": {
+    "tls_row": "verified ca: caData store secret:gsd-cluster-w244-exp/tlsClientConfig.caData \u00b7 1 certificate CN=walk-244 expiring CA \u00b7 issuer CN=walk-244 expiring CA \u00b7 2026-10-10T05:04:45Z \u00b7 expiring",
+    "trust_store": "store secret:gsd-cluster-w244-exp/tlsClientConfig.caData \u00b7 1 certificate",
+    "certificates": [
+      {
+        "text": "CN=walk-244 expiring CA \u00b7 issuer CN=walk-244 expiring CA \u00b7 2026-10-10T05:04:45Z \u00b7 expiring",
+        "data_cc_ca": "0c34b434490528e7af0d7b58e0a5332afefd76f24a8f6668d4f26d25b43b6cae"
+      }
+    ],
+    "badges": [
+      "verified"
+    ],
+    "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-exp with the CA that signs its API server",
+    "store": "store secret:gsd-cluster-w244-exp/tlsClientConfig.caData",
+    "connection_row": "unreachable 2026-09-30 05:08 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-exp with the CA that signs its API server store secret:gsd-cluster-w244-exp/tlsClientConfig.caData"
+  },
+  "api_ca_expiring": [
+    {
+      "code": "ca-expiring",
+      "clusters": [
+        "w244-exp"
+      ],
+      "detail": "w244-exp's CA CN=walk-244 expiring CA is expiring (2026-10-10T05:04:45Z). The cluster is still polled."
+    }
+  ],
+  "banner": [
+    {
+      "code": "shared-api-url",
+      "title": "Shared API URL.",
+      "text": "\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."
+    },
+    {
+      "code": "shared-api-url",
+      "title": "Shared API URL.",
+      "text": "\u26a0\ufe0f Shared API URL. mock-privateca, w244-exp, w244-fail declare the same API URL: https://mock-privateca:6443. Each entry is still polled and counted on its own."
+    },
+    {
+      "code": "ca-expiring",
+      "title": "CA expiring.",
+      "text": "\u26a0\ufe0f CA expiring. w244-exp's CA CN=walk-244 expiring CA is expiring (2026-10-10T05:04:45Z). The cluster is still polled."
+    }
+  ]
+}

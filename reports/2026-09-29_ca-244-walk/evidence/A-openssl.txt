@@ -1,0 +1,14 @@
+# oc get secrets -n group-sync-dashboard gsd-cluster-mock-privateca -o json | jq -r '.data.config | @base64d | fromjson | .tlsClientConfig.caData' | base64 -d > <tmp>/mock-privateca-cadata.pem
+# at 2026-09-30T04:56:28Z
+# PEM blocks in the caData: 1
+# openssl x509 -in <tmp>/mock-privateca-cadata.pem -noout -subject -issuer -dates -fingerprint -sha256 -nameopt RFC2253
+subject=CN=mock-privateca-root
+issuer=CN=mock-privateca-root
+notBefore=Sep 20 16:54:01 2026 GMT
+notAfter=Sep 19 16:54:01 2031 GMT
+sha256 Fingerprint=CD:F9:FB:27:9A:87:95:54:25:54:EB:3F:A0:B2:6F:AA:45:4C:95:43:0B:67:C1:DF:F5:27:AD:ED:A9:77:FC:66
+# openssl x509 -in <tmp>/mock-privateca-cadata.pem -noout -ext basicConstraints
+X509v3 Basic Constraints: critical
+    CA:TRUE
+# openssl version: OpenSSL 3.6.4 25 Aug 2026 (Library: OpenSSL 3.6.4 25 Aug 2026)
+# the temp file was deleted: yes

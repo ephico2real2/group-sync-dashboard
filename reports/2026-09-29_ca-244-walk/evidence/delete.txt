@@ -1,0 +1,5 @@
+# explicit delete at 2026-09-30T05:09:12Z
+secret "gsd-cluster-w244-exp" deleted from group-sync-dashboard namespace
+secret "gsd-cluster-w244-fail" deleted from group-sync-dashboard namespace
+clusterrole.rbac.authorization.k8s.io "gsd-walk-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-crb-update-developer" deleted
