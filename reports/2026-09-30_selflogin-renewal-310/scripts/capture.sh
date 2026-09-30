@@ -28,7 +28,10 @@ case "${kind}" in
     echo "${pod}" > "${raw}/pod"
     # A follow that ends (the API server closed it, the network blinked) is resumed from the last instant it wrote, on
     # whichever pod is Running then; a line at that instant may arrive twice, and `podlog` drops exact duplicates.
+    # Both loops run with errexit OFF: a subshell inherits `set -e`, and with it a follow that exits non-zero — or
+    # stream-stop killing it — ended the loop instead of resuming it (review of phase 1, OB3).
     (
+      set +e
       since=""
       while :; do
         p=$(dashboard_pod); [ -n "${p}" ] && echo "${p}" > "${raw}/pod"
@@ -41,9 +44,12 @@ case "${kind}" in
     ) &
     echo $! > "${raw}/podlog.pid"
     (
+      set +e
       while :; do
+        # Stamped BEFORE the read: a sample stamped at or after an instant was read after it (analyse.py relies on it).
+        t=$(now)
         m=$(metrics 2>/dev/null | grep -E "^gsd_cluster_(up|last_poll_timestamp_seconds)\{cluster=\"(${WALK_CLUSTER}|dashboard)\"\}" || true)
-        printf '%s\n' "${m:-(no sample)}" | sed "s/^/$(now) /" >> "${raw}/metrics.raw"
+        printf '%s\n' "${m:-(no sample)}" | sed "s/^/${t} /" >> "${raw}/metrics.raw"
         sleep 15
       done
     ) &
@@ -53,8 +59,12 @@ case "${kind}" in
   stream-stop)
     raw="${2:?raw dir}"
     for p in podlog metrics; do
-      # The loop's children (the oc logs follow, a sleep) go with it: the subshell's process group is its own PID's.
-      if [ -f "${raw}/${p}.pid" ]; then pkill -P "$(cat "${raw}/${p}.pid")" 2>/dev/null; kill "$(cat "${raw}/${p}.pid")" 2>/dev/null; fi
+      # The loop's children (the oc logs follow, a sleep) first, then the loop itself: the background subshells share
+      # the caller's process group, so each is stopped by PID. Either may be gone already; neither ends this loop early.
+      if [ -f "${raw}/${p}.pid" ]; then
+        pkill -P "$(cat "${raw}/${p}.pid")" 2>/dev/null || true
+        kill "$(cat "${raw}/${p}.pid")" 2>/dev/null || true
+      fi
       rm -f "${raw}/${p}.pid"
     done
     say "streams stopped"
@@ -70,8 +80,9 @@ case "${kind}" in
       grep -E " (fleet-login|fleet-login-failed|fleet-login-refused|fleet-logout|fleet-logout-failed|self-login-renewed|self-login-failed|fleet-credential-suspended|fleet-state-unavailable) .*cluster=${WALK_CLUSTER}( |$)| fleet-credential-suspended |polled ${WALK_CLUSTER}:|cluster-unreachable .*cluster=${WALK_CLUSTER}( |$)|${WALK_CLUSTER}: (polling started|self-login raised)|Traceback| ERROR | CRITICAL " "${src}" \
         | redact || true
       echo "# counts:"
+      # `clusters?=`: fleet-credential-suspended names its clusters in `clusters=<a,b,…>` (gsd/selflogin.py#_suspend).
       for e in fleet-login fleet-login-failed fleet-login-refused fleet-logout fleet-logout-failed self-login-renewed self-login-failed fleet-credential-suspended; do
-        echo "#   '${e} … cluster=${WALK_CLUSTER}' lines: $(grep -c -E " ${e} .*cluster=${WALK_CLUSTER}( |$)" "${src}" || true)"
+        echo "#   '${e} … cluster=${WALK_CLUSTER}' lines: $(grep -c -E " ${e} .*clusters?=([^ ]*,)?${WALK_CLUSTER}(,| |$)" "${src}" || true)"
       done
       echo "#   'polled ${WALK_CLUSTER}:' lines: $(grep -c "polled ${WALK_CLUSTER}:" "${src}" || true)"
       echo "#   failed polls of ${WALK_CLUSTER}: $(grep -c -E "cluster-unreachable .*cluster=${WALK_CLUSTER}( |$)" "${src}" || true)"

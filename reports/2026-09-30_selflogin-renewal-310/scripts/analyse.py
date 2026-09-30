@@ -36,7 +36,11 @@ def event(line: str) -> tuple[str, dict] | None:
     if not m:
         return None
     fields = {k: v.strip('"') for k, v in FIELD.findall(m.group(2))}
-    return (m.group(1), fields) if fields.get("cluster") == CLUSTER else None
+    # fleet-credential-suspended names what it stopped in `clusters=<a,b,…>` and has no `cluster=` (gsd/selflogin.py#_suspend);
+    # other events list clusters too (shared-api-url), so the list counts for this event alone.
+    about = fields.get("cluster") == CLUSTER or (
+        m.group(1) == "fleet-credential-suspended" and CLUSTER in fields.get("clusters", "").split(","))
+    return (m.group(1), fields) if about else None
 
 
 def analyse(log_lines: list[str], sample_lines: list[str], lifetime: int, poll: int, renewals: int) -> list[tuple[bool, str]]:
@@ -110,15 +114,19 @@ def analyse(log_lines: list[str], sample_lines: list[str], lifetime: int, poll: 
     out.append((not failures, f"failure lines about {CLUSTER} (or ERROR/Traceback): {len(failures)}"
                 + "".join(f"\n      {a:%H:%M:%S} {t}" for a, t in failures[:10])))
 
+    # A sample counts only once it was READ after the first poll committed: capture.sh stamps a sample before reading it,
+    # and until that poll /metrics serves the cluster's stored row — for walk-self-login, a row retired by an earlier
+    # walk, with that walk's last outcome and instant (gsd/metrics.py: `up` is 1 only when the last poll succeeded).
+    first_poll = next((p for p in polls if p >= first_at), None)
     ups, stamps = [], []
     for line in sample_lines:
         m = re.match(r"^(\S+) gsd_cluster_(up|last_poll_timestamp_seconds)\{cluster=\"" + CLUSTER + r"\"\} (\S+)$", line)
-        if m and utc(m.group(1)) >= first_at.replace(microsecond=0):
+        if m and first_poll is not None and utc(m.group(1)) > first_poll:
             (ups if m.group(2) == "up" else stamps).append((utc(m.group(1)), float(m.group(3))))
     values = sorted({v for _, v in stamps})
     steps = [b - a for a, b in zip(values, values[1:])]
     out.append((bool(ups) and all(v == 1.0 for _, v in ups),
-                f"gsd_cluster_up{{cluster=\"{CLUSTER}\"}} samples after the first login: {len(ups)}, all 1: "
+                f"gsd_cluster_up{{cluster=\"{CLUSTER}\"}} samples read after the first poll: {len(ups)}, all 1: "
                 f"{all(v == 1.0 for _, v in ups) if ups else 'no samples'}"))
     out.append((len(values) >= 2 and max(steps) <= slack.total_seconds(),
                 f"gsd_cluster_last_poll_timestamp_seconds{{cluster=\"{CLUSTER}\"}}: {len(values)} distinct values, "

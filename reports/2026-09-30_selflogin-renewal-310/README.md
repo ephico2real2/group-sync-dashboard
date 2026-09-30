@@ -283,9 +283,11 @@ password or token is captured, and the fleet account is counted, never named.
   900 s gate: the result is recorded either way.
 - **`--argocd main` deploys whatever `main` is on GitHub.** The preflight aborts unless it is `708e6be1`. A merge to
   `main` during the walk would change what the hand-back deploys.
-- **PVCs**: both carry `helm.sh/resource-policy: keep` (data `f065b7a4-535c-4ef1-868c-58f5afee4953`, report-artifacts
-  `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`, as found), and both handovers keep them. Nothing in the scripts touches a
-  PVC. The UIDs are compared start to end.
+- **PVCs**: both carry `helm.sh/resource-policy: keep`, which keeps them through `helm uninstall` (the hand-back), and
+  `argocd.argoproj.io/sync-options: Prune=false,Delete=false,PruneLast=true`, which keeps them through the Application's
+  cascade (the deploy; `charts/group-sync-dashboard/templates/pvc.yaml`): data `f065b7a4-535c-4ef1-868c-58f5afee4953`,
+  report-artifacts `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`, as found. The preflight aborts unless the live objects carry
+  both. Nothing in the scripts touches a PVC. The UIDs are compared start to end.
 - **The walk cluster stays in the database as a retired row**, `walk-self-login`, and the product keeps its history
   (#96), as the 2026-09-27 walk's did. `developer`'s entry also stays in `fleet-gate.json`, the copy of the fleet Leases
   that #481 keeps beside the database on the data PVC. The restored configuration names no `developer` account, so
@@ -309,7 +311,9 @@ password or token is captured, and the fleet account is counted, never named.
 2. **The ping**: the chart default (on), which cannot bind here, or an explicit `ping.enabled: false`?
 3. **The observation length**: two renewals (16 min on the model) or three (24 min)? `RENEWALS=3` makes it three.
 4. **The trap does not run `--argocd main`.** A failed run leaves the lab on the walk's Helm release, with
-   `oauth/cluster` restored and the password Secret gone. The trap prints the command. Should the trap run it itself?
+   `oauth/cluster` restored and the password Secret gone. The trap prints the command only once its sweep restored
+   `31536000` and saw the operator settle; otherwise it prints the restore and says not to hand back. Should the trap
+   run it itself?
 5. **The build**: `release-crc.sh` builds `2.0.0-708e6be104` into the internal registry, because none exists. Per the
    operator's rule the images stay (published images are never deleted).
 6. **SPEC_S4c §3.12 step 4 and #310's "ping stays on"**: §3.12 walks self-login "with the ping still on" beside a lookup
@@ -319,7 +323,7 @@ password or token is captured, and the fleet account is counted, never named.
 
 ## The offline proofs (phase 1)
 
-`PY=<the repo's venv python> bash scripts/offline_proofs.sh` runs all seven groups. It reads no cluster.
+`PY=<the repo's venv python> bash scripts/offline_proofs.sh` runs all eight groups. It reads no cluster.
 
 | Proof | Result | Evidence |
 |---|---|---|
@@ -333,6 +337,7 @@ password or token is captured, and the fleet account is counted, never named.
 | the margin by lifetime, and the 600 s schedule, from `renew_at` | 31536000 and 86400: 7200 s (the 2 h cap); 600: 150 s; renewals at +480 s, +960 s, +1440 s | `evidence/offline-timing.txt` |
 | `scripts/analyse.py` on synthetic logs in the real lines' shapes | a good run 14 passed / 0 failed; a run with the old session revoked first and one missed poll fails exactly those two checks (12 / 2) | `evidence/offline-analyse.txt` |
 | `scripts/sweep.sh` three times against a stub `oc` | 1 patch in three runs; the keep-grant and `developer`'s Lease left in run 1 (exit 5), removed in run 2, nothing in run 3 | `evidence/offline-restore.txt` |
+| `scripts/capture.sh` stream-start, then stream-stop, against a stub `oc` | both exit 0; no stream loop left (not yet run: added by the review of phase 1) | `evidence/offline-streams.txt` |
 
 Every script passes `bash -n` and `shellcheck -x`.
 
@@ -393,3 +398,25 @@ KUBECONFIG=/Users/olasumbo/.claude/gsd-session-2026-09-28/kc-crc \
 It exits 0 only if all three hold: the analysis passed, the final sweep removed everything, and the start/end
 comparison is equal on every MUST line. If it stops early, the trap restores `oauth/cluster` and removes what is safe
 to remove. `evidence/phase2-run.txt` then ends with what is left, and the command that finishes it.
+
+The background task needs its own timeout, set to the harness's maximum (`timeout: 7200000`). The run's length was
+not measured. Its bounded waits add up to 8 235 s before the image build: `release-crc.sh --values` 1 205 s, the
+leader 180 s, the 600 patch 1 500 s, the first login 240 s, the renewals 1 380 s, 130 s, the restore 1 500 s,
+`--argocd main` 1 200 s, and the second sweep's settle check 900 s. That is more than the maximum. A stop that sends
+SIGTERM or SIGHUP to the process group runs the trap; SIGKILL runs nothing (below).
+
+### If the run is killed
+
+SIGKILL, or any stop that gives the trap no time, leaves whatever the run had reached. `run.sh` prints the restore
+before it patches `oauth/cluster`; it is also here. In this order, from this worktree:
+
+```sh
+KUBECONFIG=/Users/olasumbo/.claude/gsd-session-2026-09-28/kc-crc bash reports/2026-09-30_selflogin-renewal-310/scripts/sweep.sh manual
+# the same first step by hand, if the scripts cannot run:
+oc patch oauths.config.openshift.io cluster --type=merge -p '{"spec":{"tokenConfig":{"accessTokenMaxAgeSeconds":31536000}}}'
+```
+
+Only once `oc get oauths.config.openshift.io cluster -o jsonpath='{.spec.tokenConfig}'` reads
+`{"accessTokenMaxAgeSeconds":31536000}` and the authentication operator reads `Available=True Degraded=False
+Progressing=False`, run `release-crc.sh --argocd main` from the deploy clone, then `sweep.sh` once more: the restored
+configuration pings the fleet account on its first discovery cadence.

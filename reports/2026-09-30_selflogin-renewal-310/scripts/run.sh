@@ -24,6 +24,8 @@ DEPLOY="${WALK_TMP}/deploy-${MAIN_SHA:0:8}"   # a clean clone at MAIN_SHA: relea
 RAW="${WALK_TMP}/raw"                         # the raw pod log and metrics samples; removed on exit
 LOG="${EVIDENCE}/phase2-run.txt"
 HANDBACK_DONE=false
+# The one write that undoes the walk's cluster-wide change, spelled out for a human: SIGKILL runs no trap.
+RESTORE_CMD="oc patch oauths.config.openshift.io cluster --type=merge -p '{\"spec\":{\"tokenConfig\":{\"accessTokenMaxAgeSeconds\":${LIFETIME_FOUND}}}}'"
 exec > >(tee -a "${LOG}") 2>&1
 
 abort() { say "ABORT: $*"; exit 1; }
@@ -47,12 +49,22 @@ wait_for() {
 on_exit() {
   local rc=$?
   set +e
+  # Nothing may stop the restore half-way. A SIGTERM or SIGHUP sent to the process group also kills the `tee` behind
+  # stdout, and the trap's first write then ended this shell with SIGPIPE before the sweep ran; a second Ctrl-C killed
+  # the sweep in the middle of its patch (both measured by the review of phase 1). Ignored here, the signals stay
+  # ignored in every command this trap starts; the log file is written directly.
+  trap '' INT TERM HUP PIPE
+  exec >>"${LOG}" 2>&1
   [ -d "${RAW}" ] && bash "${S}/capture.sh" stream-stop "${RAW}"
   if [ "${HANDBACK_DONE}" != true ]; then
     say "run.sh is exiting (rc=${rc}) before the hand-back completed: the restore runs now"
-    bash "${S}/sweep.sh" trap
-    # The trap does not redeploy: a 15-minute Argo CD cutover is the operator's step, said here with its command.
-    if oc get secrets -n "${NS}" -l owner=helm,name=group-sync-dashboard -o name | grep -q . \
+    local swept=0; bash "${S}/sweep.sh" trap || swept=$?
+    # The trap does not redeploy: a 15-minute Argo CD cutover is the operator's step, said here with its command — and
+    # only when the sweep restored oauth/cluster and saw the operator settled (exit 0 or 5): the restored configuration
+    # pings the fleet account on its first cadence, and must not meet the walk's lifetime or a rolling OAuth server.
+    if [ "${swept}" != 0 ] && [ "${swept}" != 5 ]; then
+      say "THE RESTORE DID NOT COMPLETE: sweep.sh exited ${swept} (evidence/trap-sweep.txt); spec.tokenConfig reads $(token_config 2>/dev/null || echo '(unreadable)'). Finish it first — bash ${S}/sweep.sh trap-again, or the one write: ${RESTORE_CMD} — and run no release-crc.sh --argocd main until it reads ${LIFETIME_FOUND} and the authentication operator reads Available=True Degraded=False Progressing=False."
+    elif oc get secrets -n "${NS}" -l owner=helm,name=group-sync-dashboard -o name | grep -q . \
        || ! oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o name >/dev/null 2>&1; then
       say "THE LAB IS NOT ON ARGO CD (a Helm release is installed, or the Application is gone). To finish: (cd ${DEPLOY}/local-development && ./release-crc.sh --argocd main), then bash ${S}/sweep.sh trap-after-handback"
     fi
@@ -73,6 +85,13 @@ podman info >/dev/null 2>&1 || abort "podman is not reachable: release-crc.sh bu
 [ -z "$(oc get leases.coordination.k8s.io -n "${NS}" "gsd-fleet-$(printf developer | shasum -a 256 | cut -c1-16)" -o name --ignore-not-found)" ] \
   || abort "developer's Lease exists: another walk is under way or was not cleaned"
 oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o name >/dev/null || abort "no Argo CD Application"
+# Step 2's cascade deletes every object the Application tracks; a PVC survives it only by its LIVE
+# `argocd.argoproj.io/sync-options: …Delete=false…` (helm.sh/resource-policy: keep protects `helm uninstall` alone).
+oc get persistentvolumeclaims -n "${NS}" -o json \
+  | jq -e '[.items[] | select(.metadata.name | test("^group-sync-dashboard-(data|report-artifacts)$"))]
+           | length == 2 and all(.[]; ((.metadata.annotations["argocd.argoproj.io/sync-options"] // "") | split(",") | index("Delete=false"))
+                                      and .metadata.annotations["helm.sh/resource-policy"] == "keep")' >/dev/null \
+  || abort "the data and report-artifacts PVCs must both carry Delete=false and resource-policy keep: the handover's cascade deletes a PVC without them"
 remote=$(git -C "${HERE}" remote get-url origin)
 origin_main=$(git ls-remote "${remote}" refs/heads/main | cut -f1)
 [ "${origin_main}" = "${MAIN_SHA}" ] || abort "GitHub's main is ${origin_main}, not ${MAIN_SHA}: the hand-back would deploy another commit"
@@ -113,13 +132,15 @@ wait_for 1 'gsd\.leader .*(became leader|taking it)' '' 180 || abort "the walk p
 
 # ── 4. The configuration names only developer; then the lifetime ──────────────────────────────────────────────────
 bash "${S}/labcheck.sh" phase2-after-deploy || abort "the lab check did not print 0 0 0 after the deploy"
+say "IF THIS RUN IS KILLED FROM HERE ON (kill -9, a hard stop: no trap runs), restore oauth/cluster before anything else — bash ${S}/sweep.sh manual — or the one write: ${RESTORE_CMD}"
 bash "${S}/oauth_lifetime.sh" set "${LIFETIME_WALK}" phase2-set-600 || abort "oauth/cluster did not settle at ${LIFETIME_WALK}"
 
 # ── 5. The password, only after the lab check ─────────────────────────────────────────────────────────────────────
 bash "${S}/labcheck.sh" phase2-before-walk-secret || abort "the lab check did not print 0 0 0 before the walk Secret"
 T_SECRET=$(now)
 bash "${S}/walk_secret.sh" phase2
-FAIL_RE=" (fleet-login-refused|fleet-login-failed|fleet-credential-suspended|self-login-failed) .*cluster=${WALK_CLUSTER}( |$)|cluster-unreachable .*cluster=${WALK_CLUSTER}( |$)"
+# fleet-credential-suspended names its clusters in `clusters=<a,b,…>` and has no `cluster=` (gsd/selflogin.py#_suspend).
+FAIL_RE=" (fleet-login-refused|fleet-login-failed|self-login-failed) .*cluster=${WALK_CLUSTER}( |$)| fleet-credential-suspended .*clusters=([^ ]*,)?${WALK_CLUSTER}(,| |$)|cluster-unreachable .*cluster=${WALK_CLUSTER}( |$)"
 
 # ── 6. Observe: the first session, then RENEWALS scheduled renewals, then two more poll cycles ────────────────────
 wait_for 1 " fleet-login cluster=${WALK_CLUSTER} " "${FAIL_RE}" 240 || abort "no first self-login"

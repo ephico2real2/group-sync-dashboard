@@ -26,9 +26,16 @@ left=0; rc=0
 {
   say "sweep '${label}' begins"
 
-  # 1. The lifetime first: whatever else fails, the cluster-wide change is undone.
-  bash "${here}/oauth_lifetime.sh" set "${LIFETIME_FOUND}" "${label}"; r=$?
-  now_cfg=$(token_config)
+  # 1. The lifetime first: whatever else fails, the cluster-wide change is undone. Up to three writes, 20 s apart, while
+  #    the value is not written: the trap runs this sweep once, and one refused or lost request must not leave the
+  #    cluster at the walk's lifetime. A value that is written but has not settled is reported, not written again.
+  for attempt in 1 2 3; do
+    bash "${here}/oauth_lifetime.sh" set "${LIFETIME_FOUND}" "${label}"; r=$?
+    now_cfg=$(token_config)
+    [ "${now_cfg}" = "{\"accessTokenMaxAgeSeconds\":${LIFETIME_FOUND}}" ] && break
+    say "1. attempt ${attempt} of 3 did not write it: oauth_lifetime.sh exited ${r}; spec.tokenConfig reads ${now_cfg:-(unreadable)}"
+    [ "${attempt}" = 3 ] || sleep 20
+  done
   if [ "${r}" -eq 0 ] && [ "${now_cfg}" = "{\"accessTokenMaxAgeSeconds\":${LIFETIME_FOUND}}" ]; then
     say "1. oauth/cluster spec.tokenConfig is ${now_cfg}, the authentication operator settled"
   else

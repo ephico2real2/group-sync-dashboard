@@ -54,5 +54,12 @@ case "${args}" in
     flag secret && echo secret/gsd-walk-developer-password; flag keep && echo role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; true ;;
   "get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run="*" -o name")
     flag crb && echo clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-developer-poller; true ;;
+  # capture.sh's streams (proof 8): the Running pod, a follow that blocks until killed, and one metrics sample.
+  "get pods -n group-sync-dashboard -l app.kubernetes.io/name=group-sync-dashboard --field-selector=status.phase=Running -o jsonpath={.items[0].metadata.name}")
+    printf 'group-sync-dashboard-stub' ;;
+  "logs -f --timestamps -n group-sync-dashboard group-sync-dashboard-stub -c dashboard"*)
+    exec /bin/sleep 3600 ;;
+  "get --raw /api/v1/namespaces/group-sync-dashboard/pods/https:group-sync-dashboard-stub:8443/proxy/metrics")
+    echo 'gsd_cluster_up{cluster="walk-self-login"} 1.0' ;;
   *) echo "stub oc: unexpected call: ${args}" >&2; exit 97 ;;
 esac

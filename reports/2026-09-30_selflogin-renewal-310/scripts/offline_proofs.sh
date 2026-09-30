@@ -15,6 +15,8 @@
 #                             and a run with the old session revoked first and a missed poll fails on exactly those
 #   7. offline-restore.txt    sweep.sh (and oauth_lifetime.sh inside it) run three times against a stub `oc`: one patch
 #                             in all, the keep-grant and developer's Lease left until the chart's grant is back
+#   8. offline-streams.txt    capture.sh stream-start then stream-stop against the stub `oc`: both exit 0, and no stream
+#                             loop outlives stream-stop
 set -euo pipefail
 S="$(cd "$(dirname "$0")" && pwd)"
 HERE="$(cd "${S}/.." && pwd)"
@@ -229,5 +231,31 @@ stub() {  # the stub first on PATH, under bash, with nothing inherited but what 
 } > "${EV}/offline-restore.txt"
 grep -q '^PASS' "${EV}/offline-restore.txt" || ok=false
 
-for f in values render rbac-diff hermetic timing analyse restore; do echo "== evidence/offline-${f}.txt"; grep -E '^(PASS|FAIL)|REMOVED|passed|failed|renewal|floor|MARGIN|^exit|grep -c' "${EV}/offline-${f}.txt" || true; done
+# ── 8. capture.sh's streams stop cleanly, against the stub oc and the real sleep ───────────────────────────────────
+# The review of phase 1 (OB3): the stream loops inherited `set -e`, so stream-stop's `kill` met a loop that had already
+# exited with its follow; stream-stop exited 1, and run.sh — under set -e — aborted before the evidence was captured.
+mkdir -p "${T}/bin8" && ln -sf "${S}/stub/oc" "${T}/bin8/oc"
+streams() {
+  env -i HOME="${HOME}" PATH="${T}/bin8:/usr/bin:/bin:$(dirname "$(command -v jq)")" STUB_STATE="${T}/state" \
+    EVIDENCE_DIR="${T}/ev" KUBECONFIG=/dev/null bash "${S}/capture.sh" "$1" "${T}/raw" > /dev/null 2>&1
+}
+{
+  stamp
+  set +e
+  streams stream-start; r1=$?
+  /bin/sleep 2
+  streams stream-stop; r2=$?
+  /bin/sleep 1
+  left=$(pgrep -f "capture.sh stream-start ${T}/raw" | wc -l | tr -d ' ')
+  set -e
+  echo "stream-start exit ${r1}; stream-stop exit ${r2}; stream loops still running a second later: ${left}"
+  if [ "${r1}" = 0 ] && [ "${r2}" = 0 ] && [ "${left}" = 0 ]; then
+    echo "PASS the streams start and stop, and nothing outlives stream-stop"
+  else
+    echo "FAIL"; pkill -f "capture.sh stream-start ${T}/raw" || true
+  fi
+} > "${EV}/offline-streams.txt"
+grep -q '^PASS' "${EV}/offline-streams.txt" || ok=false
+
+for f in values render rbac-diff hermetic timing analyse restore streams; do echo "== evidence/offline-${f}.txt"; grep -E '^(PASS|FAIL)|REMOVED|passed|failed|renewal|floor|MARGIN|^exit|grep -c' "${EV}/offline-${f}.txt" || true; done
 if ${ok}; then echo "ALL OFFLINE PROOFS PASS"; else echo "SOME OFFLINE PROOF FAILED"; exit 1; fi
