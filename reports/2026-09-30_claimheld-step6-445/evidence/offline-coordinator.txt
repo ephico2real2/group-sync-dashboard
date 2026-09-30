@@ -1,0 +1,50 @@
+# 2026-09-30T23:03:50Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+## the extraction: /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/extract_step6.py <this tree> <out>  (the repository's own tests/test_s4c_step6_walk.py regexes)
+oc exec -i -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -
+2b5e210329a66ce6dc3387470ade604bb835028e36dc00e04a28298dca5be9c2
+82
+## python -m py_compile: compiles
+PASS run.sh pins COORD_SHA256=2b5e210329a66ce6dc3387470ade604bb835028e36dc00e04a28298dca5be9c2, the program extracted here
+## the image's gsd against this tree's: every local-development/gsd/**/*.py by sha256 (localhost/group-sync-dashboard:2.0.0-708e6be104)
+PASS 68 modules, identical: the rehearsal runs the code main ships
+## the rehearsal, the Lease absent: podman run -i --network none … localhost/group-sync-dashboard:2.0.0-708e6be104 python3.14 /walk/rehearse_step6.py absent < <the program>
+HELD walk-step6-a gsd-fleet-88fa0d759f845b47
+ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until <instant>
+RELEASED
+# fake API: every request, in order:
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 404
+#   POST /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases -> 201
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+#   PUT /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+# fake API: the Lease at the end: {"annotations": {"groupsync-dashboard.io/account": "developer"}, "holderIdentity": "", "resourceVersion": "1002"}
+# coordinator exit code: 0
+exit 0
+## the rehearsal, the Lease free: podman run -i --network none … localhost/group-sync-dashboard:2.0.0-708e6be104 python3.14 /walk/rehearse_step6.py free < <the program>
+HELD walk-step6-a gsd-fleet-88fa0d759f845b47
+ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until <instant>
+RELEASED
+# fake API: every request, in order:
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+#   PUT /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+#   PUT /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+# fake API: the Lease at the end: {"annotations": {"groupsync-dashboard.io/account": "developer"}, "holderIdentity": "", "resourceVersion": "1002"}
+# coordinator exit code: 0
+exit 0
+## the rehearsal, the Lease held: podman run -i --network none … localhost/group-sync-dashboard:2.0.0-708e6be104 python3.14 /walk/rehearse_step6.py held < <the program>
+Traceback (most recent call last):
+  File "<string>", line 20, in <module>
+    lease.claim()
+    ~~~~~~~~~~~^^
+  File "/install/lib/python3.14/site-packages/gsd/fleetstate.py", line 329, in claim
+    raise ClaimHeld(f"{record.holder} holds {self.name} until {stamp(record.holder_until)}")
+gsd.fleetstate.ClaimHeld: group-sync-dashboard-pod holds gsd-fleet-88fa0d759f845b47 until <instant>
+ABORT: process A did not hold
+ABORT: process A did not release
+# fake API: every request, in order:
+#   GET /apis/coordination.k8s.io/v1/namespaces/group-sync-dashboard/leases/gsd-fleet-88fa0d759f845b47 -> 200
+# fake API: the Lease at the end: {"annotations": {"groupsync-dashboard.io/account": "developer"}, "holderIdentity": "group-sync-dashboard-pod", "resourceVersion": "1000"}
+# coordinator exit code: 2
+exit 2

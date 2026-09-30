@@ -1,0 +1,31 @@
+# 2026-09-30T23:03:40Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+gsd imported from: <this tree>/local-development/gsd/__init__.py
+## this walk's arrangement: pytest -v scripts/test_step6_arrangement.py
+../reports/2026-09-30_claimheld-step6-445/scripts/test_step6_arrangement.py::test_step6_the_walk_pod_never_touches_developers_lease_and_the_claim_is_held PASSED
+../reports/2026-09-30_claimheld-step6-445/scripts/test_step6_arrangement.py::test_step6_control_a_stanza_naming_developer_makes_the_pod_read_its_lease PASSED
+======================== 2 passed, 2 warnings in 0.87s =========================
+## the spec's own step-6 pins: pytest -v tests/test_s4c_step6_walk.py
+tests/test_s4c_step6_walk.py::test_step6_is_not_an_out_of_cluster_copy_of_the_app PASSED
+tests/test_s4c_step6_walk.py::test_step6_proves_claimheld_on_developers_lease_inside_the_pod PASSED
+tests/test_s4c_step6_walk.py::test_step6_names_the_counts_and_the_aborts PASSED
+tests/test_s4c_step6_walk.py::test_step6_script_claims_and_never_reads_a_password PASSED
+tests/test_s4c_step6_walk.py::test_walk_stays_one_numbered_list PASSED
+tests/test_s4c_step6_walk.py::test_step6_coordinator_shows_why_b_failed PASSED
+tests/test_s4c_step6_walk.py::test_step6_block_has_no_trailing_whitespace PASSED
+============================== 7 passed in 0.03s ===============================
+## ClaimHeld across processes, the tests SPEC_S4c §3.11 names: pytest -v
+tests/test_fleet_lifecycle.py::test_r1_two_processes_cannot_both_win_one_claim_and_no_claim_is_no_bind PASSED
+tests/test_fleet_lifecycle.py::test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_targets_a_restart_and_an_edit[401] PASSED
+tests/test_fleet_lifecycle.py::test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_targets_a_restart_and_an_edit[500] PASSED
+tests/test_fleet_lifecycle.py::test_d1_clock_skew_does_not_admit_a_second_bind PASSED
+tests/test_fleet_lifecycle.py::test_d1_skew_takeover_at_each_point_of_the_attempt[reservation] PASSED
+tests/test_fleet_lifecycle.py::test_d1_skew_takeover_at_each_point_of_the_attempt[authorize] PASSED
+tests/test_fleet_lifecycle.py::test_d1_skew_takeover_at_each_point_of_the_attempt[refusal] PASSED
+tests/test_fleet_lifecycle.py::test_d1_a_paused_winner_resumes_after_the_takeover_and_does_not_bind PASSED
+tests/test_fleet_lifecycle.py::test_d1_paused_winner_success_clears_its_own_reservation_on_409 PASSED
+tests/test_fleet_lifecycle.py::test_d1_paused_winner_complete_does_not_erase_a_foreign_refusal PASSED
+======================== 10 passed, 2 warnings in 0.88s ========================
+## pytest -q tests/test_fleet_lifecycle.py tests/test_fleet_lifecycle_round3.py tests/test_fleet_gate_backstop.py
+90 passed, 2 warnings in 3.39s
+## pytest -q tests/test_ping_account_scope.py
+24 passed, 2 warnings in 2.93s

@@ -1,0 +1,40 @@
+# 2026-09-30T23:03:53Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+## run 0 — the Application being deleted (a cascade cut short), the chart's Role still readable: exit 5 (5 = left on purpose)
+sweep 'run-0' begins
+1. (the walk Secret, by label)
+2. LEFT: the keep-grant stays — the chart's own grant on ldap-oauth-bind-secret is not back on a lab that is on Argo CD (Role rules matching: 1, bindings: 1, on Argo CD: no). Run release-crc.sh --argocd main, then this script again.
+3. gsd-fleet-88fa0d759f845b47 is absent
+labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get 
+sweep 'run-0' ends: rc=0 left=1
+## run 1 — the walk values deployed (no chart grant, the configuration names developer, A's claim live): exit 5 (5 = left on purpose)
+sweep 'run-1' begins
+1. (the walk Secret, by label)
+2. LEFT: the keep-grant stays — the chart's own grant on ldap-oauth-bind-secret is not back on a lab that is on Argo CD (Role rules matching: 0, bindings: 0, on Argo CD: no). Run release-crc.sh --argocd main, then this script again.
+3. LEFT: gsd-fleet-88fa0d759f845b47 stays — the deployed configuration still names developer (1 line(s)). Run release-crc.sh --argocd main, then this script again.
+labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get 
+sweep 'run-1' ends: rc=0 left=1
+## run 2 — after the hand-back, A's claim still live (a coordinator killed inside its 195 s): exit 5
+sweep 'run-2' begins
+1. (the walk Secret, by label)
+2. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant
+2. role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted 
+3. LEFT: gsd-fleet-88fa0d759f845b47 stays — a live claim holds it (holder=walk-step6-a renew=2026-09-30T23:03:54.000000Z duration=195 rv=7); wait until renew + duration has passed, then run this script again.
+labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: 
+sweep 'run-2' ends: rc=0 left=1
+## run 3 — the claim released: exit 0
+sweep 'run-3' begins
+1. (the walk Secret, by label)
+2. no keep-grant present
+3. the deployed configuration names no developer account and no claim holds it (holder=none renew=2026-09-30T00:00:00.000000Z duration=195 rv=8): lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted 
+labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: 
+sweep 'run-3' ends: rc=0 left=0
+## run 4 — again, nothing left: exit 0
+sweep 'run-4' begins
+1. (the walk Secret, by label)
+2. no keep-grant present
+3. gsd-fleet-88fa0d759f845b47 is absent
+labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: 
+sweep 'run-4' ends: rc=0 left=0
+## the stub's call log: 7 delete call(s) (each --ignore-not-found); unexpected calls: 0
+final state: secret=0 keep=0 lease=absent
+PASS the restore is safe to run again and again: nothing removed early (the keep-grant before the chart's grant is back on a lab that is on Argo CD, the Lease before the configuration stops naming developer or while a claim is live), everything removed at the end

@@ -1,0 +1,24 @@
+# #445 phase 1 risk reads at 2026-09-30T22:05:36Z — oc get only (and git ls-remote); no Secret data but the declared-mode booleans of the cluster Secrets' config
+## oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq <the declared modes, booleans only>
+gsd-cluster-mock-privateca saTokenLookup=false userSelfLogin=false hasLdapConnectionBootstrap=false token-source=- has-lookup-account=false
+gsd-cluster-mock-refusal saTokenLookup=false userSelfLogin=false hasLdapConnectionBootstrap=false token-source=- has-lookup-account=false
+gsd-cluster-mock-selfsigned saTokenLookup=false userSelfLogin=false hasLdapConnectionBootstrap=false token-source=- has-lookup-account=false
+gsd-cluster-mock-trusted saTokenLookup=false userSelfLogin=false hasLdapConnectionBootstrap=false token-source=- has-lookup-account=false
+gsd-cluster-shared-qa saTokenLookup=false userSelfLogin=false hasLdapConnectionBootstrap=false token-source=- has-lookup-account=false
+gsd-cluster-shared-rnd saTokenLookup=false userSelfLogin=false hasLdapConnectionBootstrap=false token-source=remote-lookup has-lookup-account=true
+## onboarding ConfigMaps (groupsync-dashboard.io/config-type): 0
+## image stream tags matching :2.0.0- in group-sync-dashboard
+imagestreamtag.image.openshift.io/group-sync-dashboard:2.0.0-708e6be104
+imagestreamtag.image.openshift.io/group-sync-dashboard-report:2.0.0-708e6be104
+## the deployed ConfigMap's cadence keys
+pollIntervalSeconds: 60
+discoveryIntervalSeconds: 300
+requestTimeoutSeconds: 15
+fleetPingEnabled: true
+fleetPingIntervalSeconds: 86400
+## the Leases in group-sync-dashboard (name, holder, lease-type label)
+grafana-operator-a3ff8cb167045bd296db1493d0f15dc4ab61f57a6c217969fef5964ac9e3daae   grafana-operator-controller-manager-v5-58748cb7d4-wlpf9_95dc8df9-b7cc-4781-acff-e75b3eac39bf   <none>
+group-sync-dashboard                                                                group-sync-dashboard-7b9485f499-ltsk6                                                          <none>
+gsd-fleet-666f1ba7f2fdead0                                                                                                                                                         fleet-account
+## GitHub main: 57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61
+## git diff --stat 708e6be1 57735e9e -- local-development charts environments gitops docs/specs: 0 line(s)

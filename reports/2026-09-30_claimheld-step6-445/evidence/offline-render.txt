@@ -1,0 +1,12 @@
+# 2026-09-30T23:03:39Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+lines in the walk render: 3318
+lines in the argo render: 3318
+lines in the walk-clusters render: 164
+lines in the argo-clusters render: 164
+walk clusters.yaml: pollIntervalSeconds: 60 discoveryIntervalSeconds: 300 requestTimeoutSeconds: 15 fleetAccountUsername: "developer" fleetPasswordSecretNamespace: "group-sync-dashboard" fleetPasswordSecretName: "gsd-walk-developer-password" fleetPasswordSecretKey: "password" fleetPingEnabled: true fleetPingIntervalSeconds: 86400 
+walk clusters.yaml: ldapConnectionBootstrap lines: 0; saTokenLookup: true lines: 0; userSelfLogin: true lines: 0
+grep -c <the fleet account>: walk clusters.yaml 0, the whole walk render 0; the Argo shape's clusters.yaml 1 (expected 1: the check tells the two apart)
+PASS the walk names only developer, and no stanza names anyone (SPEC_S4c §3.12 step 0)
+the leases rule, walk render:  {"bound": ["ServiceAccount:group-sync-dashboard:group-sync-dashboard"], "role": "ClusterRole/group-sync-dashboard-reader", "rules": [{"apiGroups": ["coordination.k8s.io"], "resources": ["leases"], "verbs": ["get", "create", "update"]}]}
+the leases rule, Argo render:  {"bound": ["ServiceAccount:group-sync-dashboard:group-sync-dashboard"], "role": "ClusterRole/group-sync-dashboard-reader", "rules": [{"apiGroups": ["coordination.k8s.io"], "resources": ["leases"], "verbs": ["get", "create", "update"]}]}
+PASS both renders carry the same leases rule (get, create, update): step 6's processes act as the ServiceAccount

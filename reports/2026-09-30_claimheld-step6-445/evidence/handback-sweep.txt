@@ -1,0 +1,7 @@
+2026-09-30T23:10:29Z sweep 'handback' begins
+2026-09-30T23:10:29Z 1. No resources found (the walk Secret, by label)
+2026-09-30T23:10:29Z 2. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant
+2026-09-30T23:10:29Z 2. role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace rolebinding.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace 
+2026-09-30T23:10:30Z 3. the deployed configuration names no developer account and no claim holds it (holder=none renew=2026-09-30T23:09:23.879027Z duration=195 rv=7635110): lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted from group-sync-dashboard namespace 
+2026-09-30T23:10:30Z labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: 
+2026-09-30T23:10:30Z sweep 'handback' ends: rc=0 left=0

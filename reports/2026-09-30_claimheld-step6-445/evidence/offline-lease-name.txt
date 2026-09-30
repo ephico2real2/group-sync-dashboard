@@ -1,0 +1,4 @@
+gsd imported from: <this tree>/local-development/gsd/fleetstate.py
+lease_name(account: 'str') -> 'str'; lease_digest(account: 'str', password: 'str', salt: 'str') -> 'str'
+lease_name('developer') = gsd-fleet-88fa0d759f845b47; lib.sh's DEV_LEASE = gsd-fleet-88fa0d759f845b47; the spec's = gsd-fleet-88fa0d759f845b47
+PASS

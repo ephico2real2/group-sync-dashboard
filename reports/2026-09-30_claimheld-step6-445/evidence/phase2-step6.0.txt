@@ -1,0 +1,9 @@
+# SPEC_S4c §3.12 step 6.0 at 2026-09-30T23:09:23Z. The lab check: evidence/phase2-step6.0-labcheck.txt (0 0 0).
+# the spec's Lease read, verbatim:
+#   oc get leases.coordination.k8s.io gsd-fleet-88fa0d759f845b47 -n group-sync-dashboard -o jsonpath='{.spec.holderIdentity} {.spec.renewTime} {.spec.leaseDurationSeconds}{"\n"}'
+Error from server (NotFound): leases.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" not found
+developer's Lease: absent — free by gsd/fleetstate.py#FleetRecord.in_flight's rule (absent reads as unheld)
+STEP6_SINCE=2026-09-30T23:09:23Z
+developer, openshift-challenging-client: 6
+the fleet account, openshift-challenging-client: 2
+sha256 of the fleet account's Lease (jq -S -c . | shasum -a 256): fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302

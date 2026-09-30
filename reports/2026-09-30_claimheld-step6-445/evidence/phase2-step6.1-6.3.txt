@@ -1,0 +1,9 @@
+# SPEC_S4c §3.12 step 6.1-6.3 at 2026-09-30T23:09:24Z: oc exec -i -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 - <<'PY' … PY
+# the program: SPEC_S4c at 57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61, extracted by scripts/extract_step6.py, sha256 2b5e210329a66ce6dc3387470ade604bb835028e36dc00e04a28298dca5be9c2
+## stdout
+HELD walk-step6-a gsd-fleet-88fa0d759f845b47
+ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until 2026-09-30T23:12:38Z
+RELEASED
+## stderr
+## exit code: 0
+## developer's Lease after: holder=none renew=2026-09-30T23:09:23.879027Z duration=195 rv=7635110

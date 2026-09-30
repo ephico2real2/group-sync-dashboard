@@ -1,0 +1,7 @@
+# SPEC_S4c §3.12 step 6.4 at 2026-09-30T23:09:25Z: the derived audit in [2026-09-30T23:09:23Z, now) is evidence/phase2-step6.4-audit.txt
+#   developer authorize records, any decision: 0   (expected 0)
+#   the fleet account's authorize records, any decision: 0   (expected 0)
+# challenging-client token counts, 6.0 -> now:
+developer, openshift-challenging-client: 6  ->  developer, openshift-challenging-client: 6
+the fleet account, openshift-challenging-client: 2  ->  the fleet account, openshift-challenging-client: 2
+# the fleet account's Lease sha256, 6.0 -> now: fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302 -> fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302

@@ -1,0 +1,3 @@
+# 2026-09-30T23:03:55Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+watcher output: 2026-09-30T23:03:56Z
+PASS the watcher records an end only after the exact walk pod UID is gone

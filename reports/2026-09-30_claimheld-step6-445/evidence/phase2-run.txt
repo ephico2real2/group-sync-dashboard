@@ -1,0 +1,142 @@
+2026-09-30T23:08:15Z #445 phase 2 — run claimheld-445-2026-09-30, main 57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61
+2026-09-30T23:08:17Z extracted from /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445-tmp/deploy-57735e9e/docs/specs/SPEC_S4c_credential_lifecycle.md §3.12 step 6: oc exec -i -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 - 2b5e210329a66ce6dc3387470ade604bb835028e36dc00e04a28298dca5be9c2 82 
+2026-09-30T23:08:20Z baseline: evidence/phase2-start-baseline.txt
+# SPEC_S4e §5 lab check at 2026-09-30T23:08:20Z (read-only). F is the fleet account's username, read from its Lease; not printed.
+#   oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c "${F}"
+#   oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq --arg f "${F}" '[.items[] | (.data.config // "" | @base64d | fromjson? // {}) | select(.ldapConnectionBootstrap == $f)] | length'
+#   oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json | jq --arg f "${F}" '[.items[] | .data // {} | to_entries[] | select(.value | contains($f))] | length'
+# looked at: ConfigMap group-sync-dashboard-config resourceVersion 7557189; fleetAccountUsername is developer: 0; userSelfLogin stanzas: 0
+# looked at: 6 cluster Secret(s): gsd-cluster-mock-privateca, gsd-cluster-mock-refusal, gsd-cluster-mock-selfsigned, gsd-cluster-mock-trusted, gsd-cluster-shared-qa, gsd-cluster-shared-rnd
+# looked at: 0 onboarding ConfigMap(s)
+1 0 0
+2026-09-30T23:08:20Z IF THIS RUN IS KILLED FROM HERE ON (kill -9: no trap runs): (cd /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445-tmp/deploy-57735e9e/local-development && ./release-crc.sh --argocd main), then bash /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445/reports/2026-09-30_claimheld-step6-445/scripts/sweep.sh manual — no step of this walk leaves a password or a cluster-wide change behind
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+2026-09-30T23:08:20Z release-crc.sh --values reports/2026-09-30_claimheld-step6-445/prepared/walk-values-claimheld.yaml (from /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445-tmp/deploy-57735e9e)
+2026-09-30T23:09:22Z release-crc.sh --values exited 0 (evidence/phase2-deploy-release-crc.log)
+2026-09-30T23:09:22Z the walk pod group-sync-dashboard-59595d645f-qsqxv (uid recorded, not printed) started 2026-09-30T23:08:44Z and leads (2026-09-30T23:09:22Z)
+# SPEC_S4e §5 lab check at 2026-09-30T23:09:22Z (read-only). F is the fleet account's username, read from its Lease; not printed.
+#   oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c "${F}"
+#   oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq --arg f "${F}" '[.items[] | (.data.config // "" | @base64d | fromjson? // {}) | select(.ldapConnectionBootstrap == $f)] | length'
+#   oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json | jq --arg f "${F}" '[.items[] | .data // {} | to_entries[] | select(.value | contains($f))] | length'
+# looked at: ConfigMap group-sync-dashboard-config resourceVersion 7634641; fleetAccountUsername is developer: 1; userSelfLogin stanzas: 0
+# looked at: 6 cluster Secret(s): gsd-cluster-mock-privateca, gsd-cluster-mock-refusal, gsd-cluster-mock-selfsigned, gsd-cluster-mock-trusted, gsd-cluster-shared-qa, gsd-cluster-shared-rnd
+# looked at: 0 onboarding ConfigMap(s)
+0 0 0
+# SPEC_S4c §3.12 step 6.0 at 2026-09-30T23:09:23Z. The lab check: evidence/phase2-step6.0-labcheck.txt (0 0 0).
+# the spec's Lease read, verbatim:
+#   oc get leases.coordination.k8s.io gsd-fleet-88fa0d759f845b47 -n group-sync-dashboard -o jsonpath='{.spec.holderIdentity} {.spec.renewTime} {.spec.leaseDurationSeconds}{"\n"}'
+Error from server (NotFound): leases.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" not found
+developer's Lease: absent — free by gsd/fleetstate.py#FleetRecord.in_flight's rule (absent reads as unheld)
+STEP6_SINCE=2026-09-30T23:09:23Z
+developer, openshift-challenging-client: 6
+the fleet account, openshift-challenging-client: 2
+sha256 of the fleet account's Lease (jq -S -c . | shasum -a 256): fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302
+2026-09-30T23:09:23Z 6.1-6.3: oc exec -i -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 - < <the program, sha256 2b5e210329a66ce6dc3387470ade604bb835028e36dc00e04a28298dca5be9c2>
+# SPEC_S4c §3.12 step 6.1-6.3 at 2026-09-30T23:09:24Z: oc exec -i -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 - <<'PY' … PY
+# the program: SPEC_S4c at 57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61, extracted by scripts/extract_step6.py, sha256 2b5e210329a66ce6dc3387470ade604bb835028e36dc00e04a28298dca5be9c2
+## stdout
+HELD walk-step6-a gsd-fleet-88fa0d759f845b47
+ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until 2026-09-30T23:12:38Z
+RELEASED
+## stderr
+## exit code: 0
+## developer's Lease after: holder=none renew=2026-09-30T23:09:23.879027Z duration=195 rv=7635110
+wrote /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445/reports/2026-09-30_claimheld-step6-445/evidence/phase2-step6.4-audit.txt
+# SPEC_S4c §3.12 step 6.4 at 2026-09-30T23:09:25Z: the derived audit in [2026-09-30T23:09:23Z, now) is evidence/phase2-step6.4-audit.txt
+#   developer authorize records, any decision: 0   (expected 0)
+#   the fleet account's authorize records, any decision: 0   (expected 0)
+# challenging-client token counts, 6.0 -> now:
+developer, openshift-challenging-client: 6  ->  developer, openshift-challenging-client: 6
+the fleet account, openshift-challenging-client: 2  ->  the fleet account, openshift-challenging-client: 2
+# the fleet account's Lease sha256, 6.0 -> now: fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302 -> fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302
+2026-09-30T23:09:25Z STEP 6 PASSED: HELD, ClaimHeld, RELEASED, exit 0; 0 authorizes for developer and for the fleet account; counts and the fleet Lease unchanged
+wrote /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445/reports/2026-09-30_claimheld-step6-445/evidence/phase2-podlog.txt
+2026-09-30T23:09:25Z release-crc.sh --argocd main (from /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445-tmp/deploy-57735e9e)
+2026-09-30T23:10:29Z release-crc.sh --argocd main exited 0 (evidence/phase2-handback-release-crc-argocd-main.log)
+2026-09-30T23:10:29Z walk pod audit bounds: [2026-09-30T23:08:44Z, 2026-09-30T23:09:30Z); hand-back started 2026-09-30T23:09:25Z
+2026-09-30T23:10:29Z sweep 'handback' begins
+2026-09-30T23:10:29Z 1. No resources found (the walk Secret, by label)
+2026-09-30T23:10:29Z 2. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant
+2026-09-30T23:10:29Z 2. role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace rolebinding.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace 
+2026-09-30T23:10:30Z 3. the deployed configuration names no developer account and no claim holds it (holder=none renew=2026-09-30T23:09:23.879027Z duration=195 rv=7635110): lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted from group-sync-dashboard namespace 
+2026-09-30T23:10:30Z labelled walk.gsd.lab/run=claimheld-445-2026-09-30 now: 
+2026-09-30T23:10:30Z sweep 'handback' ends: rc=0 left=0
+2026-09-30T23:10:30Z sweep.sh handback exited 0
+wrote /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445/reports/2026-09-30_claimheld-step6-445/evidence/phase2-before-walk-pod-audit.txt
+wrote /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445/reports/2026-09-30_claimheld-step6-445/evidence/phase2-walk-pod-audit.txt
+wrote /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-445/reports/2026-09-30_claimheld-step6-445/evidence/phase2-after-walk-pod-audit.txt
+EQUAL     oauth/cluster .spec (sha256)
+  start: sha256 of oauth/cluster .spec (jq -S -c .spec): 305a29862c7463dec710cdca8223498716ecd68a62d2d2b68d3fdcc52aaa93b5
+  end:   sha256 of oauth/cluster .spec (jq -S -c .spec): 305a29862c7463dec710cdca8223498716ecd68a62d2d2b68d3fdcc52aaa93b5
+EQUAL     Argo CD: targetRevision, sync status, revision, image parameters
+  start: argo: targetRevision=main sync=Synced revision=57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61 image parameters=0
+  end:   argo: targetRevision=main sync=Synced revision=57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61 image parameters=0
+EQUAL     PVC UIDs
+  start: group-sync-dashboard-data uid=f065b7a4-535c-4ef1-868c-58f5afee4953 volume=pvc-f065b7a4-535c-4ef1-868c-58f5afee4953 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+         group-sync-dashboard-report-artifacts uid=08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 volume=pvc-08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+  end:   group-sync-dashboard-data uid=f065b7a4-535c-4ef1-868c-58f5afee4953 volume=pvc-f065b7a4-535c-4ef1-868c-58f5afee4953 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+         group-sync-dashboard-report-artifacts uid=08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 volume=pvc-08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+EQUAL     gsd-cluster-shared-qa (name, resourceVersion, created)
+  start: gsd-cluster-shared-qa         2981054   2026-09-23T00:08:44Z
+  end:   gsd-cluster-shared-qa         2981054   2026-09-23T00:08:44Z
+EQUAL     gsd-cluster-shared-rnd (name, resourceVersion, created)
+  start: gsd-cluster-shared-rnd        2835139   2026-09-24T07:04:21Z
+  end:   gsd-cluster-shared-rnd        2835139   2026-09-24T07:04:21Z
+EQUAL     the fleet account's OAuthAccessTokens (challenging client)
+  start: the fleet account, openshift-challenging-client: 2 created 2026-09-19T00:48:44Z, 2026-09-19T00:50:11Z
+  end:   the fleet account, openshift-challenging-client: 2 created 2026-09-19T00:48:44Z, 2026-09-19T00:50:11Z
+EQUAL     the fleet account's OAuthAccessTokens (any client)
+  start: the fleet account, any client: 2
+  end:   the fleet account, any client: 2
+EQUAL     developer's challenging-client OAuthAccessTokens (count and creation instants)
+  start: developer, openshift-challenging-client: 6 created 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z, 2026-09-26T14:35:41Z, 2026-09-28T17:57:41Z, 2026-09-29T12:04:45Z, 2026-09-30T04:46:29Z
+  end:   developer, openshift-challenging-client: 6 created 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z, 2026-09-26T14:35:41Z, 2026-09-28T17:57:41Z, 2026-09-29T12:04:45Z, 2026-09-30T04:46:29Z
+EQUAL     objects labelled with the run
+  start: labelled walk.gsd.lab/run=claimheld-445-2026-09-30:  
+  end:   labelled walk.gsd.lab/run=claimheld-445-2026-09-30:  
+EQUAL     the walk Secret by name (never created)
+  start: the walk Secret by name: secrets "gsd-walk-developer-password" not found
+  end:   the walk Secret by name: secrets "gsd-walk-developer-password" not found
+EQUAL     developer's Lease
+  start: developer's Lease gsd-fleet-88fa0d759f845b47: absent
+  end:   developer's Lease gsd-fleet-88fa0d759f845b47: absent
+EQUAL     the chart's fleet-account Role in openshift-config
+  start: the chart's group-sync-dashboard-fleet-account Role in openshift-config: [{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]
+  end:   the chart's group-sync-dashboard-fleet-account Role in openshift-config: [{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]
+EQUAL     the ServiceAccount's get on ldap-oauth-bind-secret
+  start: ServiceAccount get openshift-config/ldap-oauth-bind-secret: yes
+  end:   ServiceAccount get openshift-config/ldap-oauth-bind-secret: yes
+EQUAL     the ServiceAccount's create/update on leases
+  start: ServiceAccount create/update leases in group-sync-dashboard: yes/yes
+  end:   ServiceAccount create/update leases in group-sync-dashboard: yes/yes
+INFO      the fleet account's Lease (the product's daily ping may move rv and ping-last-*; holder must be none)
+  start: the fleet account's Lease gsd-fleet-666f1ba7f2fdead0 rv=7468503 holder=(none) ping-last-attempt=2026-09-30T17:58:43Z ping-last-ok=2026-09-30T17:58:43Z ping-last-outcome=ok refused=absent 
+  end:   the fleet account's Lease gsd-fleet-666f1ba7f2fdead0 rv=7468503 holder=(none) ping-last-attempt=2026-09-30T17:58:43Z ping-last-ok=2026-09-30T17:58:43Z ping-last-outcome=ok refused=absent 
+INFO      the fleet Lease's sha256
+  start: sha256 of that whole Lease (jq -S -c .): fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302 
+  end:   sha256 of that whole Lease (jq -S -c .): fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302 
+INFO      Argo CD (health)
+  start: {"targetRevision":"main","syncPolicy":{"prune":true,"selfHeal":true},"sync":"Synced","revision":"57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61","health":"Healthy","notHealthy":[]} 
+  end:   {"targetRevision":"main","syncPolicy":{"prune":true,"selfHeal":true},"sync":"Synced","revision":"57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61","health":"Healthy","notHealthy":[]} 
+INFO      the dashboard Deployment
+  start: {"images":[{"name":"dashboard","image":"quay.io/ephico2real/group-sync-dashboard:2.0.0"},{"name":"oauth-proxy","image":"registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15"}],"chart":"group-sync-dashboard-0.59.25","managedBy":"Helm","version":"2.0.0"} 
+  end:   {"images":[{"name":"dashboard","image":"quay.io/ephico2real/group-sync-dashboard:2.0.0"},{"name":"oauth-proxy","image":"registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15"}],"chart":"group-sync-dashboard-0.59.25","managedBy":"Helm","version":"2.0.0"} 
+INFO      /api/version
+  start: /api/version (oc exec … python3.14 urlopen on the pod's loopback): {"leader":true,"version":"2.0.0","commit":"b40b5cf82a","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}} 
+  end:   /api/version (oc exec … python3.14 urlopen on the pod's loopback): {"leader":true,"version":"2.0.0","commit":"b40b5cf82a","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}} 
+INFO      the authentication ClusterOperator
+  start: authentication conditions: Available=True Degraded=False Progressing=False 
+  end:   authentication conditions: Available=True Degraded=False Progressing=False 
+INFO      developer's OAuthAccessTokens, any client (console sessions are not the walk's)
+  start: developer, any client: 73 
+  end:   developer, any client: 73 
+INFO      all OAuthAccessTokens
+  start: all objects: 256 
+  end:   all objects: 256 
+EQUAL     the fleet account's Lease has no holder at the end
+LEFT AS FOUND on every MUST line
+2026-09-30T23:10:36Z done: step 6 passed, argocd main rc=0, pod-end watcher rc=0, sweep rc=0, walk-pod audit (developer, fleet)=0 0 (rc 0), compare rc=0, the fleet account named in evidence/: 0 time(s)
+2026-09-30T23:10:36Z run.sh ends rc=0

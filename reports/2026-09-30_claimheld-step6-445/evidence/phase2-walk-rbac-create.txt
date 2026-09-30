@@ -1,0 +1,2 @@
+role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
+rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get
