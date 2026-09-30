@@ -1,0 +1,4 @@
+# exit trap at 2026-09-29T17:37:36Z
+error: You must have a token in order to logout.
+No resources found
+removed the throwaway directory

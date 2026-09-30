@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>#449 on the lab at 1.19.0 — 2026-09-29</title><style>:root{--fg:#1d1d1f;--muted:#5a5a60;--rule:#d9d6cf;--bg:#fbfaf7;--code:#f0ede6}@media (prefers-color-scheme:dark){:root{--fg:#ecebe8;--muted:#a9a8a3;--rule:#3a3935;--bg:#161615;--code:#24231f}}body{font:15px/1.55 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg);max-width:1000px;margin:32px auto;padding:0 16px}h1{font-size:1.6em;line-height:1.25}h2{margin-top:2em;border-bottom:1px solid var(--rule);padding-bottom:.2em}table{border-collapse:collapse;width:100%;font-size:.9em;margin:1em 0;display:block;overflow-x:auto}th,td{border:1px solid var(--rule);padding:6px 8px;vertical-align:top;text-align:left}th{background:var(--code)}code{background:var(--code);padding:1px 4px;border-radius:3px;font-size:.88em;word-break:break-word}pre{background:var(--code);padding:12px;overflow-x:auto;border-radius:4px}pre code{background:none;padding:0}figure{margin:1.2em 0;break-inside:avoid}img{max-width:100%;border:1px solid var(--rule);border-radius:4px}figcaption{color:var(--muted);font-size:.85em;margin-top:.3em}@media print{body{margin:0;max-width:none;font-size:11px}h2{break-after:avoid}table{display:table}}</style></head><body>
+<h1>#449 on the lab: when a newly added entry's Logins shows a login — 2026-09-29</h1>
+<p><strong>Outcome: the row was delayed by the first-sight backfill; no lost row was observed in this run.</strong> The lab served
+application 1.19.0 at <code>ad102d9f1f</code> at both ends (<code>evidence/before-version.txt</code>, <code>evidence/after-version.txt</code>). A
+throwaway entry, <code>logins-449</code>, was added on the same CRC API as the host entry <code>dashboard</code>. Its Secret creation was
+logged at 17:31:45Z, a timestamp with one-second precision. One <code>oc login</code> as <code>developer</code> then ran from
+17:31:45.991829Z to 17:31:46.169090Z (<code>evidence/secret-create.txt</code>, <code>evidence/login.txt</code>). From the login's audit event
+to the log line recording it, the lag was 2.1 s on <code>dashboard</code> and 226.8 s on <code>logins-449</code>. The new entry recorded the
+row at its <strong>fourth</strong> audit read, <strong>179.3 s (three configured 60 s poll intervals)</strong> after its first read, the
+<code>first sight: backfill</code> one (<code>evidence/after-podlog.txt</code>, <code>evidence/login-audit.txt</code>, <code>evidence/reads.jsonl</code>). It came
+no earlier because a first sight reads <code>audit.log</code> from byte 0, oldest first, under an 8 MiB per-node body-read budget
+per capture pass. Just after the login, <code>audit.log</code> held 31,004,795 bytes, and the login's auditID matched lines
+starting at bytes 31,002,229 and 31,002,906 (<code>evidence/login-auditfile.txt</code>, <code>evidence/login-audit.txt</code>). The code is
+under &quot;The cause&quot; below.</p>
+<p>The API reads of the throwaway entries in #448 also came before those entries' backfills had finished. That is
+consistent with the same mechanism, but #448's records do not establish when its own login rows were captured (under
+&quot;What #448 saw&quot;).</p>
+<h2>What was measured</h2>
+<ul>
+<li><strong>The entry.</strong> <code>logins-449</code> was declared by a Secret on <code>https://api.crc.testing:6443</code>, with no annotation, no
+<code>saTokenLookup</code> and no <code>ldapConnectionBootstrap</code>. Discovery resolved it as <code>credential=bearer tls=trusted-bundle visibility=remote-sar identity=same-as-host</code> (<code>evidence/after-podlog.txt</code>).</li>
+<li><strong>The login.</strong> One <code>oc login</code> as <code>developer</code> went into a throwaway kubeconfig. The password went in on stdin, and TLS
+was verified against the lab kubeconfig's CA. It answered <code>Login successful.</code>, exit 0, and <code>whoami</code> <code>developer</code>
+(<code>evidence/login.txt</code>). The audit log holds exactly one annotated login event since the start: <code>cli allow 302</code> at
+<code>2026-09-29T17:31:46.149663Z</code>, auditID <code>7abcf1bc-1207-4e92-99fd-241ffe54aabb</code> (<code>evidence/login-audit.txt</code>,
+<code>evidence/after-audit.txt</code>).</li>
+<li><strong>The reads.</strong> <code>scripts/read.sh</code> read <code>GET /api/clusters/&lt;id&gt;/logins?kind=cli&amp;limit=50</code> for <code>logins-449</code> and for
+<code>dashboard</code> (the control) through the pod's loopback as <code>developer</code>. That local route starts no OAuth login.
+Successful answers had <code>scope: self</code>; the first request for the new entry answered 404 (<code>evidence/reads.jsonl</code>).
+<code>scripts/run.sh</code> watched the pod log for new audit reads, waited 5 s after one, then read the API, so with detection
+and command overhead the API reads came more than 5 s after the audit reads. It read after the entry's reads 1–4 and
+after the control's first audit read following the login, and stopped when the row appeared. Its fallback bound was
+six audit reads of the entry, with wall-clock guards besides. The selection threshold,
+<code>2026-09-29T17:31:45.837912Z</code>, was recorded before the login script was invoked
+(<code>evidence/login-start-instant.txt</code>); the command itself started at 17:31:45.991829Z (<code>evidence/login.txt</code>). The row
+looked for is a <code>cli</code> <code>success</code> row for <code>developer</code> at or after that threshold.</li>
+</ul>
+<h2>The timeline</h2>
+<table>
+<thead>
+<tr>
+<th>Instant (UTC)</th>
+<th>What happened</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>17:31:44–17:31:45</td>
+<td>The run began at 17:31:44Z after arming its exit trap; the before captures ran across these two seconds</td>
+<td><code>evidence/start-instant.txt</code>, <code>evidence/run-output.txt</code>, <code>evidence/before-version.txt</code>, <code>evidence/before-kubeconfig.txt</code>, <code>scripts/run.sh</code></td>
+</tr>
+<tr>
+<td>17:31:45</td>
+<td><code>secret/gsd-cluster-logins-449 created</code> from a mode-600 manifest</td>
+<td><code>evidence/secret-create.txt</code></td>
+</tr>
+<tr>
+<td>17:31:45.992 – 17:31:46.169</td>
+<td>The one <code>oc login</code>, timed inside the login script. The audit event was stamped 17:31:46.149663Z. The offset capture lists two lines carrying its auditID, at bytes 31,002,229 and 31,002,906 of <code>audit.log</code>, which then held 31,004,795 bytes; it does not label the stage of each line</td>
+<td><code>evidence/login.txt</code>, <code>evidence/login-audit.txt</code>, <code>evidence/login-auditfile.txt</code></td>
+</tr>
+<tr>
+<td>17:31:48.190–17:31:48.203</td>
+<td><strong>Control</strong>: <code>dashboard</code> read 19,347 bytes from offset 30,985,448, then logged 1 recorded login attempt. 30,985,448 + 19,347 = 31,004,795</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:31:57</td>
+<td>API: <code>dashboard</code> had the row (<code>observed_at</code> 17:31:48Z). <code>logins-449</code> answered 404 (<code>unknown cluster</code>) because discovery had not added it yet</td>
+<td><code>evidence/reads.jsonl</code> line 1</td>
+</tr>
+<tr>
+<td>17:32:31</td>
+<td>Discovery cycle 28 added <code>logins-449</code>, and polling started</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:32:33.614</td>
+<td><strong>Read 1</strong>: <code>audit.log read 8388608 byte(s) from offset 0 (first sight: backfill)</code>; 317 recorded</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:32:39</td>
+<td>API: <code>logins-449</code> 200, <code>total</code> 38, row <strong>absent</strong>. <code>dashboard</code> had the row</td>
+<td><code>evidence/reads.jsonl</code> line 2</td>
+</tr>
+<tr>
+<td>17:33:33.216</td>
+<td><strong>Read 2</strong>: 8,388,608 bytes from offset 8,387,795; 3 recorded</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:33:41</td>
+<td>API: <code>total</code> 39, row <strong>absent</strong></td>
+<td><code>evidence/reads.jsonl</code> line 3</td>
+</tr>
+<tr>
+<td>17:34:33.496</td>
+<td><strong>Read 3</strong>: 8,388,608 bytes from offset 16,776,336; 160 recorded</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:34:43</td>
+<td>API: <code>total</code> 119, row <strong>absent</strong></td>
+<td><code>evidence/reads.jsonl</code> line 4</td>
+</tr>
+<tr>
+<td>17:35:32.906</td>
+<td><strong>Read 4</strong>: 5,905,295 bytes from offset 25,164,790, ending at 31,070,085. That range covers the login's line at 31,002,906. 35 recorded, logged at 17:35:32.917</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:35:40</td>
+<td>API: <code>total</code> 149, row <strong>present</strong>, <code>at</code> 17:31:46.149663Z, <code>observed_at</code> 17:35:32Z. <code>dashboard</code>'s <code>total</code> was also 149</td>
+<td><code>evidence/reads.jsonl</code> line 5</td>
+</tr>
+<tr>
+<td>17:35:42</td>
+<td>The throwaway login was logged out and the Secret deleted by label</td>
+<td><code>evidence/logout.txt</code>, <code>evidence/delete.txt</code></td>
+</tr>
+<tr>
+<td>17:36:32</td>
+<td>Read 5: 16,072 bytes from offset 31,070,085. The entry had caught up</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+<tr>
+<td>17:37:31–17:37:32</td>
+<td>Discovery cycle 29 logged <code>removed=logins-449</code> at 17:37:31.989Z. The poll cycle that had polled at 17:37:31.848Z went on to a sixth audit read, 16,072 bytes from offset 31,086,157, logged at 17:37:32.106Z; the poll thread stopped at 17:37:32.186Z (<code>history kept</code>)</td>
+<td><code>evidence/after-podlog.txt</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>The lag.</strong> From the first-sight read's log line (17:32:33.614Z) to the fourth read's recording line (17:35:32.917Z,
+<code>recorded 35 login attempt(s)</code>) was 179.3 s. From the login's audit event at 17:31:46.149663Z to the recording lines
+was 226.8 s on <code>logins-449</code> and 2.1 s on <code>dashboard</code>; the control's preceding read line, at 17:31:48.190Z, was 2.0 s
+after the event. These are recording times taken from the pod log. The first API reads that showed the row were at
+17:31:57Z for the control and 17:35:40Z for the new entry (<code>evidence/after-podlog.txt</code>, <code>evidence/login-audit.txt</code>,
+<code>evidence/reads.jsonl</code>). Before first sight, discovery added the entry about 46 s after the Secret's creation, whose
+timestamp has one-second precision. The lab's discovery interval is 300 s (<code>reports/2026-09-29_rejoin-465-walk/README.md</code>
+item 2). That is the wait between discovery passes, not a deadline for one: the work of a pass comes on top of it
+(<code>local-development/gsd/poller.py#Poller._run_discovery</code>).</p>
+<h2>The cause, as the code shows it</h2>
+<p>The line numbers are those of <code>44ee52c</code>. <code>git diff ad102d9f1f 44ee52c</code> is empty for <code>auditlog.py</code>, <code>kube.py</code>,
+<code>poller.py</code>, <code>store.py</code> and <code>api.py</code>, so they match the deployed commit (<code>evidence/code-diff.txt</code>).</p>
+<ul>
+<li><strong>A first sight reads oldest-first, with <code>audit.log</code> last.</strong> <code>local-development/gsd/auditlog.py#capture_once</code>, lines
+496–506: rotated files are sorted by their stamp. <code>audit.log</code> goes first only when its cursor is past 0; when its
+cursor is 0 or missing it is appended at the end. The run's recorded reads name only <code>audit.log</code>
+(<code>evidence/after-podlog.txt</code>), and a directory listing taken after the run, at 17:40:56Z, also names only
+<code>audit.log</code> (<code>evidence/auditdir.txt</code>).</li>
+<li><strong>Each capture pass has an 8 MiB body-read budget per node.</strong> <code>local-development/gsd/kube.py#AUDIT_READ_MAX_BYTES</code>
+(line 83, <code>8 * 1024 * 1024</code>) is the budget set at <code>auditlog.py</code> line 507. It is passed as <code>max_bytes</code> at line 538
+and spent at line 570; the loop breaks when it is spent (line 510). Fingerprint probes are reads outside that budget.
+Reads 1–3 each returned exactly 8,388,608 body bytes.</li>
+<li><strong>The live file's cursor advances only through whole lines.</strong> <code>local-development/gsd/auditlog.py#complete_lines</code>
+and the <code>set_audit_cursor</code> call at lines 599–603 do this. Read 1 consumed 8,387,795 of its 8,388,608 bytes, which is
+why read 2 starts there. A closed rotated file has a separate end-of-file exception at lines 562–567.</li>
+<li><strong>One capture per poll cycle.</strong> <code>local-development/gsd/poller.py</code> line 1330 calls <code>capture_once</code> after <code>poll_once</code>
+in the cluster's loop, and the loop waits the rest of <code>pollIntervalSeconds</code>, at least 1 s (60 s on the lab;
+<code>read_interval_seconds: 60</code> in <code>evidence/reads.jsonl</code>).</li>
+</ul>
+<p>So a newly added entry records the newest login only when its cursor passes that login's line. The nominal count,
+ceil(31,070,085 / 8,388,608) = 4 reads, agrees with the observed offsets: read 3 left the cursor at 25,164,790, and
+read 4 reached 31,070,085, past the login's line at 31,002,906. Rereading partial lines did not change the number of
+reads in this run. The rows were stored under the entry's own key (<code>store.py#Store.record_audit_login_events</code>, keyed
+on <code>cluster_id</code> and <code>audit_id</code>), so the host entry's copy did not suppress the new entry's. Once drained, both self
+views reported <code>total: 149</code> and returned 43 CLI rows (<code>evidence/reads.jsonl</code> line 5). Only those counts and the
+target row's summary were saved, so equality of every row is not recorded.</p>
+<p>For a new entry, unread rotated files inside <code>loginRetentionDays</code> add work before the live file, since rotated files
+are read first. The bytes to drain divided by the 8 MiB budget give a nominal count of reads; rereads of partial
+lines, partial reads, rotation, failures and other poll work can add more. Retention, the identity filter and the
+API's scope also decide whether a given event is kept and shown, so passing its byte offset is not on its own a
+guarantee. This run's row was kept and shown at the API read after the fourth capture. The scaling was read from the
+code above and was not measured beyond this one file. The first-sight backfill and its 8 MiB-per-cycle drain are the
+documented design (<code>docs/AUDIT_LOG_CAPTURE.md</code>, section 5; <code>docs/REVIEW_D1.md</code>: &quot;drained in four cycles under the 8
+MiB budget&quot;). This measurement supports that design as the explanation for this row.</p>
+<h2>What #448 saw</h2>
+<p>These are its own records (<code>reports/2026-09-27_rejoin-walk/</code>):</p>
+<ul>
+<li><strong>Run 1.</strong> <code>rejoin-walk</code>'s first sight read 8,388,608 bytes from 0 at 23:45:03. The Logins API was read at
+23:45:06, 3 s later. The entry's third read, at 23:47:03, ended the drain at offset 24,569,183
+(<code>evidence/end-podlog.txt</code> and <code>evidence/walk-output.txt</code> there).</li>
+<li><strong>Run 2.</strong> <code>rejoin-walk-2</code>'s first sight was at 23:58:28. The API was read at 23:59:21, 53 s later and before its
+second read at 23:59:28. The drain ended with the third read at 00:00:29, at offset 24,635,082
+(<code>evidence/r2-end-podlog.txt</code> and <code>evidence/r2-walk-output-resumed.txt</code> there).</li>
+</ul>
+<p>In both runs the API read came after the entry's first read and before its second, while the backfill was incomplete:
+the next read resumed at byte 8,387,795 of a file of more than 24 MB. The empty results there are consistent with the
+lag measured here. The byte offsets of #448's own login lines, and any later read of those entries' rows, were not
+captured, so which read held those logins is not measured and this evidence does not settle why they were absent.</p>
+<h2>Before and after</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Before (17:31:44Z–17:31:45Z)</th>
+<th>During</th>
+<th>After (17:37:34Z–17:37:36Z)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/version</code></td>
+<td>1.19.0, <code>ad102d9f1f</code>, <code>dirty: false</code></td>
+<td>—</td>
+<td>the same</td>
+</tr>
+<tr>
+<td>PVC UIDs</td>
+<td>data <code>f065b7a4-535c-4ef1-868c-58f5afee4953</code>, report-artifacts <code>08c7d45c-a3eb-47be-8506-f24ea7a3e0e3</code></td>
+<td>—</td>
+<td>identical</td>
+</tr>
+<tr>
+<td><code>gsd-cluster-shared-qa</code></td>
+<td>resourceVersion 2981054</td>
+<td>—</td>
+<td>2981054</td>
+</tr>
+<tr>
+<td>fleet-account Lease</td>
+<td>1 Lease, resourceVersion 6761163, holder <code>&quot;&quot;</code></td>
+<td>—</td>
+<td>6761163, <code>&quot;&quot;</code></td>
+</tr>
+<tr>
+<td><code>developer</code> tokens, <code>openshift-challenging-client</code></td>
+<td>5</td>
+<td>6 after the login</td>
+<td>5 after the logout, and at the end</td>
+</tr>
+<tr>
+<td>the fleet account's tokens</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+</tr>
+<tr>
+<td>the fleet account's username-annotated login events in the audit log</td>
+<td>—</td>
+<td>0 events, 0 authorizes since 17:31:44Z</td>
+<td>0 and 0</td>
+</tr>
+<tr>
+<td>the lab kubeconfig (sha256 prefix of the file)</td>
+<td><code>10e7822a3c585576</code></td>
+<td>the same after the login</td>
+<td>the same</td>
+</tr>
+<tr>
+<td><code>gsd-cluster-logins-449</code></td>
+<td>absent</td>
+<td>created 17:31:45, deleted 17:35:42</td>
+<td>absent; the label selects nothing</td>
+</tr>
+</tbody>
+</table>
+<p>The rows come from <code>evidence/{before,login,deleted,after}-{version,pvcs,sharedqa,lease,tokens,kubeconfig,secret}.txt</code>,
+<code>evidence/after-audit.txt</code> and <code>evidence/trap-delete.txt</code>. In the pod log for the window, <code>fleet-login</code>,
+<code>fleet-logout</code>, <code>fleet-lookup</code>, <code>fleet-ping</code>, <code>cluster-rejoin-failed</code>, <code>cluster-rejoined</code>, Traceback and ERROR each
+count 0. Lines naming the fleet account also count 0 (<code>evidence/after-podlog.txt</code>). The scripts make no change to
+<code>shared-qa</code> or to a PVC. The unchanged PVC UIDs show that the PVC objects persisted; they do not measure writes to the
+volumes' data.</p>
+<h2>The credential, and why it was chosen</h2>
+<p>The method #448 used was Rejoin as <code>developer</code> behind a disposable <code>cluster-admin</code> binding. It cannot run on 1.19.0:
+on this lab <code>developer</code>'s password equals its username, and #447 refuses such a password with <code>422 rejoin-password-within-username</code> before sending anything (<code>reports/2026-09-29_rejoin-465-walk/README.md</code>, row C).
+Rejoin would also have made another <code>developer</code> login. So the throwaway Secret carries a copy of
+<code>gsd-cluster-shared-rnd</code>'s <code>bearerToken</code> and <code>tlsClientConfig</code>. <code>scripts/lab.sh</code> copies those two fields through a jq
+pipe into a temporary manifest under <code>umask 077</code>, removes it with an EXIT trap, and records its mode
+(<code>evidence/secret-create.txt</code>: <code>manifest mode 600</code>). The token was never printed and never on an external command's
+argv. No annotation or bootstrap field was copied, so the fleet account's name, which <code>shared-rnd</code> records, stayed out.
+<code>shared-rnd</code>'s Secret itself was only read. No Secret capture ran while the copy existed, so the two tokens were
+never compared (observation 4); the copy's successful polls and its six reads of <code>audit.log</code> through <code>nodes/proxy</code>
+show that it worked (<code>evidence/after-podlog.txt</code>). The run created no RBAC grant: <code>developer</code>'s self view carries
+its own rows, and both entries answered <code>scope: self</code> (<code>evidence/reads.jsonl</code>; the tier rule is
+<code>local-development/gsd/api.py#viewer_scope</code>).</p>
+<p>The Secret carried the run's label and was deleted by that label. The throwaway OAuth token was revoked separately by
+the logout, and the exit trap removed the temporary kubeconfig and CA directory (<code>evidence/delete.txt</code>,
+<code>evidence/logout.txt</code>, <code>evidence/trap-delete.txt</code>). The scripts make only the one <code>developer</code> login; the audit capture
+counts one annotated login event since the start, <code>developer</code>'s, and none by the fleet account
+(<code>evidence/after-audit.txt</code>). The application keeps the entry's history after its removal.</p>
+<h2>What came back that the brief does not say</h2>
+<ol>
+<li><strong>During the drain, the Logins API gave no sign that it was behind.</strong> <code>last_read_at</code> advanced on every read
+(17:32:33Z, 17:33:33Z, 17:34:33Z) while the row was absent, and <code>total</code> grew from 38 to 39 to 119
+(<code>evidence/reads.jsonl</code> lines 2–4), then reached 149 when the row appeared (line 5). A reader of the tab in those
+three minutes sees a fresh &quot;last read&quot; and a history that lacks the newest attempts. A later capture of the
+answer's keys, at 17:40:56Z, lists no backfill-progress field, and its <code>note</code> promises &quot;history back to the oldest
+rotated audit file on a first read&quot; without saying when (<code>evidence/api-keys.txt</code>). This is a design observation,
+not a lost row. A &quot;backfill in progress&quot; signal would be a separate change.</li>
+<li><strong>Discovery added the entry about 46 s after its creation, not up to 300 s.</strong> The Secret was logged at 17:31:45Z
+and cycle 28 added the entry at 17:32:31.748Z (<code>evidence/secret-create.txt</code>, <code>evidence/after-podlog.txt</code>).</li>
+<li><strong>The new entry's first poll announced 20 unmanaged grants as <code>UNMANAGED GRANT DISCOVERED</code>.</strong> The 20 lines fell at
+17:32:34–17:32:35 (<code>evidence/after-podlog.txt</code>) and include operator-version binding names such as
+<code>metallb-operator.v4.22.0-…</code>. They are grants without the markers the line names (no config-source label, no
+exception annotation), not necessarily hand-made ones. The announcements are capped per cycle
+(<code>local-development/gsd/poller.py#refresh_bindings</code>; the chart's default <code>maxPerCycle</code> is 20), so the 20 lines are
+not a census of every such grant.</li>
+<li><strong>The capture script's own gap.</strong> No Secret capture ran while the entry existed. The <code>secret</code> captures are before,
+after the delete and at the end, all <code>[]</code>. So the copy's equality with <code>shared-rnd</code>'s token is not recorded. The
+entry's successful polls and audit reads are the evidence that the credential worked.</li>
+<li><strong>The exit trap's <code>oc logout</code> found no token</strong> (<code>error: You must have a token in order to logout.</code>,
+<code>evidence/trap-delete.txt</code>). The explicit logout at 17:35:42 had already revoked it. The trap's delete found
+nothing and removed the throwaway directory.</li>
+</ol>
+<h2>Redaction in this folder</h2>
+<ul>
+<li>No password value is written. <code>developer</code>'s password went to <code>oc login</code> on stdin from a variable and was unset
+afterwards (<code>scripts/lab.sh</code>). The captured prompt line is <code>Password: Login successful.</code>: the input is not echoed.</li>
+<li>No token is written. The captures select metadata and counts, or redact <code>sha256~</code> values; none stores the raw
+Secret, kubeconfig or audit log (<code>scripts/capture.sh</code>, <code>scripts/lab.sh</code>, <code>scripts/read.sh</code>). A search of this
+folder's 43 files for <code>sha256~</code> followed by six or more token characters, a JWT prefix, a private-key block or a
+literal long <code>Bearer</code> credential matched nothing. Those searches do not prove the absence of every possible secret.</li>
+<li>The pod-log capture counts 0 lines naming the fleet account (<code>evidence/after-podlog.txt</code>), and
+<code>scripts/capture.sh</code> replaces that name with <code>&lt;fleet account&gt;</code> in what it writes. The name and the search for it
+run before the commit are not archived, so that search cannot be repeated from this folder alone.</li>
+<li>The long operator-version strings in <code>evidence/after-podlog.txt</code> are ClusterRoleBinding and role names in the
+logged RBAC fields, not tokens. Their shape is that of OLM-generated bindings; their owner metadata was not captured.</li>
+<li>The lab kubeconfig is recorded only as a 16-hex-digit prefix of the file's sha256.</li>
+</ul>
+<h2>How to run it again</h2>
+<pre><code class="language-sh">export KUBECONFIG=&lt;the lab kubeconfig&gt;
+reports/2026-09-29_logins-449-lag/scripts/run.sh    # trap, before, Secret, login, reads, logout, delete, after
+</code></pre>
+<p><code>scripts/run.sh</code> stops at the row or at six audit reads of the entry. The reads use <code>scripts/read.sh</code>, the captures
+use <code>scripts/capture.sh</code>, and the writes are <code>scripts/lab.sh</code> (<code>secret</code>, <code>login</code>, <code>logout</code>, <code>delete</code>).</p>
+
+</body></html>
