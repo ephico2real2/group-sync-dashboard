@@ -21,7 +21,22 @@ held, across two processes; the 409/CAS race, leadership plus the Lease, and a b
 tests' (R1, D1).
 
 #445's Definition of Done: "§3.12 step 6 rewritten, reviewed by two seats (Grok one), and walked on the lab, with
-evidence under `reports/`." PR #461 did the rewrite and its review (merged 2026-09-28). What is still owed is the walk.
+evidence under `reports/`."
+
+- **Rewritten and reviewed:** PR #461, merged 2026-09-28 (`0b52258f`). Cursor (Grok) implemented it, so Grok did not
+  review the rewrite itself: Codex Astra and OB2 reviewed the first head (`e180520`), OB1-lite the revision (`828d2f8`),
+  and Grok checked the N1 delta (`828d2f8..ab4f1bf`, APPROVE; the PR does not record which seat wrote that delta).
+  The PR records "The review is complete: Codex, OB2, OB1-lite and Grok."
+- **Walked on the lab, with evidence under `reports/`:** this folder. The plan before it ran, and the results after,
+  were reviewed by Codex and by OB3 in Grok's seat (Cursor was out of usage). Grok reviewed no part of the walk.
+- The operator ruled on 2026-09-30, when Cursor ran out of usage, that OB3 takes Grok's seat ("use ob3 for grok");
+  this walk's reviews by OB3 in that seat meet "(Grok one)".
+
+**A known defect in `scripts/capture.sh audit`, found by OB3's review of the results (not triggered here).** `jq` stops
+at the first audit-log line that does not parse, and with its error discarded every later record would drop out of
+the counts unseen — a false 0. This walk's log had 0 malformed lines among its 38370 (OB3, re-parsed line by line),
+so its zeros are genuine. This folder keeps the script as it ran; the fix (parse line by line, and refuse to count on
+a malformed line, exit 4) goes into the next walk's copy.
 
 ## What step 6 proves, and what it does not
 
@@ -429,7 +444,10 @@ measured; see "Timings".
 ### If the run is killed
 
 SIGKILL, or any stop that gives the trap no time, leaves whatever the run had reached. No password was ever placed,
-and no cluster-wide object was ever written. In this order, from this worktree:
+and no cluster-wide configuration was changed. The only cluster-scoped objects the run writes are the chart's own
+ClusterRoles and ClusterRoleBindings: Argo CD's cascade deletes them, Helm creates them, and the hand-back's
+uninstall and sync do both again, so a stop before the hand-back can leave them missing or Helm-owned. The first
+command below puts them back. In this order, from this worktree:
 
 ```sh
 (cd <WALK_TMP>/deploy-57735e9e/local-development && ./release-crc.sh --argocd main)
