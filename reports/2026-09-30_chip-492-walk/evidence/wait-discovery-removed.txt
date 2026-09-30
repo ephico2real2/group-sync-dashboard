@@ -1,0 +1,2 @@
+# waited 293 s, until 2026-09-30T07:15:41Z, for: discovery cycle=[0-9]+ .*removed=[^ ]*w492-fail
+2026-09-30T07:15:36.032313619Z 2026-09-30 03:15:36,032-0400 INFO    gsd.clusterconfig discovery cycle=5 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 removed=w492-fail

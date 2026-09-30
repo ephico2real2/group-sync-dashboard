@@ -1,0 +1,32 @@
+{
+  "read_at": "2026-09-30T07:06:53Z",
+  "whoami": {
+    "user": "developer",
+    "tier": null,
+    "cluster_admin": false
+  },
+  "tabs": [
+    "Home",
+    "Overview",
+    "Groups",
+    "Users",
+    "Access granted",
+    "RBAC policy",
+    "Kyverno",
+    "Namespace audit",
+    "Logins",
+    "Usage",
+    "Reports",
+    "Library"
+  ],
+  "cluster_configurations_tab_offered": false,
+  "api_clusterconfigs": {
+    "http": 403,
+    "body": "{\"detail\":\"For cluster administrators only. This view reports how this instance is wired to its clusters \u2014 which Secret configures each one, the kind of credential it holds and how its certificate is trusted.\"}"
+  },
+  "page_clusters": {
+    "cc_head": false,
+    "cards": 0,
+    "text": "Signed in as developer \u00b7 developer You reach 1 namespace on dashboard You are in no synced group here; 1 direct grant. no cluster-wide role 1 namespace 0 / 0 groups grant 1 direct grant These numbers are for dashboard. You're also on mock-privateca, mock-selfsigned and mock-trusted \u2014 3 group memberships in total. What changed last 30 days No change to your group memberships in the last 30 days. History starts 2026-09-21, where this dashboard began watching; nothing is pruned. Cluster-wide 0 roles \u00b7 0 bindings No cluster-wide role \u2014 everything you reach on dashboard is namespaced. Namespaces yo"
+  }
+}

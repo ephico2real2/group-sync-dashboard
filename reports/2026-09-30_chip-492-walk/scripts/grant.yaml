@@ -1,0 +1,30 @@
+# The walk's temporary grant (after reports/2026-09-29_ca-244-walk/scripts/grant.yaml): `developer` passes the
+# cluster-admin tier (`visibility.clusterAdminSar`, `update clusterrolebindings` on the host) for the length of the
+# walk, because the Cluster Configurations tab and `GET /api/clusterconfigs` are served to that tier only
+# (`require_cluster_admin` in local-development/gsd/api.py; the precheck records the answer without it). Created by
+# run.sh, removed by run.sh's explicit delete and its exit trap, both through the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-492-crb-update
+  labels:
+    walk.gsd.lab/run: chip-492-2026-09-30
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-492-crb-update-developer
+  labels:
+    walk.gsd.lab/run: chip-492-2026-09-30
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-492-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

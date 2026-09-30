@@ -1,0 +1,4 @@
+# oc get pods -n group-sync-dashboard -l app.kubernetes.io/name=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,RESTARTS:.status.containerStatuses[*].restartCount,IMAGE:.spec.containers[0].image
+# at 2026-09-30T07:06:45Z
+NAME                                    START                  RESTARTS   IMAGE
+group-sync-dashboard-7b8fb45dfc-r2ns8   2026-09-30T07:00:21Z   0,0        quay.io/ephico2real/group-sync-dashboard:1.21.0

@@ -1,0 +1,55 @@
+{
+  "entry": {
+    "id": "mock-privateca",
+    "source": "secret:gsd-cluster-mock-privateca",
+    "retired": false,
+    "enabled": true,
+    "api_url": "https://mock-privateca:6443",
+    "credential": "bearer",
+    "tls": {
+      "insecure": false,
+      "ca": "caData"
+    },
+    "status": "ok",
+    "last_poll": "2026-09-30T07:09:53Z",
+    "error": null
+  },
+  "card": {
+    "tls_row": "verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+    "badges": [
+      {
+        "text": "verified",
+        "class": "badge ok"
+      }
+    ],
+    "ok_badges_in_tls_row": 1,
+    "connection_error": null,
+    "action": null,
+    "store": null,
+    "connection_row": "ok reachable 2026-09-30 07:09",
+    "geometry": {
+      "card": {
+        "left": 70,
+        "right": 1210,
+        "top": -1787,
+        "bottom": -1367
+      },
+      "card_scrollWidth": 1138,
+      "card_clientWidth": 1138,
+      "tls_value": {
+        "left": 473,
+        "right": 1193,
+        "top": -1630,
+        "bottom": -1570
+      },
+      "chips": [
+        {
+          "left": 473,
+          "right": 550,
+          "top": -1630,
+          "bottom": -1606
+        }
+      ]
+    }
+  }
+}

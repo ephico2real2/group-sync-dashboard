@@ -7506,6 +7506,21 @@ class TestClusterConfigPage:
         page.wait_for_timeout(300)
         assert [u for u in asked if "/api/clusterconfigs" in u] == []
 
+    def test_a_hash_change_to_the_page_without_the_tier_paints_the_refusal_card_not_home(self, page, cc_rig):
+        """Review of #494 (OB2 C6): the #492 lab precheck read Home under `#main.stale` 2 s after a same-document
+        `goto('/#page=clusters')`, which Playwright resolves at once. The router's answer, once the refresh lands,
+        is the refusal card — the same as the cold load above — so a reading of Home is a capture mid-refresh."""
+        base, host, settings = cc_rig
+        _open_as(page, base, "auditor")
+        page.wait_for_function("() => data.whoami && data.whoami.authenticated")
+        page.goto(f"{base}/#page=clusters")                      # same-document: no reload, no boot
+        page.wait_for_function("() => !document.getElementById('main').classList.contains('stale')"
+                               " && document.querySelector('#main .scope-refusal') !== null", timeout=10_000)
+        assert page.evaluate("() => view.page") == "clusters"
+        assert page.locator("#cc-head").count() == 0
+        assert "Withheld, not empty" in page.locator("#main").inner_text()
+        assert page.locator(".home").count() == 0, "Home is not painted for a position that is not Home"
+
     def test_the_yaml_twin_is_the_object_the_api_would_write(self, page, cc_rig):
         """The pane's whole promise — "as GitOps would write it" — is that applying it yields the
         Secret the API writes. So the page's YAML is PARSED and compared field for field with

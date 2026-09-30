@@ -1,0 +1,4 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=chip-492-2026-09-30 -o name
+# at 2026-09-30T07:06:54Z
+clusterrole.rbac.authorization.k8s.io/gsd-walk-492-crb-update
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-492-crb-update-developer
