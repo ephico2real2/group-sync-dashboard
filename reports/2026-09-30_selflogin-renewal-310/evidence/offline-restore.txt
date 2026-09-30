@@ -1,0 +1,56 @@
+# 2026-09-30T18:02:54Z; tree 8a02acd74b; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+## run 1 — the walk values still deployed (no chart grant, the configuration names developer): exit 5 (5 = left on purpose)
+sweep 'run-1' begins
+want spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}
+found spec.tokenConfig {"accessTokenMaxAgeSeconds":600}; generation=16 observed=16 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+oc patch oauths.config.openshift.io cluster --type=merge -p '{"spec":{"tokenConfig":{"accessTokenMaxAgeSeconds":31536000}}}'
+oauth.config.openshift.io/cluster patched
+spec.tokenConfig now {"accessTokenMaxAgeSeconds":31536000}
+the operator rolled oauth-openshift: generation 16 -> 17
+generation=17 observed=16 replicas=1 updated=0 ready=1 available=1 Available=True Degraded=False Progressing=True
+generation=17 observed=16 replicas=1 updated=0 ready=1 available=1 Available=True Degraded=False Progressing=False
+generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+SETTLED
+pod oauth-openshift-stub-17 phase=Running started=2026-09-30T00:00:00Z
+1. oauth/cluster spec.tokenConfig is {"accessTokenMaxAgeSeconds":31536000}, the authentication operator settled
+2. secret "gsd-walk-developer-password" deleted (the walk Secret, by label)
+3. clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-developer-poller" deleted (developer's ClusterRoleBinding, by label)
+4. LEFT: the keep-grant stays — the chart's own grant on ldap-oauth-bind-secret is not back (Role rules matching: 0, bindings: 0). Run release-crc.sh --argocd main, then this script again.
+5. LEFT: gsd-fleet-88fa0d759f845b47 stays — the deployed configuration still names developer (1 line(s)); a claim would re-create it. Run release-crc.sh --argocd main, then this script again.
+labelled walk.gsd.lab/run=selflogin-310-2026-09-30 now: role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get 
+sweep 'run-1' ends: rc=0 left=1
+## run 2 — after the hand-back (the chart's grant back, developer named nowhere): exit 0
+sweep 'run-2' begins
+want spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}
+found spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}; generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+already 31536000: nothing patched; checking that the operator is settled
+generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+SETTLED
+pod oauth-openshift-stub-17 phase=Running started=2026-09-30T00:00:00Z
+1. oauth/cluster spec.tokenConfig is {"accessTokenMaxAgeSeconds":31536000}, the authentication operator settled
+2. (the walk Secret, by label)
+3. (developer's ClusterRoleBinding, by label)
+4. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant
+4. role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted 
+5. the deployed configuration names no developer account: lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted 
+labelled walk.gsd.lab/run=selflogin-310-2026-09-30 now: 
+sweep 'run-2' ends: rc=0 left=0
+## run 3 — again, nothing left: exit 0
+sweep 'run-3' begins
+want spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}
+found spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}; generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+already 31536000: nothing patched; checking that the operator is settled
+generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+SETTLED
+pod oauth-openshift-stub-17 phase=Running started=2026-09-30T00:00:00Z
+1. oauth/cluster spec.tokenConfig is {"accessTokenMaxAgeSeconds":31536000}, the authentication operator settled
+2. (the walk Secret, by label)
+3. (developer's ClusterRoleBinding, by label)
+4. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant
+4. 
+5. gsd-fleet-88fa0d759f845b47 is absent
+labelled walk.gsd.lab/run=selflogin-310-2026-09-30 now: 
+sweep 'run-3' ends: rc=0 left=0
+## the stub's call log: 1 patch(es) of oauth/cluster in three runs; 9 delete call(s) (each --ignore-not-found)
+final state: lifetime=31536000 secret=0 crb=0 keep=0 lease=0
+PASS the restore is safe to run twice (three times here): one patch, nothing removed early, everything removed at the end

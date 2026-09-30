@@ -1,0 +1,12 @@
+gsd imported from: <this tree>/local-development/gsd/__init__.py
+MARGIN (the ceiling) = 2:00:00; renew_at(600 s session) = expires_at - 150 s
+the margin by lifetime, from gsd.selflogin.renew_at (min(2 h, expires_in / 4)):
+   31536000 s  margin   7200 s  renews  31528800 s after login  [2 h cap] CRC as found (crc-org/snc oauth_cr.yaml)
+      86400 s  margin   7200 s  renews     79200 s after login  [2 h cap] OpenShift's documented default
+      28800 s  margin   7200 s  renews     21600 s after login  [both (equal)] 8 h: the two branches meet
+       3600 s  margin    900 s  renews      2700 s after login  [1/4 of the lifetime] a tightened estate
+        600 s  margin    150 s  renews       450 s after login  [1/4 of the lifetime] this walk
+the floor: expires_in must exceed 4 x pollIntervalSeconds = 240 s; 600 > 240: True
+renewal 1 at login + 480 s: 30 s after renew_at, 120 s before the old session's expires_at
+renewal 2 at login + 960 s: 30 s after renew_at, 120 s before the old session's expires_at
+renewal 3 at login + 1440 s: 30 s after renew_at, 120 s before the old session's expires_at

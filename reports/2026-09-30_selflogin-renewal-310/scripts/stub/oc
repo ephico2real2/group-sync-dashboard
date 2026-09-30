@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# A stand-in `oc` for scripts/offline_proofs.sh: it answers the reads and writes sweep.sh and oauth_lifetime.sh make,
+# from files in ${STUB_STATE}, and logs every call to ${STUB_STATE}/calls. It never reaches a cluster. After a patch the
+# authentication operator "rolls" for three reads of the Deployment (Progressing=True, the old generation observed).
+set -euo pipefail
+d="${STUB_STATE:?}"; echo "$*" >> "${d}/calls"
+get() { cat "${d}/$1" 2>/dev/null || echo "${2:-}"; }
+put() { printf '%s' "$2" > "${d}/$1"; }
+flag() { [ "$(get "$1" 0)" = 1 ]; }
+rolling() { [ "$(get pending 0)" -gt 0 ]; }
+args="$*"
+case "${args}" in
+  "get oauths.config.openshift.io cluster -o json")
+    printf '{"spec":{"identityProviders":[{"name":"developer"}],"tokenConfig":{"accessTokenMaxAgeSeconds":%s}}}\n' "$(get lifetime)" ;;
+  "patch oauths.config.openshift.io cluster --type=merge -p "*)
+    n=$(sed -E 's/.*"accessTokenMaxAgeSeconds":([0-9]+).*/\1/' <<<"${args}")
+    put lifetime "${n}"; put gen $(( $(get gen 15) + 1 )); put pending 3
+    echo "oauth.config.openshift.io/cluster patched" ;;
+  "get deployments.apps -n openshift-authentication oauth-openshift -o jsonpath={.metadata.generation}")
+    get gen 15 ;;
+  "get deployments.apps -n openshift-authentication oauth-openshift -o json")
+    g=$(get gen 15); o=${g}; u=1
+    if rolling; then o=$(( g - 1 )); u=0; put pending $(( $(get pending) - 1 )); fi
+    printf '{"metadata":{"generation":%s},"status":{"observedGeneration":%s,"replicas":1,"updatedReplicas":%s,"readyReplicas":1,"availableReplicas":1}}\n' "${g}" "${o}" "${u}" ;;
+  "get clusteroperators.config.openshift.io authentication -o json")
+    p=False; [ "$(get pending 0)" -gt 0 ] && p=True
+    printf '{"status":{"conditions":[{"type":"Degraded","status":"False"},{"type":"Progressing","status":"%s"},{"type":"Available","status":"True"}]}}\n' "${p}" ;;
+  "get pods -n openshift-authentication -l app=oauth-openshift -o json")
+    printf '{"items":[{"metadata":{"name":"oauth-openshift-stub-%s"},"status":{"phase":"Running","startTime":"2026-09-30T00:00:00Z"}}]}\n' "$(get gen 15)" ;;
+  "delete secrets -n group-sync-dashboard -l walk.gsd.lab/run="*" --ignore-not-found")
+    if flag secret; then put secret 0; echo 'secret "gsd-walk-developer-password" deleted'; fi ;;
+  "get secrets -n group-sync-dashboard gsd-walk-developer-password -o name --ignore-not-found")
+    if flag secret; then echo secret/gsd-walk-developer-password; fi ;;
+  "delete clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run="*" --ignore-not-found")
+    if flag crb; then put crb 0; echo 'clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-developer-poller" deleted'; fi ;;
+  "get roles.rbac.authorization.k8s.io -n openshift-config group-sync-dashboard-fleet-account -o json")
+    if flag chart; then echo '{"rules":[{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]}'
+    else echo 'Error from server (NotFound): roles.rbac.authorization.k8s.io "group-sync-dashboard-fleet-account" not found' >&2; exit 1; fi ;;
+  "get rolebindings.rbac.authorization.k8s.io -n openshift-config -o json")
+    if flag chart; then echo '{"items":[{"roleRef":{"kind":"Role","name":"group-sync-dashboard-fleet-account"},"subjects":[{"kind":"ServiceAccount","name":"group-sync-dashboard","namespace":"group-sync-dashboard"}]}]}'
+    else echo '{"items":[]}'; fi ;;
+  "delete roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -n openshift-config -l walk.gsd.lab/run="*" --ignore-not-found")
+    if flag keep; then put keep 0; echo 'role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted'; fi ;;
+  "get roles.rbac.authorization.k8s.io -n openshift-config -l walk.gsd.lab/run="*" -o name")
+    if flag keep; then echo role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; fi ;;
+  "get leases.coordination.k8s.io -n group-sync-dashboard gsd-fleet-88fa0d759f845b47 -o name --ignore-not-found")
+    if flag lease; then echo lease.coordination.k8s.io/gsd-fleet-88fa0d759f845b47; fi ;;
+  "get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json")
+    if flag cm_developer; then printf '%s\n' '{"data":{"clusters.yaml":"fleetAccountUsername: \"developer\"\n"}}'
+    else printf '%s\n' '{"data":{"clusters.yaml":"fleetAccountUsername: \"someone-else\"\n"}}'; fi ;;
+  "delete leases.coordination.k8s.io -n group-sync-dashboard gsd-fleet-88fa0d759f845b47 --ignore-not-found")
+    if flag lease; then put lease 0; echo 'lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted'; fi ;;
+  "get secrets,roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run="*" -o name")
+    flag secret && echo secret/gsd-walk-developer-password; flag keep && echo role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; true ;;
+  "get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run="*" -o name")
+    flag crb && echo clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-developer-poller; true ;;
+  # capture.sh's streams (proof 8): the Running pod, a follow that blocks until killed, and one metrics sample.
+  "get pods -n group-sync-dashboard -l app.kubernetes.io/name=group-sync-dashboard --field-selector=status.phase=Running -o jsonpath={.items[0].metadata.name}")
+    printf 'group-sync-dashboard-stub' ;;
+  "logs -f --timestamps -n group-sync-dashboard group-sync-dashboard-stub -c dashboard"*)
+    exec /bin/sleep 3600 ;;
+  "get --raw /api/v1/namespaces/group-sync-dashboard/pods/https:group-sync-dashboard-stub:8443/proxy/metrics")
+    echo 'gsd_cluster_up{cluster="walk-self-login"} 1.0' ;;
+  *) echo "stub oc: unexpected call: ${args}" >&2; exit 97 ;;
+esac

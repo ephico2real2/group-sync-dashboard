@@ -1,0 +1,3 @@
+# 2026-09-30T18:02:55Z; tree 8a02acd74b; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+stream-start exit 0; stream-stop exit 0; stream loops still running a second later: 0
+PASS the streams start and stop, and nothing outlives stream-stop

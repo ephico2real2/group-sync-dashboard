@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# A stand-in `sleep` for the stub runs: the waits return at once.
+exit 0

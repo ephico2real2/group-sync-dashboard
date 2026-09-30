@@ -1,0 +1,41 @@
+# oc logs -f --timestamps -n group-sync-dashboard group-sync-dashboard-85889c4f96-v8kxn -c dashboard, streamed; captured 2026-09-30T20:41:22Z; sha256~ names redacted
+# lines in the stream: 1272; stream errors: 0
+2026-09-30T20:23:10.281442795Z 2026-09-30 16:23:10,281-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-self-login account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2026-09-30T20:33:10Z
+2026-09-30T20:23:10.318263129Z 2026-09-30 16:23:10,318-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 3 new sync event(s), 0 membership change(s)
+2026-09-30T20:24:09.895693986Z 2026-09-30 16:24:09,895-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:25:09.910670371Z 2026-09-30 16:25:09,910-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:26:09.893741440Z 2026-09-30 16:26:09,893-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:27:09.913421550Z 2026-09-30 16:27:09,913-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:28:09.908471952Z 2026-09-30 16:28:09,908-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:29:09.881569126Z 2026-09-30 16:29:09,881-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:30:09.899503549Z 2026-09-30 16:30:09,899-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 1 new sync event(s), 0 membership change(s)
+2026-09-30T20:31:09.947891954Z 2026-09-30 16:31:09,947-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-self-login account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2026-09-30T20:41:09Z
+2026-09-30T20:31:09.998710603Z 2026-09-30 16:31:09,998-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-self-login account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-30T20:31:09.998873978Z 2026-09-30 16:31:09,998-0400 INFO    gsd.selflogin self-login-renewed cluster=walk-self-login account=<redacted> expires_at=2026-09-30T20:41:09Z renew_at=2026-09-30T20:38:39Z
+2026-09-30T20:31:10.022459612Z 2026-09-30 16:31:10,022-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:32:09.896612481Z 2026-09-30 16:32:09,896-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:33:09.904247758Z 2026-09-30 16:33:09,904-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:34:09.901830388Z 2026-09-30 16:34:09,901-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:35:09.905334240Z 2026-09-30 16:35:09,905-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:36:09.896320558Z 2026-09-30 16:36:09,896-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:37:09.890439195Z 2026-09-30 16:37:09,890-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:38:09.890091600Z 2026-09-30 16:38:09,890-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:39:09.945981102Z 2026-09-30 16:39:09,945-0400 INFO    gsd.fleetlogin fleet-login cluster=walk-self-login account=<redacted> tls=trusted-bundle oauth=https://oauth-openshift.apps-crc.testing expires_at=2026-09-30T20:49:09Z
+2026-09-30T20:39:09.996394597Z 2026-09-30 16:39:09,996-0400 INFO    gsd.fleetlogin fleet-logout cluster=walk-self-login account=<redacted> tls=trusted-bundle token=sha256~<redacted> outcome=revoked
+2026-09-30T20:39:09.996470430Z 2026-09-30 16:39:09,996-0400 INFO    gsd.selflogin self-login-renewed cluster=walk-self-login account=<redacted> expires_at=2026-09-30T20:49:09Z renew_at=2026-09-30T20:46:39Z
+2026-09-30T20:39:10.016762787Z 2026-09-30 16:39:10,016-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:40:09.890344538Z 2026-09-30 16:40:09,890-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+2026-09-30T20:41:09.889251690Z 2026-09-30 16:41:09,889-0400 INFO    gsd.poller polled walk-self-login: 3 CRs, 66 groups, 0 new sync event(s), 0 membership change(s)
+# counts:
+#   'fleet-login … cluster=walk-self-login' lines: 3
+#   'fleet-login-failed … cluster=walk-self-login' lines: 0
+#   'fleet-login-refused … cluster=walk-self-login' lines: 0
+#   'fleet-logout … cluster=walk-self-login' lines: 2
+#   'fleet-logout-failed … cluster=walk-self-login' lines: 0
+#   'self-login-renewed … cluster=walk-self-login' lines: 2
+#   'self-login-failed … cluster=walk-self-login' lines: 0
+#   'fleet-credential-suspended … cluster=walk-self-login' lines: 0
+#   'polled walk-self-login:' lines: 19
+#   failed polls of walk-self-login: 0
+#   ERROR/CRITICAL/Traceback lines: 0
+#   fleet-* lines in the whole stream that name the fleet account: 0

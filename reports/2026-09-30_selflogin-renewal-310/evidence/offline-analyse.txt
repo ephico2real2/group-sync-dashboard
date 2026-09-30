@@ -1,0 +1,43 @@
+# 2026-09-30T18:02:54Z; tree 8a02acd74b; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+## analyse.py on the good synthetic run
+timeline (UTC):
+  login 1   18:00:00.394561  expires_at 18:10:00  renew_at 18:07:30
+  renewal 1 18:08:00.505561  expires_at 18:18:00  renew_at 18:15:30
+  renewal 2 18:16:00.505561  expires_at 18:26:00  renew_at 18:23:30
+PASS every session's expires_at - its login instant is 600 s (+/-10): [600, 600, 600]
+PASS scheduled renewals (no reauth): 2 (want >= 2); reauth renewals: 0 (want 0)
+PASS renewal 1: the new login at 18:08:00.484561 is at or after renew_at 18:07:30 (+30.5 s, within one cycle) and before the old session's expires_at 18:10:00 (119.5 s left)
+PASS renewal 1: new session entered, THEN the old one exited: fleet-login 18:08:00.484561 <= fleet-logout outcome=revoked 18:08:00.504561 <= self-login-renewed 18:08:00.505561
+PASS renewal 1: self-login-renewed says expires_at 18:18:00, renew_at 18:15:30 (= expires_at - 150 s)
+PASS renewal 1: polled across the boundary — last poll before 18:07:00, first after 18:08:00
+PASS renewal 2: the new login at 18:16:00.484561 is at or after renew_at 18:15:30 (+30.5 s, within one cycle) and before the old session's expires_at 18:18:00 (119.5 s left)
+PASS renewal 2: new session entered, THEN the old one exited: fleet-login 18:16:00.484561 <= fleet-logout outcome=revoked 18:16:00.504561 <= self-login-renewed 18:16:00.505561
+PASS renewal 2: self-login-renewed says expires_at 18:26:00, renew_at 18:23:30 (= expires_at - 150 s)
+PASS renewal 2: polled across the boundary — last poll before 18:15:00, first after 18:16:00
+PASS `polled walk-self-login:` lines from the first login: 18, the longest gap 60.0 s (want <= 75)
+PASS failure lines about walk-self-login (or ERROR/Traceback): 0
+PASS gsd_cluster_up{cluster="walk-self-login"} samples read after the first poll: 18, all 1: True
+PASS gsd_cluster_last_poll_timestamp_seconds{cluster="walk-self-login"}: 18 distinct values, the longest step 60 s (want <= 75)
+14 passed, 0 failed
+exit 0
+## analyse.py on the bad synthetic run
+timeline (UTC):
+  login 1   18:00:00.394561  expires_at 18:10:00  renew_at 18:07:30
+  renewal 1 18:08:00.505561  expires_at 18:18:00  renew_at 18:15:30
+  renewal 2 18:16:00.505561  expires_at 18:26:00  renew_at 18:23:30
+PASS every session's expires_at - its login instant is 600 s (+/-10): [600, 600, 600]
+PASS scheduled renewals (no reauth): 2 (want >= 2); reauth renewals: 0 (want 0)
+PASS renewal 1: the new login at 18:08:00.484561 is at or after renew_at 18:07:30 (+30.5 s, within one cycle) and before the old session's expires_at 18:10:00 (119.5 s left)
+PASS renewal 1: new session entered, THEN the old one exited: fleet-login 18:08:00.484561 <= fleet-logout outcome=revoked 18:08:00.504561 <= self-login-renewed 18:08:00.505561
+PASS renewal 1: self-login-renewed says expires_at 18:18:00, renew_at 18:15:30 (= expires_at - 150 s)
+PASS renewal 1: polled across the boundary — last poll before 18:07:00, first after 18:08:00
+PASS renewal 2: the new login at 18:16:00.484561 is at or after renew_at 18:15:30 (+30.5 s, within one cycle) and before the old session's expires_at 18:18:00 (119.5 s left)
+FAIL renewal 2: new session entered, THEN the old one exited: fleet-login 18:16:00.484561 <= no logout <= self-login-renewed 18:16:00.505561
+PASS renewal 2: self-login-renewed says expires_at 18:26:00, renew_at 18:23:30 (= expires_at - 150 s)
+PASS renewal 2: polled across the boundary — last poll before 18:15:00, first after 18:16:00
+FAIL `polled walk-self-login:` lines from the first login: 17, the longest gap 120.0 s (want <= 75)
+PASS failure lines about walk-self-login (or ERROR/Traceback): 0
+PASS gsd_cluster_up{cluster="walk-self-login"} samples read after the first poll: 18, all 1: True
+PASS gsd_cluster_last_poll_timestamp_seconds{cluster="walk-self-login"}: 18 distinct values, the longest step 60 s (want <= 75)
+12 passed, 2 failed
+exit 1

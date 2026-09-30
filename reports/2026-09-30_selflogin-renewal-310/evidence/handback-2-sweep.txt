@@ -1,0 +1,15 @@
+2026-09-30T20:45:31Z sweep 'handback-2' begins
+2026-09-30T20:45:31Z want spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}
+2026-09-30T20:45:31Z found spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}; generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+2026-09-30T20:45:31Z already 31536000: nothing patched; checking that the operator is settled
+2026-09-30T20:45:31Z generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+2026-09-30T20:45:31Z SETTLED
+pod oauth-openshift-7cbbc9d47f-6sstr phase=Running started=2026-09-30T20:42:54Z
+2026-09-30T20:45:31Z 1. oauth/cluster spec.tokenConfig is {"accessTokenMaxAgeSeconds":31536000}, the authentication operator settled
+2026-09-30T20:45:31Z 2. No resources found (the walk Secret, by label)
+2026-09-30T20:45:31Z 3. No resources found (developer's ClusterRoleBinding, by label)
+2026-09-30T20:45:31Z 4. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant
+2026-09-30T20:45:32Z 4. role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace rolebinding.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted from openshift-config namespace 
+2026-09-30T20:45:32Z 5. the deployed configuration names no developer account: lease.coordination.k8s.io "gsd-fleet-88fa0d759f845b47" deleted from group-sync-dashboard namespace 
+2026-09-30T20:45:32Z labelled walk.gsd.lab/run=selflogin-310-2026-09-30 now: 
+2026-09-30T20:45:32Z sweep 'handback-2' ends: rc=0 left=0

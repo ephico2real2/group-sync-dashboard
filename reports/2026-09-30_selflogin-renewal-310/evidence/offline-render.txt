@@ -1,0 +1,9 @@
+# 2026-09-30T18:02:47Z; tree 8a02acd74b; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+lines in the walk render: 3323
+lines in the argo render: 3318
+lines in the walk-clusters render: 169
+lines in the argo-clusters render: 164
+walk clusters.yaml: pollIntervalSeconds: 60 fleetAccountUsername: "developer" fleetPingEnabled: true fleetPingIntervalSeconds: 86400 
+walk clusters.yaml: ldapConnectionBootstrap lines:  1 ldapConnectionBootstrap: developer;; userSelfLogin: true lines: 1; saTokenLookup: true lines: 0
+grep -c <the fleet account>: walk clusters.yaml 0, the whole walk render 0; the Argo shape's clusters.yaml 1 (expected 1: the check tells the two apart)
+PASS the walk names only developer (SPEC_S4c §3.12 step 0)
