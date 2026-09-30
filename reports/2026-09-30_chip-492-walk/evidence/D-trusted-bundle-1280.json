@@ -1,0 +1,112 @@
+{
+  "mock-trusted": {
+    "entry": {
+      "id": "mock-trusted",
+      "source": "secret:gsd-cluster-mock-trusted",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://mock-trusted:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T07:09:53Z",
+      "error": null
+    },
+    "card": {
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "ok_badges_in_tls_row": 1,
+      "connection_error": null,
+      "action": null,
+      "store": null,
+      "connection_row": "ok reachable 2026-09-30 07:09",
+      "geometry": {
+        "card": {
+          "left": 70,
+          "right": 1210,
+          "top": 914,
+          "bottom": 1274
+        },
+        "card_scrollWidth": 1138,
+        "card_clientWidth": 1138,
+        "tls_value": {
+          "left": 473,
+          "right": 1193,
+          "top": 1029,
+          "bottom": 1071
+        },
+        "chips": [
+          {
+            "left": 473,
+            "right": 550,
+            "top": 1029,
+            "bottom": 1053
+          }
+        ]
+      }
+    }
+  },
+  "shared-rnd": {
+    "entry": {
+      "id": "shared-rnd",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T07:09:54Z",
+      "error": null
+    },
+    "card": {
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "ok_badges_in_tls_row": 1,
+      "connection_error": null,
+      "action": null,
+      "store": null,
+      "connection_row": "ok reachable 2026-09-30 07:09",
+      "geometry": {
+        "card": {
+          "left": 70,
+          "right": 1210,
+          "top": 1700,
+          "bottom": 2099
+        },
+        "card_scrollWidth": 1138,
+        "card_clientWidth": 1138,
+        "tls_value": {
+          "left": 473,
+          "right": 1193,
+          "top": 1857,
+          "bottom": 1899
+        },
+        "chips": [
+          {
+            "left": 473,
+            "right": 550,
+            "top": 1857,
+            "bottom": 1881
+          }
+        ]
+      }
+    }
+  }
+}

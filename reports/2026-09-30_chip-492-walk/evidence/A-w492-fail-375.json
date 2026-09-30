@@ -1,0 +1,138 @@
+{
+  "read_at": "2026-09-30T07:10:47Z",
+  "entry": {
+    "id": "w492-fail",
+    "source": "secret:gsd-cluster-w492-fail",
+    "retired": false,
+    "enabled": true,
+    "api_url": "https://mock-privateca:6443",
+    "credential": "bearer",
+    "tls": {
+      "insecure": false,
+      "ca": "caData"
+    },
+    "status": "unreachable",
+    "last_poll": "2026-09-30T07:10:35Z",
+    "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server",
+    "store": "secret:gsd-cluster-w492-fail/tlsClientConfig.caData"
+  },
+  "card": {
+    "tls_row": "verify failed ca: caData store secret:gsd-cluster-w492-fail/tlsClientConfig.caData \u00b7 1 certificate CN=walk-492 wrong CA \u00b7 issuer CN=walk-492 wrong CA \u00b7 2027-09-30T07:06:54Z",
+    "badges": [
+      {
+        "text": "verify failed",
+        "class": "badge warning"
+      }
+    ],
+    "ok_badges_in_tls_row": 0,
+    "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server",
+    "store": "store secret:gsd-cluster-w492-fail/tlsClientConfig.caData",
+    "connection_row": "unreachable 2026-09-30 07:10 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server store secret:gsd-cluster-w492-fail/tlsClientConfig.caData",
+    "geometry": {
+      "card": {
+        "left": 20,
+        "right": 355,
+        "top": 4618,
+        "bottom": 5477
+      },
+      "card_scrollWidth": 333,
+      "card_clientWidth": 333,
+      "tls_value": {
+        "left": 149,
+        "right": 338,
+        "top": 4834,
+        "bottom": 4966
+      },
+      "chips": [
+        {
+          "left": 149,
+          "right": 252,
+          "top": 4834,
+          "bottom": 4858
+        }
+      ]
+    }
+  },
+  "page": {
+    "innerWidth": 375,
+    "scrollWidth": 375
+  },
+  "mock-privateca": {
+    "tls_row": "verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+    "badges": [
+      {
+        "text": "verified",
+        "class": "badge ok"
+      }
+    ],
+    "ok_badges_in_tls_row": 1,
+    "connection_error": null,
+    "action": null,
+    "store": null,
+    "connection_row": "ok reachable 2026-09-30 07:09",
+    "geometry": {
+      "card": {
+        "left": 20,
+        "right": 355,
+        "top": 1499,
+        "bottom": 2204
+      },
+      "card_scrollWidth": 333,
+      "card_clientWidth": 333,
+      "tls_value": {
+        "left": 149,
+        "right": 338,
+        "top": 1737,
+        "bottom": 1869
+      },
+      "chips": [
+        {
+          "left": 149,
+          "right": 226,
+          "top": 1737,
+          "bottom": 1761
+        }
+      ]
+    }
+  },
+  "mock-selfsigned": {
+    "tls_row": "insecure",
+    "badges": [
+      {
+        "text": "insecure",
+        "class": "badge warning"
+      }
+    ],
+    "ok_badges_in_tls_row": 0,
+    "connection_error": null,
+    "action": null,
+    "store": null,
+    "connection_row": "ok reachable 2026-09-30 07:09",
+    "geometry": {
+      "card": {
+        "left": 20,
+        "right": 355,
+        "top": 2218,
+        "bottom": 2755
+      },
+      "card_scrollWidth": 333,
+      "card_clientWidth": 333,
+      "tls_value": {
+        "left": 149,
+        "right": 338,
+        "top": 2396,
+        "bottom": 2420
+      },
+      "chips": [
+        {
+          "left": 149,
+          "right": 232,
+          "top": 2396,
+          "bottom": 2420
+        }
+      ]
+    }
+  }
+}

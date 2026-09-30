@@ -1,0 +1,123 @@
+{
+  "read_at": "2026-09-30T07:15:49Z",
+  "entry": {
+    "id": "w492-fail",
+    "source": "secret:gsd-cluster-w492-fail",
+    "retired": true,
+    "enabled": false,
+    "api_url": "https://mock-privateca:6443",
+    "credential": "bearer",
+    "tls": null,
+    "status": "unreachable",
+    "last_poll": "2026-09-30T07:15:35Z",
+    "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+  },
+  "card": {
+    "tls_row": "unknown its source no longer describes it",
+    "badges": [],
+    "ok_badges_in_tls_row": 0,
+    "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "action": null,
+    "store": null,
+    "connection_row": "unreachable 2026-09-30 07:15 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "geometry": {
+      "card": {
+        "left": 70,
+        "right": 1210,
+        "top": 11843,
+        "bottom": 12176
+      },
+      "card_scrollWidth": 1138,
+      "card_clientWidth": 1138,
+      "tls_value": {
+        "left": 473,
+        "right": 1193,
+        "top": 11958,
+        "bottom": 11976
+      },
+      "chips": []
+    }
+  },
+  "w244_rows_recorded_only": {
+    "w244-fail": {
+      "entry": {
+        "id": "w244-fail",
+        "source": "secret:gsd-cluster-w244-fail",
+        "retired": true,
+        "enabled": false,
+        "api_url": "https://mock-privateca:6443",
+        "credential": "bearer",
+        "tls": null,
+        "status": "unreachable",
+        "last_poll": "2026-09-30T05:13:53Z",
+        "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+      },
+      "card": {
+        "tls_row": "unknown its source no longer describes it",
+        "badges": [],
+        "ok_badges_in_tls_row": 0,
+        "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+        "action": null,
+        "store": null,
+        "connection_row": "unreachable 2026-09-30 05:13 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+        "geometry": {
+          "card": {
+            "left": 70,
+            "right": 1210,
+            "top": 10802,
+            "bottom": 11135
+          },
+          "card_scrollWidth": 1138,
+          "card_clientWidth": 1138,
+          "tls_value": {
+            "left": 473,
+            "right": 1193,
+            "top": 10917,
+            "bottom": 10935
+          },
+          "chips": []
+        }
+      }
+    },
+    "w244-exp": {
+      "entry": {
+        "id": "w244-exp",
+        "source": "secret:gsd-cluster-w244-exp",
+        "retired": true,
+        "enabled": false,
+        "api_url": "https://mock-privateca:6443",
+        "credential": "bearer",
+        "tls": null,
+        "status": "unreachable",
+        "last_poll": "2026-09-30T05:13:53Z",
+        "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+      },
+      "card": {
+        "tls_row": "unknown its source no longer describes it",
+        "badges": [],
+        "ok_badges_in_tls_row": 0,
+        "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+        "action": null,
+        "store": null,
+        "connection_row": "unreachable 2026-09-30 05:13 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+        "geometry": {
+          "card": {
+            "left": 70,
+            "right": 1210,
+            "top": 10455,
+            "bottom": 10788
+          },
+          "card_scrollWidth": 1138,
+          "card_clientWidth": 1138,
+          "tls_value": {
+            "left": 473,
+            "right": 1193,
+            "top": 10570,
+            "bottom": 10588
+          },
+          "chips": []
+        }
+      }
+    }
+  }
+}

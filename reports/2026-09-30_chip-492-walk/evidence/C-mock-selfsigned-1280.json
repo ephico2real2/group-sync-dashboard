@@ -1,0 +1,55 @@
+{
+  "entry": {
+    "id": "mock-selfsigned",
+    "source": "secret:gsd-cluster-mock-selfsigned",
+    "retired": false,
+    "enabled": true,
+    "api_url": "https://mock-selfsigned:6443",
+    "credential": "bearer",
+    "tls": {
+      "insecure": true,
+      "ca": null
+    },
+    "status": "ok",
+    "last_poll": "2026-09-30T07:09:53Z",
+    "error": null
+  },
+  "card": {
+    "tls_row": "insecure",
+    "badges": [
+      {
+        "text": "insecure",
+        "class": "badge warning"
+      }
+    ],
+    "ok_badges_in_tls_row": 0,
+    "connection_error": null,
+    "action": null,
+    "store": null,
+    "connection_row": "ok reachable 2026-09-30 07:09",
+    "geometry": {
+      "card": {
+        "left": 70,
+        "right": 1210,
+        "top": 674,
+        "bottom": 1015
+      },
+      "card_scrollWidth": 1138,
+      "card_clientWidth": 1138,
+      "tls_value": {
+        "left": 473,
+        "right": 1193,
+        "top": 789,
+        "bottom": 813
+      },
+      "chips": [
+        {
+          "left": 473,
+          "right": 556,
+          "top": 789,
+          "bottom": 813
+        }
+      ]
+    }
+  }
+}

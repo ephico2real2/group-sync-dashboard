@@ -1,0 +1,10 @@
+2026-09-30T07:15:45Z PASS developer holds the cluster-admin tier for the retired pass: {"user": "developer", "tier": null, "cluster_admin": true}
+2026-09-30T07:15:49Z PASS no 'Dashboard API error' (clusters tab, retired pass): 0
+2026-09-30T07:15:49Z PASS GET /api/clusterconfigs answers 200 (retired pass)   : 200
+2026-09-30T07:15:49Z wrote                                                     : evidence/E-w492-fail-retired.json
+2026-09-30T07:15:49Z PASS E: the entry is retired, with tls null and no action : {"id": "w492-fail", "source": "secret:gsd-cluster-w492-fail", "retired": true, "enabled": false, "api_url": "https://mock-privateca:6443", "credential": "bearer", "tls": null, "status": "unreachable", "last_poll": "2026-09-30T07:15:35Z", "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"}
+2026-09-30T07:15:49Z PASS E: the retired card's tls row paints no chip         : {"tls_row": "unknown its source no longer describes it", "badges": [], "ok_badges_in_tls_row": 0, "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)", "action": null, "store": null, "connection_row": "unreachable 2026-09-30 07:15 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)", "geometry": {"card": {"left": 70, "right": 1210, "top": 11843, "bottom": 12176}, "card_scrollWidth": 1138, "card_clientWidth": 1138, "tls_value": {"left": 473, "right": 1193, "top": 11958, "bottom": 11976}, "chips": []}}
+2026-09-30T07:15:49Z shot                                                      : 07-1280-E-w492-fail-retired-card.png
+2026-09-30T07:15:49Z PASS no 'Dashboard API error' (the end)                   : 0
+2026-09-30T07:15:49Z PASS no uncaught page errors                              : []
+2026-09-30T07:15:49Z retired failures                                          : []

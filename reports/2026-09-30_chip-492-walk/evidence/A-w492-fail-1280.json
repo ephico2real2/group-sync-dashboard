@@ -1,0 +1,61 @@
+{
+  "entry": {
+    "id": "w492-fail",
+    "source": "secret:gsd-cluster-w492-fail",
+    "retired": false,
+    "enabled": true,
+    "api_url": "https://mock-privateca:6443",
+    "credential": "bearer",
+    "tls": {
+      "insecure": false,
+      "ca": "caData"
+    },
+    "status": "unreachable",
+    "last_poll": "2026-09-30T07:10:35Z",
+    "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server",
+    "store": "secret:gsd-cluster-w492-fail/tlsClientConfig.caData"
+  },
+  "card": {
+    "tls_row": "verify failed ca: caData store secret:gsd-cluster-w492-fail/tlsClientConfig.caData \u00b7 1 certificate CN=walk-492 wrong CA \u00b7 issuer CN=walk-492 wrong CA \u00b7 2027-09-30T07:06:54Z",
+    "badges": [
+      {
+        "text": "verify failed",
+        "class": "badge warning"
+      }
+    ],
+    "ok_badges_in_tls_row": 0,
+    "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+    "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server",
+    "store": "store secret:gsd-cluster-w492-fail/tlsClientConfig.caData",
+    "connection_row": "unreachable 2026-09-30 07:10 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server store secret:gsd-cluster-w492-fail/tlsClientConfig.caData",
+    "geometry": {
+      "card": {
+        "left": 70,
+        "right": 1210,
+        "top": 3197,
+        "bottom": 3694
+      },
+      "card_scrollWidth": 1138,
+      "card_clientWidth": 1138,
+      "tls_value": {
+        "left": 473,
+        "right": 1193,
+        "top": 3354,
+        "bottom": 3414
+      },
+      "chips": [
+        {
+          "left": 473,
+          "right": 576,
+          "top": 3354,
+          "bottom": 3378
+        }
+      ]
+    }
+  },
+  "page": {
+    "innerWidth": 1280,
+    "scrollWidth": 1280
+  }
+}

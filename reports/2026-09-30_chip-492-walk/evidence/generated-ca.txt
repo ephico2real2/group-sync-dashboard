@@ -1,0 +1,8 @@
+# openssl x509 -in <tmp>/wrong-ca.pem -noout -subject -issuer -dates -fingerprint -sha256 -ext basicConstraints -nameopt RFC2253
+subject=CN=walk-492 wrong CA
+issuer=CN=walk-492 wrong CA
+notBefore=Sep 30 07:06:54 2026 GMT
+notAfter=Sep 30 07:06:54 2027 GMT
+sha256 Fingerprint=21:E9:8F:C4:3C:8B:DC:7C:72:C3:E0:F9:03:1D:44:C6:09:49:A2:B0:81:83:59:1C:41:DB:74:58:7D:15:84:BD
+X509v3 Basic Constraints: critical
+    CA:TRUE

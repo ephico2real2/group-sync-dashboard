@@ -1,0 +1,35 @@
+# oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --timestamps --since-time=2026-09-30T07:06:44Z  (captured 2026-09-30T07:15:52Z)
+# lines in the window: 391
+# discovery, cert-verify-failed, fleet-*, and every line naming w492- except its poll-cycle timing and unmanaged-grant summary:
+2026-09-30T07:10:35.836875963Z 2026-09-30 03:10:35,836-0400 WARNING gsd.clusterconfig shared-api-url url=https://mock-privateca:6443 clusters=mock-privateca,w492-fail state=appeared cycle=4
+2026-09-30T07:10:35.852494563Z 2026-09-30 03:10:35,852-0400 INFO    gsd.clusterconfig discovery cycle=4 namespace=group-sync-dashboard seen=7 accepted=6 refused=1 added=w492-fail
+2026-09-30T07:10:35.852852023Z 2026-09-30 03:10:35,852-0400 INFO    gsd.clusterconfig cluster-resolved cycle=4 cluster=w492-fail source=secret:gsd-cluster-w492-fail credential=bearer tls=caData visibility=inherit identity=none enabled=true
+2026-09-30T07:10:35.875264483Z 2026-09-30 03:10:35,875-0400 INFO    gsd.poller cluster w492-fail: polling started (secret:gsd-cluster-w492-fail)
+2026-09-30T07:10:35.891059334Z 2026-09-30 03:10:35,890-0400 WARNING gsd.poller cluster-unreachable phase=tls outcome=cert-verify-failed cluster=w492-fail source=secret:gsd-cluster-w492-fail tls=caData store=secret:gsd-cluster-w492-fail/tlsClientConfig.caData action="this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server" detail="ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+2026-09-30T07:10:35.904851303Z 2026-09-30 03:10:35,904-0400 WARNING gsd.auditlog w492-fail: audit-log capture could not list nodes: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) — group data is unaffected
+2026-09-30T07:10:36.029618942Z 2026-09-30 03:10:36,029-0400 WARNING gsd.poller binding refresh for w492-fail failed: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) (unreachable) — group data is unaffected
+2026-09-30T07:11:35.889398893Z 2026-09-30 03:11:35,888-0400 WARNING gsd.poller cluster-unreachable phase=tls outcome=cert-verify-failed cluster=w492-fail source=secret:gsd-cluster-w492-fail tls=caData store=secret:gsd-cluster-w492-fail/tlsClientConfig.caData action="this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server" detail="ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+2026-09-30T07:11:35.901521147Z 2026-09-30 03:11:35,901-0400 WARNING gsd.auditlog w492-fail: audit-log capture could not list nodes: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) — group data is unaffected
+2026-09-30T07:12:35.890579588Z 2026-09-30 03:12:35,890-0400 WARNING gsd.poller cluster-unreachable phase=tls outcome=cert-verify-failed cluster=w492-fail source=secret:gsd-cluster-w492-fail tls=caData store=secret:gsd-cluster-w492-fail/tlsClientConfig.caData action="this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server" detail="ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+2026-09-30T07:12:35.902959468Z 2026-09-30 03:12:35,902-0400 WARNING gsd.auditlog w492-fail: audit-log capture could not list nodes: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) — group data is unaffected
+2026-09-30T07:13:35.890239485Z 2026-09-30 03:13:35,889-0400 WARNING gsd.poller cluster-unreachable phase=tls outcome=cert-verify-failed cluster=w492-fail source=secret:gsd-cluster-w492-fail tls=caData store=secret:gsd-cluster-w492-fail/tlsClientConfig.caData action="this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server" detail="ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+2026-09-30T07:13:35.901565820Z 2026-09-30 03:13:35,901-0400 WARNING gsd.auditlog w492-fail: audit-log capture could not list nodes: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) — group data is unaffected
+2026-09-30T07:14:35.891411722Z 2026-09-30 03:14:35,891-0400 WARNING gsd.poller cluster-unreachable phase=tls outcome=cert-verify-failed cluster=w492-fail source=secret:gsd-cluster-w492-fail tls=caData store=secret:gsd-cluster-w492-fail/tlsClientConfig.caData action="this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server" detail="ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+2026-09-30T07:14:35.902977807Z 2026-09-30 03:14:35,902-0400 WARNING gsd.auditlog w492-fail: audit-log capture could not list nodes: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) — group data is unaffected
+2026-09-30T07:15:35.892488488Z 2026-09-30 03:15:35,892-0400 WARNING gsd.poller cluster-unreachable phase=tls outcome=cert-verify-failed cluster=w492-fail source=secret:gsd-cluster-w492-fail tls=caData store=secret:gsd-cluster-w492-fail/tlsClientConfig.caData action="this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w492-fail with the CA that signs its API server" detail="ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)"
+2026-09-30T07:15:35.904954200Z 2026-09-30 03:15:35,904-0400 WARNING gsd.auditlog w492-fail: audit-log capture could not list nodes: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) — group data is unaffected
+2026-09-30T07:15:36.020152700Z 2026-09-30 03:15:36,019-0400 INFO    gsd.clusterconfig shared-api-url url=https://mock-privateca:6443 clusters=mock-privateca,w492-fail state=cleared cycle=5
+2026-09-30T07:15:36.032313619Z 2026-09-30 03:15:36,032-0400 INFO    gsd.clusterconfig discovery cycle=5 namespace=group-sync-dashboard seen=6 accepted=5 refused=1 removed=w492-fail
+2026-09-30T07:15:36.974936400Z 2026-09-30 03:15:36,974-0400 INFO    gsd.poller w492-fail: its Secret is gone; the poll thread stops (history kept)
+# discovery lines: 2
+# fleet-lookup lines: 0
+# fleet-ping lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# cert-verify-failed lines: 6
+# lines naming the fleet account: 0
+# Traceback lines: 0
+# ERROR lines (the string anywhere): 0
+# the walk's bearer token (never printed): 0 lines
