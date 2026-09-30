@@ -1,0 +1,6 @@
+2026-09-30T09:47:25Z wrote                                                         : evidence/P-precheck.json
+2026-09-30T09:47:25Z shot                                                          : screenshots/00-1280-precheck-reports-without-grant.png
+2026-09-30T09:47:25Z PASS no 'Dashboard API error' (the end)                       : 0
+2026-09-30T09:47:25Z PASS no uncaught page errors                                  : []
+2026-09-30T09:47:25Z PASS no write other than the one Refresh was attempted        : []
+2026-09-30T09:47:25Z precheck failures                                             : []

@@ -1,0 +1,105 @@
+{
+  "read_at": "2026-09-30T09:48:44Z",
+  "cards": {
+    "mock-privateca": {
+      "heading": "mock-privateca Secret gsd-cluster-mock-privateca enabled",
+      "shared_api_chip": false,
+      "shared_api_hint": null,
+      "tls_row": "verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    },
+    "mock-selfsigned": {
+      "heading": "mock-selfsigned Secret gsd-cluster-mock-selfsigned enabled",
+      "shared_api_chip": false,
+      "shared_api_hint": null,
+      "tls_row": "insecure",
+      "badges": [
+        {
+          "text": "insecure",
+          "class": "badge warning"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    },
+    "mock-trusted": {
+      "heading": "mock-trusted Secret gsd-cluster-mock-trusted enabled",
+      "shared_api_chip": false,
+      "shared_api_hint": null,
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    },
+    "shared-qa": {
+      "heading": "shared-qa Secret gsd-cluster-shared-qa enabled shared API URL",
+      "shared_api_chip": true,
+      "shared_api_hint": "Also declared by shared-rnd \u2014 each entry is polled and counted on its own.",
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    },
+    "shared-rnd": {
+      "heading": "shared-rnd Secret gsd-cluster-shared-rnd enabled shared API URL",
+      "shared_api_chip": true,
+      "shared_api_hint": "Also declared by shared-qa \u2014 each entry is polled and counted on its own.",
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    },
+    "dashboard": {
+      "heading": "dashboard in-cluster enabled",
+      "shared_api_chip": false,
+      "shared_api_hint": null,
+      "tls_row": "verified ca: serviceAccount store /var/run/secrets/kubernetes.io/serviceaccount/ca.crt \u00b7 6 certificates OU=openshift,CN=kube-apiserver-lb-signer \u00b7 issuer OU=openshift,CN=kube-apiserver-lb-signer \u00b7 2036-07-26T11:41:58Z OU=openshift,CN=kube-apiserver-localhost-signer \u00b7 issuer OU=openshift,CN=kube-apiserver-localhost-signer \u00b7 2036-07-26T11:41:58Z OU=openshift,CN=kube-apiserver-service-network-signer \u00b7 issuer OU=openshift,CN=kube-apiserver-service-network-signer \u00b7 2036-07-26T11:41:58Z CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898 \u00b7 issuer CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898 \u00b7 2036-07-26T11:51:39Z CN=*.apps-crc.testing \u00b7 issuer CN=ingress-operator@1785325954 \u00b7 2028-07-28T11:52:37Z CN=ingress-operator@1785325954 \u00b7 issuer CN=ingress-operator@1785325954 \u00b7 2028-07-28T11:52:35Z",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    }
+  },
+  "page": {
+    "innerWidth": 1280,
+    "scrollWidth": 1280
+  }
+}

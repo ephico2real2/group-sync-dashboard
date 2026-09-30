@@ -1,0 +1,44 @@
+{
+  "pressed": [
+    "2026-09-30T09:48:46Z POST https://group-sync-dashboard.apps-crc.testing/api/clusterconfigs/mock-privateca/refresh"
+  ],
+  "answer_line": "Refresh: unreachable \u00b7 2026-09-30T09:48:46Z \u2014 HTTP 404 on /version: {\"detail\":\"Not Found\"}",
+  "card_after": {
+    "heading": "mock-privateca Secret gsd-cluster-mock-privateca enabled",
+    "shared_api_chip": false,
+    "shared_api_hint": null,
+    "tls_row": "verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+    "badges": [
+      {
+        "text": "verified",
+        "class": "badge ok"
+      }
+    ],
+    "connection_row": "ok reachable 2026-09-30 09:47 Refresh: unreachable \u00b7 2026-09-30T09:48:46Z \u2014 HTTP 404 on /version: {\"detail\":\"Not Found\"}",
+    "refresh_button": true,
+    "rejoin_button": false,
+    "refresh_line": "Refresh: unreachable \u00b7 2026-09-30T09:48:46Z \u2014 HTTP 404 on /version: {\"detail\":\"Not Found\"}"
+  },
+  "secrets_before": {
+    "read_at": "2026-09-30T09:48:46Z",
+    "resourceVersions": {
+      "gsd-cluster-mock-privateca": "995049",
+      "gsd-cluster-mock-refusal": "993486",
+      "gsd-cluster-mock-selfsigned": "993485",
+      "gsd-cluster-mock-trusted": "993483",
+      "gsd-cluster-shared-qa": "2981054",
+      "gsd-cluster-shared-rnd": "2835139"
+    }
+  },
+  "secrets_after": {
+    "read_at": "2026-09-30T09:48:46Z",
+    "resourceVersions": {
+      "gsd-cluster-mock-privateca": "995049",
+      "gsd-cluster-mock-refusal": "993486",
+      "gsd-cluster-mock-selfsigned": "993485",
+      "gsd-cluster-mock-trusted": "993483",
+      "gsd-cluster-shared-qa": "2981054",
+      "gsd-cluster-shared-rnd": "2835139"
+    }
+  }
+}

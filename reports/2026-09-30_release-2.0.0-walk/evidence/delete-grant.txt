@@ -1,0 +1,3 @@
+# delete the grant at 2026-09-30T09:51:14Z
+clusterrole.rbac.authorization.k8s.io "gsd-walk-200-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-200-crb-update-developer" deleted

@@ -1,0 +1,12 @@
+  [ok ] access-certification     e4fe971b2030  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] access-matrix            18d77b30685e  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] binding-findings         f1bc63e15dd2  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] compliance-snapshot      f3c82817d9d0  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] dormant-access           12f9998e2d7a  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] groups                   4d861f9ab7e3  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] groupsync-health         e486dd5a307e  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] login-activity           df1e95b0301a  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] namespace-access         23585c079be7  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] privileged-access        a4c01a9e82cb  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] users                    e7497030b5c5  recomputed=True run=True pdf=True html=True pdf/a=True
+11 / 11 reports pass → /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-200-tmp/e2e/integrity.jsonl

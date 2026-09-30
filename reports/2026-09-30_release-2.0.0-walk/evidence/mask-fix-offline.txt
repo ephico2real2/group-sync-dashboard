@@ -1,0 +1,5 @@
+# cd scripts && KUBECONFIG=<lab> python mask_fix_offline.py <tmp>/offline   (at 2026-09-30T10:15:55Z)
+{"old": "old.png", "new": "01-new.png", "overlays_left_in_page": 0, "mask_log": {"shot": "offline/01-new.png", "fleet_row_elements": 0, "elements_naming_the_account": 1, "text_boxes": 2, "page_text_named_the_account": true}}
+# "${OCR}" <tmp>/offline/<png> | grep -ci 'walkfake'   (the made-up name's distinctive token; OCR misreads single letters of 12-px text, e.g. 'probe' as 'nrobe', so the token is the needle)
+old.png: 1 lines
+01-new.png: 0 lines

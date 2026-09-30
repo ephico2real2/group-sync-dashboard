@@ -1,0 +1,5 @@
+  [ok ] open the route: https://group-sync-dashboard.apps-crc.testing → https://group-sync-dashboard.apps-crc.testing/  → 01-oauth-proxy-interstitial.png
+  [ok ] identity-provider chooser: offered: developer, ldap-local; picked developer  → 02-openshift-idp-chooser.png
+  [ok ] OpenShift login form: username filled: developer  → 03-openshift-login-form.png
+  [ok ] login: dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard
+  [ok ] tab Logins (re-captured): heading: Login attempts  → 13-tab-logins.png
