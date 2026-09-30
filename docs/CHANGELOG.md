@@ -10,6 +10,15 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A verify-failed card no longer wears the green `verified` chip (#492, Epic D #384, found on #244's lab walk,
+  PR #491).** The TLS row painted `verified` from the mode alone, so a cluster whose certificate the trust store
+  refused showed a green chip two rows above its red `CERTIFICATE_VERIFY_FAILED`. The chip now names the last poll's
+  outcome: `verify failed` (warning) when the entry carries #244's `action`, which the API sets only on a live,
+  not-insecure row whose last error is a verify failure; `verified` otherwise, including a card that failed for
+  another reason (DNS, timeout, 401). The `ca:` mode text, the `insecure` chip, the store and certificate lines and
+  the connection row are unchanged; no API change. `SPEC_D5` §3.6 now says the Test answer's certificates are the
+  `summarise_pem` dicts, without `validity` and `enterpriseRoot`. Application **1.21.0**, chart 0.59.23.
+
 - **CA visibility: is this the enterprise root, and is it still valid? (#244, Epic D #384,
   `docs/specs/SPEC_D5_ca_visibility.md`, phase 2).** Every live row of `GET /api/clusterconfigs` carries `trust`
   (the store, its kind, its count, and each listed certificate's subject, issuer, `notBefore`, `notAfter`, SHA-256 and

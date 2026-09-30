@@ -87,6 +87,18 @@ index row and the tests that hold the document; it applies no block.
   sentence (`… does not decode to a PEM bundle that loads: UnicodeDecodeError`) instead of `tls.caData must be
   a base64 PEM bundle`, and carries the block that decoded. Added: a poller appear/clear test (§3.3 had none),
   and the release fields (app 1.20.0, chart 0.59.22, the CHANGELOG bullet), which the head did not carry.
+- **After release: #492 (2026-09-30), found on #244's lab walk (PR #491, row C).** (1) The card's TLS chip was
+  painted from the mode alone, so throwaway cluster `w244-fail` (a CA that did not sign its server) showed a
+  green `verified` two rows above its red `CERTIFICATE_VERIFY_FAILED` and this spec's fix sentence. `ccTls`
+  now paints a warning `verify failed` when the entry carries `action`, which
+  `gsd/api.py#list_cluster_configs` sets only on a live, not-insecure row whose last error is a verify
+  failure, and `verified` otherwise; the `ca:` mode text, `insecure` and the API are unchanged. §6's `ccTls`
+  block carries the change, because `test_ca_visibility_spec.py` holds the tree to every block's New text;
+  #492's browser test sits outside the span of the `test_ui.py` block for the same reason. (2) §3.6's prose
+  said the Test answer's `certificates` were "the same dicts, without requiring a pin"; the block and
+  `gsd/clusterconfig/writer.py#test_connection` return `summarise_pem`'s dicts, which carry no `validity` and
+  no `enterpriseRoot` (the walk's `E-test-answers.json`). The prose now says what the code does; the code is
+  unchanged.
 
 ## 1. The point, in one table
 
@@ -344,7 +356,9 @@ The log line and the API field are the same two strings. A test compares them.
 
 **Both return the summary the pasted PEM resolved to.**
 
-`POST /api/clusterconfigs/test` gains `certificates` (the same dicts, without requiring a pin).
+`POST /api/clusterconfigs/test` gains `certificates`: the pasted PEM's `summarise_pem` dicts (subject, issuer,
+`notBefore`, `notAfter`, `sha256`), without the card's `validity` and `enterpriseRoot`, which `annotate` adds
+only to a cluster's `trust` (§6's `writer.py` block, `gsd/clusterconfig/writer.py#test_connection`).
 
 A `ca-data-invalid` refusal that decoded at least one block answers
 
@@ -439,6 +453,7 @@ the applied page. Phase 2 runs them with the rest of the browser suite.
 verify failure keeps the raw error and adds the fix under it. Warnings use the existing banner.**
 
 - Retired wording is unchanged.
+- A row that carries `action` wears a warning `verify failed` chip instead of the green `verified` (#492).
 - `ca-expiring` / `ca-expired` / `ca-not-yet-valid` / `ca-not-enterprise` get their own banner
   title, the way `shared-api-url` already does.
 - The form's Test result paints the same certificate lines.
@@ -1018,7 +1033,11 @@ def _ca_expiry_days(raw: dict) -> int:
 }
 ```
 ```javascript
-  let out = t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
+  // #492: the chip names the last poll's outcome, the `ca:` text the mode. The API sets `action` only on a live,
+  // not-insecure row whose last error is a verify failure (api.py, is_verify_failure), so a green `verified`
+  // no longer sits two rows above a red CERTIFICATE_VERIFY_FAILED (found on the #244 lab walk, PR #491).
+  const chip = c.action ? ccBadge("warning", "verify failed") : ccBadge("ok", "verified");
+  let out = t.insecure ? ccBadge("warning", "insecure") : `${chip} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
   const trust = c.trust || {};
   if (trust.store && !t.insecure) {
     out += `<div class="cc-hint cc-trust-store">store ${esc(trust.store)} · ${trust.count || 0} certificate${trust.count === 1 ? "" : "s"}</div>`;

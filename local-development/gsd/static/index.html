@@ -6207,7 +6207,11 @@ function ccTls(c) {
       ? `<span class="muted">unknown</span> <span class="cc-hint">its source no longer describes it</span>`
       : `<span class="muted">—</span>`;
   }
-  let out = t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
+  // #492: the chip names the last poll's outcome, the `ca:` text the mode. The API sets `action` only on a live,
+  // not-insecure row whose last error is a verify failure (api.py, is_verify_failure), so a green `verified`
+  // no longer sits two rows above a red CERTIFICATE_VERIFY_FAILED (found on the #244 lab walk, PR #491).
+  const chip = c.action ? ccBadge("warning", "verify failed") : ccBadge("ok", "verified");
+  let out = t.insecure ? ccBadge("warning", "insecure") : `${chip} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
   const trust = c.trust || {};
   if (trust.store && !t.insecure) {
     out += `<div class="cc-hint cc-trust-store">store ${esc(trust.store)} · ${trust.count || 0} certificate${trust.count === 1 ? "" : "s"}</div>`;
