@@ -16,6 +16,9 @@
 #   capture.sh podlog <label> <since>   the dashboard container's log since <since>: discovery, the CA and shared-URL
 #                                       announcements, every line naming w244-, cert-verify-failed, connection-tested,
 #                                       fleet-*, with counts; the walk's bearer tokens counted, never printed
+#   capture.sh redaction <label>        the report folder itself searched for what must not be in it: any `sha256~`
+#                                       value, the fleet account's name (any case, screenshots included) and each
+#                                       walk token; file counts only, nothing quoted
 # Every command is a read. No password or token is printed; any `sha256~` string is redacted; the fleet account's
 # name is read from its Lease into a variable and replaced by `<fleet account>` in everything written.
 set -euo pipefail
@@ -100,6 +103,24 @@ case "${kind}" in
       fi
     } > "${out}"
     rm -f "${raw}"
+    ;;
+  redaction)
+    {
+      echo "# the report folder searched at $(now); counts of FILES, nothing quoted"
+      echo "# grep -rl 'sha256~[A-Za-z0-9]' <folder>   (a token that escaped the filter, screenshots included; the placeholder is sha256~<redacted>)"
+      echo "# files: $(grep -rl 'sha256~[A-Za-z0-9]' "${here}" | wc -l | tr -d ' ')"
+      echo "# grep -rli -F '<the fleet account>' <folder>   (its real name, any case, screenshots included)"
+      echo "# files: $(grep -rli -F -- "${fleet}" "${here}" | wc -l | tr -d ' ')"
+      if [ -s "${tmp}/tokens" ]; then
+        i=0
+        while IFS= read -r tok; do
+          i=$((i + 1))
+          echo "# the walk's bearer token ${i} (never printed): $(grep -rl -F -- "${tok}" "${here}" | wc -l | tr -d ' ') files"
+        done < "${tmp}/tokens"
+      else
+        echo "# no walk tokens recorded"
+      fi
+    } > "${out}"
     ;;
   *) echo "unknown kind ${kind}" >&2; exit 2 ;;
 esac

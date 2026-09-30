@@ -72,5 +72,6 @@ for k in cani grant secrets version pvcs sharedqa lease; do "${s}/capture.sh" "$
 wait_for discovery-removed 400 'discovery cycle=[0-9]+ .*removed=[^ ]*w244-exp' || true
 for k in secrets version pvcs sharedqa lease cani grant; do "${s}/capture.sh" "${k}" end; done
 "${s}/capture.sh" podlog end "${t0}"
+"${s}/capture.sh" redaction end
 echo "walk.py exit=${rc}" > "${ev}/run-exit.txt"
 exit "${rc}"
