@@ -16,8 +16,10 @@
 #                               the dashboard image against a fake API server: the Lease absent, free, and held
 #   7. offline-restore.txt      sweep.sh five times against a stub `oc`: nothing removed early, everything at the end
 #   8. offline-audit.txt        capture.sh audit against a stub `oc`: the counts from synthetic records; a failed read
-#                               and a log that starts after the window both refuse to count
-#   9. offline-lint.txt         bash -n and shellcheck -x on every script
+#                               and a log that starts after the window both refuse to count; fractional audit instants
+#                               at the whole-second start/end prove start-inclusive/end-exclusive
+#   9. offline-pod-window.txt   the exact-pod end watcher against a stub `oc`
+#  10. offline-lint.txt         bash -n and shellcheck -x on every script
 set -euo pipefail
 S="$(cd "$(dirname "$0")" && pwd)"
 HERE="$(cd "${S}/.." && pwd)"
@@ -305,17 +307,63 @@ audit() {
   : > "${T}/state/audit.log"
   audit stub-empty 2026-09-30T10:00:00Z; a3=$?
   echo "## nothing read: exit ${a3} (2 = refuses to count)"; cat "${T}/ev/stub-empty-audit.txt"
+  "${PY}" - "${T}/state/audit.log" <<'PY'
+import json, sys
+record = {"stage": "ResponseComplete", "requestURI": "/healthz", "stageTimestamp": "2026-09-30T10:00:00.500000Z"}
+open(sys.argv[1], "w").write(json.dumps(record) + "\n")
+PY
+  audit stub-fractional-late 2026-09-30T10:00:00Z 2026-09-30T11:00:00Z; a4=$?
+  echo "## a first record half a second after the start: exit ${a4} (3 = refuses to count)"
+  "${PY}" - "${T}/state/audit.log" <<'PY'
+import json, sys
+def record(at, user, uri="/oauth/authorize?client_id=openshift-challenging-client"):
+    return json.dumps({"stage": "ResponseComplete", "requestURI": uri, "stageTimestamp": at,
+                       "annotations": {"authentication.openshift.io/username": user,
+                                       "authentication.openshift.io/decision": "allow"},
+                       "responseStatus": {"code": 302}})
+open(sys.argv[1], "w").write("\n".join([
+    record("2026-09-30T09:00:00.000000Z", "someone-else", "/healthz"),
+    record("2026-09-30T10:00:00.000000Z", "developer"),
+]) + "\n")
+PY
+  audit stub-start-boundary 2026-09-30T10:00:00Z 2026-09-30T11:00:00Z; a5=$?
+  audit stub-end-boundary 2026-09-30T09:00:00Z 2026-09-30T10:00:00Z; a6=$?
+  start_count=$(sed -nE 's/^#   developer authorize records, any decision: ([0-9]+)$/\1/p' "${T}/ev/stub-start-boundary-audit.txt")
+  end_count=$(sed -nE 's/^#   developer authorize records, any decision: ([0-9]+)$/\1/p' "${T}/ev/stub-end-boundary-audit.txt")
+  echo "## fractional stageTimestamp at whole-second bounds: start exit/count ${a5}/${start_count}; end exit/count ${a6}/${end_count}"
   set -e
   if [ "${a1}" = 0 ] && [ "${a2}" = 3 ] && [ "${a3}" = 2 ] \
+     && [ "${a4}" = 3 ] && [ "${a5}" = 0 ] && [ "${a6}" = 0 ] && [ "${start_count}" = 1 ] && [ "${end_count}" = 0 ] \
      && grep -qx '#   developer authorize records, any decision: 2' "${T}/ev/stub-window-audit.txt" \
      && grep -qx "#   the fleet account's authorize records, any decision: 1" "${T}/ev/stub-window-audit.txt" \
      && ! grep -q 'someone-else\|stub-fleet-account' "${T}/ev/stub-window-audit.txt"; then
-    echo "PASS the counts are the window's (developer 2, the fleet account 1, unnamed), and a read that is empty or starts late never counts as 0"
+    echo "PASS the counts are start-inclusive/end-exclusive at whole-second precision, and an empty or late read never counts as 0"
   else echo "FAIL"; fi
 } > "${EV}/offline-audit.txt"
 grep -q '^PASS' "${EV}/offline-audit.txt" || ok=false
 
-# ── 9. lint ────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 9. exact walk-pod audit window, against a stub oc ──────────────────────────────────────────────────────────────
+printf old > "${T}/state/pod"
+env -i HOME="${HOME}" PATH="${S}/stub:/usr/bin:/bin:$(dirname "$(command -v jq)")" STUB_STATE="${T}/state" \
+  EVIDENCE_DIR="${T}/ev" KUBECONFIG=/dev/null bash "${S}/watch_pod_end.sh" walk-pod walk-uid "${T}/pod-ended" 5 &
+watcher=$!
+for _ in {1..100}; do
+  grep -q '^get pods -n group-sync-dashboard walk-pod -o json$' "${T}/state/calls" && break
+  sleep 0.05
+done
+grep -q '^get pods -n group-sync-dashboard walk-pod -o json$' "${T}/state/calls"
+printf gone > "${T}/state/pod"; wait "${watcher}"
+{
+  stamp
+  echo "watcher output: $(cat "${T}/pod-ended")"
+  if grep -qxE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' "${T}/pod-ended" \
+     && grep -q '^get pods -n group-sync-dashboard walk-pod -o json$' "${T}/state/calls"; then
+    echo "PASS the watcher records an end only after the exact walk pod UID is gone"
+  else echo "FAIL"; fi
+} > "${EV}/offline-pod-window.txt"
+grep -q '^PASS' "${EV}/offline-pod-window.txt" || ok=false
+
+# ── 10. lint ───────────────────────────────────────────────────────────────────────────────────────────────────────
 {
   stamp
   for f in "${S}"/*.sh "${S}/stub/oc"; do bash -n "${f}" && echo "bash -n: ${f#"${HERE}"/}"; done
@@ -323,7 +371,7 @@ grep -q '^PASS' "${EV}/offline-audit.txt" || ok=false
 } > "${EV}/offline-lint.txt" 2>&1
 grep -q '^PASS' "${EV}/offline-lint.txt" || ok=false
 
-for f in values render rbac-diff lease-name hermetic coordinator restore audit lint; do
+for f in values render rbac-diff lease-name hermetic coordinator restore audit pod-window lint; do
   echo "== evidence/offline-${f}.txt"; grep -E '^(PASS|FAIL)|REMOVED|passed|failed|^exit|^HELD|^ClaimHeld|^RELEASED|^ABORT' "${EV}/offline-${f}.txt" || true
 done
 if ${ok}; then echo "ALL OFFLINE PROOFS PASS"; else echo "SOME OFFLINE PROOF FAILED"; exit 1; fi

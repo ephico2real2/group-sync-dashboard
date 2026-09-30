@@ -10,6 +10,8 @@
 #   capture.sh audit <label> <since> [until]
 #                                          evidence/<label>-audit.txt: challenging-client authorize records in
 #                                          [since, until), derived: `developer`'s rows, the fleet account's COUNT, and
+#                                          Bounds and stageTimestamp are compared at whole-second precision: the
+#                                          scripts' `date` has no fractional part, while OpenShift audit MicroTime does.
 #                                          the count of records with no username. The raw log names every user and is
 #                                          never kept: it lives in a mktemp directory removed on exit.
 #                                          reports/2026-09-30_selflogin-renewal-310/scripts/capture.sh's `audit`,
@@ -58,17 +60,24 @@ case "${kind}" in
     : > "${tmp}/raw"
     for f in ${files}; do oc adm node-logs --role=master --path="oauth-server/${f}" >> "${tmp}/raw"; done
     # A read that failed, or a log that does not reach back to `since`, never counts as 0 authorizes.
+    # `now()` is whole-second RFC3339 while audit stageTimestamp is MicroTime. Compare the same precision: raw lexical
+    # comparison makes 10:00:00.000000Z sort before 10:00:00Z, dropping an event in the inclusive start second.
     earliest=$(sed -E 's/^[^{]*//' "${tmp}/raw" | jq -r '.stageTimestamp? // empty' 2>/dev/null | sort | head -1 || true)
     if [ -z "${earliest}" ]; then
       echo "# READ FAILED at $(now): no oauth-server audit record was read (files: ${files:-none})" > "${out}"; cat "${out}" >&2; exit 2
     fi
-    if [[ "${earliest}" > "${since}" ]]; then
+    # Every caller supplies a whole-second bound. Expand it to the earliest MicroTime in that second so a log whose
+    # first record is even one microsecond later is incomplete; raw `...000000Z` vs `...Z` compares in the wrong order.
+    since_micro="${since%Z}.000000Z"
+    if [[ "${earliest}" > "${since_micro}" ]]; then
       echo "# INCOMPLETE at $(now): the earliest audit record read is ${earliest}, after the window's start ${since}" > "${out}"; cat "${out}" >&2; exit 3
     fi
     sed -E 's/^[^{]*//' "${tmp}/raw" | jq -r --arg since "${since}" --arg until "${until}" --arg fleet "${F}" '
+        def second: sub("\\.[0-9]+Z$"; "Z");
         select(.stage? == "ResponseComplete" and (.requestURI // "" | startswith("/oauth/authorize"))
                and (.requestURI | test("client_id=openshift-challenging-client"))
-               and .stageTimestamp >= $since and .stageTimestamp < $until)
+               and (.stageTimestamp | second) >= ($since | second)
+               and (.stageTimestamp | second) < ($until | second))
         | (.annotations["authentication.openshift.io/username"] // "") as $u
         | (.annotations["authentication.openshift.io/decision"] // "-") as $d
         | if $u == "developer" then "\(.stageTimestamp) user=developer decision=\($d) code=\(.responseStatus.code)"
@@ -77,7 +86,7 @@ case "${kind}" in
           else empty end' 2>/dev/null | sort > "${tmp}/rows" || true
     {
       echo "# oc adm node-logs --role=master --path=oauth-server/<$(tr '\n' ',' <<<"${files}")>  (captured $(now)), DERIVED:"
-      echo "# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client in [${since}, ${until})"
+      echo "# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client in whole-second [${since}, ${until})"
       echo "# audit records read: $(sed -E 's/^[^{]*//' "${tmp}/raw" | grep -c '^{' || true); the earliest at ${earliest}"
       grep ' user=developer ' "${tmp}/rows" || true
       echo "# counts in [${since}, ${until}):"

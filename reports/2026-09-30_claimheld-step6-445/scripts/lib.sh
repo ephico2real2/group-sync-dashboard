@@ -56,6 +56,29 @@ dashboard_pod() {
     --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
 
+# Wait until one exact pod UID is gone, then write the next whole-second instant. Using that as an exclusive audit bound
+# starts this before Helm is handed back to Argo, so the audit can use the walk pod's real lifetime rather than leader
+# detection and hand-back initiation. A transient read failure is not absence. 0 gone, 1 timeout/unreadable.
+wait_for_pod_end() {
+  local pod_name="${1:?pod name}" pod_uid="${2:?pod uid}" out="${3:?output file}" timeout_seconds="${4:-1200}"
+  local deadline=$(( $(date +%s) + timeout_seconds )) obj current
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    if obj=$(oc get pods -n "${NS}" "${pod_name}" -o json 2>&1); then
+      current=$(printf '%s' "${obj}" | jq -r '.metadata.uid // empty') || current=
+      if [ -n "${current}" ] && [ "${current}" != "${pod_uid}" ]; then
+        date -u -r "$(( $(date +%s) + 1 ))" +%Y-%m-%dT%H:%M:%SZ > "${out}"
+        return 0
+      fi
+    else
+      case "${obj}" in
+        *NotFound*|*"not found"*) date -u -r "$(( $(date +%s) + 1 ))" +%Y-%m-%dT%H:%M:%SZ > "${out}"; return 0 ;;
+      esac
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 # `developer`'s Lease as one line: `absent`, or `holder=<id|none> renew=<t> duration=<s> rv=<n>`. A read that fails
 # for any reason but NotFound prints nothing and returns 1: an unreadable Lease is never read as free.
 dev_lease_state() {

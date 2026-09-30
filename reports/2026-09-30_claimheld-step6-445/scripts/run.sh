@@ -131,7 +131,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
 done
 [ "${led:-0}" -ge 1 ] || abort "the walk pod did not take the leader Lease in 180 s"
 T_LEADS=$(now)
-say "the walk pod ${pod} leads (${T_LEADS})"
+WALK_POD_UID=$(oc get pods -n "${NS}" "${pod}" -o jsonpath='{.metadata.uid}')
+T_WALK_START=$(oc get pods -n "${NS}" "${pod}" -o jsonpath='{.status.startTime}')
+[ -n "${WALK_POD_UID}" ] && [ -n "${T_WALK_START}" ] \
+  || abort "the walk pod's UID or startTime could not be read"
+say "the walk pod ${pod} (uid recorded, not printed) started ${T_WALK_START} and leads (${T_LEADS})"
 
 # ── 6.0 Abort checks before any claim() ────────────────────────────────────────────────────────────────────────────
 bash "${S}/labcheck.sh" phase2-step6.0 || abort "the lab check did not print 0 0 0"
@@ -212,21 +216,43 @@ say "STEP 6 PASSED: HELD, ClaimHeld, RELEASED, exit 0; 0 authorizes for develope
 bash "${S}/capture.sh" podlog phase2 "${RAW}"
 
 # ── 7. Hand back: Argo, then what is left ─────────────────────────────────────────────────────────────────────────
-T_HANDBACK=$(now)
+T_HANDBACK_START=$(now)
+POD_END_FILE="${RAW}/walk-pod-end"
+KUBECONFIG="${KUBECONFIG}" bash "${S}/watch_pod_end.sh" "${pod}" "${WALK_POD_UID}" "${POD_END_FILE}" 1200 &
+pod_end_waiter=$!
 say "release-crc.sh --argocd main (from ${DEPLOY})"
 set +e
 ( cd "${DEPLOY}/local-development" && ./release-crc.sh --argocd main ) > "${EVIDENCE}/phase2-handback-release-crc-argocd-main.log" 2>&1
 argo_rc=$?
 set -e
 say "release-crc.sh --argocd main exited ${argo_rc} (evidence/phase2-handback-release-crc-argocd-main.log)"
+pod_end_rc=0
+if [ "${argo_rc}" != 0 ] && [ ! -s "${POD_END_FILE}" ]; then
+  kill "${pod_end_waiter}" 2>/dev/null || true
+  wait "${pod_end_waiter}" 2>/dev/null || true
+  pod_end_rc=4
+else
+  wait "${pod_end_waiter}" || pod_end_rc=$?
+fi
+if [ "${pod_end_rc}" = 0 ] && [ -s "${POD_END_FILE}" ]; then
+  T_WALK_END=$(sed -n 1p "${POD_END_FILE}")
+else
+  T_WALK_END=$(now)
+  say "ABORT: the exact walk pod's end was not observed (watcher rc=${pod_end_rc}); its tenure audit cannot prove 0/0"
+fi
+say "walk pod audit bounds: [${T_WALK_START}, ${T_WALK_END}); hand-back started ${T_HANDBACK_START}"
 sweep_rc=0; bash "${S}/sweep.sh" handback || sweep_rc=$?
 say "sweep.sh handback exited ${sweep_rc}"
 
 # ── 8. The evidence at the end ────────────────────────────────────────────────────────────────────────────────────
 set +e
-bash "${S}/capture.sh" audit phase2-before-walk-pod "${T_START}" "${T_LEADS}"      # INFO: the Argo pod's own ping, if due
-bash "${S}/capture.sh" audit phase2-walk-pod "${T_LEADS}" "${T_HANDBACK}"; tenure_rc=$?
-bash "${S}/capture.sh" audit phase2-after-handback "${T_HANDBACK}"                  # INFO: the restored pod's own ping
+bash "${S}/capture.sh" audit phase2-before-walk-pod "${T_START}" "${T_WALK_START}"       # INFO: the old Argo pod's ping, if due
+if [ "${pod_end_rc}" = 0 ]; then
+  bash "${S}/capture.sh" audit phase2-walk-pod "${T_WALK_START}" "${T_WALK_END}"; tenure_rc=$?
+else
+  tenure_rc=4
+fi
+bash "${S}/capture.sh" audit phase2-after-walk-pod "${T_WALK_END}"                       # INFO: the restored pod's ping, if due
 tenure=$(grep -E "^#   (developer|the fleet account's) authorize records, any decision: " "${EVIDENCE}/phase2-walk-pod-audit.txt" | sed -E 's/.*: //' | tr '\n' ' ')
 bash "${S}/baseline.sh" phase2-end >/dev/null
 bash "${S}/compare_baselines.sh" phase2-start phase2-end > "${EVIDENCE}/phase2-compare.txt"; compare_rc=$?
@@ -235,8 +261,8 @@ cat "${EVIDENCE}/phase2-compare.txt"
 # stays in the variable).
 named=$(grep -r -c -F -- "${F}" "${EVIDENCE}" | awk -F: '{ s += $NF } END { print s + 0 }')
 set -e
-say "done: step 6 passed, argocd main rc=${argo_rc}, sweep rc=${sweep_rc}, walk-pod audit (developer, fleet)=${tenure}(rc ${tenure_rc}), compare rc=${compare_rc}, the fleet account named in evidence/: ${named} time(s)"
+say "done: step 6 passed, argocd main rc=${argo_rc}, pod-end watcher rc=${pod_end_rc}, sweep rc=${sweep_rc}, walk-pod audit (developer, fleet)=${tenure}(rc ${tenure_rc}), compare rc=${compare_rc}, the fleet account named in evidence/: ${named} time(s)"
 # Only a complete sweep ends the trap's duty; otherwise it runs the sweep once more and says what is left.
 [ "${sweep_rc}" = 0 ] && HANDBACK_DONE=true
-[ "${argo_rc}" = 0 ] && [ "${sweep_rc}" = 0 ] && [ "${compare_rc}" = 0 ] && [ "${tenure_rc}" = 0 ] && [ "${tenure}" = "0 0 " ] \
+[ "${argo_rc}" = 0 ] && [ "${pod_end_rc}" = 0 ] && [ "${sweep_rc}" = 0 ] && [ "${compare_rc}" = 0 ] && [ "${tenure_rc}" = 0 ] && [ "${tenure}" = "0 0 " ] \
   && [ "${named}" = 0 ]

@@ -188,7 +188,7 @@ Phase 2 is one script, `scripts/run.sh`, run in the background with one waiter o
 | 6.4 | The derived audit in `[STEP6_SINCE, now)`; the counts again; the fleet Lease's sha256 again | none | `developer` 0 and the fleet account 0 authorizes, counts equal, fleet count 2, sha equal; else "ABORT: an authorize ran in the window" |
 | — | The pod's log, read once, derived | none | — |
 | 7 | `release-crc.sh --argocd main`, then `sweep.sh handback` | the reverse of 1–2, and `developer`'s Lease | the sweep never drops a ServiceAccount permission, never deletes a held Lease |
-| 8 | Audits for three windows (before the walk pod leads: INFO; its tenure: MUST 0/0; after the hand-back: INFO), the end baseline, the comparison, and a count of the fleet account's name in `evidence/` (MUST 0) | none | exit 0 only if all hold |
+| 8 | Audits for three windows (before the walk pod starts: INFO; its exact observed lifetime, pod `startTime` until its UID is gone: MUST 0/0; after that pod: INFO), the end baseline, the comparison, and a count of the fleet account's name in `evidence/` (MUST 0) | none | exit 0 only if all hold |
 
 ### The coordinator comes from the spec, never from a copy
 
@@ -248,12 +248,13 @@ never named, and `run.sh` counts its name across `evidence/` at the end (MUST 0)
 | `phase2-step6.1-6.3.txt` | the command, the program's sha256, its stdout, its stderr, its exit code, and the Lease after it |
 | `phase2-step6.4.txt`, `phase2-step6.4-audit.txt` | the derived audit in `[STEP6_SINCE, now)`, and the counts before and after |
 | `phase2-podlog.txt` | the walk pod's log, read once: the leader lines, any line naming `developer`'s Lease (0 expected: the pod never touches it, and step 6's processes write to the exec stream), fleet-* and self-login-* lines, errors |
-| `phase2-{before-walk-pod,walk-pod,after-handback}-audit.txt` | the three windows' derived audits |
+| `phase2-{before-walk-pod,walk-pod,after-walk-pod}-audit.txt` | the three windows' derived audits; the middle bounds are the walk pod's Kubernetes `startTime` and the next whole second after its exact UID is first observed gone |
 | `handback-sweep.txt` (or `trap-sweep.txt`), `phase2-compare.txt`, `phase2-run.txt` | the restore, the start/end comparison line by line, the whole run's log |
 
 `scripts/capture.sh audit` is #310's, with one addition: a read that returns no records exits 2, and a log whose
 earliest record is later than the window's start exits 3. Neither can be read as "0 authorizes"
-(`evidence/offline-audit.txt`).
+(`evidence/offline-audit.txt`). Audit MicroTime and the second-only shell bounds are normalized to whole seconds before
+the start-inclusive/end-exclusive comparison; the boundary regression is also in that evidence.
 
 ## Timings
 
@@ -282,8 +283,9 @@ figures it is on the order of minutes.
 - **The fleet account's daily ping.** It last ran at 2026-09-30T17:58:43Z (the fleet Lease, phase 1), so it is next
   due at 2026-10-01T17:58:43Z. If phase 2 starts after that, the Argo CD pod pings the fleet account before the
   deploy and again after the hand-back. That is the product, not the walk, and the audit windows keep it apart: the
-  walk pod's tenure is a MUST 0/0, before and after are INFO. The fleet Lease's resourceVersion and sha256 are INFO
-  lines start to end. Within 6.0–6.4 its sha256 is a MUST: the walk pod does not declare the fleet account, so it
+  exact walk pod's observed lifetime is a MUST 0/0; before its Kubernetes `startTime` and after its UID is gone are
+  INFO. A local read-only watcher records the second bound while Helm removes the pod, before Argo starts its replacement.
+  The fleet Lease's resourceVersion and sha256 are INFO lines start to end. Within 6.0–6.4 its sha256 is a MUST: the walk pod does not declare the fleet account, so it
   never writes that Lease.
 - **A coordinator cut off mid-claim.** A network drop during `oc exec` could leave A's claim live for up to 195 s.
   The spec says to wait, never to delete it. `run.sh` aborts with no retry. `sweep.sh` leaves a held Lease in place
@@ -327,7 +329,8 @@ PROOFS PASS`.
 | `tests/test_fleet_lifecycle.py` + `test_fleet_lifecycle_round3.py` + `test_fleet_gate_backstop.py`; `tests/test_ping_account_scope.py` | 90 passed; 24 passed | same |
 | the coordinator: extracted, compiled, pinned; the image's `gsd` = this tree's; rehearsed absent / free / held | PASS, PASS (68 modules); exit 0 / 0 / 2 with the lines above | `evidence/offline-coordinator.txt` |
 | `scripts/sweep.sh` five times against a stub `oc` | exit 5, 5, 5, 0, 0: the keep-grant kept while a cut-short cascade is deleting the Application and until the chart's grant is back on Argo CD; the Lease kept while the configuration names `developer` and while a claim is live; everything removed at the end; 0 unexpected calls | `evidence/offline-restore.txt` |
-| `scripts/capture.sh audit` against a stub `oc`, on 8 synthetic records | the window's counts (developer 2, the fleet account 1, another user never printed); an empty read exits 2, a late log exits 3 | `evidence/offline-audit.txt` |
+| `scripts/capture.sh audit` against a stub `oc`, on synthetic records | the window's counts; an empty read exits 2, a late log exits 3; fractional timestamps on the whole-second start/end are included/excluded respectively | `evidence/offline-audit.txt` |
+| the exact-pod end watcher against a stub `oc` | records a conservative exclusive bound only after the walk pod UID is gone | `evidence/offline-pod-window.txt` |
 | `bash -n`, `shellcheck -x` (0.11.0) on every script | PASS | `evidence/offline-lint.txt` |
 
 ### The stub harness
@@ -378,6 +381,7 @@ From `evidence/phase1-as-found-baseline.txt` (`scripts/baseline.sh phase1-as-fou
 - `scripts/labcheck.sh`: the spec's three counts (#310's, unchanged below its header).
 - `scripts/baseline.sh`, `scripts/compare_baselines.sh`: the lab's invariants, and their comparison.
 - `scripts/capture.sh`: the pod log (read once) and the derived audit.
+- `scripts/watch_pod_end.sh`: the local/read-only exact-pod end watcher used to bound the tenure audit.
 - `scripts/test_step6_arrangement.py`: the arrangement, hermetically.
 - `scripts/offline_proofs.sh`, `scripts/stub/`: the phase 1 proofs, the stand-in `oc`, and the in-image rehearsal.
 
@@ -398,7 +402,7 @@ both. `run.sh` exits 0 only if all of these hold:
 - step 6 printed its three lines and 6.4's counts held;
 - the hand-back's `release-crc.sh --argocd main` exited 0 (Synced and Healthy at `main`);
 - the hand-back's sweep removed everything;
-- the walk pod's tenure audit is 0 authorizes for `developer` and 0 for the fleet account;
+- the exact walk pod lifetime audit is 0 authorizes for `developer` and 0 for the fleet account;
 - the start/end comparison is equal on every MUST line;
 - the fleet account is named 0 times in `evidence/`.
 

@@ -40,6 +40,11 @@ case "${args}" in
   "get secrets,roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run="*" -o name")
     if flag keep; then printf '%s\n' role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; fi ;;
   "get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run="*" -o name") ;;
+  "get pods -n group-sync-dashboard walk-pod -o json")
+    case "$(get pod old)" in
+      old) echo '{"metadata":{"name":"walk-pod","uid":"walk-uid"}}' ;;
+      gone) echo 'Error from server (NotFound): pods "walk-pod" not found' >&2; exit 1 ;;
+    esac ;;
   # lib.sh#on_argo: the Application (`argo`: present|deleting|absent, default present) and the Helm release (`helm`).
   "get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o jsonpath={.metadata.deletionTimestamp}")
     case "$(get argo present)" in
