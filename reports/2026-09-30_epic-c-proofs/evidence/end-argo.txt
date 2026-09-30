@@ -1,0 +1,3 @@
+# oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision, not_healthy: [.status.resources[] | select(.health.status != null and .health.status != "Healthy") | {kind, name, health: .health.status, message: .health.message}]}'
+# at 2026-09-30T15:21:46Z
+{"sync":"Synced","health":"Degraded","revision":"b7d120ca9be7fc64c4044f677d5b0b432e468c4c","not_healthy":[{"kind":"CronJob","name":"group-sync-dashboard-report-nightly-namespace-access","health":"Degraded","message":"CronJob has not completed its last execution successfully"}]}

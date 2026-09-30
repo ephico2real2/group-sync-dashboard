@@ -1,0 +1,8 @@
+# the report folder searched at 2026-09-30T15:26:18Z; counts of FILES, nothing quoted
+# grep -rl 'sha256~[A-Za-z0-9]' <folder>   (a token that escaped the filter, screenshots included; the placeholder is sha256~<redacted>)
+# files: 0
+# grep -rli -F '<the fleet account>' <folder>   (its real name, any case, screenshots included)
+# files: 0
+# pdftotext <each PDF> - | grep -i -F '<the fleet account>'   (the PDFs' extracted text)
+# PDFs: 0; naming the fleet account: 0
+# the screenshots are masked where the page's DOM named the fleet account: evidence/mask-log.jsonl

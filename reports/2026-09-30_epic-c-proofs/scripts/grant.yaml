@@ -1,0 +1,30 @@
+# The walk's temporary grant (after reports/2026-09-30_release-2.0.0-walk/scripts/grant.yaml): `developer` passes the
+# cluster-admin tier (`visibility.clusterAdminSar`, `update clusterrolebindings` on the host) for the length of the
+# fleet-row captures. That tier gates the Cluster Configurations tab (`require_cluster_admin` in
+# local-development/gsd/api.py). Created by proof2.sh, removed by its explicit delete and by its exit trap, both
+# through the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-epic-c-proofs-crb-update
+  labels:
+    walk.gsd.lab/run: epic-c-proofs-2026-09-30
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-epic-c-proofs-crb-update-developer
+  labels:
+    walk.gsd.lab/run: epic-c-proofs-2026-09-30
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-epic-c-proofs-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

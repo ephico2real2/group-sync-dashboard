@@ -1,0 +1,29 @@
+2026-09-30T15:21:08Z whoami                                                        : {"user": "developer", "cluster_admin": true}
+2026-09-30T15:21:08Z PASS developer holds the cluster-admin tier for the walk      : {"user": "developer", "cluster_admin": true}
+2026-09-30T15:21:08Z PASS GET /api/clusterconfigs answers 200                      : 200
+2026-09-30T15:21:08Z wrote                                                         : evidence/api-clusterconfigs-fleet.json
+2026-09-30T15:21:11Z PASS 1280: no 'Dashboard API error'                           : null
+2026-09-30T15:21:11Z wrote                                                         : evidence/fleet-rows-1280.json
+2026-09-30T15:21:11Z PASS 1280: one row per fleet account in the API               : {"rows": 1, "accounts": 1}
+2026-09-30T15:21:11Z PASS 1280: the row has SPEC_S4c §3.10's shape                 : fleet account <fleet account> · last confirmed 2026-09-29 17:57 · last ping shared-rnd: ok
+2026-09-30T15:21:11Z PASS 1280: `suspended` badge painted iff the Lease holds an entry: {"badges": [], "suspended_entries": 0}
+2026-09-30T15:21:11Z PASS 1280: `last confirmed` is the API's last_ok              : 2026-09-29T17:57:32Z
+2026-09-30T15:21:11Z PASS 1280: the row names the last ping's target and outcome   : null
+2026-09-30T15:21:11Z PASS 1280: the page does not scroll sideways                  : {"innerWidth": 1280, "scrollWidth": 1280}
+2026-09-30T15:21:12Z shot                                                          : screenshots/01-1280-cc-head.png
+2026-09-30T15:21:12Z shot                                                          : screenshots/02-1280-fleet-row.png
+2026-09-30T15:21:13Z control (unmasked, outside the repo)                          : control-1280-fleet-row-UNMASKED.png
+2026-09-30T15:21:13Z control (unmasked, outside the repo)                          : control-1280-cc-head-UNMASKED.png
+2026-09-30T15:21:15Z PASS 375: no 'Dashboard API error'                            : null
+2026-09-30T15:21:15Z wrote                                                         : evidence/fleet-rows-375.json
+2026-09-30T15:21:15Z PASS 375: one row per fleet account in the API                : {"rows": 1, "accounts": 1}
+2026-09-30T15:21:15Z PASS 375: the row has SPEC_S4c §3.10's shape                  : fleet account <fleet account> · last confirmed 2026-09-29 17:57 · last ping shared-rnd: ok
+2026-09-30T15:21:15Z PASS 375: `suspended` badge painted iff the Lease holds an entry: {"badges": [], "suspended_entries": 0}
+2026-09-30T15:21:15Z PASS 375: `last confirmed` is the API's last_ok               : 2026-09-29T17:57:32Z
+2026-09-30T15:21:15Z PASS 375: the row names the last ping's target and outcome    : null
+2026-09-30T15:21:15Z PASS 375: the page does not scroll sideways                   : {"innerWidth": 375, "scrollWidth": 375}
+2026-09-30T15:21:15Z shot                                                          : screenshots/03-375-cc-head.png
+2026-09-30T15:21:16Z shot                                                          : screenshots/04-375-fleet-row.png
+2026-09-30T15:21:16Z PASS no uncaught page errors                                  : []
+2026-09-30T15:21:16Z PASS no write was attempted                                   : []
+2026-09-30T15:21:16Z failures                                                      : []

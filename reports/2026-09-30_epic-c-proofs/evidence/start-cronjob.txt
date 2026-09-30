@@ -1,0 +1,6 @@
+# oc get cronjobs.batch -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,SCHEDULE:.spec.schedule,TZ:.spec.timeZone,LAST_SCHEDULE:.status.lastScheduleTime,LAST_SUCCESS:.status.lastSuccessfulTime
+# at 2026-09-30T15:14:34Z
+NAME                                                   SCHEDULE           TZ                 LAST_SCHEDULE          LAST_SUCCESS
+group-sync-dashboard-report-biweekly-groups            0 6 1,16 * *       America/New_York   <none>                 <none>
+group-sync-dashboard-report-nightly-namespace-access   0 22 * * *         America/New_York   2026-09-30T02:00:00Z   2026-09-29T02:00:11Z
+group-sync-dashboard-report-quarterly-compliance       0 6 1 1,4,7,10 *   America/New_York   <none>                 <none>

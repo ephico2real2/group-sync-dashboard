@@ -1,0 +1,6 @@
+# oc get configmaps -n openshift-config enterprise-and-cluster-ca-bundle -o jsonpath='{.data.ca-bundle\.crt}' > <tmp>/ca.crt
+# at 2026-09-30T15:14:43Z; certificates in the bundle: 6
+# openssl s_client -connect api.crc.testing:6443 -servername api.crc.testing -CAfile <tmp>/ca.crt
+Verify return code: 0 (ok)
+# openssl s_client -connect oauth-openshift.apps-crc.testing:443 -servername oauth-openshift.apps-crc.testing -CAfile <tmp>/ca.crt
+Verify return code: 0 (ok)

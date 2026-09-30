@@ -1,0 +1,22 @@
+{
+  "read_at": "2026-09-30T15:21:08Z",
+  "request": "GET /api/clusterconfigs",
+  "http": 200,
+  "fleet": {
+    "ping": {
+      "enabled": true,
+      "interval_seconds": 86400
+    },
+    "accounts": [
+      {
+        "username": "<fleet account>",
+        "lease": "gsd-fleet-666f1ba7f2fdead0",
+        "last_attempt": "2026-09-29T17:57:32Z",
+        "last_ok": "2026-09-29T17:57:32Z",
+        "last_outcome": "ok",
+        "last_target": "shared-rnd",
+        "suspended": []
+      }
+    ]
+  }
+}

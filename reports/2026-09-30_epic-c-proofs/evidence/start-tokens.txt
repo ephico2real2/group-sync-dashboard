@@ -1,0 +1,6 @@
+# oc get oauthaccesstokens.oauth.openshift.io -o json | jq -r --arg f '<fleet account>' 'def n(p): [.items[] | select(p)] | length; "developer, openshift-challenging-client: \(n(.userName=="developer" and .clientName=="openshift-challenging-client"))", "developer, any client: \(n(.userName=="developer"))", "fleet account, openshift-challenging-client: \(n(.userName==$f and .clientName=="openshift-challenging-client"))", "fleet account, any client: \(n(.userName==$f))"'
+# at 2026-09-30T15:14:35Z
+developer, openshift-challenging-client: 6
+developer, any client: 71
+fleet account, openshift-challenging-client: 2
+fleet account, any client: 2

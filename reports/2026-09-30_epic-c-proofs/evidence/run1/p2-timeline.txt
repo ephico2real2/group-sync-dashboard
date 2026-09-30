@@ -1,0 +1,5 @@
+2026-09-30T15:17:32Z proof 2 start
+2026-09-30T15:17:32Z grant created
+2026-09-30T15:18:42Z rows.py
+2026-09-30T15:18:56Z grant deleted
+2026-09-30T15:18:57Z proof 2 end rc=1

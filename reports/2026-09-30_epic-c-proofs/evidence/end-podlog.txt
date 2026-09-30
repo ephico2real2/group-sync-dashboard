@@ -1,0 +1,15 @@
+# oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --timestamps --since-time=2026-09-30T15:14:32Z  (captured 2026-09-30T15:21:48Z)
+# lines in the window: 283
+# discovery cycles, fleet-* and cluster-refreshed lines:
+# discovery cycle lines: 0
+# fleet-lookup lines: 0
+# fleet-ping lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# cluster-refreshed lines: 0
+# cluster-rejoined lines: 0
+# lines naming the fleet account: 0
+# Traceback lines: 0
+# ERROR lines (the string anywhere): 0

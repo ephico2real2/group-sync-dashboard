@@ -1,0 +1,4 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=epic-c-proofs-2026-09-30 -o name
+# at 2026-09-30T15:19:53Z
+clusterrole.rbac.authorization.k8s.io/gsd-walk-epic-c-proofs-crb-update
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-epic-c-proofs-crb-update-developer
