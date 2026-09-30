@@ -37,6 +37,19 @@ fleet_account() {
   printf '%s' "${names}"
 }
 
+# Whether the lab is on Argo CD: the Application exists and is not being deleted, and no Helm release of the dashboard
+# is installed. A signal that cuts `release-crc.sh --values` short inside `oc delete application` leaves the Application
+# with a deletionTimestamp while Argo CD goes on deleting what it tracks, the chart's fleet-account Role in
+# openshift-config among them, so the Application's presence alone does not mean the lab is on Argo CD. 0 yes; 1 no,
+# or a read failed (a failed read never counts as "on Argo CD").
+on_argo() {
+  local deleting helm
+  deleting=$(oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard \
+    -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null) || return 1
+  helm=$(oc get secrets -n "${NS}" -l owner=helm,name=group-sync-dashboard -o name 2>/dev/null) || return 1
+  [ -z "${deleting}" ] && [ -z "${helm}" ]
+}
+
 # The Running dashboard pod's name (the Deployment runs one replica, Recreate; the report pod has another name label).
 dashboard_pod() {
   oc get pods -n "${NS}" -l app.kubernetes.io/name=group-sync-dashboard \

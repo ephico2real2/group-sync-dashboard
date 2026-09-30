@@ -14,7 +14,7 @@
 #                               §3.11 names (R1, R2, D1, C5) one by one, and their suites whole
 #   6. offline-coordinator.txt  the program extracted from the spec, compiled, pinned in run.sh, and run VERBATIM inside
 #                               the dashboard image against a fake API server: the Lease absent, free, and held
-#   7. offline-restore.txt      sweep.sh four times against a stub `oc`: nothing removed early, everything at the end
+#   7. offline-restore.txt      sweep.sh five times against a stub `oc`: nothing removed early, everything at the end
 #   8. offline-audit.txt        capture.sh audit against a stub `oc`: the counts from synthetic records; a failed read
 #                               and a log that starts after the window both refuse to count
 #   9. offline-lint.txt         bash -n and shellcheck -x on every script
@@ -223,9 +223,12 @@ done
 grep -qx 'held 2' "${T}/rehearsal-rc" && grep -qx 'ABORT: process A did not hold' "${T}/held.out" \
   && [ "$(grep -cE '^#   (POST|PUT) ' "${T}/held.out" || true)" = 0 ] || ok=false
 
-# ── 7. the restore, four times, against a stub oc ──────────────────────────────────────────────────────────────────
+# ── 7. the restore, five times, against a stub oc ──────────────────────────────────────────────────────────────────
 mkdir -p "${T}/state" "${T}/ev"
-( cd "${T}/state" && printf 0 > chart && printf 0 > secret && printf 1 > keep && printf 1 > cm_developer && printf held > lease )
+# Run 0: a signal cut `release-crc.sh --values` short inside `oc delete application`; Argo CD is still deleting what
+# it tracks, and the chart's Role in openshift-config is still readable.
+( cd "${T}/state" && printf 1 > chart && printf 0 > secret && printf 1 > keep && printf 0 > cm_developer && printf absent > lease \
+    && printf deleting > argo && printf 0 > helm )
 stub() {  # the stub first on PATH, under bash, with nothing inherited but what the scripts need
   env -i HOME="${HOME}" PATH="${S}/stub:/usr/bin:/bin:$(dirname "$(command -v jq)")" STUB_STATE="${T}/state" \
     EVIDENCE_DIR="${T}/ev" KUBECONFIG=/dev/null bash "${S}/sweep.sh" "$1" > "${T}/$1.out" 2>&1
@@ -233,10 +236,15 @@ stub() {  # the stub first on PATH, under bash, with nothing inherited but what 
 {
   stamp
   set +e
+  stub run-0; r0=$?
+  echo "## run 0 — the Application being deleted (a cascade cut short), the chart's Role still readable: exit ${r0} (5 = left on purpose)"
+  sed -E 's/^[0-9TZ:-]+ //' "${T}/run-0.out"
+  # The walk values deployed: a Helm release, no Application, no chart grant, the configuration naming developer.
+  ( cd "${T}/state" && printf 0 > chart && printf 1 > cm_developer && printf held > lease && printf absent > argo && printf 1 > helm )
   stub run-1; r1=$?
   echo "## run 1 — the walk values deployed (no chart grant, the configuration names developer, A's claim live): exit ${r1} (5 = left on purpose)"
   sed -E 's/^[0-9TZ:-]+ //' "${T}/run-1.out"
-  ( cd "${T}/state" && printf 1 > chart && printf 0 > cm_developer )   # what `release-crc.sh --argocd main` restores
+  ( cd "${T}/state" && printf 1 > chart && printf 0 > cm_developer && printf present > argo && printf 0 > helm )   # what `release-crc.sh --argocd main` restores
   stub run-2; r2=$?
   echo "## run 2 — after the hand-back, A's claim still live (a coordinator killed inside its 195 s): exit ${r2}"
   sed -E 's/^[0-9TZ:-]+ //' "${T}/run-2.out"
@@ -250,11 +258,12 @@ stub() {  # the stub first on PATH, under bash, with nothing inherited but what 
   set -e
   echo "## the stub's call log: $(grep -c '^delete ' "${T}/state/calls" || true) delete call(s) (each --ignore-not-found); unexpected calls: $(cat "${T}"/run-*.out | grep -c 'unexpected call' || true)"
   echo "final state: secret=$(cat "${T}/state/secret") keep=$(cat "${T}/state/keep") lease=$(cat "${T}/state/lease")"
-  if [ "${r1}" = 5 ] && [ "${r2}" = 5 ] && [ "${r3}" = 0 ] && [ "${r4}" = 0 ] \
+  if [ "${r0}" = 5 ] && [ "${r1}" = 5 ] && [ "${r2}" = 5 ] && [ "${r3}" = 0 ] && [ "${r4}" = 0 ] \
+     && grep -q '2. LEFT: the keep-grant stays' "${T}/run-0.out" \
      && grep -q '2. LEFT: the keep-grant stays' "${T}/run-1.out" && grep -q '3. LEFT: .* still names developer' "${T}/run-1.out" \
      && grep -q 'removing the keep-grant' "${T}/run-2.out" && grep -q '3. LEFT: .* a live claim holds it' "${T}/run-2.out" \
      && [ "$(cat "${T}/state/keep")$(cat "${T}/state/lease")" = 0absent ]; then
-    echo "PASS the restore is safe to run again and again: nothing removed early (the keep-grant before the chart's grant, the Lease before the configuration stops naming developer or while a claim is live), everything removed at the end"
+    echo "PASS the restore is safe to run again and again: nothing removed early (the keep-grant before the chart's grant is back on a lab that is on Argo CD, the Lease before the configuration stops naming developer or while a claim is live), everything removed at the end"
   else echo "FAIL"; fi
 } > "${EV}/offline-restore.txt"
 grep -q '^PASS' "${EV}/offline-restore.txt" || ok=false

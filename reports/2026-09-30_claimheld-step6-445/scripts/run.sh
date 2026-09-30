@@ -48,9 +48,8 @@ on_exit() {
     # after a sweep that settled (exit 0, or 5: something left on purpose until the hand-back).
     if [ "${swept}" != 0 ] && [ "${swept}" != 5 ]; then
       say "THE SWEEP DID NOT COMPLETE: sweep.sh exited ${swept} (evidence/trap-sweep.txt). Run bash ${S}/sweep.sh trap-again and read what it says before anything else."
-    elif oc get secrets -n "${NS}" -l owner=helm,name=group-sync-dashboard -o name | grep -q . \
-       || ! oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o name >/dev/null 2>&1; then
-      say "THE LAB IS NOT ON ARGO CD (a Helm release is installed, or the Application is gone). To finish: (cd ${DEPLOY}/local-development && ./release-crc.sh --argocd main), then bash ${S}/sweep.sh trap-after-handback"
+    elif ! on_argo; then
+      say "THE LAB IS NOT ON ARGO CD (a Helm release is installed, or the Application is gone or being deleted). To finish: (cd ${DEPLOY}/local-development && ./release-crc.sh --argocd main), then bash ${S}/sweep.sh trap-after-handback"
     fi
   fi
   rm -rf "${RAW}"
@@ -239,4 +238,5 @@ set -e
 say "done: step 6 passed, argocd main rc=${argo_rc}, sweep rc=${sweep_rc}, walk-pod audit (developer, fleet)=${tenure}(rc ${tenure_rc}), compare rc=${compare_rc}, the fleet account named in evidence/: ${named} time(s)"
 # Only a complete sweep ends the trap's duty; otherwise it runs the sweep once more and says what is left.
 [ "${sweep_rc}" = 0 ] && HANDBACK_DONE=true
-[ "${sweep_rc}" = 0 ] && [ "${compare_rc}" = 0 ] && [ "${tenure_rc}" = 0 ] && [ "${tenure}" = "0 0 " ] && [ "${named}" = 0 ]
+[ "${argo_rc}" = 0 ] && [ "${sweep_rc}" = 0 ] && [ "${compare_rc}" = 0 ] && [ "${tenure_rc}" = 0 ] && [ "${tenure}" = "0 0 " ] \
+  && [ "${named}" = 0 ]

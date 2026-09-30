@@ -40,6 +40,15 @@ case "${args}" in
   "get secrets,roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run="*" -o name")
     if flag keep; then printf '%s\n' role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; fi ;;
   "get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run="*" -o name") ;;
+  # lib.sh#on_argo: the Application (`argo`: present|deleting|absent, default present) and the Helm release (`helm`).
+  "get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o jsonpath={.metadata.deletionTimestamp}")
+    case "$(get argo present)" in
+      present) ;;
+      deleting) printf '2026-09-30T00:00:00Z' ;;
+      *) echo 'Error from server (NotFound): applications.argoproj.io "group-sync-dashboard" not found' >&2; exit 1 ;;
+    esac ;;
+  "get secrets -n group-sync-dashboard -l owner=helm,name=group-sync-dashboard -o name")
+    if flag helm; then echo secret/sh.helm.release.v1.group-sync-dashboard.v1; fi ;;
   # capture.sh audit: the fleet account's name from its Lease, then the oauth-server audit log from ${STUB_STATE}/audit.log.
   "get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o json")
     echo '{"items":[{"metadata":{"annotations":{"groupsync-dashboard.io/account":"stub-fleet-account"}}},{"metadata":{"annotations":{"groupsync-dashboard.io/account":"developer"}}}]}' ;;

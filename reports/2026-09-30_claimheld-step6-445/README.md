@@ -326,7 +326,7 @@ PROOFS PASS`.
 | ClaimHeld across processes, the tests SPEC_S4c §3.11 names: R1 `test_r1_two_processes_cannot_both_win_one_claim_and_no_claim_is_no_bind`; R2 `test_r2_the_budget_over_the_system_one_authorize_across_two_processes_three_targets_a_restart_and_an_edit[401\|500]`; D1 `test_d1_clock_skew_does_not_admit_a_second_bind`, `test_d1_skew_takeover_at_each_point_of_the_attempt[reservation\|authorize\|refusal]`, `test_d1_a_paused_winner_resumes_after_the_takeover_and_does_not_bind`; C5 `test_d1_paused_winner_success_clears_its_own_reservation_on_409`, `test_d1_paused_winner_complete_does_not_erase_a_foreign_refusal` | 10 passed, each named PASSED | same |
 | `tests/test_fleet_lifecycle.py` + `test_fleet_lifecycle_round3.py` + `test_fleet_gate_backstop.py`; `tests/test_ping_account_scope.py` | 90 passed; 24 passed | same |
 | the coordinator: extracted, compiled, pinned; the image's `gsd` = this tree's; rehearsed absent / free / held | PASS, PASS (68 modules); exit 0 / 0 / 2 with the lines above | `evidence/offline-coordinator.txt` |
-| `scripts/sweep.sh` four times against a stub `oc` | exit 5, 5, 0, 0: the keep-grant kept until the chart's grant is back; the Lease kept while the configuration names `developer` and while a claim is live; everything removed at the end; 0 unexpected calls | `evidence/offline-restore.txt` |
+| `scripts/sweep.sh` five times against a stub `oc` | exit 5, 5, 5, 0, 0: the keep-grant kept while a cut-short cascade is deleting the Application and until the chart's grant is back on Argo CD; the Lease kept while the configuration names `developer` and while a claim is live; everything removed at the end; 0 unexpected calls | `evidence/offline-restore.txt` |
 | `scripts/capture.sh audit` against a stub `oc`, on 8 synthetic records | the window's counts (developer 2, the fleet account 1, another user never printed); an empty read exits 2, a late log exits 3 | `evidence/offline-audit.txt` |
 | `bash -n`, `shellcheck -x` (0.11.0) on every script | PASS | `evidence/offline-lint.txt` |
 
@@ -396,6 +396,7 @@ PY=/Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/pyt
 both. `run.sh` exits 0 only if all of these hold:
 
 - step 6 printed its three lines and 6.4's counts held;
+- the hand-back's `release-crc.sh --argocd main` exited 0 (Synced and Healthy at `main`);
 - the hand-back's sweep removed everything;
 - the walk pod's tenure audit is 0 authorizes for `developer` and 0 for the fleet account;
 - the start/end comparison is equal on every MUST line;

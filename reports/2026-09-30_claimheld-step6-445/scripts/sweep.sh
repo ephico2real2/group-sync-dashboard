@@ -5,7 +5,8 @@
 # of times — each step reads the state first and does nothing when it is already where it should be.
 #   1. The walk Secret, by the run label. The walk never creates it; the step proves it absent.
 #   2. The ServiceAccount's keep-grant, by the run label — ONLY when the chart's own group-sync-dashboard-fleet-account
-#      Role in openshift-config grants `get` on ldap-oauth-bind-secret again (after `release-crc.sh --argocd main`).
+#      Role in openshift-config grants `get` on ldap-oauth-bind-secret again (after `release-crc.sh --argocd main`)
+#      AND the lab is on Argo CD (lib.sh#on_argo: a cascade cut short still shows that Role while deleting it).
 #      Before that the grant is the only thing holding that permission, and it stays: the dashboard ServiceAccount's
 #      permissions never drop (the operator's rule of 2026-09-25).
 #   3. `developer`'s Lease, by name — ONLY when the deployed configuration names no `developer` account AND no live
@@ -35,13 +36,16 @@ left=0; rc=0
   chart_binding=$(oc get rolebindings.rbac.authorization.k8s.io -n openshift-config -o json 2>/dev/null \
     | jq -r --arg ns "${NS}" '[.items[] | select(.roleRef.kind == "Role" and .roleRef.name == "group-sync-dashboard-fleet-account")
          | .subjects[]? | select(.kind == "ServiceAccount" and .name == "group-sync-dashboard" and .namespace == $ns)] | length' 2>/dev/null || echo 0)
+  # The chart's grant counts only on a lab that is on Argo CD: while a cut-short cascade is deleting the Application,
+  # the Role is still readable and about to go (lib.sh#on_argo).
+  argo=no; on_argo && argo=yes
   if [ -z "$(oc get roles.rbac.authorization.k8s.io -n openshift-config -l "${RUN_LABEL}" -o name)" ]; then
     say "2. no keep-grant present"
-  elif [ "${chart_role:-0}" -ge 1 ] && [ "${chart_binding:-0}" -ge 1 ]; then
+  elif [ "${chart_role:-0}" -ge 1 ] && [ "${chart_binding:-0}" -ge 1 ] && [ "${argo}" = yes ]; then
     say "2. the chart's group-sync-dashboard-fleet-account Role and binding grant the ServiceAccount get on ldap-oauth-bind-secret: removing the keep-grant"
     say "2. $(oc delete roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -n openshift-config -l "${RUN_LABEL}" --ignore-not-found 2>&1 | tr '\n' ' ')"
   else
-    say "2. LEFT: the keep-grant stays — the chart's own grant on ldap-oauth-bind-secret is not back (Role rules matching: ${chart_role:-0}, bindings: ${chart_binding:-0}). Run release-crc.sh --argocd main, then this script again."
+    say "2. LEFT: the keep-grant stays — the chart's own grant on ldap-oauth-bind-secret is not back on a lab that is on Argo CD (Role rules matching: ${chart_role:-0}, bindings: ${chart_binding:-0}, on Argo CD: ${argo}). Run release-crc.sh --argocd main, then this script again."
     left=1
   fi
 
