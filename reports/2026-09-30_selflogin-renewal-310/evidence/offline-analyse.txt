@@ -1,4 +1,4 @@
-# 2026-09-30T16:39:43Z; tree 708e6be104; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# 2026-09-30T18:02:54Z; tree 8a02acd74b; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
 ## analyse.py on the good synthetic run
 timeline (UTC):
   login 1   18:00:00.394561  expires_at 18:10:00  renew_at 18:07:30
@@ -16,7 +16,7 @@ PASS renewal 2: self-login-renewed says expires_at 18:26:00, renew_at 18:23:30 (
 PASS renewal 2: polled across the boundary — last poll before 18:15:00, first after 18:16:00
 PASS `polled walk-self-login:` lines from the first login: 18, the longest gap 60.0 s (want <= 75)
 PASS failure lines about walk-self-login (or ERROR/Traceback): 0
-PASS gsd_cluster_up{cluster="walk-self-login"} samples after the first login: 18, all 1: True
+PASS gsd_cluster_up{cluster="walk-self-login"} samples read after the first poll: 18, all 1: True
 PASS gsd_cluster_last_poll_timestamp_seconds{cluster="walk-self-login"}: 18 distinct values, the longest step 60 s (want <= 75)
 14 passed, 0 failed
 exit 0
@@ -37,7 +37,7 @@ PASS renewal 2: self-login-renewed says expires_at 18:26:00, renew_at 18:23:30 (
 PASS renewal 2: polled across the boundary — last poll before 18:15:00, first after 18:16:00
 FAIL `polled walk-self-login:` lines from the first login: 17, the longest gap 120.0 s (want <= 75)
 PASS failure lines about walk-self-login (or ERROR/Traceback): 0
-PASS gsd_cluster_up{cluster="walk-self-login"} samples after the first login: 18, all 1: True
+PASS gsd_cluster_up{cluster="walk-self-login"} samples read after the first poll: 18, all 1: True
 PASS gsd_cluster_last_poll_timestamp_seconds{cluster="walk-self-login"}: 18 distinct values, the longest step 60 s (want <= 75)
 12 passed, 2 failed
 exit 1

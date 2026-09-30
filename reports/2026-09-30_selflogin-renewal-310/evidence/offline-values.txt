@@ -1,4 +1,4 @@
-# 2026-09-30T16:39:36Z; tree 708e6be104; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# 2026-09-30T18:02:46Z; tree 8a02acd74b; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
 PASS outside .clusters and .clusterConfig.fleetAccount, the walk values parse equal to environments/crc.yaml
 the walk's .clusters: [{"name":"dashboard","dashboardController":true,"apiUrl":"https://kubernetes.default.svc","tokenFile":"/var/run/secrets/kubernetes.io/serviceaccount/token","caBundleFile":"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt","enabled":true},{"name":"walk-self-login","apiUrl":"https://api.crc.testing:6443","userSelfLogin":true,"ldapConnectionBootstrap":"developer","enabled":true}]
 the walk's .clusterConfig.fleetAccount: {"username":"developer","passwordSecret":{"namespace":"group-sync-dashboard","name":"gsd-walk-developer-password","key":"password"}}
