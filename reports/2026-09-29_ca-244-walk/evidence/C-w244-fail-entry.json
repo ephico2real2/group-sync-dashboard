@@ -1,0 +1,32 @@
+{
+  "id": "w244-fail",
+  "source": "secret:gsd-cluster-w244-fail",
+  "api_url": "https://mock-privateca:6443",
+  "credential": "bearer",
+  "tls": {
+    "insecure": false,
+    "ca": "caData"
+  },
+  "status": "unreachable",
+  "last_poll": "2026-09-30T05:08:53Z",
+  "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+  "trust": {
+    "store": "secret:gsd-cluster-w244-fail/tlsClientConfig.caData",
+    "sourceKind": "secret",
+    "count": 1,
+    "enterpriseRoot": null,
+    "certificates": [
+      {
+        "subject": "CN=walk-244 wrong CA",
+        "issuer": "CN=walk-244 wrong CA",
+        "notBefore": "2026-09-30T05:04:45Z",
+        "notAfter": "2027-09-30T05:04:45Z",
+        "sha256": "7c3082f15c68864f06a173a2f78cc36b8edc25e7aebb45aac7f0e2bb05454c1d",
+        "enterpriseRoot": null,
+        "validity": "valid"
+      }
+    ]
+  },
+  "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-fail with the CA that signs its API server",
+  "store": "secret:gsd-cluster-w244-fail/tlsClientConfig.caData"
+}

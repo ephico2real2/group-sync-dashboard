@@ -1,0 +1,17 @@
+{
+  "tls_row": "verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+  "trust_store": "store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate",
+  "certificates": [
+    {
+      "text": "CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+      "data_cc_ca": "cdf9fb279a8795542554eb3fa0b26faa454c95430b67c1dff527adeda977fc66"
+    }
+  ],
+  "badges": [
+    "verified"
+  ],
+  "connection_error": null,
+  "action": null,
+  "store": null,
+  "connection_row": "ok reachable 2026-09-30 05:08"
+}

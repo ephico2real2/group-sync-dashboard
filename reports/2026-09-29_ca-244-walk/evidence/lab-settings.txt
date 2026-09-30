@@ -1,0 +1,13 @@
+# at 2026-09-30T05:15:30Z
+# oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o jsonpath='{.data.clusters\.yaml}' | grep -E '^(enterpriseCa|caExpiry|pollInterval|discoveryInterval|clusterSecrets)'
+pollIntervalSeconds: 60
+discoveryIntervalSeconds: 300
+clusterSecretsEnabled: true
+clusterSecretsWritesEnabled: true
+enterpriseCaSha256: ""
+enterpriseCaSubject: ""
+caExpiryWarningDays: 30
+# oc get deployments.apps -n group-sync-dashboard group-sync-dashboard -o json | jq '.spec.template.spec.containers[] | select(.name=="dashboard") | {image, GSD_TRUSTED_CA_FILE: (.env[] | select(.name=="GSD_TRUSTED_CA_FILE") | .value)}'
+{"image":"quay.io/ephico2real/group-sync-dashboard:1.20.0","GSD_TRUSTED_CA_FILE":"/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt"}
+# oc get deployments.apps -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.metadata.labels.helm\.sh/chart}'   (at 2026-09-30T05:17:36Z)
+group-sync-dashboard-0.59.22

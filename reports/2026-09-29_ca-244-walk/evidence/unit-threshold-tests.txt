@@ -1,0 +1,5 @@
+# PYTHONPATH=<worktree>/local-development .venv/bin/python -m pytest -v tests/test_ca_visibility.py -k 'threshold or fractional or empty_pin'   (worktree at d874fbc6, run 2026-09-30T04:56:56Z)
+tests/test_ca_visibility.py::test_an_empty_pin_does_not_claim_an_enterprise_root PASSED [ 33%]
+tests/test_ca_visibility.py::test_expiring_at_the_threshold_and_not_the_day_before PASSED [ 66%]
+tests/test_ca_visibility.py::test_warning_does_not_start_a_fractional_day_early PASSED [100%]
+================= 3 passed, 25 deselected, 2 warnings in 0.20s =================

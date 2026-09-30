@@ -1,0 +1,1 @@
+this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-fail with the CA that signs its API server

@@ -1,0 +1,571 @@
+{
+  "read_at": "2026-09-30T05:09:07Z",
+  "http": 200,
+  "clusters": [
+    {
+      "id": "dashboard",
+      "source": "values",
+      "api_url": "https://kubernetes.default.svc",
+      "credential": "in-cluster",
+      "tls": {
+        "insecure": false,
+        "ca": "serviceAccount"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+        "sourceKind": "file",
+        "count": 6,
+        "enterpriseRoot": null,
+        "certificates": [
+          {
+            "subject": "OU=openshift,CN=kube-apiserver-lb-signer",
+            "issuer": "OU=openshift,CN=kube-apiserver-lb-signer",
+            "notBefore": "2026-07-29T11:41:58Z",
+            "notAfter": "2036-07-26T11:41:58Z",
+            "sha256": "5ff417a981815f6da3cc1a5fff0df29278e72b1684b0546078c1fe406c0f352c",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "OU=openshift,CN=kube-apiserver-localhost-signer",
+            "issuer": "OU=openshift,CN=kube-apiserver-localhost-signer",
+            "notBefore": "2026-07-29T11:41:58Z",
+            "notAfter": "2036-07-26T11:41:58Z",
+            "sha256": "263a8acb9f0266073d77a2f9a84dbf6403a5e2f93f732788c2317e5b8a634451",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "OU=openshift,CN=kube-apiserver-service-network-signer",
+            "issuer": "OU=openshift,CN=kube-apiserver-service-network-signer",
+            "notBefore": "2026-07-29T11:41:58Z",
+            "notAfter": "2036-07-26T11:41:58Z",
+            "sha256": "84cc955b4acfcb674c49a8155ed5463fef6c817d791d9277287d6d2fa308af81",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898",
+            "issuer": "CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898",
+            "notBefore": "2026-07-29T11:51:38Z",
+            "notAfter": "2036-07-26T11:51:39Z",
+            "sha256": "8c3c20c4ddebffe5aba33d2bd9d4f346887f19a69c587935faa4e64967de3771",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "CN=*.apps-crc.testing",
+            "issuer": "CN=ingress-operator@1785325954",
+            "notBefore": "2026-07-29T11:52:36Z",
+            "notAfter": "2028-07-28T11:52:37Z",
+            "sha256": "96b4cad0d6cd760cf172dd383b13335ea7d7c82e486ced12cb999d814e37a23f",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "CN=ingress-operator@1785325954",
+            "issuer": "CN=ingress-operator@1785325954",
+            "notBefore": "2026-07-29T11:52:34Z",
+            "notAfter": "2028-07-28T11:52:35Z",
+            "sha256": "f29466f89309e158056d2ff83fd9eed8cc53e755f81620c392269c0df23c8f91",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mock-privateca",
+      "source": "secret:gsd-cluster-mock-privateca",
+      "api_url": "https://mock-privateca:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "caData"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "secret:gsd-cluster-mock-privateca/tlsClientConfig.caData",
+        "sourceKind": "secret",
+        "count": 1,
+        "enterpriseRoot": null,
+        "certificates": [
+          {
+            "subject": "CN=mock-privateca-root",
+            "issuer": "CN=mock-privateca-root",
+            "notBefore": "2026-09-20T16:54:01Z",
+            "notAfter": "2031-09-19T16:54:01Z",
+            "sha256": "cdf9fb279a8795542554eb3fa0b26faa454c95430b67c1dff527adeda977fc66",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mock-selfsigned",
+      "source": "secret:gsd-cluster-mock-selfsigned",
+      "api_url": "https://mock-selfsigned:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": true,
+        "ca": null
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "insecure",
+        "sourceKind": "none",
+        "count": 0,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "mock-trusted",
+      "source": "secret:gsd-cluster-mock-trusted",
+      "api_url": "https://mock-trusted:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:10Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "shared-qa",
+      "source": "secret:gsd-cluster-shared-qa",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "shared-rnd",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "w244-exp",
+      "source": "secret:gsd-cluster-w244-exp",
+      "api_url": "https://mock-privateca:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "caData"
+      },
+      "status": "unreachable",
+      "last_poll": "2026-09-30T05:08:53Z",
+      "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+      "trust": {
+        "store": "secret:gsd-cluster-w244-exp/tlsClientConfig.caData",
+        "sourceKind": "secret",
+        "count": 1,
+        "enterpriseRoot": null,
+        "certificates": [
+          {
+            "subject": "CN=walk-244 expiring CA",
+            "issuer": "CN=walk-244 expiring CA",
+            "notBefore": "2026-09-30T05:04:45Z",
+            "notAfter": "2026-10-10T05:04:45Z",
+            "sha256": "0c34b434490528e7af0d7b58e0a5332afefd76f24a8f6668d4f26d25b43b6cae",
+            "enterpriseRoot": null,
+            "validity": "expiring"
+          }
+        ]
+      },
+      "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-exp with the CA that signs its API server",
+      "store": "secret:gsd-cluster-w244-exp/tlsClientConfig.caData"
+    },
+    {
+      "id": "w244-fail",
+      "source": "secret:gsd-cluster-w244-fail",
+      "api_url": "https://mock-privateca:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "caData"
+      },
+      "status": "unreachable",
+      "last_poll": "2026-09-30T05:08:53Z",
+      "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+      "trust": {
+        "store": "secret:gsd-cluster-w244-fail/tlsClientConfig.caData",
+        "sourceKind": "secret",
+        "count": 1,
+        "enterpriseRoot": null,
+        "certificates": [
+          {
+            "subject": "CN=walk-244 wrong CA",
+            "issuer": "CN=walk-244 wrong CA",
+            "notBefore": "2026-09-30T05:04:45Z",
+            "notAfter": "2027-09-30T05:04:45Z",
+            "sha256": "7c3082f15c68864f06a173a2f78cc36b8edc25e7aebb45aac7f0e2bb05454c1d",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          }
+        ]
+      },
+      "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-fail with the CA that signs its API server",
+      "store": "secret:gsd-cluster-w244-fail/tlsClientConfig.caData"
+    },
+    {
+      "id": "cm-demo-a",
+      "source": "secret:gsd-cluster-cm-demo-a",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-25T07:02:30Z",
+      "error": null
+    },
+    {
+      "id": "cm-demo-b",
+      "source": "secret:gsd-cluster-cm-demo-b",
+      "api_url": "https://192.168.127.2:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-25T06:57:30Z",
+      "error": null
+    },
+    {
+      "id": "constructor",
+      "source": "secret:gsd-cluster-constructor",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-28T17:15:07Z",
+      "error": "401 Unauthorized \u2014 token invalid or expired"
+    },
+    {
+      "id": "crc-local",
+      "source": "values",
+      "api_url": "https://kubernetes.default.svc",
+      "credential": "in-cluster",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-21T02:56:40Z",
+      "error": null
+    },
+    {
+      "id": "crc-tls-cadata",
+      "source": "secret:gsd-cluster-tls-cadata",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-20T16:53:42Z",
+      "error": null
+    },
+    {
+      "id": "crc-tls-default",
+      "source": "secret:gsd-cluster-tls-default",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "unreachable",
+      "last_poll": "2026-09-20T16:53:42Z",
+      "error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1082)"
+    },
+    {
+      "id": "crc-tls-insecure",
+      "source": "secret:gsd-cluster-tls-insecure",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-20T16:53:42Z",
+      "error": null
+    },
+    {
+      "id": "d2b-no-groups",
+      "source": "secret:gsd-cluster-d2b-no-groups",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "forbidden",
+      "last_poll": "2026-09-24T08:11:10Z",
+      "error": "403 Forbidden on /apis/redhatcop.redhat.io/v1alpha1/groupsyncs \u2014 the ServiceAccount lacks list permission here"
+    },
+    {
+      "id": "d2b-no-sar",
+      "source": "secret:gsd-cluster-d2b-no-sar",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "forbidden",
+      "last_poll": "2026-09-24T08:11:09Z",
+      "error": "403 Forbidden on /apis/redhatcop.redhat.io/v1alpha1/groupsyncs \u2014 the ServiceAccount lacks list permission here"
+    },
+    {
+      "id": "dashboard-rnd",
+      "source": "values",
+      "api_url": "https://kubernetes.default.svc",
+      "credential": "in-cluster",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-21T06:14:29Z",
+      "error": null
+    },
+    {
+      "id": "gitops-404",
+      "source": "secret:gsd-cluster-gitops-404",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-28T09:45:00Z",
+      "error": null
+    },
+    {
+      "id": "gitops-example-389",
+      "source": "secret:gsd-cluster-gitops-example-389",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-26T19:24:14Z",
+      "error": null
+    },
+    {
+      "id": "logins-449",
+      "source": "secret:gsd-cluster-logins-449",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-29T17:37:31Z",
+      "error": null
+    },
+    {
+      "id": "mock",
+      "source": "values",
+      "api_url": "https://mock-openshift:6443",
+      "credential": "file",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-24T08:11:56Z",
+      "error": null
+    },
+    {
+      "id": "mock-none",
+      "source": "secret:gsd-cluster-mock-none",
+      "api_url": "https://mock-openshift:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-24T08:12:26Z",
+      "error": null
+    },
+    {
+      "id": "mock-sar",
+      "source": "secret:gsd-cluster-mock-sar",
+      "api_url": "https://mock-openshift:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-24T13:08:52Z",
+      "error": null
+    },
+    {
+      "id": "rejoin-walk",
+      "source": "secret:gsd-cluster-rejoin-walk",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-27T23:49:02Z",
+      "error": null
+    },
+    {
+      "id": "rejoin-walk-2",
+      "source": "secret:gsd-cluster-rejoin-walk-2",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-28T00:02:27Z",
+      "error": null
+    },
+    {
+      "id": "result-w462",
+      "source": "secret:gsd-cluster-result-w462",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-28T17:15:07Z",
+      "error": "401 Unauthorized \u2014 token invalid or expired"
+    },
+    {
+      "id": "rnd-lookup",
+      "source": "secret:gsd-cluster-rnd-lookup",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-22T06:03:31Z",
+      "error": null
+    },
+    {
+      "id": "rnd-lookup2",
+      "source": "secret:gsd-cluster-rnd-lookup2",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-22T06:03:47Z",
+      "error": null
+    },
+    {
+      "id": "verify-lookup",
+      "source": "secret:gsd-cluster-verify-lookup",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-22T11:54:28Z",
+      "error": null
+    },
+    {
+      "id": "w462",
+      "source": "secret:gsd-cluster-w462",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-28T17:15:07Z",
+      "error": "401 Unauthorized \u2014 token invalid or expired"
+    },
+    {
+      "id": "w465",
+      "source": "secret:gsd-cluster-w465",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-29T15:37:28Z",
+      "error": "401 Unauthorized \u2014 token invalid or expired"
+    },
+    {
+      "id": "walk-447",
+      "source": "secret:gsd-cluster-walk-447",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-28T06:14:55Z",
+      "error": "401 Unauthorized \u2014 token invalid or expired"
+    },
+    {
+      "id": "walk-452",
+      "source": "secret:gsd-cluster-walk-452",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-28T02:21:55Z",
+      "error": null
+    },
+    {
+      "id": "walk-authfail",
+      "source": "secret:gsd-cluster-walk-authfail",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-27T20:54:59Z",
+      "error": "401 Unauthorized \u2014 token invalid or expired"
+    },
+    {
+      "id": "walk-lookup",
+      "source": "secret:gsd-cluster-walk-lookup",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": null,
+      "status": "ok",
+      "last_poll": "2026-09-27T22:50:28Z",
+      "error": null
+    },
+    {
+      "id": "walk-self-login",
+      "source": "values",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "self-login",
+      "tls": null,
+      "status": "auth_failed",
+      "last_poll": "2026-09-27T22:40:29Z",
+      "error": "login-refused: the self-login credential for developer is suspended"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "shared-api-url",
+      "clusters": [
+        "shared-qa",
+        "shared-rnd"
+      ],
+      "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."
+    },
+    {
+      "code": "shared-api-url",
+      "clusters": [
+        "mock-privateca",
+        "w244-exp",
+        "w244-fail"
+      ],
+      "detail": "mock-privateca, w244-exp, w244-fail declare the same API URL: https://mock-privateca:6443. Each entry is still polled and counted on its own."
+    },
+    {
+      "code": "ca-expiring",
+      "clusters": [
+        "w244-exp"
+      ],
+      "detail": "w244-exp's CA CN=walk-244 expiring CA is expiring (2026-10-10T05:04:45Z). The cluster is still polled."
+    }
+  ]
+}
