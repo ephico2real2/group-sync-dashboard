@@ -3,10 +3,13 @@
 What this session did, when, and how each claim was measured. Times are git author times in America/Chicago; a PR's
 merge time is its merge commit's on main; lab instants are the cluster's UTC as the commands printed them. Every
 "measured" claim is one the session ran a command for; nothing below is recalled from memory alone. Two kinds of
-measurement live only here, because their command output was not committed: the lab reads of Part 1 and Part 4, and
-the local full-suite totals of `merge_pinned.sh` (the session's merge helper, outside the repository: the hermetic AND
-browser suites on the exact head it merges, so its totals are larger than CI's hermetic job). Everything else cites a
-PR, a commit or a file under `reports/`. The session resumed after a laptop reboot, with the scope the operator set at
+measurement live only here, because their command output was not committed: the lab reads that this log is the only
+record of (the Before table's failed sync at 2026-09-30 03:19:15Z, all of Part 1, and Part 4), and the local
+full-suite totals of `merge_pinned.sh` (the session's merge helper, outside the repository: the hermetic AND browser
+suites on the exact head it merges, so its totals are larger than CI's hermetic job; 6739 is also quoted on #492's
+closing comment). A few other unpublished command outputs are labelled in place: the `registries.conf` mtime and the
+31-of-31 re-run, Grok's 650-of-650 second pass on the browser file, `prepare-release.py` under the system Python, and
+the review-pass counts from the session's scratchpad. Everything else cites a PR, a commit or a committed file. The session resumed after a laptop reboot, with the scope the operator set at
 23:50 on 2026-09-29: this Mac only, Epics C and D only. The product changelog (`docs/CHANGELOG.md`) says what each
 release changed for an operator; this says what a working session did.
 
@@ -19,7 +22,7 @@ review passed (K1–K7) with its one runbook fix merged, the release walked with
 |---|---|---|
 | main | `d874fbc6` (#489, 1.20.0 / chart 0.59.22) | `b6cf6a32` (#497), 2.0.0 / chart 0.59.25 |
 | deployed on the lab | 1.19.0 (`ad102d9f1f`); Argo's sync to `d874fbc6` failed at 2026-09-30 03:19:15Z | 2.0.0 (`b40b5cf82a`), chart 0.59.25, Argo Synced at main; Degraded only by one failed CronJob run |
-| Epic D (#384) | #244 merged, not walked, open | closed; milestone 2.0.0 closed at 19/19 |
+| Epic D (#384) | #244 merged, not walked, open | closed; GitHub milestone 9 (2.0.0) closed at 19/19 |
 | Epic C (#383) | lab items #445 step 6, #285, #286, #291, #310, #315, #288 open | unchanged (not reached) |
 
 ---
@@ -68,7 +71,7 @@ review passed (K1–K7) with its one runbook fix merged, the release walked with
   **Accepted**: `cc_rig`'s teardown deletes `east`'s rows; on a copy without the cleanup the `[1280]` case fails with
   `['shared API URL', 'verify failed']`. Grok's second pass reported the whole browser file at 650 of 650.
 - Merged at 1.21.0 (local full suite 6739 passed; 9 of 9 checks, quoted on #492's closing comment). Argo deployed
-  1.21.0 at 07:00:59Z.
+  1.21.0 at 07:00:59Z (same comment).
 
 ### The walk (02:20 → 02:43) — commits `0037e538`, `4f1dff45`, PR #494, merged `1173fe06`
 
@@ -120,7 +123,7 @@ review passed (K1–K7) with its one runbook fix merged, the release walked with
   and the gap written beside the mask claim.
 - Merged (local full suite 6752 passed). The first description of #497 and the summary on #384 said "17 tabs"; the
   walk says 14, and both were corrected in place (**Found by** Grok's review of this log).
-- Epic D closed with its summary; milestone 9 closed at 19/19.
+- Epic D closed with its summary; GitHub milestone 9 closed at 19/19.
 
 ---
 
@@ -149,4 +152,4 @@ review passed (K1–K7) with its one runbook fix merged, the release walked with
 - Lab: 2.0.0 / chart 0.59.25, Argo Synced at main, Degraded only by the CronJob run of 2026-09-30T02:00Z; nothing
   carries a walk label; PVC UIDs unchanged; `shared-qa` rv 2981054.
 - Owed: `release-crc.sh --argocd main` re-run after the next nightly succeeds; Epic C's lab items; the operator's
-  decision on the fleet account's name already in 30 images and 156 text files on main.
+  decision on the fleet account's name already in 30 images and 156 text files on main (quoted on #384's summary).
