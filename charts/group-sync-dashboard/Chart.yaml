@@ -294,7 +294,8 @@ type: application
 # CHART 0.59.21 (2026-09-28), PATCH: appVersion moves to application 1.19.0 (below); #465.
 # CHART 0.59.22 (2026-09-29), PATCH: trustedCA.enterpriseRoot.{sha256,subject} and trustedCA.expiryWarningDays
 #   reach the ConfigMap; appVersion moves to application 1.20.0 (below); #244.
-version: 0.59.22
+# CHART 0.59.23 (2026-09-30), PATCH: appVersion moves to application 1.21.0 (below); #492.
+version: 0.59.23
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -415,7 +416,8 @@ version: 0.59.22
 # 1.18.0 (2026-09-28). A deleted fleet Lease is put back from the copy kept beside the database, so `crc start` sends no refused password again and pings no second time in a day (#481). MINOR.
 # 1.19.0 (2026-09-28). A quoted text that holds the password is shown whole as a fixed mark, and left out where the mark would meet the password; Rejoin adds no refusal (#465). MINOR.
 # 1.20.0 (2026-09-29). Each cluster card lists its trusted certificates' subject, issuer and dates, says whether one is the pinned enterprise root, and shows the fix under a verify failure; a CA within thirty days of expiry warns on the Cluster Configurations banner (#244). MINOR.
-appVersion: "1.20.0"
+# 1.21.0 (2026-09-30). A card whose last poll failed TLS verification wears a `verify failed` warning chip instead of the green `verified` one; the `ca:` mode text is unchanged (#492). MINOR.
+appVersion: "1.21.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

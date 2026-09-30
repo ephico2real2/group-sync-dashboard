@@ -7045,6 +7045,13 @@ class TestClusterConfigPage:
         monkeypatch.setattr(app.state, "remote_tier_resolvers", {})
         yield scoped_server, host, settings
         settings.cluster_registry.replace([], [], at="2026-09-20T23:59:59Z")
+        # `scoped_server` and its Store are module-scoped, while this rig is per-test. `east` is
+        # transient fixture data (the module seed contains only crc-local and prod-east), so restore
+        # that invariant after tests which record a poll for it. Otherwise the [1280] parametrization
+        # below inherits the verify failure written between its two cases.
+        with app.state.store._tx() as conn:
+            conn.execute("DELETE FROM poll_outcome WHERE cluster_id = ?", ("east",))
+            conn.execute("DELETE FROM cluster WHERE id = ?", ("east",))
 
     def test_the_cards_from_a_cold_url_with_rotate_and_delete_on_the_secret_row_only(self, page, cc_rig):
         base, host, settings = cc_rig
@@ -7085,7 +7092,9 @@ class TestClusterConfigPage:
         assert all(text in banner.inner_text() for text in ("east", "shared-qa", east.api_url))
         for name, other in (("east", "shared-qa"), ("shared-qa", "east")):
             card = page.locator(f"#cc-cluster-{name}")
-            assert card.locator(".badge.warning").inner_text() == "shared API URL"
+            warnings = card.locator(".badge.warning").all_inner_texts()
+            assert warnings == ["shared API URL"], (
+                "a healthy shared-URL card gained an unrelated warning", name, warnings)
             assert other in card.locator(".cc-shared-api-hint").inner_text()
             assert card.locator("[data-cc-rotate], [data-cc-delete]").count() == 2
         assert page.locator("#cc-cluster-crc-local .cc-shared-api-hint").count() == 0
@@ -8071,6 +8080,41 @@ class TestClusterConfigPage:
         assert page.input_value("#rejoin-password") == "", "the refused password is not kept in the field"
         assert "must not be the username" in page.inner_text("#cc-rejoin-result_east")
         assert calls == [], "a refused press runs no login"
+
+    def test_a_verify_failure_does_not_wear_the_green_verified_chip(self, page, cc_rig):
+        """#492: the TLS chip names the last poll's outcome. A card whose last poll failed verification wears
+        `verify failed`, not a green `verified` two rows above its CERTIFICATE_VERIFY_FAILED; a card that polled
+        fine, or failed for another reason, keeps `verified`. The `ca:` text beside the chip keeps naming the mode."""
+        base, _, _settings = cc_rig
+        store = _SCOPED_APP.state.store
+        store.upsert_cluster("east", "https://api.east.example:6443", True,
+                             source="secret:gsd-cluster-east", credential="bearer")
+        store.record_poll(
+            "east", "unreachable",
+            "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            "self-signed certificate in certificate chain (_ssl.c:1082)")
+        # A transport failure that is not a verify failure: the API sets no `action` on it. Put back after:
+        # the scoped store outlives this test, and prod-east's seeded row is not this test's to change.
+        before = next(row for row in store.clusters() if row["id"] == "prod-east")
+        store.record_poll("prod-east", "unreachable",
+                          "ConnectError: [Errno 8] nodename nor servname provided, or not known")
+        try:
+            page.set_extra_http_headers({"X-Forwarded-User": "root"})
+            page.goto(f"{base}/#page=clusters")
+            page.wait_for_selector("#cc-cluster-east [data-cc-tls-action]")
+
+            def tls(name):
+                return page.locator(f"#cc-cluster-{name} .cc-kv:has(> .k:text-is('tls'))")
+
+            east = tls("east")
+            assert east.locator(".badge.ok").count() == 0, east.inner_text()
+            assert east.locator(".badge.warning").inner_text() == "verify failed"
+            assert "ca: trusted-bundle" in east.inner_text()
+            for name in ("prod-east", "crc-local"):   # failed on DNS; polled ok
+                assert tls(name).locator(".badge.ok").inner_text() == "verified", tls(name).inner_text()
+                assert tls(name).locator(".badge.warning").count() == 0, tls(name).inner_text()
+        finally:
+            store.record_poll("prod-east", before["status"], before["message"])
 
     def test_fetch_refuses_redirects_and_submits_once(self, page, cc_rig, monkeypatch):
         """#316 (review of the spec, C1): a 307 or 308 in front of the dashboard would re-send the POST, password and
