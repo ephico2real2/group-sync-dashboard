@@ -1,0 +1,13 @@
+# oc logs --timestamps -n group-sync-dashboard group-sync-dashboard-59595d645f-qsqxv -c dashboard, read once at 2026-09-30T23:09:25Z; sha256~ names redacted; the fleet account's name replaced
+# container restarts: 0; lines read: 209; first line at: 2026-09-30T23:08:46.520384700Z
+2026-09-30T23:08:46.594495552Z 2026-09-30 19:08:46,594-0400 DEBUG   gsd.leader leader election: group-sync-dashboard-7b9485f499-ltsk6 holds lease group-sync-dashboard/group-sync-dashboard, renewed 17s of 30s ago — standing by, not polling
+2026-09-30T23:08:56.599744842Z 2026-09-30 19:08:56,599-0400 DEBUG   gsd.leader leader election: group-sync-dashboard-7b9485f499-ltsk6 holds lease group-sync-dashboard/group-sync-dashboard, renewed 27s of 30s ago — standing by, not polling
+2026-09-30T23:09:06.605451217Z 2026-09-30 19:09:06,605-0400 INFO    gsd.leader leader election: lease held by 'group-sync-dashboard-7b9485f499-ltsk6' has expired, taking it
+2026-09-30T23:09:06.611227863Z 2026-09-30 19:09:06,611-0400 INFO    gsd.leader became leader (group-sync-dashboard/group-sync-dashboard as group-sync-dashboard-59595d645f-qsqxv)
+# counts:
+#   leader lines (became leader / taking it): 2
+#   lines naming gsd-fleet-88fa0d759f845b47 (the pod's own; step 6's processes write to the exec stream, not here): 0
+#   fleet-*/self-login-* lines: 0
+#   fleet-*/self-login-* lines naming account=developer: 0
+#   fleet-* lines naming the fleet account: 0
+#   ERROR/CRITICAL/Traceback lines: 0

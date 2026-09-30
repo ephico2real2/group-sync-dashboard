@@ -1,4 +1,4 @@
-# 2026-09-30T22:06:00Z; tree 57735e9ee8; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# 2026-09-30T23:03:39Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
 PASS outside .clusters and .clusterConfig.fleetAccount, the walk values parse equal to environments/crc.yaml
 PASS the walk's .clusters equal the Argo CD Application's override (prepared/argo-clusters-override.yaml): no walk stanza
 the walk's .clusterConfig.fleetAccount: {"username":"developer","passwordSecret":{"namespace":"group-sync-dashboard","name":"gsd-walk-developer-password","key":"password"}}

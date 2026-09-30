@@ -1,0 +1,10 @@
+# oc adm node-logs --role=master --path=oauth-server/<audit.log,>  (captured 2026-09-30T23:10:32Z), DERIVED:
+# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client in whole-second [2026-09-30T23:08:44Z, 2026-09-30T23:09:30Z)
+# audit records read: 38358; the earliest at 2026-09-16T14:23:06.841941Z
+# counts in [2026-09-30T23:08:44Z, 2026-09-30T23:09:30Z):
+#   developer allow: 0
+#   developer deny: 0
+#   developer error: 0
+#   developer authorize records, any decision: 0
+#   the fleet account's authorize records, any decision: 0
+#   records with no username (an unauthenticated challenge a client may send first): 0

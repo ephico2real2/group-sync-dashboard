@@ -1,0 +1,70 @@
+EQUAL     oauth/cluster .spec (sha256)
+  start: sha256 of oauth/cluster .spec (jq -S -c .spec): 305a29862c7463dec710cdca8223498716ecd68a62d2d2b68d3fdcc52aaa93b5
+  end:   sha256 of oauth/cluster .spec (jq -S -c .spec): 305a29862c7463dec710cdca8223498716ecd68a62d2d2b68d3fdcc52aaa93b5
+EQUAL     Argo CD: targetRevision, sync status, revision, image parameters
+  start: argo: targetRevision=main sync=Synced revision=57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61 image parameters=0
+  end:   argo: targetRevision=main sync=Synced revision=57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61 image parameters=0
+EQUAL     PVC UIDs
+  start: group-sync-dashboard-data uid=f065b7a4-535c-4ef1-868c-58f5afee4953 volume=pvc-f065b7a4-535c-4ef1-868c-58f5afee4953 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+         group-sync-dashboard-report-artifacts uid=08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 volume=pvc-08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+  end:   group-sync-dashboard-data uid=f065b7a4-535c-4ef1-868c-58f5afee4953 volume=pvc-f065b7a4-535c-4ef1-868c-58f5afee4953 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+         group-sync-dashboard-report-artifacts uid=08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 volume=pvc-08c7d45c-a3eb-47be-8506-f24ea7a3e0e3 resource-policy=keep sync-options=Prune=false,Delete=false,PruneLast=true
+EQUAL     gsd-cluster-shared-qa (name, resourceVersion, created)
+  start: gsd-cluster-shared-qa         2981054   2026-09-23T00:08:44Z
+  end:   gsd-cluster-shared-qa         2981054   2026-09-23T00:08:44Z
+EQUAL     gsd-cluster-shared-rnd (name, resourceVersion, created)
+  start: gsd-cluster-shared-rnd        2835139   2026-09-24T07:04:21Z
+  end:   gsd-cluster-shared-rnd        2835139   2026-09-24T07:04:21Z
+EQUAL     the fleet account's OAuthAccessTokens (challenging client)
+  start: the fleet account, openshift-challenging-client: 2 created 2026-09-19T00:48:44Z, 2026-09-19T00:50:11Z
+  end:   the fleet account, openshift-challenging-client: 2 created 2026-09-19T00:48:44Z, 2026-09-19T00:50:11Z
+EQUAL     the fleet account's OAuthAccessTokens (any client)
+  start: the fleet account, any client: 2
+  end:   the fleet account, any client: 2
+EQUAL     developer's challenging-client OAuthAccessTokens (count and creation instants)
+  start: developer, openshift-challenging-client: 6 created 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z, 2026-09-26T14:35:41Z, 2026-09-28T17:57:41Z, 2026-09-29T12:04:45Z, 2026-09-30T04:46:29Z
+  end:   developer, openshift-challenging-client: 6 created 2026-09-23T07:34:50Z, 2026-09-26T04:25:57Z, 2026-09-26T14:35:41Z, 2026-09-28T17:57:41Z, 2026-09-29T12:04:45Z, 2026-09-30T04:46:29Z
+EQUAL     objects labelled with the run
+  start: labelled walk.gsd.lab/run=claimheld-445-2026-09-30:  
+  end:   labelled walk.gsd.lab/run=claimheld-445-2026-09-30:  
+EQUAL     the walk Secret by name (never created)
+  start: the walk Secret by name: secrets "gsd-walk-developer-password" not found
+  end:   the walk Secret by name: secrets "gsd-walk-developer-password" not found
+EQUAL     developer's Lease
+  start: developer's Lease gsd-fleet-88fa0d759f845b47: absent
+  end:   developer's Lease gsd-fleet-88fa0d759f845b47: absent
+EQUAL     the chart's fleet-account Role in openshift-config
+  start: the chart's group-sync-dashboard-fleet-account Role in openshift-config: [{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]
+  end:   the chart's group-sync-dashboard-fleet-account Role in openshift-config: [{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]
+EQUAL     the ServiceAccount's get on ldap-oauth-bind-secret
+  start: ServiceAccount get openshift-config/ldap-oauth-bind-secret: yes
+  end:   ServiceAccount get openshift-config/ldap-oauth-bind-secret: yes
+EQUAL     the ServiceAccount's create/update on leases
+  start: ServiceAccount create/update leases in group-sync-dashboard: yes/yes
+  end:   ServiceAccount create/update leases in group-sync-dashboard: yes/yes
+INFO      the fleet account's Lease (the product's daily ping may move rv and ping-last-*; holder must be none)
+  start: the fleet account's Lease gsd-fleet-666f1ba7f2fdead0 rv=7468503 holder=(none) ping-last-attempt=2026-09-30T17:58:43Z ping-last-ok=2026-09-30T17:58:43Z ping-last-outcome=ok refused=absent 
+  end:   the fleet account's Lease gsd-fleet-666f1ba7f2fdead0 rv=7468503 holder=(none) ping-last-attempt=2026-09-30T17:58:43Z ping-last-ok=2026-09-30T17:58:43Z ping-last-outcome=ok refused=absent 
+INFO      the fleet Lease's sha256
+  start: sha256 of that whole Lease (jq -S -c .): fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302 
+  end:   sha256 of that whole Lease (jq -S -c .): fb7092eedd5bb05cc1ab02d4bac3b1509c0439247e33f254b5d0a86d8c98a302 
+INFO      Argo CD (health)
+  start: {"targetRevision":"main","syncPolicy":{"prune":true,"selfHeal":true},"sync":"Synced","revision":"57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61","health":"Healthy","notHealthy":[]} 
+  end:   {"targetRevision":"main","syncPolicy":{"prune":true,"selfHeal":true},"sync":"Synced","revision":"57735e9ee8fe4a8bf7cf6df97b0ebde50ca21a61","health":"Healthy","notHealthy":[]} 
+INFO      the dashboard Deployment
+  start: {"images":[{"name":"dashboard","image":"quay.io/ephico2real/group-sync-dashboard:2.0.0"},{"name":"oauth-proxy","image":"registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15"}],"chart":"group-sync-dashboard-0.59.25","managedBy":"Helm","version":"2.0.0"} 
+  end:   {"images":[{"name":"dashboard","image":"quay.io/ephico2real/group-sync-dashboard:2.0.0"},{"name":"oauth-proxy","image":"registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15"}],"chart":"group-sync-dashboard-0.59.25","managedBy":"Helm","version":"2.0.0"} 
+INFO      /api/version
+  start: /api/version (oc exec … python3.14 urlopen on the pod's loopback): {"leader":true,"version":"2.0.0","commit":"b40b5cf82a","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}} 
+  end:   /api/version (oc exec … python3.14 urlopen on the pod's loopback): {"leader":true,"version":"2.0.0","commit":"b40b5cf82a","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}} 
+INFO      the authentication ClusterOperator
+  start: authentication conditions: Available=True Degraded=False Progressing=False 
+  end:   authentication conditions: Available=True Degraded=False Progressing=False 
+INFO      developer's OAuthAccessTokens, any client (console sessions are not the walk's)
+  start: developer, any client: 73 
+  end:   developer, any client: 73 
+INFO      all OAuthAccessTokens
+  start: all objects: 256 
+  end:   all objects: 256 
+EQUAL     the fleet account's Lease has no holder at the end
+LEFT AS FOUND on every MUST line

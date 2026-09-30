@@ -1,4 +1,4 @@
-# 2026-09-30T22:06:01Z; tree 57735e9ee8; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# 2026-09-30T23:03:40Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
 # before: the Argo CD shape; after: the walk values (then + prepared/walk-rbac.yaml). Lines: 3318 / 3318 / 45
 ## without the walk grant
 inputs: before argo.yaml; after walk.yaml

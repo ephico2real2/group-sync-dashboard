@@ -1,7 +1,7 @@
-# 2026-09-30T22:06:14Z; tree 57735e9ee8; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# 2026-09-30T23:03:54Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
 ## [10:00:00Z, 10:30:00Z) over 8 synthetic records: exit 0
-# oc adm node-logs --role=master --path=oauth-server/<audit.log,>  (captured 2026-09-30T22:06:15Z), DERIVED:
-# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client in [2026-09-30T10:00:00Z, 2026-09-30T10:30:00Z)
+# oc adm node-logs --role=master --path=oauth-server/<audit.log,>  (captured 2026-09-30T23:03:54Z), DERIVED:
+# ResponseComplete GET /oauth/authorize?client_id=openshift-challenging-client in whole-second [2026-09-30T10:00:00Z, 2026-09-30T10:30:00Z)
 # audit records read: 8; the earliest at 2026-09-30T09:00:00.000000Z
 2026-09-30T10:00:01.000000Z user=developer decision=allow code=302
 2026-09-30T10:00:02.000000Z user=developer decision=deny code=401
@@ -14,7 +14,9 @@
 #   the fleet account: 2026-09-30T10:00:03.000000Z user=(the fleet account) decision=allow code=302
 #   records with no username (an unauthenticated challenge a client may send first): 1
 ## a window that starts before the earliest record (09:00:00Z): exit 3 (3 = refuses to count)
-# INCOMPLETE at 2026-09-30T22:06:15Z: the earliest audit record read is 2026-09-30T09:00:00.000000Z, after the window's start 2026-09-30T08:00:00Z
+# INCOMPLETE at 2026-09-30T23:03:54Z: the earliest audit record read is 2026-09-30T09:00:00.000000Z, after the window's start 2026-09-30T08:00:00Z
 ## nothing read: exit 2 (2 = refuses to count)
-# READ FAILED at 2026-09-30T22:06:15Z: no oauth-server audit record was read (files: none)
-PASS the counts are the window's (developer 2, the fleet account 1, unnamed), and a read that is empty or starts late never counts as 0
+# READ FAILED at 2026-09-30T23:03:54Z: no oauth-server audit record was read (files: none)
+## a first record half a second after the start: exit 3 (3 = refuses to count)
+## fractional stageTimestamp at whole-second bounds: start exit/count 0/1; end exit/count 0/0
+PASS the counts are start-inclusive/end-exclusive at whole-second precision, and an empty or late read never counts as 0

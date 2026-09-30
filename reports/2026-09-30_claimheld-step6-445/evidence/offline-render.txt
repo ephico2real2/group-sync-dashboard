@@ -1,4 +1,4 @@
-# 2026-09-30T22:06:00Z; tree 57735e9ee8; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# 2026-09-30T23:03:39Z; tree f0d397f80f; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
 lines in the walk render: 3318
 lines in the argo render: 3318
 lines in the walk-clusters render: 164

@@ -1,8 +1,24 @@
 # #445 — SPEC_S4c §3.12 step 6 walked on the CRC lab: `ClaimHeld` on `developer`'s Lease, application 2.0.0 (prepared 2026-09-30)
 
-**Status: PREPARED, NOT RUN.** This is phase 1: the plan, the scripts, the offline proofs and a read-only baseline of
-the lab. Phase 1 wrote nothing to the cluster; its only cluster commands were `oc get` and `oc whoami`. Phase 2 runs
-`scripts/run.sh` once OB3 and Grok have reviewed this plan.
+**Status: RUN, PASSED, LAB LEFT AS FOUND.** The plan below was reviewed before it ran by OB3 (in Grok's seat: Cursor
+was out of usage) and Codex; both reviews' fixes are in the scripts. Phase 2 ran `scripts/run.sh` on 2026-09-30 from
+23:08:15Z to 23:10:36Z and exited 0: step 6 passed, `--argocd main` rc 0, the pod-end watcher rc 0, the sweep rc 0, the
+walk pod's audit 0/0, the start/end comparison rc 0, the fleet account named 0 times in `evidence/`
+(`evidence/phase2-run.txt`).
+
+## Result (phase 2)
+
+| Step | Result | Evidence |
+|---|---|---|
+| 6.0 abort checks | the lab check `0 0 0` with the walk values; `developer`'s Lease absent, read as free | `evidence/phase2-step6.0-labcheck.txt`, `evidence/phase2-step6.0.txt` |
+| 6.1–6.3 hold, challenge, release | the spec's program (sha256 `2b5e2103…be9c2`, extracted from SPEC_S4c at `57735e9e`) printed exactly `HELD walk-step6-a gsd-fleet-88fa0d759f845b47`, `ClaimHeld walk-step6-a holds gsd-fleet-88fa0d759f845b47 until 2026-09-30T23:12:38Z`, `RELEASED`; exit 0; the Lease's holder empty afterwards | `evidence/phase2-step6.1-6.3.txt` |
+| 6.4 counts, `[23:09:23Z, now)` | `developer` 0 and the fleet account 0 authorize records; challenging-client tokens `developer` 6 → 6, the fleet account 2 → 2; the fleet Lease's sha256 unchanged | `evidence/phase2-step6.4.txt`, `evidence/phase2-step6.4-audit.txt` |
+| The walk pod's whole lifetime, `[23:08:44Z, 23:09:30Z)` | 0 authorizes for `developer`, 0 for the fleet account (the pod's end observed by its UID) | `evidence/phase2-walk-pod-audit.txt` |
+| Left as found | 15 EQUAL lines: `oauth/cluster`, Argo (target, sync, revision), PVC UIDs, `shared-qa` and `shared-rnd`, both accounts' token counts, nothing labelled, the walk Secret never created, `developer`'s Lease (created by A, removed by the sweep), the chart's fleet-account Role and the ServiceAccount's grants, the fleet Lease with no holder | `evidence/phase2-compare.txt` |
+
+What this proves, and what it does not, is the section below: B's `ClaimHeld` came from the read path of a Lease A
+held, across two processes; the 409/CAS race, leadership plus the Lease, and a bind under the claim are the hermetic
+tests' (R1, D1).
 
 #445's Definition of Done: "§3.12 step 6 rewritten, reviewed by two seats (Grok one), and walked on the lab, with
 evidence under `reports/`." PR #461 did the rewrite and its review (merged 2026-09-28). What is still owed is the walk.
@@ -39,7 +55,7 @@ account.
 These are for the orchestrator to settle before phase 2 runs.
 
 1. **The Lease name holds.** `gsd-fleet-88fa0d759f845b47` is `lease_name("developer")`, which is
-   `"gsd-fleet-" + sha256(username)[:16]` (`gsd/fleetstate.py:109`). It depends on the username only. The password
+   `"gsd-fleet-" + sha256(username)[:16]` (`gsd/fleetstate.py#lease_name`). It depends on the username only. The password
    Secret's `metadata.uid` salts the **digest** that a Lease records (`lease_digest(account, password, salt)`, line
    114), never the name. So any walk Secret gives the same Lease name, and so does no Secret at all. Checked against
    the code in `evidence/offline-lease-name.txt` (PASS).
@@ -51,7 +67,7 @@ These are for the orchestrator to settle before phase 2 runs.
    - The spec's 6.0 read, `oc get leases.coordination.k8s.io gsd-fleet-88fa0d759f845b47 … -o jsonpath=…`, answers
      NotFound.
    - By the code, an absent Lease is not in flight: `read()` returns an empty record, whose holder is `""`. A's
-     `claim()` then creates the Lease with a POST (`gsd/fleetstate.py:340`,
+     `claim()` then creates the Lease with a POST (`gsd/fleetstate.py#FleetLease` (`claim`'s create path),
      `self._call("POST" if record.raw is None else "PUT", obj)`).
 
    `scripts/run.sh` handles this in 6.0. It treats NotFound as free, with the same rule as `in_flight`
@@ -77,7 +93,7 @@ These are for the orchestrator to settle before phase 2 runs.
 6. **6.5's "does not import `fleet_password`, `FleetLogin` or `lookup`" is true by name only.** It is true of the
    names: `tests/test_s4c_step6_walk.py::test_step6_script_claims_and_never_reads_a_password` PASSED. But
    `gsd.fleetstate` imports the `gsd.fleetlogin` module (`from .fleetlogin import RETRY_POLICY`,
-   `gsd/fleetstate.py:58`), so that module is loaded. It is never *called*: in the rehearsal, the only requests the
+   `gsd/fleetstate.py#RETRY_POLICY` (imported from `gsd.fleetlogin`)), so that module is loaded. It is never *called*: in the rehearsal, the only requests the
    coordinator sends are Lease GET/POST/PUT (`evidence/offline-coordinator.txt`).
 7. **These match today's lab:**
    - the fleet account's challenging-client token count is **2** (6.4 expects 2; phase 1 baseline: `2 created

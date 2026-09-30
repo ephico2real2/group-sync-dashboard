@@ -1,0 +1,16 @@
+argocd  : group-sync-dashboard -> revision main (57735e9ee8), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:2.0.0 is application 2.0.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:2.0.0 is application 2.0.0
+helm    : uninstalling release group-sync-dashboard (the PVCs and the minted Secrets survive)
+These resources were kept due to the resource policy:
+[PersistentVolumeClaim] group-sync-dashboard-report-artifacts
+[PersistentVolumeClaim] group-sync-dashboard-data
+
+release "group-sync-dashboard" uninstalled
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+23:09:28Z  OutOfSync  Healthy      Running    
+23:09:44Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+23:09:59Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+23:10:14Z  Synced     Progressing  Succeeded  successfully synced (all tasks run)
+23:10:29Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
