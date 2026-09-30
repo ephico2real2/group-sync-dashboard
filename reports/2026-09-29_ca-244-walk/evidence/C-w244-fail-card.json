@@ -1,0 +1,17 @@
+{
+  "tls_row": "verified ca: caData store secret:gsd-cluster-w244-fail/tlsClientConfig.caData \u00b7 1 certificate CN=walk-244 wrong CA \u00b7 issuer CN=walk-244 wrong CA \u00b7 2027-09-30T05:04:45Z",
+  "trust_store": "store secret:gsd-cluster-w244-fail/tlsClientConfig.caData \u00b7 1 certificate",
+  "certificates": [
+    {
+      "text": "CN=walk-244 wrong CA \u00b7 issuer CN=walk-244 wrong CA \u00b7 2027-09-30T05:04:45Z",
+      "data_cc_ca": "7c3082f15c68864f06a173a2f78cc36b8edc25e7aebb45aac7f0e2bb05454c1d"
+    }
+  ],
+  "badges": [
+    "verified"
+  ],
+  "connection_error": "ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+  "action": "this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-fail with the CA that signs its API server",
+  "store": "store secret:gsd-cluster-w244-fail/tlsClientConfig.caData",
+  "connection_row": "unreachable 2026-09-30 05:08 ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) this cluster pins its own CA: replace tlsClientConfig.caData in Secret gsd-cluster-w244-fail with the CA that signs its API server store secret:gsd-cluster-w244-fail/tlsClientConfig.caData"
+}

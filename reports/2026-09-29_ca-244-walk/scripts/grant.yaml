@@ -1,0 +1,29 @@
+# The walk's temporary grant: `developer` passes the cluster-admin tier (`visibility.clusterAdminSar`, `update
+# clusterrolebindings` on the host) for the length of the walk, so the Cluster Configurations tab, its Add-cluster
+# form and `POST /api/clusterconfigs/test` are served to it. Created by run.sh, removed by run.sh's explicit delete
+# and its exit trap, both through the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-crb-update
+  labels:
+    walk.gsd.lab/run: ca-244-2026-09-29
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-crb-update-developer
+  labels:
+    walk.gsd.lab/run: ca-244-2026-09-29
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

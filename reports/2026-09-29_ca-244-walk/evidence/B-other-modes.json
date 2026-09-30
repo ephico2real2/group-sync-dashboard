@@ -1,0 +1,108 @@
+{
+  "mock-trusted": {
+    "entry": {
+      "id": "mock-trusted",
+      "source": "secret:gsd-cluster-mock-trusted",
+      "api_url": "https://mock-trusted:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:10Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    "card": {
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "trust_store": "store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "certificates": [],
+      "badges": [
+        "verified"
+      ],
+      "connection_error": null,
+      "action": null,
+      "store": null,
+      "connection_row": "ok reachable 2026-09-30 05:08"
+    }
+  },
+  "mock-selfsigned": {
+    "entry": {
+      "id": "mock-selfsigned",
+      "source": "secret:gsd-cluster-mock-selfsigned",
+      "api_url": "https://mock-selfsigned:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": true,
+        "ca": null
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "insecure",
+        "sourceKind": "none",
+        "count": 0,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    "card": {
+      "tls_row": "insecure",
+      "trust_store": null,
+      "certificates": [],
+      "badges": [
+        "insecure"
+      ],
+      "connection_error": null,
+      "action": null,
+      "store": null,
+      "connection_row": "ok reachable 2026-09-30 05:08"
+    }
+  },
+  "shared-rnd": {
+    "entry": {
+      "id": "shared-rnd",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T05:08:11Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    "card": {
+      "tls_row": "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "trust_store": "store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates",
+      "certificates": [],
+      "badges": [
+        "verified"
+      ],
+      "connection_error": null,
+      "action": null,
+      "store": null,
+      "connection_row": "ok reachable 2026-09-30 05:08"
+    }
+  },
+  "warning_codes": [
+    "ca-expiring",
+    "shared-api-url"
+  ]
+}

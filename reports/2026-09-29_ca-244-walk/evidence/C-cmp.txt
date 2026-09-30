@@ -1,0 +1,4 @@
+# cmp evidence/C-action-api.txt evidence/C-action-log.txt
+identical: 130 bytes each
+# cmp evidence/C-store-api.txt evidence/C-store-log.txt
+identical: 51 bytes each

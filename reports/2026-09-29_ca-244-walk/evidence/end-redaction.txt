@@ -1,0 +1,6 @@
+# the report folder searched at 2026-09-30T05:40:00Z; counts of FILES, nothing quoted
+# grep -rl 'sha256~[A-Za-z0-9]' <folder>   (a token that escaped the filter, screenshots included; the placeholder is sha256~<redacted>)
+# files: 0
+# grep -rli -F '<the fleet account>' <folder>   (its real name, any case, screenshots included)
+# files: 0
+# no walk tokens recorded

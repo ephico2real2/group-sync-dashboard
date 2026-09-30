@@ -1,0 +1,78 @@
+{
+  "E1": {
+    "case": "E1",
+    "pressed_at": "2026-09-30T05:09:09Z",
+    "request": {
+      "name": "w244-test",
+      "server": "https://mock-privateca:6443",
+      "credential": "bearerToken (random, not recorded)",
+      "tls.mode": "caData",
+      "tls.caData": "base64 of the PEM field (the page's ccBody)",
+      "pem_field": "the wrong CA of step C (evidence/generated-cas.txt)"
+    },
+    "http_status": 200,
+    "answer": {
+      "reachable": false,
+      "server_version": null,
+      "identity": null,
+      "error": "unreachable: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+      "certificates": [
+        {
+          "subject": "CN=walk-244 wrong CA",
+          "issuer": "CN=walk-244 wrong CA",
+          "notBefore": "2026-09-30T05:04:45Z",
+          "notAfter": "2027-09-30T05:04:45Z",
+          "sha256": "7c3082f15c68864f06a173a2f78cc36b8edc25e7aebb45aac7f0e2bb05454c1d"
+        }
+      ]
+    },
+    "page_shows": {
+      "test_result": "REACHABLE no SERVER VERSION \u2014 IDENTITY \u2014 unreachable: ConnectError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082) CN=walk-244 wrong CA \u00b7 issuer CN=walk-244 wrong CA \u00b7 2027-09-30T05:04:45Z",
+      "certificates": [
+        "CN=walk-244 wrong CA \u00b7 issuer CN=walk-244 wrong CA \u00b7 2027-09-30T05:04:45Z"
+      ],
+      "form_message": ""
+    }
+  },
+  "E2": {
+    "case": "E2",
+    "pressed_at": "2026-09-30T05:09:11Z",
+    "request": {
+      "name": "w244-test",
+      "server": "https://mock-privateca:6443",
+      "credential": "bearerToken (random, not recorded)",
+      "tls.mode": "caData",
+      "tls.caData": "base64 of the PEM field (the page's ccBody)",
+      "pem_field": "not a certificate"
+    },
+    "http_status": 422,
+    "answer": {
+      "detail": "ca-data-invalid: tlsClientConfig.caData does not decode to a PEM bundle that loads: SSLError"
+    },
+    "page_shows": {
+      "test_result": null,
+      "certificates": [],
+      "form_message": "ca-data-invalid: tlsClientConfig.caData does not decode to a PEM bundle that loads: SSLError"
+    }
+  },
+  "cluster_secrets_before_E": [
+    "gsd-cluster-mock-privateca",
+    "gsd-cluster-mock-refusal",
+    "gsd-cluster-mock-selfsigned",
+    "gsd-cluster-mock-trusted",
+    "gsd-cluster-shared-qa",
+    "gsd-cluster-shared-rnd",
+    "gsd-cluster-w244-exp",
+    "gsd-cluster-w244-fail"
+  ],
+  "cluster_secrets_after_E": [
+    "gsd-cluster-mock-privateca",
+    "gsd-cluster-mock-refusal",
+    "gsd-cluster-mock-selfsigned",
+    "gsd-cluster-mock-trusted",
+    "gsd-cluster-shared-qa",
+    "gsd-cluster-shared-rnd",
+    "gsd-cluster-w244-exp",
+    "gsd-cluster-w244-fail"
+  ]
+}

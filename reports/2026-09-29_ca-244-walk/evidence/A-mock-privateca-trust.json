@@ -1,0 +1,17 @@
+{
+  "store": "secret:gsd-cluster-mock-privateca/tlsClientConfig.caData",
+  "sourceKind": "secret",
+  "count": 1,
+  "enterpriseRoot": null,
+  "certificates": [
+    {
+      "subject": "CN=mock-privateca-root",
+      "issuer": "CN=mock-privateca-root",
+      "notBefore": "2026-09-20T16:54:01Z",
+      "notAfter": "2031-09-19T16:54:01Z",
+      "sha256": "cdf9fb279a8795542554eb3fa0b26faa454c95430b67c1dff527adeda977fc66",
+      "enterpriseRoot": null,
+      "validity": "valid"
+    }
+  ]
+}
