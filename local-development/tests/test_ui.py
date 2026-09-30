@@ -7045,6 +7045,13 @@ class TestClusterConfigPage:
         monkeypatch.setattr(app.state, "remote_tier_resolvers", {})
         yield scoped_server, host, settings
         settings.cluster_registry.replace([], [], at="2026-09-20T23:59:59Z")
+        # `scoped_server` and its Store are module-scoped, while this rig is per-test. `east` is
+        # transient fixture data (the module seed contains only crc-local and prod-east), so restore
+        # that invariant after tests which record a poll for it. Otherwise the [1280] parametrization
+        # below inherits the verify failure written between its two cases.
+        with app.state.store._tx() as conn:
+            conn.execute("DELETE FROM poll_outcome WHERE cluster_id = ?", ("east",))
+            conn.execute("DELETE FROM cluster WHERE id = ?", ("east",))
 
     def test_the_cards_from_a_cold_url_with_rotate_and_delete_on_the_secret_row_only(self, page, cc_rig):
         base, host, settings = cc_rig
@@ -7085,9 +7092,9 @@ class TestClusterConfigPage:
         assert all(text in banner.inner_text() for text in ("east", "shared-qa", east.api_url))
         for name, other in (("east", "shared-qa"), ("shared-qa", "east")):
             card = page.locator(f"#cc-cluster-{name}")
-            # this test's chip, not the card's only warning: the TLS row may carry one too (#492's `verify
-            # failed`, left on east by the verify-failure tests, which pytest runs before the [1280] case)
-            assert card.locator(".badge.warning", has_text="shared API URL").inner_text() == "shared API URL"
+            warnings = card.locator(".badge.warning").all_inner_texts()
+            assert warnings == ["shared API URL"], (
+                "a healthy shared-URL card gained an unrelated warning", name, warnings)
             assert other in card.locator(".cc-shared-api-hint").inner_text()
             assert card.locator("[data-cc-rotate], [data-cc-delete]").count() == 2
         assert page.locator("#cc-cluster-crc-local .cc-shared-api-hint").count() == 0
