@@ -297,7 +297,9 @@ type: application
 # CHART 0.59.23 (2026-09-30), PATCH: appVersion moves to application 1.21.0 (below); #492.
 # CHART 0.59.24 (2026-09-30), PATCH: appVersion moves to application 2.0.0 (below); Epic D:
 # reconnect a cluster from the screen (#384).
-version: 0.59.24
+# CHART 0.59.25 (2026-09-30), PATCH: RUNBOOK section 1 says the card's connection row and tls chip
+# are the last poll's, not Refresh's (Epic D composition review, K5).
+version: 0.59.25
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

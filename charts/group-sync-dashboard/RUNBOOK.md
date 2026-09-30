@@ -37,6 +37,8 @@ The word under the card's `connection` row, or `outcome=` in the line, says what
 | `cert-verify-failed` | the dashboard does not trust the remote's certificate | section 4 |
 | `not-probed` | a `userSelfLogin` cluster: its credential is a session, which the card's credential row shows | not Rejoin; see `CLUSTER_CREDENTIALS.md` |
 
+The `connection` row and the `tls` row's chip (`verified` / `verify failed`) are the last poll's, not Refresh's: the `Refresh:` line carries its own instant, and the two rows follow at the next poll.
+
 ## 2. Confirm the token on the remote before you rejoin
 
 A token that still works on the remote means the problem is elsewhere, and Rejoin will not fix it. Present the stored
