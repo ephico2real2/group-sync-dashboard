@@ -12,7 +12,7 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 - **The runbook says which card rows are the last poll's (Epic D composition review, K5).** Refresh stores nothing
   (SPEC_D3 §3) and the TLS chip names the last poll's outcome (#492), so a card can read `verify failed` above
-  `Refresh: connected` until the next poll. `RUNBOOK.md` section 1 now says so. Chart 0.59.25; no application change.
+  `Refresh: connected` until the next poll. `RUNBOOK.md` section 1 now says so; chart 0.59.25, no application change.
 
 ## Application 2.0.0 — chart 0.59.24 — 2026-09-30
 
