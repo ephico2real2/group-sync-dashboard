@@ -7,7 +7,7 @@
 | Release | — (post-programme; Epic D, after D5) |
 | Version on release | app 1.19.0, chart 0.59.21 |
 | Issue | [#465](https://github.com/ephico2real2/group-sync-dashboard/issues/465) |
-| Status | merged |
+| Status | released |
 | Source | Written by the implementer (phase 1: research, measurement and the spec; no production code) from #465, OB2's measurement on #463 and SPEC_D4. Measured on this machine against main `ece9298` (application 1.12.0), on the Rejoin test suite's own rig (a fake remote that counts the wire, the tab's in-memory host). No cluster was touched and no login was made. §6's blocks were cut from a copy of `ece9298` with the design implemented, and applied back to clean copies for the proof in §4. |
 
 ## How to read this spec

@@ -8,7 +8,14 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 2.0.0 — chart 0.59.24 — 2026-09-30
+
+- **Epic D: reconnect a cluster from the screen (#384).** A cluster administrator repairs a broken cluster on the
+  Cluster Configurations tab: Refresh probes it with the credential the dashboard holds (#311), Rejoin signs in once
+  as the administrator and forgets the password, with its runbook (#316), a warning names two entries declaring the
+  same API server (#314), and each card shows which CA it trusts, when it expires, and the fix under a verify failure
+  (#244). Self-diagnosing connection logs (#245) shipped in #247. The follow-ups found on the way: #390, #404, #441,
+  #447, #449, #452, #459, #462, #465, #466, #467, #473, #478 and #492.
 
 - **A verify-failed card no longer wears the green `verified` chip (#492, Epic D #384, found on #244's lab walk,
   PR #491).** The TLS row painted `verified` from the mode alone, so a cluster whose certificate the trust store

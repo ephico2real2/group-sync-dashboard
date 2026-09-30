@@ -7,7 +7,7 @@
 | Release | — (post-programme; its own PR and its own review) |
 | Version on release | app 1.2.0, chart 0.59.4 |
 | Issue | [#311](https://github.com/ephico2real2/group-sync-dashboard/issues/311) |
-| Status | merged |
+| Status | released |
 | Source | Written by the implementer (OB1-lite) from #311's body, its reopening comment and its decisions comment of 2026-09-27, measured on main `6740e1e` (application 1.1.0); there is no separate design-agent output |
 
 ## How to read this spec
