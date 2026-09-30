@@ -239,3 +239,14 @@ def test_with_the_writes_switch_off_the_route_does_not_exist(tmp_path):
     with TestClient(app) as c:
         assert _refresh(c, "c1").status_code == 404
     assert "/api/clusterconfigs/{name}/refresh" not in app.openapi()["paths"]
+
+
+def test_the_runbook_says_the_card_rows_are_the_last_polls_not_refreshs():
+    """Epic D composition review (OB2, K5): Refresh stores nothing (SPEC_D3 §3), and #492's chip names the last
+    poll's outcome, so `verify failed` can sit above `Refresh: connected` (and `verified` above
+    `Refresh: cert-verify-failed`) until the next poll. The runbook's section 1 says which rows are the poll's."""
+    import pathlib
+    runbook = (pathlib.Path(__file__).resolve().parents[2] / "charts/group-sync-dashboard/RUNBOOK.md").read_text()
+    section = runbook.split("## 1. ", 1)[1].split("## 2. ", 1)[0]
+    assert ("The `connection` row and the `tls` row's chip (`verified` / `verify failed`) are the last poll's, not "
+            "Refresh's: the `Refresh:` line carries its own instant, and the two rows follow at the next poll.") in section
