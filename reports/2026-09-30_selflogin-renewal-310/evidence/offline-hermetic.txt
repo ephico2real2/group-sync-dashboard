@@ -1,0 +1,14 @@
+# 2026-09-30T16:39:37Z; tree 708e6be104; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+gsd imported from: <this tree>/local-development/gsd/__init__.py
+## pytest -p no:cacheprovider -q tests/test_ping_account_scope.py::test_the_self_login_walk_arrangement_with_the_ping_on_presents_nothing_as_the_fleet_account
+2 passed, 2 warnings in 0.68s
+## pytest -p no:cacheprovider -q tests/test_ping_account_scope.py
+24 passed, 2 warnings in 2.48s
+## pytest -p no:cacheprovider -q tests/test_fleet_lifecycle.py tests/test_fleet_lifecycle_round3.py
+54 passed, 2 warnings in 1.96s
+## pytest -p no:cacheprovider -v  R5 (the margin, both branches) and R6 (the order)
+tests/test_fleet_lifecycle.py::test_r5_renewal_is_a_fixed_margin_before_expiry[3600-2700] PASSED
+tests/test_fleet_lifecycle.py::test_r5_renewal_is_a_fixed_margin_before_expiry[86400-79200] PASSED
+tests/test_fleet_lifecycle.py::test_r5_renewal_is_a_fixed_margin_before_expiry[31536000-31528800] PASSED
+tests/test_fleet_lifecycle.py::test_r6_renewal_answers_the_new_login_before_the_old_token_is_revoked PASSED
+======================== 4 passed, 2 warnings in 0.30s =========================

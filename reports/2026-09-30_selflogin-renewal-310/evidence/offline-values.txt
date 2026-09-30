@@ -1,0 +1,97 @@
+# 2026-09-30T16:39:36Z; tree 708e6be104; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+PASS outside .clusters and .clusterConfig.fleetAccount, the walk values parse equal to environments/crc.yaml
+the walk's .clusters: [{"name":"dashboard","dashboardController":true,"apiUrl":"https://kubernetes.default.svc","tokenFile":"/var/run/secrets/kubernetes.io/serviceaccount/token","caBundleFile":"/var/run/secrets/kubernetes.io/serviceaccount/ca.crt","enabled":true},{"name":"walk-self-login","apiUrl":"https://api.crc.testing:6443","userSelfLogin":true,"ldapConnectionBootstrap":"developer","enabled":true}]
+the walk's .clusterConfig.fleetAccount: {"username":"developer","passwordSecret":{"namespace":"group-sync-dashboard","name":"gsd-walk-developer-password","key":"password"}}
+the walk's .clusterConfig.fleetAccount.ping: null (null: the chart default)
+PASS grep -c <the fleet account> in the walk values file: 0
+# diff environments/crc.yaml prepared/walk-values-selflogin.yaml (the fleet account's username shown as <the fleet account>):
+0a1,19
+> # WALK-ONLY VALUES: #310 Part A — a `userSelfLogin` session renewing on the CRC lab, as `developer`, at application
+> # 2.0.0 (main 708e6be1). Deployed with `local-development/release-crc.sh --values <this file>` (Helm mode) from a
+> # clean checkout of 708e6be1, while oauth/cluster's accessTokenMaxAgeSeconds is 600. Replaced at the end by
+> # `release-crc.sh --argocd main`. Not a release file: nothing here outlives the walk.
+> #
+> # Everything below is environments/crc.yaml at 708e6be1 (application 2.0.0, chart 0.59.25), verbatim — its comments
+> # included — except two blocks, each fenced by WALK/END WALK lines, and the comment crc.yaml puts above the second:
+> #   1. `clusters`: the Argo CD Application's own override (`dashboard` alone, gitops/argocd-application-dashboard.yaml
+> #      helm.valuesObject), plus ONE walk stanza, `walk-self-login`: userSelfLogin as `developer` against the same
+> #      CRC API. No saTokenLookup stanza: nothing in this walk looks a token up.
+> #   2. `clusterConfig.fleetAccount`: the chart-level username is `developer` and the password Secret is the walk-only
+> #      Secret in the release namespace. The ping block is not written: the chart default (on, daily) stands, and it
+> #      cannot bind here — `developer` has no retrieved cluster to ping against (README, "The ping").
+> #
+> # NOTHING HERE NAMES THE FLEET ACCOUNT (SPEC_S4c §3.12 step 0): the chart username and the stanza's
+> # ldapConnectionBootstrap are `developer`. SPEC_S4e's
+> # test_the_self_login_walk_arrangement_with_the_ping_on_presents_nothing_as_the_fleet_account is this arrangement's
+> # hermetic proof, and scripts/offline_proofs.sh re-runs it.
+> 
+116a136
+> # WALK 1 of 2 (#310 Part A): the Argo CD Application's clusters override, plus the walk's one stanza.
+118,121d137
+<   # HELM REPLACES LISTS, IT DOES NOT MERGE THEM. values.yaml's `clusters` default is discarded the
+<   # moment this file declares its own, so the host stanza is REPEATED here deliberately — dropping it
+<   # does not inherit it, it deletes it, and the first enabled entry silently becomes the controller
+<   # (measured: removing it made shared-rnd the host and the render refused, naming exactly that).
+128,131c144,147
+<   # shared-rnd is RETRIEVED, not hand-made: the stanza declares saTokenLookup, and the dashboard logs
+<   # in as clusterConfig.fleetAccount, reads that cluster's poller ServiceAccount token and writes
+<   # gsd-cluster-shared-rnd itself (SPEC_S4b, #284).
+<   - name: shared-rnd
+---
+>   # Polled on `developer`'s own OAuth session, renewed at expires_at - min(2 h, expires_in / 4): 150 s before the
+>   # end of a 600 s session. `developer` is bound to the group-sync-dashboard-cluster-poller ClusterRole for the walk
+>   # (prepared/walk-rbac.yaml).
+>   - name: walk-self-login
+133,145c149,150
+<     saTokenLookup: true
+<     # NO PER-CLUSTER CA ON PURPOSE — this is the path a real remote cluster takes. With nothing
+<     # declared, ClusterConfig.verify() falls back to the bundle OpenShift injects
+<     # (GSD_TRUSTED_CA_FILE), which carries the system trust merged with proxy/cluster's trustedCA.
+<     # That bundle now also carries this cluster's own CA, because proxy/cluster.spec.trustedCA was
+<     # pointed at `enterprise-and-cluster-ca-bundle` (the enterprise root plus kube-root-ca), so the
+<     # injected bundle verifies api.crc.testing and the OAuth route as well as enterprise-signed
+<     # endpoints. Declaring a caBundleFile here would OVERRIDE that and stop exercising the real path.
+<     # NO visibility / identity ON PURPOSE. A remote that states neither is asked about the reader
+<     # itself — `remote-sar` + `same-as-host` (SPEC_D2b) — so shared-rnd's OWN RBAC decides who sees it
+<     # wide, and the Secret the lookup writes follows this stanza for as long as it is the lookup's own.
+<     # `mock` sets `inherit` explicitly because it is a toy. Copying mock's keys here would widen
+<     # shared-rnd's membership to every host cluster-admin — a decision, not a consistency fix.
+---
+>     userSelfLogin: true
+>     ldapConnectionBootstrap: developer
+147,157c152
+<   - name: mock
+<     apiUrl: https://mock-openshift:6443
+<     tokenFile: /etc/gsd/mock/token
+<     caBundleFile: /etc/gsd/mock/ca.crt
+<     enabled: true
+<     # The mock is a demo cluster whose fixture makes kubeadmin cluster-admin and developer a report
+<     # auditor. A second cluster that states nothing takes remote-sar + same-as-host — its own RBAC
+<     # decides. Here we STATE `inherit` instead: the host's tier decides the mock's rows, as a toy's
+<     # should, and the reader is matched by OpenShift username.
+<     visibility: inherit
+<     identity: same-as-host
+---
+> # END WALK 1
+169,172c164,166
+<   # The fleet account, stated explicitly rather than inherited: the LDAP identity the dashboard
+<   # authenticates to a TARGET cluster as, to read that cluster's poller ServiceAccount token
+<   # (SPEC_S4b). Measured on this cluster: `oc get user <the fleet account>` exists, so the
+<   # account authenticates, and the estate's token-reader Role already binds it.
+---
+>   # WALK 2 of 2 (#310 Part A): `developer`, and the walk-only password Secret in the release namespace. The comment
+>   # environments/crc.yaml carries above this key names the fleet account, so it is replaced with this one: nothing
+>   # in this file names that account (SPEC_S4c §3.12 step 0).
+174c168
+<     username: <the fleet account>
+---
+>     username: developer
+176,178c170,173
+<       namespace: openshift-config
+<       name: ldap-oauth-bind-secret
+<       key: bindPassword
+---
+>       namespace: group-sync-dashboard
+>       name: gsd-walk-developer-password
+>       key: password
+>   # END WALK 2
