@@ -1,0 +1,2 @@
+# oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=release-200-2026-09-30 -o name
+# at 2026-09-30T09:51:15Z

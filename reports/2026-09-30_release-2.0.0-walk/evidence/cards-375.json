@@ -1,0 +1,44 @@
+{
+  "read_at": "2026-09-30T09:48:49Z",
+  "cards": {
+    "mock-privateca": {
+      "heading": "mock-privateca Secret gsd-cluster-mock-privateca enabled",
+      "shared_api_chip": false,
+      "shared_api_hint": null,
+      "tls_row": "verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData \u00b7 1 certificate CN=mock-privateca-root \u00b7 issuer CN=mock-privateca-root \u00b7 2031-09-19T16:54:01Z",
+      "badges": [
+        {
+          "text": "verified",
+          "class": "badge ok"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47 Refresh: unreachable \u00b7 2026-09-30T09:48:46Z \u2014 HTTP 404 on /version: {\"detail\":\"Not Found\"}",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": "Refresh: unreachable \u00b7 2026-09-30T09:48:46Z \u2014 HTTP 404 on /version: {\"detail\":\"Not Found\"}"
+    },
+    "mock-selfsigned": {
+      "heading": "mock-selfsigned Secret gsd-cluster-mock-selfsigned enabled",
+      "shared_api_chip": false,
+      "shared_api_hint": null,
+      "tls_row": "insecure",
+      "badges": [
+        {
+          "text": "insecure",
+          "class": "badge warning"
+        }
+      ],
+      "connection_row": "ok reachable 2026-09-30 09:47",
+      "refresh_button": true,
+      "rejoin_button": false,
+      "refresh_line": null
+    }
+  },
+  "banners": [
+    "\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."
+  ],
+  "page": {
+    "innerWidth": 375,
+    "scrollWidth": 375
+  }
+}

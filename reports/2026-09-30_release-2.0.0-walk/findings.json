@@ -1,0 +1,17 @@
+[
+  {
+    "title": "KPIs and Cluster Configurations were photographed while loading (a walk-tool gap, not the product)",
+    "severity": "note",
+    "text": "The tab steps for KPIs and Cluster Configurations passed on their heading, but both screenshots show the card reading `Loading…` (900 px tall, the viewport). walk_tabs waits for any h2 plus 700 ms, and the loading card has an h2. A second short pass (tabs_loaded.py) waited for `Loading…` to leave #main: KPIs painted 1.6 s and Cluster Configurations 1.2 s after the click (evidence/tabs-painted.json), and both painted captures are in screenshots/11-* and 12-*."
+  },
+  {
+    "title": "Refresh on mock-privateca answered `unreachable`: the mock serves no /version",
+    "severity": "note",
+    "text": "Refresh, pressed once, answered `Refresh: unreachable · 2026-09-30T09:48:46Z — HTTP 404 on /version: {\"detail\":\"Not Found\"}`; the pod logged one cluster-refreshed line with outcome=unreachable, zero fleet-login lines, and every cluster Secret kept its resourceVersion. The probe asks /version first; the lab's mock-openshift app registers no /version route, and the 2026-09-28 walk recorded the same answer on all three mocks. The card's `verified` chip and `ok` connection row are the last poll's, as RUNBOOK section 1 says since #496."
+  },
+  {
+    "title": "Six of the eleven reports name the fleet account, so their artefacts are not committed",
+    "severity": "note",
+    "text": "The fleet account is a real user on the lab, so users, groups, access-matrix, access-certification, binding-findings and dormant-access list it. Those six reports' PDF, HTML and JSON stay out of the folder; all eleven passed the four-way integrity check before the split (integrity.jsonl). Every screenshot masks the account where the page named it (evidence/mask-log.jsonl). The first Logins capture masked a sibling span and left the name readable; it was re-captured at 10:11Z with a box over the name's own text (scripts/e2e_masked.py, TEXT_BOXES_JS), and an OCR pass over every PNG and every image in this document finds the name 0 times (evidence/ocr-redaction.txt)."
+  }
+]

@@ -1,0 +1,255 @@
+{
+  "read_at": "2026-09-30T09:48:44Z",
+  "http": 200,
+  "warnings": [
+    {
+      "code": "shared-api-url",
+      "clusters": [
+        "shared-qa",
+        "shared-rnd"
+      ],
+      "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."
+    }
+  ],
+  "live": [
+    "dashboard",
+    "mock-privateca",
+    "mock-selfsigned",
+    "mock-trusted",
+    "shared-qa",
+    "shared-rnd"
+  ],
+  "retired": [
+    "cm-demo-a",
+    "cm-demo-b",
+    "constructor",
+    "crc-local",
+    "crc-tls-cadata",
+    "crc-tls-default",
+    "crc-tls-insecure",
+    "d2b-no-groups",
+    "d2b-no-sar",
+    "dashboard-rnd",
+    "gitops-404",
+    "gitops-example-389",
+    "logins-449",
+    "mock",
+    "mock-none",
+    "mock-sar",
+    "rejoin-walk",
+    "rejoin-walk-2",
+    "result-w462",
+    "rnd-lookup",
+    "rnd-lookup2",
+    "verify-lookup",
+    "w244-exp",
+    "w244-fail",
+    "w462",
+    "w465",
+    "w492-fail",
+    "walk-447",
+    "walk-452",
+    "walk-authfail",
+    "walk-lookup",
+    "walk-self-login"
+  ],
+  "clusters": [
+    {
+      "id": "dashboard",
+      "source": "values",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://kubernetes.default.svc",
+      "credential": "in-cluster",
+      "tls": {
+        "insecure": false,
+        "ca": "serviceAccount"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T09:47:52Z",
+      "error": null,
+      "trust": {
+        "store": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+        "sourceKind": "file",
+        "count": 6,
+        "enterpriseRoot": null,
+        "certificates": [
+          {
+            "subject": "OU=openshift,CN=kube-apiserver-lb-signer",
+            "issuer": "OU=openshift,CN=kube-apiserver-lb-signer",
+            "notBefore": "2026-07-29T11:41:58Z",
+            "notAfter": "2036-07-26T11:41:58Z",
+            "sha256": "5ff417a981815f6da3cc1a5fff0df29278e72b1684b0546078c1fe406c0f352c",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "OU=openshift,CN=kube-apiserver-localhost-signer",
+            "issuer": "OU=openshift,CN=kube-apiserver-localhost-signer",
+            "notBefore": "2026-07-29T11:41:58Z",
+            "notAfter": "2036-07-26T11:41:58Z",
+            "sha256": "263a8acb9f0266073d77a2f9a84dbf6403a5e2f93f732788c2317e5b8a634451",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "OU=openshift,CN=kube-apiserver-service-network-signer",
+            "issuer": "OU=openshift,CN=kube-apiserver-service-network-signer",
+            "notBefore": "2026-07-29T11:41:58Z",
+            "notAfter": "2036-07-26T11:41:58Z",
+            "sha256": "84cc955b4acfcb674c49a8155ed5463fef6c817d791d9277287d6d2fa308af81",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898",
+            "issuer": "CN=openshift-kube-apiserver-operator_localhost-recovery-serving-signer@1785325898",
+            "notBefore": "2026-07-29T11:51:38Z",
+            "notAfter": "2036-07-26T11:51:39Z",
+            "sha256": "8c3c20c4ddebffe5aba33d2bd9d4f346887f19a69c587935faa4e64967de3771",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "CN=*.apps-crc.testing",
+            "issuer": "CN=ingress-operator@1785325954",
+            "notBefore": "2026-07-29T11:52:36Z",
+            "notAfter": "2028-07-28T11:52:37Z",
+            "sha256": "96b4cad0d6cd760cf172dd383b13335ea7d7c82e486ced12cb999d814e37a23f",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          },
+          {
+            "subject": "CN=ingress-operator@1785325954",
+            "issuer": "CN=ingress-operator@1785325954",
+            "notBefore": "2026-07-29T11:52:34Z",
+            "notAfter": "2028-07-28T11:52:35Z",
+            "sha256": "f29466f89309e158056d2ff83fd9eed8cc53e755f81620c392269c0df23c8f91",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mock-privateca",
+      "source": "secret:gsd-cluster-mock-privateca",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://mock-privateca:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "caData"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T09:47:51Z",
+      "error": null,
+      "trust": {
+        "store": "secret:gsd-cluster-mock-privateca/tlsClientConfig.caData",
+        "sourceKind": "secret",
+        "count": 1,
+        "enterpriseRoot": null,
+        "certificates": [
+          {
+            "subject": "CN=mock-privateca-root",
+            "issuer": "CN=mock-privateca-root",
+            "notBefore": "2026-09-20T16:54:01Z",
+            "notAfter": "2031-09-19T16:54:01Z",
+            "sha256": "cdf9fb279a8795542554eb3fa0b26faa454c95430b67c1dff527adeda977fc66",
+            "enterpriseRoot": null,
+            "validity": "valid"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mock-selfsigned",
+      "source": "secret:gsd-cluster-mock-selfsigned",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://mock-selfsigned:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": true,
+        "ca": null
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T09:47:51Z",
+      "error": null,
+      "trust": {
+        "store": "insecure",
+        "sourceKind": "none",
+        "count": 0,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "mock-trusted",
+      "source": "secret:gsd-cluster-mock-trusted",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://mock-trusted:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T09:47:51Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "shared-qa",
+      "source": "secret:gsd-cluster-shared-qa",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T09:47:52Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    },
+    {
+      "id": "shared-rnd",
+      "source": "secret:gsd-cluster-shared-rnd",
+      "retired": false,
+      "enabled": true,
+      "api_url": "https://api.crc.testing:6443",
+      "credential": "bearer",
+      "tls": {
+        "insecure": false,
+        "ca": "trusted-bundle"
+      },
+      "status": "ok",
+      "last_poll": "2026-09-30T09:47:53Z",
+      "error": null,
+      "trust": {
+        "store": "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt",
+        "sourceKind": "configmap",
+        "count": 152,
+        "enterpriseRoot": null,
+        "certificates": []
+      }
+    }
+  ]
+}

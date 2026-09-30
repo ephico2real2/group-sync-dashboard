@@ -1,0 +1,8 @@
+# OCR every image and count recognised lines naming the fleet account (full name or its middle fragment, any case)
+# at 2026-09-30T10:13:30Z; OCR = macOS Vision (VNRecognizeTextRequest, accurate, 1400-px bands)
+# "${OCR}" <files> | grep -i -F -e '<the fleet account>' -e '<its middle fragment>'
+# positive control (outside the repo): files 2; lines naming the account 2
+#   hit:    1 <tmp>/ORIGINAL-e2e-13-tab-logins.png
+#   hit:    1 <tmp>/ORIGINAL-embedded-12.jpeg
+# every PNG in the folder: files 88; lines naming the account 0
+# every image embedded in e2e-walk.html (extracted outside the repo): files 65; lines naming the account 0

@@ -1,0 +1,42 @@
+2026-09-30T09:48:40Z whoami                                                        : {"user": "developer", "cluster_admin": true, "host_scope": "all"}
+2026-09-30T09:48:40Z PASS developer holds the cluster-admin tier for the walk      : {"user": "developer", "cluster_admin": true, "host_scope": "all"}
+2026-09-30T09:48:40Z tabs offered                                                  : ["Home", "Overview", "KPIs", "Groups", "Users", "Access granted", "RBAC policy", "Kyverno", "Namespace audit", "Logins", "Usage", "Reports", "Library", "Cluster Configurations"]
+2026-09-30T09:48:44Z PASS no 'Dashboard API error' (clusters tab, 1280)            : 0
+2026-09-30T09:48:44Z PASS GET /api/clusterconfigs answers 200                      : 200
+2026-09-30T09:48:44Z wrote                                                         : evidence/clusterconfigs-1280.json
+2026-09-30T09:48:44Z API warnings (all kinds)                                      : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"], "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-30T09:48:44Z API shared-api-url warnings                                   : [{"code": "shared-api-url", "clusters": ["shared-qa", "shared-rnd"], "detail": "shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."}]
+2026-09-30T09:48:44Z banners painted                                               : ["\u26a0\ufe0f Shared API URL. shared-qa, shared-rnd declare the same API URL: https://api.crc.testing:6443. Each entry is still polled and counted on its own."]
+2026-09-30T09:48:44Z PASS one banner per API warning (the banner is painted from the API's warnings): {"warnings": 1, "banners": 1}
+2026-09-30T09:48:44Z shot                                                          : screenshots/01-1280-head-and-banner.png
+2026-09-30T09:48:44Z wrote                                                         : evidence/cards-1280.json
+2026-09-30T09:48:44Z PASS mock-privateca: the TLS chip is the green `verified`, `ca: caData`, a store and a certificate line: verified ca: caData store secret:gsd-cluster-mock-privateca/tlsClientConfig.caData · 1 certificate CN=mock-privateca-root · issuer CN=mock-privateca-root · 2031-09-19T16:54:01Z
+2026-09-30T09:48:44Z PASS mock-privateca: the card names the certificate's expiry (the API's notAfter): {"notAfter": ["2031-09-19T16:54:01Z"]}
+2026-09-30T09:48:44Z PASS mock-selfsigned: the TLS chips are exactly `insecure`    : [{"text": "insecure", "class": "badge warning"}]
+2026-09-30T09:48:44Z recorded: mock-trusted chips / tls row                        : [["verified"], "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates"]
+2026-09-30T09:48:44Z recorded: shared-rnd chips / tls row                          : [["verified"], "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates"]
+2026-09-30T09:48:44Z recorded: shared-qa chips / tls row                           : [["verified"], "verified ca: trusted-bundle store /etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt \u00b7 152 certificates"]
+2026-09-30T09:48:45Z shot                                                          : screenshots/02-1280-mock-privateca-card.png
+2026-09-30T09:48:45Z shot                                                          : screenshots/03-1280-mock-selfsigned-card.png
+2026-09-30T09:48:45Z shot                                                          : screenshots/04-1280-mock-trusted-card.png
+2026-09-30T09:48:46Z shot                                                          : screenshots/05-1280-shared-rnd-card.png
+2026-09-30T09:48:46Z shot                                                          : screenshots/06-1280-shared-qa-card.png
+2026-09-30T09:48:46Z before the press: cluster Secret resourceVersions             : {"read_at": "2026-09-30T09:48:46Z", "resourceVersions": {"gsd-cluster-mock-privateca": "995049", "gsd-cluster-mock-refusal": "993486", "gsd-cluster-mock-selfsigned": "993485", "gsd-cluster-mock-trusted": "993483", "gsd-cluster-shared-qa": "2981054", "gsd-cluster-shared-rnd": "2835139"}}
+2026-09-30T09:48:46Z after the answer: cluster Secret resourceVersions             : {"read_at": "2026-09-30T09:48:46Z", "resourceVersions": {"gsd-cluster-mock-privateca": "995049", "gsd-cluster-mock-refusal": "993486", "gsd-cluster-mock-selfsigned": "993485", "gsd-cluster-mock-trusted": "993483", "gsd-cluster-shared-qa": "2981054", "gsd-cluster-shared-rnd": "2835139"}}
+2026-09-30T09:48:46Z refresh answer line                                           : Refresh: unreachable · 2026-09-30T09:48:46Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-30T09:48:46Z wrote                                                         : evidence/refresh-mock-privateca.json
+2026-09-30T09:48:46Z PASS Refresh was sent exactly once                            : ["2026-09-30T09:48:46Z POST https://group-sync-dashboard.apps-crc.testing/api/clusterconfigs/mock-privateca/refresh"]
+2026-09-30T09:48:46Z FAIL Refresh answered on mock-privateca's own card (`Refresh: connected · …`): Refresh: unreachable · 2026-09-30T09:48:46Z — HTTP 404 on /version: {"detail":"Not Found"}
+2026-09-30T09:48:46Z PASS no cluster Secret changed across the press (every resourceVersion equal): null
+2026-09-30T09:48:47Z shot                                                          : screenshots/07-1280-mock-privateca-after-refresh.png
+2026-09-30T09:48:49Z PASS no 'Dashboard API error' (clusters tab, 375)             : 0
+2026-09-30T09:48:49Z wrote                                                         : evidence/cards-375.json
+2026-09-30T09:48:49Z PASS 375: mock-privateca `verified`, mock-selfsigned `insecure`: {"mock-privateca": ["verified"], "mock-selfsigned": ["insecure"]}
+2026-09-30T09:48:49Z PASS 375: the page does not scroll sideways (scrollWidth <= innerWidth): {"innerWidth": 375, "scrollWidth": 375}
+2026-09-30T09:48:49Z shot                                                          : screenshots/08-375-head-and-banner.png
+2026-09-30T09:48:50Z shot                                                          : screenshots/09-375-mock-privateca-card.png
+2026-09-30T09:48:50Z shot                                                          : screenshots/10-375-mock-selfsigned-card.png
+2026-09-30T09:48:50Z PASS no 'Dashboard API error' (the end)                       : 0
+2026-09-30T09:48:50Z PASS no uncaught page errors                                  : []
+2026-09-30T09:48:50Z PASS no write other than the one Refresh was attempted        : []
+2026-09-30T09:48:50Z live failures                                                 : ["Refresh answered on mock-privateca's own card (`Refresh: connected \u00b7 \u2026`)"]

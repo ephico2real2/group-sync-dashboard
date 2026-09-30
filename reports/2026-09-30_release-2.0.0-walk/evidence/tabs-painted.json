@@ -1,0 +1,39 @@
+{
+  "whoami": {
+    "user": "developer",
+    "cluster_admin": true,
+    "host_scope": "all"
+  },
+  "tabs": [
+    {
+      "tab": "KPIs",
+      "seconds_from_click_to_painted": 1.6,
+      "heading": "System status\nupdated\n1s ago\n\u00b7 refresh 60s",
+      "h2s": [
+        "System status\nupdated\n1s ago\n\u00b7 refresh 60s",
+        "Access posture\nas of last poll \u00b7 6 clusters \u00b7 dashboard + mock-privateca + mock-selfsigned + mock-trusted + shared-qa + shared-rnd",
+        "Trends\nin-app from append-only history \u00b7 30d \u00b7 deeper series in Grafana",
+        "Clusters"
+      ]
+    },
+    {
+      "tab": "Cluster Configurations",
+      "seconds_from_click_to_painted": 1.2,
+      "heading": "Cluster Configurations 38 clusters",
+      "h2s": [
+        "Cluster Configurations 38 clusters",
+        "dashboard in-cluster \nenabled",
+        "mock-privateca Secret gsd-cluster-mock-privateca \nenabled",
+        "mock-selfsigned Secret gsd-cluster-mock-selfsigned \nenabled",
+        "mock-trusted Secret gsd-cluster-mock-trusted \nenabled",
+        "shared-qa Secret gsd-cluster-shared-qa \nenabled \nshared API URL",
+        "shared-rnd Secret gsd-cluster-shared-rnd \nenabled \nshared API URL",
+        "cm-demo-a Secret gsd-cluster-cm-demo-a \ndisabled",
+        "cm-demo-b Secret gsd-cluster-cm-demo-b \ndisabled",
+        "constructor Secret gsd-cluster-constructor \ndisabled",
+        "crc-local values \ndisabled",
+        "crc-tls-cadata Secret gsd-cluster-tls-cadata \ndisabled"
+      ]
+    }
+  ]
+}

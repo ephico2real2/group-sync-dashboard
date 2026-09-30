@@ -1,0 +1,5 @@
+# oc get deployments.apps -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns='NAME:.metadata.name,CHART:.metadata.labels.helm\.sh/chart,VERSION:.metadata.labels.app\.kubernetes\.io/version,IMAGE:.spec.template.spec.containers[0].image'
+# at 2026-09-30T09:51:17Z
+NAME                          CHART                          VERSION   IMAGE
+group-sync-dashboard          group-sync-dashboard-0.59.25   2.0.0     quay.io/ephico2real/group-sync-dashboard:2.0.0
+group-sync-dashboard-report   group-sync-dashboard-0.59.25   2.0.0     quay.io/ephico2real/group-sync-dashboard-report:2.0.0

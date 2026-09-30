@@ -1,0 +1,32 @@
+{
+  "read_at": "2026-09-30T09:47:25Z",
+  "whoami": {
+    "user": "developer",
+    "cluster_admin": false,
+    "host_scope": "self"
+  },
+  "tabs": [
+    "Home",
+    "Overview",
+    "Groups",
+    "Users",
+    "Access granted",
+    "RBAC policy",
+    "Kyverno",
+    "Namespace audit",
+    "Logins",
+    "Usage",
+    "Reports",
+    "Library"
+  ],
+  "cluster_configurations_tab_offered": false,
+  "kpis_tab_offered": false,
+  "api_clusterconfigs": {
+    "http": 403,
+    "body": "{\"detail\":\"For cluster administrators only. This view reports how this instance is wired to its clusters \u2014 which Secret configures each one, the kind of credential it holds and how its certificate is trusted.\"}"
+  },
+  "reports_tab": {
+    "catalogue_offered": false,
+    "refusal": "Withheld, not empty. Reports are documents about the cluster's own RBAC surface, its groups and its users. For administrators only. Nothing on this page is broken and nothing is missing from the cluster \u2014 this view is simply not part of yours."
+  }
+}

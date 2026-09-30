@@ -1,0 +1,16 @@
+# oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --timestamps --since-time=2026-09-30T09:47:17Z  (captured 2026-09-30T09:51:18Z)
+# lines in the window: 172
+# discovery cycles, fleet-* and cluster-refreshed lines:
+2026-09-30T09:48:46.793398493Z 2026-09-30 05:48:46,792-0400 INFO    gsd.clusterconfig.writer cluster-refreshed cluster=mock-privateca credential=bearer by=developer outcome=unreachable
+# discovery cycle lines: 0
+# fleet-lookup lines: 0
+# fleet-ping lines: 0
+# fleet-login lines: 0
+# fleet-login-refused lines: 0
+# fleet-login-failed lines: 0
+# fleet-logout lines: 0
+# cluster-refreshed lines: 1
+# cluster-rejoined lines: 0
+# lines naming the fleet account: 0
+# Traceback lines: 0
+# ERROR lines (the string anywhere): 0
