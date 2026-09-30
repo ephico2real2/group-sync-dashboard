@@ -1,0 +1,9 @@
+# The Argo CD Application's helm.valuesObject (gitops/argocd-application-dashboard.yaml): rendered after
+# environments/crc.yaml, it gives the shape Argo deploys, which scripts/rbac_rules.py diffs against the walk's.
+clusters:
+  - name: dashboard
+    dashboardController: true
+    apiUrl: https://kubernetes.default.svc
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    caBundleFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    enabled: true

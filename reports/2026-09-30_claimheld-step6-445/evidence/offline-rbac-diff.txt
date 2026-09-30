@@ -1,0 +1,18 @@
+# 2026-09-30T22:06:01Z; tree 57735e9ee8; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+# before: the Argo CD shape; after: the walk values (then + prepared/walk-rbac.yaml). Lines: 3318 / 3318 / 45
+## without the walk grant
+inputs: before argo.yaml; after walk.yaml
+grants: before 66, after 66
+REMOVED 1
+  - ServiceAccount:group-sync-dashboard:group-sync-dashboard | openshift-config | secrets | get | ldap-oauth-bind-secret
+ADDED 1
+  + ServiceAccount:group-sync-dashboard:group-sync-dashboard | group-sync-dashboard | secrets | get | gsd-walk-developer-password
+REMOVED for ServiceAccount:group-sync-dashboard:group-sync-dashboard: 1
+## with prepared/walk-rbac.yaml beside the walk render
+inputs: before argo.yaml; after walk.yaml + prepared/walk-rbac.yaml
+grants: before 66, after 67
+REMOVED 0
+ADDED 1
+  + ServiceAccount:group-sync-dashboard:group-sync-dashboard | group-sync-dashboard | secrets | get | gsd-walk-developer-password
+REMOVED for ServiceAccount:group-sync-dashboard:group-sync-dashboard: 0
+PASS REMOVED 1 without the keep-grant (the ServiceAccount's get on ldap-oauth-bind-secret), REMOVED 0 with it

@@ -1,0 +1,11 @@
+# 2026-09-30T22:06:15Z; tree 57735e9ee8; helm v4.3.0+gbec5b06; yq (https://github.com/mikefarah/yq/) version v4.53.6; Python 3.14.7
+bash -n: scripts/baseline.sh
+bash -n: scripts/capture.sh
+bash -n: scripts/compare_baselines.sh
+bash -n: scripts/labcheck.sh
+bash -n: scripts/lib.sh
+bash -n: scripts/offline_proofs.sh
+bash -n: scripts/run.sh
+bash -n: scripts/sweep.sh
+bash -n: scripts/stub/oc
+PASS shellcheck 0.11.0 -x: no finding

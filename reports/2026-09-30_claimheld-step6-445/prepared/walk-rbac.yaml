@@ -1,0 +1,45 @@
+# #445's one temporary grant, 2026-09-30: the keep-grant, and nothing else. It is
+# reports/2026-09-30_selflogin-renewal-310/prepared/walk-rbac.yaml's grant 1, relabelled for this run, so its removal
+# is one label selector and provable. The other walk grants SPEC_S4c §3.12 names are for steps this walk does not run:
+# `developer` on the token-reader Role served the lookup (step 2), `developer` on the poller ClusterRole served the
+# self-login polls (step 4). Step 6's processes act as the dashboard ServiceAccount, whose `leases` rule the chart
+# renders in both shapes (evidence/offline-rbac-diff.txt).
+#
+# Created with `oc create` (scripts/run.sh) before the walk's values are deployed. Removed by scripts/sweep.sh only
+# once the chart's own group-sync-dashboard-fleet-account Role in openshift-config names ldap-oauth-bind-secret again
+# (after `release-crc.sh --argocd main`), so the dashboard ServiceAccount's permissions never drop (the operator's rule
+# of 2026-09-25).
+#
+# KEEP the dashboard ServiceAccount's `get` on the fleet password Secret while the walk's values point the chart's
+# fleet-account grant at the walk-only Secret instead. The same subject, resourceName and verb as the chart's own
+# group-sync-dashboard-fleet-account Role in openshift-config. Nothing in the walk's configuration reads this Secret:
+# the grant only keeps what the ServiceAccount already has (evidence/offline-rbac-diff.txt: without it the walk values
+# REMOVE exactly this atom).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gsd-walk-keep-fleet-password-get
+  namespace: openshift-config
+  labels:
+    walk.gsd.lab/run: claimheld-445-2026-09-30
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["ldap-oauth-bind-secret"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gsd-walk-keep-fleet-password-get
+  namespace: openshift-config
+  labels:
+    walk.gsd.lab/run: claimheld-445-2026-09-30
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gsd-walk-keep-fleet-password-get
+subjects:
+  - kind: ServiceAccount
+    name: group-sync-dashboard
+    namespace: group-sync-dashboard

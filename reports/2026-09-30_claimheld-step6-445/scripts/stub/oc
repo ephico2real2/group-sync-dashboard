@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# A stand-in `oc` for scripts/offline_proofs.sh: it answers the reads and writes scripts/sweep.sh makes, and the reads
+# of scripts/capture.sh's `audit`, from files in ${STUB_STATE}, and logs every call to ${STUB_STATE}/calls. It never
+# reaches a cluster. State files hold 0/1 flags, `lease` holds absent|held|free, `audit.log` the audit records.
+# A call it does not know is an error (exit 97), so a gap cannot pass silently.
+set -euo pipefail
+d="${STUB_STATE:?}"; echo "$*" >> "${d}/calls"
+get() { cat "${d}/$1" 2>/dev/null || echo "${2:-}"; }
+put() { printf '%s' "$2" > "${d}/$1"; }
+flag() { [ "$(get "$1" 0)" = 1 ]; }
+L=gsd-fleet-88fa0d759f845b47
+args="$*"
+case "${args}" in
+  "delete secrets -n group-sync-dashboard -l walk.gsd.lab/run="*" --ignore-not-found")
+    if flag secret; then put secret 0; echo 'secret "gsd-walk-developer-password" deleted'; fi ;;
+  "get secrets -n group-sync-dashboard gsd-walk-developer-password -o name --ignore-not-found")
+    if flag secret; then echo secret/gsd-walk-developer-password; fi ;;
+  "get roles.rbac.authorization.k8s.io -n openshift-config group-sync-dashboard-fleet-account -o json")
+    if flag chart; then echo '{"rules":[{"apiGroups":[""],"resourceNames":["ldap-oauth-bind-secret"],"resources":["secrets"],"verbs":["get"]}]}'
+    else echo 'Error from server (NotFound): roles.rbac.authorization.k8s.io "group-sync-dashboard-fleet-account" not found' >&2; exit 1; fi ;;
+  "get rolebindings.rbac.authorization.k8s.io -n openshift-config -o json")
+    if flag chart; then echo '{"items":[{"roleRef":{"kind":"Role","name":"group-sync-dashboard-fleet-account"},"subjects":[{"kind":"ServiceAccount","name":"group-sync-dashboard","namespace":"group-sync-dashboard"}]}]}'
+    else echo '{"items":[]}'; fi ;;
+  "delete roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -n openshift-config -l walk.gsd.lab/run="*" --ignore-not-found")
+    if flag keep; then put keep 0; echo 'role.rbac.authorization.k8s.io "gsd-walk-keep-fleet-password-get" deleted'; fi ;;
+  "get roles.rbac.authorization.k8s.io -n openshift-config -l walk.gsd.lab/run="*" -o name")
+    if flag keep; then echo role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; fi ;;
+  "get leases.coordination.k8s.io -n group-sync-dashboard ${L} -o json")
+    case "$(get lease absent)" in
+      absent) echo "Error from server (NotFound): leases.coordination.k8s.io \"${L}\" not found" >&2; exit 1 ;;
+      held) printf '{"metadata":{"resourceVersion":"7"},"spec":{"holderIdentity":"walk-step6-a","renewTime":"%s","leaseDurationSeconds":195}}\n' \
+              "$(date -u +%Y-%m-%dT%H:%M:%S.000000Z)" ;;
+      free) echo '{"metadata":{"resourceVersion":"8"},"spec":{"holderIdentity":"","renewTime":"2026-09-30T00:00:00.000000Z","leaseDurationSeconds":195}}' ;;
+    esac ;;
+  "delete leases.coordination.k8s.io -n group-sync-dashboard ${L} --ignore-not-found")
+    if [ "$(get lease absent)" != absent ]; then put lease absent; echo "lease.coordination.k8s.io \"${L}\" deleted"; fi ;;
+  "get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json")
+    if flag cm_developer; then printf '%s\n' '{"data":{"clusters.yaml":"fleetAccountUsername: \"developer\"\n"}}'
+    else printf '%s\n' '{"data":{"clusters.yaml":"fleetAccountUsername: \"someone-else\"\n"}}'; fi ;;
+  "get secrets,roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run="*" -o name")
+    if flag keep; then printf '%s\n' role.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get rolebinding.rbac.authorization.k8s.io/gsd-walk-keep-fleet-password-get; fi ;;
+  "get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run="*" -o name") ;;
+  # capture.sh audit: the fleet account's name from its Lease, then the oauth-server audit log from ${STUB_STATE}/audit.log.
+  "get leases.coordination.k8s.io -n group-sync-dashboard -l groupsync-dashboard.io/lease-type=fleet-account -o json")
+    echo '{"items":[{"metadata":{"annotations":{"groupsync-dashboard.io/account":"stub-fleet-account"}}},{"metadata":{"annotations":{"groupsync-dashboard.io/account":"developer"}}}]}' ;;
+  "adm node-logs --role=master --path=oauth-server/")
+    if [ -s "${d}/audit.log" ]; then echo "crc audit.log"; fi ;;
+  "adm node-logs --role=master --path=oauth-server/audit.log")
+    sed 's/^/crc /' "${d}/audit.log" ;;
+  *) echo "stub oc: unexpected call: ${args}" >&2; exit 97 ;;
+esac
