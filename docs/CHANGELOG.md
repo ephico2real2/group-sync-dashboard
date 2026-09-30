@@ -8,7 +8,9 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 2.0.0 — chart 0.59.24 — 2026-09-30
+
+- **Epic D: reconnect a cluster from the screen (#384).**
 
 - **A verify-failed card no longer wears the green `verified` chip (#492, Epic D #384, found on #244's lab walk,
   PR #491).** The TLS row painted `verified` from the mode alone, so a cluster whose certificate the trust store
