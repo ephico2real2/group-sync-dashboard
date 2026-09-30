@@ -1,2 +1,5 @@
 # git log -1 --format='%H %s' b40b5cf8   (read 2026-09-30T11:13:20Z, review of #497)
 b40b5cf82a07255d80011676e072daf38ed5c734 Merge pull request #495 from ephico2real2/release/app-2.0.0
+
+# git log -1 --format='%H %s' eebc2f36   (read 2026-09-30T11:24:28Z, second review of #497)
+eebc2f3647b21bfcbb1fbc68fb5717035e851edf Merge pull request #496 from ephico2real2/docs/epic-d-k5-runbook

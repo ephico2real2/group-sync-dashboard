@@ -17,4 +17,4 @@
 2026-09-30T10:11:28Z recapture_logins.py
 2026-09-30T10:11:37Z third grant deleted
 2026-09-30T10:11:40Z third window end rc=0
-2026-09-30T11:13:20Z review of #497: grant total = window 1 (09:47:25Z–09:51:14Z, 229 s) + window 2 (09:54:17Z–09:55:36Z, 79 s) + window 3 (10:10:18Z–10:11:37Z, 79 s) = 387 s, from the create/delete instants above
+2026-09-30T11:13:20Z review of #497: grant total = window 1 (09:47:25Z–09:51:14Z, 229 s) + window 2 (09:54:17Z–09:55:36Z, 79 s) + window 3 (10:10:18Z–10:11:37Z, 79 s) = 387 s, from the `oc create` / `oc delete` headers of grant-create.txt, delete-grant.txt and their p2-/p3- twins; window 1's delete is logged above at 09:51:15Z, the instant run.sh wrote after the delete returned, 1 s after delete-grant.txt's header

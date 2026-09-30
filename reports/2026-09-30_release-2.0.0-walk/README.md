@@ -3,7 +3,7 @@
 **Outcome.** The lab served application 2.0.0 at commit `b40b5cf82a` before and after the walk
 (`evidence/before-version.txt` at 09:47:17Z, `evidence/after-version.txt` at 09:51:15Z,
 `evidence/p2-after-version.txt` at 09:55:37Z). That is release PR #495's merge commit (`evidence/release-commit.txt`). Both Deployments carried the
-label `helm.sh/chart: group-sync-dashboard-0.59.25`, the chart of PR #496 (`evidence/before-chart.txt`,
+label `helm.sh/chart: group-sync-dashboard-0.59.25`, the chart of PR #496 (`evidence/release-commit.txt`; `evidence/before-chart.txt`,
 `evidence/after-chart.txt`). Argo CD reported the dashboard Application `Synced` at revision
 `eebc2f3647b21bfcbb1fbc68fb5717035e851edf`, which is PR #496's merge (`evidence/before-argo.txt`).
 
@@ -53,7 +53,7 @@ host scope `all`, and 14 tabs were offered (`evidence/walk-live.txt`). The grant
 | 2: KPIs and Cluster Configurations once painted (finding 1) | 09:54:17Z | 09:55:36Z | 79 | `evidence/p2-grant-create.txt`, `evidence/p2-delete-grant.txt` |
 | 3: the Logins tab re-captured with the corrected mask (Redaction) | 10:10:18Z | 10:11:37Z | 79 | `evidence/p3-grant-create.txt`, `evidence/p3-delete-grant.txt` |
 
-The grant stood for 387 s in total (229 + 79 + 79 s, `evidence/timeline.txt`). `oc auth can-i update clusterrolebindings --as=developer` answered as follows:
+The grant stood for 387 s in total (229 + 79 + 79 s, from `evidence/grant-create.txt` and `evidence/delete-grant.txt` and their `p2-` and `p3-` twins; the sum is in `evidence/timeline.txt`). `oc auth can-i update clusterrolebindings --as=developer` answered as follows:
 
 - window 1: `no` at 09:47:19Z, `yes` at 09:48:35Z, `no` at 09:51:15Z (`evidence/before-cani.txt`,
   `evidence/during-cani.txt`, `evidence/after-cani.txt`);
@@ -147,7 +147,7 @@ Read with the page's own fetch and the painted cards (`evidence/walk-live.txt`, 
 | Rejoin | Not pressed, as the brief says. The route guard would have aborted it. | `scripts/epicd.py` |
 
 The header counts 38 clusters, and the retired rows `w244-exp`, `w244-fail` and `w492-fail` (throwaways of earlier walks) are among them. They are
-history from those walks and were not read here (`evidence/tabs-painted.json`).
+history from those walks and were not read here (`evidence/clusterconfigs-1280.json`, `retired`; the count is in `evidence/tabs-painted.json`).
 
 ## Findings
 
