@@ -411,7 +411,8 @@ class TestWriter:
         monkeypatch.setattr("gsd.clusterconfig.writer.ClusterClient", _Probe)
         with caplog.at_level(logging.INFO):
             out = probe_connection(_req(), NS, host_name="c1", timeout=5.0, viewer="root")
-        assert out == {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:reader", "error": None}
+        assert out == {"reachable": True, "server_version": "v1.31.6", "identity": "system:serviceaccount:ns:reader", "error": None,
+                       "certificates": []}   # #244: the Test response carries the pasted PEM's summary; a bearer request pastes none
         assert seen == ["/version", "/apis/user.openshift.io/v1/users/~"]
         assert "connection-tested cluster=west server=https://api.west.example:6443 by=root outcome=reachable" in caplog.text
         assert TOKEN not in caplog.text
@@ -546,7 +547,9 @@ class TestApi:
     def test_each_refusal_answers_its_code_and_writes_nothing(self, rig, patch, status, code):
         c, app, host, settings = rig
         r = c.post("/api/clusterconfigs", json={**self.BODY, **patch}, headers=H("root"))
-        assert r.status_code == status and r.json()["detail"].startswith(code + ":"), r.text
+        detail = r.json()["detail"]
+        text = detail if isinstance(detail, str) else f"{detail.get('code')}: {detail.get('message')}"
+        assert r.status_code == status and text.startswith(code + ":"), r.text
         assert not any(m in ("POST", "PUT", "DELETE") for m, _ in host.calls)
 
     def test_the_writes_switch_off_registers_no_write_route_and_the_read_says_so(self, tmp_path):

@@ -96,9 +96,10 @@ class WriteRefused(Exception):
     `not-a-secret-cluster`, `not-our-secret`, `secret-exists`, `secret-changed`, `label-invalid`,
     `config-not-json`), `detail` the sentence."""
 
-    def __init__(self, code: str, detail: str, *, conflict: bool = False):
+    def __init__(self, code: str, detail: str, *, conflict: bool = False, certificates: list | None = None):
         super().__init__(f"{code}: {detail}")
         self.code, self.detail, self.conflict = code, detail, conflict
+        self.certificates = certificates or []
 
 
 class WriteFailed(Exception):
@@ -214,13 +215,18 @@ def validate(req: CreateRequest, namespace: str, *, host_name: str | None,
         raise WriteRefused("credential-missing", f"a bearer token is at least {MIN_TOKEN_LENGTH} characters; this one looks truncated")
     if req.tls_mode not in TLS_MODES:
         raise WriteRefused("unsupported-config-key", f"tls.mode must be one of {', '.join(TLS_MODES)}")
+    summary: list = []
     if req.tls_mode == "caData":
         if not req.ca_data:
             raise WriteRefused("ca-data-invalid", "tls.mode caData needs tls.caData (a base64 PEM bundle)")
         try:
-            base64.b64decode(req.ca_data, validate=True)
+            # Read like summarise_file reads a bundle: the blocks are ASCII, and what lies between them is
+            # the parser's to refuse (#466's sentence names the cause), not this base64 check's.
+            pem = base64.b64decode(req.ca_data, validate=True).decode("utf-8", errors="replace")
         except (binascii.Error, ValueError):
             raise WriteRefused("ca-data-invalid", "tls.caData must be a base64 PEM bundle") from None
+        from .ca import summarise_pem
+        summary = summarise_pem(pem)
     for key, value in (req.labels or {}).items():
         key, value = str(key), str(value)
         if key.startswith(LABEL_DOMAIN):
@@ -234,7 +240,9 @@ def validate(req: CreateRequest, namespace: str, *, host_name: str | None,
                                                 "digits, '-', '_' or '.', starting and ending alphanumeric")
     parsed = parse_secret(secret_object(req, namespace), host_name=host_name)
     if isinstance(parsed, Finding):
-        raise WriteRefused(parsed.code, parsed.detail)
+        # §3.6: only a `ca-data-invalid` refusal answers with what decoded; every other refusal keeps its string.
+        raise WriteRefused(parsed.code, parsed.detail,
+                           certificates=summary if parsed.code == "ca-data-invalid" else None)
     if parsed.name in taken:
         raise WriteRefused("duplicate-cluster-name", f"{parsed.name} is already declared by {taken[parsed.name]}", conflict=True)
     return parsed
@@ -521,6 +529,8 @@ def test_connection(req: CreateRequest, namespace: str, *, host_name: str | None
     # The probe client redacts its own token from what the remote echoes; scrubbed again here so the
     # sentence that reaches the page never depends on which client raised it.
     out["error"] = None if exc is None else _scrub(f"{exc.outcome}: {exc.message}", req.token)
+    from .ca import summarise_pem
+    out["certificates"] = summarise_pem(parsed.ca_data or "")
     event(log, logging.INFO, "connection-tested", cluster=req.name, server=req.server, by=viewer,
           outcome="reachable" if out["reachable"] else "unreachable", secrets=(req.token,))
     return out

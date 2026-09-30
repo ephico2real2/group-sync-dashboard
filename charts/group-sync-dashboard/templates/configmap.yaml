@@ -99,6 +99,9 @@ data:
     # The daily ping (SPEC_S4c §3.4): once per fleet account per interval, on the discovery cadence.
     fleetPingEnabled: {{ .Values.clusterConfig.fleetAccount.ping.enabled }}
     fleetPingIntervalSeconds: {{ .Values.clusterConfig.fleetAccount.ping.intervalSeconds }}
+    enterpriseCaSha256: {{ .Values.trustedCA.enterpriseRoot.sha256 | quote }}
+    enterpriseCaSubject: {{ .Values.trustedCA.enterpriseRoot.subject | quote }}
+    caExpiryWarningDays: {{ .Values.trustedCA.expiryWarningDays }}
     saTokenLookupSourceNamespace: {{ .Values.clusterConfig.saTokenLookup.sourceNamespace | quote }}
     saTokenLookupSourceServiceAccount: {{ .Values.clusterConfig.saTokenLookup.sourceServiceAccount | quote }}
     saTokenLookupTokenSecretName: {{ .Values.clusterConfig.saTokenLookup.tokenSecretName | quote }}

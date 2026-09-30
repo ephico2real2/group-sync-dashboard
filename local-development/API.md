@@ -234,6 +234,15 @@ Secrets and ConfigMap entries participate; refused Secrets and retired rows do n
 non-default ports stay different. Pending declarations count; a disabled entry is not polled, so it joins no group.
 This warning changes no polling, counts, binding findings, alerts or metrics. Different URLs reaching
 one physical cluster are not detected.
+`ca-expiring`, `ca-expired`, `ca-not-yet-valid` and `ca-not-enterprise` use the same list (#244).
+They never refuse a configuration. `ca-expiring` fires at `trustedCA.expiryWarningDays` (default 30)
+days remaining, not the day before.
+
+A live row also carries `trust`: `{store, sourceKind, count, enterpriseRoot, certificates}`.
+`certificates` is each pinned PEM's subject, issuer, `notBefore`, `notAfter`, sha256, and validity
+word. For `trusted-bundle` it is only the configured enterprise root, or empty. `action` and `store`
+appear on a verify failure; they are the same strings as the poller's line. The raw `error` stays.
+A retired row has no `trust`.
 
 **`tls`** says how the cluster's API server certificate is verified, one of three (the operator's ruling,
 2026-09-20): `{"insecure": false, "ca": "trusted-bundle"}` — the default when the Secret names no

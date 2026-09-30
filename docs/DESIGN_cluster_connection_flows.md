@@ -175,6 +175,12 @@ The last row is why the failure line separates the two: **the fix depends on the
 cluster on the shared bundle is repaired fleet-wide; a cluster pinning its own CA is repaired alone;
 a cluster already running `insecure` cannot be failing verification at all.
 
+The page half of that sentence is #244 (`docs/specs/SPEC_D5_ca_visibility.md`). `action` and `store`
+are the same two strings the log already carries, built by one function
+(`gsd/clusterconfig/ca.py#tls_verify_failure`). Beneath them the card lists the trusted
+certificates' subject, issuer and dates, and #314's `warnings` channel announces `ca-expiring`
+thirty days before `notAfter`. A CA is public PKI; a Secret or a ConfigMap is equally fine.
+
 ### The three modes, proven: the TLS verification record
 
 The picture above is a claim; this is its proof, and it lives beside the picture so the two are read

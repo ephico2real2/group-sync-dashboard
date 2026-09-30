@@ -28,7 +28,10 @@ def test_the_spec_file_and_index_row_exist():
     assert len(row) == 1, row
     assert "SPEC_D5_ca_visibility.md" in row[0]
     assert "#244" in row[0]
-    assert "specified" in row[0]
+    # Specified until the implementing commit applies the blocks (their module exists); then merged or released.
+    implemented = (REPO / "local-development" / "gsd" / "clusterconfig" / "ca.py").exists()
+    status = row[0].rstrip(" |").rsplit("|", 1)[1].strip()
+    assert status in (("merged", "released") if implemented else ("specified",)), status
 
 
 def test_the_operator_rulings_are_recorded():

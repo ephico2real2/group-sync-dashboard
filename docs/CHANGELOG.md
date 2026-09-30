@@ -10,6 +10,17 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **CA visibility: is this the enterprise root, and is it still valid? (#244, Epic D #384,
+  `docs/specs/SPEC_D5_ca_visibility.md`, phase 2).** Every live row of `GET /api/clusterconfigs` carries `trust`
+  (the store, its kind, its count, and each listed certificate's subject, issuer, `notBefore`, `notAfter`, SHA-256 and
+  validity word); a row whose error is a verify failure carries the poller's own `action` and `store`, built by one
+  function. The card prints them; the Test panel and a `ca-data-invalid` refusal that decoded a block list what the
+  pasted PEM resolved to. `trustedCA.enterpriseRoot.sha256` (or `.subject`) names the estate's root, and
+  `ca-expiring`, `ca-expired`, `ca-not-yet-valid` and `ca-not-enterprise` join #314's `warnings` list and banner,
+  `trustedCA.expiryWarningDays` (30) before `notAfter`; the poller announces each once on appear and once on clear.
+  A CA is public PKI: a Secret and a ConfigMap are equal sources and nothing here is scrubbed. No RBAC or schema
+  change. Application **1.20.0**, chart 0.59.22.
+
 - **Rejoin quotes a text that holds a secret in fixed words, whole (#465, Epic D #384,
   `docs/specs/SPEC_D6_scrub_span.md`, part (2)).** The scrub cuts a password out of text wherever it occurs, so a
   password found in a text Rejoin only quotes — a failure's evidence, D8's reason — left `<redacted>` spans that

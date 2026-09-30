@@ -6100,6 +6100,8 @@ function ccConnection(c) {
   if (st === "ok") out += " reachable";
   out += ` <span class="mono">${c.last_poll ? fmtStamp(c.last_poll) : "never"}</span>`;
   if (c.error) out += `<div class="err">${esc(c.error)}</div>`;
+  if (c.action) out += `<div class="cc-consq" data-cc-tls-action>${esc(c.action)}</div>`;
+  if (c.store && c.action) out += `<div class="cc-hint" data-cc-tls-store>store ${esc(c.store)}</div>`;
   if (st === "never") out += `<div class="cc-consq">${esc(MEANS.cl_never)}</div>`;
   return out;
 }
@@ -6205,7 +6207,18 @@ function ccTls(c) {
       ? `<span class="muted">unknown</span> <span class="cc-hint">its source no longer describes it</span>`
       : `<span class="muted">—</span>`;
   }
-  return t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
+  let out = t.insecure ? ccBadge("warning", "insecure") : `${ccBadge("ok", "verified")} <span class="mono">ca: ${esc(t.ca || "")}</span>`;
+  const trust = c.trust || {};
+  if (trust.store && !t.insecure) {
+    out += `<div class="cc-hint cc-trust-store">store ${esc(trust.store)} · ${trust.count || 0} certificate${trust.count === 1 ? "" : "s"}</div>`;
+  }
+  if (trust.enterpriseRoot === true) out += ` ${ccBadge("ok", "enterprise root")}`;
+  if (trust.enterpriseRoot === false) out += ` ${ccBadge("warning", "not enterprise root")}`;
+  for (const cert of (trust.certificates || [])) {
+    const extra = cert.validity && cert.validity !== "valid" ? ` · ${esc(cert.validity)}` : "";
+    out += `<div class="cc-hint cc-ca-cert" data-cc-ca="${esc(cert.sha256 || "")}">${esc(cert.subject)} · issuer ${esc(cert.issuer)} · ${esc(cert.notAfter)}${extra}</div>`;
+  }
+  return out;
 }
 function ccClusterCard(c) {
   const shared = (data.clusterconfigs.warnings || []).find((w) => w.code === "shared-api-url" && w.clusters.includes(c.id));
@@ -6297,7 +6310,8 @@ function ccAddForm(d) {
         <div class="cc-kv"><span class="k">reachable</span><span class="v">${test.reachable ? ccBadge("ok", "yes") : ccBadge("critical", "no")}</span></div>
         <div class="cc-kv"><span class="k">server version</span><span class="v mono">${esc(test.server_version || "—")}</span></div>
         <div class="cc-kv"><span class="k">identity</span><span class="v mono">${esc(test.identity || "—")}</span></div>
-        ${test.error ? `<div class="err">${esc(test.error)}</div>` : ""}</div>`;
+        ${test.error ? `<div class="err">${esc(test.error)}</div>` : ""}
+        ${(test.certificates || []).map((cert) => `<div class="cc-hint cc-ca-cert" data-cc-ca="${esc(cert.sha256 || "")}">${esc(cert.subject)} · issuer ${esc(cert.issuer)} · ${esc(cert.notAfter)}</div>`).join("")}</div>`;
   return `<section class="card" id="cc-add"><h2>Add cluster</h2>
     <div class="filterbar-note">${ccWritesOn() ? "Writes" : "Describes"} a labelled Secret in <span class="mono">${esc((d.secrets && d.secrets.namespace) || "the pod's namespace")}</span>.
       The same object from the UI or from a repository — GitOps parity.${d.secrets && d.secrets.enabled === false ? " <strong>Discovery is switched off for this deployment</strong>: a Secret written here is not read." : ""}</div>
@@ -6404,7 +6418,7 @@ function clusterConfigPage() {
     <div class="cc-kv"><span class="k">discovery</span><span class="v">${s.enabled === false ? "switched off (<code>clusterConfig.secrets.enabled: false</code>)"
       : `${discoveredSecrets} served from ${discoveredSecrets === 1 ? "a Secret" : "Secrets"}${refusedSecrets ? ` · ${refusedSecrets} labelled Secret${refusedSecrets === 1 ? "" : "s"} refused (see Findings)` : ""} · last read <span class="mono">${s.last_discovery ? fmtStamp(s.last_discovery) : "never"}</span>${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}`}</span></div>
     ${ccFleetRows(d.fleet)}
-    ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${w.code === "shared-api-url" ? "Shared API URL." : "Configuration warning."}</strong> ${esc(w.detail)}</div>`).join("")}
+    ${(d.warnings || []).map((w) => `<div class="cc-warn" role="status" data-cc-warning="${esc(w.code)}"><span aria-hidden="true">⚠️</span> <strong>${({ "shared-api-url": "Shared API URL.", "ca-expiring": "CA expiring.", "ca-expired": "CA expired.", "ca-not-yet-valid": "CA not yet valid.", "ca-not-enterprise": "Not the enterprise root." }[w.code] || "Configuration warning.")}</strong> ${esc(w.detail)}</div>`).join("")}
     <div class="ns-controls"><a class="btn cc-btn-acc" id="cc-add-jump" href="#cc-add">Add cluster</a></div></section>`;
   const findings = (d.findings || []).map(ccFinding).join("")
     || `<div class="empty-note">No configuration findings. Refused Secrets and ConfigMap stanzas are listed here with their source and reason.</div>`;
@@ -6420,8 +6434,12 @@ async function apiSend(path, method, body, redirect = "follow") {
   }
   const payload = await res.json();
   if (!res.ok) {
-    const err = new Error(payload && payload.detail ? String(payload.detail) : `${res.status} ${res.statusText}`);
-    err.status = res.status; throw err;
+    // #244: a `ca-data-invalid` refusal that decoded some blocks answers an object {code, message, certificates};
+    // every other refusal is still a string. The message reads the same either way; the object stays on `err.detail`.
+    const detail = payload && payload.detail;
+    const text = detail && typeof detail === "object" ? `${detail.code}: ${detail.message}` : detail ? String(detail) : `${res.status} ${res.statusText}`;
+    const err = new Error(text);
+    err.status = res.status; err.detail = detail; throw err;
   }
   return payload;
 }

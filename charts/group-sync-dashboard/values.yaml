@@ -904,6 +904,23 @@ trustedCA:
     # give OpenSSL's collision suffix (`c275f070.1`) rather than shadow the base's `.0`.
     subjectHash: ""
 
+  # #244: which certificate is this estate's root, and when to warn that it will expire.
+  # A CA is public PKI. The pin is the SHA-256 of the DER certificate (`openssl x509
+  # -noout -fingerprint -sha256`), 64 hex digits, colons optional. Empty: the page
+  # still shows subject, issuer and dates, and does not claim any certificate is
+  # the enterprise root. subject is the fallback when only a DN is known; two CAs
+  # can share a subject, so the fingerprint is the one that names one certificate.
+  # Do not reuse existingConfigMap.subjectHash: that is OpenSSL's 8-hex hashed
+  # directory name for curl, not an identity pin.
+  enterpriseRoot:
+    sha256: ""
+    subject: ""
+  # Days before notAfter at which a ca-expiring warning is emitted. 30 is Let's
+  # Encrypt's neighbourhood and the common operational default. A ten-year root
+  # still gets a month of notice. The warning fires at this many days remaining,
+  # not the day before (31 days with the default).
+  expiryWarningDays: 30
+
   # BOTH may be enabled at once. They are concatenated into one bundle at startup, in the
   # order injected-then-manual, because a bundle is just a list of PEM blocks and there is
   # no reason to make the operator choose. Enabling neither falls back to Python's default
