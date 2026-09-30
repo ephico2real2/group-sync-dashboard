@@ -1,0 +1,10 @@
+# oc get --raw /api/v1/nodes/crc/proxy/logs/oauth-server/audit.log, events at or after 2026-09-29T17:31:44Z
+# captured 2026-09-29T17:37:36Z; audit.log was 31102229 bytes; the raw log is never written to this folder
+annotated login events since 2026-09-29T17:31:44Z: 1
+developer, all: 1
+fleet account, all: 0
+fleet account, authorize: 0
+developer rows (stageTimestamp, kind, decision, status, stage, auditID):
+  2026-09-29T17:31:46.149663Z  cli  allow  302  ResponseComplete  7abcf1bc-1207-4e92-99fd-241ffe54aabb
+developer rows' byte offsets in audit.log (the first byte of the event's line; grep -b on the auditID):
+  7abcf1bc-1207-4e92-99fd-241ffe54aabb  31002229 31002906 
