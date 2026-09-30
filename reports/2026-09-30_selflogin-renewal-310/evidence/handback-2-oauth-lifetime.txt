@@ -1,0 +1,6 @@
+2026-09-30T20:45:31Z want spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}
+2026-09-30T20:45:31Z found spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}; generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+2026-09-30T20:45:31Z already 31536000: nothing patched; checking that the operator is settled
+2026-09-30T20:45:31Z generation=17 observed=17 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+2026-09-30T20:45:31Z SETTLED
+pod oauth-openshift-7cbbc9d47f-6sstr phase=Running started=2026-09-30T20:42:54Z

@@ -1,8 +1,29 @@
 # #310 Part A — a `userSelfLogin` session renewing on the CRC lab, as `developer`, application 2.0.0 (prepared 2026-09-30)
 
-**Status: PREPARED, NOT RUN.** This folder is phase 1 of 2. It holds the plan, the walk's values and grants, the
-scripts phase 2 will run, the offline proofs, and the lab's state as found, read with `oc get` only. Nothing in this
-folder has written to the cluster. Phase 2 runs `scripts/run.sh` once the orchestrator has checked this plan.
+**Status: RUN, PASSED, LAB LEFT AS FOUND.** Phase 1 (below) was reviewed by OB3 and Grok before anything ran; their
+fixes are in the scripts. Phase 2 ran `scripts/run.sh` on 2026-09-30 from 20:17:40Z to 20:45:37Z and exited 0:
+analysis rc 0, `--argocd main` rc 0, final sweep rc 0, the start/end comparison rc 0 (`evidence/phase2-run.txt`).
+
+## Result (phase 2)
+
+| #310 Part A, Definition of Done | Result | Evidence |
+|---|---|---|
+| A renewal **observed**: the margin fires | **PASS** — every session lived 600 s (`[600, 600, 600]`); 2 scheduled renewals, 0 re-authentications. Renewal 1: `renew_at` 20:30:40, the new login 20:31:09.95 (+29.9 s, one poll cycle), 120.1 s before the old session's `expires_at` 20:33:10. Renewal 2: `renew_at` 20:38:39, new login 20:39:09.95 (+30.9 s), 119.1 s left. Each `self-login-renewed` states `renew_at = expires_at − 150 s` | `evidence/phase2-analysis.txt` (14 passed, 0 failed), `evidence/phase2-podlog.txt` |
+| …the new session is entered before the old one exits | **PASS**, both renewals: `fleet-login` (new) → `fleet-logout outcome=revoked` (old, 50 ms later) → `self-login-renewed` | `evidence/phase2-analysis.txt` |
+| …polling continues across the boundary | **PASS**: 19 `polled walk-self-login:` lines, the longest gap 60.1 s; `gsd_cluster_up{cluster="walk-self-login"}` 1 in all 72 samples; the last-poll timestamp's longest step 61 s; 0 failure lines | `evidence/phase2-analysis.txt`, `evidence/phase2-metrics.txt` |
+| The lab entry is not `shared-qa` | **PASS**: `walk-self-login`, as `developer`; `shared-qa` rv 2981054 at both ends | `evidence/phase2-compare.txt` |
+| `accessTokenMaxAgeSeconds` restored to `31536000`; the lab left as found | **PASS**: 600 from 20:19:32Z (settled 20:22:34Z) to 20:41:23Z; `31536000` again at 20:41:23Z, settled 20:44:26Z (oauth-openshift generation 15 → 17); "LEFT AS FOUND on every MUST line" — 16 EQUAL lines: `oauth/cluster` (the value, and the rest of its spec by sha256), the challenging client's overrides, the PVC UIDs, `gsd-cluster-shared-qa` and `gsd-cluster-shared-rnd`, the fleet account's and `developer`'s token counts, nothing carrying the run label, the walk Secret, `developer`'s Lease, the chart's fleet-account Role and the ServiceAccount's `get` back, the authentication ClusterOperator; the fleet Lease's sha256 equal too (an INFO line) | `evidence/phase2-set-600-oauth-lifetime.txt`, `evidence/handback-1-oauth-lifetime.txt`, `evidence/phase2-compare.txt` |
+
+- **The fleet account was never presented**: 0 authorize records for it on the OAuth server in the window; 3 for
+  `developer` (the first login and the two renewals) (`evidence/phase2-window-audit.txt`); its token counts EQUAL.
+- **Which branch this proves**: the ¼ branch of the margin (600 s → 150 s), end to end on the lab. The 2 h branch that
+  production lifetimes use (CRC's 31536000, full OpenShift's 86400) is proven by the injected-clock tests named in the
+  Scope section below.
+- **One side effect, recorded**: Argo read Degraded at the start (the nightly-report CronJob's failed 02:00Z run) and
+  Healthy at the end — the Helm handover's cascade deleted and Argo re-created that CronJob, which cleared its failed
+  status (`evidence/phase2-compare.txt`, INFO "Argo CD").
+- **The hand-back**: the first sweep kept the keep-grant and `developer`'s Lease on purpose until Argo was back; the
+  second removed both (`evidence/handback-1-sweep.txt`, `evidence/handback-2-sweep.txt`).
 
 ## What the walk proves
 

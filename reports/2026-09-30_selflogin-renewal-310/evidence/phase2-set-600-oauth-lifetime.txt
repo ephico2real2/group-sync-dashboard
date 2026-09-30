@@ -1,0 +1,11 @@
+2026-09-30T20:19:31Z want spec.tokenConfig {"accessTokenMaxAgeSeconds":600}
+2026-09-30T20:19:31Z found spec.tokenConfig {"accessTokenMaxAgeSeconds":31536000}; generation=15 observed=15 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+2026-09-30T20:19:32Z oc patch oauths.config.openshift.io cluster --type=merge -p '{"spec":{"tokenConfig":{"accessTokenMaxAgeSeconds":600}}}'
+oauth.config.openshift.io/cluster patched
+2026-09-30T20:19:32Z spec.tokenConfig now {"accessTokenMaxAgeSeconds":600}
+2026-09-30T20:20:42Z the operator rolled oauth-openshift: generation 15 -> 16
+2026-09-30T20:20:42Z generation=16 observed=16 replicas=1 updated=1 ready=0 available=0 Available=False Degraded=False Progressing=True
+2026-09-30T20:21:13Z generation=16 observed=16 replicas=1 updated=1 ready=1 available=1 Available=False Degraded=False Progressing=True
+2026-09-30T20:22:34Z generation=16 observed=16 replicas=1 updated=1 ready=1 available=1 Available=True Degraded=False Progressing=False
+2026-09-30T20:22:34Z SETTLED
+pod oauth-openshift-654fcf96d8-b5xfv phase=Running started=2026-09-30T20:21:07Z
