@@ -1,0 +1,5 @@
+# review of #494: the darkest pixel (Pillow, mode L, getextrema()[0]) of the precheck screenshot and two cards, measured 2026-09-30T07:42:35Z
+# python -c 'from PIL import Image; import sys; [print(f, Image.open(f).convert("L").getextrema()[0]) for f in sys.argv[1:]]' screenshots/00-1280-precheck-clusters-without-grant.png screenshots/01-1280-A-w492-fail-card.png screenshots/07-1280-E-w492-fail-retired-card.png
+screenshots/00-1280-precheck-clusters-without-grant.png 110
+screenshots/01-1280-A-w492-fail-card.png 11
+screenshots/07-1280-E-w492-fail-retired-card.png 11

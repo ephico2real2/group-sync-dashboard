@@ -71,14 +71,23 @@ comment names the tab, the form and the Test route together (`reports/2026-09-29
 
 ## Observed, outside #492's checks
 
-1. **`/#page=clusters` without the tier painted Home, not the refusal card.** The precheck navigated to
-   `/#page=clusters` in the logged-in session, waited 2 s, and read `cc_head: false` and `cards: 0`. The page text
-   began with Home's `Signed in as developer · developer You reach 1 namespace on dashboard …`
-   (`evidence/P-precheck.json`, screenshot `screenshots/00-1280-precheck-clusters-without-grant.png`). The comment
-   above the `view.page === "clusters"` branch in `local-development/gsd/static/index.html#Reached by URL without the level: the refusal card`
-   says this reader should get the refusal card. The walk did not establish whether this is the product or the way the
-   precheck navigated: it was a same-document hash change after login, not a cold load. It changes nothing for #492,
-   because the tab and the API refused either way. It is recorded here, not filed.
+1. **`/#page=clusters` without the tier read as Home, dimmed: the precheck read the page before its refresh
+   painted. Not the product.** The precheck navigated to `/#page=clusters` in the logged-in session, waited 2 s, and
+   read `cc_head: false` and `cards: 0`, the page text beginning with Home's `Signed in as developer · developer You
+   reach 1 namespace on dashboard …` (`evidence/P-precheck.json`, screenshot
+   `screenshots/00-1280-precheck-clusters-without-grant.png`). That screenshot is dimmed: its darkest pixel is
+   110 where `screenshots/01-1280-A-w492-fail-card.png` and `screenshots/07-1280-E-w492-fail-retired-card.png` reach
+   11 (`evidence/P-precheck-dim.txt`; `--text-primary` is `#0b0b0b`), which is `#main` carrying `stale` (`opacity: 0.55`, `local-development/gsd/static/app.css`), the
+   class `refresh()` sets while a reader-initiated fetch is in flight and `render()` removes. A hash change is a
+   same-document navigation, so Playwright's `goto(..., wait_until="networkidle")` returns without waiting for the
+   refresh it starts, and the 2 s wait was shorter than the lab's refresh of that page: the live pass, which waited
+   for `#cc-head` instead, took about 3 s from `whoami` to the tab (`evidence/walk-live.txt`, 07:10:41Z–07:10:45Z).
+   On the seeded test rig the same hash change for a reader without the tier paints the refusal card (`Withheld,
+   not empty`) once the refresh lands, and so does a cold load, which is what the comment above the
+   `view.page === "clusters"` branch says (`local-development/gsd/static/index.html#Reached by URL without the level`);
+   `test_a_hash_change_to_the_page_without_the_tier_paints_the_refusal_card_not_home` in
+   `local-development/tests/test_ui.py` waits for the paint and pins it. It changes nothing for #492, because the
+   tab and the API refused either way. Recorded here, not filed: the reading is the walk's 2 s wait, not the router.
 2. **Discovery refused one Secret in both cycles** (`seen=7 accepted=6 refused=1` at cycle 4, and
    `seen=6 accepted=5 refused=1` at cycle 5, `evidence/after-podlog.txt`). The refused one is not the walk's Secret,
    since the count did not change when `w492-fail` came and went. The walk did not look further.
