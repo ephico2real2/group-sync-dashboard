@@ -1,0 +1,3 @@
+# oc get oauthaccesstokens.oauth.openshift.io -o json | jq -r --arg s '2026-09-30T15:14:32Z' '[.items[] | select(.userName=="developer" and .metadata.creationTimestamp >= $s)] | group_by(.clientName) | map("\(.[0].clientName): \(length) (created \([.[].metadata.creationTimestamp] | sort | join(", ")))") | .[]'
+# at 2026-09-30T15:22:07Z: developer's OAuthAccessTokens created since the walk's start, by client (counts and instants only)
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard: 2 (created 2026-09-30T15:18:44Z, 2026-09-30T15:21:06Z)

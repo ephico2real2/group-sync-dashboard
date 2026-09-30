@@ -1,0 +1,15 @@
+# where a userSelfLogin cluster could be declared, read at 2026-09-30T15:23:55Z; counts only
+# oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq '[.items[] | (.data.config // "" | @base64d | fromjson? // {}) | select(.userSelfLogin == true)] | length'
+cluster Secrets declaring userSelfLogin: 0
+# oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq '.items | length'
+cluster Secrets: 6
+# oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c userSelfLogin
+the release's clusters.yaml lines naming userSelfLogin: 0
+# oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json | jq '[.items[] | .data | tostring | select(test("userSelfLogin"))] | length'
+onboarding ConfigMaps naming userSelfLogin: 0
+# control: oc get secrets -n group-sync-dashboard -l groupsync-dashboard.io/secret-type=cluster -o json | jq '[.items[] | (.data.config // "" | @base64d | fromjson? // null) | select(type == "object")] | length'
+cluster Secrets whose config parses as a JSON object: 6
+# control: oc get configmaps -n group-sync-dashboard group-sync-dashboard-config -o json | jq -r '.data["clusters.yaml"]' | grep -c .
+non-empty lines in the release's clusters.yaml: 163
+# oc get configmaps -n group-sync-dashboard -l groupsync-dashboard.io/config-type -o json | jq '.items | length'
+onboarding ConfigMaps: 0

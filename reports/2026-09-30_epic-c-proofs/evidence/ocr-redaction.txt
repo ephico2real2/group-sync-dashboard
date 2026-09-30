@@ -1,0 +1,16 @@
+# OCR each image and count recognised lines naming the fleet account (full name or its middle fragment, any case)
+# at 2026-09-30T15:21:31Z; OCR = macOS Vision (VNRecognizeTextRequest)
+# "${OCR}" <image> | grep -i -F -c -e '<the fleet account>' -e '<its middle fragment: cut -d- -f2-3>'
+# positive controls (UNMASKED, outside the repo; each must be >= 1):
+#   <tmp>/control-1280-fleet-row-UNMASKED.png: 1
+#   <tmp>/control-1280-cc-head-UNMASKED.png: 1
+# every PNG in the folder (each must be 0):
+#   screenshots/01-1280-cc-head.png: 0
+#   screenshots/02-1280-fleet-row.png: 0
+#   screenshots/03-375-cc-head.png: 0
+#   screenshots/04-375-fleet-row.png: 0
+#   screenshots/run1/01-1280-cc-head.png: 0
+#   screenshots/run1/02-1280-fleet-row.png: 0
+#   screenshots/run1/03-375-cc-head.png: 0
+#   screenshots/run1/04-375-fleet-row.png: 0
+# PNGs in the folder: 8; lines naming the account across them: 0

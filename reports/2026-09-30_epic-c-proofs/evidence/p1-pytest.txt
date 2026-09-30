@@ -1,0 +1,19 @@
+# cd local-development && PYTHONPATH=<worktree>/local-development GSD_LIVE_LOGIN_API=https://api.crc.testing:6443 \
+#   GSD_LIVE_LOGIN_USER=developer GSD_LIVE_LOGIN_PASSWORD=<crc console --credentials> GSD_LIVE_LOGIN_CA=<tmp>/ca.crt \
+#   /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python -m pytest -p no:cacheprovider tests/test_live_fleet_login.py -v -s --tb=short | sed 's/sha256~<token name>/sha256~<redacted>/'
+# started 2026-09-30T15:14:43Z
+============================= test session starts ==============================
+platform darwin -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0 -- /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python
+rootdir: /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-c/local-development
+configfile: pyproject.toml
+plugins: playwright-0.9.0, base-url-2.1.0, anyio-4.15.1
+collecting ... collected 1 item
+
+tests/test_live_fleet_login.py::test_the_session_is_obtained_and_revoked 
+live: account=developer issuer=https://oauth-openshift.apps-crc.testing expires_in=31536000 expires_at=2027-09-30T15:14:43Z token_name=sha256~<redacted> count_before=6 count_during=7
+live: count_after=6 (before=6)
+live: the revoked token stopped authenticating after 121 s (the API server's token cache)
+PASSED
+
+======================== 1 passed in 121.12s (0:02:01) =========================
+# ended 2026-09-30T15:16:44Z; pytest pipeline exit 0
