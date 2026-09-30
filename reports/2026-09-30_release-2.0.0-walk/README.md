@@ -2,7 +2,7 @@
 
 **Outcome.** The lab served application 2.0.0 at commit `b40b5cf82a` before and after the walk
 (`evidence/before-version.txt` at 09:47:17Z, `evidence/after-version.txt` at 09:51:15Z,
-`evidence/p2-after-version.txt` at 09:55:37Z). That is release PR #495's merge commit. Both Deployments carried the
+`evidence/p2-after-version.txt` at 09:55:37Z). That is release PR #495's merge commit (`evidence/release-commit.txt`). Both Deployments carried the
 label `helm.sh/chart: group-sync-dashboard-0.59.25`, the chart of PR #496 (`evidence/before-chart.txt`,
 `evidence/after-chart.txt`). Argo CD reported the dashboard Application `Synced` at revision
 `eebc2f3647b21bfcbb1fbc68fb5717035e851edf`, which is PR #496's merge (`evidence/before-argo.txt`).
@@ -53,7 +53,7 @@ host scope `all`, and 14 tabs were offered (`evidence/walk-live.txt`). The grant
 | 2: KPIs and Cluster Configurations once painted (finding 1) | 09:54:17Z | 09:55:36Z | 79 | `evidence/p2-grant-create.txt`, `evidence/p2-delete-grant.txt` |
 | 3: the Logins tab re-captured with the corrected mask (Redaction) | 10:10:18Z | 10:11:37Z | 79 | `evidence/p3-grant-create.txt`, `evidence/p3-delete-grant.txt` |
 
-The grant stood for 387 s in total. `oc auth can-i update clusterrolebindings --as=developer` answered as follows:
+The grant stood for 387 s in total (229 + 79 + 79 s, `evidence/timeline.txt`). `oc auth can-i update clusterrolebindings --as=developer` answered as follows:
 
 - window 1: `no` at 09:47:19Z, `yes` at 09:48:35Z, `no` at 09:51:15Z (`evidence/before-cani.txt`,
   `evidence/during-cani.txt`, `evidence/after-cani.txt`);
@@ -146,7 +146,7 @@ Read with the page's own fetch and the painted cards (`evidence/walk-live.txt`, 
 | 375 px | **PASS**: `scrollWidth 375 = innerWidth 375` | `evidence/cards-375.json` |
 | Rejoin | Not pressed, as the brief says. The route guard would have aborted it. | `scripts/epicd.py` |
 
-The header counts 38 clusters, and the retired rows of the #244 and #492 walks' throwaways are among them. They are
+The header counts 38 clusters, and the retired rows `w244-exp`, `w244-fail` and `w492-fail` (throwaways of earlier walks) are among them. They are
 history from those walks and were not read here (`evidence/tabs-painted.json`).
 
 ## Findings
@@ -192,8 +192,8 @@ history from those walks and were not read here (`evidence/tabs-painted.json`).
 **Argo CD's `Degraded` is known and was only recorded.** The only resource that is not Healthy is the CronJob
 `group-sync-dashboard-report-nightly-namespace-access`, with `CronJob has not completed its last execution
 successfully` (`evidence/before-argo.txt`). Its last schedule was 2026-09-30T02:00:00Z and its last success
-2026-09-29T02:00:11Z (`evidence/before-cronjob.txt`). That run hit `DeadlineExceeded` during a Multus certificate
-outage, which is the brief's account and was not re-measured here. Its schedule is `0 22 * * *` America/New_York.
+2026-09-29T02:00:11Z (`evidence/before-cronjob.txt`). That run's Job failed with `DeadlineExceeded`, "Job was active longer than specified deadline", at 02:15:01Z
+(`evidence/cronjob-failed-run.txt`, read in the review of #497); why it ran past its deadline is not measured here. Its schedule is `0 22 * * *` America/New_York.
 
 The pod log was read for each window (`evidence/after-podlog.txt`, from 09:47:17Z, 172 lines;
 `evidence/p2-after-podlog.txt`, 43 lines; `evidence/p3-after-podlog.txt`, 39 lines). Each held 0 `fleet-lookup`, `fleet-ping`, `fleet-login`,
@@ -255,6 +255,10 @@ fingerprints are public PKI and are kept.
 - **The fix.** `scripts/e2e_masked.py` now also draws an opaque box over the client rects of every matched substring
   of every text node (`TEXT_BOXES_JS`), whatever element holds it. `mask-log.jsonl` counts those boxes as
   `text_boxes`.
+- **What it still does not cover (reviews of #497, Grok and Codex).** A name split across elements (the Lookup
+  highlighter's `<mark>` around part of it) or held in an `<input>`/`<textarea>` value is not boxed. This folder is not
+  affected — the OCR check below reads every PNG and embedded image — and the script stays the one that produced it;
+  the gap is the walk tooling's to close, and the OCR check stays the gate.
 - **Proved offline first.** `scripts/mask_fix_offline.py` puts a copy of that markup, with a made-up name, below the
   fold of a local page, outside the repo. OCR read the name once in the old mask's capture and 0 times in the new
   one's (`evidence/mask-fix-offline.txt`).
