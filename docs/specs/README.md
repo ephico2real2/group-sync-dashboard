@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Forty-one specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Forty-two specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The forty-one specifications
+## The forty-two specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -107,6 +107,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
 | G3 | [`SPEC_G3_acknowledged_direct_grants.md`](SPEC_G3_acknowledged_direct_grants.md) — acknowledged direct grants: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label or exception annotation leaves the worklist, its counts, the alert and the reports' review figures, counted and listed; `group-sync-operator-helm` is a chart's provenance in the Group gate; no migration | G — access declared | — | app 2.2.0, chart 0.60.1 | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) | specified |
 | E5 | [`SPEC_E5_offsite_on_by_default.md`](SPEC_E5_offsite_on_by_default.md) — the off-volume backup on by default: `backup.offsite.enabled` read as a word (`""` on wherever the copy can work and nothing where it cannot, `true` refusing what cannot work, `false` off), one helper deciding for the CronJob and its two alerts (and for SPEC_E2's recovery mount), and the newest pre-upgrade copy shipped to `/offsite/pre-upgrade` at one replica | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) | specified |
+| E8 | [`SPEC_E8_chart_publish_label_gate.md`](SPEC_E8_chart_publish_label_gate.md) — the chart-publish label gate: `helm.yaml` copies an image to the chart-version tag only when both default images carry the chart's appVersion as their `org.opencontainers.image.version` label, on every Linux image behind each tag, and never over another application's own alias; PR A of #410 (PR B, #430, is held by the operator) | E — restore tools and release safety | — | no version change (workflow, tests and docs only) | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
