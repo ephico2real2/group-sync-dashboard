@@ -8,7 +8,7 @@
 | Version on release | app 2.1.0, chart 0.60.0 |
 | Issue | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from #255 (body refined 2026-09-30, "Decisions and corrections (2026-10-01)"), its epic #387 and main `afa01bb8` (application 2.0.0, chart 0.59.25). Measured on this machine (Python 3.14.7, helm v4.3.0) and read-only on the CRC lab (2026-10-01, 13:06–13:07Z). §7 was cut from an implemented copy of `afa01bb8` and proved against a clean tree (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from #255 (body refined 2026-09-30, "Decisions and corrections (2026-10-01)"), its epic #387 and main `afa01bb8` (application 2.0.0, chart 0.59.25). Measured on this machine (Python 3.14.7, helm v4.3.0) and read-only on the CRC lab (2026-10-01, 13:06–13:07Z). §7 was cut from an implemented copy of `afa01bb8` and proved against a clean tree (§4.3). Revised the same day after the review of `4c75c65b` by OB3 (in Grok's seat) and Codex, on the orchestrator's decisions (Orchestrator's notes, 4), on a branch that merged main `21132a25` (SPEC G1, #506); the corrected blocks were proved again on that main (§4.2, §4.3) |
 
 ## How to read this spec
 
@@ -36,13 +36,17 @@ orchestrator's notes, before it is applied again.
 ## Orchestrator's notes
 
 1. **Corrections to the issue, each with its evidence.**
-   - **OpenShift's break-glass user is `kube:admin` outside CRC.** The shipped default names `kubeadmin`. In
-     openshift/library-go the bootstrap user is `BootstrapUser = "kube:admin"`, and `kubeadmin` is only the name it
-     logs in with (`bootstrapUserBasicAuth = "kubeadmin"`, §2.2). On the CRC lab the bindings name `kubeadmin`, not
-     `kube:admin` (§2.7). The issue's settled decision holds: the defaults stay exactly 2.0.0's, and a test pins them
-     (T255-1). The values comment, the chart README and the exclusions document tell an estate to add `kube:admin`
-     to `additionalNames` if its bindings name it. Whether the shipped default should gain `kube:admin` is open
-     question (b) below.
+   - **OpenShift's break-glass user is `kube:admin` outside CRC, and the shipped defaults now name it.** The 2.0.0
+     list names `kubeadmin`. In openshift/library-go the bootstrap user is `BootstrapUser = "kube:admin"`, and
+     `kubeadmin` is only the name it logs in with (`bootstrapUserBasicAuth = "kubeadmin"`, §2.2); every project it
+     requests binds `kube:admin` as the project's admin (openshift/openshift-apiserver, §2.2). On the CRC lab
+     `kubeadmin` is an HTPasswd user and the bindings name `kubeadmin`, never `kube:admin` (§2.7). **The operator's
+     ruling of 2026-10-01, recorded on #255:** *"kubeadmin or kube:admin is a trusted user in crc that we use as
+     admin"* — one trusted admin identity, so the shipped defaults are 2.0.0's list plus `kube:admin`. This amends
+     the issue's "the defaults reproduce 2.0.0's classification exactly": T255-1 pins 2.0.0's list written out plus
+     `kube:admin` by name, and the CHANGELOG says so. On the lab it changes nothing: no binding names `kube:admin`
+     (read-only `oc`, 2026-10-01T13:59:37Z: 35 User rows, none of them `kube:admin`). The login capture already
+     counts `kube:admin` among the names that are never people (`local-development/gsd/auditlog.py#SYSTEM_NAMES`).
    - **The issue says `trustedCA` is a `subPath` mount.** Only its `subjectHash` link is
      (`charts/group-sync-dashboard/templates/deployment.yaml#subPath: {{ $.Values.trustedCA.existingConfigMap.key }}`);
      the bundle itself is a whole-ConfigMap directory mount. The platform lists are mounted the same way as the
@@ -73,22 +77,45 @@ orchestrator's notes, before it is applied again.
      are added). If another release lands first, the release-field blocks (§7, blocks 70–74) fail their check, because
      their Old text is the version they replace, and the implementing pull request re-derives them here first.
    - **The index row conflicts with SPEC_G1's (#239, in review on `docs/spec-g1-239`).** Both raise the count from
-     thirty-five to thirty-six against `afa01bb8`, and both touch `tests/test_specs_index.py`. This spec excludes the
-     Epic G rows (`G…`) from the rising-issue-number assertion as a rule, which composes with G1's per-id exclusion;
-     the orchestrator rebases whichever merges second (the count becomes thirty-seven).
-3. **Open for the operator** (asked when #255 is reached; neither blocks the implementation).
+     thirty-five to thirty-six against `afa01bb8`, and both touch `tests/test_specs_index.py`. This spec excludes G2
+     alone from the rising-issue-number assertion, by its id, and pins it to #255 (`assert ROWS["G2"]["issue"] ==
+     "255"`), as G1 excludes G1 by its id and pins it to T1's issue: an exclusion by the `G` prefix let a G2 row
+     mistyped as #256 or #525, and a later G row mistyped as #100, pass every index test (review of this spec, OB3).
+     G1 merged first (`21132a25`); this branch merged it, so G2 is the thirty-seventh row and the exclusion is
+     `fid not in ("G1", "G2")`, with both pins (a G2 row mistyped as #256 or #525 now fails, measured).
+3. **Open for the operator** (asked when #255 is reached; it does not block the implementation).
    - (a) **A person an estate lists as a platform user leaves their own Namespace audit self view**, as `kubeadmin`
      does today: the page never sends `include_platform` there (`local-development/gsd/static/index.html#want.userBindings = guard403(get(`),
      while Home lists their grants. Kept exactly as today (the issue's decision 3 and the epic's open question 4).
-   - (b) **Should the shipped defaults gain `kube:admin`?** It would classify OpenShift's real break-glass user as
-     the platform's on every non-CRC cluster, which is what the `kubeadmin` entry meant (§2.2). It is not done here,
-     because it changes 2.0.0's classification and the issue requires the defaults to equal 2.0.0's exactly.
+   - (b) *Should the shipped defaults gain `kube:admin`?* Settled by the operator on 2026-10-01 (note 1): they do.
+4. **The review of `4c75c65b`** (OB3 in Grok's seat, Codex gpt-5.6-sol at xhigh; decided by the orchestrator on
+   2026-10-01). Every accepted change was traced before it was applied, and is in §3 and §7 and proved in §4.
+   - **Accepted, OB3 F1 (and Codex C8, superseded by the ruling):** `kube:admin` in the shipped defaults, note 1.
+   - **Accepted, OB3 F2 and Codex's required fix 1:** the mock cluster's suite (`.github/workflows/mock-cluster.yml`,
+     outside the hermetic run) read the removed `UserBindingView.is_platform`; block 75 changes it, and §4 runs that
+     suite. OB3's form is taken (it also asserts the default classifies the mock's user as a person); Codex's
+     `hasattr` check is the same assertion. The other readers of the flag read the stored column, which the poller
+     still writes (both reviewers swept them).
+   - **Accepted, OB3 F3 and Codex's required fix 3:** the index exemption names G2 and pins #255 (note 2).
+   - **Accepted, OB3 F4:** `PlatformUsers.unmatched([])` reports nothing, so a cluster whose bindings were never
+     read shows no ⚠ for every entry (§3.4).
+   - **Accepted, OB3 F5:** §2a sources A2 and A7 and weighs A9 (`podAnnotations`) and A10 (a versioned name).
+   - **Accepted, OB3 F6:** the CHANGELOG names both `platformNamespaces` render changes (an empty replacing list now
+     renders; a non-mapping is refused), and the empty-list render test loads what it renders.
+   - **Accepted, OB3 F7 and F8 (low):** a quoted `existingConfigMap.enabled` is refused at render, and
+     `revision: 0` renders as `"0"` so it rolls the pod.
+   - **Accepted, Codex's required fix 2 (C6):** an unmatched entry is an observation, not a departed account: the
+     page, the values comment, `API.md` and the docstring say "not currently matched by any User subject on a binding
+     in this cluster; keep planned entries, and check unexpected ones" (§3.4).
+   - **Not taken:** Codex's suggestion (C8) to leave the defaults at 2.0.0's and open a separate issue, superseded by
+     the operator's ruling; OB3's two "no change proposed" items (a loose `existingConfigMap.name` pattern the API
+     server refuses at apply; a ConfigMap-sourced `platformNamespaces` string still split, #259's semantics).
 
 ## 1. The mandate, and what is out of scope
 
 The issue (#255, "What must be accomplished"): `values.yaml` gains `platformUsers` with `prefixes` and `names`
 (replacing the defaults) and `additionalPrefixes` and `additionalNames` (appending); with nothing set the defaults
-equal 2.0.0's lists; a listed user is the platform's everywhere the stored flag reaches (the direct-user rows, their
+equal 2.0.0's lists (plus `kube:admin`, by the operator's ruling of 2026-10-01, Orchestrator's note 1); a listed user is the platform's everywhere the stored flag reaches (the direct-user rows, their
 total and worklist, the alert, `excluded_platform`, the unmanaged finding's `built_in`); a typo is refused by name at
 `helm template` and at start; the stanza reaches the application through the settings file; a stale `additional*`
 entry is reported in the namespace index's idiom; `platformNamespaces` and `platformUsers` can each be read from an
@@ -138,9 +165,18 @@ openshift/library-go `pkg/authentication/bootstrapauthenticator/bootstrap.go` at
 
 **Measured on the lab.** CRC's bindings name `kubeadmin` (an htpasswd user there) and never `kube:admin` (§2.7).
 
+**Where `kube:admin` lands on a binding.** openshift/openshift-apiserver at `34196aab`,
+`pkg/project/apiserver/registry/projectrequest/delegated/sample_template.go`, line 57: `binding :=
+NewRoleBindingForClusterRole(bootstrappolicy.AdminRoleName, ns).Users("${" + ProjectAdminUserParam + "}")`, and
+`delegated.go`, lines 148-150: `projectAdmin = userInfo.GetName()`. Every project the bootstrap user requests binds
+the User `kube:admin` as its `admin`, the documentation's `joe-project` example above. On the lab `kubeadmin` is an
+HTPasswd user (`oc get user kubeadmin`: identities `["developer:kubeadmin"]`) and `kube-system/kubeadmin`, the
+bootstrap user's secret, does not exist, so no `kube:admin` binding can arise there.
+
 **What it settles.** The 2.0.0 default `kubeadmin` matches the CRC lab's user and not the bootstrap user of an
-installed OpenShift cluster. The defaults are kept exactly (the issue's rule, T255-1); the docs name `kube:admin` as
-the entry an estate adds; whether to ship it is the operator's open question (b).
+installed OpenShift cluster, whose project bindings it would raise as a person's direct grants. The operator ruled on
+2026-10-01 that the two names are one trusted admin identity (Orchestrator's note 1): the shipped defaults are 2.0.0's
+list plus `kube:admin`, T255-1 pins exactly that, and nothing moves on the lab.
 
 ### 2.3 A user name has no format
 
@@ -290,13 +326,15 @@ a volume nested under the settings volume runs there today.
 | option | source | cost here | decision |
 |---|---|---|---|
 | A1. The ConfigMap mounted as a directory, read once at start; `existingConfigMap.revision` in the values file rolls the pod | §2.4, §2.5 (Helm's checksum tip) | one volume and mount per enabled stanza, one optional value, one loader branch; no permission | **chosen** |
-| A2. Read the ConfigMap through the API | — | a `get configmaps` grant in the release namespace (RBAC ADDED, against the issue's "no new RBAC: REMOVED 0, ADDED 0"), and an absent ConfigMap becomes a runtime state to handle instead of a pod that does not start | rejected |
+| A2. Read the ConfigMap through the API | the issue's decision 1 (one shape across the chart, no new permission) | a `get configmaps` grant in the release namespace (RBAC ADDED, against the issue's "no new RBAC: REMOVED 0, ADDED 0"), and an absent ConfigMap becomes a runtime state to handle instead of a pod that does not start | rejected |
 | A3. Re-read the mounted file on every binding refresh | §2.4: "projected keys are eventually updated" | a runtime refusal path (keep the last list? stop classifying?), and the API (which reads `Settings`) and the poller (which would read the file) could hold two different lists between refreshes; the issue wants one classifier | rejected |
 | A4. Helm `lookup` to inline the ConfigMap at render | §2.5 | returns nothing under `helm template` and therefore under a GitOps conduit; the render would silently use the defaults | rejected |
 | A5. Restart by hand after an edit | the operator, 2026-10-01 | a CLI step outside the values file, which the operator's rule forbids outside troubleshooting; under a GitOps conduit the restart annotation is drift | rejected |
 | A6. `rollme: {{ randAlphaNum 5 }}` | §2.5 | rolls the pod on every render; Argo CD documents the application as always `OutOfSync` | rejected |
-| A7. A reloader controller watching the ConfigMap | — | a second component to install and trust, for one file | rejected |
+| A7. A reloader controller watching the ConfigMap | stakater/Reloader at `099c9d8b`, `README.md` line 22: "a Kubernetes controller that automatically triggers rollouts of workloads … whenever referenced `Secrets`, `ConfigMaps` … are updated" | a second component to install and trust, for one file, and a roll no values file records | rejected |
 | A8. Inline values only (no `existingConfigMap`) | the issue | the issue's outcome 6 requires the ConfigMap | rejected |
+| A9. Bump an annotation in `podAnnotations` after an edit (no new key) | this chart: `charts/group-sync-dashboard/values.yaml#podAnnotations: {}`, rendered into the pod template (`charts/group-sync-dashboard/templates/deployment.yaml#with .Values.podAnnotations`); measured, a bumped annotation changes the pod template and rolls the pod | no code at all, but nothing ties the annotation to the list it re-reads: an estate must invent a key, and the settings file does not record which edit the pod started from | rejected in favour of `revision`, which sits beside the reference it rolls and is recorded in the settings file; it keeps working, as any pod annotation does |
+| A10. A versioned ConfigMap name: a new name per edit (an immutable ConfigMap, or one a generator suffixes with a hash) | Kubernetes "ConfigMaps", "Immutable ConfigMaps": "You can only delete and recreate the ConfigMap. Because existing Pods maintain a mount point to the deleted ConfigMap, it is recommended to recreate these pods."; "Managing Kubernetes Objects Using Kustomize": "The generated ConfigMaps and Secrets have a content hash suffix appended. This ensures that a new ConfigMap or Secret is generated when the contents are changed." | no new key: a new `existingConfigMap.name` changes the pod template's volume and rolls the pod (measured), and an immutable copy cannot change under a running pod | supported as it stands (any name works); not the only way, because an estate that edits its ConfigMap in place needs `revision` |
 
 **B. Matching.** Plain prefix and exact name (chosen, the issue's decision and #259's rule) against a suffix axis
 (nothing measured needs one: the lab's non-platform User subjects, §2.7, are named people and named accounts, and an
@@ -325,7 +363,7 @@ ConfigMap key per axis (a second format for one stanza).
 | research says | the code does it at |
 |---|---|
 | `system:` is reserved for Kubernetes (§2.1) | `PLATFORM_USER_PREFIXES = ("system:",)`, moved unchanged to `local-development/gsd/config.py#PLATFORM_USER_PREFIXES`; T255-1 pins it against the 2.0.0 list written out |
-| the bootstrap user is `kube:admin` (§2.2) | not in the defaults (they stay 2.0.0's); `charts/group-sync-dashboard/values.yaml#kube:admin` and the README say to add it |
+| the bootstrap user is `kube:admin` (§2.2) | in the shipped defaults beside `kubeadmin`, by the operator's ruling of 2026-10-01 (`local-development/gsd/config.py#PLATFORM_USER_NAMES`); T255-1 pins 2.0.0's list plus `kube:admin`, written out |
 | a user name has no format (§2.3) | `local-development/gsd/config.py#_platform_users_setting` refuses a non-list ("a user name may contain a comma, so a string is never split") and `PlatformUsers.matches` compares bytes |
 | a subPath mount is never updated; without `items` every key is a file (§2.4) | `charts/group-sync-dashboard/templates/deployment.yaml#A platform list kept in a ConfigMap you own` mounts the whole ConfigMap at `/etc/gsd/platform-users` (and `/etc/gsd/platform-namespaces`), no `subPath`, no `items`; `tests/test_chart_platform_users.py` asserts both |
 | a missing, non-optional ConfigMap stops the pod (§2.4) | the volume carries no `optional` (`…#NOT optional, as trustedCA's`); a missing key reaches `local-development/gsd/config.py#_platform_stanza`, which refuses with the ConfigMap and the key |
@@ -341,9 +379,9 @@ ConfigMap key per axis (a second format for one stanza).
 ```yaml
 platformUsers:
   # prefixes: ["system:"]
-  # names: ["kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy", "kubeadmin"]
+  # names: ["kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy", "kubeadmin", "kube:admin"]
   additionalPrefixes: []
-  additionalNames: []       # e.g. ["kube:admin"]
+  additionalNames: []       # e.g. ["breakglass-admin"]
   existingConfigMap:
     enabled: false
     name: ""
@@ -352,9 +390,9 @@ platformUsers:
 ```
 
 Four list keys, as the issue decided: `prefixes` and `names` replace the shipped defaults, `additionalPrefixes` and
-`additionalNames` append to them. With nothing set the defaults are 2.0.0's, byte for byte: the constants move from
-`gsd/kube.py` to `gsd/config.py` unchanged (`PLATFORM_USER_PREFIXES`, `PLATFORM_USER_NAMES`), so
-`PlatformUsers()` holds them. `PlatformUsers.matches(name)` is the one User classifier: an exact name (shipped or
+`additionalNames` append to them. With nothing set the defaults are 2.0.0's plus `kube:admin`: the constants move
+from `gsd/kube.py` to `gsd/config.py` (`PLATFORM_USER_PREFIXES` unchanged, `PLATFORM_USER_NAMES` with `kube:admin`
+added by the operator's ruling of 2026-10-01, Orchestrator's note 1), so `PlatformUsers()` holds them. `PlatformUsers.matches(name)` is the one User classifier: an exact name (shipped or
 added), then a prefix (shipped or added). `platformNamespaces` gains the same `existingConfigMap` and nothing else.
 
 Reason: the estate's common case is additive (a bind account, a break-glass login), and a restated list would rot on
@@ -388,10 +426,18 @@ stored, which is the previous list's classification and no other.
 `PlatformUsers.unmatched(users)` returns every `additionalPrefixes` entry that is a prefix of none of `users` and
 every `additionalNames` entry equal to none, by axis, as `PlatformNamespaces.unmatched` does. `users` is
 `Store.user_binding_names(cluster)`: every User subject on that cluster's bindings, platform ones included (users have
-no index of their own; the issue's decision 2). The shipped defaults are never reported. `/user-bindings` returns it
-as `platform_users_unmatched` at the wide tier and `null` at self, with `excluded_platform`, and the page reports it
-under the direct-user note in the namespace index's words: "⚠ `additionalNames`: `breakglass-2024` matches no User
-subject on this cluster — a typo, or an account that has gone."
+no index of their own; the issue's decision 2). An empty list judges nothing: a cluster's bindings always name its
+own `system:` components as Users (24 rows on the lab, §2.7), so none at all means the bindings have not been read
+there, not that every entry has gone — the namespace index likewise shows its stale patterns only inside its
+platform line (`local-development/gsd/static/index.html#const stalePatterns`). The shipped defaults are never
+reported. `/user-bindings` returns it as `platform_users_unmatched` at the wide tier and `null` at self, with
+`excluded_platform`.
+
+This is an observation about the bindings now, not proof that an account is stale or deleted: an estate may
+deliberately list a platform user before its first grant (review of this spec, Codex C6). The page therefore reports
+it under the direct-user note in the namespace index's warning idiom, with neutral, actionable words: "⚠
+`additionalNames`: `breakglass-2024` is not currently matched by any User subject on a binding in this cluster; keep
+planned entries, and check unexpected ones."
 
 ### 3.5 `existingConfigMap`, for either stanza
 
@@ -423,7 +469,7 @@ subject on this cluster — a typo, or an account that has gone."
 ### 3.7 The page
 
 The direct-user note (both of its places in `directUserGrants`) and the namespace index's note are built from the
-payload. `platformListSource(src, stanza, defaults)` writes "`system:*` and six named ones, the shipped defaults"
+payload. `platformListSource(src, stanza, defaults)` writes "`system:*` and seven named ones, the shipped defaults"
 (or "the shipped defaults with `platformUsers.names` replaced"), then ", plus this estate's
 `platformUsers.additionalNames`" for each `additional*` key set, then ", read from the ConfigMap `<name>` (key
 `<key>`)". `/user-bindings` carries `platform_users_source` (`null` at self) and `/namespaces` carries
@@ -466,13 +512,13 @@ cut the `## Unreleased` heading). The CHANGELOG bullet goes first under `## Unre
 
 | ID | test (file) | what it holds | why it fails on `afa01bb8` (measured, §4.2) |
 |---|---|---|---|
-| T255-1 | `test_t255_1_with_nothing_set_the_lists_are_exactly_those_of_2_0_0` (`tests/test_config.py`) | with no stanza, `{}` or empty `additional*`, the prefixes are `("system:",)` and the names the six of 2.0.0, written out in the test; `kube:admin`, `kubeadmin2` and `System:admin` are people | `PlatformUsers` does not exist: the module fails to import |
+| T255-1 | `test_t255_1_with_nothing_set_the_lists_are_those_of_2_0_0_plus_kube_admin` (`tests/test_config.py`) | with no stanza, `{}` or empty `additional*`, the prefixes are `("system:",)` and the names the six of 2.0.0 plus `kube:admin` (the operator's ruling of 2026-10-01), each written out in the test; `kubeadmin2`, `kube:admin2` and `System:admin` are people | `PlatformUsers` does not exist: the module fails to import |
 | T255-2 | `test_t255_2_an_additional_name_appends_and_a_prefix_appends` (`tests/test_config.py`); `test_t255_2_a_named_user_leaves_the_rows_and_the_alert_and_is_counted` (`tests/test_rbac.py`) | listing `ocp-oauth-bind-serviceid` takes its two rows out of the rows, the total and the rollup, raises the excluded count from 1 to 3, turns the alert's subject from "3 direct user grants" to "1 direct user grant", and removing it restores them | `refresh_bindings` takes no `platform_users` (TypeError) |
 | T255-3 | `test_t255_3_names_replaces_the_defaults_and_prefixes_still_applies` (`tests/test_config.py`); `test_t255_3_names_replaced_makes_kubeadmin_a_person` (`tests/test_rbac.py`) | `names: []` makes `kubeadmin` a person while `system:` still applies | no key reaches the names (import error; TypeError) |
 | T255-4 | `test_t255_4_a_typo_is_refused_by_name`, six cases (`tests/test_config.py`) | an unknown key, `suffixes`, a glob, a string, a non-string and a non-mapping are refused, each by name | the loader never reads `platformUsers` |
-| T255-5 | `test_t255_5_the_render_refuses_what_the_loader_refuses`, six cases (`tests/test_chart_platform_users.py`) | the render refuses the same, and an unknown `existingConfigMap` key | `helm template` exits 0 on every case |
+| T255-5 | `test_t255_5_the_render_refuses_what_the_loader_refuses`, seven cases (`tests/test_chart_platform_users.py`) | the render refuses the same, an unknown `existingConfigMap` key, and an `enabled` that is not a boolean (a quoted `"false"` would turn it on) | `helm template` exits 0 on every case |
 | T255-6 | `test_t255_6_the_stanza_reaches_the_settings_file`, `test_t255_6_an_absent_stanza_renders_no_key` (same file) | the settings file carries `platformUsers` when set and no new key when not | the first: the key is absent from the render; the second passes today (a guard) |
-| T255-7 | `test_t255_7_a_stale_additional_entry_is_reportable_and_the_defaults_are_not` (`tests/test_config.py`); `test_t255_7_a_stale_additional_name_is_named_at_the_wide_tier`, `test_t255_7_the_stale_entries_and_the_source_are_withheld_at_self` (`tests/test_user_binding_paging.py`) | `ghost` is named, the listed bind account is not (its own rows match it), and both new fields are `null` at self | no such class, no such field (`KeyError`) |
+| T255-7 | `test_t255_7_a_stale_additional_entry_is_reportable_and_the_defaults_are_not` (`tests/test_config.py`); `test_t255_7_a_stale_additional_name_is_named_at_the_wide_tier`, `test_t255_7_the_stale_entries_and_the_source_are_withheld_at_self` (`tests/test_user_binding_paging.py`) | `ghost` is named, the listed bind account is not (its own rows match it), nothing is judged on a cluster whose bindings name no User, and both new fields are `null` at self | no such class, no such field (`KeyError`) |
 | T255-8 | `test_t255_8_existing_configmap_beside_an_inline_list_fails_the_render` and `test_t255_8_a_replacing_key_set_empty_also_counts_as_inline`, both stanzas (`tests/test_chart_platform_users.py`); `test_t255_8_the_inline_stanza_beside_its_configmap_is_refused_at_start`, both stanzas (`tests/test_config.py`) | refused at render, naming both keys, and at start | `platformNamespaces.existingConfigMap is not a key this chart defines` (the wrong refusal), and the `platformUsers` cases render |
 | T255-9 | `test_t255_9_a_configmap_list_equals_the_same_list_inline` and `test_t255_9_a_missing_or_malformed_file_refuses_the_start_naming_the_configmap_and_key`, both stanzas (`tests/test_config.py`); `test_t255_9_existing_configmap_is_mounted_as_a_file_and_named_in_the_settings` (`tests/test_chart_platform_users.py`) | the parsed lists equal the inline ones; a missing, invalid, empty or mistyped file refuses the start naming `(ConfigMap 'estate-platform', key 'lists.yaml')`; the volume is the whole ConfigMap, not optional, mounted without `subPath` in the dashboard container only | no such key, mount or reference |
 | T255-10 | `test_t255_10_a_listed_user_is_built_in_not_unmanaged` (`tests/test_unmanaged_subjects.py`) | an unlabelled ClusterRoleBinding naming `jdoe` is `unmanaged`, and `built_in` once `jdoe` is listed | `refresh_bindings` takes no `platform_users` |
@@ -489,14 +535,19 @@ Added by the research and the design: `test_a_user_name_with_a_comma_is_one_name
 (`tests/test_unmanaged_subjects.py`, the hand-off a direct call cannot see); `test_an_empty_replacing_list_is_rendered_so_it_replaces`,
 `test_an_unusable_reference_fails_the_render` and `test_changing_the_revision_rolls_the_pod_and_nothing_else_does_for_an_external_edit`
 (`tests/test_chart_platform_users.py`); `test_a_replaced_axis_is_named_as_replaced` and `test_the_self_tier_shows_no_note`
-(`tests/test_ui.py`). Two existing tests change with the design: `test_the_direct_user_view_is_unchanged` (its fake
-reader builds six-field rows) and `test_values_defaults.py`'s list of switches kept off (the two new
-`existingConfigMap.enabled`).
+(`tests/test_ui.py`). Three existing tests change with the design: `test_the_direct_user_view_is_unchanged` (its fake
+reader builds six-field rows), `test_values_defaults.py`'s list of switches kept off (the two new
+`existingConfigMap.enabled`), and the mock cluster's `test_fetch_user_bindings`
+(`local-development/mock-app/tests/test_request_surface.py`, block 75), which read the reader's `is_platform` and is
+run by `.github/workflows/mock-cluster.yml` on every pull request that changes `gsd/kube.py`, `gsd/config.py`,
+`gsd/poller.py` or `gsd/store.py` — this one changes all four.
 
 ### 4.2 Each test fails without the change
 
-On a clean worktree of `afa01bb8` with only the test blocks applied (§7 blocks 46–61), `PYTHONPATH` at that tree's
-`local-development` and the imported `gsd` printed from that tree, each file run alone:
+On a clean worktree of `21132a25` (main after SPEC G1; none of the 30 files this spec changes differs from
+`afa01bb8`) with only the test blocks applied (§7 blocks 46–61 and 75), `PYTHONPATH` at that tree's
+`local-development` and the imported `gsd` printed from that tree, each file run alone (the mock cluster's suite in a
+scratch virtualenv with `pip install -e .` and `-e 'mock-app[test]'`, as the workflow installs them):
 
 | file | before (test blocks only) | after (every block) |
 |---|---|---|
@@ -506,30 +557,33 @@ On a clean worktree of `afa01bb8` with only the test blocks applied (§7 blocks 
 | `tests/test_namespaces_api.py` | 1 failed, 25 passed (the new one) | 26 passed |
 | `tests/test_unmanaged_subjects.py` | 3 failed, 52 passed (the two new, and the changed one: six-field rows) | 55 passed |
 | `tests/test_metrics.py` | 1 failed, 37 passed (the new one) | 38 passed |
-| `tests/test_chart_platform_users.py` | 17 failed, 5 passed (the five guards: T255-6's absent stanza and T255-12's four value sets) | 22 passed |
+| `tests/test_chart_platform_users.py` | 18 failed, 5 passed (the five guards: T255-6's absent stanza and T255-12's four value sets) | 23 passed |
 | `tests/test_platform_classification_marker.py` | 2 failed, 16 passed: `{'local-development/gsd/kube.py': [(207, 'PLATFORM_USER_NAMES = frozenset({')]}` and `StopIteration` on `platformUsers:` | 18 passed |
 | `tests/test_values_defaults.py` | 2 failed, 5 passed: `listed but no longer false: ['platformNamespaces.existingConfigMap.enabled', 'platformUsers.existingConfigMap.enabled']` | 7 passed |
 | `tests/test_ui.py -k TestPlatformNotesNameTheirSource --browser chromium` | 10 failed: `waiting for locator("#du-platform-note") to be visible` | 10 passed (inside the browser suite below) |
+| `mock-app/tests/test_request_surface.py` (`pytest mock-app/tests`, the mock-openshift job; it needs the `mock-app[test]` extras) | 1 failed, 58 passed: `ImportError: cannot import name 'PlatformUsers' from 'gsd.config'` | 59 passed (without block 75: 1 failed, `AttributeError: 'UserBindingView' object has no attribute 'is_platform'`) |
 
 ### 4.3 The proof
 
 §7 was not written by hand. The design was implemented in a copy of `afa01bb8`; a generator cut each block from that
 copy at whole lines, Old from the file as the earlier blocks leave it and widened with context until it occurs exactly
 once, and checked that the blocks, applied in order, give every implemented file byte for byte (`74 blocks across 29
-files`). Then, on a clean worktree of `afa01bb8`:
+files`). The review's corrections (Orchestrator's notes, 4) made them 75 across 30; they were proved again on a clean
+worktree of `21132a25`, main after SPEC G1:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G2_platform_users.md <tree>
-    74 blocks check out across 29 files
+    75 blocks check out across 30 files
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G2_platform_users.md <tree> --apply
 
 | check | command | result |
 |---|---|---|
-| the applied tree is the implemented copy | `diff -r` of the 29 files | all 29 identical (`cmp`) to the implemented copy |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6180 passed, 22 skipped, 665 deselected, 5 xfailed` |
+| the applied tree is the implemented copy | `diff -r` of the 29 files | all 29 identical (`cmp`) to the implemented copy (the first 74 blocks, before the review's corrections; the corrected blocks are proved by the rows below) |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py`, on `21132a25` with every block applied and this spec, the index and its test in the tree, as the implementing pull request will have them | `6249 passed, 23 skipped, 665 deselected, 5 xfailed` (the first version, on `afa01bb8` without this spec in the tree: `6180 passed, 22 skipped, 665 deselected, 5 xfailed`) |
 | browser suite | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `661 passed` |
+| mock cluster (the `mock-openshift` job) | `pytest mock-app/tests -q`, in a virtualenv with `pip install -e .` and `-e 'mock-app[test]'`, as the workflow installs them | `59 passed`; without block 75, `1 failed, 58 passed`: `AttributeError: 'UserBindingView' object has no attribute 'is_platform'` |
 | markdown | `markdownlint-cli2` on the chart README, the exclusions document, `API.md` and the CHANGELOG | 15 findings before and after, the same per file and rule, all on main already; none new |
 | chart | `helm lint`; `helm template` with the defaults and each of the three values files | `1 chart(s) linted, 0 chart(s) failed`; every render exits 0 |
-| the settings file (T255-12) | the rendered `clusters.yaml` of `afa01bb8` and of the applied chart, parsed, for the defaults and the three values files | the parsed settings are equal for all four; the text differs in 9 lines, every one a comment of the template (§6: the pod rolls once) |
+| the settings file (T255-12) | the rendered `clusters.yaml` of `21132a25` and of the applied chart, parsed, for the defaults and the three values files | the parsed settings are equal for all four; the text differs in 9 lines, every one a comment of the template (§6: the pod rolls once) |
 | RBAC (T255-14) | every Role/ClusterRole rule and binding subject as an atom, four values sets × leader election on and off, before, after, and after with both lists in ConfigMaps | 66 / 63 (defaults), 73 / 73 (`crc.yaml`), 66 / 63 and 71 / 71 (the two production examples) atoms with election on / off, the same before, after and with both ConfigMaps: REMOVED 0, ADDED 0 |
 
 ## 5. On the lab (the implementing pull request)
@@ -561,12 +615,13 @@ step 2, and the ConfigMap deleted after step 4.
 
 ## 6. What an operator sees, and what it costs
 
-- **Nothing, until the values file says something.** With no `platformUsers` the classification is 2.0.0's and the
-  settings file is the one rendered today; the image and chart versions move and the pod rolls once because the
-  template's comments changed.
+- **Nothing, until the values file says something.** With no `platformUsers` the classification is 2.0.0's plus
+  `kube:admin` (the operator's ruling of 2026-10-01: a grant naming OpenShift's bootstrap user is counted as the
+  platform's; no binding on the CRC lab names it) and the settings file is the one rendered today; the image and
+  chart versions move and the pod rolls once because the template's comments changed.
 - **With a list.** The listed users' grants leave the worklist and the alert and are counted; the direct-user note
   reads "N platform identities excluded — the cluster's own and break-glass identities, with nowhere to migrate to.
-  · `system:*` and six named ones, the shipped defaults, plus this estate's `platformUsers.additionalNames`."; a stale
+  · `system:*` and seven named ones, the shipped defaults, plus this estate's `platformUsers.additionalNames`."; a stale
   entry gets a ⚠ line under it; the namespace index's note names its source the same way.
 - **With a ConfigMap.** One more mounted directory in the dashboard container; a missing ConfigMap keeps the pod from
   starting (as `trustedCA`'s does), a bad key stops the start with a message naming it; an edit takes effect when
@@ -583,23 +638,24 @@ Lines added and removed by §7 (`git diff --numstat` on the applied tree):
 | `charts/group-sync-dashboard/Chart.yaml` | 7 | 2 |
 | `charts/group-sync-dashboard/README.md` | 28 | 2 |
 | `charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md` | 9 | 2 |
-| `charts/group-sync-dashboard/templates/_helpers.tpl` | 60 | 19 |
+| `charts/group-sync-dashboard/templates/_helpers.tpl` | 63 | 19 |
 | `charts/group-sync-dashboard/templates/configmap.yaml` | 18 | 6 |
 | `charts/group-sync-dashboard/templates/deployment.yaml` | 20 | 0 |
-| `charts/group-sync-dashboard/values.yaml` | 66 | 1 |
-| `docs/CHANGELOG.md` | 15 | 0 |
-| `local-development/API.md` | 18 | 3 |
+| `charts/group-sync-dashboard/values.yaml` | 67 | 1 |
+| `docs/CHANGELOG.md` | 22 | 0 |
+| `local-development/API.md` | 19 | 3 |
 | `local-development/gsd/__init__.py` | 1 | 1 |
 | `local-development/gsd/api.py` | 17 | 7 |
-| `local-development/gsd/config.py` | 210 | 5 |
+| `local-development/gsd/config.py` | 221 | 5 |
 | `local-development/gsd/kube.py` | 5 | 30 |
 | `local-development/gsd/poller.py` | 17 | 11 |
 | `local-development/gsd/state.py` | 1 | 1 |
 | `local-development/gsd/static/index.html` | 38 | 11 |
 | `local-development/gsd/storage.py` | 1 | 0 |
 | `local-development/gsd/store.py` | 9 | 2 |
+| `local-development/mock-app/tests/test_request_surface.py` | 5 | 1 |
 | `local-development/pyproject.toml` | 1 | 1 |
-| `local-development/tests/test_config.py` | 132 | 1 |
+| `local-development/tests/test_config.py` | 136 | 1 |
 | `local-development/tests/test_metrics.py` | 38 | 0 |
 | `local-development/tests/test_namespaces_api.py` | 13 | 0 |
 | `local-development/tests/test_platform_classification_marker.py` | 21 | 11 |
@@ -608,12 +664,12 @@ Lines added and removed by §7 (`git diff --numstat` on the applied tree):
 | `local-development/tests/test_unmanaged_subjects.py` | 70 | 4 |
 | `local-development/tests/test_user_binding_paging.py` | 42 | 0 |
 | `local-development/tests/test_values_defaults.py` | 2 | 0 |
-| `local-development/tests/test_chart_platform_users.py` (new) | 170 | 0 |
+| `local-development/tests/test_chart_platform_users.py` (new) | 179 | 0 |
 
 ## 7. Implementation blocks
 
-Applied in this order. Blocks 1–37 are the application, 38–45 the chart, 46–61 the tests, 62–69 the documents and
-70–74 the release fields.
+Applied in this order. Blocks 1–37 are the application, 38–45 the chart, 46–61 the tests, 62–69 the documents,
+70–74 the release fields, and 75 the mock cluster's test (placed last so that no block is renumbered).
 
 ### Block 1 — local-development/gsd/config.py
 
@@ -669,7 +725,8 @@ New text:
 
 
 # The shipped User defaults, moved here from gsd/kube.py by #255 so the settings can default to them (gsd.kube
-# imports gsd.config, not the reverse); values.yaml `platformUsers.prefixes`/`names` replace them and
+# imports gsd.config, not the reverse): 2.0.0's lists plus `kube:admin`, by the operator's ruling of 2026-10-01
+# (#255); values.yaml `platformUsers.prefixes`/`names` replace them and
 # `additionalPrefixes`/`additionalNames` widen them. Kubernetes reserves `system:` "for Kubernetes system use"
 # (RBAC, "Referring to subjects"). Measured on the reference cluster: 36 direct-user bindings, of which 22 are
 # these — kube-apiserver, kube-scheduler, kube-controller-manager, the node identities, and SA-shaped users like
@@ -685,6 +742,11 @@ PLATFORM_USER_NAMES = frozenset({
     # it TO, and on the reference cluster it accounted for 12 of the 14 non-system rows —
     # so leaving it in would have made the finding look like a kubeadmin report.
     "kubeadmin",
+    # The same identity, by the name OpenShift's bootstrap authenticator gives it outside CRC: openshift/library-go
+    # `BootstrapUser = "kube:admin"` (`kubeadmin` is only its login), and every project it requests binds
+    # `kube:admin` as admin. The operator's ruling of 2026-10-01 (#255): "kubeadmin or kube:admin is a trusted user
+    # in crc that we use as admin" — one trusted admin identity, both names shipped.
+    "kube:admin",
 })
 
 
@@ -721,8 +783,13 @@ class PlatformUsers:
         """Every `additional*` entry that matches none of `users`, by axis.
 
         `users` is every User subject on the cluster's bindings, platform ones included: users have no
-        index of their own, and an entry that names an account no binding names any more is a typo or an
-        account that has gone. The shipped defaults are not reported, as for namespaces."""
+        index of their own. An unmatched entry can be planned, misspelled, or no longer bound; this method
+        reports the observation, not a deletion. An empty `users` judges nothing: a cluster's bindings always name its own
+        `system:` components as Users, so none at all means they have not been read there (the namespace
+        index shows its stale patterns only beside platform rows, likewise). The shipped defaults are not
+        reported, as for namespaces."""
+        if not users:
+            return {}
         stale: dict[str, list[str]] = {}
         missing = [p for p in self.additional_prefixes if not any(u.startswith(p) for u in users)]
         if missing:
@@ -1423,9 +1490,9 @@ New text:
 
 ```python
             description="Include the platform's identities: the users `platformUsers` names "
-                        "(by default `system:*`, `kubeadmin` and the kube components). Excluded "
-                        "by default: there is nowhere to migrate them to, and on the reference "
-                        "cluster they were 34 of 36 rows."),
+                        "(by default `system:*`, the kube components, `kubeadmin` and `kube:admin`). "
+                        "Excluded by default: there is nowhere to migrate them to, and on the "
+                        "reference cluster they were 34 of 36 rows."),
 ```
 
 ### Block 29 — local-development/gsd/api.py
@@ -1446,8 +1513,8 @@ New text:
 
 ```python
         The platform's identities — the users `platformUsers` names, by default system:*, the
-        kube components and OpenShift's break-glass `kubeadmin` — are excluded by default: there
-        is nowhere to migrate them to, and on the reference cluster they were 34 of 36 rows, so including them would
+        kube components and OpenShift's break-glass `kubeadmin` / `kube:admin` — are excluded by default:
+        there is nowhere to migrate them to, and on the reference cluster they were 34 of 36 rows, so including them would
 ```
 
 ### Block 30 — local-development/gsd/api.py
@@ -1496,7 +1563,7 @@ New text:
 
 ```html
        <code>platformNamespaces</code> names, a user the chart's <code>platformUsers</code> names
-       (by default a <code>system:</code> user and <code>kubeadmin</code>). None of these is a finding.`,
+       (by default a <code>system:</code> user, <code>kubeadmin</code> and <code>kube:admin</code>). None of these is a finding.`,
 ```
 
 ### Block 32 — local-development/gsd/static/index.html
@@ -1576,11 +1643,11 @@ function platformUsersNote(ub) {
   const n = ub.excluded_platform || 0;
   const staleLine = !axes.length ? "" : `<div class="mt-2">⚠ ${axes
     .map((axis) => `<code>${esc(axis)}</code>: ${stale[axis].map((v) => `<code>${esc(v)}</code>`).join(", ")}`)
-    .join("; ")} ${axes.length === 1 && stale[axes[0]].length === 1 ? "matches" : "match"}
-    no User subject on this cluster — a typo, or an account that has gone.</div>`;
+    .join("; ")} ${axes.length === 1 && stale[axes[0]].length === 1 ? "is" : "are"} not currently matched by any
+    User subject on a binding in this cluster; keep planned entries, and check unexpected ones.</div>`;
   return `${n} platform identit${n === 1 ? "y" : "ies"} excluded — the cluster's own and break-glass identities,
     with nowhere to migrate to. <span class="muted">· ${platformListSource(ub.platform_users_source, "platformUsers",
-      "<code>system:*</code> and six named ones")}.</span>${staleLine}`;
+      "<code>system:*</code> and seven named ones")}.</span>${staleLine}`;
 }
 
 /* Roles granted directly to a person, ranked by risk. */
@@ -1728,6 +1795,9 @@ look it up in — so the loader refuses a typo inside it at start, naming the Co
 {{- fail (printf "%s.existingConfigMap.%s is not a key this chart defines; expected enabled, name, key, revision." $s.name $k) -}}
 {{- end -}}
 {{- end -}}
+{{- if and (hasKey $value "enabled") (not (kindIs "bool" $value.enabled)) -}}
+{{- fail (printf "%s.existingConfigMap.enabled must be true or false, got %s: a quoted \"false\" is a string, and a string turns it on." $s.name (kindOf $value.enabled)) -}}
+{{- end -}}
 {{- else if not (has $key $known) -}}
 {{- fail (printf "%s.%s is not a key this chart defines; expected any of %s. A typo here is a pattern that never takes effect." $s.name $key (join ", " (append $known "existingConfigMap"))) -}}
 {{- else if not (kindIs "invalid" $value) -}}
@@ -1809,7 +1879,7 @@ New text:
     {{- with index $.Values $name }}
     {{- $cm := .existingConfigMap | default dict }}
     {{- if $cm.enabled }}
-    {{ $name }}ConfigMap: {{ toJson (dict "name" $cm.name "key" $cm.key "path" (printf "%s/%s" (include "gsd.platformListDir" $name) $cm.key) "revision" (toString ($cm.revision | default ""))) }}
+    {{ $name }}ConfigMap: {{ toJson (dict "name" $cm.name "key" $cm.key "path" (printf "%s/%s" (include "gsd.platformListDir" $name) $cm.key) "revision" (ternary "" (toString $cm.revision) (kindIs "invalid" $cm.revision))) }}
     {{- else }}
     {{- $set := dict }}
     {{- range $k, $v := . }}{{- if and (ne $k "existingConfigMap") (kindIs "slice" $v) (or $v (has $k (list "prefixes" "suffixes" "names"))) }}{{- $_ := set $set $k $v }}{{- end }}{{- end }}
@@ -1895,7 +1965,7 @@ New text:
 
 ```yaml
   # ServiceAccount in a namespace `platformNamespaces` (below) names, a user `platformUsers` (below)
-  # names — by default a `system:` user, kubeadmin and the kube components.
+  # names — by default a `system:` user, the kube components, kubeadmin and kube:admin.
 ```
 
 ### Block 44 — charts/group-sync-dashboard/values.yaml
@@ -1967,31 +2037,32 @@ New text:
 # a break-glass account, a bind account, a fleet login — so the list is yours, built like
 # `platformNamespaces` above.
 #
-# The shipped defaults are the rule of 2.0.0: the prefix `system:` (Kubernetes reserves it "for
-# Kubernetes system use") and the names below. `prefixes` and `names` REPLACE them; the `additional*`
+# The shipped defaults are the rule of 2.0.0 plus `kube:admin`: the prefix `system:` (Kubernetes reserves it
+# "for Kubernetes system use") and the names below. `prefixes` and `names` REPLACE them; the `additional*`
 # two APPEND, which is what an estate usually wants. Plain prefix and exact name only — no suffix, glob
 # or regular expression, and every value is a list: a user name may contain a comma
 # (`cn=jdoe,ou=People`), so a string is never split. A key that is not one of the four is refused by
 # name at render and at start.
 #
-# On OpenShift outside CRC the break-glass login `kubeadmin` signs in as the user `kube:admin`
-# (openshift/library-go, bootstrapauthenticator), which the shipped `kubeadmin` does not match; add it
-# here if your bindings name it.
+# `kubeadmin` and `kube:admin` are one trusted admin identity, both shipped: outside CRC the break-glass
+# login `kubeadmin` signs in as the user `kube:admin` (openshift/library-go, bootstrapauthenticator), on CRC
+# an HTPasswd `kubeadmin` signs in under its own name (the operator's ruling of 2026-10-01, #255).
 #
 # Never silent: the page states how many grants it excluded, names where this list comes from, and
-# reports an `additional*` entry no User subject on that cluster matches — a typo, or an account that
-# has gone. A listed person's own grants also leave their self view of the Namespace audit, exactly as
-# kubeadmin's do; Home still lists them.
+# reports an `additional*` entry no User subject on a binding in that cluster currently matches — a
+# pre-staged entry may be intentional, and the page asks the reader to check unexpected ones. A listed
+# person's own grants also leave their self view of the Namespace audit, exactly as kubeadmin's do; Home
+# still lists them.
 # PLATFORM-CLASSIFICATION (#255, #353): the estate's own platform users. What this decides: the direct-user rows, their
 # alert and their excluded count, and the unmanaged finding's built-in tier for a User subject.
 platformUsers:
   # Uncomment to replace the shipped defaults outright (rarely what you want):
   # prefixes: ["system:"]
-  # names: ["kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy", "kubeadmin"]
+  # names: ["kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy", "kubeadmin", "kube:admin"]
 
   # What THIS estate adds for itself.
   additionalPrefixes: []
-  additionalNames: []       # e.g. ["kube:admin"]
+  additionalNames: []       # e.g. ["breakglass-admin"]
 
   # OR all of the above from a ConfigMap you own, as YAML under one key, with the same rules as
   # platformNamespaces.existingConfigMap: mounted, read at start, `revision` changed and the release rolled
@@ -2064,21 +2135,24 @@ class TestPlatformUsersAreConfigurable:
     estate could not name its own break-glass or bind account without a release."""
 
     #: The 2.0.0 lists, written out rather than imported: the defaults test must fail if the code's
-    #: defaults move, not move with them (the issue's Definition of Done).
+    #: defaults move, not move with them (the issue's Definition of Done) — and `kube:admin`, which the
+    #: operator's ruling of 2026-10-01 on #255 adds: OpenShift's bootstrap user, one identity with `kubeadmin`.
     PREFIXES_200 = ("system:",)
     NAMES_200 = frozenset({"kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler",
                            "kube-proxy", "kubeadmin"})
+    NAMES_RULED_2026_10_01 = frozenset({"kube:admin"})
 
-    def test_t255_1_with_nothing_set_the_lists_are_exactly_those_of_2_0_0(self, tmp_path):
+    def test_t255_1_with_nothing_set_the_lists_are_those_of_2_0_0_plus_kube_admin(self, tmp_path):
         for body in ("", "platformUsers: {}\n", "platformUsers:\n  additionalPrefixes: []\n  additionalNames: []\n"):
             users = _settings(tmp_path, body).platform_users
-            assert users.prefixes == self.PREFIXES_200 and users.names == self.NAMES_200, body
+            assert users.prefixes == self.PREFIXES_200, body
+            assert users.names == self.NAMES_200 | self.NAMES_RULED_2026_10_01, body
             assert users.additional_prefixes == () and users.additional_names == frozenset(), body
             assert users == PlatformUsers(), body
         default = PlatformUsers()
-        for name in ("system:admin", "system:serviceaccount:apps:deployer", *sorted(self.NAMES_200)):
+        for name in ("system:admin", "system:serviceaccount:apps:deployer", "kube:admin", *sorted(self.NAMES_200)):
             assert default.matches(name), name
-        for name in ("kube:admin", "ocp-oauth-bind-serviceid", "jdoe", "kubeadmin2", "System:admin"):
+        for name in ("ocp-oauth-bind-serviceid", "jdoe", "kubeadmin2", "kube:admin2", "Kube:Admin", "System:admin"):
             assert not default.matches(name), name
 
     def test_t255_2_an_additional_name_appends_and_a_prefix_appends(self, tmp_path):
@@ -2116,6 +2190,7 @@ class TestPlatformUsersAreConfigurable:
         assert users.unmatched(["jdoe", "svc-backup", "system:admin"]) == {
             "additionalPrefixes": ["gone-"], "additionalNames": ["ghost"]}
         assert PlatformUsers().unmatched([]) == {}, "the shipped defaults are never reported"
+        assert users.unmatched([]) == {}, "no User subject at all is bindings not yet read, not every entry gone"
 
     def test_the_summary_names_keys_and_never_values(self, tmp_path):
         users = _settings(tmp_path, 'platformUsers:\n  names: ["root"]\n  additionalNames: ["ghost"]\n').platform_users
@@ -2596,6 +2671,7 @@ def _dashboard(out: str) -> dict:
     ({"additionalNames": "x"}, "platformUsers.additionalNames must be a list, got string"),
     ({"names": [3]}, "platformUsers.names: every entry must be a string"),
     ({"existingConfigMap": {"enabld": True}}, "platformUsers.existingConfigMap.enabld is not a key this chart defines"),
+    ({"existingConfigMap": {"enabled": "false", "name": "e"}}, "platformUsers.existingConfigMap.enabled must be true or false, got string"),
 ])
 def test_t255_5_the_render_refuses_what_the_loader_refuses(tmp_path, stanza, fragment):
     ok, out = _render(tmp_path, {"platformUsers": stanza})
@@ -2622,6 +2698,12 @@ def test_an_empty_replacing_list_is_rendered_so_it_replaces(tmp_path):
     assert ok, out[-600:]
     settings = _settings(out)
     assert settings["platformUsers"] == {"names": []} and settings["platformNamespaces"] == {"names": []}
+    # ... and the loader reads what was rendered as "none": the behaviour change the CHANGELOG names.
+    from gsd.config import _platform_namespaces_setting, _platform_users_setting
+    namespaces, users = _platform_namespaces_setting(settings), _platform_users_setting(settings)
+    assert not namespaces.matches("default") and not namespaces.matches("openshift")
+    assert namespaces.matches("openshift-monitoring"), "the prefix axis is untouched"
+    assert not users.matches("kubeadmin") and users.matches("system:admin")
 
 
 @pytest.mark.parametrize("stanza, inline", [("platformUsers", "additionalNames"),
@@ -2674,13 +2756,15 @@ def test_changing_the_revision_rolls_the_pod_and_nothing_else_does_for_an_extern
     `revision` value is the release's way to say "re-read it" (checksum/config moves, the pod rolls)."""
     base = {"platformUsers": {"existingConfigMap": {"enabled": True, "name": "estate-platform"}}}
     bumped = {"platformUsers": {"existingConfigMap": {"enabled": True, "name": "estate-platform", "revision": "2"}}}
+    zero = {"platformUsers": {"existingConfigMap": {"enabled": True, "name": "estate-platform", "revision": 0}}}
     checksums = []
-    for values in (base, base, bumped):
+    for values in (base, base, bumped, zero):
         ok, out = _render(tmp_path, values)
         assert ok, out[-600:]
         deploy = next(d for d in _docs(out) if d["kind"] == "Deployment" and d["metadata"]["name"] == "t-group-sync-dashboard")
         checksums.append(deploy["spec"]["template"]["metadata"]["annotations"]["checksum/config"])
     assert checksums[0] == checksums[1] != checksums[2]
+    assert checksums[3] not in (checksums[0], checksums[2]), "`revision: 0` is a revision like any other, not unset"
 
 
 @pytest.mark.parametrize("values_file", ["environments/crc.yaml", "environments/example-production.yaml",
@@ -2889,7 +2973,7 @@ class TestPlatformNotesNameTheirSource:
     def test_the_defaults_are_named_as_the_shipped_defaults(self, dash):
         self._open(dash)
         assert self._note(dash) == ("1 platform identity excluded — the cluster's own and break-glass identities, with "
-                                    "nowhere to migrate to. · system:* and six named ones, the shipped defaults.")
+                                    "nowhere to migrate to. · system:* and seven named ones, the shipped defaults.")
         line = self._note(dash, "#ns-show-platform >> xpath=..")
         assert "openshift-*, kube-* and five named ones, the shipped defaults — the rule the Home page uses." in line, line
         assert "and five named ones —" not in line
@@ -2917,10 +3001,10 @@ class TestPlatformNotesNameTheirSource:
             dash.wait_for_function("() => document.querySelector('#du-platform-note') && "
                                    "document.querySelector('#du-platform-note').innerText.includes('breakglass-2024')")
         note = self._note(dash)
-        assert ("system:* and six named ones, the shipped defaults, plus this estate's platformUsers.additionalNames, "
+        assert ("system:* and seven named ones, the shipped defaults, plus this estate's platformUsers.additionalNames, "
                 "read from the ConfigMap estate-platform (key platform-users.yaml).") in note, note
-        assert ("⚠ additionalNames: breakglass-2024 matches no User subject on this cluster — a typo, or an account "
-                "that has gone.") in note, note
+        assert ("⚠ additionalNames: breakglass-2024 is not currently matched by any User subject on a binding in "
+                "this cluster; keep planned entries, and check unexpected ones.") in note, note
         line = self._note(dash, "#ns-show-platform >> xpath=..")
         assert ("the shipped defaults, plus this estate's platformNamespaces.additionalSuffixes and "
                 "platformNamespaces.additionalNames — the rule the Home page uses.") in line, line
@@ -2947,7 +3031,7 @@ class TestPlatformNotesNameTheirSource:
             data.namespaces.platform_namespaces_source = {configMap: {name: 'estate-platform-namespaces-list', key: 'platform-namespaces.yaml'},
               replaced: ['prefixes', 'names'], additional: ['additionalSuffixes', 'additionalNames']};
             render(); }""", [theme, self.SOURCE, {"additionalPrefixes": ["svc-retired-"], "additionalNames": ["breakglass-2024", "kube:admin"]}])
-        assert "match no User subject" in self._note(dash)
+        assert "are not currently matched by any User subject" in self._note(dash)
         overflow = dash.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
         assert overflow <= 0, f"the page scrolls {overflow}px sideways at {width}px ({theme})"
 ```
@@ -2981,8 +3065,8 @@ release's values file and takes effect when the release is rolled out through it
 |---|---|---|
 | `platformNamespaces.prefixes`, `.suffixes`, `.names` | unset: `openshift-`, `kube-`; none; `default`, `openshift`, `kube-system`, `kube-public`, `kube-node-lease` | set, each REPLACES its shipped default (an empty list means none) |
 | `platformNamespaces.additionalPrefixes`, `.additionalSuffixes`, `.additionalNames` | `[]` | APPEND to the defaults: what an estate usually wants |
-| `platformUsers.prefixes`, `.names` | unset: `system:`; `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin` | set, each REPLACES its shipped default (an empty list means none) |
-| `platformUsers.additionalPrefixes`, `.additionalNames` | `[]` | APPEND; for example a bind or break-glass account. Outside CRC, OpenShift's `kubeadmin` login is the user `kube:admin`, which the shipped `kubeadmin` does not match |
+| `platformUsers.prefixes`, `.names` | unset: `system:`; `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin`, `kube:admin` | set, each REPLACES its shipped default (an empty list means none). `kubeadmin` and `kube:admin` are one identity: OpenShift's break-glass login signs in as `kube:admin` outside CRC |
+| `platformUsers.additionalPrefixes`, `.additionalNames` | `[]` | APPEND; for example a bind or break-glass account |
 | `platformNamespaces.existingConfigMap.enabled`, `platformUsers.existingConfigMap.enabled` | `false` | read that stanza's keys from a ConfigMap you own instead, as YAML under one key; refused at render beside any list of the same stanza |
 | `….existingConfigMap.name` | `""` | the ConfigMap, in the release namespace; required when enabled, and the pod does not start while it is missing |
 | `….existingConfigMap.key` | `platform-namespaces.yaml`, `platform-users.yaml` | the key holding the YAML; a missing key or a typo inside it stops the start with a message naming the ConfigMap and the key |
@@ -3015,7 +3099,7 @@ New text:
 
 ```text
 ServiceAccount in a namespace `platformNamespaces` names and a user `platformUsers` names (the
-defaults and the estate's additions, in the section above; a `system:` user and `kubeadmin` by default) join the
+defaults and the estate's additions, in the section above; a `system:` user, `kubeadmin` and `kube:admin` by default) join the
 ```
 
 ### Block 64 — charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md
@@ -3033,7 +3117,7 @@ Old text:
 New text:
 
 ```text
-| User | the user is a platform user: by default the name starts with `system:`, or is `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy` or `kubeadmin` | the shipped defaults, plus your `platformUsers.additionalPrefixes` and `additionalNames` in `values.yaml` (or a ConfigMap, `platformUsers.existingConfigMap`); the same list the direct-user view uses |
+| User | the user is a platform user: by default the name starts with `system:`, or is `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin` or `kube:admin` | the shipped defaults, plus your `platformUsers.additionalPrefixes` and `additionalNames` in `values.yaml` (or a ConfigMap, `platformUsers.existingConfigMap`); the same list the direct-user view uses |
 ```
 
 ### Block 65 — charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md
@@ -3055,8 +3139,8 @@ New text:
 
 To silence a user who is the estate's own (a bind account, a break-glass login), add the name to
 `platformUsers.additionalNames` in the release's values file and roll it out through the release's deployment
-pipeline. Outside CRC, OpenShift's `kubeadmin`
-login is the user `kube:admin`, which the shipped default `kubeadmin` does not match.
+pipeline. OpenShift's break-glass login is shipped under both of its names: `kubeadmin`, and `kube:admin`, the
+user it signs in as outside CRC.
 
 Nothing else silences a grant. A Helm, OLM or Argo CD label, the binding's name, or a ServiceAccount's name
 ```
@@ -3146,7 +3230,7 @@ New text:
 
 ```text
 `excluded_platform` counts what was left out: the platform's identities, the users the chart's
-`platformUsers` names (by default `system:*`, the kube components and `kubeadmin`), with nowhere to migrate
+`platformUsers` names (by default `system:*`, the kube components, `kubeadmin` and `kube:admin`), with nowhere to migrate
 to; on the reference cluster they were 34 of 36 rows. `include_platform=true` shows them. The flag is stored
 with each row at the binding refresh, from the list the pod started with.
 
@@ -3154,8 +3238,9 @@ with each row at the binding refresh, from the list the pod started with.
 the `additional*` axes it set (`additional`), and the ConfigMap it was read from (`configMap`, `{name, key}`,
 or `null` for the values file) — key names only, never the values. `platform_users_unmatched` names every
 `additional*` entry that matches none of the User subjects on this cluster's bindings, platform ones included,
-by axis (`{}` when none): a typo, or an account that has gone. Both are `null` at the self tier, with
-`excluded_platform`.
+by axis (`{}` when none, and while the cluster's bindings have not been read). An entry can be unmatched because
+it is planned, misspelled, or no longer bound; the response reports that observation, not a deletion. Both are
+`null` at the self tier, with `excluded_platform`.
 ```
 
 ### Block 70 — docs/CHANGELOG.md
@@ -3179,8 +3264,11 @@ New text:
 - **An estate names its own platform users, and either platform list can live in a ConfigMap (#255, Epic G #387,
   `docs/specs/SPEC_G2_platform_users.md`; application 2.1.0, chart 0.60.0).** `platformUsers` in the values file
   works like `platformNamespaces`: `prefixes` and `names` replace the shipped defaults (`system:`, and
-  `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin`, exactly as in
-  2.0.0), `additionalPrefixes` and `additionalNames` append to them. A listed user's grants leave the direct-user
+  `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin` as in 2.0.0,
+  plus `kube:admin`), `additionalPrefixes` and `additionalNames` append to them. **`kube:admin` is new in the
+  defaults** (the operator's ruling of 2026-10-01 on #255): it is OpenShift's bootstrap break-glass user, the same
+  identity as `kubeadmin`, so a grant naming it — every project it requests binds it as admin — is now counted as the
+  platform's instead of raised as a person's direct grant; no binding on the CRC lab names it. A listed user's grants leave the direct-user
   worklist and its alert, are counted in `excluded_platform`, and are `built_in` in the unmanaged finding; the
   poller classifies Users from the settings at each binding refresh, so one list feeds all four. An unknown key, a
   non-list, a non-string entry or a glob character is refused by name at render and at start; an `additional*`
@@ -3188,8 +3276,12 @@ New text:
   (`enabled`, `name`, `key`, `revision`) reads either stanza from a ConfigMap you own, mounted as a file, read at
   start, refused at render beside an inline list; after editing the ConfigMap, change `revision` in the values
   file and roll the release out. No new permission. The two platform notes on the Namespace audit tab now say
-  where their list comes from. An empty replacing list (`names: []`) now reaches the application instead of
-  being dropped at render.
+  where their list comes from. **Two `platformNamespaces` inputs render differently on upgrade:** an empty
+  replacing list (`prefixes: []`, `suffixes: []`, `names: []`) now reaches the application instead of being dropped
+  at render, so it replaces the shipped defaults as the values comment always said (`names: []` makes `default` and
+  `openshift` ordinary namespaces; `prefixes: []` does the same to every `openshift-*` and `kube-*` one); and a
+  `platformNamespaces` that is not a mapping (`false`, `""`, `[]`), which rendered as if unset, is refused at render
+  by name.
 
 ```
 
@@ -3230,7 +3322,7 @@ appVersion: "2.0.0"
 New text:
 
 ```yaml
-# 2.1.0 (2026-10-01). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap (#255). MINOR.
+# 2.1.0 (2026-10-01). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
 appVersion: "2.1.0"
 ```
 
@@ -3268,4 +3360,30 @@ New text:
 
 ```python
 __version__ = "2.1.0"
+```
+
+### Block 75 — local-development/mock-app/tests/test_request_surface.py
+
+The mock cluster's suite read the reader's `is_platform` (§3.2); `.github/workflows/mock-cluster.yml` runs it on
+every pull request that changes `gsd/kube.py`, `gsd/config.py`, `gsd/poller.py` or `gsd/store.py`. The row carries
+no flag now, and the shipped defaults make `lateef.o` a person.
+
+<!-- block: local-development/mock-app/tests/test_request_surface.py | edit -->
+
+Old text:
+
+```python
+    assert row.role_name == "viewer"
+    assert row.is_platform is False
+```
+
+New text:
+
+```python
+    assert row.role_name == "viewer"
+    # #255: the reader carries no platform flag; the poller decides it from the settings' platformUsers, whose
+    # shipped defaults make lateef.o a person.
+    from gsd.config import PlatformUsers
+    assert not hasattr(row, "is_platform")
+    assert not PlatformUsers().matches(row.user_name)
 ```
