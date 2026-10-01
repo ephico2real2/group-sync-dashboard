@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Thirty-six specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Thirty-seven specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The thirty-six specifications
+## The thirty-seven specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -102,6 +102,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | D6 | [`SPEC_D6_scrub_span.md`](SPEC_D6_scrub_span.md) — Scrub spans: a quoted text holding a secret is replaced whole; the spec's refusal of a password found in the words Rejoin writes is not applied (the operator's decision, 2026-09-29) | D — reconnect | — | app 1.19.0, chart 0.59.21 | [#465](https://github.com/ephico2real2/group-sync-dashboard/issues/465) | released |
 | S4f | [`SPEC_S4f_fleet_gate_backstop.md`](SPEC_S4f_fleet_gate_backstop.md) — the fleet gate's backstop: a deleted fleet Lease is put back from a copy beside the database, so `crc start` sends no refused password again and pings no second time in a day | S — cluster configuration | — | app 1.18.0, chart 0.59.20 | [#481](https://github.com/ephico2real2/group-sync-dashboard/issues/481) | released |
 | G1 | [`SPEC_G1_tier_declaration.md`](SPEC_G1_tier_declaration.md) — the access declaration: every route and page names the tier each reader gets, in `ACCESS_CONTROL.md` §3 and §4, and a test proves every cell per persona; SPEC_T1's status follows | G — access declared | — | no version change (tests and docs only) | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) | specified |
+| E5 | [`SPEC_E5_offsite_on_by_default.md`](SPEC_E5_offsite_on_by_default.md) — the off-volume backup on by default: `backup.offsite.enabled` read as a word (`""` on wherever the copy can work and nothing where it cannot, `true` refusing what cannot work, `false` off), one helper deciding for the CronJob and its two alerts (and for SPEC_E2's recovery mount), and the newest pre-upgrade copy shipped to `/offsite/pre-upgrade` at one replica | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on

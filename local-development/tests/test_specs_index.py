@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E5 #304)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 36, f"expected thirty-six index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481) and G1 (#239); matched {sorted(rows)}"
+    assert len(rows) == 37, f"expected thirty-seven index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239) and E5 (#304); matched {sorted(rows)}"
     return rows
 
 
@@ -101,7 +101,8 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # so the exclusion covers that one sharing and no other number (review of SPEC_G1, OB3 and Codex).
     assert ROWS["G1"]["issue"] == ROWS["T1"]["issue"] == "239", (
         "only T1 and G1 may share #239", ROWS["T1"]["issue"], ROWS["G1"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244" and fid != "G1"]
+    # E5 (#304) the same as D5: an Epic E step specified after S4f (#481).
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] not in ("244", "304") and fid != "G1"]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
