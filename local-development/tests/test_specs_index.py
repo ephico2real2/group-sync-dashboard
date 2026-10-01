@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E3 #302)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 37, f"expected thirty-seven index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239) and E3 (#302); matched {sorted(rows)}"
+    assert len(rows) == 41, f"expected forty-one index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503) and E3 (#302); matched {sorted(rows)}"
     return rows
 
 
@@ -96,13 +96,29 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     thirteen have one issue each; the S batch is one issue (#230) in three steps, so its rows share it."""
     # D5 (#244) is specified after later work (D3/D4, S4e) because the operator's rulings
     # arrived later; it sits at the end of the table and is excluded from the rising-number assert.
-    # E3 (#302), like D5 (#244): Epic E's restore script, specified after S4f (#481).
     # G1 is #239's second design (SPEC_G1, Epic G #387), specified after everything above it; it shares
     # T1's issue, as the S steps share #230, so it is excluded from both asserts — and pinned to #239 here,
     # so the exclusion covers that one sharing and no other number (review of SPEC_G1, OB3 and Codex).
     assert ROWS["G1"]["issue"] == ROWS["T1"]["issue"] == "239", (
         "only T1 and G1 may share #239", ROWS["T1"]["issue"], ROWS["G1"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] not in ("244", "302") and fid != "G1"]
+    # E2 (#303) is Epic E's first step, specified after G1; it sits at the end like D5 and is excluded from
+    # the rising-number assert by its id, pinned to #303 the same narrow way, so a mistyped issue fails here.
+    assert ROWS["E2"]["issue"] == "303", ("E2 is #303", ROWS["E2"]["issue"])
+    # G2 is #255 (filed 2026-09-21), specified after #481 in Epic G's build order: excluded from the rising-number
+    # assert by its id and pinned to #255, so a mistyped issue on that row still fails (review of SPEC_G2, OB3 and Codex).
+    assert ROWS["G2"]["issue"] == "255", ("G2 is #255", ROWS["G2"]["issue"])
+    # E4 (#391) was filed while Epic E was drafted and specified on 2026-10-01 after G2; excluded the same way, by
+    # its id, and pinned to #391 (review of SPEC_E4, OB3 and OB2). D5 is excluded by its id too and pinned to #244:
+    # excluded by the number alone, D5's row and header mistyped as #445 passed every index test (review of SPEC_E4, OB3).
+    assert ROWS["E4"]["issue"] == "391", ("E4 is #391", ROWS["E4"]["issue"])
+    assert ROWS["D5"]["issue"] == "244", ("D5 is #244", ROWS["D5"]["issue"])
+    # G3 (#503) is Epic G's third step, after G2 in the epic's build order: excluded by its id and pinned to #503 the
+    # same narrow way, so the row's place follows the build order and a mistyped issue still fails (review of SPEC_G3).
+    assert ROWS["G3"]["issue"] == "503", ("G3 is #503", ROWS["G3"]["issue"])
+    # E3 (#302) is Epic E's restore script, specified after S4f (#481): excluded from the rising-number assert by its id
+    # and pinned to #302, so a mistyped issue on that row still fails (confirmation pass of SPEC_E3, OB3, F3).
+    assert ROWS["E3"]["issue"] == "302", ("E3 is #302", ROWS["E3"]["issue"])
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E3")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
