@@ -147,6 +147,17 @@ Decisions made on "easy to manage, best practice", corrections to the issue, and
    `gsd/api.py` prints nothing), so §2's line citations into main hold on both; the merge with `6d532178` changed none
    of them either (it added SPEC_E3, its index row and its pin), and no file a block of this spec edits besides the
    index and `SPEC_E3_restore_db.md`, which blocks 8m and 8n now edit.
+10. **The confirmation review of `c5ae454e` (OB2, in Codex's seat; Codex and Cursor out of usage), decided by the
+    orchestrator on 2026-10-01: both corrections accepted, applied from OB2's patch verbatim.**
+    - **N1, accepted (blocks T1, T2, T4, T5):** the checker refused only an unknown marker *word*, so a known word in
+      a malformed form (a capital, a stray or missing space, a misspelt kind) still dropped its block silently with
+      rc 0, while T5's README bullet promised a refusal. Every column-0 `<!-- <word>:` line must now be exactly one of
+      the three forms, or nothing is written. OB2 measured it against every spec on main (46 unchanged) and every spec
+      blob in the history (512, 0 newly refused); the new test fails 1 / passes 7 before and passes 8 after.
+    - **N2, accepted (§3.4, wording):** the step 1 → step 2 row cites OB3's phase samples (255 under Helm, 118 under
+      Argo CD's order), not the whole runs' totals; the skip row says the reporting tail is skipped under one WARNING
+      (`local-development/gsd/poller.py#reporting tail skipped`). §6's two cells for the checker re-measured (18 / 2,
+      50 / 0).
 
 ## 1. The mandate, and what is out of scope
 
@@ -464,8 +475,8 @@ upgrade, per dashboard pod, for Lease calls the API server refuses because neith
 | upgrade | refused Lease calls | why |
 |---|---|---|
 | any chart before step 1 → step 1 | 0 | nothing is removed; the Role is added beside the rule |
-| step 1 → step 2 | 0 | the Role exists before the ClusterRole patch and after it: the rendered Role and RoleBinding differ between the two releases only in their `helm.sh/chart` label (OB2). Measured by OB3 on a throwaway kube-apiserver: 0 refused in 5379 samples under Helm, 0 in 3756 under Argo CD's order |
-| a chart before step 1 → step 2 directly | the elector's and the fleet sweep's calls that fall in the gap between the ClusterRole patch and the RoleBinding create (§2.6): at most one elector round per pod while the gap is shorter than `renew_seconds` (10 s). Measured by OB3 on a throwaway kube-apiserver v1.35.0 with Helm v4.3.0 and the lab's values: 41 to 44 refused sampled calls in a gap of 64 to 92 ms spanning 22 Helm requests (four runs), the real elector one round each time; under Argo CD's order 16 refused in 31 ms. CRC's own gap is not measured (a lab write) | §2.9: that round's leadership, three log lines, and a `fleet-state-unavailable` finding until the next discovery cycle if a sweep read falls there; nothing binds. A poll in flight when leadership drops finishes its reads and skips its tail for that cycle: the reporting snapshot and usage pull with a WARNING each (`local-development/gsd/poller.py#reporting tail skipped`), retention with a WARNING if it was between tables (`local-development/gsd/poller.py#retention stopped before pruning`), and the KPI rollup silently (`local-development/gsd/poller.py#Poller._rollup_kpi`); the next cycle runs them. The same upgrade replaces the pod (§2.8) |
+| step 1 → step 2 | 0 | the Role exists before the ClusterRole patch and after it: the rendered Role and RoleBinding differ between the two releases only in their `helm.sh/chart` label (OB2). Measured by OB3 on a throwaway kube-apiserver: 0 refused under Helm (255 samples during the step 1 → step 2 upgrade, in a 5379-sample run from main through both steps and back) and 0 under Argo CD's order (118 during that sync, in a 3756-sample run) |
+| a chart before step 1 → step 2 directly | the elector's and the fleet sweep's calls that fall in the gap between the ClusterRole patch and the RoleBinding create (§2.6): at most one elector round per pod while the gap is shorter than `renew_seconds` (10 s). Measured by OB3 on a throwaway kube-apiserver v1.35.0 with Helm v4.3.0 and the lab's values: 41 to 44 refused sampled calls in a gap of 64 to 92 ms spanning 22 Helm requests (four runs), the real elector one round each time; under Argo CD's order 16 refused in 31 ms. CRC's own gap is not measured (a lab write) | §2.9: that round's leadership, three log lines, and a `fleet-state-unavailable` finding until the next discovery cycle if a sweep read falls there; nothing binds. A poll in flight when leadership drops finishes its reads and skips its tail for that cycle: the reporting snapshot and usage pull under one WARNING (`local-development/gsd/poller.py#reporting tail skipped`; the pull logs its own only when leadership drops after the snapshot), retention with a WARNING if it was between tables (`local-development/gsd/poller.py#retention stopped before pruning`), and the KPI rollup silently (`local-development/gsd/poller.py#Poller._rollup_kpi`); the next cycle runs them. The same upgrade replaces the pod (§2.8) |
 | rollback from step 2 to step 1 | 0 | the Role stays in the desired state; only the rule is patched back. Measured by OB3 under Argo CD's order: 0 refused in 2373 samples |
 | rollback from step 2 to a chart before step 1 | under Helm 0 (measured by OB3, `helm rollback` to main): the rule is patched back before the Role is deleted (deletions run last, §2.6). Under Argo CD with `prune: true`: the Role and RoleBinding are pruned BEFORE the ClusterRole is patched back (§2.7, "prune first"), so the skip case's gap in reverse, with the same bound and the same pod replacement; measured by OB3 under Argo CD's order: 35 refused in 53 ms, the real elector one round | the lab's Application prunes (§2.7); an estate that rolls back by reverting both steps at once should revert step 2 first, which is 0 |
 
@@ -821,8 +832,8 @@ they must be equal. Never log in as the fleet account, never place a wrong fleet
 | `docs/CHANGELOG.md` | 14 / 0 | 11 / 0 |
 | `docs/specs/README.md` (T5's bullet, 8g's five cells, 8m's and 8o's) | 12 / 7 | — |
 | `docs/specs/SPEC_E2_*`, `SPEC_G2_*`, `SPEC_E4_*`, `SPEC_G3_*`, `SPEC_E5_*`, `SPEC_E3_*`, `SPEC_E6_*` (one cell each) | 1 / 1 each | — |
-| `local-development/apply-spec-blocks.py` | 15 / 2 | — |
-| `local-development/tests/test_apply_spec_blocks.py` | 31 / 0 | — |
+| `local-development/apply-spec-blocks.py` | 18 / 2 | — |
+| `local-development/tests/test_apply_spec_blocks.py` | 50 / 0 | — |
 | `local-development/tests/test_chart_connection_modes.py` | 65 / 0 | 8 / 0 |
 | `local-development/tests/test_leader.py` | 74 / 0 | — |
 | `local-development/tests/test_fleet_lifecycle.py` | 24 / 0 | — |
@@ -842,7 +853,7 @@ order.
 
 OB2's F1, verbatim from its review (Orchestrator's notes, 8). The checker on main reads only `block`, so on main it
 says nothing about step 2's sixteen `deferred-block` markers; from these blocks on it counts both staging words
-aloud and refuses any other word in a marker's place.
+aloud and refuses any marker line that is not exactly one of the three forms.
 
 #### Block T1 — local-development/apply-spec-blocks.py: the two markers the checker leaves alone, by name
 
@@ -862,9 +873,11 @@ MARK = re.compile(r"^<!-- block: (?P<path>[^|]+?) \| (?P<kind>edit|create|after:
 FENCE = re.compile(r"^```[\w-]*\n(?P<body>.*?)^```$", re.M | re.S)
 # A change that ships in two pull requests (SPEC_G4, #420) stages the later one's blocks as `deferred-block`
 # (their Old text cannot exist yet) and, once the earlier one is on main, retires its markers to `applied-block`.
-# Neither is applied, but both are counted and said aloud, so "8 blocks check out" cannot hide sixteen more; any
-# other word in a marker's place is a typo and is refused rather than skipped.
-MARKER = re.compile(r"^<!-- (?P<word>\S*block\S*): ", re.M)
+# Neither is applied, but both are counted and said aloud, so "8 blocks check out" cannot hide sixteen more. Every
+# column-0 HTML comment whose first word ends in a colon is taken for a marker, and one that is not exactly one of
+# the three forms (a misspelt word, a capital, a stray or missing space) is a typo, refused rather than skipped.
+MARKER = re.compile(r"^<!--[ \t]*(?P<word>[^\s:]*):.*$", re.M)
+EXACT = re.compile(r"<!-- (?:block|deferred-block|applied-block): [^|]+? \| (?:edit|create|after: .+?) -->")
 LEFT_ALONE = ("deferred-block", "applied-block")
 ```
 
@@ -884,10 +897,11 @@ New text:
 ```python
     source = spec.read_text()
     words = [m.group("word") for m in MARKER.finditer(source)]
-    unknown = sorted({w for w in words if w not in ("block", *LEFT_ALONE)})
+    unknown = [m.group(0) for m in MARKER.finditer(source) if not EXACT.fullmatch(m.group(0))]
     if unknown:
         raise SystemExit(f"unknown block marker(s) {unknown}: this tool reads `block` and leaves `deferred-block` and "
-                         "`applied-block` alone (docs/specs/README.md, \"Implementation blocks\")")
+                         "`applied-block` alone, each exactly `<!-- <word>: <path> | edit|create|after: <line> -->` "
+                         "(docs/specs/README.md, \"Implementation blocks\")")
     files: dict[str, str] = {}
     for b in blocks(source):
 ```
@@ -953,6 +967,25 @@ def test_a_marker_word_the_tool_does_not_know_is_refused_not_skipped(tmp_path):
     assert "defered-block" in done.stderr
 
 
+def test_a_marker_the_tool_cannot_read_exactly_is_refused_before_anything_is_written(tmp_path):
+    """A known word in a form the tool does not read (a capital, a stray or missing space, a misspelt kind) was
+    skipped silently while "N blocks check out" counted the rest; every column-0 `<!-- <word>:` line must be exactly
+    one of the three forms, or nothing is written (confirmation review of SPEC_G4, OB2)."""
+    for n, marker in enumerate(("<!-- " + "Block: pkg/new.py | create -->",
+                                "<!-- " + "deferred-Block: pkg/new.py | create -->",
+                                "<!-- " + "block: pkg/new.py | create --> ",
+                                "<!-- " + "block: pkg/new.py |create -->",
+                                "<!-- " + "block: pkg/new.py | Create -->",
+                                "<!--" + "block: pkg/new.py | create -->")):
+        tree = tmp_path / f"tree{n}"
+        write(tree / "pkg/a.py", "alpha\nbeta\ngamma\n")
+        typo = SPEC.replace("<!-- block: pkg/new.py | create -->", marker)
+        done = run(write(tmp_path / f"spec{n}.md", typo), tree, "--apply")
+        assert done.returncode == 1 and "unknown block marker" in done.stderr, (marker, done.stdout, done.stderr)
+        assert marker in done.stderr, (marker, done.stderr)
+        assert (tree / "pkg/a.py").read_text() == "alpha\nbeta\ngamma\n" and not (tree / "pkg/new.py").exists(), marker
+
+
 def test_a_dirty_git_tree_is_refused(tmp_path):
 ```
 
@@ -976,7 +1009,8 @@ New text:
   ships in two pull requests stages the later one's blocks as `deferred-block` (their Old text cannot exist yet)
   and, once the earlier one is on main, retires its markers to `applied-block`; the later pull request's first
   commit turns `deferred-block` into `block` and applies only those (SPEC_G4, #420). The checker says how many of
-  each it left alone, and refuses any other word in a marker's place.
+  each it left alone, and refuses, before it writes anything, any column-0 `<!-- <word>:` line that is not exactly
+  one of the three forms (a misspelt word, a capital, a stray or missing space).
 
 `local-development/apply-spec-blocks.py <spec> <tree>` checks every block against a tree and, with `--apply`,
 ```
