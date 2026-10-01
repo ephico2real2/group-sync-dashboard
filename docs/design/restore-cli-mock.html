@@ -1770,7 +1770,8 @@ pre.cc-yaml.term { white-space: pre; overflow-wrap: normal; word-break: normal; 
     <h2>1 · Recovery mode on, through the release's values <span class="tag-proposed">proposed · #303</span></h2>
     <p class="cap">Set in the release's values file and redeployed, never with <code>oc set env</code>: a GitOps controller
       reverts a hand edit of the Deployment (the lab's Argo CD Application has <code>selfHeal: true</code>). The values
-      file is the only mechanism: Argo CD, or an ApplicationSet, only delivers it. At one replica the
+      file is the only mechanism: Argo CD, or an ApplicationSet, only delivers it, and nobody runs <code>helm</code> or
+      <code>argocd</code> by hand outside development and troubleshooting. At one replica the
       strategy is <code>Recreate</code>, so the writer stops before the recovery pod starts. The pod runs
       a small stdlib script the chart ships as a ConfigMap (as it ships <code>offsite_backup.py</code>), so it runs under any
       image, the older one a rollback targets included, and it never opens the database. It has no liveness probe; its
@@ -1781,8 +1782,7 @@ recovery:
   enabled: true
   ttl: 2h
 
-<span class="c"># then redeploy it the way this release is deployed; with plain Helm:</span>
-<span class="p">$ </span><span class="cmd">helm upgrade group-sync-dashboard &lt;chart&gt; -n group-sync-dashboard -f &lt;values-file&gt;</span>
+<span class="c"># commit it, and the release's deployment pipeline rolls it out (GitOps: the values file in Git)</span>
 
 <span class="p">$ </span><span class="cmd">oc get pods -n group-sync-dashboard -l app=group-sync-dashboard</span>
 <span class="hd">NAME                                    READY   STATUS    RESTARTS   AGE</span>
@@ -1794,6 +1794,8 @@ recovery:
 <span class="il">2026-10-01T09:47:30Z</span> gsd-recovery data path /data/gsd.db (not opened by this process)
 <span class="il">2026-10-01T09:47:30Z</span> gsd-recovery TTL 2h: ends <span class="il">2026-10-01T11:47:30Z</span>, <span class="il">2h0m</span> left
 <span class="il">2026-10-01T10:17:30Z</span> gsd-recovery <span class="il">1h30m</span> left; the app is NOT running and no data is collected</pre>
+    <p class="cap"><b>Development and troubleshooting only</b> (a lab, a scratch release; never the enterprise path):
+      the same values file with plain Helm, <code>helm upgrade &lt;release&gt; &lt;chart&gt; -n &lt;ns&gt; -f &lt;values-file&gt;</code>.</p>
     <p class="cap"><b>At the TTL</b> the module exits non-zero and logs the reason and the commands that extend or end it.
       The pod reads CrashLoopBackOff only while every restart exits at once: the kubelet restarts a container at once
       after its first exit and resets the back-off after ten minutes of running (kubernetes/website
@@ -1802,9 +1804,8 @@ recovery:
       <code>emptyDir</code>, which does); where it is kept is #303's spec to decide.</p>
 <pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --tail=8</span>
 <span class="il">2026-10-01T11:47:30Z</span> gsd-recovery <span class="bad">TTL 2h reached; exiting <span class="il">1</span></span>: the app is still NOT running and no data is collected
-<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to extend: set recovery.ttl (e.g. 4h) in the release's values file and redeploy,
-  e.g. helm upgrade group-sync-dashboard &lt;chart&gt; -n group-sync-dashboard -f &lt;values-file&gt;
-<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to leave: set recovery.enabled: false in the values file and redeploy; the app starts on /data/gsd.db
+<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to extend: set recovery.ttl (e.g. 4h) in the release's values file and roll it out
+<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to leave: set recovery.enabled: false in the release's values file and roll it out; the app starts on /data/gsd.db
 
 <span class="p">$ </span><span class="cmd">oc get pods -n group-sync-dashboard -l app=group-sync-dashboard</span>
 <span class="hd">NAME                                    READY   STATUS             RESTARTS      AGE</span>
@@ -1852,9 +1853,8 @@ live     /data/gsd.db · user_version 20
 <pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">local-development/restore-db.sh --list</span>
 <span class="bad">refused</span>: pod group-sync-dashboard-7b9485f499-jspfl is not in recovery mode
   GSD_RECOVERY_MODE is not set, and uvicorn is running (PID 1): the dashboard is writing /data/gsd.db.
-  Turn recovery mode on in the release's values file (recovery.enabled: true, recovery.ttl: 2h) and redeploy,
-  e.g. helm upgrade group-sync-dashboard &lt;chart&gt; -n group-sync-dashboard -f &lt;values-file&gt;
-  Never with oc set env: a GitOps controller reverts a hand edit of the Deployment.
+  Turn recovery mode on in the release's values file (recovery.enabled: true, recovery.ttl: 2h) and roll it out
+  through the release's deployment pipeline. Never with oc set env: a GitOps controller reverts a hand edit.
 <span class="c"># exit status <span class="il">2</span></span></pre>
     <p class="cap"><b>A candidate newer than the image</b> is refused with both numbers. The rollback #302's Definition of
       Done walks: an image with migration 21 ran (taking its pre-upgrade copy), and 2.0.0 is back in recovery mode.</p>
