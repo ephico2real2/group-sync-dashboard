@@ -97,7 +97,10 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # D5 (#244) is specified after later work (D3/D4, S4e) because the operator's rulings
     # arrived later; it sits at the end of the table and is excluded from the rising-number assert.
     # G1 is #239's second design (SPEC_G1, Epic G #387), specified after everything above it; it shares
-    # T1's issue, as the S steps share #230, so it is excluded from both asserts.
+    # T1's issue, as the S steps share #230, so it is excluded from both asserts — and pinned to #239 here,
+    # so the exclusion covers that one sharing and no other number (review of SPEC_G1, OB3 and Codex).
+    assert ROWS["G1"]["issue"] == ROWS["T1"]["issue"] == "239", (
+        "only T1 and G1 may share #239", ROWS["T1"]["issue"], ROWS["G1"]["issue"])
     issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244" and fid != "G1"]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]

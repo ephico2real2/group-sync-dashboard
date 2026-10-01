@@ -8,7 +8,7 @@
 | Version on release | no version change (tests and docs only) |
 | Issue | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#387) and its decisions of 2026-09-30 and 2026-10-01. Measured on main `5c03a9b1` on this machine (Python 3.14, FastAPI 0.141.1, Starlette 1.6.0, the versions the venv and the image carry), in a browser (Playwright, Chromium), and read-only on the lab. §7's blocks were cut from a copy of `5c03a9b1` with the design implemented and proved against a clean tree (§4.4) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#387) and its decisions of 2026-09-30 and 2026-10-01. Measured on main `5c03a9b1` on this machine (Python 3.14, FastAPI 0.141.1, Starlette 1.6.0, the versions the venv and the image carry), in a browser (Playwright, Chromium), and read-only on the lab. §7's blocks were cut from a copy of `5c03a9b1` with the design implemented and proved against a clean tree (§4.4). Revised the same day after the review of `de42286a` by OB3 (in Grok's seat) and Codex, on the orchestrator's decisions (Orchestrator's notes, "The review of `de42286a`"), and re-proved on main `dd51b91f` (§4.4) |
 
 ## How to read this spec
 
@@ -20,7 +20,8 @@ route could ship with no gate and the suite would stay green. This spec makes §
 for routes and §3 the declaration for pages, and adds the test that holds both to the running code.
 
 §1 is the mandate. §2 is the research: each finding names its source (a primary document with the date it was
-fetched, upstream code read from the raw file, or a probe run on main), and quotes what it relies on. Line citations
+fetched, upstream code read from the raw file, or a probe run on main), and quotes what it relies on; §2a weighs the
+alternatives and reconciles each external claim with the line here that behaves accordingly. Line citations
 into upstream code and into main at `5c03a9b1` are written as plain text, never as backticked `path:line`, to keep them
 apart from the maintained `path#anchor` citations. §3 is the design, one rule per subsection with its reason. §4 maps
 every test case of the issue (T239-1 to T239-11) to a test, shows each failing without the change, and shows the
@@ -66,10 +67,11 @@ every declared tier is proved per persona; SPEC_T1 becomes `in progress` with a 
    process with a 409 and never leaves it, whatever `GSD_NAMESPACE` says on the machine running the suite.
 6. **Every entry of `app.routes` is a row; nothing is excluded by name.** The issue allowed FastAPI's
    `/api/openapi.json` and the `/static` mount to be "rows too, or excluded by name with the reason". Both are rows:
-   the key is each route's `path_format` (a mount's is `/static/{path}`, Starlette routing.py line 388), and `HEAD` is
-   left out because Starlette adds it to every `Route` that has `GET` (routing.py lines 233-238) while FastAPI's
-   `APIRoute` never carries it (fastapi/routing.py lines 1019-1021). A rule with no exceptions is the simpler one to
-   keep.
+   the key is each route's `path_format` (a mount's is `/static/{path}`, Starlette routing.py line 388), and `HEAD`
+   beside `GET` is left out because Starlette adds it to every `Route` that has `GET` (routing.py lines 233-238).
+   FastAPI's `APIRoute` carries exactly the methods it is declared with (fastapi/routing.py lines 1019-1021), so a
+   route declared for `HEAD` alone (`@app.head`) keeps `HEAD` and needs its row. A rule with no exceptions is the
+   simpler one to keep.
 7. **`/report/**` leaves the declaration table for its own small table, "Served by another service".** That is
    T239-2's "marker for another service", and a test holds it to name no route of this application.
 8. **Correction to the issue: §3 has sixteen pages, not fifteen.** The issue names the fourteen tab buttons and the
@@ -98,14 +100,46 @@ every declared tier is proved per persona; SPEC_T1 becomes `in progress` with a 
     column.
 14. **The spec's own commit edits `local-development/tests/test_specs_index.py`, outside the blocks.** The index row
     added with this spec moves the row count from 35 to 36, and G1 shares #239 with T1, so the "issues rise down the
-    table" and "programme issues are unique" checks name G1 as an exception, as they already name D5 and the S steps.
-    That edit lands with the row, in the spec's commit; §7's block for the same file adds T239-8's test at the end of
-    the file and does not touch those lines, so it applies on main and on main with this spec alike.
+    table" and "programme issues are unique" checks name G1 as an exception, as they already name D5 and the S steps,
+    and pin G1's issue to T1's, so the exception covers that one sharing and no other number (review of the spec, OB3:
+    without the pin, a G1 row mistyped as #504 in the index and the header passed all 79 tests). That edit lands with
+    the row, in the spec's commit; §7's block for the same file adds T239-8's test at the end of the file and does not
+    touch those lines, so it applies on main and on main with this spec alike.
 15. **Found, not changed: a stale comment in `api.py`.** The comment above `FastAPI(...)` in
     `local-development/gsd/api.py#build_app` says `skipAuthRegex` admits `^/(healthz|readyz|metrics)$` and nothing
     else; the chart's regex also admits `/signed-out` and two static assets
     (`charts/group-sync-dashboard/values.yaml#skipAuthRegex`). Correcting it changes the image (a MINOR), which this
     tests-and-docs change does not take; §3 and §4 cite the chart's regex, the source of truth.
+
+**The review of `de42286a`** (OB3 in Grok's seat, Codex gpt-5.6-sol at xhigh, 2026-10-01), as the orchestrator
+accepted it; each hunk was traced before it was applied, and none was rejected:
+
+- **F1, a route declared for `HEAD` alone escaped the declaration (OB3, required).** `_route_keys` dropped `HEAD`
+  everywhere, but Starlette adds it only beside `GET`; an ungated `@app.head("/api/probe")` passed all 270 tests.
+  `HEAD` now stays a key where the route has no `GET` (note 6, §3.2, §2a's reconciliation); mutant M13 (§4.3) is the
+  proof.
+- **F2 = Codex C6, the G1 exception was wider than its comment (both).** Unpinned, a G1 row mistyped as another
+  issue in the index and the header passed all 79 index tests. The spec's own commit now asserts
+  `ROWS["G1"]["issue"] == ROWS["T1"]["issue"] == "239"` before excluding G1 (note 14): OB3's pin to T1's issue,
+  with Codex's literal `"239"`.
+- **F4, F5 (OB3), clearer failures for the next person adding a route.** The missing-route message prints a row to
+  fill in; the path-value message names the key to add.
+- **F6 (OB3), the posture names the other clusters.** Every other cluster inherits the host's decision in the rows'
+  posture; `/api/alerts` reads every cluster, so a `remote-sar` cluster the reader is not wide on makes it `self`
+  (§3.3, §4's posture paragraph).
+- **F3 (OB3)** lets the tab pattern accept spaces inside `tab( "id" , "Label" )`; **F7 (OB3)** says `/signed-out`
+  reads no *identity* header; **N1 (OB3)** gives block 2 PEP 8's two blank lines on both sides.
+- **Codex C1–C5 and C8 confirmed** with their own probes; **C7 plausible** only because its sandbox refused Chromium
+  and two loopback binds. OB3 ran both suites green, and §4.4 is re-run here on `dd51b91f`. Codex's extra mutant (a
+  `list_groups` that keeps `scope: self` but serves every row) survives this module and dies in
+  `local-development/tests/test_visibility.py`, as §1 scopes it: field and row projections keep their own tests.
+
+**The operator's rules of 2026-10-01.** §2a answers *"verify the claims and alternative solutions … and reconcile your
+research and code logic"*. The Helm-values-first rule touches nothing here: no chart value, template or command
+changes; the new §3 and §4 name settings by their values keys (`reporting.enabled`,
+`clusterConfig.secrets.writes.enabled`), and no document text gives a `helm`, `--set` or Argo CD step as a path. §2.7
+cites Argo CD's RBAC model only as the design analogy the mandate asked for; the `argocd admin settings rbac can`
+command appears there as a quotation of that model, not as a step of this change.
 
 **Open for the operator** (the issue's own question, asked when this issue starts; not designed here):
 
@@ -386,6 +420,49 @@ are §10's); bringing that half over is the registry the operator has left open.
 - PVCs: `group-sync-dashboard-data` `f065b7a4-535c-4ef1-868c-58f5afee4953`, `group-sync-dashboard-report-artifacts`
   `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3` (the issue's values, unchanged).
 
+## 2a. Alternatives considered
+
+Six ways to make "every route declares its tier" true were weighed (the operator's rule of 2026-10-01: verify the
+alternatives and reconcile the research with the code). Each was researched at its primary source and, where a claim
+could be measured on this app, measured.
+
+| alternative | source, quoted | what it would cost here | decision |
+|---|---|---|---|
+| **A1. The declaration as tables in `docs/ACCESS_CONTROL.md`, read by a test that walks `app.routes` and drives every cell** | ASVS 5.0.0 8.1.1, "authorization documentation defines rules for restricting function-level … access" (§2.6); the Authorization Cheat Sheet, line 133, "automated unit and integration testing of access control logic can help reduce the number of security flaws that make it into production" | one test module (269 lines), one browser test, the two tables; no change under `gsd/` or `charts/`, so no image and no release | **chosen**: the epic's decision of 2026-09-30, the only option that changes no behaviour, and the only one that is the documentation ASVS asks for |
+| **A2. Generate §4 from the code** (a script that probes every route and writes the table) | — (a design option, not a published practice) | small, but the table would then record whatever the code does: a route shipped with the wrong gate would regenerate a wrong row and stay green | **rejected**: a declaration must be written by a person and compared with the code, or it proves nothing; generation is how the drift would be hidden, not caught |
+| **A3. A `TIER_BY_SURFACE` registry in `gsd/`** (SPEC_T1's step T1) | the Cheat Sheet, line 41: checks "should allow for global, application-wide configuration rather than needing to be applied individually to every method or class" | every gate re-pointed at the registry, `visibility.tiers` on `/api/whoami`, an image MINOR, and the setting renames that came with it in SPEC_T1 | **not designed here**: it is the operator's open question on #239 (the mandate). The Cheat Sheet's sentence is its best argument and is recorded under "Open for the operator" |
+| **A4. Enforcement in FastAPI itself: a global dependency, or a custom `APIRoute` class, that refuses a route with no declared tier at runtime** | FastAPI 0.141.1 docs, `tutorial/dependencies/global-dependencies.md` lines 3-7: "you can add them to the `FastAPI` application … they will be applied to all the *path operations* in the application"; `how-to/custom-request-and-route.md` line 3: "you may want to override the logic used by the `Request` and `APIRoute` classes" | measured on FastAPI 0.141.1 with a global dependency that refuses every request: `/decorated 403`, `/hidden 403` (an `include_in_schema=False` route), `/openapi.json 200`, `/static/a.css 200`. A path operation is an `APIRoute`, so the schema route and the mount, two of this app's 44 entries, are out of its reach; it also needs the tier table in code (A3), turns a forgotten declaration into a refusal served in production instead of a red build, and changes the image | **rejected**: it covers fewer routes than A1's walk of `app.routes`, and moves the failure from CI to readers |
+| **A5. Tag each route in its OpenAPI operation** (`openapi_extra={"x-tier": …}`) and test the schema | FastAPI 0.141.1 docs, `advanced/path-operation-advanced-configuration.md` line 83: "You can extend the OpenAPI schema for a *path operation* using the parameter `openapi_extra`"; line 128: it "will be deeply merged with the automatically generated OpenAPI schema" | 42 decorator edits under `gsd/` (an image MINOR), and the schema leaves out 7 of the 44 entries (the five `include_in_schema=False` routes, the schema route, the mount: §2.1), so a test of the schema cannot be complete | **rejected**: the issue's decision 5 already ruled the schema out for this reason |
+| **A6. An Argo CD-style policy file** (Casbin `p, <subject>, <resource>, <action>, <object>, <effect>` rows and a `policy.default`) | Argo CD v3.5.3 `rbac.md` line 45: "The model syntax is based on Casbin"; line 58, the `p, …` syntax; `assets/builtin-policy.csv` lines 9-12, `p, role:readonly, applications, get, */*, allow` | a policy engine dependency, a policy file the chart would have to carry as a value, and every gate rewritten to ask it: a configuration layer the mandate excludes, and one that would let a site change who sees what by editing a file the dashboard's SubjectAccessReviews do not govern | **rejected**: OpenShift RBAC is already the policy (each tier is a SubjectAccessReview, §2 of `ACCESS_CONTROL.md`); what Argo's model contributes here is the shape, a closed resources × actions table with a default, which A1's §4 is |
+
+**Reconciliation: each external claim, and the line here that behaves accordingly.**
+
+- *Starlette adds `HEAD` to a `Route` that has `GET`* (routing.py lines 237-238): FastAPI's schema route is such a
+  `Route`, measured `GET,HEAD` (§2.1), and the test's `_route_keys` drops `HEAD` only where `GET` is also present
+  (§7, block 1), so `/api/openapi.json` is one row, `GET`.
+- *FastAPI's `APIRoute` carries exactly its declared methods* (fastapi/routing.py lines 1019-1021): every `@app.get`
+  route is measured `GET` alone (§2.1), and a route declared with `@app.head` keeps `HEAD` as its key and fails the
+  walk until it has a row (mutant M13, §4.3).
+- *A mount's path is `<path>/{path:path}`* (routing.py line 388): measured `path_format` `/static/{path}`, the §4 row
+  `GET /static/{path}`.
+- *FastAPI registers the schema route with `include_in_schema=False`* (applications.py line 1120), and five decorated
+  routes opt out too (`local-development/gsd/api.py#build_app`): why the test walks `app.routes`, never the schema.
+- *ASVS 8.2.1, function-level access restricted to explicit permissions*: each gated handler calls its gate before it
+  reads a row, for instance `local-development/gsd/api.py#require_cluster_admin` at the top of `/api/kpi` and
+  `local-development/gsd/api.py#require_admin_tier` at the top of `operator-configs`; the gate column check (§3.5)
+  holds each row to that call.
+- *ASVS 8.3.1, a trusted service layer, never client-side JavaScript*: the page draws the KPIs and Cluster
+  Configurations tabs only when `/api/whoami` says so (`local-development/gsd/static/index.html#function clusterAdmin()`),
+  and the 403 comes first from the server; §3's `absent` is always backed by §4's 403 on the same surface.
+- *The Cheat Sheet's "deny by default", and Argo CD's `policy.default`*: every tier decision falls to the narrow answer
+  when nothing positively widens it: no viewer, no resolver, an error or a junk answer is `self`
+  (`local-development/gsd/api.py#_decide`), and the cluster-admin tier is `False` on any of those
+  (`local-development/gsd/api.py#_cluster_admin_granted`). The persona test's no-identity column measures that
+  default on every row.
+- *"Validate the Permissions on Every Request"*: the resolvers are read off `app.state` on each request, not captured
+  at build time (`local-development/gsd/api.py#viewer_scope`, `local-development/gsd/api.py#usage_scope`), which is
+  also the seam the persona test swaps per persona.
+
 ## 3. The design
 
 ### 3.1 Where the declaration lives
@@ -398,16 +475,20 @@ code without CI failing. The table records the gates; it configures nothing.
 ### 3.2 The key
 
 A route is `(method, path_format)` over every entry of `app.routes` of an app built with every switch that registers a
-route (`cluster_secrets_enabled` and `cluster_secrets_writes_enabled` true). `HEAD` is never a key (§2.2). A mount is
+route (`cluster_secrets_enabled` and `cluster_secrets_writes_enabled` true). `HEAD` is a key only on a route declared
+without `GET` (§2.2: Starlette adds it beside `GET`; an `@app.head` route declares it). A mount is
 `GET <its path_format>`. Each row says `registered: always` or `registered: writes on`; T239-7 builds the app again with
 the writes off and requires the difference to be exactly the `writes on` rows.
 
 ### 3.3 The posture and the personas
 
 The rows describe the default posture with every route registered: the proxy on, `visibility.enabled: true`, the host
-cluster `inherit`, reporting on, and the writes on. Five personas, one identity (`alice`, seeded as a member of
-`g-adm`, a user, and holder of a grant in `ns1`), set through the seams `build_app` publishes per request
-(`app.state.tier_resolver`, `.usage_tier_resolver`, `.cluster_admin_resolver`):
+cluster `inherit` and every other cluster inheriting its decision (the fixture's second cluster is `inherit`),
+reporting on, and the writes on. `/api/alerts` is the one row that reads every cluster: its `scope` is the narrowest
+across the clusters it carries, so a `remote-sar` cluster the reader is not wide on makes it `self` (measured: with
+the second cluster at its default, `remote-sar`, 2 of the 220 cells move, both `/api/alerts`). Five personas, one
+identity (`alice`, seeded as a member of `g-adm`, a user, and holder of a grant in `ns1`), set through the seams
+`build_app` publishes per request (`app.state.tier_resolver`, `.usage_tier_resolver`, `.cluster_admin_resolver`):
 
 | persona | identity | wide stub | usage stub | cluster-admin stub |
 |---|---|---|---|---|
@@ -507,14 +588,15 @@ run the browser test instead):
 | M2 | `operator-configs` loses its `require_admin_tier` call | 4 failed | its `no identity`, `self` and `usage` cases, and its gate column |
 | M3 | `/api/dashboard/activity` asks `viewer_scope` instead of `usage_scope` | 3 failed | its `auditor` (now `all`) and `usage` (now `self`) cases, and its gate column: a move to another tier fails both ways |
 | M4 | `_writes_gate` loses its `require_cluster_admin` call | 18 failed | the `self`, `auditor` and `usage` cases of all six writes |
-| M5 | a new `@app.get("/api/probe")` with no row (the issue's check) | 1 failed | `test_every_route_the_app_registers_has_a_row`, naming `('GET', '/api/probe')` |
-| M6 | the `/api/kpi` row deleted from §4 (the issue's check) | 1 failed | `test_every_route_the_app_registers_has_a_row`, naming `('GET', '/api/kpi')` |
+| M5 | a new `@app.get("/api/probe")` with no row (the issue's check) | 1 failed | `test_every_route_the_app_registers_has_a_row`, printing the §4 row to fill in for `GET /api/probe` |
+| M6 | the `/api/kpi` row deleted from §4 (the issue's check) | 1 failed | `test_every_route_the_app_registers_has_a_row`, printing the §4 row to fill in for `GET /api/kpi` |
 | M7 | a new `tab("audit2", "Audit two")` in the strip with no §3 row | 1 failed | `test_every_tab_and_page_has_one_row_and_every_row_names_one` |
 | M8 | the Kyverno row deleted from §3 | 1 failed | the same |
 | M9 | §3 declares the Overview `all` for the self persona | 1 failed | `TestTheDeclaredTabs…[chromium-self]`: the page draws the refusal card |
 | M10 | the KPIs tab drawn for every reader | 3 failed | `TestTheDeclaredTabs…` for self, auditor and usage: the strip has `kpi` |
 | M11 | §4 names `viewer_scope` as the Kyverno route's gate, every outcome left right | 1 failed | `test_the_gate_column_names_what_the_handler_calls[GET /api/clusters/{cluster_id}/kyverno]` |
 | M12 | the Kyverno handler loses `require_cluster` | 1 failed with the derived sweep; 16 passed with main's hand list | `test_every_cluster_handler_answers_hidden_like_unknown`: `AssertionError: kyverno` |
+| M13 | a new `@app.head("/api/probe")` with no row (review of the spec, OB3: it survived the first module, 270 passed) | 1 failed | `test_every_route_the_app_registers_has_a_row`, printing the §4 row to fill in for `HEAD /api/probe` |
 
 M7's first version used an id the test's pattern did not match (`[a-z]+` against `audit2`) and survived; the patterns
 in §7 accept any `[\w-]+` id, and the guard `len(tabs) >= 14` catches a pattern that stops matching altogether.
@@ -523,27 +605,35 @@ in §7 accept any `[\w-]+` id, and the guard `len(tabs) >= 14` catches a pattern
 
 §7 was not written by hand. The design was implemented in a detached worktree of `5c03a9b1`; a generator cut each
 block's Old text from main and its New text from the implemented copy, at whole lines, widening each Old text until it
-occurs once, and the CHANGELOG entry was written as an `after: ## Unreleased` block. Then:
+occurs once, and the CHANGELOG entry was written as an `after: ## Unreleased` block. The review's fixes (notes, "The
+review of `de42286a`") were then applied to the blocks as OB3's patch wrote them, after tracing, and the proof below
+was run again on main `dd51b91f`. No file a block touches changed between `5c03a9b1` and `dd51b91f` (`git diff
+--stat` on the eight paths is empty), and the blocks check on `afa01bb8` too:
 
-    python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G1_tier_declaration.md <git archive of 5c03a9b1>
+    python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G1_tier_declaration.md <git archive of afa01bb8>
+    14 blocks check out across 8 files
+    python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G1_tier_declaration.md <git archive of dd51b91f>
     14 blocks check out across 8 files
 
-Applied to a copy of that archive, every one of the eight files is identical (`cmp`) to the implemented copy. On a
-second detached worktree of `5c03a9b1`, clean, with `--apply`, and `PYTHONPATH` at its `local-development`:
+Before applying, the four test files of §7 copied onto a worktree of `dd51b91f` give §4.2's results again (the module
+stops at collection, T239-8 fails with `specified`, the sweep passes 44, the browser test fails 4). On a clean
+detached worktree of `dd51b91f`, with `--apply`, and `PYTHONPATH` at its `local-development`:
 
 | check | command | result |
 |---|---|---|
-| the blocks | `apply-spec-blocks.py` on the clean worktree, then `--apply` | `14 blocks check out across 8 files`; applied; every changed file identical (`cmp`) to the implemented copy |
+| the blocks | `apply-spec-blocks.py --apply` on the clean worktree | applied; every changed file identical (`cmp`) to the same blocks applied to the archive |
 | nothing else moves | `git diff --stat -- local-development/gsd charts` | empty |
-| the new module | `pytest tests/test_access_declaration.py` | `270 passed` (6 table tests, 44 gate cases, 220 persona cases), 0.70 s |
-| the browser test | `pytest tests/test_ui.py -k TestTheDeclaredTabs --browser chromium` | `4 passed`, 4.81 s |
+| the new module | `pytest tests/test_access_declaration.py` | `270 passed` (6 table tests, 44 gate cases, 220 persona cases), 0.95 s |
+| the browser test | `pytest tests/test_ui.py -k TestTheDeclaredTabs --browser chromium` | `4 passed`, 5.20 s |
 | the files the change touches | `pytest` on `test_access_declaration`, `test_specs_index`, `test_docs_citations`, `test_multicluster_visibility`, `test_values_defaults`, `test_api_contract`, `test_cluster_admin_tier`, `test_visibility` | `1846 passed, 18 skipped` |
-| hermetic suite, main | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` on a worktree of `5c03a9b1` | `6126 passed, 22 skipped, 655 deselected, 5 xfailed` |
+| hermetic suite, main | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` on a worktree of `dd51b91f` | `6126 passed, 22 skipped, 655 deselected, 5 xfailed` |
 | hermetic suite, applied | the same on the applied worktree | `6384 passed, 22 skipped, 659 deselected, 5 xfailed`: +270 (the module), +1 (T239-8), −15 (the sweep's 16 parametrized cases become one test), +2 (`test_docs_citations` checks the two new anchored citations in §3) |
-| browser suite, applied | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `655 passed`: main's 651 and the 4 new |
+| browser suite, main | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` on the worktree of `dd51b91f` | `651 passed` |
+| browser suite, applied | the same on the applied worktree | `655 passed`: main's 651 and the 4 new |
 | markdown | `markdownlint-cli2` on `ACCESS_CONTROL.md`, `CHANGELOG.md`, the specs index | the same findings before and after (6 MD040 on `ACCESS_CONTROL.md`'s unlabelled fences, 1 MD012 on the CHANGELOG), none new |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the four test modules | all parse; CI's 3.11 job was not run here |
-| the mutants | §4.3 | all thirteen runs as tabulated |
+| the mutants | §4.3, each a fresh copy of the applied worktree | all fourteen runs as tabulated; M13 also run against the first version's key rule, where it survives (`270 passed`) |
+| F6's measurement | the module with the fixture's second cluster at its default policy (`remote-sar`) | `2 failed, 268 passed`: `GET /api/alerts` for the auditor and the cluster-admin, as §3.3 says |
 
 ## 5. On the lab (the implementing pull request)
 
@@ -580,18 +670,18 @@ under `reports/<date>_tier-declaration/` with the screenshots, pinned to the ful
 
 | file | added | removed |
 |---|---|---|
-| `local-development/tests/test_access_declaration.py` (new) | 265 | 0 |
-| `local-development/tests/test_ui.py` | 64 | 0 |
+| `local-development/tests/test_access_declaration.py` (new) | 269 | 0 |
+| `local-development/tests/test_ui.py` | 63 | 0 |
 | `local-development/tests/test_multicluster_visibility.py` | 29 | 16 |
 | `local-development/tests/test_specs_index.py` | 12 | 0 |
-| `docs/ACCESS_CONTROL.md` | 132 | 40 |
+| `docs/ACCESS_CONTROL.md` | 133 | 40 |
 | `docs/specs/SPEC_T1_tier_model.md` | 7 | 2 |
 | `docs/specs/README.md` | 1 | 1 |
 | `docs/CHANGELOG.md` | 10 | 0 |
 | `local-development/gsd/`, `charts/` | 0 | 0 |
 
 The spec's own commit adds this file and its index row (`docs/specs/README.md`, 3 added and 2 removed, the count
-included) and changes `local-development/tests/test_specs_index.py` (6 added, 4 removed: note 14); none of that is a block.
+included) and changes `local-development/tests/test_specs_index.py` (9 added, 4 removed: note 14); none of that is a block.
 
 ## 7. Implementation blocks
 
@@ -704,12 +794,14 @@ def _key(row: dict[str, str]) -> tuple[str, str]:
 
 
 def _route_keys(route) -> set[tuple[str, str]]:
-    """The (method, path) pairs one route answers. HEAD is left out: Starlette adds it to every `Route` that has GET
-    (FastAPI's own schema route is one), so it is never a route of its own. A mount answers GET under its
-    `path_format`, `/static/{path}`."""
+    """The (method, path) pairs one route answers. HEAD beside GET is left out: Starlette adds it to every `Route`
+    that has GET (FastAPI's own schema route is one), so there it is not a route of its own. A route declared for
+    HEAD alone (`@app.head`) keeps it, and needs its row. A mount answers GET under its `path_format`,
+    `/static/{path}`."""
     if isinstance(route, Mount):
         return {("GET", route.path_format)}
-    return {(method, route.path_format) for method in route.methods if method != "HEAD"}
+    return {(method, route.path_format) for method in route.methods
+            if method != "HEAD" or "GET" not in route.methods}
 
 
 def _keys(app) -> set[tuple[str, str]]:
@@ -722,7 +814,7 @@ def _url(path: str) -> str:
     for i, part in enumerate(parts):
         if part.startswith("{"):
             key = parts[i - 1] if part == "{name}" else part[1:-1]
-            assert key in PATH_VALUES, f"{path}: no value for {part}; give PATH_VALUES one"
+            assert key in PATH_VALUES, f"{path}: no value for {part}; add {key!r} to PATH_VALUES"
             out.append(PATH_VALUES[key])
         else:
             out.append(part)
@@ -777,9 +869,11 @@ def client(app):
 
 
 def test_every_route_the_app_registers_has_a_row(app):
-    """T239-1: a route added without a §4 row fails here by name."""
+    """T239-1: a route added without a §4 row fails here by name, with the row to fill in."""
     missing = sorted(_keys(app) - {_key(row) for row in ROUTES})
-    assert not missing, f"routes with no row in docs/ACCESS_CONTROL.md §4: {missing}"
+    rows = "\n".join(f"| {method} | `{path}` | <always or writes on> | <gate or none> | <no identity> | <self> "
+                     f"| <auditor> | <usage> | <cluster-admin> | <notes> |" for method, path in missing)
+    assert not missing, f"routes with no row in docs/ACCESS_CONTROL.md §4; add one each (§4 names the words):\n{rows}"
 
 
 def test_every_row_names_one_route_the_app_serves(app):
@@ -850,7 +944,7 @@ def test_each_route_answers_each_persona_as_its_row_declares(app, client, monkey
 
 def _tabs() -> dict[str, str]:
     """The tab buttons the page can draw, id -> label: every `tab("<id>", "<Label>")` call in index.html."""
-    return dict(re.findall(r'\btab\("([\w-]+)", "([^"]+)"\)', PAGE.read_text()))
+    return dict(re.findall(r'\btab\(\s*"([\w-]+)"\s*,\s*"([^"]+)"\s*\)', PAGE.read_text()))
 
 
 def _pages() -> set[str]:
@@ -888,8 +982,6 @@ def _home(page, base, user="alice"):
 New text:
 
 ```python
-
-
 # ── #239: the declared tabs (docs/ACCESS_CONTROL.md §3, SPEC_G1) ────────────────────────────────────
 # §3 says, per persona, which tabs the strip draws and which pages are a refusal card. This loads every page as
 # every persona and holds the page to it; tests/test_access_declaration.py holds §3 to the pages index.html can draw.
@@ -952,6 +1044,7 @@ class TestTheDeclaredTabs:
             page.wait_for_function(PAGE_SETTLED, timeout=10_000)
             refused = page.locator("#main .scope-refusal").count() > 0
             assert refused == (row[persona] in ("refused", "absent")), (persona, row["page"], row[persona])
+
 
 def _home(page, base, user="alice"):
 ```
@@ -1207,9 +1300,10 @@ any persona is answered differently from its row. A route that ships without a g
 CI. The table records the gates; it does not configure them (§10 does).
 
 **The posture the rows describe:** the oauth-proxy on, `visibility.enabled: true`, the host cluster deciding
-(`inherit`, §11), reporting on, and, for the six rows registered `writes on`,
+(`inherit`, §11) for every cluster the dashboard reads, reporting on, and, for the six rows registered `writes on`,
 `clusterConfig.secrets.writes.enabled: true`. §8 says what changes with the proxy or the restrictions off, and §11
-what a remote cluster's own policy changes.
+what a remote cluster's own policy changes; of these rows only `/api/alerts` reads every cluster, and its `scope` is
+the narrowest across them, so a `remote-sar` or `self-only` cluster that does not widen the reader makes it `self`.
 
 **The personas.** Each is one reader, so a path naming the reader's own group, user or namespace resolves:
 
@@ -1279,7 +1373,7 @@ to guess.
 | GET | `/api/redoc` | always | none | 200 | 200 | 200 | 200 | 200 | the reference rendering |
 | GET | `/api/docs` | always | none | 308 | 308 | 308 | 308 | 308 | the conventional path, redirected to `/api` |
 | GET | `/` | always | none | 200 | 200 | 200 | 200 | 200 | the page; it draws what `/api/whoami` declares (§3) |
-| GET | `/signed-out` | always | none | 200 | 200 | 200 | 200 | 200 | the proxy's sign-out target; it reads no header |
+| GET | `/signed-out` | always | none | 200 | 200 | 200 | 200 | 200 | the proxy's sign-out target; it reads no identity header |
 | GET | `/static/index.html` | always | none | 200 | 200 | 200 | 200 | 200 | the page again, rendered, shadowing the raw file |
 | GET | `/static/signed-out.html` | always | none | 200 | 200 | 200 | 200 | 200 | the sign-out page again, rendered, shadowing the raw file |
 | GET | `/static/{path}` | always | none | 200 | 200 | 200 | 200 | 200 | the stylesheet, icon and vendored scripts (a mount; it refuses the page sources) |
