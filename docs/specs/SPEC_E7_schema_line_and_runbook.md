@@ -9,7 +9,7 @@
 | Version note | `local-development/prepare-release.py`, `local-development/tests/`, `docs/` and `.claude/` are outside `publish.yml`'s image paths (`.github/workflows/publish.yml#ONLY WHEN SOMETHING THAT GOES INTO THE IMAGE CHANGED`), and no block touches `charts/**`, so neither the application nor the chart version moves: the issue's "Target version: none" |
 | Issue | [#300](https://github.com/ephico2real2/group-sync-dashboard/issues/300) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's "Decisions and corrections (2026-10-01)" and its comment of the same day (the reason stays the first bullet). Measured on origin/main `b5463d45` (application 2.0.0, chart 0.59.25, schema 20) with Python 3.14.7, SQLite 3.53.4, git 2.55.0 and helm v4.3.0, and read-only on the CRC lab (OpenShift 4.22.7, image 2.0.0). §7's blocks were cut from a throwaway tree of `b5463d45` with SPEC_E2, SPEC_E3 (at `159deef8`), SPEC_E4 and SPEC_E5 (at `a5103cd6`) applied first, the epic's build order, and proved there and on three narrower bases (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's "Decisions and corrections (2026-10-01)" and its comment of the same day (the reason stays the first bullet). Measured on origin/main `b5463d45` (application 2.0.0, chart 0.59.25, schema 20) with Python 3.14.7, SQLite 3.53.4, git 2.55.0 and helm v4.3.0, and read-only on the CRC lab (OpenShift 4.22.7, image 2.0.0). §7's blocks were cut from a throwaway tree of `b5463d45` with SPEC_E2, SPEC_E3 (at `159deef8`), SPEC_E4 and SPEC_E5 (at `a5103cd6`) applied first, the epic's build order, and proved there and on three narrower bases. Revised the same day on OB2's review (Orchestrator's notes, 9) and rebased onto origin/main `eade4c2a` (SPEC_E3 and SPEC_E6 merged as specs); §4.2 and §4.3 re-measured on `eade4c2a` with SPEC_E2's and SPEC_E3's blocks applied |
 
 ## How to read this spec
 
@@ -38,8 +38,8 @@ through the lifecycle by the orchestrator's hand; no block touches it.
 the running database carries it as `PRAGMA user_version`, and the image as `KNOWN_SCHEMA_VERSION`. The *release
 commit* is the first-parent commit at which `pyproject.toml`'s version became HEAD's
 (`local-development/prepare-release.py#schema_since_app_release`, #298). The *schema line* is the changelog bullet
-this spec adds. The *stack* is `b5463d45` with the blocks of SPEC_E2, SPEC_E3, SPEC_E4 and SPEC_E5 applied, the tree
-#300's pull request will meet.
+this spec adds. The *stack* is main with the blocks of SPEC_E2 and SPEC_E3 applied, the tree #300's pull request will
+meet: first measured on `b5463d45` with SPEC_E4 and SPEC_E5 as well, re-measured on `eade4c2a` with E2 and E3.
 
 ## Orchestrator's notes
 
@@ -57,9 +57,9 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
      migrates nothing (`docs/RELEASING.md#A chart-only release`), and refusing it on a shallow clone would add a
      refusal with nothing to protect; `test_t300_6_a_chart_only_release_reads_no_history` holds that.
    - *3, the sandbox:* `FILES` gains `local-development/gsd/store.py` (block 8). Measured with the change applied
-     and that one line removed: 12 of the file's 30 tests fail, 7 of them existing ones, every `--app` run refused
-     with `git show <sha>:local-development/gsd/store.py failed: fatal: path … does not exist` (§4.2); with it, 30 of
-     30 pass. The issue measured 8 of 22 with its own wiring of the call; this spec's reads the schema after the
+     and that one line removed: 14 of the file's 32 tests fail, 7 of them existing ones, every `--app` run refused
+     with `git show <sha>:local-development/gsd/store.py failed: fatal: path … does not exist` (§4.2); with it, 32 of
+     32 pass. The issue measured 8 of 22 with its own wiring of the call; this spec's reads the schema after the
      existing refusals, so the existing-branch test still meets its own refusal first.
    - *4, the two off-volume paths:* §0 step 2 reads whether the offsite CronJob exists and branches (§3.5).
    - *5, the from-schema:* the image's `KNOWN_SCHEMA_VERSION`, imported in the running pod, measured on the lab
@@ -89,7 +89,7 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
    | `docs/CHANGELOG.md`, first under `## Unreleased` | SPEC_E2 block 18, SPEC_E3 block 10, SPEC_E4, SPEC_E5 | 13 | each Old text stays unique; the later-applied entry is first |
 
    So 19 of the 22 blocks apply to `b5463d45` itself, and all 22 to `b5463d45` with SPEC_E2's blocks, with or
-   without E3, E4 and E5 (§4.3). Blocks 15 and 16 name `restore-db.sh` and E3's paragraph, so #300 is implemented
+   without E3, E4 and E5; re-measured the same on `eade4c2a`, with SPEC_E3 as merged (§4.3). Blocks 15 and 16 name `restore-db.sh` and E3's paragraph, so #300 is implemented
    after #302 as the epic orders it. SPEC_E2's own runbook tests (`test_t303_19_the_docs_name_the_switch_and_say_what_alerts`,
    `test_the_only_documented_path_is_the_values_file`) and SPEC_E3's (`test_the_runbook_removes_every_journal_it_keeps`,
    `test_runbook_explains_how_to_recover_a_kept_live_set`, `test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file`)
@@ -127,10 +127,26 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
    spec, as their own notes say they will until handled: `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one[default]`
    (SPEC_E5's note 1: SPEC_E2's block 3 must take `gsd.offsiteOn`) and `test_the_wrapper_is_executable` (SPEC_E3's
    note 13: `chmod +x` after `--apply`).
-8. **The index.** This spec adds the forty-first row against `b5463d45`, after G3's, and
+8. **The index.** Rebased onto `eade4c2a`, this spec adds the forty-fourth row, after E6's, and
    `local-development/tests/test_specs_index.py` excludes E7 from the rising-issue check by its id and pins it to
-   #300, as it does E4 and G3. SPEC_E5 (PR #511) also adds a forty-first row and changes the same count sentence,
-   heading and test; whichever merges later is rebased to the forty-second.
+   #300 (`assert ROWS["E7"]["issue"] == "300"`), as it does E3, E5 and E6.
+9. **OB2's review of 2026-10-01, decided by the orchestrator (all accepted; finder: OB2).**
+   - **F1 (required): T300-1/2 seeded its changelog from the repository's.** On a release pull request's head the
+     repository's `docs/CHANGELOG.md` has no `## Unreleased` (the release consumed it), and the test's
+     `lines[5]` raised `IndexError` on `b40b5cf8`'s changelog (OB2 measured). The test now writes its own changelog
+     with one collected bullet and asserts the whole entry: reason, the line, the collected bullet. The test without
+     an `## Unreleased` heading stays.
+   - **F2: what the helper cannot read is refused with the script's message.** `highest_migration` parses the
+     store with `ast`, so a store that does not parse, or a `_MIGRATIONS` entry that is not a literal tuple, raised
+     `SyntaxError`, `ValueError` or `AttributeError` past `run()` as a traceback. Block 4 catches those three
+     beside `ReleaseError` and refuses ("so nothing was changed"), before any edit;
+     `test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited`.
+   - **F3: a schema that fell is refused.** HEAD's highest target below the release commit's means the image
+     would refuse (`StoreSchemaTooNew`) every database the released image migrated; the first version printed "no
+     schema line" and cut the release. Block 4 refuses it before any edit, block 2's docstring says so;
+     `test_t300_6_a_schema_that_fell_is_refused_before_anything_is_edited`.
+   - **Prose:** §3.3 names the three refusals; §4.1's T300-6 row names the two tests; §4.2's counts are
+     re-measured (11 failing before, 43 passing after); §2.3's GitLab quote follows upstream's "rolling back to".
 
 **Open question for the operator (not decided, not built).** Should CI also hold the schema line for a release
 whose version is bumped by hand, without `prepare-release.py`? One way is a test that every changelog heading whose
@@ -211,9 +227,9 @@ MINOR; nothing in the number says it. The line is that signal.
 - **GitLab** (`doc/update/plan_your_upgrade.md` on gitlab.com master): "Something might go wrong during an upgrade,
   so it's critical that you have a rollback plan. A proper rollback plan creates a clear path to bring a GitLab
   instance back to its last working state and comprises: The process to back up the instance. The process to
-  restore the instance." `doc/update/package/downgrade.md`: "You must have at least a database backup created with
-  the exact same version and edition you are downgrading to. The backup is required to revert the schema changes
-  (migrations) made during the upgrade."
+  restore the instance." `doc/update/package/downgrade.md` (re-read 2026-10-01 for the review): "At least a database
+  backup created under the exact same version and edition you are rolling back to." and "The backup is required to
+  revert the schema changes (migrations) made during the upgrade."
 - **Argo CD** (argo-cd.readthedocs.io/en/stable/operator-manual/upgrading/overview/): "If you are upgrading from
   v1.3.0 to v1.5.2 please make sure to check upgrading details in both v1.3 to v1.4 and v1.4 to v1.5 upgrading
   instructions." "The major release introduces backward incompatible behavior changes. It is recommended to take a
@@ -439,15 +455,28 @@ It goes directly under the reason bullet, one blank line apart like every bullet
 `## Unreleased` collected follow it; the same holds when there is no `## Unreleased` heading. One line, not wrapped,
 so `grep '^- \*\*Schema '` finds every one (§3.4); the reason bullet is not wrapped either.
 
-### 3.3 The new refusal
+### 3.3 The new refusals
 
-On a history too shallow to reach the release commit, the helper raises; `run()` re-raises it as:
+Three refusals, each raised after every existing one and before the first write, so `git status --porcelain` stays
+empty and the exit is 1 (T300-6):
 
-    ERROR: cannot tell whether application 2.1.0 migrates the database, so nothing was changed: history ends at <sha> before application 2.0.0 began; this needs the full history (actions/checkout fetch-depth: 0)
+- **A history too shallow** to reach the release commit. The helper raises; `run()` re-raises it as
 
-Exit 1, raised before the first write, so `git status --porcelain` stays empty (T300-6). It is recorded in "WHAT IT
-REFUSES". CI's `tests` job already checks out with `fetch-depth: 0` for #298's guard, and a release is cut from a
-checkout of `main`.
+      ERROR: cannot tell whether application 2.1.0 migrates the database, so nothing was changed: history ends at <sha> before application 2.0.0 began; this needs the full history (actions/checkout fetch-depth: 0)
+
+  CI's `tests` job already checks out with `fetch-depth: 0` for #298's guard, and a release is cut from a checkout
+  of `main`.
+- **A `store.py` the helper cannot read**, at HEAD or at the release commit: a `git show` that fails, a file that
+  does not parse, a `_MIGRATIONS` entry that is not a literal tuple, a non-integer target. The same "cannot tell
+  whether … so nothing was changed" message, with the helper's error after it, never a traceback. A release commit
+  whose `store.py` has no `_MIGRATIONS` assignment reads as schema 0 (`highest_migration` returns 0); unreachable on
+  this history, where every release commit carries the list.
+- **A schema that fell:** HEAD's highest target below the release commit's. That image would refuse every database
+  the released one migrated (`local-development/gsd/store.py#StoreSchemaTooNew`):
+
+      ERROR: _MIGRATIONS reaches 20 at HEAD but 21 at <sha> (application 2.1.0), so this image would refuse every database that release migrated; nothing was changed
+
+All three are recorded in "WHAT IT REFUSES" (block 2).
 
 **Budget (B1), the script, scope: one run of `prepare-release.py` on the operator's checkout.**
 
@@ -456,7 +485,7 @@ checkout of `main`.
 | files edited | Chart.yaml, CHANGELOG, and with `--app` pyproject and `__init__`, plus promoted specs | the same set |
 | lines added to the CHANGELOG | heading + reason (+ blank) | the same, plus exactly one bullet and one blank line when `now > then` on `--app`; none otherwise |
 | git calls before the first edit | `status`, `rev-parse --abbrev-ref`, `rev-parse --verify` | plus, on `--app` only: one `rev-list --first-parent`, one `git show` of `pyproject.toml` for HEAD and one per first-parent commit until the version changes, at most one `rev-parse --is-shallow-repository`, and two `git show` of `store.py`; all reads. Measured on `b5463d45` by counting the helper's calls: 16, 0, 2 and the one `rev-list`, in 0.232 s |
-| refusals | the docstring's list | the same list, in the same order, plus one: the shallow history, `--app` only, before any edit |
+| refusals | the docstring's list | the same list, in the same order, plus three on `--app` only, before any edit: the shallow history, an unreadable `store.py`, a schema that fell |
 | network, refs, tags | none | none |
 
 ### 3.4 The epic's release note
@@ -537,12 +566,12 @@ dashboard ServiceAccount is untouched), no GUI action.
 
 | ID | Test | Fails without the change because |
 |---|---|---|
-| T300-1 | `test_t300_1_2_a_release_after_a_migration_carries_the_schema_line_under_its_reason[1]`; `test_t300_1_the_line_is_written_without_an_unreleased_heading_too` | `run()` writes no schema line: the entry's lines are the reason and the collected bullets only |
+| T300-1 | `test_t300_1_2_a_release_after_a_migration_carries_the_schema_line_under_its_reason[1]`, on a changelog it seeds with one collected bullet; `test_t300_1_the_line_is_written_without_an_unreleased_heading_too` | `run()` writes no schema line: the entry's lines are the reason and the collected bullet only |
 | T300-2 | `test_t300_1_2_…[2]`: two migrations, `Schema N → N+2` | as T300-1 |
 | T300-3 | `test_t300_3_no_line_when_the_schema_did_not_move` | regression guard; it also asserts the new `; no schema line` print, which today's script lacks |
 | T300-4 | `test_t300_4_no_line_on_a_chart_only_release` | regression guard: after a migration, `--chart` writes no line and prints no `schema  :` |
-| T300-5 | block 8 (`FILES` gains `store.py`); no test removed or weakened | not a failing test: with the change and without that line, 12 of 30 fail, 7 of the 22 existing (§4.2) |
-| T300-6 | `test_t300_6_a_shallow_history_is_refused_before_anything_is_edited`; `test_t300_6_a_chart_only_release_reads_no_history` | today a shallow clone releases with no check (exit 0); the second is a guard of the refusal's scope |
+| T300-5 | block 8 (`FILES` gains `store.py`); no test removed or weakened | not a failing test: with the change and without that line, 14 of 32 fail, 7 of the 22 existing (§4.2) |
+| T300-6 | `test_t300_6_a_shallow_history_is_refused_before_anything_is_edited`; `test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited`; `test_t300_6_a_schema_that_fell_is_refused_before_anything_is_edited`; `test_t300_6_a_chart_only_release_reads_no_history` | today a shallow clone and a fallen schema release with no check (exit 0), and an unreadable entry is never read; the last is a guard of the refusals' scope |
 | T300-7 | the file's existing 22 tests, unchanged, and `tests/test_migration_needs_app_release.py`'s 7 | regression guard |
 | T300-8 | `test_t300_8_releasing_md_states_the_line_and_when_it_appears` | `docs/RELEASING.md` has no such text, and `prep.SCHEMA_LINE` does not exist |
 | T300-9 | `test_t300_9_section_0_comes_first_and_covers_the_three_steps` | no `## 0.` heading |
@@ -553,8 +582,9 @@ dashboard ServiceAccount is untouched), no GUI action.
 
 ### 4.2 Measured: each new test fails without the change, and passes with it
 
-On a throwaway worktree of the stack (`b5463d45` with SPEC_E2, E3, E4 and E5 applied), with only this spec's test
-blocks (6 to 9 and 22) applied, `PYTHONPATH=<tree>/local-development`:
+Re-measured after OB2's review on a throwaway worktree of `eade4c2a` with SPEC_E2's and SPEC_E3's blocks applied
+(and `chmod +x local-development/restore-db.sh`, SPEC_E3's note 13), with only this spec's test blocks (6 to 9 and
+22) applied, `PYTHONPATH=<tree>/local-development`:
 
     $ python -m pytest -q tests/test_prepare_release.py tests/test_runbook_backup_restore.py
     FAILED tests/test_prepare_release.py::test_t300_1_2_a_release_after_a_migration_carries_the_schema_line_under_its_reason[1]
@@ -562,62 +592,63 @@ blocks (6 to 9 and 22) applied, `PYTHONPATH=<tree>/local-development`:
     FAILED tests/test_prepare_release.py::test_t300_1_the_line_is_written_without_an_unreleased_heading_too
     FAILED tests/test_prepare_release.py::test_t300_3_no_line_when_the_schema_did_not_move
     FAILED tests/test_prepare_release.py::test_t300_6_a_shallow_history_is_refused_before_anything_is_edited
+    FAILED tests/test_prepare_release.py::test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited
+    FAILED tests/test_prepare_release.py::test_t300_6_a_schema_that_fell_is_refused_before_anything_is_edited
     FAILED tests/test_prepare_release.py::test_t300_8_releasing_md_states_the_line_and_when_it_appears
     FAILED tests/test_runbook_backup_restore.py::test_t300_9_section_0_comes_first_and_covers_the_three_steps
     FAILED tests/test_runbook_backup_restore.py::test_t300_10_section_4_is_recovery_mode_and_the_script_with_oc_debug_as_the_fallback
     FAILED tests/test_runbook_backup_restore.py::test_t300_11_no_stale_version_and_the_fallback_keeps_the_wal
-    9 failed, 25 passed in 11.75s
+    11 failed, 25 passed in 15.42s
+
+Each fails for the reason §4.1 gives: T300-1/2 on the entry (`reason, the line, then the collected bullets`), the
+no-Unreleased case on its entry, T300-3 on the missing `; no schema line` print, the three T300-6 refusals on an exit
+of 0 (`derived : chart …`, the release went through), T300-8 on `prep.SCHEMA_LINE` (`AttributeError`), and T300-9
+to T300-11 on the runbook.
 
 With all 22 blocks applied:
 
     $ python -m pytest -q tests/test_prepare_release.py tests/test_runbook_backup_restore.py tests/test_migration_needs_app_release.py
-    41 passed in 13.52s
+    43 passed in 14.74s
 
 T300-5, measured with all blocks applied and block 8's `store.py` line removed from `FILES`:
 
-    12 failed, 18 passed
+    14 failed, 18 passed
     FAILED: the 7 existing --app tests (test_an_application_release_moves_all_four_fields_together,
       test_an_explicit_chart_version_wins_over_the_derived_patch,
       test_an_unreleased_heading_becomes_the_release_heading_and_keeps_its_bullets,
       test_a_failing_version_test_leaves_the_edits_and_commits_nothing, test_no_commit_edits_the_tree_and_stops,
-      test_missing_gh_leaves_the_branch_and_says_so, test_a_release_promotes_merged_status_cells), each with
-      "ERROR: cannot tell whether application 9.0.0 migrates the database, so nothing was changed: git show
+      test_missing_gh_leaves_the_branch_and_says_so, test_a_release_promotes_merged_status_cells), each refused
+      with "ERROR: cannot tell whether application 9.0.0 migrates the database, so nothing was changed: git show
       <sha>:local-development/gsd/store.py failed: fatal: path 'local-development/gsd/store.py' does not exist in
-      '<sha>'"; and the 5 new tests that add a migration to the sandbox's store (FileNotFoundError)
+      '<sha>'"; and the 7 new tests that read or edit the sandbox's store
 
 ### 4.3 Measured: where the blocks apply, and what else runs
 
     $ python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E7_schema_line_and_runbook.md <tree>
-    b5463d45 (main)                                FAIL block 16 (docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times
-    b5463d45 without blocks 16, 17 and 19          19 blocks check out across 7 files
-    b5463d45 + SPEC_E2                             22 blocks check out across 7 files
-    b5463d45 + SPEC_E2 + SPEC_E3                   22 blocks check out across 7 files
-    the stack (+ SPEC_E4, SPEC_E5 without its      22 blocks check out across 7 files
-      version and index blocks and its block 14, Orchestrator's notes, 7)
+    eade4c2a (main)                                FAIL block 16 (docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times
+    eade4c2a without blocks 16, 17 and 19          19 blocks check out across 7 files
+    eade4c2a + SPEC_E2                             22 blocks check out across 7 files
+    eade4c2a + SPEC_E2 + SPEC_E3 (as merged)       22 blocks check out across 7 files
 
-The applied stack equals, byte for byte, the tree the blocks were cut from (`diff` of the seven files: none).
+The first version measured the same on `b5463d45`, `b5463d45` + E2, + E3, and with E4 and E5 (SPEC_E5 without its
+version and index blocks and its block 14, Orchestrator's notes, 7). The applied tree equals, byte for byte, the tree
+the blocks were cut from (`cmp` of the seven files: none differ).
 
-On the stack with every block applied, the test files this change touches and the ones that read the runbook or
-call the helper:
+On `eade4c2a` + E2 + E3 with every block applied, the other test files that read the runbook or call the helper:
 
-    $ python -m pytest -q tests/test_prepare_release.py tests/test_runbook_backup_restore.py \
-        tests/test_migration_needs_app_release.py tests/test_docs_citations.py tests/test_migrations.py \
-        tests/test_chart_recovery_mode.py tests/test_recovery_mode.py tests/test_restore_db.py \
-        tests/test_restore_db_wrapper.py tests/test_restore_db_safety.py tests/test_chart_versions.py
-    without this spec: 2 failed, 1687 passed, 19 skipped in 49.48s
-    with this spec:    2 failed, 1703 passed, 19 skipped in 52.73s
-    failing in both:   tests/test_chart_recovery_mode.py::test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one[default]
-                       tests/test_restore_db.py::test_the_wrapper_is_executable
+    $ python -m pytest -q tests/test_docs_citations.py tests/test_migrations.py tests/test_chart_recovery_mode.py \
+        tests/test_recovery_mode.py tests/test_restore_db.py tests/test_restore_db_wrapper.py \
+        tests/test_restore_db_safety.py tests/test_chart_versions.py
+    1739 passed, 19 skipped in 41.03s
 
-The two failures are the predecessors' (Orchestrator's notes, 7): both fail identically on the stack without this
-spec's blocks. In the spec worktree, `tests/test_specs_index.py` and `tests/test_docs_citations.py` pass with this
-spec and its index row: `1621 passed, 22 skipped`. With this spec the neighbouring run has 16 more passing tests:
-the 12 new tests and 4 citation checks for the anchors the new text cites.
+The full hermetic suite was run on the first version's stack (`b5463d45` + E2 to E5): `3 failed, 7131 passed, 27
+skipped, 5 xfailed`, the three failures the predecessors' and identical without this spec (E2's offsite-mount test,
+E3's `chmod`, and G2's version cell once E5's renumbering blocks were left out). The review's fixes change only
+blocks 2, 4 and 9 (`prepare-release.py` and its test file), whose files ran above, so the suite was not rerun.
 
-The full hermetic suite on the applied stack (`python -m pytest -q`, 9 min 36 s): `3 failed, 7131 passed, 27 skipped,
-5 xfailed`. The third failure is `test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`,
-`('G2', 'app 2.1.0, chart 0.60.0', 'Chart.yaml is already 0.60.0')`: the stack left out SPEC_E5's version and index
-blocks, which renumber G2, so it fails the same way on the stack without this spec. This spec names no version.
+In the spec worktree, `tests/test_specs_index.py` and `tests/test_docs_citations.py` pass with this spec and its index
+row: `1700 passed, 22 skipped`. The pin holds: with E7's row and header mistyped as #301, the index test
+fails on `('E7 is #300', '301')` (`1 failed, 93 passed` on a copy of the index and the spec).
 
 ## 5. On the lab
 
@@ -667,7 +698,7 @@ The demo-guide structure does not apply: this is a runbook (the issue).
 ## 7. Implementation blocks
 
 Twenty-two blocks, in order. Blocks 16, 17 and 19 rewrite SPEC_E2's runbook text and apply once SPEC_E2's runbook
-blocks are on the tree; the other nineteen apply to `b5463d45` as well (Orchestrator's notes, 2). After `--apply`
+blocks are on the tree; the other nineteen apply to `eade4c2a` as well (Orchestrator's notes, 2). After `--apply`
 nothing else is run by hand: no file mode, no version.
 
 ### Block 1 — local-development/prepare-release.py: the docstring says what the script derives: the schema line
@@ -691,9 +722,9 @@ released the current version gets the schema line under its reason in the change
 #300): the first start on its image migrates the database one way.
 ```
 
-### Block 2 — local-development/prepare-release.py: the docstring records the new refusal
+### Block 2 — local-development/prepare-release.py: the docstring records the new refusals
 
-WHAT IT REFUSES gains the shallow history, the issue's decision 2 (§3.3).
+WHAT IT REFUSES gains the shallow history (the issue's decision 2), an unreadable store and a schema that fell (§3.3).
 
 <!-- block: local-development/prepare-release.py | edit -->
 
@@ -708,7 +739,10 @@ New text:
 ```text
 close), or with no letter or digit in it, or spanning any line boundary (\r and U+2028 included).
 An application release on a history too shallow to reach the commit that released the current
-version (checked before anything is edited): without it the schema line cannot be decided.
+version, or whose store.py there or at HEAD cannot be read (checked before anything is edited):
+without it the schema line cannot be decided. An application release whose HEAD carries a lower
+highest `_MIGRATIONS` target than that commit (also before any edit): its image would refuse every
+database that release migrated.
 ```
 
 ### Block 3 — local-development/prepare-release.py: the line's fixed words, one constant
@@ -735,7 +769,7 @@ SCHEMA_LINE = ("- **Schema {then} → {now}.** The first start on this image mig
 
 ### Block 4 — local-development/prepare-release.py: the schema is read after the refusals and before the first edit
 
-#298's helper, called for an application release only (§3.1, §3.3).
+#298's helper, called for an application release only; what it cannot read, and a schema that fell, are refused (§3.1, §3.3).
 
 <!-- block: local-development/prepare-release.py | edit -->
 
@@ -758,9 +792,15 @@ New text:
     if args.app:
         try:
             released_at, then, now = schema_since_app_release(REPO)
-        except ReleaseError as err:
+        except (ReleaseError, SyntaxError, ValueError, AttributeError) as err:
+            # ReleaseError: a shallow history, a `git show` that fails, a non-integer target. The rest: a
+            # store.py that does not parse, or a `_MIGRATIONS` entry that is not the literal tuple the helper reads.
             raise ReleaseError(f"cannot tell whether application {app_new} migrates the database, so nothing "
                                f"was changed: {err}") from None
+        if now < then:
+            raise ReleaseError(f"_MIGRATIONS reaches {now} at HEAD but {then} at {released_at[:10]} (application "
+                               f"{app_old}), so this image would refuse every database that release migrated; "
+                               "nothing was changed")
         if now > then:
             schema_line = SCHEMA_LINE.format(then=then, now=now)
         print(f"schema  : {then} at {released_at[:10]} (application {app_old}), {now} at HEAD; "
@@ -865,7 +905,7 @@ New text:
 
 ### Block 9 — local-development/tests/test_prepare_release.py: the schema line's tests
 
-T300-1 to T300-4, T300-6 and T300-8 (§4).
+T300-1 to T300-4, T300-6 (with the unreadable store and the schema that fell) and T300-8 (§4).
 
 <!-- block: local-development/tests/test_prepare_release.py | edit -->
 
@@ -923,15 +963,20 @@ def entry(sandbox: pathlib.Path, heading: str) -> list[str]:
 def test_t300_1_2_a_release_after_a_migration_carries_the_schema_line_under_its_reason(
         sandbox: pathlib.Path, count: int) -> None:
     """T300-1 and T300-2: the numbers are the release's and HEAD's highest targets, a jump of two included, and
-    the line sits directly under the reason, before the bullets Unreleased collected."""
+    the line sits directly under the reason, before the bullets Unreleased collected. The changelog is seeded:
+    the repository's own has no `## Unreleased` heading on a release PR's head (the release consumed it), and
+    the collected bullets must be known to be asserted."""
+    log = sandbox / "docs/CHANGELOG.md"
+    log.write_text("# Changelog\n\nIntro.\n\n## Unreleased\n\n- **Something merged earlier.**\n\n"
+                   "## Application 0.1.0 — chart 0.1.0 — 2026-01-01\n\n- old\n")
+    git(sandbox, "commit", "-qam", "seed an Unreleased section")
     then, now = add_migrations(sandbox, count)
     target = _next_app_minor(sandbox)
     done = run(sandbox, "--app", target, "The migration's release", "--no-commit")
     assert done.returncode == 0, done.stdout + done.stderr
     lines = entry(sandbox, f"## Application {target} — chart {current(sandbox)['chart']} — {DATE}")
-    assert lines[:4] == ["", "- **The migration's release.**", "", f"- **Schema {then} → {now}.** {SCHEMA_SENTENCE}"]
-    assert lines[4] == "" and lines[5].startswith("- **"), "the collected bullets follow, one blank line apart"
-    assert sum(line.startswith("- **Schema ") for line in lines) == 1
+    assert lines == ["", "- **The migration's release.**", "", f"- **Schema {then} → {now}.** {SCHEMA_SENTENCE}",
+                     "", "- **Something merged earlier.**", ""], "reason, the line, then the collected bullets"
     assert f"schema  : {then} at " in done.stdout and f"{now} at HEAD; the changelog entry says so" in done.stdout
 
 
@@ -990,6 +1035,36 @@ def test_t300_6_a_shallow_history_is_refused_before_anything_is_edited(sandbox: 
     assert "Traceback" not in done.stderr
     assert current(clone) == before
     assert git(clone, "status", "--porcelain").strip() == ""
+
+
+def test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited(sandbox: pathlib.Path) -> None:
+    """A store.py the helper cannot read (here an entry that is not a literal tuple) is a refusal with the
+    script's message, not a traceback, and nothing is edited."""
+    store = sandbox / STORE
+    store.write_text(store.read_text().replace(MIGRATIONS_OPEN, MIGRATIONS_OPEN + "\n    *EXTRA,"))
+    git(sandbox, "commit", "-qam", "a _MIGRATIONS entry the parser cannot read")
+    before = current(sandbox)
+    done = run(sandbox, "--app", _next_app_minor(sandbox), "Unreadable", "--no-commit")
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "so nothing was changed" in done.stderr and "Traceback" not in done.stderr
+    assert current(sandbox) == before and git(sandbox, "status", "--porcelain").strip() == ""
+
+
+def test_t300_6_a_schema_that_fell_is_refused_before_anything_is_edited(sandbox: pathlib.Path) -> None:
+    """HEAD's highest target below the released one: that image would refuse (StoreSchemaTooNew) every database
+    the released image migrated, so the release is refused before any edit, not cut with no line."""
+    then, now = add_migrations(sandbox, 1)
+    released = _next_app_minor(sandbox)
+    done = run(sandbox, "--app", released, "Released with the migration")
+    assert done.returncode == 0, done.stdout + done.stderr
+    (sandbox / STORE).write_text((REPO / STORE).read_text())
+    git(sandbox, "commit", "-qam", "the migration reverted, the version kept")
+    before = current(sandbox)
+    done = run(sandbox, "--app", _next_app_minor(sandbox), "Fell", "--no-commit")
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert f"reaches {then} at HEAD but {now} at" in done.stderr and "nothing was changed" in done.stderr
+    assert "Traceback" not in done.stderr
+    assert current(sandbox) == before and git(sandbox, "status", "--porcelain").strip() == ""
 
 
 def test_t300_6_a_chart_only_release_reads_no_history(sandbox: pathlib.Path, tmp_path_factory) -> None:
