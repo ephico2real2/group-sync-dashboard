@@ -1751,7 +1751,7 @@ pre.cc-yaml.term { white-space: pre; overflow-wrap: normal; word-break: normal; 
 }
 </style>
 </head>
-<body>
+<body data-page="kpi">
 <div class="wrap" id="wrap">
   <div class="proposed-banner" role="note">
     <h1>Restore tools — the operator's terminal</h1>
@@ -1760,7 +1760,7 @@ pre.cc-yaml.term { white-space: pre; overflow-wrap: normal; word-break: normal; 
     draw. Every block is outlined and labelled. Type, colours and the preformatted block are the app's own
     (<code>app.css</code> at main <code>5c03a9b1</code>: its tokens and <code>.cc-yaml</code>).
     <div class="legend">
-      <span>Plain values: the lab's, read with <code>oc exec</code> (read-only), 2026-10-01T09:47–09:48Z.</span>
+      <span>Lab values (named in each block's grey caption): read with <code>oc exec</code> (read-only), 2026-10-01T09:47–09:48Z. Other plain text is the proposed output itself: its words are the design.</span>
       <span><span class="il">Dotted underline</span>: illustrative — a pod, a time or a copy the lab does not have.</span>
     </div>
   </div>
@@ -1771,7 +1771,10 @@ pre.cc-yaml.term { white-space: pre; overflow-wrap: normal; word-break: normal; 
     <p class="cap">Set on the Argo CD Application, never with <code>oc set env</code>: the lab's Application tracks
       <code>main</code> with <code>selfHeal: true</code>, so a hand edit of the Deployment is reverted. At one replica the
       strategy is <code>Recreate</code>, so the writer stops before the recovery pod starts. The pod runs
-      <code>python3.14 -m gsd.recovery</code>, which never opens the database, with no liveness or readiness probe.</p>
+      a small stdlib script the chart ships as a ConfigMap (as it ships <code>offsite_backup.py</code>), so it runs under any
+      image, the older one a rollback targets included, and it never opens the database. It has no liveness probe; its
+      readiness probe fails while the app is stopped, so the pod never joins the Service: READY reads 1/2 (the
+      oauth-proxy sidecar is ready, the dashboard container is not).</p>
 <pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">oc patch applications.argoproj.io/group-sync-dashboard -n openshift-gitops --type merge \
     -p '{"spec":{"source":{"helm":{"parameters":[{"name":"recovery.enabled","value":"true"},{"name":"recovery.ttl","value":"2h"}]}}}}'</span>
 application.argoproj.io/group-sync-dashboard patched
@@ -1780,26 +1783,36 @@ application.argoproj.io/group-sync-dashboard patched
 
 <span class="p">$ </span><span class="cmd">oc get pods -n group-sync-dashboard -l app=group-sync-dashboard</span>
 <span class="hd">NAME                                    READY   STATUS    RESTARTS   AGE</span>
-<span class="il">group-sync-dashboard-6c5d8f7b9d-q2x7m</span>   2/2     Running   0          <span class="il">41s</span>
+<span class="il">group-sync-dashboard-6c5d8f7b9d-q2x7m</span>   <span class="il">1/2</span>     <span class="il">Running</span>   <span class="il">0</span>          <span class="il">41s</span>
 
 <span class="p">$ </span><span class="cmd">oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard</span>
-<span class="il">2026-10-01T09:47:30Z</span> gsd.recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=2h)
-<span class="il">2026-10-01T09:47:30Z</span> gsd.recovery <b>the app is NOT running and no data is collected</b>
-<span class="il">2026-10-01T09:47:30Z</span> gsd.recovery data path /data/gsd.db (not opened by this process)
-<span class="il">2026-10-01T09:47:30Z</span> gsd.recovery TTL 2h: ends <span class="il">2026-10-01T11:47:30Z</span>, <span class="il">2h0m</span> left
-<span class="il">2026-10-01T10:17:30Z</span> gsd.recovery <span class="il">1h30m</span> left; the app is NOT running and no data is collected</pre>
-    <p class="cap"><b>At the TTL</b> the module exits non-zero, so the pod shows the state as CrashLoopBackOff, with the reason
-      and the way out in its log:</p>
-<pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --tail=3</span>
-<span class="il">2026-10-01T11:47:30Z</span> gsd.recovery <span class="bad">TTL 2h reached; exiting 1</span>: the app is still NOT running and no data is collected
-<span class="il">2026-10-01T11:47:30Z</span> gsd.recovery to extend: set recovery.ttl (e.g. 4h) in the release's values, the command that turned recovery on
-<span class="il">2026-10-01T11:47:30Z</span> gsd.recovery to leave: remove both parameters; the app starts on /data/gsd.db
+<span class="il">2026-10-01T09:47:30Z</span> gsd-recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=2h)
+<span class="il">2026-10-01T09:47:30Z</span> gsd-recovery <b>the app is NOT running and no data is collected</b>
+<span class="il">2026-10-01T09:47:30Z</span> gsd-recovery data path /data/gsd.db (not opened by this process)
+<span class="il">2026-10-01T09:47:30Z</span> gsd-recovery TTL 2h: ends <span class="il">2026-10-01T11:47:30Z</span>, <span class="il">2h0m</span> left
+<span class="il">2026-10-01T10:17:30Z</span> gsd-recovery <span class="il">1h30m</span> left; the app is NOT running and no data is collected</pre>
+    <p class="cap"><b>At the TTL</b> the module exits non-zero and logs the reason and the commands that extend or end it.
+      The pod reads CrashLoopBackOff only while every restart exits at once: the kubelet restarts a container at once
+      after its first exit and resets the back-off after ten minutes of running (kubernetes/website
+      <code>pod-lifecycle.md</code>, "Container restarts"), so a TTL counted from the module's own start would
+      restart and sleep another 2h. The TTL has to outlive a container restart (the pod's <code>/tmp</code> is an
+      <code>emptyDir</code>, which does); where it is kept is #303's spec to decide.</p>
+<pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --tail=8</span>
+<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery <span class="bad">TTL 2h reached; exiting <span class="il">1</span></span>: the app is still NOT running and no data is collected
+<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to extend under Argo CD:
+  oc patch applications.argoproj.io/group-sync-dashboard -n openshift-gitops --type merge \
+    -p '{"spec":{"source":{"helm":{"parameters":[{"name":"recovery.enabled","value":"true"},{"name":"recovery.ttl","value":"4h"}]}}}}'
+<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to extend with Helm:
+  helm upgrade group-sync-dashboard &lt;chart&gt; -n group-sync-dashboard --reuse-values --set recovery.ttl=4h
+<span class="il">2026-10-01T11:47:30Z</span> gsd-recovery to leave: remove both parameters; the app starts on /data/gsd.db
 
 <span class="p">$ </span><span class="cmd">oc get pods -n group-sync-dashboard -l app=group-sync-dashboard</span>
 <span class="hd">NAME                                    READY   STATUS             RESTARTS      AGE</span>
 <span class="il">group-sync-dashboard-6c5d8f7b9d-q2x7m</span>   1/2     <span class="bad">CrashLoopBackOff</span>   <span class="il">1 (9s ago)</span>    <span class="il">2h0m</span></pre>
-    <p class="cap src">While recovery mode lasts the dashboard records nothing, and the existing
-      <code>GroupSyncDashboardNotPolling</code> alert says so; the values comment names it. Lab facts: the Application
+    <p class="cap src">While recovery mode lasts the dashboard records nothing, and no existing alert says so:
+      <code>GroupSyncDashboardNotPolling</code> reads a gauge the stopped process no longer emits
+      (<code>templates/monitoring.yaml:151</code>), so it returns nothing. The TTL is the bound, and the values comment
+      says that plainly. Lab facts: the Application
       <code>openshift-gitops/group-sync-dashboard</code> has <code>{"prune":true,"selfHeal":true}</code> and no Helm
       parameters today; the Deployment's strategy is <code>Recreate</code>; the label selects the one dashboard pod.</p>
   </section>
@@ -1807,19 +1820,20 @@ application.argoproj.io/group-sync-dashboard patched
   <section class="card is-proposed" id="list">
     <h2>2 · <code>restore-db.sh --list</code> <span class="tag-proposed">proposed · #302</span></h2>
     <p class="cap">Run from the laptop with <code>oc</code>; it streams a stdlib helper into the recovery pod. One row per
-      candidate; <code>--from-version</code> takes exactly the ID printed here, <code>&lt;user_version&gt;-&lt;UTC stamp&gt;</code>.</p>
+      candidate; <code>--from-version</code> takes exactly the ID printed here, <code>&lt;user_version&gt;-&lt;the copy's own stamp&gt;</code>,
+      microseconds included as in the file name (<code>store.py:1737</code>): two copies can share a second.</p>
 <pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">local-development/restore-db.sh --list</span>
 pod      <span class="il">group-sync-dashboard-6c5d8f7b9d-q2x7m</span> · recovery mode, <span class="il">1h59m</span> left
 image    quay.io/ephico2real/group-sync-dashboard:2.0.0 · understands schema 20 and older
 live     /data/gsd.db · user_version 20
 
-<span class="hd">ID                   SCHEMA  STAMP (UTC)           SIZE       SOURCE       SIDECAR   THIS IMAGE</span>
-20-20261001T051103Z  20      2026-10-01T05:11:03Z  13.55 MiB  backup       none      yes
-20-20260930T231004Z  20      2026-09-30T23:10:04Z  13.53 MiB  backup       none      yes
-20-20260930T230906Z  20      2026-09-30T23:09:06Z  13.53 MiB  backup       none      yes
-20-20260930T204457Z  20      2026-09-30T20:44:57Z  13.51 MiB  backup       none      yes
-<span class="il">20-20260930T180002Z  20      2026-09-30T18:00:02Z  13.49 MiB  offsite      mismatch  yes</span>
-<span class="il">19-20260925T064601Z  19      2026-09-25T06:46:01Z  12.87 MiB  pre-upgrade  ok        yes, migrates 19 → 20 on start</span>
+<span class="hd">ID                          SCHEMA  STAMP (UTC)           SIZE       SOURCE       SIDECAR   THIS IMAGE</span>
+20-20261001T051103.798578Z  20      2026-10-01T05:11:03Z  13.55 MiB  backup       none      yes
+20-20260930T231004.994977Z  20      2026-09-30T23:10:04Z  13.53 MiB  backup       none      yes
+20-20260930T230906.692903Z  20      2026-09-30T23:09:06Z  13.53 MiB  backup       none      yes
+20-20260930T204457.676696Z  20      2026-09-30T20:44:57Z  13.51 MiB  backup       none      yes
+<span class="il">20-20260930T180002.104233Z  20      2026-09-30T18:00:02Z  13.49 MiB  offsite      mismatch  yes</span>
+<span class="il">19-20260925T064601.385120Z  19      2026-09-25T06:46:01Z  12.87 MiB  pre-upgrade  ok        yes, migrates 19 → 20 on start</span>
 <span class="c"># 6 candidates. none: scheduled backups write no .sha256, so integrity_check is their only check.
 # mismatch: the copy's sha256 differs from its sidecar; --from-version refuses it.</span></pre>
     <p class="cap src">The four <code>backup</code> rows are the lab's <code>/data/backup</code>: names, sizes (bytes
@@ -1841,13 +1855,13 @@ live     /data/gsd.db · user_version 20
   Turn recovery mode on through the release's values, never with oc set env:
     oc patch applications.argoproj.io/group-sync-dashboard -n openshift-gitops --type merge \
       -p '{"spec":{"source":{"helm":{"parameters":[{"name":"recovery.enabled","value":"true"},{"name":"recovery.ttl","value":"2h"}]}}}}'
-<span class="c"># exit status 2</span></pre>
+<span class="c"># exit status <span class="il">2</span></span></pre>
     <p class="cap"><b>A candidate newer than the image</b> is refused with both numbers. The rollback #302's Definition of
       Done walks: an image with migration 21 ran (taking its pre-upgrade copy), and 2.0.0 is back in recovery mode.</p>
-<pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">local-development/restore-db.sh --from-version <span class="il">21-20261003T150002Z</span></span>
-<span class="bad">refused</span>: <span class="il">21-20261003T150002Z</span> has user_version <span class="il">21</span>; this image (group-sync-dashboard:2.0.0) understands 20 and older.
-  Its pre-upgrade copy is the way back: --from-version <span class="il">20-20261003T090002Z</span> (source pre-upgrade, sidecar ok).
-<span class="c"># exit status 3; nothing on /data changed</span></pre>
+<pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">local-development/restore-db.sh --from-version <span class="il">21-20261003T150002.513647Z</span></span>
+<span class="bad">refused</span>: <span class="il">21-20261003T150002.513647Z</span> has user_version <span class="il">21</span>; this image (group-sync-dashboard:2.0.0) understands 20 and older.
+  Its pre-upgrade copy is the way back: --from-version <span class="il">20-20261003T090002.208311Z</span> (source pre-upgrade, sidecar ok).
+<span class="c"># exit status <span class="il">3</span>; nothing on /data changed</span></pre>
     <p class="cap src">Lab facts in the first block: the running pod's name, its environment (no
       <code>GSD_RECOVERY_MODE</code> among its <code>GSD_*</code> keys) and uvicorn as PID 1, read 2026-10-01T09:48Z. The
       exit statuses and the second block are illustrative.</p>
@@ -1858,7 +1872,7 @@ live     /data/gsd.db · user_version 20
     <p class="cap">Every check runs before the live file is touched: integrity, the sidecar, the schema. Then the loss window
       and what it discards, a confirmation (<code>--yes</code> for scripts), and the steps that corrupt data silently when
       skipped by hand: the live set kept, <code>-wal</code> and <code>-shm</code> removed, the group set.</p>
-<pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">local-development/restore-db.sh --from-version 20-20261001T051103Z</span>
+<pre class="cc-yaml term"><span class="p">$ </span><span class="cmd">local-development/restore-db.sh --from-version 20-20261001T051103.798578Z</span>
 pod          <span class="il">group-sync-dashboard-6c5d8f7b9d-q2x7m</span> · recovery mode, <span class="il">1h59m</span> left
 candidate    /data/backup/gsd-20261001T051103.798578Z.db · 13.55 MiB · backup
 integrity    <span class="ok">ok</span>  (PRAGMA integrity_check on the copy, opened ?immutable=1)
@@ -1869,17 +1883,22 @@ loss window  2026-10-01T05:11:03Z → 2026-10-01T09:48:17Z (4h37m14s): what the 
              membership_event   1843   1843        0
              sync_event         2572   2527       45
              binding_event      4328   4328        0
-Restore 20-20261001T051103Z over /data/gsd.db? [y/N] <span class="cmd">y</span>
-kept         /data/pre-restore/20261001T094817Z/  gsd.db, gsd.db-wal, gsd.db-shm (the live set, as found)
+Restore 20-20261001T051103.798578Z over /data/gsd.db? [y/N] <span class="cmd">y</span>
+kept         /data/pre-restore/<span class="il">20261001T094817Z</span>/  gsd.db, gsd.db-wal, gsd.db-shm (the live set, as found)
 removed      /data/gsd.db-wal, /data/gsd.db-shm
 written      /data/gsd.db ← gsd-20261001T051103.798578Z.db · chgrp 0 · chmod g=u
 user_version 20 → 20
 <span class="ok">restored.</span> Turn recovery mode off through the release's values; the app starts on the restored file.</pre>
     <p class="cap src">Lab values: the candidate's name and size; its <code>integrity</code> verdict stands in for the
       <code>quick_check</code> measured; the live counts (read-only connection, 2026-10-01T09:48:17Z) and the copy's
-      (<code>?immutable=1</code>), so <b>discarded</b> is live less copy; the loss window between the copy's stamp and that
-      instant. The live set is kept whole because <code>gsd.db-wal</code> held 4,511,432 bytes at 09:47Z: a kept
-      <code>gsd.db</code> without it would not be the live state (the runbook's §4a keeps only <code>gsd.db</code>,
+      (<code>?immutable=1</code>); the loss window between the copy's stamp and that instant. <b>discarded</b> counts the
+      live rows inserted after the copy (an <code>id</code> above the copy's highest; the ids are AUTOINCREMENT, never
+      reused), not the live count less the copy's: retention prunes <code>sync_event</code> past
+      <code>syncEventsDays</code> (730 by default) after each cycle's backup, and a subtraction then undercounts what is
+      lost. The lab has pruned nothing (its oldest row is 2026-09-19), so the two agree here. The live set is kept whole:
+      a clean stop checkpoints the WAL away and leaves <code>gsd.db</code> alone, but a writer killed before it closed
+      leaves committed rows in <code>gsd.db-wal</code> (4,511,432 bytes on the lab at 09:47Z, while running), which a kept
+      <code>gsd.db</code> alone would not hold (the runbook's §4a keeps only <code>gsd.db</code>,
       <code>docs/RUNBOOK_backup_restore.md:205-208</code>). The lab's live file is group <code>1000790000</code>, mode
       <code>664</code>, in a setgid <code>/data</code>; the process holds groups 0 and 1000790000, so <code>chgrp 0</code> and
       <code>g=u</code> keep it writable. The pod name and the <code>pre-restore</code> stamp are illustrative.</p>
@@ -1893,13 +1912,16 @@ user_version 20 → 20
     <div class="md">
       <h3>Application <span class="il">2.1.0</span> — chart <span class="il">0.60.0</span> — <span class="il">2026-10-03</span></h3>
       <ul>
+        <li class="elided"><strong>the release's reason</strong>, first, as <code>prepare-release.py</code> writes it today</li>
         <li><strong>Schema <span class="il">20</span> → <span class="il">21</span>.</strong> The first start on this image migrates
           the database one way; the pre-upgrade copy (#301) and <code>restore-db.sh</code> (#302) are the way back.</li>
-        <li class="elided">the release's own entries follow, as today</li>
+        <li class="elided">the collected bullets follow, as today</li>
       </ul>
     </div>
-    <p class="cap src">A release whose schema did not move gets no line. The numbers are illustrative: main's schema is 20
-      (<code>KNOWN_SCHEMA_VERSION</code>, <code>store.py:1159</code>) and no migration 21 exists.</p>
+    <p class="cap src">The reason stays the first bullet (<code>prepare-release.py:343</code>, and the epic skill's "the epic
+      as the first bullet"), so the schema line follows it. A release whose schema did not move gets no line. The numbers
+      are illustrative: main's schema is 20 (<code>KNOWN_SCHEMA_VERSION</code>, <code>store.py:1159</code>) and no
+      migration 21 exists.</p>
   </section>
   </main>
 </div>
