@@ -6,10 +6,10 @@
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
 | Version on release | chart 0.60.0 (chart only) |
-| Version note | No application version: `charts/**` is outside `publish.yml`'s image paths (`.github/workflows/publish.yml#NOTE charts/** is deliberately ABSENT`), and nothing else changes in the image. The chart takes a MINOR, 0.59.25 to 0.60.0, because a default changes and a value's grammar widens (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). SPEC_E2 and SPEC_G2 also name 0.60.0. Whichever merges first takes it; the later one takes the next free MINOR and corrects, before applying, the two blocks here that name 0.60.0 (block 37, `Chart.yaml`, and block 36, the CHANGELOG entry), with the reason under these notes (`docs/specs/README.md`, "Implementation blocks") |
+| Version note | No application version: `charts/**` is outside `publish.yml`'s image paths (`.github/workflows/publish.yml#NOTE charts/** is deliberately ABSENT`), and nothing else changes in the image. The chart takes a MINOR, 0.59.25 to 0.60.0, because a default changes and a value's grammar widens (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). **When specs claim the same numbers, the rule is:** a spec still `specified` must name a version above `Chart.yaml` (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), so whichever implementation merges first takes its number and, in the same pull request, moves every other `specified` spec whose chart version is not above the new `Chart.yaml` to the next free version above it, in its header and its index row, keeping its MINOR or PATCH and its application version. On origin/main `3b3d0010` those are SPEC_E2 (chart 0.60.0), SPEC_G2 (app 2.1.0, chart 0.60.0) and SPEC_E4 (app 2.1.0, chart 0.59.26): blocks 36 to 39 move them to chart 0.61.0, 0.61.0 and 0.60.1 (this spec changes no application version, so their app cells stay). Measured: §7 without blocks 36 to 39 fails that test with `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.60.0')`; with them the full hermetic suite passes (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull request re-derives blocks 36 to 41 before applying: it drops the cells that no longer collide and corrects the version in blocks 40 (the CHANGELOG entry) and 41 (`Chart.yaml`), with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). SPEC_E3 (#302, app 2.1.0, chart 0.59.26) is not on main; when it is, the same rule applies to it. The epic's build order puts #303 first, so the expected case is SPEC_E2's implementing pull request moving this spec to chart 0.61.0 |
 | Issue | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code, from the issue's "Decisions and corrections (2026-10-01)", the epic's decisions of 2026-09-26, SPEC_M1 §3.8 and SPEC_E2 at `465411cd`. Measured on origin/main `21132a25` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and the repository's Python 3.14.7 (SQLite 3.53.4), and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code, from the issue's "Decisions and corrections (2026-10-01)", the epic's decisions of 2026-09-26, SPEC_M1 §3.8 and SPEC_E2 at `465411cd`. Measured on origin/main `21132a25` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and the repository's Python 3.14.7 (SQLite 3.53.4), and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `4dfde5e6` (OB3 in Grok's seat, OB2 in Codex's), after merging origin/main `3b3d0010` (SPEC G1, E2, G2 and E4); §7 re-cut from that merge and proved again (§4.3; Orchestrator's notes, 10) |
 
 ## How to read this spec
 
@@ -61,8 +61,11 @@ numbers come from `curl -s <raw-url> | nl -ba`.
    - **SPEC_E2 merges first:** this spec's implementing pull request adds one edit block for
      `charts/group-sync-dashboard/templates/deployment.yaml`, Old the first line above, New the second,
      after block 9 here, and records it under these notes; the same E2 test is then the guard.
-   - Both orders were applied and tested on copies of `21132a25` (§4.3, "Composition with SPEC_E2"): each
-     passes both specs' chart tests with the one line changed, and fails E2's `[default]` case without it.
+   - Both orders were applied and tested on copies of this branch's merge of origin/main `3b3d0010`, with SPEC_E2
+     as merged on main (§4.3, "Composition with SPEC_E2"): each passes both specs' chart tests with the one line
+     changed (`391 passed`), and fails E2's `[default]` case without it. OB3 also found that without the line a
+     quoted `"false"` makes the recovery pod mount a claim that is never rendered, which E2's test does not cover;
+     the one line closes both. Blocks 36 and 39 move SPEC_E2's version cells, which E2's own blocks never touch.
    SPEC_E3 (#302) lists `/offsite` at any depth for `gsd-<stamp>….db` and `pre-upgrade-<stamp>-schema-…`
    names and asked that #304 keep them (SPEC_E3, Orchestrator's notes 8): the second pass ships each copy
    under the store's own name into `/offsite/pre-upgrade/` (§3.6).
@@ -80,7 +83,14 @@ numbers come from `curl -s <raw-url> | nl -ba`.
    set by hand under `backup.offsite.destination` says offsite is wanted, and yielding there would be a
    configured backup that silently never runs, which is the mistake the template's first guard exists for
    (`charts/group-sync-dashboard/templates/backup-offsite.yaml#the mistake it catches is`). The CHANGELOG's
-   upgrade note names the case and the way out. Reviewers may refute this; the alternative is one more
+   upgrade note names the case and the way out. The same exception applies to the epic's acceptance check E4
+   ("Every configuration that renders today still renders"), which is read with it. Who it breaks, measured on
+   the merge of origin/main `3b3d0010` with §7 applied: none of the seventeen values files the repository ships
+   for this chart (`environments/crc.yaml`, both `example-production.yaml`, the fourteen under
+   `reports/*/prepared/`) sets a `backup.offsite` value, and all seventeen render; the lab's Application adds only
+   a `clusters` override (OB3's read). A release that does break fails its whole render, not only the offsite
+   objects, with that value's message. The review kept the refusals (OB3: a typo'd destination would otherwise
+   yield silently while the estate believes the new default turned offsite on); the alternative is one more
    condition in the helper (§2a, A9).
 4. **The pre-upgrade pass runs on the `pvc` destination at one replica only.** SPEC_M1 §3.8 recommends "one
    replica only": above one each pod has its own `/data/<pod>/pre-upgrade/` (SPEC_M1 §2.5). The `s3` destination is
@@ -104,11 +114,31 @@ numbers come from `curl -s <raw-url> | nl -ba`.
    says "seventeen, nineteen with backup.offsite"; that is still true, so the board is left as it is. The
    chart README's heading keeps the words "The seventeen alerts",
    which two specs cite (`charts/group-sync-dashboard/README.md#The seventeen alerts`).
-8. **The index.** This spec's commit adds its row to `docs/specs/README.md` and moves
-   `local-development/tests/test_specs_index.py`'s count from 36 to 37, excluding #304 from the rising issue
-   numbers as D5 (#244) is: an Epic E step specified after S4f (#481). SPEC_E2's branch moves the same two lines;
-   the second to merge takes 38 and both exclusions.
-9. **For the operator:** none. The three-state switch was settled on 2026-09-26, the pre-upgrade pass on SPEC_M1
+8. **The index.** This spec's row follows SPEC_E4's in `docs/specs/README.md`, and
+   `local-development/tests/test_specs_index.py`'s count moves from 39 to 40. Like E2, G2 and E4, E5 is excluded
+   from the rising issue numbers by its id and pinned to its issue, `assert ROWS["E5"]["issue"] == "304"`, not by
+   the number: excluded by the number alone, E5 mistyped as #504 in its row and its header passed every index
+   check (OB3's mutant). Measured on the merge: with the pin, that mutant fails `AssertionError: ('E5 is #304',
+   '504')`; with the pin removed, it passes `86 passed`.
+9. **The stale alert after the second pass** (the review's N1). A run fails when either pass fails, so
+   `GroupSyncDashboardOffsiteBackupStale` can fire while the six-hourly copies still leave the volume: a refused
+   pre-upgrade copy fails every run until a newer upgrade replaces it or it is moved aside. The alert's
+   description, the chart README's row and runbook §2 say so, and runbook §2 says how to clear it (blocks 9, 13
+   and 16, held by `test_a_refused_pre_upgrade_copy_is_named_by_the_alert_and_the_runbook`).
+10. **The reviews of `4dfde5e6`, decided by the orchestrator on 2026-10-01.** OB3 (in Grok's seat) and OB2 (in
+    Codex's seat, Codex being out of usage) confirmed the switch over 43 input forms, the nine yield shapes, the
+    script's 13 edge cases, both composition orders with SPEC_E2 as merged, and RBAC REMOVED 0 ADDED 0.
+    - **Accepted, required:** F1, the version rule above and blocks 36 to 39 (OB3 measured §7 on main failing the
+      ladder test on SPEC_E2); F2, the index pin (note 8; OB2 found it too); F4, A8's Bitnami ref (`17930f7` is
+      ambiguous in bitnami/charts and its raw URL answers 404; `17930f75cdbc` resolves to the quoted lines).
+    - **Accepted, recommended:** N1 (note 9); F5 (note 3); F6, the chart README says what a cluster with no
+      default StorageClass does (block 11); OB2's F2, the CHANGELOG's upgrade note adds that a valid destination
+      filled in while `enabled` was left unset is now used (block 40).
+    - **Not taken:** OB3's alternative to F1, naming 0.61.0 here now: block 41 would then check out only after
+      SPEC_E2 is applied. OB3's N2, the root README's monitoring sentence ("twelve alerting rules … both off by
+      default"), was wrong before this spec and is not in a block this spec touches; it is left for its own
+      change.
+11. **For the operator:** none. The three-state switch was settled on 2026-09-26, the pre-upgrade pass on SPEC_M1
    §3.8, and the rest above on "easy to manage, best practice".
 
 ## 1. The mandate, and what is out of scope
@@ -381,7 +411,7 @@ default, at one replica.
 | A5 | Read the switch with `default` (`enabled \| default true`) | Sprig `dfault` (§2.1) | an explicit `false` turns offsite on (measured `defaultTrue=true` for `--set o.x=false`) | rejected |
 | A6 | Keep truthiness (`if .Values.backup.offsite.enabled`) and add a guard | Go `text/template` (§2.1) | `""` is false, so the default would turn nothing on, and `"false"` stays on | rejected |
 | A7 | Decide "can it work" with `lookup` (the StorageClass, the live claim) | Helm, "Using the `lookup` function", `functions_and_pipelines.mdx` lines 271-274: "Helm is not supposed to contact the Kubernetes API Server during a `helm template\|install\|upgrade\|delete\|rollback --dry-run` operation" | Argo CD renders with `helm template` and no cluster, so every `lookup` is empty there and the decision would differ between Helm and Argo | rejected; the five conditions are all decidable from values |
-| A8 | Keep the copy opt-in, as other charts do | Bitnami `postgresql` `values.yaml` lines 1327-1329 at `17930f7` (`backup.enabled: false`); CloudNativePG `charts/cluster/values.yaml` lines 496-498 at `60fda25` ("You need to configure backups manually, so backups are disabled by default"); Velero `charts/velero/values.yaml` line 798 at `6b21973` (`schedules: {}`) | the industry default is off because a backup's destination is the installer's to choose; here the operator ruled the opposite (2026-09-22: "We need to enable offsite backup immediately"; the chart's 0.14.0 rule, booleans on), and a second claim on the default class is a destination the chart can choose | rejected by the operator's ruling; the trade (not off the storage) is stated in the values comment |
+| A8 | Keep the copy opt-in, as other charts do | Bitnami `postgresql` `values.yaml` lines 1327-1329 at `17930f75cdbc` (`backup.enabled: false`); CloudNativePG `charts/cluster/values.yaml` lines 496-498 at `60fda25` ("You need to configure backups manually, so backups are disabled by default"); Velero `charts/velero/values.yaml` line 798 at `6b21973` (`schedules: {}`) | the industry default is off because a backup's destination is the installer's to choose; here the operator ruled the opposite (2026-09-22: "We need to enable offsite backup immediately"; the chart's 0.14.0 rule, booleans on), and a second claim on the default class is a destination the chart can choose | rejected by the operator's ruling; the trade (not off the storage) is stated in the values comment |
 | A9 | Yield also on the stanza's own refusals (type, claim, keep, S3) | — | a configured destination that silently never runs | rejected (Orchestrator's notes, 3) |
 | A10 | Ship the pre-upgrade copy from a second container, or a second CronJob | SPEC_M1 §3.8 ("a second pass") | a second container runs concurrently with the first and needs its own mounts; a second CronJob needs its own alerts, account and claim | rejected; one run, two passes of the same script (§3.6) |
 | A11 | Ship the pre-upgrade copy to S3 too | — | a subdirectory under `/stage` that an operator's custom `command` may not expect, a re-upload every run, no `keep` | rejected (Orchestrator's notes, 4) |
@@ -490,7 +520,8 @@ The script gains `--pre-upgrade-source DIR` (blocks 1 to 5). After the six-hourl
 `newest_backup`, `prune` and `ship` take the pattern as a parameter whose default is today's `PATTERN`, so the
 six-hourly pass calls them exactly as before. The two passes are independent: each runs, a `BackupError` in one
 is printed and does not stop the other, and the process exits 1 if either failed, so the CronJob's status and
-both alerts still see any failure.
+both alerts still see any failure. The stale alert therefore fires when either pass keeps failing, and its
+description says so (Orchestrator's notes, 9).
 
 The CronJob passes `--pre-upgrade-source /data/pre-upgrade` to the `pvc` container only, and only when
 `replicaCount` is not above 1: the same test `deployment.yaml` uses for `GSD_DB_PATH`
@@ -526,15 +557,15 @@ report-artifacts claims; the application image.
 
 ### 4.1 One test per test case of the issue
 
-"Before" is the new and changed test files run against `21132a25`'s chart and script (a copy of the tree with
-only the six test files of §7 replaced); "after" is the tree with §7 applied (§4.3). The quoted failure is the
+"Before" is the new and changed test files run against the chart and script of this branch's merge of origin/main
+`3b3d0010` (`547a68ad`; a copy of the tree with only the six test files of §7 replaced); "after" is the tree with §7 applied (§4.3). The quoted failure is the
 line pytest printed before.
 
 | ID | test (in `local-development/tests/`) | before | after |
 |---|---|---|---|
 | T304-1 | `test_chart_backup_offsite.py::TestSwitch::test_the_default_ships_the_copy_off_the_volume` (replaces `test_nothing_renders_by_default`): the CronJob, the ConfigMap carrying the script, the account without a token, the 5Gi claim with `helm.sh/resource-policy: keep`, Argo's `Prune=false,Delete=false,PruneLast=true` and no `storageClassName`, and one bind Job | fails: `assert False == ''` (the default is `false`) | passes |
 | T304-2 to T304-7 | `TestYield::test_the_default_steps_aside[…]`, seven cases: on-volume backup off; derived `ReadWriteOncePod`; persistence off; empty backup dir; dir outside `/data/`; dir walking out of `/data/` (`/data/../etc`); existing data claim without an access mode. Each: render succeeds, no object labelled `backup-offsite`, no offsite alert | passes (offsite is off by default): regression guards. With only the default flipped, each of these renders fails (§2.6, the five `true + …` rows) | passes |
-| T304-8 | `TestYield::test_true_still_refuses_with_the_reason[…]`, the same seven, each with its message; the existing `TestPrerequisites` and `TestAccessModes` refusals are kept with `true` | passes (`true` is strict on main): regression guard. The six messages compared byte for byte between `21132a25` and the applied tree are the same (§4.3) | passes |
+| T304-8 | `TestYield::test_true_still_refuses_with_the_reason[…]`, the same seven, each with its message; the existing `TestPrerequisites` and `TestAccessModes` refusals are kept with `true` | passes (`true` is strict on main): regression guard. The six messages compared byte for byte between `547a68ad` and the applied tree are the same (§4.3) | passes |
 | T304-9 | `TestTheSwitchIsAWord::test_false_is_off`; `TestAlerts::test_the_two_rules_render_exactly_when_the_cronjob_does[false]` | passes: regression guard. Mutation M2 (the word read through `default`) fails it (§4.2) | passes |
 | T304-10 | `test_a_quoted_word_means_what_it_says[false-False]`, `test_a_values_file_reads_the_same["false"-False]` | fails: `assert (True is False)`, the CronJob renders | passes |
 | T304-11 | `test_any_other_word_is_refused_naming_the_three[yes, ture, 0, False]` | fails: `assert not True`, the render succeeds | passes |
@@ -547,7 +578,7 @@ line pytest printed before.
 | T304-18 | the 18 of §2.6, each an expectation update: the two offsite tests are replaced by T304-1 and T304-12; `test_chart_route.py` sets the offsite account aside (blocks 34, 35; nine tests); `test_chart_reporting.py` names the report CronJob and checks both CronJobs against both budgets (blocks 31-33; three tests); `test_chart_pdb.py` is T304-16; `test_values_defaults.py` is T304-15 (two tests); `test_chart_strategy.py::TestStillRenders::test_rollingupdate_at_one_replica_without_persistence` is unchanged and passes because the default yields with persistence off | on a copy with only the default flipped to `true`: 18 failed (§2.6) | all pass |
 | T304-19 | the lab walk, §5 | the lab has no offsite CronJob (§2.7) | the implementing pull request |
 
-**Added by the research** (all in the same two files):
+**Added by the research and the review** (all in the same two files):
 
 | test | what it holds | before | after |
 |---|---|---|---|
@@ -559,15 +590,17 @@ line pytest printed before.
 | `TestPreUpgradePass::test_a_copy_that_no_longer_matches_its_sidecar_is_refused` | Orchestrator's notes, 5; and the six-hourly pass still ships | `SystemExit: 2` | passes |
 | `TestPreUpgradePass::test_a_failing_six_hourly_pass_does_not_stop_the_pre_upgrade_pass` | §3.6: independent passes, exit 1 | `SystemExit: 2` | passes |
 | `TestPreUpgradePass::test_the_names_and_the_count_are_the_stores` | `PRE_UPGRADE_KEEP`, `PRE_UPGRADE_DIR` and the pattern equal to the store's | `AttributeError: module 'offsite_backup' has no attribute 'PRE_UPGRADE_KEEP'` | passes |
+| `TestAlerts::test_a_refused_pre_upgrade_copy_is_named_by_the_alert_and_the_runbook` | Orchestrator's notes, 9 (the review's N1): the stale alert's description names a refused pre-upgrade copy and no longer says "nothing newer is off it."; runbook §2 says how to clear it | fails: `KeyError: 'GroupSyncDashboardOffsiteBackupStale'`; against the first cut of §7 (`4dfde5e6`): `assert ('pre-upgrade copy is refused' in "t-group-sync-dashboard-backup-offsite last succeeded …")` | passes |
 
 Counts, the seven touched chart and script files (`tests/test_offsite_backup_script.py tests/test_chart_backup_offsite.py
 tests/test_values_defaults.py tests/test_chart_pdb.py tests/test_chart_reporting.py tests/test_chart_route.py
-tests/test_chart_strategy.py`): before `27 failed, 307 passed`; after `334 passed`.
+tests/test_chart_strategy.py`): before `28 failed, 307 passed`; after `335 passed`.
 
 ### 4.2 Each new behaviour fails without its line
 
 Ten mutations of the implemented tree, each a copy with one change, running `tests/test_chart_backup_offsite.py` and
-`tests/test_offsite_backup_script.py` (105 tests):
+`tests/test_offsite_backup_script.py` (105 tests). Measured on the first cut (`4dfde5e6`); the review changed none of
+the lines they mutate, and OB3 re-ran M1, M2, M5, M6 and M8 with the same results:
 
 | run | the change | result | tests that go red |
 |---|---|---|---|
@@ -584,14 +617,15 @@ Ten mutations of the implemented tree, each a copy with one change, running `tes
 
 ### 4.3 The proof
 
-§7 was not written by hand. The design was implemented in a detached worktree of origin/main `21132a25`; a
-generator cut each block's Old text from `21132a25` and its New text from the implemented copy, at whole lines,
-with no code fence inside a block, each Old unique in its file as the earlier blocks leave it, and checked that
-each file's blocks, applied in order, give the implemented file byte for byte: `37 blocks across 16 files
-reproduce the implemented files byte for byte`. Then, on a fresh detached worktree of `21132a25`:
+§7 was not written by hand. The design was implemented in a detached worktree of this branch's merge of origin/main
+`3b3d0010` (`547a68ad`: SPEC G1, E2, G2 and E4 merged, and this spec's first cut); a generator cut each block's Old
+text from that merge and its New text from the implemented copy, at whole lines, with no code fence inside a block,
+each Old unique in its file as the earlier blocks leave it and preferring leading context, and checked that each
+file's blocks, applied in order, give the implemented file byte for byte: `41 blocks across 20 files reproduce the
+implemented files byte for byte`. Then, on a fresh detached worktree of `547a68ad`:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E5_offsite_on_by_default.md .
-    37 blocks check out across 16 files
+    41 blocks check out across 20 files
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E5_offsite_on_by_default.md . --apply
 
 After `--apply` every changed file is identical (`cmp`) to the implemented copy. On that tree, with `PYTHONPATH`
@@ -599,26 +633,27 @@ at its `local-development` (the imported `gsd` printed as that tree's):
 
 | check | command | result |
 |---|---|---|
-| the issue's six chart test files and the script and copy tests | `pytest -q -p no:cacheprovider tests/test_chart_*.py tests/test_values_defaults.py tests/test_offsite_backup_script.py tests/test_pre_upgrade_copy.py tests/test_kyverno.py tests/test_ci_charts.py` | `21132a25`: `497 passed, 3 skipped`; applied: `545 passed, 3 skipped` |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | applied: `6207 passed, 23 skipped, 655 deselected, 5 xfailed`, no failure |
-| this spec's index row and citations | `pytest -q tests/test_specs_index.py tests/test_docs_citations.py`, in the spec's branch | `1513 passed, 19 skipped`; 35 of the citation checks are this spec's, none skipped |
-| chart | `helm lint`; the render matrix of §2.6 | lint clean; the matrix on the applied chart equals the implemented copy's and reads as §3.1 and §3.2 say: the default renders the five objects and two alerts with the pre-upgrade argument; `false`, `"false"` and the seven yield cases render nothing of offsite; `"yes"` is refused naming the three values; `true` keeps the five refusals; the four stanza refusals apply by default too; at `replicaCount` 2 the CronJob renders without the pre-upgrade argument |
-| the strict messages | the six `true + …` renders on `21132a25` and on the applied chart, the error line compared as a string | the same message in all six |
+| the issue's six chart test files and the script and copy tests | `pytest -q -p no:cacheprovider tests/test_chart_*.py tests/test_values_defaults.py tests/test_offsite_backup_script.py tests/test_pre_upgrade_copy.py tests/test_kyverno.py tests/test_ci_charts.py` | `547a68ad`: `497 passed, 3 skipped`; applied: `546 passed, 3 skipped` |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | applied on `547a68ad` (main `3b3d0010` with this spec): `6346 passed, 26 skipped, 655 deselected, 5 xfailed`, no failure; the version ladder test included |
+| the version ladder (Orchestrator's notes, Version note) | `pytest tests/test_specs_index.py` on a copy with every block but 36 to 39 applied | `1 failed, 85 passed`: `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.60.0')`; with them, passes in the hermetic suite above |
+| this spec's index row and citations | `pytest -q tests/test_specs_index.py tests/test_docs_citations.py`, in the spec's branch | `1612 passed, 22 skipped`; 37 of the citation checks are this spec's, none skipped |
+| chart | `helm lint`; the render matrix of §2.6 | lint clean; the matrix on the applied chart equals the first cut's and reads as §3.1 and §3.2 say: the default renders the five objects and two alerts with the pre-upgrade argument; `false`, `"false"` and the seven yield cases render nothing of offsite; `"yes"` is refused naming the three values; `true` keeps the five refusals; the four stanza refusals apply by default too; at `replicaCount` 2 the CronJob renders without the pre-upgrade argument |
+| the strict messages | the six `true + …` renders on `547a68ad` and on the applied chart, the error line compared as a string | the same message in all six |
 | RBAC | `reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py`, default values and `environments/crc.yaml` | `rules: before 59, after 59`, `REMOVED 0`, `ADDED 0`; `rules: before 65, after 65`, `REMOVED 0`, `ADDED 0`; bindings 7 and 7, 8 and 8, none added or removed |
 | markdown | `markdownlint-cli2` on the runbook, the CHANGELOG, the reference architecture and the chart README | 30 findings before and after, the same per file and rule (MD004, MD012, MD014, MD040), all on main already |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the script and the six test files | all parse; CI's 3.11 job was not run here |
 
-**Composition with SPEC_E2** (Orchestrator's notes, 1). SPEC_E2 at `465411cd` with its `Chart.yaml` block left
+**Composition with SPEC_E2** (Orchestrator's notes, 1). SPEC_E2 as merged on main, with its `Chart.yaml` block left
 out (that block is the version collision of the header, settled at implementation), applied in both orders on
-copies of `21132a25`, then both specs' chart and script tests (`tests/test_chart_recovery_mode.py
+copies of `547a68ad`, then both specs' chart and script tests (`tests/test_chart_recovery_mode.py
 tests/test_recovery_mode.py` and the seven files of §4.1):
 
 | order | E2's line | result |
 |---|---|---|
-| this spec, then E2 | changed to call `gsd.offsiteOn` | `390 passed` |
-| this spec, then E2 | as E2 writes it | `1 failed, 389 passed`: `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one[default]` |
-| E2, then this spec plus the interlock block | changed by the interlock block | `390 passed` |
-| E2, then this spec | as E2 writes it | `1 failed, 389 passed`: the same test |
+| this spec, then E2 | changed to call `gsd.offsiteOn` | `391 passed` |
+| this spec, then E2 | as E2 writes it | `1 failed, 390 passed`: `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one[default]` |
+| E2, then this spec plus the interlock block | changed by the interlock block | `391 passed` |
+| E2, then this spec | as E2 writes it | `1 failed, 390 passed`: the same test |
 
 Every block of both specs applied cleanly in both orders.
 
@@ -677,14 +712,15 @@ migration, as SPEC_M1 §5 describes) is not part of this walk.
 | `charts/group-sync-dashboard/scripts/offsite_backup.py` | 56 | 17 |
 | `charts/group-sync-dashboard/templates/_helpers.tpl` | 42 | 0 |
 | `charts/group-sync-dashboard/templates/backup-offsite.yaml` | 15 | 19 |
-| `charts/group-sync-dashboard/templates/monitoring.yaml` | 2 | 1 |
+| `charts/group-sync-dashboard/templates/monitoring.yaml` | 5 | 3 |
 | `charts/group-sync-dashboard/values.yaml` | 25 | 8 |
-| `charts/group-sync-dashboard/README.md` | 17 | 9 |
+| `charts/group-sync-dashboard/README.md` | 19 | 9 |
 | `charts/group-sync-dashboard/Chart.yaml` | 4 | 1 |
-| `docs/RUNBOOK_backup_restore.md` | 16 | 5 |
+| `docs/RUNBOOK_backup_restore.md` | 20 | 5 |
 | `docs/reference-architecture.md` | 10 | 4 |
-| `docs/CHANGELOG.md` | 21 | 0 |
-| `local-development/tests/test_chart_backup_offsite.py` | 130 | 16 |
+| `docs/CHANGELOG.md` | 24 | 0 |
+| `docs/specs/README.md`, `SPEC_E2_recovery_mode.md`, `SPEC_G2_platform_users.md`, `SPEC_E4_per_pod_backup_rotation.md` (version cells) | 6 | 6 |
+| `local-development/tests/test_chart_backup_offsite.py` | 138 | 16 |
 | `local-development/tests/test_offsite_backup_script.py` | 106 | 1 |
 | `local-development/tests/test_values_defaults.py` | 10 | 2 |
 | `local-development/tests/test_chart_pdb.py` | 9 | 6 |
@@ -693,7 +729,7 @@ migration, as SPEC_M1 §5 describes) is not part of this walk.
 
 ## 7. Implementation blocks
 
-Applied in this order: the script (1-5), the templates (6-9), `values.yaml` (10), the documents (11-19), the tests (20-35), the CHANGELOG (36) and the chart version (37). Every block is an edit; no file is created.
+Applied in this order: the script (1-5), the templates (6-9), `values.yaml` (10), the documents (11-19), the tests (20-35), the version cells of the three other specs this chart version passes (36-39), the CHANGELOG (40) and the chart version (41). Every block is an edit; no file is created.
 
 ### Block 1 — charts/group-sync-dashboard/scripts/offsite_backup.py
 
@@ -727,6 +763,7 @@ The pre-upgrade constants, equal to the store's, and `newest_backup` takes the p
 Old text:
 
 ```python
+PATTERN = "gsd-*.db"
 SIDECAR_LINE = re.compile(r"([0-9A-Fa-f]{64})[ \t]+(.+?)\r?\n?")
 PART_SUFFIX = ".part"
 SUM_SUFFIX = ".sha256"
@@ -747,12 +784,12 @@ def newest_backup(source: Path) -> Path:
     if not candidates:
         raise BackupError(
             f"no {PATTERN} under {source}: the dashboard has not written a backup yet "
-            f"(it takes one on its first poll), or config.backup is off"
 ```
 
 New text:
 
 ```python
+PATTERN = "gsd-*.db"
 #: The pre-upgrade copies (#301): beside the database, outside PATTERN, the newest by name. Kept to the
 #: count the store keeps on the volume (gsd/store.py PRE_UPGRADE_KEEP; a test holds the two equal).
 PRE_UPGRADE_PATTERN = "pre-upgrade-*.db"
@@ -778,7 +815,6 @@ def newest_backup(source: Path, pattern: str = PATTERN) -> Path:
     if not candidates:
         raise BackupError(
             f"no {pattern} under {source}: the dashboard has not written a backup yet "
-            f"(it takes one on its first poll), or config.backup is off"
 ```
 
 ### Block 3 — charts/group-sync-dashboard/scripts/offsite_backup.py
@@ -790,6 +826,7 @@ def newest_backup(source: Path, pattern: str = PATTERN) -> Path:
 Old text:
 
 ```python
+
 def prune(dest: Path, keep: int) -> int:
     """Store.backup's rule: sorted(glob)[:-keep] goes. 0 keeps everything. Sidecars follow their
     copies; a sidecar whose copy is gone, and any .part a killed run left, go too (review of B1)."""
@@ -840,12 +877,12 @@ def ship(source: Path, dest: Path, keep: int) -> int:
         published = False
         try:
             source_digest, size = copy_hashed(newest, part)
-            # Verify what the DESTINATION persisted, not only what was read: a copy the storage
 ```
 
 New text:
 
 ```python
+
 def prune(dest: Path, keep: int, pattern: str = PATTERN) -> int:
     """Store.backup's rule: sorted(glob)[:-keep] goes. 0 keeps everything. Sidecars follow their
     copies; a sidecar whose copy is gone, and any .part a killed run left, go too (review of B1)."""
@@ -903,7 +940,6 @@ def ship(source: Path, dest: Path, keep: int, pattern: str = PATTERN, *, require
                 if recorded != source_digest:
                     raise BackupError(f"{newest}: the bytes read hash to {source_digest}, but its sidecar on the "
                                       f"volume records {recorded or 'no digest'}; it is not the copy the store verified")
-            # Verify what the DESTINATION persisted, not only what was read: a copy the storage
 ```
 
 ### Block 4 — charts/group-sync-dashboard/scripts/offsite_backup.py
@@ -915,6 +951,7 @@ The re-pick and the prune use the pass's pattern; `ship_pre_upgrade`, the second
 Old text:
 
 ```python
+        try:
             later = newest_backup(source)
         except BackupError:
             later = newest
@@ -930,12 +967,12 @@ Old text:
     removed = prune(dest, keep)
     print(f"pruned {removed} older cop{'y' if removed == 1 else 'ies'} (keep={keep})")
     return 0
-
 ```
 
 New text:
 
 ```python
+        try:
             later = newest_backup(source, pattern)
         except BackupError:
             later = newest
@@ -962,7 +999,6 @@ def ship_pre_upgrade(source: Path, dest: Path) -> int:
               f"upgrades the schema)")
         return 0
     return ship(source, dest, PRE_UPGRADE_KEEP, PRE_UPGRADE_PATTERN, require_source_sidecar=True)
-
 ```
 
 ### Block 5 — charts/group-sync-dashboard/scripts/offsite_backup.py
@@ -974,6 +1010,7 @@ def ship_pre_upgrade(source: Path, dest: Path) -> int:
 Old text:
 
 ```python
+    parser.add_argument("--check", type=Path, metavar="FILE", help="verify one copy and exit")
     args = parser.parse_args(argv)
     try:
         if args.check is not None:
@@ -981,12 +1018,12 @@ Old text:
         if args.source is None or args.dest is None:
             parser.error("--source and --dest are required unless --check is given")
         return ship(args.source, args.dest, args.keep)
-    except BackupError as exc:
 ```
 
 New text:
 
 ```python
+    parser.add_argument("--check", type=Path, metavar="FILE", help="verify one copy and exit")
     parser.add_argument("--pre-upgrade-source", type=Path, metavar="DIR",
                         help=f"also ship the newest {PRE_UPGRADE_PATTERN} under DIR to <dest>/{PRE_UPGRADE_DIR}, "
                              f"keeping {PRE_UPGRADE_KEEP}")
@@ -1005,7 +1042,6 @@ def run_pass(step) -> int:
     """One pass: its return code, or 1 with the reason on stderr."""
     try:
         return step()
-    except BackupError as exc:
 ```
 
 ### Block 6 — charts/group-sync-dashboard/templates/_helpers.tpl
@@ -1093,6 +1129,7 @@ The header names the three states; the file renders when `gsd.offsiteOn` says so
 Old text:
 
 ```yaml
+Off-volume backup: the other half of config.backup. See values.yaml under `backup:` for the
 decisions; this file models the interactions and renders, when enabled, a ServiceAccount, a
 ConfigMap and a CronJob — plus the destination claim and its one-shot bind Job when the chart
 creates that claim (five objects), none of those two for an existing claim or S3 (three).
@@ -1134,12 +1171,12 @@ pass, both reviewers). */}}
 {{- if eq $mode "ReadWriteOncePod" }}
 {{- fail "backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one." }}
 {{- end }}
-{{- if not (has $type (list "pvc" "s3")) }}
 ```
 
 New text:
 
 ```yaml
+Off-volume backup: the other half of config.backup. See values.yaml under `backup:` for the
 decisions; this file models the interactions and renders, when on (gsd.offsiteOn: by default
 wherever it can work), a ServiceAccount, a ConfigMap and a CronJob — plus the destination claim
 and its one-shot bind Job when the chart creates that claim (five objects), none of those two for
@@ -1171,7 +1208,6 @@ stable name is a refused patch, not a no-op; and the chart version, so a change 
 fixed content (the command, the mounts) in a new chart also renames the Job (review of B1, second
 pass, both reviewers). */}}
 {{- $bindHash := printf "%s|%s|%s|%s|%s|%s|%s|%s|%s" .Chart.Version (include "gsd.image" .) .Values.image.pullPolicy (toYaml .Values.image.pullSecrets) (toYaml $o.resources) (toYaml .Values.securityContext) (toYaml .Values.podSecurityContext) (toYaml .Values.nodeSelector) (toYaml .Values.tolerations) | sha256sum | trunc 8 }}
-{{- if not (has $type (list "pvc" "s3")) }}
 ```
 
 ### Block 8 — charts/group-sync-dashboard/templates/backup-offsite.yaml
@@ -1200,25 +1236,62 @@ New text:
 
 ### Block 9 — charts/group-sync-dashboard/templates/monitoring.yaml
 
-The two alerts follow the same helper (§3.1, T304-12).
+The two alerts follow the same helper (§3.1, T304-12), and the stale alert's description names both passes: a run fails when either fails (§3.6; the review's N1).
 
 <!-- block: charts/group-sync-dashboard/templates/monitoring.yaml | edit -->
 
 Old text:
 
 ```yaml
+              pod log for the cause.
         {{- if .Values.backup.offsite.enabled }}
 
         # The app cannot see its own CronJob, so these two read kube-state-metrics. On
+        # OpenShift the platform stack scrapes it for every namespace and user-workload rules
+        # are evaluated against the Thanos querier that federates it, so the series is
+        # normally visible here. Where kube-state-metrics is absent the second rule fires and
+        # stays firing — an alert that could never fire would be indistinguishable from
+        # healthy, which is the GroupSyncDashboardNotPolling lesson applied to a Job.
+        - alert: GroupSyncDashboardOffsiteBackupStale
+          expr: >-
+            (time() - max(kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="{{ include "gsd.fullname" . }}-backup-offsite"}))
+              > {{ .Values.monitoring.prometheusRule.offsiteBackupStaleSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.offsiteBackupStale }}
+          labels: {severity: critical}
+          annotations:
+            summary: "The off-volume backup CronJob has not succeeded within the expected window"
+            description: >-
+              {{ include "gsd.fullname" . }}-backup-offsite last succeeded
+              {{ `{{ $value | humanizeDuration }}` }} ago — at least two schedule slots. The
+              on-volume copies still land on the claim they protect; nothing newer is off it.
 ```
 
 New text:
 
 ```yaml
+              pod log for the cause.
         {{- if eq (include "gsd.offsiteOn" .) "true" }}
 
         # Rendered exactly when the offsite CronJob is: one helper decides both.
         # The app cannot see its own CronJob, so these two read kube-state-metrics. On
+        # OpenShift the platform stack scrapes it for every namespace and user-workload rules
+        # are evaluated against the Thanos querier that federates it, so the series is
+        # normally visible here. Where kube-state-metrics is absent the second rule fires and
+        # stays firing — an alert that could never fire would be indistinguishable from
+        # healthy, which is the GroupSyncDashboardNotPolling lesson applied to a Job.
+        - alert: GroupSyncDashboardOffsiteBackupStale
+          expr: >-
+            (time() - max(kube_cronjob_status_last_successful_time{namespace="{{ .Release.Namespace }}",cronjob="{{ include "gsd.fullname" . }}-backup-offsite"}))
+              > {{ .Values.monitoring.prometheusRule.offsiteBackupStaleSeconds }}
+          for: {{ .Values.monitoring.prometheusRule.for.offsiteBackupStale }}
+          labels: {severity: critical}
+          annotations:
+            summary: "The off-volume backup CronJob has not succeeded within the expected window"
+            description: >-
+              {{ include "gsd.fullname" . }}-backup-offsite last succeeded
+              {{ `{{ $value | humanizeDuration }}` }} ago — at least two schedule slots. A run
+              fails when either of its passes fails: nothing newer is off the volume, or, at one
+              replica, the newest pre-upgrade copy is refused while the six-hourly copies still ship.
 ```
 
 ### Block 10 — charts/group-sync-dashboard/values.yaml
@@ -1230,6 +1303,7 @@ The comment states the three words, the default destination's class, and the pre
 Old text:
 
 ```yaml
+#
 # OFF BY DEFAULT because it needs a destination the chart cannot choose for you — a second
 # claim on a DIFFERENT StorageClass, or a bucket and a credential — and a CronJob rendered with
 # nowhere to write is a red Job on every schedule. Nothing else about it is optional once on:
@@ -1270,12 +1344,12 @@ Old text:
 backup:
   offsite:
     enabled: false
-    # Cron, in the controller manager's time zone. Every six hours, to match
 ```
 
 New text:
 
 ```yaml
+#
 # ON WHEREVER IT CAN WORK. `enabled` is read as a word, one of three:
 #   ""     (the default) on, unless the copy cannot work here; then nothing renders and nothing
 #          fails. It cannot work with: persistence off; config.backup off, or an empty
@@ -1333,18 +1407,18 @@ New text:
 backup:
   offsite:
     enabled: ""    # "" on wherever it can work | true on, refusing what cannot work | false off
-    # Cron, in the controller manager's time zone. Every six hours, to match
 ```
 
 ### Block 11 — charts/group-sync-dashboard/README.md
 
-The section's opening paragraph and the `enabled` row.
+The section's opening paragraph, with what a cluster without a default StorageClass does (the review's F6), and the `enabled` row.
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
 
 Old text:
 
 ```text
+
 **Off by default** — it needs a destination the chart cannot choose for you. Once on, the copy is
 hashed, opened and integrity-checked before it counts, and the Job fails loudly otherwise.
 Restore and verification: [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
@@ -1352,20 +1426,22 @@ Restore and verification: [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_
 | Key | Default | Notes |
 |---|---|---|
 | `backup.offsite.enabled` | `false` | renders a CronJob, a ConfigMap with `scripts/offsite_backup.py`, a grant-less ServiceAccount, and (type `pvc`, no `existingClaim`) a second PVC. **Refused** with `persistence.enabled=false`, `config.backup.enabled=false`, a `config.backup.dir` outside `/data/`, or a `ReadWriteOncePod` data volume |
-| `backup.offsite.schedule` | `"15 */6 * * *"` | cron; match `config.backup.intervalHours`. The app's backups run on a timer from pod start, so there is nothing to align to |
 ```
 
 New text:
 
 ```text
+
 **On wherever it can work.** `backup.offsite.enabled` is read as a word: empty (the default) renders
 the CronJob unless the copy cannot work in this release, and then renders nothing and fails nothing;
 `true` renders it and refuses those combinations with the reason; `false` turns it off (a quoted
 `"false"` too); any other word refuses the render. Set it in the release's values file and roll it out
 through the release's deployment pipeline. The default destination is a 5Gi claim on the cluster's
 default StorageClass, which is off the volume but not necessarily off the storage: name a different
-class in `destination.pvc.storageClass` for that. The copy is hashed, opened and integrity-checked
-before it counts, and the Job fails loudly otherwise. At one replica with the `pvc` destination the
+class in `destination.pvc.storageClass` for that. A cluster with no default StorageClass leaves the claim
+Pending, and its bind Job fails after 600 s, so the rollout reports a failure until
+`destination.pvc.storageClass` names a class. The copy is hashed, opened and integrity-checked before it
+counts, and the Job fails loudly otherwise. At one replica with the `pvc` destination the
 same run also ships the newest pre-upgrade copy ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies))
 to `/offsite/pre-upgrade`, keeping three. Restore and verification:
 [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
@@ -1373,7 +1449,6 @@ to `/offsite/pre-upgrade`, keeping three. Restore and verification:
 | Key | Default | Notes |
 |---|---|---|
 | `backup.offsite.enabled` | `""` | renders a CronJob, a ConfigMap with `scripts/offsite_backup.py`, a grant-less ServiceAccount, and (type `pvc`, no `existingClaim`) a second PVC with its bind Job. Empty: **nothing renders**, and nothing fails, with `persistence.enabled=false`, `config.backup.enabled=false`, a `config.backup.dir` that is empty or outside `/data/`, `persistence.existingClaim` without `persistence.accessMode`, or a `ReadWriteOncePod` data volume. `true`: each of those is **refused**. `false`: off. Any other word is refused |
-| `backup.offsite.schedule` | `"15 */6 * * *"` | cron; match `config.backup.intervalHours`. The app's backups run on a timer from pod start, so there is nothing to align to |
 ```
 
 ### Block 12 — charts/group-sync-dashboard/README.md
@@ -1385,6 +1460,7 @@ The alert count in the `monitoring.prometheusRule.enabled` row and the stale-thr
 Old text:
 
 ```text
+| `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
 | `monitoring.prometheusRule.enabled` | `true` | **seventeen** alerts — two of them render only with `reporting.enabled` (the default) — nineteen with `backup.offsite.enabled`; see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
@@ -1393,12 +1469,12 @@ Old text:
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
 | `monitoring.prometheusRule.offsiteBackupStaleSeconds` | `43200` | seconds since the off-volume CronJob last succeeded (`kube_cronjob_status_last_successful_time`, kube-state-metrics). Two slots of `backup.offsite.schedule`. Rendered only with `backup.offsite.enabled` |
-| `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 ```
 
 New text:
 
 ```text
+| `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
 | `monitoring.prometheusRule.enabled` | `true` | **nineteen** alerts — two of them render only with `reporting.enabled` (the default), two only where the offsite CronJob renders (the default, which steps aside where it cannot work); see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
@@ -1407,18 +1483,18 @@ New text:
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
 | `monitoring.prometheusRule.offsiteBackupStaleSeconds` | `43200` | seconds since the off-volume CronJob last succeeded (`kube_cronjob_status_last_successful_time`, kube-state-metrics). Two slots of `backup.offsite.schedule`. Rendered only where the offsite CronJob renders |
-| `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 ```
 
 ### Block 13 — charts/group-sync-dashboard/README.md
 
-The alerts heading keeps the cited words "The seventeen alerts"; the two offsite rows say when they render.
+The alerts heading keeps the cited words "The seventeen alerts"; the two offsite rows say when they render, and the stale row names both passes (the review's N1).
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
 
 Old text:
 
 ```text
+
 #### The seventeen alerts (nineteen with `backup.offsite`)
 
 | Alert | Fires on | `for` |
@@ -1439,12 +1515,12 @@ Old text:
 | `GroupSyncDashboardReportSnapshotStale` | `gsd_report_snapshot_age_seconds` above four snapshot intervals — the dashboard's leader is not writing copies, so a report would print stale data with an honest "data as of" line. Rendered only with `reporting.enabled` | `for.reportSnapshot`, `30m` |
 | `GroupSyncDashboardOffsiteBackupStale` | *(`backup.offsite.enabled` only)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume | `for.offsiteBackupStale`, `30m` |
 | `GroupSyncDashboardOffsiteBackupUnobserved` | *(`backup.offsite.enabled` only)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
-| `GroupSyncDashboardPodThrottled` | a pod's throttled share of scheduler periods above `kpi.thresholds.throttledPercent` (1 %) over 15m — the saturation signal the KPI page marks amber; raise its CPU limit | `for.podThrottled`, `15m` |
 ```
 
 New text:
 
 ```text
+
 #### The seventeen alerts, and two more wherever the offsite CronJob renders (the default)
 
 | Alert | Fires on | `for` |
@@ -1463,9 +1539,8 @@ New text:
 | `GroupSyncDashboardBackupStale` | the newest file in `backupDir` is older than `backupStaleSeconds` — the only copy of the un-refetchable history has stopped being taken | `for.backupStale`, `30m` |
 | `GroupSyncDashboardReportUsagePullFailing` | the dashboard's poller could not pull the report service's usage feed (token mismatch, Service/TLS, or a shape change) and has not succeeded in the window — runs are not lost, the Usage tab's Reports table stops advancing. Rendered only with `reporting.enabled` | `for.reportPull`, `30m` |
 | `GroupSyncDashboardReportSnapshotStale` | `gsd_report_snapshot_age_seconds` above four snapshot intervals — the dashboard's leader is not writing copies, so a report would print stale data with an honest "data as of" line. Rendered only with `reporting.enabled` | `for.reportSnapshot`, `30m` |
-| `GroupSyncDashboardOffsiteBackupStale` | *(only where the offsite CronJob renders)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume | `for.offsiteBackupStale`, `30m` |
+| `GroupSyncDashboardOffsiteBackupStale` | *(only where the offsite CronJob renders)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume, or the newest pre-upgrade copy is refused (a run fails when either pass fails; the pod's log says which) | `for.offsiteBackupStale`, `30m` |
 | `GroupSyncDashboardOffsiteBackupUnobserved` | *(only where the offsite CronJob renders)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
-| `GroupSyncDashboardPodThrottled` | a pod's throttled share of scheduler periods above `kpi.thresholds.throttledPercent` (1 %) over 15m — the saturation signal the KPI page marks amber; raise its CPU limit | `for.podThrottled`, `15m` |
 ```
 
 ### Block 14 — docs/RUNBOOK_backup_restore.md
@@ -1477,20 +1552,20 @@ The opening list: on by default, and the pre-upgrade copy.
 Old text:
 
 ```text
+  (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim;
 * **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
   claim or to object storage, with a `.sha256` sidecar, after an integrity check
   (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`);
-* **pre-upgrade** — from the application release after 0.36.0, before a new image upgrades the database it
 ```
 
 New text:
 
 ```text
+  (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim;
 * **off-volume** — `backup.offsite` (on by default wherever it can work) copies the newest of those to a
   second claim or to object storage, with a `.sha256` sidecar, after an integrity check
   (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`), and, at one replica with the second
   claim, the newest pre-upgrade copy as well (§6);
-* **pre-upgrade** — from the application release after 0.36.0, before a new image upgrades the database it
 ```
 
 ### Block 15 — docs/RUNBOOK_backup_restore.md
@@ -1514,7 +1589,7 @@ no pre-upgrade-*.db under /data/pre-upgrade: nothing to ship (one is written onl
 
 ### Block 16 — docs/RUNBOOK_backup_restore.md
 
-§2 explains the second pass.
+§2 explains the second pass, and how a refused pre-upgrade copy stops failing every run (the review's N1).
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -1534,7 +1609,11 @@ has written a pre-upgrade copy (§6), that line is replaced by the pass's own th
 `/data/pre-upgrade/pre-upgrade-….db -> /offsite/pre-upgrade/pre-upgrade-….db`, its `integrity_check ok`
 and `pruned 0 older copies (keep=3)`. The pass checks the copy against the `.sha256` beside it first and
 keeps the newest three. The two passes are independent: a failure in one does not stop the other, and
-either fails the Job.
+either fails the Job. A pass that prints `ERROR: … it is not the copy the store verified` has found a copy whose
+bytes no longer match the checksum the dashboard wrote when it took it: do not restore from it. Every run fails on
+it, and `GroupSyncDashboardOffsiteBackupStale` fires while the six-hourly copies still ship, until a newer upgrade
+writes a newer copy or that copy and its `.sha256` are moved out of `pre-upgrade/` (to `/data/pre-restore/`, as §6
+does); the next run then ships the newest copy that verifies.
 
 A second run straight after says `already shipped: … matches its sidecar; nothing to copy`.
 ```
@@ -1548,19 +1627,19 @@ A second run straight after says `already shipped: … matches its sidecar; noth
 Old text:
 
 ```text
+  `/data/<pod-name>/pre-upgrade/` when `replicaCount` is greater than 1. It is written even when scheduled
   backups are disabled, and the six-hourly rotation, the offsite CronJob, the backup metric and the KPI size
   line never include it.
-* **Name.** `pre-upgrade-<UTC stamp>-schema-<from>-to-<to>-<pod>.db`. The two numbers are database schema
 ```
 
 New text:
 
 ```text
+  `/data/<pod-name>/pre-upgrade/` when `replicaCount` is greater than 1. It is written even when scheduled
   backups are disabled, and the six-hourly rotation, the backup metric and the KPI size line never include it.
 * **Off the volume.** At one replica, the offsite CronJob's `pvc` destination also receives the newest copy,
   in `/offsite/pre-upgrade/` under the same name, checked against its `.sha256` first; the newest three are
   kept there (§2). The copies of the six-hourly backups in `/offsite` never include it.
-* **Name.** `pre-upgrade-<UTC stamp>-schema-<from>-to-<to>-<pod>.db`. The two numbers are database schema
 ```
 
 ### Block 18 — docs/reference-architecture.md
@@ -1572,17 +1651,17 @@ The backup paragraph names the second pass.
 Old text:
 
 ```text
+directory while hashing it, opens the *copy* with `immutable=1` and runs `PRAGMA
 integrity_check`, then writes a `.sha256` sidecar and prunes to `keep`. Object storage goes
-through an operator-supplied CLI image with a credential the chart never renders; the dashboard
 ```
 
 New text:
 
 ```text
+directory while hashing it, opens the *copy* with `immutable=1` and runs `PRAGMA
 integrity_check`, then writes a `.sha256` sidecar and prunes to `keep`. At one replica a second pass
 does the same for the newest pre-upgrade copy, into its own directory
 (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship_pre_upgrade`). Object storage goes
-through an operator-supplied CLI image with a credential the chart never renders; the dashboard
 ```
 
 ### Block 19 — docs/reference-architecture.md
@@ -1594,6 +1673,7 @@ The refusal table: what refuses only under `true`, the access-mode row split, th
 Old text:
 
 ```text
+`templates/backup-offsite.yaml` adds its own, all about mounting one claim twice and about where
 the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup.enabled is not a value`):
 
 | Combination | Refused because |
@@ -1601,12 +1681,12 @@ the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup
 | `backup.enabled` set at all | the on-volume switch is `config.backup.enabled`; a key that silently did nothing would look like a backup that was configured |
 | `backup.offsite.enabled` with `persistence.enabled=false`, `config.backup.enabled=false`, or `config.backup.dir` outside `/data/` | nothing to ship, a torn copy of the live file, or a directory the CronJob cannot see |
 | `backup.offsite.enabled` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
-| `destination.type` not `pvc`/`s3`; `destination.pvc.existingClaim` equal to the data claim; `keep < 0`; `s3` without a Secret or an image | a destination that is not one, a copy on the volume it protects, an unbounded negative, or credentials/tools the chart refuses to invent |
 ```
 
 New text:
 
 ```text
+`templates/backup-offsite.yaml` adds its own, all about mounting one claim twice and about where
 the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup.enabled is not a value`).
 The second to fourth rows refuse only an explicit `true`: the default, an empty `backup.offsite.enabled`, renders
 no CronJob in those combinations instead (`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.offsiteBlocker`):
@@ -1618,7 +1698,6 @@ no CronJob in those combinations instead (`charts/group-sync-dashboard/templates
 | `backup.offsite.enabled: true` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
 | `backup.offsite.enabled: true` with `persistence.existingClaim` and no `persistence.accessMode` | the chart cannot read the live claim's mode, and one derived from `replicaCount` may not be the claim's |
 | `backup.offsite.enabled` set to a word other than `true`, `false` or empty | the switch is compared as a word, so a quoted `"false"` is off; a misspelt word must not decide whether the copy leaves the volume |
-| `destination.type` not `pvc`/`s3`; `destination.pvc.existingClaim` equal to the data claim; `keep < 0`; `s3` without a Secret or an image | a destination that is not one, a copy on the volume it protects, an unbounded negative, or credentials/tools the chart refuses to invent |
 ```
 
 ### Block 20 — local-development/tests/test_offsite_backup_script.py
@@ -1630,16 +1709,16 @@ Imports for the pre-upgrade tests.
 Old text:
 
 ```python
-from gsd.store import Store
 
+from gsd.store import Store
 ```
 
 New text:
 
 ```python
+
 import gsd.store as store_module
 from gsd.store import KNOWN_SCHEMA_VERSION, Store
-
 ```
 
 ### Block 21 — local-development/tests/test_offsite_backup_script.py
@@ -2094,34 +2173,35 @@ The `s3` stage ships the six-hourly copy only (Orchestrator's notes, 4).
 Old text:
 
 ```python
-        assert upload["image"] == "public.ecr.aws/aws-cli/aws-cli:2.17.0"
+        assert stage["command"][stage["command"].index("--keep") + 1] == "0"
 ```
 
 New text:
 
 ```python
+        assert stage["command"][stage["command"].index("--keep") + 1] == "0"
         assert "--pre-upgrade-source" not in stage["command"], "the s3 destination ships the six-hourly copy only"
-        assert upload["image"] == "public.ecr.aws/aws-cli/aws-cli:2.17.0"
 ```
 
 ### Block 25 — local-development/tests/test_chart_backup_offsite.py
 
-T304-12 replaces `test_the_two_rules_render_only_with_the_cronjob`: the rules render exactly when the CronJob does, in every state.
+T304-12 replaces `test_the_two_rules_render_only_with_the_cronjob`: the rules render exactly when the CronJob does, in every state; and the stale alert and the runbook name a refused pre-upgrade copy (the review's N1).
 
 <!-- block: local-development/tests/test_chart_backup_offsite.py | edit -->
 
 Old text:
 
 ```python
+
     def test_the_two_rules_render_only_with_the_cronjob(self):
         assert "GroupSyncDashboardOffsiteBackupStale" not in self._rules()
         rules = self._rules(**ON)
-        stale = rules["GroupSyncDashboardOffsiteBackupStale"]
 ```
 
 New text:
 
 ```python
+
     @pytest.mark.parametrize("case", ["default", "true", "false", "quoted false", *sorted(CANNOT_WORK)])
     def test_the_two_rules_render_exactly_when_the_cronjob_does(self, case):
         """T304-12: one helper decides both, so they cannot drift apart in any state."""
@@ -2141,9 +2221,16 @@ New text:
         assert sorted(_offsite_alerts(out)) == expected
         assert bool(cronjob) is (case in ("default", "true"))
 
+    def test_a_refused_pre_upgrade_copy_is_named_by_the_alert_and_the_runbook(self):
+        """A run fails when either pass fails (§3.6): the stale alert must not say that nothing newer left the
+        volume, and the runbook must say how a refused pre-upgrade copy stops failing every run."""
+        description = self._rules()["GroupSyncDashboardOffsiteBackupStale"]["annotations"]["description"]
+        assert "pre-upgrade copy is refused" in description and "nothing newer is off it." not in description
+        runbook = (CHART.parents[1] / "docs" / "RUNBOOK_backup_restore.md").read_text().split("## 3.", 1)[0]
+        assert "it is not the copy the store verified" in runbook and "/data/pre-restore/" in runbook
+
     def test_the_two_rules_watch_the_cronjob(self):
         rules = self._rules()
-        stale = rules["GroupSyncDashboardOffsiteBackupStale"]
 ```
 
 ### Block 26 — local-development/tests/test_values_defaults.py
@@ -2155,14 +2242,14 @@ New text:
 Old text:
 
 ```python
+    "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
     "backup.offsite.enabled": "B1: needs a destination the chart cannot choose (a second claim or a bucket and a credential); a CronJob with nowhere to write is a red Job every six hours",
-    "session.idleTimeout.enabled": "C4: it signs people out — a session policy the platform team chooses",
 ```
 
 New text:
 
 ```python
-    "session.idleTimeout.enabled": "C4: it signs people out — a session policy the platform team chooses",
+    "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
 ```
 
 ### Block 27 — local-development/tests/test_values_defaults.py
@@ -2218,18 +2305,18 @@ The check reads `ON_WHERE_IT_CAN_WORK`.
 Old text:
 
 ```python
+    for key in FLIPPED:
         assert values[key] is True, key
-
 ```
 
 New text:
 
 ```python
+    for key in FLIPPED:
         if key in ON_WHERE_IT_CAN_WORK:
             assert values[key] == "", key
         else:
             assert values[key] is True, key
-
 ```
 
 ### Block 30 — local-development/tests/test_chart_pdb.py
@@ -2241,6 +2328,7 @@ T304-16: every Job and CronJob pod template stays outside the budget, the offsit
 Old text:
 
 ```python
+        assert _matches(selector, deployment["spec"]["template"]["metadata"]["labels"])
         jobs = [d for d in docs if d.get("kind") == "Job"]
         assert len(jobs) == 1, [d["metadata"]["name"] for d in jobs]   # secrets mint only
         for job in jobs:
@@ -2252,12 +2340,12 @@ Old text:
             # Still identifiable as this release's pod, just not as the workload.
             assert labels["app.kubernetes.io/instance"] == "t"
             assert labels["app.kubernetes.io/component"] == "secrets-mint", labels
-
 ```
 
 New text:
 
 ```python
+        assert _matches(selector, deployment["spec"]["template"]["metadata"]["labels"])
         # Every Job-owned pod template in the default render: the secrets mint, and the offsite
         # claim's bind Job and CronJob, which render by default since #304.
         pods = {d["metadata"]["name"]: d["spec"]["template"]["metadata"]["labels"] for d in docs if d.get("kind") == "Job"}
@@ -2272,7 +2360,6 @@ New text:
             )
             # Still identifiable as this release's pod, just not as the workload.
             assert labels["app.kubernetes.io/instance"] == "t"
-
 ```
 
 ### Block 31 — local-development/tests/test_chart_reporting.py
@@ -2284,16 +2371,17 @@ Both CronJobs, the report schedule's and the offsite one, stay outside both budg
 Old text:
 
 ```python
+    assert _matches(monitor["spec"]["selector"]["matchLabels"], service["metadata"]["labels"])
     cronjobs = [d for d in docs if d.get("kind") == "CronJob"]
     assert len(cronjobs) == 1
     cl = cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
     assert not _matches(ds, cl) and not _matches(rs, cl)
-
 ```
 
 New text:
 
 ```python
+    assert _matches(monitor["spec"]["selector"]["matchLabels"], service["metadata"]["labels"])
     # The report schedule's CronJob, and the offsite CronJob that renders by default (#304): neither
     # pod is selected by either budget.
     cronjobs = [d for d in docs if d.get("kind") == "CronJob"]
@@ -2301,7 +2389,6 @@ New text:
     for cronjob in cronjobs:
         cl = cronjob["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
         assert not _matches(ds, cl) and not _matches(rs, cl)
-
 ```
 
 ### Block 32 — local-development/tests/test_chart_reporting.py
@@ -2313,15 +2400,15 @@ The report CronJob by name.
 Old text:
 
 ```python
+    assert labels["app.kubernetes.io/name"].endswith("-report") and "app" not in labels
     cron = next(d for d in docs if d.get("kind") == "CronJob")
-    assert cron["metadata"]["labels"]["app.kubernetes.io/component"] == "report-schedule"
 ```
 
 New text:
 
 ```python
+    assert labels["app.kubernetes.io/name"].endswith("-report") and "app" not in labels
     cron = next(d for d in docs if d.get("kind") == "CronJob" and d["metadata"]["name"] == "t-group-sync-dashboard-report-weekly")
-    assert cron["metadata"]["labels"]["app.kubernetes.io/component"] == "report-schedule"
 ```
 
 ### Block 33 — local-development/tests/test_chart_reporting.py
@@ -2333,15 +2420,15 @@ The report CronJob by name, in the quoted-false test.
 Old text:
 
 ```python
+        docs = [d for d in _yaml.safe_load_all(done.stdout) if d]
         cron = next(d for d in docs if d.get("kind") == "CronJob")
-        env = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
 ```
 
 New text:
 
 ```python
+        docs = [d for d in _yaml.safe_load_all(done.stdout) if d]
         cron = next(d for d in docs if d.get("kind") == "CronJob" and d["metadata"]["name"] == "t-group-sync-dashboard-report-a")
-        env = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
 ```
 
 ### Block 34 — local-development/tests/test_chart_route.py
@@ -2353,19 +2440,19 @@ New text:
 Old text:
 
 ```python
+    Service, ServiceAccount, Deployment and PDB, all named `…-report`; these tests are about the
     dashboard's, so the report service's are set aside first (C3), and so is the secrets-mint
     hook's identity (0.37.0)."""
     found = [o for o in objects(out) if o["kind"] == kind and not o["metadata"]["name"].endswith(("-report", "-secrets-mint"))]
-    assert len(found) == 1, f"expected exactly one {kind}, found {len(found)}"
 ```
 
 New text:
 
 ```python
+    Service, ServiceAccount, Deployment and PDB, all named `…-report`; these tests are about the
     dashboard's, so the report service's are set aside first (C3), and so are the secrets-mint
     hook's identity (0.37.0) and the offsite CronJob's, which renders by default (#304)."""
     found = [o for o in objects(out) if o["kind"] == kind and not o["metadata"]["name"].endswith(("-report", "-secrets-mint", "-backup-offsite"))]
-    assert len(found) == 1, f"expected exactly one {kind}, found {len(found)}"
 ```
 
 ### Block 35 — local-development/tests/test_chart_route.py
@@ -2377,20 +2464,104 @@ The same in the no-ServiceAccount test.
 Old text:
 
 ```python
+        # mounted — templates/report-serviceaccount.yaml), which this switch does not govern (C3).
         dashboard_sas = [o for o in objects(out) if o["kind"] == "ServiceAccount" and not o["metadata"]["name"].endswith(("-report", "-secrets-mint"))]
-        assert not dashboard_sas and "Route" in kinds(out)
 ```
 
 New text:
 
 ```python
+        # mounted — templates/report-serviceaccount.yaml), which this switch does not govern (C3).
         dashboard_sas = [o for o in objects(out) if o["kind"] == "ServiceAccount" and not o["metadata"]["name"].endswith(("-report", "-secrets-mint", "-backup-offsite"))]
-        assert not dashboard_sas and "Route" in kinds(out)
 ```
 
-### Block 36 — docs/CHANGELOG.md
+### Block 36 — docs/specs/SPEC_E2_recovery_mode.md
 
-The CHANGELOG entry with the upgrade note, first under `## Unreleased` (`local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release` holds the chart version to it).
+SPEC_E2's version cell moves above the chart this change ships: chart 0.61.0 (the Version note; the review's F1).
+
+<!-- block: docs/specs/SPEC_E2_recovery_mode.md | edit -->
+
+Old text:
+
+```text
+| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
+| Version on release | chart 0.60.0 (chart only) |
+```
+
+New text:
+
+```text
+| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
+| Version on release | chart 0.61.0 (chart only) |
+```
+
+### Block 37 — docs/specs/SPEC_G2_platform_users.md
+
+SPEC_G2's: app 2.1.0, chart 0.61.0.
+
+<!-- block: docs/specs/SPEC_G2_platform_users.md | edit -->
+
+Old text:
+
+```text
+| Release | — (post-programme; its own PR and its own review) |
+| Version on release | app 2.1.0, chart 0.60.0 |
+```
+
+New text:
+
+```text
+| Release | — (post-programme; its own PR and its own review) |
+| Version on release | app 2.1.0, chart 0.61.0 |
+```
+
+### Block 38 — docs/specs/SPEC_E4_per_pod_backup_rotation.md
+
+SPEC_E4's: app 2.1.0, chart 0.60.1.
+
+<!-- block: docs/specs/SPEC_E4_per_pod_backup_rotation.md | edit -->
+
+Old text:
+
+```text
+| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
+| Version on release | app 2.1.0, chart 0.59.26 |
+```
+
+New text:
+
+```text
+| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
+| Version on release | app 2.1.0, chart 0.60.1 |
+```
+
+### Block 39 — docs/specs/README.md
+
+The same three cells in the index, which `local-development/tests/test_specs_index.py#test_the_index_row_matches_the_spec_header` holds equal to the headers.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| G1 | [`SPEC_G1_tier_declaration.md`](SPEC_G1_tier_declaration.md) — the access declaration: every route and page names the tier each reader gets, in `ACCESS_CONTROL.md` §3 and §4, and a test proves every cell per persona; SPEC_T1's status follows | G — access declared | — | no version change (tests and docs only) | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) | specified |
+| E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
+| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.60.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
+| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
+```
+
+New text:
+
+```text
+| G1 | [`SPEC_G1_tier_declaration.md`](SPEC_G1_tier_declaration.md) — the access declaration: every route and page names the tier each reader gets, in `ACCESS_CONTROL.md` §3 and §4, and a test proves every cell per persona; SPEC_T1's status follows | G — access declared | — | no version change (tests and docs only) | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) | specified |
+| E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.61.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
+| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.61.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
+| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.60.1 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
+```
+
+### Block 40 — docs/CHANGELOG.md
+
+The CHANGELOG entry with the upgrade note, first under `## Unreleased` (`local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release` holds the chart version to it); a configured destination is used (OB2's F2).
 
 <!-- block: docs/CHANGELOG.md | edit -->
 
@@ -2422,12 +2593,15 @@ New text:
   On a cluster with no default StorageClass the claim stays Pending until
   `backup.offsite.destination.pvc.storageClass` names one. A values file that set an invalid
   `backup.offsite.destination.*` value while offsite was off now fails the render with that value's
-  existing message. To keep offsite off, set `backup.offsite.enabled: false` in the release's values
-  file and roll it out through the release's deployment pipeline.
+  existing message, and a values file that filled in a valid destination (an `s3` stanza with its Secret
+  and image, or a `pvc` existing claim) while `enabled` was left unset now renders that CronJob on the
+  next rollout: a destination that is configured is used. To keep offsite off, set
+  `backup.offsite.enabled: false` in the release's values file and roll it out through the release's
+  deployment pipeline.
 - **The runbook says which card rows are the last poll's (Epic D composition review, K5).** Refresh stores nothing
 ```
 
-### Block 37 — charts/group-sync-dashboard/Chart.yaml
+### Block 41 — charts/group-sync-dashboard/Chart.yaml
 
 The MINOR and its history line; `appVersion` unchanged.
 
@@ -2436,16 +2610,16 @@ The MINOR and its history line; `appVersion` unchanged.
 Old text:
 
 ```yaml
+# are the last poll's, not Refresh's (Epic D composition review, K5).
 version: 0.59.25
-# 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 ```
 
 New text:
 
 ```yaml
+# are the last poll's, not Refresh's (Epic D composition review, K5).
 # CHART 0.60.0 (2026-10-01), MINOR: backup.offsite.enabled defaults to "" (on wherever it can work),
 # read as true, false or empty; the offsite CronJob also ships the newest pre-upgrade copy (#304,
 # SPEC_E5). appVersion unchanged.
 version: 0.60.0
-# 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 ```
