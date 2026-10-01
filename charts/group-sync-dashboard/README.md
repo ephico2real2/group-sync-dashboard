@@ -450,7 +450,10 @@ is on, not in the image, so it runs under the older image a rollback targets; it
 library and opens nothing under `/data`. With `backup.offsite` on its `pvc` destination, the offsite claim
 is mounted read-only at `/offsite`. The pod reads `1/2` ready with the oauth-proxy sidecar (the sidecar is
 ready, the dashboard is not) and `0/1` with the proxy off; the Deployment never reports available, so a
-pipeline step that waits for the rollout reports it failed.
+pipeline step that waits for the rollout reports it failed. A pipeline that rolls a failed rollout back on its
+own (Helm's `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry
+this change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
+restored.
 
 **Nothing is recorded while it is on.** No rule says recovery mode: `GroupSyncDashboardNotPolling` does not
 fire, because its gauge comes from the stopped process and a missing series returns nothing. With

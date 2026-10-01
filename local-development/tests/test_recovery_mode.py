@@ -218,6 +218,17 @@ def test_a_deadline_file_that_cannot_be_read_exits_2_rather_than_restart_the_clo
     assert (tmp_path / "gsd-recovery.json").read_text() == bad
 
 
+@pytest.mark.parametrize("epoch", [1e15, 1e300], ids=["year-out-of-range", "beyond-time_t"])
+def test_a_finite_but_unprintable_started_epoch_is_refused_with_exit_2_not_a_traceback(tmp_path, epoch):
+    """A hand-edited record whose started_epoch is finite but is no instant (a year past 9999, or past
+    time_t) passed the finiteness check and crashed the banner's `kept from this pod's first start at`
+    with a traceback (exit 1); §3.6's table says an unusable file is one line naming it and exit 2."""
+    _record(tmp_path, started_epoch=epoch)
+    done, _ = _run(_env(tmp_path, "1h"))
+    assert done.returncode == 2 and "cannot be used" in done.stdout and "Delete the pod" in done.stdout, done.stdout
+    assert "Traceback" not in done.stderr, done.stderr
+
+
 def test_the_duration_grammar_and_the_printed_spans():
     module = _module()
     assert [module.ttl_seconds(t) for t in ("2h", "90m", "1h30m", "1.5s", "250ms")] == [7200, 5400, 5400, 1.5, 0.25]

@@ -230,8 +230,11 @@ probes:
 # While it is on the pod has no liveness probe, and a readiness probe that cannot pass keeps it
 # out of the Service: READY reads 1/2 (the oauth-proxy sidecar is ready, the dashboard is not; 0/1
 # with the proxy off), the route has no ready endpoint, and the Deployment never reports available,
-# so a pipeline step that waits for the rollout reports it failed. When backup.offsite uses the pvc
-# destination, its claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
+# so a pipeline step that waits for the rollout reports it failed. A pipeline that rolls a failed
+# rollout back on its own (Helm's --rollback-on-failure flag, --atomic in Helm 3, or an equivalent
+# remediation) must not carry this change: the rollback turns recovery mode off by itself and starts
+# the app on a file that may be half restored. When backup.offsite uses the pvc destination, its
+# claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
 #
 # NOTHING IS RECORDED WHILE IT IS ON, and no rule says recovery mode. GroupSyncDashboardNotPolling
 # does not fire: its gauge comes from the stopped process, and a missing series returns nothing.

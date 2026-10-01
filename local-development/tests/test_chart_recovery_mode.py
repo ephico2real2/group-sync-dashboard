@@ -264,3 +264,20 @@ def test_the_only_documented_path_is_the_values_file():
         for sentence in re.split(r"(?<=[.;])\s+", text):
             assert "Argo CD" not in sentence or "revert" in sentence, (name, sentence)
     assert "helm upgrade $REL <chart> -n $NS -f <values-file>" in development and "--set" not in development
+
+
+def test_the_docs_warn_against_a_pipeline_that_rolls_a_failed_rollout_back():
+    """The recovery rollout never becomes ready, so a pipeline that remediates a failed rollout by rolling it
+    back (Helm 4's --rollback-on-failure, Helm 3's --atomic: the release goes back to the revision before, in
+    which the app runs with its liveness probe) turns recovery mode off on its own and starts the app on a
+    file that may be half restored. The three operator texts say so, in words that keep the operator path
+    free of a command line."""
+    runbook = _between((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text(),
+                       "**Recovery mode is the primary path", "**Development and troubleshooting only:**")
+    texts = {"values comment": re.sub(r"\s*\n#\s*", " ", _values_comment()),
+             "README section": _between((CHART / "README.md").read_text(), "### Recovery mode", "\n#"),
+             "runbook": runbook}
+    for name, text in texts.items():
+        text = re.sub(r"\s+", " ", text)                    # the README and the runbook wrap at 110 columns
+        assert "--rollback-on-failure" in text and "--atomic" in text and "half restored" in text, name
+        assert "helm upgrade" not in text.lower(), name

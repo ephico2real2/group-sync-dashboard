@@ -203,6 +203,31 @@ the issue, the epic and the mock. Each is applied in §3 and §7 and held by a t
     thirty-seven rows, and `test_specs_index.py` keeps G1's pin to #239 and excludes E2 by its id, pinned to #303
     the same way (a mutant with the issue mistyped as #330 fails: `AssertionError: ('E2 is #303', '330')`).
 
+17. **The review of PR #518 (2026-10-01, OB2 in Codex's seat) on its head `35a058a8`: C1 to C5 CONFIRMED, two
+    findings, both accepted and written into the blocks here before the code took them.**
+    - **F1 (low), accepted: a finite but out-of-range `started_epoch` crashed the banner with a traceback (exit 1)
+      instead of §3.6's one line naming the file and exit 2.** Evidence: a record with `started_epoch=1e15`
+      exits 1 with `ValueError: year must be in 1..9999, not 31690708`, and `1e300` with
+      `OverflowError: timestamp out of range for platform time_t`; `deadline()` checked `isfinite` only, and the
+      banner's `instant(float(record['started_epoch']))` sits outside the `try`. Reachable only by a hand edit;
+      the outcome (no fresh TTL) was the same, the contract and the `Delete the pod` advice were not. Block 1:
+      `deadline()` also calls `instant(float(kept["started_epoch"]))`, and `run()` also catches `OverflowError`.
+      Block 19: `test_a_finite_but_unprintable_started_epoch_is_refused_with_exit_2_not_a_traceback[year-out-of-range, beyond-time_t]`.
+    - **F2 (medium), accepted: a pipeline that rolls a failed rollout back on its own turns recovery mode off by
+      itself, in the restore window.** Evidence: `helm upgrade --help` (v4.3.0) says `--rollback-on-failure  if
+      set, Helm will rollback the upgrade to previous success release upon failure` (Helm 3 spells it
+      `--atomic`); the recovery Deployment never becomes available (§3.4), so such a pipeline fails at its
+      timeout and rolls back to the revision where the app runs with its liveness probe, which stops the
+      recovery pod and starts the app on a file that may be half restored. Not measured on a cluster. Blocks 10,
+      12 and 14: one sentence each in the values comment, the chart README's recovery section and the
+      runbook's §4 step 2, worded without a command line so `test_the_only_documented_path_is_the_values_file`
+      still holds. Block 20: `test_the_docs_warn_against_a_pipeline_that_rolls_a_failed_rollout_back`.
+    - No other block names the changed text: block 9's ConfigMap reads the script with `.Files.Get`, and block
+      18's CHANGELOG entry does not mention the rollout's failure. §4's counts and §6's measured figures predate
+      this note; after it the two recovery modules read `59 passed` (the three new cases failed before the code
+      took the fix, on the tree of `35a058a8`), and §6's table is updated from `git diff --numstat` of the
+      corrected blocks applied to origin/main `41b30524`.
+
 **Open questions for the operator.** None.
 
 ## 1. The mandate, and what is out of scope
@@ -941,19 +966,19 @@ The offsite mount is not walked: the lab has no offsite CronJob, and #304's walk
 
 | file | added | removed |
 |---|---|---|
-| `charts/group-sync-dashboard/scripts/recovery_mode.py` (new) | 196 | 0 |
+| `charts/group-sync-dashboard/scripts/recovery_mode.py` (new) | 197 | 0 |
 | `charts/group-sync-dashboard/templates/_helpers.tpl` | 24 | 0 |
 | `charts/group-sync-dashboard/templates/deployment.yaml` | 87 | 3 |
 | `charts/group-sync-dashboard/templates/recovery.yaml` (new) | 15 | 0 |
-| `charts/group-sync-dashboard/values.yaml` | 39 | 0 |
+| `charts/group-sync-dashboard/values.yaml` | 42 | 0 |
 | `charts/group-sync-dashboard/Chart.yaml` | 5 | 1 |
-| `charts/group-sync-dashboard/README.md` | 31 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 53 | 3 |
+| `charts/group-sync-dashboard/README.md` | 34 | 0 |
+| `docs/RUNBOOK_backup_restore.md` | 56 | 3 |
 | `docs/CHANGELOG.md` | 18 | 0 |
-| `local-development/tests/test_recovery_mode.py` (new) | 226 | 0 |
-| `local-development/tests/test_chart_recovery_mode.py` (new) | 266 | 0 |
+| `local-development/tests/test_recovery_mode.py` (new) | 237 | 0 |
+| `local-development/tests/test_chart_recovery_mode.py` (new) | 283 | 0 |
 | `local-development/tests/test_values_defaults.py` | 1 | 0 |
-| total | 961 | 7 |
+| total | 999 | 7 |
 
 ## 7. Implementation blocks
 
@@ -1076,6 +1101,7 @@ def deadline(state: Path, ttl: float, ttl_text: str, wall: float, monotonic: flo
         for key in ("started_epoch", "deadline_epoch", "deadline_monotonic"):
             if not math.isfinite(float(kept[key])):
                 raise ValueError(f"{key} is not a finite number")
+        instant(float(kept["started_epoch"]))  # a finite epoch that is no instant is refused here, not as a traceback from the banner
         str(kept["boot_id"])
         return kept, True
     except FileNotFoundError:
@@ -1126,7 +1152,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         record, kept = deadline(state, ttl, ttl_text, time.time(), time.monotonic(), boot)
         left = remaining(record, ttl, time.monotonic(), boot)
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, OverflowError, ValueError, KeyError, TypeError) as exc:
         say(f"the deadline file {state} cannot be used ({type(exc).__name__}: {exc}), so the TTL could not be kept;"
             f" exiting 2. Delete the pod to start a new one with a new TTL")
         return 2
@@ -1488,8 +1514,11 @@ New text:
 # While it is on the pod has no liveness probe, and a readiness probe that cannot pass keeps it
 # out of the Service: READY reads 1/2 (the oauth-proxy sidecar is ready, the dashboard is not; 0/1
 # with the proxy off), the route has no ready endpoint, and the Deployment never reports available,
-# so a pipeline step that waits for the rollout reports it failed. When backup.offsite uses the pvc
-# destination, its claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
+# so a pipeline step that waits for the rollout reports it failed. A pipeline that rolls a failed
+# rollout back on its own (Helm's --rollback-on-failure flag, --atomic in Helm 3, or an equivalent
+# remediation) must not carry this change: the rollback turns recovery mode off by itself and starts
+# the app on a file that may be half restored. When backup.offsite uses the pvc destination, its
+# claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
 #
 # NOTHING IS RECORDED WHILE IT IS ON, and no rule says recovery mode. GroupSyncDashboardNotPolling
 # does not fire: its gauge comes from the stopped process, and a missing series returns nothing.
@@ -1571,7 +1600,10 @@ is on, not in the image, so it runs under the older image a rollback targets; it
 library and opens nothing under `/data`. With `backup.offsite` on its `pvc` destination, the offsite claim
 is mounted read-only at `/offsite`. The pod reads `1/2` ready with the oauth-proxy sidecar (the sidecar is
 ready, the dashboard is not) and `0/1` with the proxy off; the Deployment never reports available, so a
-pipeline step that waits for the rollout reports it failed.
+pipeline step that waits for the rollout reports it failed. A pipeline that rolls a failed rollout back on its
+own (Helm's `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry
+this change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
+restored.
 
 **Nothing is recorded while it is on.** No rule says recovery mode: `GroupSyncDashboardNotPolling` does not
 fire, because its gauge comes from the stopped process and a missing series returns nothing. With
@@ -1644,7 +1676,10 @@ in this release's values file and roll it out through the release's deployment p
    `oc logs -n $NS deploy/$REL -c dashboard` starts with `RECOVERY MODE`, `the app is NOT running and no data
    is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the offsite claim is at
    `/offsite`, read-only. The Deployment never reports available, so a pipeline step that waits for the
-   rollout reports it failed; that is expected.
+   rollout reports it failed; that is expected. A pipeline that rolls a failed rollout back on its own (Helm's
+   `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry this
+   change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
+   restored.
 3. **Restore** with §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'`
    instead of `oc debug` or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
    at the TTL the script exits and every process in the container stops with it, a restore still running
@@ -2013,6 +2048,17 @@ def test_a_deadline_file_that_cannot_be_read_exits_2_rather_than_restart_the_clo
     assert (tmp_path / "gsd-recovery.json").read_text() == bad
 
 
+@pytest.mark.parametrize("epoch", [1e15, 1e300], ids=["year-out-of-range", "beyond-time_t"])
+def test_a_finite_but_unprintable_started_epoch_is_refused_with_exit_2_not_a_traceback(tmp_path, epoch):
+    """A hand-edited record whose started_epoch is finite but is no instant (a year past 9999, or past
+    time_t) passed the finiteness check and crashed the banner's `kept from this pod's first start at`
+    with a traceback (exit 1); §3.6's table says an unusable file is one line naming it and exit 2."""
+    _record(tmp_path, started_epoch=epoch)
+    done, _ = _run(_env(tmp_path, "1h"))
+    assert done.returncode == 2 and "cannot be used" in done.stdout and "Delete the pod" in done.stdout, done.stdout
+    assert "Traceback" not in done.stderr, done.stderr
+
+
 def test_the_duration_grammar_and_the_printed_spans():
     module = _module()
     assert [module.ttl_seconds(t) for t in ("2h", "90m", "1h30m", "1.5s", "250ms")] == [7200, 5400, 5400, 1.5, 0.25]
@@ -2294,6 +2340,23 @@ def test_the_only_documented_path_is_the_values_file():
         for sentence in re.split(r"(?<=[.;])\s+", text):
             assert "Argo CD" not in sentence or "revert" in sentence, (name, sentence)
     assert "helm upgrade $REL <chart> -n $NS -f <values-file>" in development and "--set" not in development
+
+
+def test_the_docs_warn_against_a_pipeline_that_rolls_a_failed_rollout_back():
+    """The recovery rollout never becomes ready, so a pipeline that remediates a failed rollout by rolling it
+    back (Helm 4's --rollback-on-failure, Helm 3's --atomic: the release goes back to the revision before, in
+    which the app runs with its liveness probe) turns recovery mode off on its own and starts the app on a
+    file that may be half restored. The three operator texts say so, in words that keep the operator path
+    free of a command line."""
+    runbook = _between((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text(),
+                       "**Recovery mode is the primary path", "**Development and troubleshooting only:**")
+    texts = {"values comment": re.sub(r"\s*\n#\s*", " ", _values_comment()),
+             "README section": _between((CHART / "README.md").read_text(), "### Recovery mode", "\n#"),
+             "runbook": runbook}
+    for name, text in texts.items():
+        text = re.sub(r"\s+", " ", text)                    # the README and the runbook wrap at 110 columns
+        assert "--rollback-on-failure" in text and "--atomic" in text and "half restored" in text, name
+        assert "helm upgrade" not in text.lower(), name
 ```
 
 ### Block 21 — local-development/tests/test_values_defaults.py: the stated false default

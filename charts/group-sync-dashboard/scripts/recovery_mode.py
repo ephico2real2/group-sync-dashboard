@@ -106,6 +106,7 @@ def deadline(state: Path, ttl: float, ttl_text: str, wall: float, monotonic: flo
         for key in ("started_epoch", "deadline_epoch", "deadline_monotonic"):
             if not math.isfinite(float(kept[key])):
                 raise ValueError(f"{key} is not a finite number")
+        instant(float(kept["started_epoch"]))  # a finite epoch that is no instant is refused here, not as a traceback from the banner
         str(kept["boot_id"])
         return kept, True
     except FileNotFoundError:
@@ -156,7 +157,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         record, kept = deadline(state, ttl, ttl_text, time.time(), time.monotonic(), boot)
         left = remaining(record, ttl, time.monotonic(), boot)
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, OverflowError, ValueError, KeyError, TypeError) as exc:
         say(f"the deadline file {state} cannot be used ({type(exc).__name__}: {exc}), so the TTL could not be kept;"
             f" exiting 2. Delete the pod to start a new one with a new TTL")
         return 2

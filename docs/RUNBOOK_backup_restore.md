@@ -201,7 +201,10 @@ in this release's values file and roll it out through the release's deployment p
    `oc logs -n $NS deploy/$REL -c dashboard` starts with `RECOVERY MODE`, `the app is NOT running and no data
    is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the offsite claim is at
    `/offsite`, read-only. The Deployment never reports available, so a pipeline step that waits for the
-   rollout reports it failed; that is expected.
+   rollout reports it failed; that is expected. A pipeline that rolls a failed rollout back on its own (Helm's
+   `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry this
+   change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
+   restored.
 3. **Restore** with §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'`
    instead of `oc debug` or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
    at the TTL the script exits and every process in the container stops with it, a restore still running
