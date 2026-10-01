@@ -15,9 +15,10 @@ release changed for an operator; this says what a working session did.
 
 Outcome in one line: **Epic D released as application 2.0.0 and closed — the lab re-synced after the reboot, #244
 walked and closed, #492 found on that walk, fixed, walked and closed, the release cut and deployed, the composition
-review passed (K1–K7) with its one runbook fix merged, the release walked with redaction proven by OCR; then Epic C
-closed — its last proofs walked (#291's live login, #285's tab row, #310's `userSelfLogin` renewal with `oauth/cluster`
-at 600 s, #445's step 6) and every child closed; ten PRs merged (#491, #493–#501).**
+review passed (K1–K7) with its one runbook fix merged, the release walked with redaction proven by OCR; then Epic C's
+last proofs walked (#291's live login, #285's tab row, #310's `userSelfLogin` renewal with `oauth/cluster` at
+600 s, #445's step 6) and every child closed, the epic itself to close when this log merges; ten PRs merged
+(#491, #493–#501).**
 
 | | Before the session | After |
 |---|---|---|
@@ -128,18 +129,21 @@ at 600 s, #445's step 6) and every child closed; ten PRs merged (#491, #493–#5
 
 ---
 
-## Part 6 — Epic C closed (2026-09-30)
+## Part 6 — Epic C: the last proofs walked and every child closed (2026-09-30)
 
-### Closed on existing evidence — #315, #286
+### Closed on existing evidence (10:13, GitHub's close time) — #315, #286
 
-- Each checklist line mapped to its evidence and pinned: #315 to #416 (`ed3edda7`) and its named tests
-  (`test_credential_gate_account.py`), with `shared-rnd` polling `ok` at 15:11:51Z; #286 to #422 (`b6797011`) and #444's
-  re-count.
+- Each checklist line mapped to its evidence and pinned on each issue's closing comment: #315 to #416 (`ed3edda7`)
+  and its named tests (`test_credential_gate_account.py`), with `shared-rnd` polling `ok` at 15:11:51Z (a lab read
+  through the pod's loopback, carried only by #315's closing comment); #286 to #422 (`b6797011`) and #444's re-count.
 
 ### The two outstanding proofs (11:00) — PR #499, merged `708e6be1`
 
 - #291's live login as `developer`: `test_live_fleet_login.py` passed, challenging-client tokens 6 → 7 → 6; the fleet
   account 2 → 2. #285's fleet-account row captured at 1280 and 375 px with the name masked (OCR: 0 of 8, controls 1/1).
+- **Found by the walker's own run** (run 1, 15:17:32Z → 15:18:56Z, kept in the walk folder): its shape check failed on
+  the label read upper-cased (`innerText`), and its mask log counted 2 masked elements in the row, the instant too.
+  Both fixed in the committed walker and the captures retaken, so the grant stood twice (84 s, 83 s).
 - **Rejected** Codex's C3 on #499 (its sandbox could not run the OCR or read the Lease; Grok and the orchestrator ran
   both). #291 closed.
 
@@ -147,13 +151,14 @@ at 600 s, #445's step 6) and every child closed; ten PRs merged (#491, #493–#5
 
 - Prepared with no cluster writes; the plan reviewed by OB3 and Grok, both GO WITH CHANGES. **Found by OB3**: a group
   SIGTERM could kill the log's `tee` so the trap died of SIGPIPE and left 600 s; the capture's stop always exited 1 and
-  would have aborted the run after the observation. **Found by Grok**: the restore had no retry and no restore command
-  printed before the patch. All fixed (`8a02acd7`), proven on 17 stub exit paths.
+  would have aborted the run after the observation. **Found by OB3 and Grok**: the restore had no retry and no restore
+  command printed before the patch. All fixed (`8a02acd7`), proven on 17 stub exit paths.
 - The auto-mode classifier blocked the first launch; the operator allowed it and phase 2 ran 20:17:40Z → 20:45:37Z, exit
   0: `oauth/cluster` at 600 s, two renewals of `developer`'s session at `renew_at` + one poll cycle, the new session in
   before the old revoked, polling unbroken (longest gap 60.1 s); the fleet account 0 authorizes; `31536000` restored and
   the lab left as found on 17 EQUAL lines. Analysis 14 passed.
-- **Found by Codex** on the results: README line 243 named the lab `developer` password's value; removed. #310 closed.
+- **Found by Codex** on the results: the walk README named the lab `developer` password's value. **Accepted**: removed
+  in `69f16149`. #310 closed.
 
 ### #445, step 6 (18:58) — PR #501, merged `a3b17163`
 
@@ -178,7 +183,7 @@ at 600 s, #445's step 6) and every child closed; ten PRs merged (#491, #493–#5
 | PRs merged | 10: #491, #493–#501 (issue #492 filed and closed on the way) |
 | Review passes run | 29 completed: Grok 15, Codex 8, OB2 3, OB3 3 (one per review directory in the session's scratchpad; one Grok launch refused for usage, not counted) |
 | Reviewer findings accepted / rejected | not counted here: each PR's decisions are in its comment or, for #491, in commit `d3bc341e` |
-| Defects found by tooling rather than reviewers | 3: the pinned merge's local full suite (the corrupted `registries.conf`), CI (the changelog case), the OCR check (the mask) |
+| Defects found by tooling rather than reviewers | 5: the pinned merge's local full suite (the corrupted `registries.conf`), CI (the changelog case), the OCR check (the mask), the #499 walker's first run (the upper-cased label, the mask over the instant) |
 | Full suite, final | 6777 passed, 22 skipped — `merge_pinned.sh`'s local run (hermetic and browser) on `1dbc15b2`, not published; CI's hermetic job on the same head: 6127 passed, 21 skipped |
 | Longest single loss | a walker launched with a literal placeholder instead of its brief — one round trip |
 
@@ -196,5 +201,5 @@ at 600 s, #445's step 6) and every child closed; ten PRs merged (#491, #493–#5
 - Lab: 2.0.0 / chart 0.59.25, Argo Synced at main and Healthy; `oauth/cluster` `31536000`; nothing carries a walk
   label; PVC UIDs unchanged; `shared-qa` rv 2981054.
 - Owed: the operator's decision on the fleet account's name already in 30 images and 156 text files on main (quoted on
-  #384's summary); the walks' `capture.sh audit` fix for the next walk's copy; the step 6 spec's two prose slips (OB3's
-  follow-up on #501).
+  #384's summary); the walks' `capture.sh audit` fix for the next walk's copy; the step 6 spec's two prose slips (open
+  question 6 in the #445 walk's README).
