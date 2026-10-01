@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G2 #255)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 35, f"expected thirty-five index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465) and S4f (#481); matched {sorted(rows)}"
+    assert len(rows) == 36, f"expected thirty-six index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481) and G2 (#255); matched {sorted(rows)}"
     return rows
 
 
@@ -96,7 +96,9 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     thirteen have one issue each; the S batch is one issue (#230) in three steps, so its rows share it."""
     # D5 (#244) is specified after later work (D3/D4, S4e) because the operator's rulings
     # arrived later; it sits at the end of the table and is excluded from the rising-number assert.
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244"]
+    # Epic G's rows (#387) follow the epic's build order, not the issues' numbers (G2 is #255, filed 2026-09-21,
+    # specified after #481): they are excluded here, as D5 is.
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244" and not fid.startswith("G")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S")]
     assert len(set(programme)) == len(programme), programme
