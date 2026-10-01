@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Forty-three specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Forty-four specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The forty-three specifications
+## The forty-four specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -109,6 +109,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | E5 | [`SPEC_E5_offsite_on_by_default.md`](SPEC_E5_offsite_on_by_default.md) — the off-volume backup on by default: `backup.offsite.enabled` read as a word (`""` on wherever the copy can work and nothing where it cannot, `true` refusing what cannot work, `false` off), one helper deciding for the CronJob and its two alerts (and for SPEC_E2's recovery mount), and the newest pre-upgrade copy shipped to `/offsite/pre-upgrade` at one replica | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) | specified |
 | E3 | [`SPEC_E3_restore_db.md`](SPEC_E3_restore_db.md) — `restore-db.sh`: from the laptop, list every copy the recovery pod can restore by `<user_version>-<stamp>` ID, and restore one with the checks, the loss window, the live set kept and an atomic swap; the helper is streamed into the pod over `oc exec -i`, so it runs under the image a rollback targets | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) | specified |
 | E6 | [`SPEC_E6_kpi_backups_card.md`](SPEC_E6_kpi_backups_card.md) — the KPI page's Backups card: the last copy as an instant and when the next is due, the copies kept against `keep`, the failures since start, the newest copy's schema against the build's and the newest pre-upgrade copy, in one of five states said in words (disabled, never "0 backups"), from what the dashboard process already has; no Prometheus, no new metric, no new permission; composes with SPEC_E4 | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) | specified |
+| E9 | [`SPEC_E9_latest_tag.md`](SPEC_E9_latest_tag.md) — `:latest` follows the newest signed `main` build: a `latest` job in `publish.yml`, after `attest` has signed both digests and read the signatures back (after `publish` alone when signing is off), on `main` only, copies each digest to its image's `:latest` with the release aliases' `skopeo copy --all --preserve-digests` and reads it back, a mismatch a red run; the chart never resolves it | E — restore tools and release safety | — | app 2.3.0; the chart takes the PATCH that `prepare-release.py --app` derives at implementation | [#425](https://github.com/ephico2real2/group-sync-dashboard/issues/425) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
