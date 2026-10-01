@@ -5,7 +5,7 @@
 | Programme | Epic E (#385), restore tools and release safety; build-order step 3 of 9. Independent of #303 and #302; it runs early so that `restore-db.sh --list` (SPEC_E3) lists the copies an operator expects |
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.59.26 |
+| Version on release | app 2.1.0, chart 0.60.2 |
 | Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore bumps the chart PATCH that the values comment, the README and the alert text need. Against `dd51b91f` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26; SPEC_E3 (#302) and SPEC_E2 (#303) claim the same next numbers, so whichever merges second takes the next ones. No block carries a version field: the script writes them, as in SPEC_E3 |
 | Issue | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) |
 | Status | specified |

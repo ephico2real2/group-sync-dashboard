@@ -29,6 +29,38 @@ It refused those renders with a message about a volume that did not exist.
 {{- fail "visibility.enabled=true requires oauthProxy.enabled=true. The per-user tiers scope data to X-Forwarded-User, which is trustworthy only when the oauth-proxy sets it; with the proxy off the header is whatever the caller typed, so the control cannot work. Turn the proxy on, or set visibility.enabled=false to accept — deliberately and on the record — that every reader of an unauthenticated route sees everything." }}
 {{- end }}
 {{- include "gsd.reportingGuards" . }}
+{{- /*
+Recovery mode (#303): the same pod and the same data volume with the app stopped, for a restore.
+Refused where it cannot be safe: a second recovery pod would be a second shell on the same file
+(or a Pending pod), and an emptyDir has nothing to restore onto and is wiped when the pod goes.
+The TTL is the bound on a forgotten recovery pod, so a value that is not a positive duration is
+refused here rather than by the script after the pod has started.
+*/}}
+{{- $recovery := eq (include "gsd.recoveryEnabled" .) "true" }}
+{{- $offsiteClaim := "" }}
+{{- if $recovery }}
+{{- /* Compared as text, not through `int`: `int true` is 1, and `replicaCount: true` rendered `replicas: true`
+(review of the spec, Codex F3). A YAML 1 reaches here as an int or a float64, and both print "1". */}}
+{{- if ne (toString .Values.replicaCount) "1" }}
+{{- fail (printf "recovery.enabled=true requires replicaCount: 1 (it is %v). Recovery mode is ONE pod holding the data volume with the writer stopped: at 0 there is no pod to restore from, and a second recovery pod is a second shell that can write the same file on a ReadWriteMany volume, or a pod that stays Pending on ReadWriteOnce and ReadWriteOncePod." .Values.replicaCount) }}
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+{{- fail "recovery.enabled=true requires persistence.enabled=true. With an emptyDir there is no database to restore onto, and anything copied into it is wiped when the pod goes." }}
+{{- end }}
+{{- $ttl := include "gsd.recoveryTtl" . }}
+{{- $ttlSeconds := include "gsd.durationSeconds" $ttl }}
+{{- if eq $ttlSeconds "-1" }}
+{{- fail (printf "recovery.ttl %q is not a duration. Use a Go duration such as 2h (the default), 90m or 1h30m; a bare number has no unit and is refused. The TTL is what ends a forgotten recovery pod." $ttl) }}
+{{- end }}
+{{- if eq $ttlSeconds "0" }}
+{{- fail (printf "recovery.ttl %q is zero: the recovery pod would exit at once and crash-loop. Use a positive Go duration such as 2h (the default)." $ttl) }}
+{{- end }}
+{{- /* The offsite claim, read-only, so #302's restore can list the offsite copies: the same switch
+and the same claim the CronJob renders with (backup-offsite.yaml). */}}
+{{- if and .Values.backup.offsite.enabled (eq .Values.backup.offsite.destination.type "pvc") }}
+{{- $offsiteClaim = .Values.backup.offsite.destination.pvc.existingClaim | default (printf "%s-backup-offsite" (include "gsd.fullname" .)) }}
+{{- end }}
+{{- end }}
 {{- if .Values.oauthProxy.enabled }}
 {{- $cookie := (.Values.oauthProxy | default dict).cookie | default dict }}
 {{- /*
@@ -123,7 +155,16 @@ spec:
         - name: dashboard
           image: {{ include "gsd.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.oauthProxy.enabled }}
+          {{- if $recovery }}
+          # RECOVERY MODE (#303): the chart's stdlib script instead of uvicorn, whether or not the
+          # proxy is on (the image's CMD is uvicorn too). It ships in a ConfigMap, not the image, so
+          # it runs under the older image a rollback targets; it never opens the database.
+          command:
+            - python3.14
+            - /scripts/recovery_mode.py
+            - --release
+            - {{ .Release.Name | quote }}
+          {{- else if .Values.oauthProxy.enabled }}
           # Bind loopback only. Otherwise 8080 stays reachable pod-network-wide and anything
           # inside the cluster can skip the proxy entirely by addressing the pod directly,
           # which would make the authentication decorative.
@@ -234,6 +275,13 @@ spec:
             # reads it: the application's own TLS is untouched, and so is Python's.
             - name: CURL_HOME
               value: /etc/curl
+            {{- if $recovery }}
+            # Read by the recovery script, and by #302's restore wrapper to know it is in recovery mode.
+            - name: GSD_RECOVERY_MODE
+              value: "true"
+            - name: GSD_RECOVERY_MODE_TTL
+              value: {{ include "gsd.recoveryTtl" . | quote }}
+            {{- end }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
           volumeMounts:
             - name: config
@@ -292,7 +340,20 @@ spec:
               subPath: {{ $.Values.trustedCA.existingConfigMap.key }}
               readOnly: true
             {{- end }}
-          {{- if .Values.probes.liveness.enabled }}
+            {{- if $recovery }}
+            - name: recovery-script
+              mountPath: /scripts
+              readOnly: true
+            {{- if $offsiteClaim }}
+            # Read-only: the copies are listed and read from here, never written.
+            - name: offsite
+              mountPath: /offsite
+              readOnly: true
+            {{- end }}
+            {{- end }}
+          {{- /* No liveness probe in recovery mode: nothing serves /healthz, and a kill in the middle
+          of a restore is the failure recovery mode exists to prevent. */}}
+          {{- if and .Values.probes.liveness.enabled (not $recovery) }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
@@ -316,7 +377,18 @@ spec:
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           {{- end }}
-          {{- if .Values.probes.readiness.enabled }}
+          {{- if $recovery }}
+          # RECOVERY MODE: a readiness probe that cannot pass, whatever probes.readiness says, so the
+          # pod never joins the Service. A container with no readiness probe counts as ready, and
+          # the Service would send readers to a proxy whose upstream has no listener. Nothing listens
+          # on 8080 while the app is stopped; a TCP probe needs no exec and touches no proxy.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 1
+          {{- else if .Values.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
               path: {{ .Values.probes.readiness.path }}
@@ -481,6 +553,18 @@ spec:
         - name: curlrc
           configMap:
             name: {{ include "gsd.fullname" . }}-curlrc
+        {{- if $recovery }}
+        - name: recovery-script
+          configMap:
+            name: {{ include "gsd.fullname" . }}-recovery
+            defaultMode: 292   # 0444: read by any UID OpenShift assigns; nothing writes it
+        {{- with $offsiteClaim }}
+        - name: offsite
+          persistentVolumeClaim:
+            claimName: {{ . }}
+            readOnly: true
+        {{- end }}
+        {{- end }}
         {{- if .Values.trustedCA.injected.enabled }}
         - name: trusted-ca-injected
           configMap:

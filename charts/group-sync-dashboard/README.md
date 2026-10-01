@@ -434,6 +434,31 @@ once, never rendered — the same for every renderer (Helm, Flux, Argo CD, Kusto
 | `nodeSelector`, `tolerations`, `affinity`, `podAnnotations`, `podLabels` | empty | |
 | `priorityClassName`, `reporting.priorityClassName` | `""` | a PriorityClass name for the dashboard / report pod, rendered only when set. A PDB does not stop preemption; set these when a workload must outrank profile-collection crons on a saturated node (#97) |
 
+### Recovery mode — `recovery`
+
+| Key | Default | Notes |
+|---|---|---|
+| `recovery.enabled` | `false` | **stops the dashboard.** The dashboard container runs the chart's recovery script instead of uvicorn, on the same pod spec and the same `/data` volume, so no process holds `gsd.db` while you restore it. No liveness probe; a readiness probe that cannot pass keeps the pod out of the Service. Refused with `replicaCount` other than 1 and with `persistence.enabled=false` |
+| `recovery.ttl` | `2h` | a Go duration (`2h`, `90m`, `1h30m`), counted from the pod's first start and kept in its `/tmp` across container restarts; a new pod (a new value, a deleted or evicted pod) starts a new TTL. At the TTL every process in the container stops, an `oc exec` restore still running included, the pod goes to `CrashLoopBackOff` and its log says how to extend or leave recovery mode. Refused when it is not a duration or is zero |
+
+Set both in the release's values file and roll them out through the release's deployment pipeline, like any
+other value; for a rollback, set the older `image.tag` in the same change. Never with `oc set env`: a GitOps
+tool such as Argo CD (selfHeal) reverts a hand edit of the Deployment, and the variable alone would leave the
+liveness probe to kill the pod in the middle of a restore. The script
+(`charts/group-sync-dashboard/scripts/recovery_mode.py`) ships in a ConfigMap rendered only while recovery
+is on, not in the image, so it runs under the older image a rollback targets; it imports only the standard
+library and opens nothing under `/data`. With `backup.offsite` on its `pvc` destination, the offsite claim
+is mounted read-only at `/offsite`. The pod reads `1/2` ready with the oauth-proxy sidecar (the sidecar is
+ready, the dashboard is not) and `0/1` with the proxy off; the Deployment never reports available, so a
+pipeline step that waits for the rollout reports it failed.
+
+**Nothing is recorded while it is on.** No rule says recovery mode: `GroupSyncDashboardNotPolling` does not
+fire, because its gauge comes from the stopped process and a missing series returns nothing. With
+`reporting.enabled`, `GroupSyncDashboardReportSnapshotStale` (warning) fires once the report service's
+newest copy is older than four snapshot intervals, for `for.reportSnapshot` (about 50 minutes at the
+defaults). The TTL is the bound. The procedure is the runbook's
+[§4](../../docs/RUNBOOK_backup_restore.md#4-restore).
+
 ### Networking
 
 | Key | Default | Notes |
@@ -1226,6 +1251,12 @@ changed buys nothing.
 The Deployment checksums the ConfigMap, so a change to intervals or the cluster list
 restarts the pod. Without that the ConfigMap would update and nothing would happen, because
 the process reads it at startup.
+
+**To restore the database, before or after an upgrade, use [recovery mode](#recovery-mode--recovery).**
+For a rollback, set the older `image.tag` and `recovery.enabled: true` in the same change to the
+values file, restore, then set `recovery.enabled: false` in the next one, keeping the older tag: the
+older image starts the app. The chart reads `recovery` so that its absence means off, so an upgrade
+that reuses an older chart's values, which renders with that chart's defaults, still renders.
 
 ## Uninstall
 

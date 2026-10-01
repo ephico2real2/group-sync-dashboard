@@ -212,6 +212,45 @@ probes:
     failureThreshold: 3
 
 # ---------------------------------------------------------------------------
+# Recovery mode (#303) — the pod with the data volume mounted and the app stopped
+# ---------------------------------------------------------------------------
+# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). recovery.enabled=true
+# runs the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
+# dashboard container instead of uvicorn, on the same pod spec and the same /data volume: no process opens
+# gsd.db, so you can replace it from `oc exec`, and a dropped session does not end the pod. The
+# script ships with the chart, not the image, so it runs under the older image a rollback targets.
+# At one replica the strategy is Recreate, so the writer stops before the recovery pod starts.
+#
+# SET IT IN THIS RELEASE'S VALUES FILE and roll it out through the release's deployment pipeline,
+# like any other value; for a rollback, set the older image.tag in the same change. Never with
+# `oc set env` or an edit of the Deployment: a GitOps tool such as Argo CD (selfHeal) reverts a hand
+# edit, and an environment variable alone would leave the liveness probe to kill the pod in the
+# middle of a restore.
+#
+# While it is on the pod has no liveness probe, and a readiness probe that cannot pass keeps it
+# out of the Service: READY reads 1/2 (the oauth-proxy sidecar is ready, the dashboard is not; 0/1
+# with the proxy off), the route has no ready endpoint, and the Deployment never reports available,
+# so a pipeline step that waits for the rollout reports it failed. When backup.offsite uses the pvc
+# destination, its claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
+#
+# NOTHING IS RECORDED WHILE IT IS ON, and no rule says recovery mode. GroupSyncDashboardNotPolling
+# does not fire: its gauge comes from the stopped process, and a missing series returns nothing.
+# With reporting on, GroupSyncDashboardReportSnapshotStale (warning) fires once the report
+# service's newest copy is older than four snapshot intervals, for for.reportSnapshot (about 50
+# minutes at the defaults). The TTL is the bound: a Go duration (2h, 90m, 1h30m), counted from the
+# pod's first start and kept in its /tmp across container restarts; a new pod (a new recovery.ttl,
+# a deleted or evicted pod) starts a new TTL. At the TTL the script exits 1 and every process in the
+# container stops with it, an `oc exec` restore still running included; the pod reads
+# CrashLoopBackOff, and the log says how to extend it (a longer recovery.ttl in the values file) or
+# leave it. Refused at render: replicaCount other than 1, persistence.enabled=false, and a TTL that
+# is not a positive duration.
+#
+# Stays false by default under the 0.14.0 rule: turning it on stops the dashboard.
+recovery:
+  enabled: false
+  ttl: 2h
+
+# ---------------------------------------------------------------------------
 # Application configuration
 # ---------------------------------------------------------------------------
 config:

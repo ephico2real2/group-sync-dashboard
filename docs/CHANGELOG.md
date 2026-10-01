@@ -10,6 +10,24 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Recovery mode: the dashboard pod with its data volume mounted and the app stopped, for a restore (#303,
+  Epic E #385, `docs/specs/SPEC_E2_recovery_mode.md`; chart 0.60.0, no application change).**
+  `recovery.enabled=true` runs the chart's recovery script (`charts/group-sync-dashboard/scripts/recovery_mode.py`,
+  shipped in a ConfigMap rendered only while it is on) instead of uvicorn, with or without the proxy, on the
+  same pod spec and `/data` volume, with `GSD_RECOVERY_MODE=true` and `GSD_RECOVERY_MODE_TTL`. The script is
+  standard library only, so it runs under the older image a rollback targets; it never opens the database.
+  The pod has no liveness probe and a readiness probe that cannot pass, so it stays out of the Service; with
+  `backup.offsite` on its `pvc` destination the offsite claim is mounted read-only at `/offsite`.
+  `recovery.ttl` (2h) is counted from the pod's first start and kept in its `/tmp` across container
+  restarts; at the TTL the script exits 1, every process in the container stops with it, the pod reads
+  `CrashLoopBackOff`, and its log says how to extend or leave recovery mode. The render refuses `replicaCount`
+  other than 1, `persistence.enabled=false` and a TTL that is not a positive duration. Set it in the
+  release's values file and roll it out through the deployment pipeline, never with `oc set env`. No rule
+  says recovery mode: `GroupSyncDashboardNotPolling` does not fire, and with reporting on
+  `GroupSyncDashboardReportSnapshotStale` fires after about 50 minutes; the TTL is the bound. The default
+  render is unchanged apart from the chart version and what is computed from it (the pod's `checksum/config`,
+  the offsite bind Job's name); no RBAC change. The runbook's §4 uses recovery mode as the primary path and
+  keeps `oc debug` as the fallback.
 - **The runbook says which card rows are the last poll's (Epic D composition review, K5).** Refresh stores nothing
   (SPEC_D3 §3) and the TLS chip names the last poll's outcome (#492), so a card can read `verify failed` above
   `Refresh: connected` until the next poll. `RUNBOOK.md` section 1 now says so; chart 0.59.25, no application change.
