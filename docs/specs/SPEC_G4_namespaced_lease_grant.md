@@ -6,10 +6,10 @@
 | Batch | G — access declared |
 | Release | — (post-programme; two pull requests, each with its own review) |
 | Version on release | chart 0.60.3 (step 1, adds the Role) and 0.60.4 (step 2, removes the ClusterRole rule), chart only |
-| Version note | No application change: `appVersion` and `pyproject.toml` do not move. Each step is a chart PATCH: no value is added. The rungs follow SPEC_E5's version rule (`docs/specs/SPEC_E5_offsite_on_by_default.md`, its Version note): a spec still `specified` names a chart version above `Chart.yaml` and above every other `specified` spec's claim. On origin/main `f1423143` the index claims chart 0.59.26 (SPEC_E4), 0.60.0 (SPEC_E2, SPEC_G2, SPEC_E5) and 0.60.1 (SPEC_G3), and SPEC_E5's blocks move SPEC_E4 to 0.60.2 when E5 ships; so step 1 takes 0.60.3 and step 2 0.60.4. Blocks 8 and 24 write those into `Chart.yaml` and blocks 7 and 23 name them in the CHANGELOG. Blocks 8g to 8l move the five `specified` specs whose chart version is not above 0.60.4 to the next free rung above it, keeping their MINOR or PATCH and their application version (SPEC_E2, SPEC_G2 and SPEC_E5 to 0.61.0, SPEC_G3 to 0.60.5, SPEC_E4 to 0.60.6), so `tests/test_specs_index.py`'s version-ladder test holds on both steps (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull requests re-derive blocks 7, 8, 8g to 8l, 23 and 24 before applying, with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). SPEC_E3 (#302, pull request #512) is not on main; when it is, the same rule applies to it |
+| Version note | No application change: `appVersion` and `pyproject.toml` do not move. Each step is a chart PATCH: no value is added. The rungs follow SPEC_E5's version rule (`docs/specs/SPEC_E5_offsite_on_by_default.md`, its Version note): a spec still `specified` names a chart version above `Chart.yaml` and above every other `specified` spec's claim. On origin/main `6d532178` the index claims chart 0.59.26 (SPEC_E4), 0.60.0 (SPEC_E2, SPEC_G2, SPEC_E5) and 0.60.1 (SPEC_G3); SPEC_E3 (merged at `6d532178`) also claims 0.59.26; SPEC_E5's blocks move SPEC_E4 to 0.60.2 when E5 ships; so step 1 takes 0.60.3 and step 2 0.60.4. Blocks 8 and 24 write those into `Chart.yaml` and blocks 7 and 23 name them in the CHANGELOG. Blocks 8g to 8n move the six `specified` specs whose chart version is not above 0.60.4 to the next free rung above it, keeping their MINOR or PATCH and their application version (SPEC_E2, SPEC_G2 and SPEC_E5 to 0.61.0, SPEC_G3 to 0.60.5, SPEC_E4 to 0.60.6, and blocks 8m and 8n move SPEC_E3 to 0.60.7), so `tests/test_specs_index.py`'s version-ladder test holds on both steps (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull requests re-derive blocks 7, 8, 8g to 8n, 23 and 24 before applying, with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). |
 | Issue | [#420](https://github.com/ephico2real2/group-sync-dashboard/issues/420) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#387) and the orchestrator's mandate (the upgrade window T420-8 is to be designed away). Measured on main `21132a25` on this machine (Helm v4.3.0, Python 3.14 with the repository's venv), on the CRC lab read-only (2026-10-01T14:55Z to 15:19Z, `oc` as `kubeadmin`: `get`, `auth can-i`, nothing written), and against upstream source read raw: Helm v4.3.0, Argo CD v3.4.7 (the lab's OpenShift GitOps 1.21.4 runs `argocd: v3.4.7+7b6113c`), client-go v0.34.0, kubernetes/website `980792fa`, helm-www `f32ec4dc`. §7's blocks were applied to a throwaway worktree of `21132a25` and to a copy of its step-1 result, and the suite ran on each. Revised the same day on the reviews of `6e08e561` (OB3 in Grok's seat, OB2 in Codex's), decided by the orchestrator (Orchestrator's notes, 8), rebased onto origin/main `f1423143`, and every block, test and count proved again there in git worktrees (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#387) and the orchestrator's mandate (the upgrade window T420-8 is to be designed away). Measured on main `21132a25` on this machine (Helm v4.3.0, Python 3.14 with the repository's venv), on the CRC lab read-only (2026-10-01T14:55Z to 15:19Z, `oc` as `kubeadmin`: `get`, `auth can-i`, nothing written), and against upstream source read raw: Helm v4.3.0, Argo CD v3.4.7 (the lab's OpenShift GitOps 1.21.4 runs `argocd: v3.4.7+7b6113c`), client-go v0.34.0, kubernetes/website `980792fa`, helm-www `f32ec4dc`. §7's blocks were applied to a throwaway worktree of `21132a25` and to a copy of its step-1 result, and the suite ran on each. Revised the same day on the reviews of `6e08e561` (OB3 in Grok's seat, OB2 in Codex's), decided by the orchestrator (Orchestrator's notes, 8), rebased onto origin/main `f1423143`, then merged with origin/main `6d532178` (SPEC_E3), and every block, test and count proved again on that merge in git worktrees (§4.3) |
 
 ## How to read this spec
 
@@ -34,7 +34,7 @@ never as backticked `path:line`, to keep them apart from the maintained `path#an
 rule per subsection with its reason, and the budget. §4 maps every test case of the issue (T420-1 to T420-9) to a test
 and shows each failing without the change. §5 is the walk on the lab. §6 is what an operator sees and what it costs.
 §7 is the whole change as implementation blocks (`docs/specs/README.md`, "Implementation blocks"): blocks T1 to T5 and 1
-to 8l are step 1 and carry `block` markers; blocks 9 to 24 are step 2 and carry `deferred-block` markers, which
+to 8n are step 1 and carry `block` markers; blocks 9 to 24 are step 2 and carry `deferred-block` markers, which
 `local-development/apply-spec-blocks.py` leaves alone and counts once blocks T1 to T5 teach it to (Orchestrator's notes,
 2, says how step 2's pull request turns them on). Step 1 is applied to a clean tree with
 
@@ -60,19 +60,19 @@ Decisions made on "easy to manage, best practice", corrections to the issue, and
    upgrade also replaces the dashboard pod, and in a single release only the outgoing pod could meet the gap. If the
    orchestrator prefers one pull request for that reason, it is still the narrowing: it may be opened only after the
    operator's agreement is quoted on #420, like step 2, and every estate's upgrade to it is §3.4's skip row. Then turn
-   blocks 9 to 24 into `block` before applying: the checker applies the 41 blocks in order on main
-   (`41 blocks check out across 19 files`, §4.3), and the result is step 2's tree. The design and the tests are the same either way; only
+   blocks 9 to 24 into `block` before applying: the checker applies the 43 blocks in order on main
+   (`43 blocks check out across 20 files`, §4.3), and the result is step 2's tree. The design and the tests are the same either way; only
    T420-8's expectation changes (§4.1).
 2. **How step 2's pull request applies its blocks.** It is the "stacked PRs" case of
    `.claude/skills/adversarial-review/SKILL.md` ("the later PR writes its version blocks as `deferred-block` … After
    the rebase, turn them into `block`, commit, and apply only them"), as SPEC_L1 did. Step 2's first commit edits this
-   spec only: step 1's twenty-five markers (blocks T1 to T5 and 1 to 8l) become `applied-block` and step 2's sixteen
+   spec only: step 1's twenty-seven markers (blocks T1 to T5 and 1 to 8n) become `applied-block` and step 2's sixteen
    become `block`, so the checker, which knows both words from block T1 on, reads step 2 alone against main as step 1
    left it and says how many it left alone. Development form of that edit (macOS `sed`):
 
        sed -i '' -e 's/^<!-- block: /<!-- applied-block: /' -e 's/^<!-- deferred-block: /<!-- block: /' docs/specs/SPEC_G4_namespaced_lease_grant.md
 
-   Measured on a copy of step 1's result: `16 blocks check out across 9 files; left alone: 25 applied-block` (§4.3). Step 2's pull request is opened only after the
+   Measured on a copy of step 1's result: `16 blocks check out across 9 files; left alone: 27 applied-block` (§4.3). Step 2's pull request is opened only after the
    operator's agreement is quoted on #420, and its body quotes it again. After step 2 merges the spec keeps
    `applied-block` on step 1's markers and `block` on step 2's; like every merged spec, its blocks no longer check
    against main, and the index row moves to `merged`.
@@ -138,12 +138,14 @@ Decisions made on "easy to manage, best practice", corrections to the issue, and
      round's wait; it kills both of OB3's mutants (§4.3).
    - **Accepted, OB3 F5:** with `rbac.create: false`, block 17 states the order: the Role and RoleBinding first, then
      the rule out of the estate's own ClusterRole.
-9. **Rebased onto origin/main `f1423143`** (SPEC_E2, G2, E4, G3 and E5 merged since `21132a25`): G4 is the forty-second
-   index row, after E5, excluded from the rising-number assert by its id and pinned to #420 like the others; the
+9. **Rebased onto origin/main `f1423143`** (SPEC_E2, G2, E4, G3 and E5 merged since `21132a25`), **then merged with
+   origin/main `6d532178`** (SPEC_E3, #302; the orchestrator, 2026-10-01): G4 is the forty-third index row, after E3, excluded from the rising-number assert by its id and pinned to #420 like the others; the
    version cells follow SPEC_E5's rule (Version note). Every file §2 reads is byte-identical at `21132a25` and
    `f1423143` (`git diff --stat 21132a25 f1423143` over the chart's templates, values, README and examples,
    `environments/`, `docs/reference-architecture.md`, `gsd/leader.py`, `gsd/fleetstate.py`, `gsd/poller.py` and
-   `gsd/api.py` prints nothing), so §2's line citations into main hold on both.
+   `gsd/api.py` prints nothing), so §2's line citations into main hold on both; the merge with `6d532178` changed none
+   of them either (it added SPEC_E3, its index row and its pin), and no file a block of this spec edits besides the
+   index and `SPEC_E3_restore_db.md`, which blocks 8m and 8n now edit.
 
 ## 1. The mandate, and what is out of scope
 
@@ -455,7 +457,7 @@ moves in any render.
 
 ### 3.4 Two releases, and the budget for refused Lease calls
 
-Step 1 (blocks T1 to T5 and 1 to 8l) adds the Role and keeps the rule. Step 2 (blocks 9 to 24) removes the rule. Budget, per
+Step 1 (blocks T1 to T5 and 1 to 8n) adds the Role and keeps the rule. Step 2 (blocks 9 to 24) removes the rule. Budget, per
 upgrade, per dashboard pod, for Lease calls the API server refuses because neither grant exists:
 
 | upgrade | refused Lease calls | why |
@@ -487,7 +489,7 @@ own comment (blocks 1 and 11),
 `fleet-account-rbac.yaml` (block 12), both `values.yaml` comments (blocks 15 and 16), the chart README's `rbac.create`
 row and RBAC paragraph (blocks 6 and 17), and `docs/reference-architecture.md` §7.1 and §8 (blocks 18 to 22, which
 also give the condition in full). `docs/CHANGELOG.md` gets one entry per step naming the moved atoms (blocks 7 and 23),
-and `Chart.yaml` one history line per step (blocks 8 and 24). Blocks 8g to 8l move five other specs' version cells
+and `Chart.yaml` one history line per step (blocks 8 and 24). Blocks 8g to 8n move six other specs' version cells
 above step 2's chart (the Version note), and blocks T1 to T5 teach the checker the two markers this spec stages its
 second step with.
 
@@ -502,7 +504,7 @@ which read ClusterRole and Role rules alike and pass unchanged (T420-5). Every o
 
 ### 4.1 One test per test case of the issue
 
-"Main" is origin/main `f1423143`; "step 1" is main with blocks T1 to T5 and 1 to 8l applied. Each result was measured as §4.3 describes.
+"Main" is origin/main `6d532178`; "step 1" is main with blocks T1 to T5 and 1 to 8n applied. Each result was measured as §4.3 describes.
 
 | test case | test (block, step) | without the change | with it |
 |---|---|---|---|
@@ -563,18 +565,19 @@ The blocks were not written from memory: each was applied and its tests run.
 
 | check | command | result |
 |---|---|---|
-| step 1 checks on main | main's `apply-spec-blocks.py`, on a throwaway `git worktree add --detach … f1423143` | `25 blocks check out across 17 files` (main's checker reads `block` only and says nothing of the sixteen `deferred-block`) |
-| the same, with step 1's checker | the tool as blocks T1 to T3 leave it, against the same tree | `25 blocks check out across 17 files; left alone: 16 deferred-block` |
+| step 1 checks on main | main's `apply-spec-blocks.py`, on a throwaway worktree of this spec's merge commit (main `6d532178` with the spec) | `27 blocks check out across 18 files` (main's checker reads `block` only and says nothing of the sixteen `deferred-block`) |
+| the same, with step 1's checker | the tool as blocks T1 to T3 leave it, against the same tree | `27 blocks check out across 18 files; left alone: 16 deferred-block` |
 | step 1's new tests, before | blocks 2 to 5 and T4 only, applied to a copy of main | `10 failed, 8 passed` among the new tests: T420-2's eight renders with a grant and T4's two fail; T420-2's two without a grant, T420-3 and the five guards of blocks 4 and 5 pass (the test file's five existing tests pass too) |
-| step 1 applied | `--apply` into the worktree; the touched files: `test_chart_connection_modes.py`, `test_leader.py`, `test_fleet_lifecycle.py`, `test_chart_strategy.py`, `test_chart_rbac_provenance.py`, `test_chart_fleet_account_rbac.py`, `test_kyverno.py`, `test_chart_versions.py`, `test_chart_grafana_dashboard.py`, `test_apply_spec_blocks.py`, `test_specs_index.py`, `test_docs_citations.py` | `1958 passed, 23 skipped` |
+| step 1 applied | `--apply` into the worktree; the touched files: `test_chart_connection_modes.py`, `test_leader.py`, `test_fleet_lifecycle.py`, `test_chart_strategy.py`, `test_chart_rbac_provenance.py`, `test_chart_fleet_account_rbac.py`, `test_kyverno.py`, `test_chart_versions.py`, `test_chart_grafana_dashboard.py`, `test_apply_spec_blocks.py`, `test_specs_index.py`, `test_docs_citations.py` | `2005 passed, 23 skipped` |
 | OB3's mutants of block 4's test (F4) | `gsd/leader.py` in a copy of step 1: MUT-PUT `return updated.status_code in (200, 403)`; MUT-WAIT `self._stop.wait(self.renew_seconds if held else self.lease_seconds)`; the test alone | unmutated `2 passed`; MUT-PUT `1 failed, 1 passed`; MUT-WAIT `2 failed` |
-| step 2 checks on step 1 | note 2's `sed`, then step 1's checker against step 1's tree | `16 blocks check out across 9 files; left alone: 25 applied-block` |
+| step 2 checks on step 1 | note 2's `sed`, then step 1's checker against step 1's tree | `16 blocks check out across 9 files; left alone: 27 applied-block` |
 | step 2's new tests, before | blocks 13 and 14 only, on a copy of step 1 | `12 failed, 5 passed` (§4.1, T420-1 and T420-9) |
-| step 2 applied | all 41 blocks live (note 1's form) into a second throwaway worktree of `f1423143`; the same touched files | `1977 passed, 23 skipped`; that tree is identical (`diff -rq`) to step 1's tree with note 2's swapped spec applied |
-| one pull request instead of two | all 41 blocks live, against main | `41 blocks check out across 19 files` |
+| step 2 applied | all 43 blocks live (note 1's form) into a second throwaway worktree of the same commit; the same touched files | `2024 passed, 23 skipped`; that tree is identical (`diff -rq`) to step 1's tree with note 2's swapped spec applied |
+| the version ladder with step 1 applied | `test_specs_index.py::test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached` on step 1 and on step 2; and on step 1 with blocks 8m and 8n undone | `1 passed` on each; without 8m and 8n `AssertionError: ('E3', 'app 2.1.0, chart 0.59.26', 'Chart.yaml is already 0.60.3')` |
+| one pull request instead of two | all 43 blocks live, against main | `43 blocks check out across 20 files` |
 | a misspelt marker | step 1's checker on this spec with one `deferred-block` misspelt `defered-block` | rc 1: `unknown block marker(s) ['defered-block']: this tool reads `block` and leaves `deferred-block` and `applied-block` alone …` |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py`, `PYTHONPATH` at each tree's `local-development`, each tree a git worktree of this spec's commit | this spec's commit (main `f1423143` with the spec): `6344 passed, 26 skipped, 655 deselected, 5 xfailed`; step 1: `6362 passed`, the same plus T420-2's 10, T420-3's 1, block 4's 4, block 5's 1 and T4's 2; step 2 (all 41 blocks): `6381 passed`, plus block 13's 10, block 14's 7 and the two citations block 19 adds; 26 skipped, 0 failed on each |
-| index pin | `test_specs_index.py` with G4's row and header both mistyped `#421` | unmutated `90 passed`; mistyped `1 failed, 89 passed`, `AssertionError: ('G4 is #420', '421')`; mistyped with the pin deleted `90 passed`, so the pin is what catches it |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py`, `PYTHONPATH` at each tree's `local-development`, each tree a git worktree of this spec's commit | this spec's merge commit (main `6d532178` with the spec): `6365 passed, 26 skipped, 655 deselected, 5 xfailed`; step 1: `6383 passed`, the same plus T420-2's 10, T420-3's 1, block 4's 4, block 5's 1 and T4's 2; step 2 (all 43 blocks): `6402 passed`, plus block 13's 10, block 14's 7 and the two citations block 19 adds; 26 skipped, 0 failed on each |
+| index pin | `test_specs_index.py` with G4's row and header both mistyped `#421` | unmutated `92 passed`; mistyped `1 failed, 91 passed`, `AssertionError: ('G4 is #420', '421')`; mistyped with the pin deleted `92 passed`, so the pin is what catches it |
 | chart | `helm lint` on step 1 and step 2 | `1 chart(s) linted, 0 chart(s) failed`, both |
 | pod template | §2.8, `environments/crc.yaml` | only `checksum/config` differs, main to step 1 and step 1 to step 2 |
 | markdown | `markdownlint-cli2` on the chart README, `docs/CHANGELOG.md`, `docs/reference-architecture.md`, `docs/specs/README.md` | 24 findings on main, on step 1 and on step 2, the same per file and rule (MD004, MD040, MD012, MD014), none new |
@@ -815,8 +818,8 @@ they must be equal. Never log in as the fleet account, never place a wrong fleet
 | `charts/group-sync-dashboard/Chart.yaml` | 4 / 1 | 4 / 1 |
 | `docs/reference-architecture.md` | 3 / 3 | 14 / 7 |
 | `docs/CHANGELOG.md` | 14 / 0 | 11 / 0 |
-| `docs/specs/README.md` (T5's bullet, 8g's five cells) | 10 / 5 | — |
-| `docs/specs/SPEC_E2_*`, `SPEC_G2_*`, `SPEC_E4_*`, `SPEC_G3_*`, `SPEC_E5_*` (one cell each) | 1 / 1 each | — |
+| `docs/specs/README.md` (T5's bullet, 8g's five cells, 8m's one) | 11 / 6 | — |
+| `docs/specs/SPEC_E2_*`, `SPEC_G2_*`, `SPEC_E4_*`, `SPEC_G3_*`, `SPEC_E5_*`, `SPEC_E3_*` (one cell each) | 1 / 1 each | — |
 | `local-development/apply-spec-blocks.py` | 15 / 2 | — |
 | `local-development/tests/test_apply_spec_blocks.py` | 31 / 0 | — |
 | `local-development/tests/test_chart_connection_modes.py` | 65 / 0 | 8 / 0 |
@@ -826,15 +829,15 @@ they must be equal. Never log in as the fleet account, never place a wrong fleet
 
 ## 7. Implementation blocks
 
-Step 1 is blocks T1 to T5 and 1 to 8l, with `block` markers: the checker's two new marker words (T1 to T5), the Role
+Step 1 is blocks T1 to T5 and 1 to 8n, with `block` markers: the checker's two new marker words (T1 to T5), the Role
 and RoleBinding, their tests, the README row, the CHANGELOG entry, the chart PATCH, the sentences that are false at
-step 1 without a correction (blocks 8a to 8f), and five other specs' version cells (8g to 8l). Step 2 is blocks 9 to 24,
+step 1 without a correction (blocks 8a to 8f), and six other specs' version cells (8g to 8n). Step 2 is blocks 9 to 24,
 with `deferred-block` markers that the checker leaves alone, and counts, until step 2's pull request turns them on
 (Orchestrator's notes, 2): the ClusterRole rule removed, the comments and documents
 that place the grant, T420-1 and T420-9, the CHANGELOG entry and the chart PATCH. Each step's blocks are applied in
 order.
 
-### Step 1, the checker — blocks T1 to T5 (applied with blocks 1 to 8l)
+### Step 1, the checker — blocks T1 to T5 (applied with blocks 1 to 8n)
 
 OB2's F1, verbatim from its review (Orchestrator's notes, 8). The checker on main reads only `block`, so on main it
 says nothing about step 2's sixteen `deferred-block` markers; from these blocks on it counts both staging words
@@ -977,7 +980,7 @@ New text:
 `local-development/apply-spec-blocks.py <spec> <tree>` checks every block against a tree and, with `--apply`,
 ```
 
-### Step 1 — blocks 1 to 8l
+### Step 1 — blocks 1 to 8n
 
 #### Block 1 — charts/group-sync-dashboard/templates/rbac.yaml: the `-leases` Role and RoleBinding (step 1)
 
@@ -1628,6 +1631,44 @@ New text:
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
 | Version on release | chart 0.61.0 (chart only) |
+```
+
+#### Block 8m — docs/specs/README.md: SPEC_E3's version cell moves above step 2's chart (the Version note)
+
+SPEC_E3 (#302) merged after blocks 8g to 8l were written; the same rule moves its chart claim, 0.59.26, to the next free PATCH above 0.60.4, after 8k's 0.60.5 and 8j's 0.60.6: 0.60.7. Its application version stays. Block 8n moves its header.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| E3 | [`SPEC_E3_restore_db.md`](SPEC_E3_restore_db.md) — `restore-db.sh`: from the laptop, list every copy the recovery pod can restore by `<user_version>-<stamp>` ID, and restore one with the checks, the loss window, the live set kept and an atomic swap; the helper is streamed into the pod over `oc exec -i`, so it runs under the image a rollback targets | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) | specified |
+```
+
+New text:
+
+```text
+| E3 | [`SPEC_E3_restore_db.md`](SPEC_E3_restore_db.md) — `restore-db.sh`: from the laptop, list every copy the recovery pod can restore by `<user_version>-<stamp>` ID, and restore one with the checks, the loss window, the live set kept and an atomic swap; the helper is streamed into the pod over `oc exec -i`, so it runs under the image a rollback targets | E — restore tools and release safety | — | app 2.1.0, chart 0.60.7 | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) | specified |
+```
+
+#### Block 8n — docs/specs/SPEC_E3_restore_db.md: SPEC_E3's version cell, 0.59.26 to 0.60.7 (a PATCH, as before)
+
+<!-- block: docs/specs/SPEC_E3_restore_db.md | edit -->
+
+Old text:
+
+```text
+| Batch | E — restore tools and release safety |
+| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
+| Version on release | app 2.1.0, chart 0.59.26 |
+```
+
+New text:
+
+```text
+| Batch | E — restore tools and release safety |
+| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
+| Version on release | app 2.1.0, chart 0.60.7 |
 ```
 
 ### Step 2 — blocks 9 to 24 (`deferred-block` until step 2's pull request; after the operator's agreement)
