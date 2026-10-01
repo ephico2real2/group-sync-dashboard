@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 35, f"expected thirty-five index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465) and S4f (#481); matched {sorted(rows)}"
+    assert len(rows) == 36, f"expected thirty-six index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481) and G1 (#239); matched {sorted(rows)}"
     return rows
 
 
@@ -96,9 +96,11 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     thirteen have one issue each; the S batch is one issue (#230) in three steps, so its rows share it."""
     # D5 (#244) is specified after later work (D3/D4, S4e) because the operator's rulings
     # arrived later; it sits at the end of the table and is excluded from the rising-number assert.
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244"]
+    # G1 is #239's second design (SPEC_G1, Epic G #387), specified after everything above it; it shares
+    # T1's issue, as the S steps share #230, so it is excluded from both asserts.
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244" and fid != "G1"]
     assert issues == sorted(issues), issues
-    programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S")]
+    programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
     # S1-S3 are three steps of one issue (#230). S4 is its own issue set (#283-#286): the credential
     # RETRIEVAL machinery is separable work with its own steps, not a fourth step of the Secret
