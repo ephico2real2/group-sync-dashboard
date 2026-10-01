@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, G2 #255)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 37, f"expected thirty-seven index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239) and G2 (#255); matched {sorted(rows)}"
+    assert len(rows) == 38, f"expected thirty-eight index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303) and G2 (#255); matched {sorted(rows)}"
     return rows
 
 
@@ -101,10 +101,13 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # so the exclusion covers that one sharing and no other number (review of SPEC_G1, OB3 and Codex).
     assert ROWS["G1"]["issue"] == ROWS["T1"]["issue"] == "239", (
         "only T1 and G1 may share #239", ROWS["T1"]["issue"], ROWS["G1"]["issue"])
+    # E2 (#303) is Epic E's first step, specified after G1; it sits at the end like D5 and is excluded from
+    # the rising-number assert by its id, pinned to #303 the same narrow way, so a mistyped issue fails here.
+    assert ROWS["E2"]["issue"] == "303", ("E2 is #303", ROWS["E2"]["issue"])
     # G2 is #255 (filed 2026-09-21), specified after #481 in Epic G's build order: excluded from the rising-number
     # assert by its id and pinned to #255, so a mistyped issue on that row still fails (review of SPEC_G2, OB3 and Codex).
     assert ROWS["G2"]["issue"] == "255", ("G2 is #255", ROWS["G2"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244" and fid not in ("G1", "G2")]
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if ROWS[fid]["issue"] != "244" and fid not in ("G1", "E2", "G2")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
