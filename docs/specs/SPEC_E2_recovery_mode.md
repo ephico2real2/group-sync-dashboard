@@ -9,7 +9,7 @@
 | Version note | No application version: the recovery program ships in the chart as a ConfigMap (the issue's decision 1), so nothing under `publish.yml`'s image paths changes. The chart takes a MINOR, 0.59.25 to 0.60.0, because it adds two values and a template (`Chart.yaml`'s own rule: "MAJOR and MINOR for behaviour"). If another chart change lands first, block 11 fails its check because its Old text is the version it replaces; the implementing pull request then takes the next free MINOR and corrects blocks 11, 14 and 18 (the three that name 0.60.0) here before applying (`docs/specs/README.md`, "Implementation blocks") |
 | Issue | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)" and the Epic E mock (PR #504). Measured on main `5c03a9b1` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and Python 3.14.7 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6, Argo CD v3.4.7). §7's blocks were cut from a copy of `5c03a9b1` with the design implemented, and proved against a clean tree (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)" and the Epic E mock (PR #504). Measured on main `5c03a9b1` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and Python 3.14.7 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6, Argo CD v3.4.7). §7's blocks were cut from a copy of `5c03a9b1` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `b7b8e993` (OB3 in Grok's seat, Codex gpt-5.6-sol xhigh) and the operator's rules of 2026-10-01, re-cut from origin/main `dd51b91f` and proved again (§4.3) |
 
 ## How to read this spec
 
@@ -18,7 +18,8 @@ the data volume with the app stopped, keeps itself out of the Service, survives 
 itself, visibly, after `recovery.ttl`.**
 
 §1 is the mandate. §2 is the research: each finding names its primary source, the exact sentence relied on, and
-what it settles; lab reads carry the command and its output. §3 is the design, one decision per subsection, with
+what it settles; lab reads carry the command and its output. §2a weighs the alternatives and reconciles each
+external claim with the code that relies on it. §3 is the design, one decision per subsection, with
 the safety budgets. §4 maps every test case of the issue (T303-1 to T303-19) to a test and shows each failing on a
 tree without the change. §5 is the walk the implementing pull request runs on the lab. §6 is what an operator sees
 and what it costs. §7 is the whole change as implementation blocks (`docs/specs/README.md`, "Implementation
@@ -57,36 +58,52 @@ the issue, the epic and the mock. Each is applied in §3 and §7 and held by a t
    while nothing listens, needs no `exec` (the probe page warns of exec's process cost) and does not depend on
    `oauthProxy.skipAuthRegex`. Not measured: whether the oauth-proxy sidecar logs every failed upstream request
    (Go's `ReverseProxy` does by default, §2.2); the TCP probe does not reach the proxy, so the question does not
-   arise. T303-4 is parametrized over `probes.readiness.enabled` true and false.
+   arise. T303-4 is parametrized over `probes.readiness.enabled` true and false. With the proxy off the pod has
+   one container and reads `0/1`, not `1/2` (rendered: every recovery-on combination of `oauthProxy.enabled` and
+   both probe switches carries the probe, and none carries a sidecar probe, a readiness gate or
+   `publishNotReadyAddresses`).
 3. **The TTL is kept in the pod's `/tmp`, so it survives a container restart (the mandate's question).** The
    kubelet restarts an exited container at once the first time and resets its back-off after ten minutes of
    running (§2.1). A TTL counted from each start would therefore expire, restart at once and sleep another full
    TTL: no CrashLoopBackOff, ever. The script writes `$TMPDIR/gsd-recovery.json` (the chart's `tmp` emptyDir at
    `/tmp`) on the pod's first start and reads it back on every later start; an emptyDir outlives a container
    crash and goes with the pod (§2.3). After the deadline every start exits 1 at once, which is what keeps the
-   pod in CrashLoopBackOff. A new pod (a new `recovery.ttl`, or `oc delete pod`) gets a new emptyDir and a new
-   TTL. #302 reads the same file for its "too little TTL left" refusal (the epic's decision of 2026-10-01);
-   its fields are in §3.5.
+   pod in CrashLoopBackOff. The budget is per pod: a new pod gets a new emptyDir and a new TTL, whether it comes
+   from a new `recovery.ttl`, `oc delete pod`, an eviction, a node drain or a node lost (§3.6). And the script
+   is the container's PID 1, so at the TTL the kernel ends every process in the container with it, an
+   `oc exec` restore still running included (§2.4, measured); the runbook says to check the time left before a
+   restore. The time left is counted on the node's monotonic clock, not the wall clock, so setting the clock back
+   cannot lengthen it (Codex F1; §2.11, §3.6). #302 reads the same file for its "too little TTL left" refusal (the
+   epic's decision of 2026-10-01); its fields are in §3.5.
 4. **The issue's test wording, aligned with the mock.** T303-9 says the *first line* names the mode, the TTL,
    the time left, the idle sentence and the data path; the mock (block 1 of `docs/design/restore-cli-mock.html`
    on main since PR #504) prints them as a four-line banner, and the spec follows the mock: T303-9 reads the
-   first four lines. T303-10 says the *last line* names the command to extend; the mock prints the reason first
-   and the commands after it. The spec keeps both: the reason first, then the commands, then a last line that
-   repeats the reason and names `recovery.ttl` and `recovery.enabled=false`, so `oc logs --tail=1` still answers.
+   first four lines, and a fifth says to check the time left before a restore (OB3's F2). T303-10 says the *last line* names the command to extend; the mock prints the reason first
+   and the commands after it. The spec keeps both: the reason first, then what to change, then a last line that
+   repeats the reason and names `recovery.ttl` and `recovery.enabled: false` in the release's values file, so
+   `oc logs --tail=1` still answers.
 5. **Where the spec differs from the mock, and why.** (a) Times left print as a compact Go duration (`2h`,
    `1h30m`), not `2h0m`, because the same function writes the suggested `recovery.ttl`, which must parse.
-   (b) The Helm commands use `--reset-then-reuse-values`, not `--reuse-values`: Helm's `--reuse-values` renders
-   with the previous release's *chart* defaults (§2.7), so a value a newer chart adds is absent. (c) "To leave:
-   remove both parameters" is an exact command (`"parameters": null`, which a JSON merge patch reads as removal,
-   §2.8). (d) The log names one more way to extend, `oc delete pod`, which restarts the same TTL. (e) The mock's
-   caption "it never opens the database" and "1/2" ready are kept as they are.
-6. **The Argo CD path, and its one hazard.** A merge patch replaces `spec.source.helm.parameters` as a whole
-   (RFC 7396, §2.8). The lab's Application has none (§2.9), so the mock's patch is right there; an Application
-   that already carries parameters would lose them. The runbook gives the merge patch and, for that case,
-   `argocd app set <app> -p …` / `argocd app unset <app> -p …`, which change only the named parameters (Argo CD's
-   `AddParameter`, §2.8). The log at the TTL cannot know which case holds, so it prints the merge patch and says
-   it replaces the list. It also assumes the Application is named after the release, in `openshift-gitops`, and
-   says so: the chart cannot read either name.
+   (b) The mock's command lines (the Argo CD Application patches and `helm upgrade --reuse-values`) are not
+   printed anywhere: the operator's direction of 2026-10-01 makes the release's values file the only path
+   (note 6). (c) "To leave: remove both parameters" becomes "set `recovery.enabled: false` in the release's
+   values file and roll it out", which keeps everything else in that file, a rollback's `image.tag` included.
+   (d) The log names nothing but the values file: the reviewed draft's `oc delete pod` line is gone from it
+   (the operator's rule covers "any message a program prints"); the runbook keeps it as a pod action. (e) The mock's caption "it never opens the database" and "1/2" ready are kept as they are.
+6. **The only path is the release's values file (the operator, 2026-10-01).** "Be careful with over
+   complicating the argocd — we might be using applicationset in production and certain parameters are fixed.
+   whatever things needs to happen to be supported by Helm values file directly. Argocd is just a conduit —
+   don't complicate it." And: "In a real enterprise — nobody uses manual cli to work on argocd or helm. we are
+   only using the cli and --set options only for troubleshooting and development." The review measured why the
+   earlier Application-patch path was unsafe (§2.8): a JSON merge patch replaces the whole `parameters` list,
+   so the printed patches dropped a rollback's `image.tag` (the app would have restarted on the chart's default
+   image, not the one rolled back to, against the epic's flow "the same target image starts the app") and the
+   four image parameters `release-crc.sh --argocd` writes on the lab; and an ApplicationSet with its default
+   `sync` policy overwrites a hand patch of the Application it generates. So the script's log, the values
+   comment, the chart README, the runbook and the CHANGELOG name the values file and the release's deployment
+   pipeline, and nothing else. Argo CD is named only to say why a hand edit of the Deployment is reverted; a
+   plain `helm upgrade -f` appears once, on the runbook's line for development and troubleshooting. Held by
+   T303-10 and `test_the_only_documented_path_is_the_values_file`.
 7. **The offsite claim, checked against the CronJob's own mount (the epic's decision of 2026-10-01).** The
    recovery pod mounts it read-only at `/offsite` exactly when the CronJob renders with a `pvc` destination, by
    the same switch and the same claim name
@@ -105,7 +122,10 @@ the issue, the epic and the mock. Each is applied in §3 and §7 and held by a t
 8. **#304 must carry this mount's switch.** The mount reads `.Values.backup.offsite.enabled`, as the CronJob does
    today. #304 makes that switch three-state with one helper deciding for the CronJob and the alerts (the epic's
    decision); its spec must use the same helper for `$offsiteClaim` in `deployment.yaml` (block 3), or recovery
-   mode stops mounting a claim the CronJob renders.
+   mode stops mounting a claim the CronJob renders. A test holds the two together:
+   `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one` compares the mount with the CronJob's
+   claim in five value sets, so a #304 that turns offsite on by default without the mount fails it (§4.2, C8),
+   where the earlier `test_no_offsite_mount_without_a_pvc_destination` still passed.
 9. **`recovery.enabled` is read as a word; `.Values.recovery` is read nil-safe.** A `--set-string` `"false"` is
    a non-empty string, which a template `if` takes as true, and turning recovery on stops the dashboard: the
    helper accepts `true` and `false` and refuses anything else by name. And `helm upgrade --reuse-values` onto
@@ -114,15 +134,62 @@ the issue, the epic and the mock. Each is applied in §3 and §7 and held by a t
 10. **No upper bound on the TTL.** The operator sets it in an incident and may need a long restore; a cap would
     be one more refusal to fight at 03:00. The default (2h) bounds the forgotten case, and every extension is a
     deliberate values change.
-11. **The lab runs the image under emulation.** PID 1 of the lab's dashboard container is
-    `/usr/bin/qemu-x86_64-static /usr/sbin/python3.14 -m uvicorn …` on an `arm64` node (§2.9): the amd64 image runs
-    under qemu-user. The SIGTERM rule of §2.4 is the kernel's; whether qemu-user as PID 1 changes it was not
-    measured. The script installs its own handler, which is correct under both, and the walk (§5, step 6) measures
-    the stop time on the lab.
+11. **The lab runs the image under emulation, and qemu-user does not change the SIGTERM rule.** PID 1 of the
+    lab's dashboard container is `/usr/bin/qemu-x86_64-static /usr/sbin/python3.14 -m uvicorn …` on an `arm64`
+    node (§2.9): the amd64 image runs under qemu-user. Measured on a podman machine of the same shape (arm64
+    Linux, `qemu-x86_64-static` in binfmt_misc, the published amd64 2.0.0 image; on the host PID 1 reads
+    `/usr/bin/qemu-x86_64-static /usr/sbin/python3.14 …`, `NSpid … 1`): the script as PID 1 stops 0.19 s after
+    SIGTERM with exit 0 under qemu (0.17 s natively), and a control with no handler waits out the 10 s grace and
+    dies by SIGKILL, exit 137, under both (§2.4). The walk (§5, step 6) still times the stop on the lab.
 12. **The index.** This spec adds the thirty-sixth row, at the end like D5's (#244) because it is the last to be
     specified, and `local-development/tests/test_specs_index.py` excludes #303 from the rising-issue check as it
     does #244. A spec for #239 is being written from the same main in parallel; whichever merges second rebases
     the count sentence and the test's count.
+13. **A GitOps sync waits for the recovery rollout (read from the code, not measured).** This chart's syncs
+    are multi-step (`charts/group-sync-dashboard/templates/secrets-mint.yaml#argocd.argoproj.io/hook: PreSync`),
+    and in a multi-step sync Argo CD v3.4.7 keeps the operation running until every applied resource is Healthy
+    or Degraded (`gitops-engine/pkg/sync/sync_context.go` lines 556-580, `multiStep` in `sync_tasks.go` lines
+    274-276); a Deployment is Degraded only at `ProgressDeadlineExceeded` (`health_deployment.go` lines 37-42),
+    600 s after the recovery rollout starts. Meanwhile auto-sync starts nothing (`controller/appcontroller.go`
+    lines 2241-2244), and the running operation and its retries keep the revision it started with
+    (`controller/sync.go` lines 124-145; a retry clears only the sync result, `appcontroller.go` lines 1532-1536).
+    So a values change committed within about ten minutes of the one that turned recovery on is applied only
+    after that sync fails and its retries end. The docs say only what holds for any pipeline (a step that waits
+    for the rollout reports it failed); the walk measures the delay (§5, step 7).
+
+14. **The reviews of `b7b8e993` (2026-10-01), decided by the orchestrator, each traced before it was applied.**
+    - **OB3, accepted whole:** (1) the release's values file as the only path, in blocks 1, 10, 12, 13, 14, 18,
+      19, 20 and the prose (notes 5-6, §2.8, §3.9, §5, §6); (2) at the TTL every process in the container stops,
+      a restore included (measured 4.2 s in), so the runbook and the banner say to check the time left first, and
+      the TTL budget is per pod (an eviction, a drain or a lost node starts a new one); (3) READY reads `0/1`
+      with the proxy off; (4) `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one` replaces
+      `test_no_offsite_mount_without_a_pvc_destination`, so #304 cannot separate the mount from the CronJob;
+      (5) §3.7's `ttl: null` (it renders `2h`), §4.3's checksum line, note 11 measured, note 13, and the
+      alternatives, now §2a. Changed after it: the script's `oc delete pod` line is dropped (note 5), so its
+      `--namespace` argument is dropped with it (blocks 1, 4 and the T303-1 command).
+    - **Codex F1 (HIGH), accepted:** the deadline was wall-clock only, so a backward step lengthened the TTL. The
+      fix counts the time left on the node's monotonic clock and records the node's boot ID (§2.11, §3.6). Taken
+      from Codex: the boot ID and refusing a record without the monotonic fields. Not taken: Codex's minimum of
+      the wall and monotonic deadlines (the wall clock adds nothing to a bound the monotonic clock already
+      holds), and the coordinator's proposal of a cap alone (`min(deadline - now, ttl)`), which still lets each
+      backward step buy up to a TTL; the cap is kept as a guard inside `remaining`. The premise "monotonic clocks
+      reset across container restarts" is refuted by measurement: in the lab pod `time.monotonic()` read 120743 s
+      against a container started 66378 s after the node's boot, and the pod is in the initial time namespace
+      (§2.11).
+    - **Codex F3 (MEDIUM), accepted:** `ne (int .Values.replicaCount) 1` let `replicaCount: true` through
+      (`int true` is 1) and rendered `replicas: true`; the guard compares `toString` with `"1"` (block 3), and
+      T303-5 renders `true`.
+    - **Codex F2, superseded** by the operator's rules (no Argo CD command anywhere); its sub-point, a `250ms`
+      TTL suggesting `0s`, is taken: the suggestion is at least `1s`
+      (`test_the_suggested_ttl_is_a_positive_duration_for_a_subsecond_ttl`). **Codex F4** (the runbook's
+      undefined `<chart>`, the unconditional `1/2`) is closed by the values-file path and OB3's (3). Codex's
+      corrected blocks were not taken, because they still print Argo CD and `--set` commands.
+15. **What #302 (SPEC E3) takes from here, after this revision.** Unchanged: the environment names
+    (`GSD_RECOVERY_MODE`, `GSD_RECOVERY_MODE_TTL`), the file `/tmp/gsd-recovery.json` and its fields `ttl`,
+    `started`, `started_epoch`, `deadline`, `deadline_epoch`, the offsite mount at `/offsite`, and the per-pod
+    TTL. Added to the file: `deadline_monotonic` and `boot_id`, which the time left is counted from (§3.5); a
+    reader that wants this script's own answer computes `deadline_monotonic - time.monotonic()` when `boot_id`
+    matches the node's, and 0 otherwise. Removed: the script's `--namespace` argument (no reader).
 
 **Open questions for the operator.** None.
 
@@ -139,7 +206,9 @@ rollback targets; everything else renders as before (RBAC ADDED 0, REMOVED 0); o
 minutes with nothing holding `/data/gsd.db` and the app comes back on the same database; the runbook, `values.yaml`
 and the chart README describe it truthfully. The epic adds: the recovery pod mounts the offsite claim read-only
 when `backup.offsite` uses a `pvc` destination, and it is set through the release's values or the Application's
-parameters, never `oc set env`.
+parameters, never `oc set env`. The operator's direction of 2026-10-01 narrows that last point: the release's
+values file, rolled out through the release's deployment pipeline, is the only path, and "the command that
+extends it" is that values change (Orchestrator's notes, 6).
 
 Out of scope, each owned elsewhere: the restore itself (listing, checking and writing a copy) is #302; the
 release note's schema line and the runbook's §0 are #300; offsite on by default is #304; the KPI backup card is
@@ -217,20 +286,40 @@ the lifetime the TTL needs (§3.6).
 **Source.** pid_namespaces(7) (man7.org, Linux man-pages 6.19, 2026-05-13): "Only signals for which the "init"
 process has established a signal handler can be sent to the "init" process by other members of the PID namespace.
 … Likewise, a process in an ancestor namespace can … send signals to the "init" process of a child PID namespace
-only if the "init" process has established a handler for that signal." Kubernetes, pod-lifecycle.md lines 854-856:
-the kubelet asks the runtime to stop the containers "by first sending a TERM (aka. SIGTERM) signal, with a grace
-period timeout, to the main process in each container." Python, `Doc/library/signal.rst` (cpython 3.14) lines
-17-22: "A small number of default handlers are installed: `SIGPIPE` is ignored … and `SIGINT` is translated into a
-`KeyboardInterrupt` exception". Measured: `python -c 'import signal; print(signal.getsignal(signal.SIGTERM))'` on
-Python 3.14.7 prints `0` (`SIG_DFL`). `Doc/library/time.rst` lines 390-391: "If the sleep is interrupted by a signal
-and no exception is raised by the signal handler, the sleep is restarted with a recomputed timeout." So a handler
-that raises ends the sleep at once.
+only if the "init" process has established a handler for that signal." And: "If the "init" process of a PID
+namespace terminates, the kernel terminates all of the processes in the namespace via a SIGKILL signal."
+Kubernetes, pod-lifecycle.md lines 854-856: the kubelet asks the runtime to stop the containers "by first sending
+a TERM (aka. SIGTERM) signal, with a grace period timeout, to the main process in each container." Python,
+`Doc/library/signal.rst` (cpython 3.14) lines 17-22: "A small number of default handlers are installed: `SIGPIPE`
+is ignored … and `SIGINT` is translated into a `KeyboardInterrupt` exception". Measured: `python -c 'import
+signal; print(signal.getsignal(signal.SIGTERM))'` on Python 3.14.7 prints `0` (`SIG_DFL`). `Doc/library/time.rst`
+lines 390-391: "If the sleep is interrupted by a signal and no exception is raised by the signal handler, the sleep
+is restarted with a recomputed timeout." So a handler that raises ends the sleep at once.
 
-**What it settles.** Derived from these sources, not measured here (this machine has no Linux PID namespace, and on
-the lab PID 1 is qemu-user): a Python PID 1 with no SIGTERM handler does not receive the kubelet's SIGTERM and is
-killed only at the end of the grace period (30 s on the lab, §2.9). The script installs a handler that raises, so `recovery.enabled=false`
-(Recreate stops the recovery pod first) does not wait out the grace period. On the lab the image runs under
-qemu-user (Orchestrator's notes, 11).
+**Measured as PID 1, natively and under qemu.** A podman machine on this Mac (arm64 Linux, with
+`qemu-x86_64-static` registered in binfmt_misc, the lab's shape) ran the script as each container's PID 1 with a
+read-only root, `/tmp` and `/scripts` as volumes and a non-root UID with group 0, and stopped it as the runtime
+stops a pod's container (`podman stop -t 10`: SIGTERM from the host, SIGKILL at the grace period). The published
+amd64 2.0.0 image ran under qemu (on the host its PID 1 reads `/usr/bin/qemu-x86_64-static /usr/sbin/python3.14 …`,
+`NSpid … 1`); the lab's own arm64 2.0.0 build ran natively:
+
+| PID 1 | stop after SIGTERM | exit | last line |
+|---|---|---|---|
+| the script, native | 0.17 s | 0 | `SIGTERM: stopping (exit 0); the app was not running` |
+| the script, qemu | 0.19 s | 0 | the same |
+| a `time.sleep` with no handler, native | 10.18 s (the grace) | 137 (SIGKILL) | — |
+| a `time.sleep` with no handler, qemu | 10.15 s (the grace) | 137 (SIGKILL) | — |
+
+Under qemu the host's view of PID 1 has no SIGTERM bit in `SigCgt` (`0x7000004de`): qemu-user installs no handler
+of its own for a guest signal left at its default, so the kernel's rule applies unchanged. A second run started a
+30-second loop through `podman exec` (what `oc exec` does) two seconds into a 6-second TTL: when the script exited
+at the TTL the loop died with it, exit 137 after 4.2 s, 4 of its 30 lines written.
+
+**What it settles.** A Python PID 1 with no SIGTERM handler does not receive the kubelet's SIGTERM and is killed
+only at the end of the grace period (30 s on the lab, §2.9), natively and under qemu-user. The script installs a
+handler that raises, so `recovery.enabled=false` (Recreate stops the recovery pod first) does not wait out the
+grace period. And the script's own exit at the TTL ends every process in the container, a restore running
+through `oc exec` included: the runbook tells the operator to check the time left first (block 14).
 
 ### 2.5 A script in a ConfigMap, run by any UID
 
@@ -283,13 +372,16 @@ determined that template rendering should fail." helm/helm `v4.3.0`, `pkg/action
 (u *Upgrade) reuseValues`): "If the ReuseValues flag is set, we always copy the old values over the new config's
 values." … `oldVals, err := util.CoalesceValues(current.Chart, current.Config)` … `chart.Values = oldVals`. `helm
 upgrade --help` (v4.3.0): `--reset-then-reuse-values` "when upgrading, reset the values to the ones built into the
-chart, apply the last release's values and merge in any overrides from the command line via --set and -f".
+chart, apply the last release's values and merge in any overrides from the command line via --set and -f". The
+chart README (`charts/group-sync-dashboard/README.md#A values FILE is the better habit anyway`): with `-f` or
+`--set` Helm "resets to chart defaults plus what this invocation supplied".
 
 **What it settles.** Every refusal is a `fail` in the render, as the chart's other guards are. A release upgraded to
 this chart with `--reuse-values` renders with the previous chart's defaults, where `recovery` does not exist, so the
-helpers read it nil-safe; the commands the spec prints use `--reset-then-reuse-values`.
+helpers read it nil-safe. The spec prints no Helm command for an operator (Orchestrator's notes, 6); the runbook's
+one plain-Helm line, for development and troubleshooting, passes the release's complete values file with `-f`.
 
-### 2.8 Argo CD: parameters, auto-sync, self-heal; and a JSON merge patch
+### 2.8 Argo CD and ApplicationSets: why a hand edit is reverted, and why a patched Application is not a path
 
 **Source.** argo-cd `v3.4.7` `docs/user-guide/helm.md`, line 48 and lines 398-400: "Order of precedence is
 `parameters > valuesObject > values > valueFiles > helm repository values.yaml`"; lines 381-396: `argocd app set
@@ -306,12 +398,34 @@ which `argocd app set -p` calls (`cmd/util/app.go`, line 541). `docs/user-guide/
 43: `-p, --parameter stringArray  Unset a parameter override`. RFC 7396 (rfc-editor.org), §1 and §2: "Null values in the
 merge patch are given special meaning to indicate the removal of existing values in the target" and "it is not
 possible to patch part of a target that is not an object, such as to replace just some of the values in an array."
+Kubernetes, `update-api-object-kubectl-patch.md` lines 218-220: "With a JSON merge patch, if you want to update a
+list, you have to specify the entire new list. And the new list completely replaces the existing list", and line
+528: "Strategic merge patch is not supported for custom resources." The ApplicationSet controller, argo-cd `v3.4.7`
+`docs/operator-manual/applicationset/Controlling-Resource-Modification.md`, lines 143-145: "When an ApplicationSet is
+reconciled, the controller will compare the ApplicationSet spec with the spec of each Application that it manages.
+If there are any differences, the controller will generate a patch to update the Application to match the
+ApplicationSet spec"; lines 21 and 38: the `--policy` default is `sync`, under which "Create, Update and Delete are
+allowed"; lines 104-105: only an `ignoreApplicationDifferences` rule exempts a field, and lines 147-148: the
+controller's patch is a merge patch, so "existing lists will be completely replaced by new lists".
 
-**What it settles.** A Helm parameter on the Application is desired state with the highest precedence: changing it
-makes the Application OutOfSync and auto-sync applies it; self-heal does not revert it, because it is not a change
-to the live cluster. A hand edit of the Deployment (`oc set env`) is exactly what self-heal reverts. `oc patch --type
-merge` with a `parameters` list replaces the whole list; `"parameters": null` removes it; `argocd app set/unset -p`
-touches only the named ones.
+**Measured against what the earlier draft printed.** RFC 7396's own algorithm (§2 pseudocode), applied to the exact
+JSON the draft's script printed at the TTL (the review of 2026-10-01 ran it; the harness is not committed):
+
+- the lab's Application after `release-crc.sh --argocd`, which writes four image parameters
+  (`local-development/release-crc.sh#apply_application()`): the draft's "turn on" patch left only the two
+  recovery parameters, so the dev-built images fell back to the chart's default, and its "leave" patch removed
+  the list;
+- the epic's rollback entered as the draft's runbook said ("set the older `image.tag` in the same change"), i.e.
+  `image.tag` in the same list: the draft's "extend" patch dropped `image.tag`, and its "leave" patch
+  (`"parameters": null`) restarted the app on the chart's default image instead of the target, against the
+  epic's "Set recovery.enabled=false: the same target image starts the app".
+
+**What it settles.** Recovery mode is a value in the release's values file, rolled out through the release's
+deployment pipeline (Orchestrator's notes, 6): it holds the rollback's `image.tag` and `recovery` in one place, a
+leave changes only `recovery.enabled`, and it works the same whether the conduit is Helm, an Application or an
+ApplicationSet. A hand edit of the Deployment (`oc set env`, `oc scale`) is exactly what self-heal reverts; a hand
+patch of an ApplicationSet-generated Application is overwritten by the ApplicationSet controller. Neither is a path,
+and nothing the chart or the script prints proposes one.
 
 ### 2.9 The lab, read-only, 2026-10-01
 
@@ -325,7 +439,10 @@ touches only the named ones.
     targetRevision: main
     sync: Synced health: Healthy
 
-No parent Application tracks it (no labels, no owner), so a parameter patched onto it stays.
+No parent Application or ApplicationSet tracks it (no labels, no owner). The parameters read `None` because the last
+deploy took `release-crc.sh`'s branch path; an `--argocd` deploy at a pushed head writes four image parameters onto
+it (`local-development/release-crc.sh#apply_application()`). Neither matters to recovery mode, which is set in the
+values file the Application reads (Orchestrator's notes, 6).
 
     $ oc get deploy -n group-sync-dashboard group-sync-dashboard -o json   (fields read with python)
     replicas 1 strategy Recreate progressDeadline 600 terminationGrace 30
@@ -351,7 +468,7 @@ No parent Application tracks it (no labels, no owner), so a parameter patched on
 
 The lab has no offsite CronJob and one node. The PDB is `maxUnavailable: 1`, so a drain still evicts a not-ready
 recovery pod (the default `unhealthyPodEvictionPolicy` evicts a running, not-ready pod while the budget is met; not
-measured).
+measured), and the replacement pod starts a new TTL (§3.6).
 
 ### 2.10 What alerts while the app is stopped
 
@@ -367,6 +484,60 @@ Read from `charts/group-sync-dashboard/templates/monitoring.yaml` (every `expr:`
 
 Not measured live: monitoring validation is parked on CRC (`docs/specs/README.md`, "Monitoring, parked"). Cluster
 rules outside the chart (the platform's own) were not read.
+
+### 2.11 The clock the TTL is counted on
+
+**Source.** clock_gettime(2) (man7.org, Linux man-pages 6.19, 2026-03-07): "`CLOCK_MONOTONIC` A nonsettable
+system-wide clock that represents monotonic time since … "some unspecified point in the past". On Linux, that point
+corresponds to the number of seconds that the system has been running since it was booted. The `CLOCK_MONOTONIC`
+clock is not affected by discontinuous jumps in the system time (e.g., if the system administrator manually changes
+the clock)". random(4): `boot_id` is a read-only file holding a random string that "was generated once". Python,
+`Doc/library/time.rst` (cpython 3.14) lines 289-303: `monotonic()` is "a clock that cannot go backwards. The clock
+is not affected by system clock updates", and on Linux it calls `clock_gettime(CLOCK_MONOTONIC)`.
+
+**Measured in the lab pod** (`oc exec … -c dashboard -- python3.14 -c …`, read-only):
+
+    boot_id: 1e78896e…
+    monotonic: 120743 uptime: 120743.03
+    pid1 start (s since boot): 66378
+    time ns: /proc/self/ns/time time:[4026531834]
+    pid1 time ns: time:[4026531834]
+
+The container started 66378 s after the node booted, and its monotonic clock reads the node's 120743 s: it is the
+node's clock, not reset by a container (re)start. The pod is in the initial time namespace (the same inode as PID 1
+of the container; no per-container offset).
+
+**What it settles.** The time left is `deadline_monotonic - time.monotonic()`, which a wall-clock step cannot move
+and a container restart does not reset. Only a node restart resets it; the boot ID says when that happened, and
+then the time left cannot be measured and counts as reached (§3.6). The wall clock is used only to print instants.
+
+## 2a. Alternatives considered
+
+The issue's original description names what the current path gets wrong ("the debug pod is tied to the terminal",
+"it is a different pod spec", "`--replicas=0` then `debug` is two states to get wrong"). Each alternative, its
+source, and the chart code it meets:
+
+| alternative | the source says | against this chart | decided |
+|---|---|---|---|
+| `oc scale --replicas=0`, then `oc debug deploy/…` (today's §4a) | `oc debug --help` (oc 4.22.13): "The started pod will be a copy of your source pod, with labels stripped, the command changed to '/bin/sh' …, and readiness and liveness checks disabled"; "The debug pod is deleted when the remote command completes or the user interrupts the shell"; `--preserve-pod`: "If true, the pod will not be deleted after the debug command exits" | the copy has no labels, so the Service, which selects by `gsd.selectorLabels` (`charts/group-sync-dashboard/templates/service.yaml#selector: {{- include "gsd.selectorLabels"`), sends it nothing, and no probe kills it. But the writer is stopped by `oc scale`, a hand edit of `replicas: {{ .Values.replicaCount }}` (`charts/group-sync-dashboard/templates/deployment.yaml#replicas: {{ .Values.replicaCount }}`), which self-heal reverts (§2.8), starting the writer on a half-restored file; without `--preserve-pod` a dropped session deletes the pod; it has no TTL; and it is two manual CLI steps | kept as the fallback (the issue's Definition of Done), not the primary path |
+| `kubectl debug <pod> --copy-to=…` | kubernetes/website `debug-running-pod.md` lines 471-477: "you can use `kubectl debug` to create a copy of the Pod with configuration values changed"; lines 518-522: "Don't forget to clean up the debugging Pod"; kubectl `v1.35.0` `profiles.go` lines 204-210: the `general` profile's copy removes labels, annotations, probes and init containers (the default profile is still `legacy`, `debug.go` line 217) | the copy outlives the session, but it copies a running pod: the writer still has to be stopped by hand, with the same self-heal problem; a bare pod has no controller, so an eviction ends it; no TTL | rejected |
+| a separate recovery Job, the Deployment at 0 replicas | `job.md` lines 769-771: "The `activeDeadlineSeconds` applies to the duration of the job, no matter how many Pods are created. Once a Job reaches `activeDeadlineSeconds`, all of its running Pods are terminated and the Job status will become `type: Failed` with `reason: DeadlineExceeded`" | the one alternative with a stronger bound: its deadline survives a pod replaced by an eviction, which the per-pod deadline of §3.6 does not. Against it: a second pod spec beside the Deployment's (the issue's "different pod spec" defect, or a refactor of `deployment.yaml` into a shared helper); a Job's pod template is immutable, so a new TTL needs a new Job name, as the bind Job does (`charts/group-sync-dashboard/templates/backup-offsite.yaml#a Job's pod template is`); and a running Job is `Progressing` to Argo CD until it ends (`gitops-engine/pkg/health/health_job.go` lines 54-57), so this chart's multi-step syncs (Orchestrator's notes, 13) would wait the whole TTL rather than 600 s | rejected; recorded as the design to take if the per-pod bound proves too weak |
+| an ephemeral container | `ephemeral-containers.md`: "Ephemeral containers may not have ports, so fields such as `ports`, `livenessProbe`, `readinessProbe` are disallowed"; "they will never be automatically restarted" | it joins a running pod, whose app is the writer: it cannot hold the volume with the writer stopped | rejected |
+| the Deployment's own pod, its command swapped (this spec) | §2.1 to §2.6 | the same pod spec, volumes, UID and image as the app; Recreate stops the writer first; no new object but a ConfigMap; one value in the release's values file turns it on and off through any conduit | chosen |
+
+**Reconciliation: each external claim the design relies on, and the code that behaves accordingly.**
+
+| research says | this repository does it at |
+|---|---|
+| the kubelet restarts an exited container at once and resets its back-off after ten minutes of running (§2.1) | the deadline is written once per pod and read back on every start, `charts/group-sync-dashboard/scripts/recovery_mode.py#deadline` (block 1) |
+| an emptyDir survives a container crash and goes with the pod (§2.3) | it is written under `$TMPDIR`, the chart's `tmp` emptyDir at `/tmp` (`charts/group-sync-dashboard/templates/deployment.yaml#readOnlyRootFilesystem is on, so anything writing to /tmp needs a volume`) |
+| `CLOCK_MONOTONIC` is system-wide, counts from the boot and ignores clock changes; `boot_id` is fixed per boot (§2.11) | the time left is `remaining`, `deadline_monotonic - time.monotonic()` with a boot-ID check (`charts/group-sync-dashboard/scripts/recovery_mode.py#remaining`, block 1) |
+| a container without a readiness probe is `Success`; `tcpSocket` passes only when the port is open (§2.2) | the recovery probe is a TCP probe on `http`, rendered whatever `probes.readiness.enabled` says (block 7), on a container whose command binds nothing (block 4) |
+| a namespace's PID 1 receives only the signals it has a handler for; Python installs none for SIGTERM (§2.4) | the script installs its own, `charts/group-sync-dashboard/scripts/recovery_mode.py#_on_sigterm` (block 1), and it is PID 1 because the command runs `python3.14` directly (block 4) |
+| a ConfigMap is always mounted read-only (§2.5) | the script runs as `python3.14 /scripts/recovery_mode.py` and writes nothing beside itself (block 1), from a ConfigMap at mode 0444 (block 8), as `charts/group-sync-dashboard/templates/backup-offsite.yaml#.Files.Get "scripts/offsite_backup.py"` ships its precedent |
+| `ReadWriteOnce` admits pods on one node; a read-only mount does not change the attachment (§2.6) | the offsite claim is mounted with `persistentVolumeClaim.readOnly` and a read-only mount, the claim name being the CronJob's own (block 8; `charts/group-sync-dashboard/templates/backup-offsite.yaml#claimName: {{ $o.destination.pvc.existingClaim`) |
+| `fail` stops the render; `--reuse-values` renders with the previous chart's values (§2.7) | the refusals are `fail`s (block 3) and the helpers read `recovery` nil-safe (block 2) |
+| a GitOps tool's self-heal reverts a hand edit of a rendered object (§2.8) | the only path the docs and the script name is the values file (blocks 1, 10, 12, 13, 14, 18), held by `test_the_only_documented_path_is_the_values_file` |
 
 ## 3. The design
 
@@ -385,14 +556,14 @@ The default stays off under the 0.14.0 rule: turning it on stops the dashboard. 
 
 With `$recovery`, the dashboard container's `command` is
 
-    python3.14 /scripts/recovery_mode.py --release <release name> --namespace <release namespace>
+    python3.14 /scripts/recovery_mode.py --release <release name>
 
 in place of the chart's uvicorn command (proxy on) **and** of the image's `CMD` (proxy off): the branch comes first
 in an `if / else if .Values.oauthProxy.enabled`, so the proxy's setting cannot leave uvicorn in force. The script is
 the chart's `scripts/recovery_mode.py`, carried by a ConfigMap `<fullname>-recovery`
 (`templates/recovery.yaml`, rendered only while recovery is on) and mounted read-only at `/scripts` with mode 0444
-(`defaultMode: 292`, the decimal form this file uses for its other modes). The release name and namespace are
-arguments only so the commands it prints at the TTL are exact.
+(`defaultMode: 292`, the decimal form this file uses for its other modes). The release name is an
+argument only so the lines it prints at the TTL name the release whose values file to change.
 
 ### 3.3 The environment
 
@@ -409,9 +580,12 @@ No liveness probe (§2.2). A readiness probe of its own, rendered whatever `prob
 
 `http` is the dashboard container's own port (8080, declared on that container, so the name resolves there).
 Nothing listens on it while the script runs, so the probe never passes and the pod is never a ready endpoint of
-the Service or the Route. The sidecar has no probe and is ready, so the pod reads `1/2`. The Deployment never
-reports an available replica: `helm upgrade --wait` times out, and Argo CD shows the Deployment Progressing, then
-Degraded after `progressDeadlineSeconds` (600 s on the lab), an honest signal for a pod that serves nothing.
+the Service or the Route. The sidecar has no probe and is ready, so the pod reads `1/2`; with the proxy off there
+is no sidecar and it reads `0/1`. A pod is Ready only when all its containers are (pod-lifecycle.md line 611,
+"`ContainersReady`: all containers in the Pod are ready"), so the sidecar cannot make it Ready. The Deployment
+never reports an available replica, so a pipeline step that waits for the rollout reports it failed: `helm upgrade
+--wait` times out, and Argo CD shows the Deployment Progressing, then Degraded after `progressDeadlineSeconds` (600 s
+on the lab), an honest signal for a pod that serves nothing (and see the Orchestrator's notes, 13).
 
 ### 3.5 The script
 
@@ -432,54 +606,75 @@ Degraded after `progressDeadlineSeconds` (600 s on the lab), an honest signal fo
         2026-10-01T09:47:30Z gsd-recovery TTL 2h: ends 2026-10-01T11:47:30Z, 2h left
 
    After a container restart the fourth line adds `(kept from this pod's first start at <instant>; the container
-   restarted)`.
+   restarted)`. A fifth line follows: `check the time left before a restore: at the TTL this process exits and
+   every process in the container stops with it`.
 5. Sleeps to the deadline in steps of `--report-every` seconds (1800 by default, the mock's half hour), printing
    `<left> left; the app is NOT running and no data is collected` after each step that ends before the deadline.
-6. At the deadline prints the reason, the commands, and a summary line, then exits 1:
+6. At the deadline prints the reason, what to change, and a summary line, then exits 1. What to change is a value
+   in the release's values file, rolled out through the release's deployment pipeline; no command line at all
+   (Orchestrator's notes, 5 and 6):
 
         2026-10-01T11:47:30Z gsd-recovery TTL 2h reached at 2026-10-01T11:47:30Z; exiting 1: the app is still NOT running and no data is collected
-        2026-10-01T11:47:30Z gsd-recovery to extend, start a new pod with a new TTL (it counts from that pod's start):
-          under Argo CD:  oc patch applications.argoproj.io/group-sync-dashboard -n openshift-gitops --type merge -p '{"spec": {"source": {"helm": {"parameters": [{"name": "recovery.enabled", "value": "true"}, {"name": "recovery.ttl", "value": "4h"}]}}}}'
-          with Helm:      helm upgrade group-sync-dashboard <chart> -n group-sync-dashboard --reset-then-reuse-values --set recovery.enabled=true --set recovery.ttl=4h
-          the same TTL:   oc delete pod <pod> -n group-sync-dashboard
-        2026-10-01T11:47:30Z gsd-recovery to leave, the app starts on /data/gsd.db:
-          under Argo CD:  oc patch applications.argoproj.io/group-sync-dashboard -n openshift-gitops --type merge -p '{"spec": {"source": {"helm": {"parameters": null}}}}'
-          with Helm:      helm upgrade group-sync-dashboard <chart> -n group-sync-dashboard --reset-then-reuse-values --set recovery.enabled=false
-          (the Argo CD lines assume the Application is named after the release, in openshift-gitops, and the merge patch replaces its whole Helm parameter list: docs/RUNBOOK_backup_restore.md, section 4)
-        2026-10-01T11:47:30Z gsd-recovery TTL 2h reached; exiting 1. Extend with recovery.ttl, leave with recovery.enabled=false (commands above)
+        2026-10-01T11:47:30Z gsd-recovery to extend: set a longer recovery.ttl (for example 4h) in release group-sync-dashboard's values file and roll it out through its deployment pipeline; the new pod counts it from its start
+        2026-10-01T11:47:30Z gsd-recovery to leave: set recovery.enabled: false in release group-sync-dashboard's values file and roll it out; the app starts on /data/gsd.db
+        2026-10-01T11:47:30Z gsd-recovery TTL 2h reached; exiting 1. Extend with recovery.ttl, leave with recovery.enabled: false, in the release's values file (lines above)
 
-   The suggested TTL is twice the current one, printed as a Go duration so it can be pasted.
+   The suggested TTL is twice the current one, at least `1s`, printed as a Go duration so it can be pasted. When
+   the node restarted under the pod, a line before the reason says so (§3.6). The script is the
+   container's PID 1, so its exit ends every process in the container (§2.4).
 
 It never reads `GSD_DB_PATH` except to print it: it opens, stats and creates nothing under the data directory, and
-imports neither `sqlite3` nor `gsd` (T303-8 seals the directory with mode 000 and runs it with `-X importtime`).
-Every print flushes, so `oc logs` shows each line as it is written whatever the image's buffering.
+imports neither `sqlite3` nor `gsd` (T303-8 seals the directory with mode 000 and runs it with `-X importtime`; the
+review ran the same under the published 2.0.0 image, to the TTL, with no import of either). Every print flushes,
+so `oc logs` shows each line as it is written whatever the image's buffering.
 
 **The deadline file, the contract #302 reads.** `$TMPDIR/gsd-recovery.json` (`/tmp/gsd-recovery.json` in the pod),
 one JSON object: `ttl` (as typed), `started` and `deadline` (ISO-8601 UTC to the second), `started_epoch` and
-`deadline_epoch` (seconds since the epoch, float). Written once per pod, to `gsd-recovery.json.tmp` and then
-renamed, so a kill mid-write leaves no half file.
+`deadline_epoch` (seconds since the epoch, float; for display), `deadline_monotonic` (the node's `CLOCK_MONOTONIC`
+at the deadline, float) and `boot_id` (the node's, from `/proc/sys/kernel/random/boot_id`; empty off Linux). The
+time left is `deadline_monotonic - time.monotonic()` while `boot_id` matches, never more than the TTL, and 0 when
+it does not. Written once per pod, to `gsd-recovery.json.tmp` and then renamed, so a kill mid-write leaves no half
+file; a record missing a field, or carrying a number that is not finite, is refused (exit 2), never replaced.
 
 ### 3.6 The TTL across restarts, and CrashLoopBackOff
 
-The budget, per pod: **one TTL, counted from the pod's first container start, whatever the number of container
-restarts; after it, every container start exits 1 within a second.** Its scope is the pod: a new pod has a new
-emptyDir and a new TTL, which is what an extension is (a new `recovery.ttl` changes the pod template; `oc delete
-pod` replaces the pod). Deleting `/tmp/gsd-recovery.json` by hand inside the pod also restarts it at the next
-container start; that is a deliberate act and is not guarded.
+The budget: **at most one TTL of running per pod, counted from the pod's first container start, whatever the number
+of container restarts; after it, every container start exits 1 within a second.** A pod keeps one TTL value for its
+life (`GSD_RECOVERY_MODE_TTL` is in the pod template, so a new value is a new pod), so "per (pod, TTL value)" and
+"per pod" are the same bound. Its scope is the pod: a new pod has a new emptyDir and a new TTL, whether it comes from
+a new `recovery.ttl` (it changes the pod template), `oc delete pod`, an eviction (a node drain: the PDB's
+`maxUnavailable: 1` allows it, §2.9) or a node lost ("When a Pod is removed from a node for any reason, the data in
+the `emptyDir` is deleted permanently", §2.3). So the TTL bounds each pod, not recovery mode: a forgotten recovery
+mode crash-loops until a person turns it off, and runs another TTL after each replacement of its pod. Deleting
+`/tmp/gsd-recovery.json` by hand inside the pod also restarts it at the next container start; that is a deliberate
+act and is not guarded.
+
+**The clock (Codex F1).** Within one pod the bound holds whatever the wall clock does: the time left is counted on
+the node's `CLOCK_MONOTONIC`, which a clock change does not move and a container restart does not reset (§2.11), and
+it is never more than the TTL. A backward step of the wall clock therefore buys nothing, and a forward one ends
+nothing early. The one event that resets the monotonic clock, a node restart with the pod kept, changes the boot ID,
+and the time left then counts as 0: the TTL ends early rather than late. Measured by
+`test_a_backward_wall_clock_step_cannot_lengthen_the_ttl` (a record whose wall-clock deadline is an hour away but
+whose monotonic deadline has passed exits 1 at once) and `test_a_node_restart_under_the_pod_counts_as_the_ttl_reached`.
 
 | event in one pod | what the script does |
 |---|---|
 | first start | writes the deadline = now + TTL; banner; waits |
 | container restart before the deadline (OOM, a kill, a node hiccup that keeps the pod) | reads the same deadline; banner says "kept from this pod's first start"; waits for the rest |
-| the deadline | prints the reason and the commands; exit 1 |
-| every start after the deadline | banner (`0s left`), the reason and the commands at once; exit 1 within a second |
+| the deadline | prints the reason and what to change; exit 1; every process in the container ends with it, an `oc exec` restore included (§2.4) |
+| every start after the deadline | banner (`0s left`), the reason and what to change at once; exit 1 within a second |
+| a deadline file it cannot use (corrupt, empty, unreadable, a directory, a key missing, a number not finite) | one line naming the file; exit 2 at every start, never a fresh TTL |
+| the wall clock set back or forward | nothing: the time left is on the monotonic clock |
+| the node restarted, the pod kept (another boot ID) | the TTL counts as reached: a line says so, then the reason; exit 1 |
 | SIGTERM at any point | `SIGTERM: stopping (exit 0)`; exit 0 at once |
 
 With §2.1's kubelet, the first exit at the deadline is restarted at once and exits at once; the next restarts wait
 10 s, 20 s, 40 s … up to 300 s (the lab's `maxContainerRestartPeriod`), and the pod reads `CrashLoopBackOff` with its
 restart count rising. It never runs ten minutes, so the back-off never resets. Measured here by the unit tests (a
-second start in the same `$TMPDIR` keeps the deadline; a start after it exits 1 in under a second); the
-CrashLoopBackOff itself is the lab walk's (§5, step 5).
+second start in the same `$TMPDIR` keeps the deadline; a start after it exits 1 in under a second), by the review
+against every shape of deadline file (each unusable one exits 2 at once, a kept one waits only the rest) and under
+the published 2.0.0 image (a restart after the deadline exits 1 in 0.69 s under qemu); the CrashLoopBackOff itself
+is the lab walk's (§5, step 5).
 
 ### 3.7 The refusals
 
@@ -487,11 +682,14 @@ All in the render, before any object is applied, each naming the value:
 
 | when `recovery.enabled=true` and | message starts | why |
 |---|---|---|
-| `replicaCount` is not 1 (0 included) | `recovery.enabled=true requires replicaCount: 1 (it is N)` | one pod holds the volume; at 0 there is none, and a second is a second writer on `ReadWriteMany` or a Pending pod on `ReadWriteOnce(Pod)` |
+| `replicaCount` is not 1 (0, 2 and `true` included; compared as text, because `int true` is 1, Codex F3) | `recovery.enabled=true requires replicaCount: 1 (it is N)` | one pod holds the volume; at 0 there is none, and a second is a second writer on `ReadWriteMany` or a Pending pod on `ReadWriteOnce(Pod)` |
 | `persistence.enabled=false` | `recovery.enabled=true requires persistence.enabled=true` | an emptyDir has nothing to restore onto and is wiped with the pod (the shape of `backup-offsite.yaml#backup.offsite.enabled=true requires persistence.enabled=true`) |
-| `recovery.ttl` is not a Go duration (`abc`, `-5m`, `7200`, null) | `recovery.ttl "…" is not a duration` | parsed by the existing `gsd.durationSeconds` (`-1`), the issue's decision 4 |
-| `recovery.ttl` is zero (`0`, `0s`) | `recovery.ttl "…" is zero` | the pod would exit at once and crash-loop |
+| `recovery.ttl` is not a Go duration (`abc`, `-5m`, `7200`, `2H`, `1 h`) | `recovery.ttl "…" is not a duration` | parsed by the existing `gsd.durationSeconds` (`-1`), the issue's decision 4 |
+| `recovery.ttl` is zero (`0`, `0s`, `0.0s`, `0h0m`) | `recovery.ttl "…" is zero` | the pod would exit at once and crash-loop |
 | (any) `recovery.enabled` is not `true` or `false` | `recovery.enabled "…" is not true or false` | Orchestrator's notes, 9 |
+
+`recovery.ttl: null`, in a values file or as `--set recovery.ttl=null`, is not refused: Helm removes a key set to
+null before the template reads it, so the TTL is the default `2h` (rendered both ways: `GSD_RECOVERY_MODE_TTL: "2h"`).
 
 `strategy` needs no rule of its own: with persistence on and one replica the chart derives `Recreate`, and an
 explicit `RollingUpdate` is already refused there
@@ -508,10 +706,12 @@ is mounted. The access-mode consequences are in the Orchestrator's notes, 7; the
 
 ### 3.9 Setting it
 
-Through the release's values, never `oc set env` (§2.8): under Argo CD the Application's Helm parameters, with Helm
-`--set`. The runbook's §4 gives the exact commands (block 14), including the case of an Application that already
-carries parameters and of one that is itself in Git. Turning it off is the reverse; Recreate stops the recovery pod
-(in under a second, §3.5) and starts the app on the restored file.
+In the release's values file, rolled out through the release's deployment pipeline like any other value; for a
+rollback, the older `image.tag` goes in the same change (Orchestrator's notes, 6). Never `oc set env` or an edit of
+the Deployment: a GitOps tool's self-heal reverts it (§2.8). The runbook's §4 gives the steps (block 14) and one
+plain `helm upgrade -f` line, labelled for development and troubleshooting. Turning it off is the reverse, in the
+same file: `recovery.enabled: false`, keeping a rollback's `image.tag`. When the change is applied, Recreate stops
+the recovery pod (in under a second, §2.4) and starts the app on the restored file.
 
 ### 3.10 What alerts
 
@@ -552,77 +752,95 @@ chart's other render tests do.
 | T303-2 | `test_t303_2_recovery_overrides_the_image_cmd_with_the_proxy_off_too` | with the proxy off the chart sets no `command` at all, so the image's uvicorn `CMD` stays |
 | T303-3 | `test_t303_3_no_liveness_probe_in_recovery_mode` | the liveness probe renders whenever `probes.liveness.enabled` |
 | T303-4 | `test_t303_4_a_readiness_probe_that_cannot_pass_keeps_the_pod_out_of_the_service[true, false]` | there is no recovery probe; with `probes.readiness.enabled=false` there is no readiness probe at all, and a missing one is `Success` (§2.2) |
-| T303-5 | `test_t303_5_more_than_one_replica_is_refused` | no recovery guard: `replicaCount=2` (and 0) renders |
+| T303-5 | `test_t303_5_more_than_one_replica_is_refused` | no recovery guard: `replicaCount=2` (and 0, and `true`) renders |
 | T303-6 | `test_t303_6_a_ttl_that_is_not_a_positive_duration_is_refused[abc, -5m, 7200, 0, 0s]` | no `recovery.ttl` value exists |
 | T303-7 | `test_t303_7_recovery_without_a_volume_is_refused` | no recovery guard |
 | T303-8 | `test_t303_8_it_imports_neither_the_store_nor_sqlite3_and_touches_nothing_in_the_data_directory` | no script exists (`charts/group-sync-dashboard/scripts/` holds only `offsite_backup.py`) |
 | T303-9 | `test_t303_9_the_log_says_what_the_pod_is_then_counts_down_in_utc` | as T303-8 |
-| T303-10 | `test_t303_10_at_the_ttl_it_exits_1_and_names_the_commands` | as T303-8 |
-| T303-11 | `test_t303_11_sigterm_stops_it_at_once_through_its_own_handler` | as T303-8. Exit 0 with the line, not `-15`, is what proves the handler: a child (not PID 1) dies at once under the default action too |
+| T303-10 | `test_t303_10_at_the_ttl_it_exits_1_and_says_how_to_extend_or_leave_through_the_values_file` | as T303-8; it also fails on a log that prints a Helm or Argo CD command line or an Application patch (the earlier draft's, mutation R7) |
+| T303-11 | `test_t303_11_sigterm_stops_it_at_once_through_its_own_handler` | as T303-8. Exit 0 with the line, not `-15`, is what proves the handler: a child (not PID 1) dies at once under the default action too. The PID-1 behaviour itself is §2.4's measurement |
 | T303-12 | `test_t303_12_every_import_is_from_the_standard_library` (also parses the script with `feature_version=(3, 11)`, the floor CI tests) | as T303-8 |
-| T303-13 | the lab walk, §5 step 2 (under `image.tag=2.0.0`); measured read-only already, §2.5 | — |
+| T303-13 | the lab walk, §5 step 2 (the published 2.0.0 image); measured read-only already, §2.5, and to the TTL under that image by the review, §3.5 | — |
 | T303-14 | `test_t303_14_off_renders_exactly_the_default_and_the_dashboard_as_today` (default = `recovery.enabled=false` = `recovery=null`) | a regression guard; it passes at the merge base too |
 | T303-15 | `test_t303_15_nothing_but_the_dashboard_container_and_its_volumes_changes[default, offsite]` | the recovery ConfigMap does not appear (the issue had this as a guard that passes vacuously; it also asserts the new object, so it fails before) |
 | T303-16 | `test_t303_16_no_rbac_rule_is_added_or_removed`, and the rule diff in §4.3 | a regression guard |
 | T303-17, T303-18 | the lab walk, §5 steps 3 and 7 | — |
-| T303-19 | `test_t303_19_the_docs_name_the_switch_and_say_what_alerts` | no recovery text exists |
+| T303-19 | `test_t303_19_the_docs_name_the_switch_and_say_what_alerts` | no recovery text exists; it also holds the values file and the pipeline as the way to set it, what the TTL ends, the per-pod TTL and the `0/1` without the proxy |
 
 Added by the research and the design:
 
 | test | holds |
 |---|---|
 | `test_the_ttl_survives_a_container_restart_and_an_expired_one_exits_at_once` | §3.6: a second start in the same `$TMPDIR` keeps the deadline; a start after it exits 1 in under a second |
-| `test_a_deadline_file_that_cannot_be_read_exits_2_rather_than_restart_the_clock` | §3.5 step 3 |
+| `test_a_deadline_file_that_cannot_be_read_exits_2_rather_than_restart_the_clock[not-json, no-monotonic-deadline, nan]` | §3.5 step 3 |
+| `test_a_backward_wall_clock_step_cannot_lengthen_the_ttl` | §3.6, the clock (Codex F1) |
+| `test_a_node_restart_under_the_pod_counts_as_the_ttl_reached` | §3.6, the boot ID |
+| `test_the_suggested_ttl_is_a_positive_duration_for_a_subsecond_ttl` | §3.5 step 6 (Codex F2's sub-point) |
 | `test_a_ttl_that_is_not_a_positive_duration_exits_2[…]` | §3.5 step 2 |
 | `test_the_duration_grammar_and_the_printed_spans` | the parser and the formatter |
 | `test_the_switch_is_read_as_a_word` | Orchestrator's notes, 9 |
 | `test_the_configmap_carries_the_script_verbatim` | §3.2, the offsite precedent |
 | `test_the_offsite_claim_is_mounted_read_only_as_the_cronjob_names_it[default claim, existingClaim]` | §3.8 |
-| `test_no_offsite_mount_without_a_pvc_destination` | §3.8 |
+| `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one[default, off, pvc, existing-claim, s3]` | §3.8 and the Orchestrator's notes, 8: the mount and the CronJob's claim agree in every value set, so #304's default cannot separate them |
 | `test_the_chart_and_the_script_accept_the_same_ttls[…]` | one grammar in two places: the render accepts a TTL exactly when the script parses it as positive |
+| `test_the_only_documented_path_is_the_values_file` | the Orchestrator's notes, 6: no Application patch, parameter, `argocd` or Helm command line in the values comment, the chart README, the runbook's operator steps or the CHANGELOG; Argo CD named only beside "revert"; one `helm upgrade -f`, on the runbook's development-and-troubleshooting line |
 | `test_the_only_false_defaults_are_the_stated_exceptions` (existing, block 21) | `recovery.enabled` is a stated exception |
 
 ### 4.2 Each test fails without the change, and mutations
 
-**On a clean tree at `5c03a9b1`, before the blocks**, with the two new test modules copied in and run with
-`PYTHONPATH` at that tree's `local-development`: `43 failed, 3 passed in 4.04s`. The three that pass: the two
+**On a clean tree of origin/main `dd51b91f`, before the blocks**, with the two new test modules copied in and run
+with `PYTHONPATH` at that tree's `local-development`: `51 failed, 5 passed in 3.29s`. The five that pass: the two
 regression guards the issue says pass at the merge base, `test_t303_14_off_renders_exactly_the_default_and_the_dashboard_as_today`
-and `test_t303_16_no_rbac_rule_is_added_or_removed`, and `test_no_offsite_mount_without_a_pvc_destination`, which
-passes vacuously (nothing is mounted when the feature does not exist). Every other test fails for the reason §4.1 gives: the script tests on `can't open
-file … recovery_mode.py` (the process exits 2 with empty stdout) or `FileNotFoundError` reading it; the render tests
-on the ignored value (`KeyError: 'command'` with the proxy off, `httpGet` where `tcpSocket` is expected,
-`'livenessProbe' not in …` false, `assert (not True)` where a refusal is expected, `set() == {('ConfigMap',
-'t-group-sync-dashboard-recovery')}`). T303-15 fails rather than passing vacuously, because it also asserts the
-recovery ConfigMap appears. **After `--apply`:** `46 passed`.
+and `test_t303_16_no_rbac_rule_is_added_or_removed`, and three cases of
+`test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one` (`default`, `off`, `s3`), which hold
+vacuously: with no feature there is no mount, and in those three value sets no CronJob writes a claim. Every other
+test fails for the reason §4.1 gives: the script tests on `can't open file … recovery_mode.py` (the process exits 2
+with empty stdout) or `FileNotFoundError` reading it; the render tests on the ignored value (`KeyError: 'command'`
+with the proxy off, `httpGet` where `tcpSocket` is expected, `'livenessProbe' not in …` false, `assert (not True)`
+where a refusal is expected, `set() == {('ConfigMap', 't-group-sync-dashboard-recovery')}`, a mount list `[]` where
+the CronJob writes a claim); the documentation tests on the missing text. **After `--apply`:** `56 passed in
+11.91s`. **On the reviewed draft's blocks (`b7b8e993`) applied to `dd51b91f`:** `11 failed, 45 passed`, the eleven
+being T303-1 (its command still carried `--namespace`), T303-5 (`replicaCount=true` rendered), T303-9 (no line to
+check the time left), T303-10 (Argo CD patches and `--set` in the log), T303-19,
+`test_the_only_documented_path_is_the_values_file`, the clock and boot-ID tests, the sub-second extension, and the
+two new deadline-file shapes (no monotonic deadline, `NaN`).
 
 **Mutations of the implemented copy**, each run against the module that holds it (a scratch copy per row; the
 imported script and chart are the mutated ones):
 
 | run | the change | result | tests that go red |
 |---|---|---|---|
-| R0 | none | 13 passed | — |
+| R0 | none | 18 passed | — |
 | R1 | no SIGTERM handler | 1 failed | `test_t303_11_…` (exit `-15`, not 0) |
-| R2 | the deadline not read back (every start a new TTL) | 2 failed | the restart test, the unreadable-file test |
+| R2 | the deadline not read back (every start a new TTL) | 6 failed | the restart test, the clock and boot-ID tests, the three unreadable-file cases |
 | R3 | `import sqlite3` added | 2 failed | `test_t303_8_…`, `test_t303_12_…` |
-| R4 | exit 0 at the TTL | 3 failed | `test_t303_10_…`, `test_t303_8_…`, the restart test |
-| R5 | `os.stat` on the database path | 5 failed | `test_t303_8_…` (the sealed directory), and the four that run it with no data directory |
+| R4 | exit 0 at the TTL | 6 failed | `test_t303_10_…`, `test_t303_8_…`, the restart, clock, boot-ID and extension tests |
+| R5 | `os.stat` on the database path | 8 failed | `test_t303_8_…` (the sealed directory), and the seven that run it with no data directory |
 | R6 | no countdown lines | 1 failed | `test_t303_9_…` |
-| C0 | none | 33 passed | — |
+| R7 | the time left read from the wall clock (the reviewed draft's) | 1 failed | `test_a_backward_wall_clock_step_cannot_lengthen_the_ttl` |
+| R8 | no boot-ID check | 1 failed | `test_a_node_restart_under_the_pod_counts_as_the_ttl_reached` |
+| R9 | an Argo CD patch printed at the TTL | 1 failed | `test_t303_10_…` |
+| R10 | the suggested TTL not bounded below (`250ms` suggests `0s`) | 1 failed | `test_the_suggested_ttl_is_a_positive_duration_for_a_subsecond_ttl` |
+| C0 | none | 38 passed | — |
 | C1 | the liveness probe kept in recovery mode | 1 failed | `test_t303_3_…` |
 | C2 | the recovery probe only when `probes.readiness.enabled` | 1 failed | `test_t303_4_…[false]` |
-| C3 | no replica guard | 1 failed | `test_t303_5_…` |
+| C3 | `replicaCount` through `int` (the reviewed draft's) | 1 failed | `test_t303_5_…` (`true` renders) |
 | C4 | no persistence guard | 1 failed | `test_t303_7_…` |
 | C5 | no zero-TTL guard | 4 failed | `test_t303_6_…[0]`, `[0s]`, and the parity test `[0]`, `[0s]` |
 | C6 | the recovery command only with the proxy on | 1 failed | `test_t303_2_…` |
 | C7 | the offsite claim mounted read-write | 2 failed | both offsite-mount cases |
 
+OB3's review measured one more on its copy: #304 simulated (offsite on by default, the mount left on the old
+switch) turns `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one[default]` red, where the
+reviewed draft's chart tests stayed green.
+
 ### 4.3 The proof
 
-§7 was not written by hand. The design was implemented in a detached copy of `5c03a9b1`; a generator cut each
-block's Old text from `5c03a9b1` and its New text from the implemented copy, at whole lines, with the fewest
-context lines that make the Old text unique, and checked that each file's blocks, applied in order, give the
-implemented file byte for byte: `21 blocks across 12 files reproduce the dev copy`. Then, on a fresh detached
-worktree of `5c03a9b1`:
+§7 was not written by hand. The design was implemented in a detached copy of origin/main `dd51b91f` (the reviewed
+draft's blocks with OB3's corrected bodies applied, then this revision's changes); a generator cut each block's Old
+text from `dd51b91f` and its New text from the implemented copy, at whole lines, with the fewest context lines that
+make the Old text unique, and checked that each file's blocks, applied in order, give the implemented file byte for
+byte: `21 blocks across 12 files reproduce the dev copy`. Then, on a fresh detached worktree of `dd51b91f`:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E2_recovery_mode.md <tree>
     21 blocks check out across 12 files
@@ -633,48 +851,54 @@ After `--apply` every changed and created file is identical (`cmp`) to the imple
 
 | check | command | result |
 |---|---|---|
-| the new tests, before the blocks | the two new modules copied into the clean tree | `43 failed, 3 passed` (§4.2) |
-| the new tests, after | `pytest tests/test_recovery_mode.py tests/test_chart_recovery_mode.py -q -p no:cacheprovider` | `46 passed in 10.89s` |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6172 passed, 22 skipped, 655 deselected, 5 xfailed in 317.24s` |
-| hermetic suite, this spec's commit alone | the same, in the spec's worktree before any block | `6147 passed, 22 skipped, 655 deselected, 5 xfailed in 305.26s`; it carries none of the 46 new tests, and its count includes `test_docs_citations.py`'s checks of this spec's own anchored citations, which the applied tree (`5c03a9b1` plus the blocks, without the spec) does not have |
+| the new tests, before the blocks | the two new modules copied into a clean tree of `dd51b91f` | `51 failed, 5 passed` (§4.2) |
+| the new tests, after | `pytest tests/test_recovery_mode.py tests/test_chart_recovery_mode.py -q -p no:cacheprovider` | `56 passed in 11.91s` |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6182 passed, 22 skipped, 655 deselected, 5 xfailed in 327.99s` |
+| hermetic suite, this spec's commit alone | the same, in the spec's worktree before any block | `6159 passed, 25 skipped, 655 deselected, 5 xfailed in 305.94s` (the spec's branch, still at `5c03a9b1`'s code, with this revision of the spec and its index row); it carries none of the 56 new tests, and its count includes `test_docs_citations.py`'s checks of this spec's own anchored citations, three more of which skip because they name files the blocks create |
 | browser suite | not run: no page, script or style of the application changes | — |
 | chart | `helm lint` | `1 chart(s) linted, 0 chart(s) failed` |
-| the default render across commits | `helm template` of `5c03a9b1` and of the applied chart, the chart label normalised in both, with default values, `config.backup.enabled=false`, `replicaCount=2` (with `leaderElection.enabled=false`, `reporting.enabled=false`), `backup.offsite.enabled=true`, and the proxy off | two lines differ in each (`checksum/config` on the dashboard's and the report service's pod templates, which hashes the ConfigMap with its chart label), four with offsite on (plus the bind Job's name, which hashes `.Chart.Version`); nothing else |
-| RBAC | `reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py` on the default render of `5c03a9b1` against the applied chart, recovery off and on | `rules: before 59, after 59`, `REMOVED 0`, `ADDED 0`, both |
+| the default render across commits | `helm template` of `dd51b91f` and of the applied chart, the chart label normalised in both, by default and with `backup.offsite.enabled=true` | one line differs by default, the dashboard pod template's `checksum/config` (it hashes the ConfigMap, chart label included); with offsite on, also the bind Job's name (it hashes `.Chart.Version`). The report Deployment's pod template is unchanged: its annotation is `checksum/reporting`, a hash of `.Values.reporting` (`charts/group-sync-dashboard/templates/report-deployment.yaml#checksum/reporting`) |
+| RBAC | `reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py` on the render of `dd51b91f` against the applied chart, recovery off and on, by default and with offsite on | `rules: before 59, after 59`, `REMOVED 0`, `ADDED 0`, all four |
 | markdown | `markdownlint-cli2` on the runbook, the CHANGELOG and the chart README | the same findings before and after, per file and rule (README MD004 ×6, MD040 ×4; CHANGELOG MD012 ×1; runbook MD004 ×3, MD040 ×3), all on main already; none new |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the script (inside T303-12) | parses; CI's 3.11 job was not run here |
-| the script under image 2.0.0 | §2.5, read-only on the lab | `--help` exits 0; 102 modules imported, none of `sqlite3`, `_sqlite3`, `gsd` |
+| the script under image 2.0.0 | §2.5, read-only on the lab (the first draft's script); and OB3's review, under the published amd64 image on a podman machine with qemu: run to a 3 s TTL with `-X importtime`, `/data` sealed (mode 000) around three files | `--help` exits 0 on the lab; under the image: exit 1 at the TTL, 101 modules imported, none of `sqlite3`, `_sqlite3`, `gsd`, `/data` mtimes unchanged, `/tmp` holding only `gsd-recovery.json`; a restart after the deadline exits 1 in 0.69 s. This revision adds only `math` and `/proc/sys/kernel/random/boot_id` to what the script touches; it was not re-run under the image |
+| SIGTERM as PID 1 | §2.4, OB3's podman machine | 0.17 s native, 0.19 s under qemu, exit 0; a no-handler control waits the grace and exits 137 |
 
 The cut and the proof are repeatable: the implemented copy, the generator and the mutation harness ran from this
-spec's scratch directory and are not committed.
+spec's scratch directory and are not committed; so did the review's splice, render matrix and podman harnesses.
 
 ## 5. On the lab (the implementing pull request)
 
-Not run in this phase: the lab is read-only here. The walk, deployed with `local-development/release-crc.sh` and,
-for the parameter path, the Application as it stands (auto-sync on), recorded under
-`reports/<date>_recovery-mode-303/`:
+Not run in this phase: the lab is read-only here. The walk sets recovery mode the way an estate does, in a values
+file rolled out through the lab's pipeline: `local-development/release-crc.sh --argocd <branch> --values <file>`
+points the Application at the branch with that file as its only `valueFiles` entry and deploys the chart's default
+image, the published 2.0.0, since this spec moves no `appVersion` (`local-development/release-crc.sh#apply_application()`;
+the file replaces `environments/crc.yaml`, so each one is a copy of it plus the lines named below). The files are
+committed under `reports/<date>_recovery-mode-303/` with the record:
 
 1. **Before.** Record the UIDs of `group-sync-dashboard-data` and `group-sync-dashboard-report-artifacts` (today
    `f065b7a4-535c-4ef1-868c-58f5afee4953` and `08c7d45c-a3eb-47be-8506-f24ea7a3e0e3`) and the row counts of
    `membership_event`, `sync_event` and `binding_event` (runbook §4c's read-only query).
-2. **On, under the image a rollback targets (T303-13).** Deploy the branch's chart, then patch the Application's
-   parameters with `recovery.enabled=true`, `recovery.ttl=2h` and `image.tag=2.0.0`. `oc logs … -c dashboard`
+2. **On, under the image a rollback targets (T303-13).** Roll out `values-on.yaml`: `recovery.enabled: true`,
+   `recovery.ttl: 2h` and `image.tag: 2.0.0` (a rollback's shape, set in the same change). `oc logs … -c dashboard`
    shows the four banner lines, not `ModuleNotFoundError`; `oc get pod` shows `1/2 Running`;
-   `oc get endpoints group-sync-dashboard` lists no ready address; the Application reads Synced, the Deployment
-   Progressing.
+   `oc get endpoints group-sync-dashboard` lists no ready address; the Deployment reads Progressing, then Degraded
+   at 600 s.
 3. **Holds (T303-17).** Wait past 11 minutes (`initialDelaySeconds` 10 + 2 × 300 s of the old liveness probe). The
    `restartCount` is unchanged, and `oc exec … -c dashboard -- ls -l /proc/*/fd` shows no descriptor on
-   `/data/gsd.db`, `-wal` or `-shm`. The parameters are still on the Application (self-heal did not revert them).
+   `/data/gsd.db`, `-wal` or `-shm`. The pod still runs the values file's settings (self-heal reverted nothing).
 4. **A restart keeps the TTL.** `oc exec … -c dashboard -- sh -c 'kill -TERM 1'` (the image has no `kill` binary, measured:
    `ls /usr/bin/kill` fails and `type kill` says `kill is a shell builtin`; the handler exits 0 and the kubelet restarts the container at once): the new banner says `kept from this pod's first start` with the same end instant.
-5. **The TTL ends visibly.** Patch `recovery.ttl=3m` (a new pod, a new TTL). After three minutes the log ends with
-   the summary line, and within the next few minutes `oc get pod` shows `CrashLoopBackOff` with the restart count
+5. **The TTL ends visibly.** Roll out `values-ttl3m.yaml` (the same with `recovery.ttl: 3m`: a new pod, a new TTL).
+   After three minutes the log ends with the summary line, which names the values file and no command, and within the next few minutes `oc get pod` shows `CrashLoopBackOff` with the restart count
    rising and `oc describe pod` a back-off message; `oc logs --previous --tail=1` is the summary line.
 6. **SIGTERM as PID 1 (T303-11).** Time `oc delete pod <recovery pod> --wait` from the command to the pod's
-   removal: well under the 30 s grace period. On this lab PID 1 is qemu-user (Orchestrator's notes, 11); the stop
-   time is what is measured.
-7. **Off (T303-18).** Remove the parameters (`"parameters": null`). The app starts on the same `/data/gsd.db`, the
-   three row counts equal step 1's, the endpoints list the pod, and the UIDs are unchanged.
+   removal: well under the 30 s grace period. On this lab PID 1 is qemu-user; the review measured 0.19 s under
+   qemu on a podman machine of the same shape (§2.4), and the lab's stop time is what is recorded here.
+7. **Off (T303-18).** Roll out `values-off.yaml` (`recovery.enabled: false`, `image.tag: 2.0.0` kept). The app
+   starts on the same `/data/gsd.db`, the three row counts equal step 1's, the endpoints list the pod, and the
+   UIDs are unchanged. Record the Application's operation phase when the rollout starts and the time to the app
+   pod Ready (Orchestrator's notes, 13: a sync still waiting on step 5's rollout delays this one).
 8. **RBAC.** The rule diff of the rendered chart, recovery off and on, against the merge base: REMOVED 0, ADDED 0
    (`reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py`).
 
@@ -682,35 +906,40 @@ The offsite mount is not walked: the lab has no offsite CronJob, and #304's walk
 
 ## 6. What an operator sees, and what it costs
 
-- **Turning it on:** one values change. The dashboard stops (Recreate), a pod comes up `1/2 Running` whose log says
+- **Turning it on:** one change to the release's values file, rolled out through the release's pipeline. The
+  dashboard stops (Recreate), a pod comes up `1/2 Running` (`0/1` with the proxy off) whose log says
   `RECOVERY MODE`, the app is not running, the data path, and when the TTL ends; every 30 minutes a line says how
   much is left. `oc exec` into it reaches `/data` (and `/offsite`, read-only, with an offsite `pvc` destination);
   no process holds `gsd.db`.
-- **While it is on:** the route has no ready endpoint (what the router shows was not measured); `helm upgrade
-  --wait` would time out and Argo CD shows the Deployment Progressing, then Degraded; nothing is recorded; with
-  reporting on, `GroupSyncDashboardReportSnapshotStale` (warning) fires after about 50 minutes.
-- **At the TTL:** `CrashLoopBackOff`, and a log that ends with the exact commands to extend (a new TTL from a new
-  pod) or leave.
-- **Turning it off:** the recovery pod stops at once and the app starts on whatever is in `/data/gsd.db`.
-- **Cost:** one ConfigMap (about 8 KB) and one Python process sleeping, only while on; nothing when off. No new
-  permission. The chart's default render is unchanged.
+- **While it is on:** the route has no ready endpoint (what the router shows was not measured); a pipeline step
+  that waits for the rollout reports it failed (`helm upgrade --wait` times out; Argo CD shows the Deployment
+  Progressing, then Degraded); nothing is recorded; with reporting on, `GroupSyncDashboardReportSnapshotStale`
+  (warning) fires after about 50 minutes.
+- **At the TTL:** every process in the container stops, a restore still running included (so check the time left
+  before one), `CrashLoopBackOff`, and a log that ends with what to change: a longer `recovery.ttl` in the values
+  file to extend, `recovery.enabled: false` to leave. A pod
+  replaced by an eviction or a drain starts a new TTL.
+- **Turning it off:** when the values change is applied, the recovery pod stops at once and the app starts on
+  whatever is in `/data/gsd.db`.
+- **Cost:** one ConfigMap (11,300 bytes rendered, measured) and one Python process sleeping, only while on; nothing when off.
+  No new permission. The chart's default render is unchanged.
 - **Code:** the table below, from `git diff --numstat` on the applied copy (§4.3).
 
 | file | added | removed |
 |---|---|---|
-| `charts/group-sync-dashboard/scripts/recovery_mode.py` (new) | 167 | 0 |
+| `charts/group-sync-dashboard/scripts/recovery_mode.py` (new) | 196 | 0 |
 | `charts/group-sync-dashboard/templates/_helpers.tpl` | 24 | 0 |
 | `charts/group-sync-dashboard/templates/deployment.yaml` | 87 | 3 |
 | `charts/group-sync-dashboard/templates/recovery.yaml` (new) | 15 | 0 |
-| `charts/group-sync-dashboard/values.yaml` | 36 | 0 |
+| `charts/group-sync-dashboard/values.yaml` | 39 | 0 |
 | `charts/group-sync-dashboard/Chart.yaml` | 5 | 1 |
-| `charts/group-sync-dashboard/README.md` | 29 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 49 | 3 |
+| `charts/group-sync-dashboard/README.md` | 31 | 0 |
+| `docs/RUNBOOK_backup_restore.md` | 53 | 3 |
 | `docs/CHANGELOG.md` | 18 | 0 |
-| `local-development/tests/test_recovery_mode.py` (new) | 182 | 0 |
-| `local-development/tests/test_chart_recovery_mode.py` (new) | 216 | 0 |
+| `local-development/tests/test_recovery_mode.py` (new) | 226 | 0 |
+| `local-development/tests/test_chart_recovery_mode.py` (new) | 266 | 0 |
 | `local-development/tests/test_values_defaults.py` | 1 | 0 |
-| total | 829 | 7 |
+| total | 961 | 7 |
 
 ## 7. Implementation blocks
 
@@ -720,7 +949,7 @@ fence inside a block would end the block.
 
 ### Block 1 — charts/group-sync-dashboard/scripts/recovery_mode.py: the recovery script
 
-Standard library only; the banner, the countdown, the deadline kept in `$TMPDIR`, the commands at the TTL, the SIGTERM handler (§3.5, §3.6).
+Standard library only; the banner, the countdown, the deadline kept in `$TMPDIR` and counted on the node's monotonic clock, what to change at the TTL (the release's values file), the SIGTERM handler (§3.5, §3.6).
 
 <!-- block: charts/group-sync-dashboard/scripts/recovery_mode.py | create -->
 
@@ -735,13 +964,17 @@ gsd or sqlite3 and opens nothing under the data directory, so no process holds g
 operator restores it.
 
 It prints what the pod is, then the time left every --report-every seconds, and exits 1 at the
-TTL so the pod reads CrashLoopBackOff, naming the commands that extend recovery mode or leave it.
+TTL so the pod reads CrashLoopBackOff, saying how to extend recovery mode or leave it: a change to
+the release's values file, rolled out through the release's deployment pipeline. As the container's
+PID 1, its exit at the TTL also ends every process in the container, an `oc exec` restore included.
 
 The deadline is kept in $TMPDIR (the pod's /tmp, an emptyDir), because the kubelet restarts an
 exited container in the same pod at once and resets its back-off after ten minutes of running: a
 TTL counted from each start would sleep another full TTL after every expiry. The emptyDir survives
-a container restart and goes with the pod, so a new pod (a new recovery.ttl, or a deleted pod)
-starts a new TTL. #302's restore wrapper reads the same file to see how much of the TTL is left.
+a container restart and goes with the pod, so a new pod (a new recovery.ttl, a deleted or evicted
+pod) starts a new TTL. The time left is measured on the node's monotonic clock, which a change of the
+wall clock does not move and a container restart does not reset; after a node restart it cannot be
+measured, so the TTL counts as reached. #302's restore wrapper reads the same file.
 
 Exit status: 0 on SIGTERM, 1 at the TTL, 2 when the TTL or the deadline file cannot be used.
 """
@@ -750,6 +983,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -760,6 +994,8 @@ from pathlib import Path
 
 #: The file under $TMPDIR (default /tmp) that keeps this pod's deadline across container restarts.
 STATE_NAME = "gsd-recovery.json"
+#: Generated once per boot of the node (random(4)); CLOCK_MONOTONIC counts from that boot (clock_gettime(2)).
+BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 #: Seconds between two "time left" lines.
 REPORT_EVERY = 1800.0
 #: The Go duration grammar of the chart's gsd.durationSeconds helper (templates/_helpers.tpl), so
@@ -806,44 +1042,63 @@ def say(message: str) -> None:
     print(f"{instant(time.time())} gsd-recovery {message}", flush=True)
 
 
-def deadline(state: Path, ttl: float, ttl_text: str, now: float) -> tuple[float, float | None]:
-    """This pod's deadline, and the instant it was set when an earlier start in the pod set it.
+def boot_id() -> str:
+    """The node's boot ID; empty where there is none (a development machine that is not Linux)."""
+    try:
+        return BOOT_ID.read_text().strip()
+    except OSError:
+        return ""
+
+
+def deadline(state: Path, ttl: float, ttl_text: str, wall: float, monotonic: float, boot: str) -> tuple[dict, bool]:
+    """This pod's deadline record, and whether an earlier start in the pod wrote it.
 
     The first start writes it (to a temporary name, then renamed, so a kill mid-write leaves no
-    half file); every later start in the same pod reads it back unchanged."""
+    half file); every later start in the same pod reads it back unchanged. A record that lacks a
+    field is refused (KeyError, ValueError) rather than replaced, so a bad file never restarts the
+    clock."""
     try:
         kept = json.loads(state.read_text())
-        return float(kept["deadline_epoch"]), float(kept["started_epoch"])
+        for key in ("started_epoch", "deadline_epoch", "deadline_monotonic"):
+            if not math.isfinite(float(kept[key])):
+                raise ValueError(f"{key} is not a finite number")
+        str(kept["boot_id"])
+        return kept, True
     except FileNotFoundError:
         pass
-    end = now + ttl
-    record = {"ttl": ttl_text, "started": instant(now), "started_epoch": now,
-              "deadline": instant(end), "deadline_epoch": end}
+    record = {"ttl": ttl_text, "started": instant(wall), "started_epoch": wall,
+              "deadline": instant(wall + ttl), "deadline_epoch": wall + ttl,
+              "deadline_monotonic": monotonic + ttl, "boot_id": boot}
     partial = state.with_name(state.name + ".tmp")
     partial.write_text(json.dumps(record) + "\n")
     os.replace(partial, state)
-    return end, None
+    return record, False
 
 
-def _expired(ttl_text: str, end: float, release: str, namespace: str, db: str) -> None:
-    longer = span(2 * (ttl_seconds(ttl_text) or 0))
-    on = json.dumps({"spec": {"source": {"helm": {"parameters": [
-        {"name": "recovery.enabled", "value": "true"}, {"name": "recovery.ttl", "value": longer}]}}}})
-    off = json.dumps({"spec": {"source": {"helm": {"parameters": None}}}})
-    pod = os.environ.get("POD_NAME") or os.uname().nodename
-    argo = f"oc patch applications.argoproj.io/{release} -n openshift-gitops --type merge -p"
-    helm = f"helm upgrade {release} <chart> -n {namespace} --reset-then-reuse-values"
-    say(f"TTL {ttl_text} reached at {instant(end)}; exiting 1: the app is still NOT running and no data is collected")
-    say("to extend, start a new pod with a new TTL (it counts from that pod's start):")
-    print(f"  under Argo CD:  {argo} '{on}'", flush=True)
-    print(f"  with Helm:      {helm} --set recovery.enabled=true --set recovery.ttl={longer}", flush=True)
-    print(f"  the same TTL:   oc delete pod {pod} -n {namespace}", flush=True)
-    say(f"to leave, the app starts on {db}:")
-    print(f"  under Argo CD:  {argo} '{off}'", flush=True)
-    print(f"  with Helm:      {helm} --set recovery.enabled=false", flush=True)
-    print("  (the Argo CD lines assume the Application is named after the release, in openshift-gitops, and the merge"
-          " patch replaces its whole Helm parameter list: docs/RUNBOOK_backup_restore.md, section 4)", flush=True)
-    say(f"TTL {ttl_text} reached; exiting 1. Extend with recovery.ttl, leave with recovery.enabled=false (commands above)")
+def remaining(record: dict, ttl: float, monotonic: float, boot: str) -> float:
+    """Seconds left, on the node's monotonic clock, never more than the TTL.
+
+    The wall clock is not read: a step of it backwards would lengthen the TTL (review of the spec,
+    Codex F1). CLOCK_MONOTONIC is system-wide and counts from the node's boot, so it runs on across
+    container restarts; a different boot ID means the node restarted under the pod and the time
+    left cannot be measured, which counts as reached."""
+    if str(record["boot_id"]) != boot:
+        return 0.0
+    return min(float(record["deadline_monotonic"]) - monotonic, ttl)
+
+
+def _expired(ttl_text: str, ttl: float, release: str, db: str, rebooted: bool) -> None:
+    # The values file, rolled out through the release's own pipeline, is the one way recovery mode changes
+    # (the operator, 2026-10-01): no Helm or Argo CD command line, which an estate's pipeline owns.
+    longer = span(max(2 * ttl, 1.0))
+    if rebooted:
+        say("the node restarted since this pod's first start, so the time left cannot be measured; the TTL counts as reached")
+    say(f"TTL {ttl_text} reached at {instant(time.time())}; exiting 1: the app is still NOT running and no data is collected")
+    say(f"to extend: set a longer recovery.ttl (for example {longer}) in release {release}'s values file and roll it"
+        f" out through its deployment pipeline; the new pod counts it from its start")
+    say(f"to leave: set recovery.enabled: false in release {release}'s values file and roll it out; the app starts on {db}")
+    say(f"TTL {ttl_text} reached; exiting 1. Extend with recovery.ttl, leave with recovery.enabled: false, in the"
+        f" release's values file (lines above)")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -853,8 +1108,10 @@ def run(args: argparse.Namespace) -> int:
         say(f"GSD_RECOVERY_MODE_TTL {ttl_text!r} is not a positive Go duration such as 2h, 90m or 1h30m; exiting 2")
         return 2
     state = Path(os.environ.get("TMPDIR") or "/tmp") / STATE_NAME
+    boot = boot_id()
     try:
-        end, started = deadline(state, ttl, ttl_text, time.time())
+        record, kept = deadline(state, ttl, ttl_text, time.time(), time.monotonic(), boot)
+        left = remaining(record, ttl, time.monotonic(), boot)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         say(f"the deadline file {state} cannot be used ({type(exc).__name__}: {exc}), so the TTL could not be kept;"
             f" exiting 2. Delete the pod to start a new one with a new TTL")
@@ -863,23 +1120,24 @@ def run(args: argparse.Namespace) -> int:
     say(f"RECOVERY MODE (GSD_RECOVERY_MODE={os.environ.get('GSD_RECOVERY_MODE', '')}, GSD_RECOVERY_MODE_TTL={ttl_text})")
     say(_IDLE)
     say(f"data path {db} (not opened by this process)")
-    kept = "" if started is None else f" (kept from this pod's first start at {instant(started)}; the container restarted)"
-    say(f"TTL {ttl_text}: ends {instant(end)}, {span(end - time.time())} left{kept}")
+    since = f" (kept from this pod's first start at {instant(float(record['started_epoch']))}; the container restarted)" if kept else ""
+    say(f"TTL {ttl_text}: ends {instant(time.time() + max(left, 0.0))}, {span(left)} left{since}")
+    say("check the time left before a restore: at the TTL this process exits and every process in the container"
+        " stops with it")
     while True:
-        left = end - time.time()
+        left = remaining(record, ttl, time.monotonic(), boot)
         if left <= 0:
-            _expired(ttl_text, end, args.release, args.namespace, db)
+            _expired(ttl_text, ttl, args.release, db, str(record["boot_id"]) != boot)
             return 1
         time.sleep(min(left, args.report_every))
-        left = end - time.time()
+        left = remaining(record, ttl, time.monotonic(), boot)
         if left > 0:
             say(f"{span(left)} left; {_IDLE}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Recovery mode (#303): hold the pod with the app stopped until the TTL.")
-    parser.add_argument("--release", default="group-sync-dashboard", help="the Helm release, for the commands printed at the TTL")
-    parser.add_argument("--namespace", default="group-sync-dashboard", help="the release's namespace, for the same commands")
+    parser.add_argument("--release", default="group-sync-dashboard", help="the release whose values file the TTL lines name")
     parser.add_argument("--report-every", type=float, default=REPORT_EVERY, help="seconds between two 'time left' lines")
     args = parser.parse_args(argv)
     try:
@@ -944,7 +1202,7 @@ false
 
 ### Block 3 — charts/group-sync-dashboard/templates/deployment.yaml: the switch and the refusals
 
-`$recovery` and `$offsiteClaim`, computed once beside the chart's other guards; the four refusals (§3.7, §3.8).
+`$recovery` and `$offsiteClaim`, computed once beside the chart's other guards; the four refusals, `replicaCount` compared as text (§3.7, §3.8).
 
 <!-- block: charts/group-sync-dashboard/templates/deployment.yaml | edit -->
 
@@ -969,7 +1227,9 @@ refused here rather than by the script after the pod has started.
 {{- $recovery := eq (include "gsd.recoveryEnabled" .) "true" }}
 {{- $offsiteClaim := "" }}
 {{- if $recovery }}
-{{- if ne (int .Values.replicaCount) 1 }}
+{{- /* Compared as text, not through `int`: `int true` is 1, and `replicaCount: true` rendered `replicas: true`
+(review of the spec, Codex F3). A YAML 1 reaches here as an int or a float64, and both print "1". */}}
+{{- if ne (toString .Values.replicaCount) "1" }}
 {{- fail (printf "recovery.enabled=true requires replicaCount: 1 (it is %v). Recovery mode is ONE pod holding the data volume with the writer stopped: at 0 there is no pod to restore from, and a second recovery pod is a second shell that can write the same file on a ReadWriteMany volume, or a pod that stays Pending on ReadWriteOnce and ReadWriteOncePod." .Values.replicaCount) }}
 {{- end }}
 {{- if not .Values.persistence.enabled }}
@@ -1019,8 +1279,6 @@ New text:
             - /scripts/recovery_mode.py
             - --release
             - {{ .Release.Name | quote }}
-            - --namespace
-            - {{ .Release.Namespace | quote }}
           {{- else if .Values.oauthProxy.enabled }}
           # Bind loopback only. Otherwise 8080 stays reachable pod-network-wide and anything
 ```
@@ -1207,26 +1465,29 @@ New text:
 # script ships with the chart, not the image, so it runs under the older image a rollback targets.
 # At one replica the strategy is Recreate, so the writer stops before the recovery pod starts.
 #
-# SET IT THROUGH THE RELEASE'S VALUES: under Argo CD, the Application's Helm parameters
-# (spec.source.helm.parameters, as the runbook shows); with Helm, --set. Never with `oc set env`
-# or an edit of the Deployment: Argo CD's selfHeal reverts a hand edit, and an environment
-# variable alone would leave the liveness probe to kill the pod in the middle of a restore.
+# SET IT IN THIS RELEASE'S VALUES FILE and roll it out through the release's deployment pipeline,
+# like any other value; for a rollback, set the older image.tag in the same change. Never with
+# `oc set env` or an edit of the Deployment: a GitOps tool such as Argo CD (selfHeal) reverts a hand
+# edit, and an environment variable alone would leave the liveness probe to kill the pod in the
+# middle of a restore.
 #
 # While it is on the pod has no liveness probe, and a readiness probe that cannot pass keeps it
-# out of the Service: READY reads 1/2 (the oauth-proxy sidecar is ready, the dashboard is not), the
-# route has no ready endpoint, and the Deployment never reports available (Argo CD shows it
-# Progressing, then Degraded). When backup.offsite uses the pvc destination, its claim is mounted
-# read-only at /offsite, so the offsite copies can be listed and read.
+# out of the Service: READY reads 1/2 (the oauth-proxy sidecar is ready, the dashboard is not; 0/1
+# with the proxy off), the route has no ready endpoint, and the Deployment never reports available,
+# so a pipeline step that waits for the rollout reports it failed. When backup.offsite uses the pvc
+# destination, its claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
 #
 # NOTHING IS RECORDED WHILE IT IS ON, and no rule says recovery mode. GroupSyncDashboardNotPolling
 # does not fire: its gauge comes from the stopped process, and a missing series returns nothing.
 # With reporting on, GroupSyncDashboardReportSnapshotStale (warning) fires once the report
 # service's newest copy is older than four snapshot intervals, for for.reportSnapshot (about 50
 # minutes at the defaults). The TTL is the bound: a Go duration (2h, 90m, 1h30m), counted from the
-# pod's first start and kept in its /tmp across container restarts. At the TTL the script exits 1,
-# the pod reads CrashLoopBackOff, and the log names the commands that extend it (a new recovery.ttl
-# starts a new pod with a new TTL) or leave it. Refused at render: replicaCount other than 1,
-# persistence.enabled=false, and a TTL that is not a positive duration.
+# pod's first start and kept in its /tmp across container restarts; a new pod (a new recovery.ttl,
+# a deleted or evicted pod) starts a new TTL. At the TTL the script exits 1 and every process in the
+# container stops with it, an `oc exec` restore still running included; the pod reads
+# CrashLoopBackOff, and the log says how to extend it (a longer recovery.ttl in the values file) or
+# leave it. Refused at render: replicaCount other than 1, persistence.enabled=false, and a TTL that
+# is not a positive duration.
 #
 # Stays false by default under the 0.14.0 rule: turning it on stops the dashboard.
 recovery:
@@ -1285,16 +1546,18 @@ New text:
 | Key | Default | Notes |
 |---|---|---|
 | `recovery.enabled` | `false` | **stops the dashboard.** The dashboard container runs the chart's recovery script instead of uvicorn, on the same pod spec and the same `/data` volume, so no process holds `gsd.db` while you restore it. No liveness probe; a readiness probe that cannot pass keeps the pod out of the Service. Refused with `replicaCount` other than 1 and with `persistence.enabled=false` |
-| `recovery.ttl` | `2h` | a Go duration (`2h`, `90m`, `1h30m`), counted from the pod's first start and kept in its `/tmp` across container restarts. At the TTL the pod goes to `CrashLoopBackOff` and its log names the commands that extend or leave recovery mode. Refused when it is not a duration or is zero |
+| `recovery.ttl` | `2h` | a Go duration (`2h`, `90m`, `1h30m`), counted from the pod's first start and kept in its `/tmp` across container restarts; a new pod (a new value, a deleted or evicted pod) starts a new TTL. At the TTL every process in the container stops, an `oc exec` restore still running included, the pod goes to `CrashLoopBackOff` and its log says how to extend or leave recovery mode. Refused when it is not a duration or is zero |
 
-Set both through the release's values: under Argo CD, the Application's Helm parameters; with Helm, `--set`.
-Never with `oc set env`: Argo CD's selfHeal reverts a hand edit of the Deployment, and the variable alone
-would leave the liveness probe to kill the pod in the middle of a restore. The script
+Set both in the release's values file and roll them out through the release's deployment pipeline, like any
+other value; for a rollback, set the older `image.tag` in the same change. Never with `oc set env`: a GitOps
+tool such as Argo CD (selfHeal) reverts a hand edit of the Deployment, and the variable alone would leave the
+liveness probe to kill the pod in the middle of a restore. The script
 (`charts/group-sync-dashboard/scripts/recovery_mode.py`) ships in a ConfigMap rendered only while recovery
 is on, not in the image, so it runs under the older image a rollback targets; it imports only the standard
 library and opens nothing under `/data`. With `backup.offsite` on its `pvc` destination, the offsite claim
-is mounted read-only at `/offsite`. The pod reads `1/2` ready: the oauth-proxy sidecar is ready, the
-dashboard is not.
+is mounted read-only at `/offsite`. The pod reads `1/2` ready with the oauth-proxy sidecar (the sidecar is
+ready, the dashboard is not) and `0/1` with the proxy off; the Deployment never reports available, so a
+pipeline step that waits for the rollout reports it failed.
 
 **Nothing is recorded while it is on.** No rule says recovery mode: `GroupSyncDashboardNotPolling` does not
 fire, because its gauge comes from the stopped process and a missing series returns nothing. With
@@ -1307,7 +1570,7 @@ defaults). The TTL is the bound. The procedure is the runbook's
 
 ### Block 13 — charts/group-sync-dashboard/README.md: the chart README: Upgrading
 
-A restore before or after an upgrade uses recovery mode; why the commands use `--reset-then-reuse-values` (§2.7).
+A restore before or after an upgrade uses recovery mode, set in the values file with a rollback's `image.tag` (§2.7, §3.9).
 
 <!-- block: charts/group-sync-dashboard/README.md | edit -->
 
@@ -1323,17 +1586,17 @@ New text:
 ```text
 
 **To restore the database, before or after an upgrade, use [recovery mode](#recovery-mode--recovery).**
-For a rollback, set the older image and `recovery.enabled=true` in the same change, restore, then turn
-recovery off. Its Helm commands use `--reset-then-reuse-values`, not `--reuse-values`: Helm's
-`--reuse-values` renders with the previous chart's defaults, so a value a newer chart adds is absent from
-that render (the chart reads `recovery` so that its absence means off).
+For a rollback, set the older `image.tag` and `recovery.enabled: true` in the same change to the
+values file, restore, then set `recovery.enabled: false` in the next one, keeping the older tag: the
+older image starts the app. The chart reads `recovery` so that its absence means off, so a
+`--reuse-values` upgrade from an older chart, which renders with that chart's defaults, still renders.
 
 ## Uninstall
 ```
 
 ### Block 14 — docs/RUNBOOK_backup_restore.md: the runbook: §4, recovery mode as the primary path
 
-The five steps, the commands for Argo CD and Helm, what alerts; the `oc scale` path kept as the fallback (§3.9).
+The five steps through the release's values file, the time left checked before a restore, what alerts, one labelled development line; the `oc scale` path kept as the fallback (§3.9).
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -1354,38 +1617,42 @@ file corrupt rather than error (`gsd/store.py#Store.__init__`).
 **Recovery mode is the primary path (chart 0.60.0 and later, #303).** The dashboard pod keeps its spec and
 its data volume but runs the chart's recovery script instead of the app
 (`charts/group-sync-dashboard/scripts/recovery_mode.py`), so nothing opens `gsd.db`, and it stays up until
-`recovery.ttl` (2h by default): a dropped `oc` session does not end it. Set it through the release's
-values, never with `oc set env` (Argo CD's selfHeal reverts a hand edit of the Deployment). Below, `$REL`
-is also the release's name and the Argo CD Application's, as on the lab; use yours where they differ.
+`recovery.ttl` (2h by default): a dropped `oc` session does not end it. It is a value like any other: set it
+in this release's values file and roll it out through the release's deployment pipeline. Never with
+`oc set env` or an edit of the Deployment: a GitOps tool such as Argo CD (selfHeal) reverts a hand edit.
 
-1. **Turn it on, with the image you will restore under.** Under Argo CD:
-   `oc patch applications.argoproj.io/$REL -n openshift-gitops --type merge -p '{"spec":{"source":{"helm":{"parameters":[{"name":"recovery.enabled","value":"true"},{"name":"recovery.ttl","value":"2h"}]}}}}'`.
-   That merge patch replaces the Application's whole parameter list, which is right when it has none, as on
-   the lab. If it already has parameters, use `argocd app set $REL -p recovery.enabled=true -p recovery.ttl=2h`,
-   which changes only these two. If the Application itself is kept in Git, change it there, or the selfHeal
-   of whatever applies it reverts the patch. With Helm:
-   `helm upgrade $REL <chart> -n $NS --reset-then-reuse-values --set recovery.enabled=true --set recovery.ttl=2h`.
-   For a rollback, set the older `image.tag` in the same change, so the restore runs under the image that
-   will open the file.
-2. **Wait for the recovery pod.** `oc get pods -n $NS -l app=$REL` shows `1/2` ready and `Running`: the
-   sidecar is ready, the dashboard is not, so the Service sends it nothing. `oc logs -n $NS deploy/$REL -c dashboard`
-   starts with `RECOVERY MODE`, `the app is NOT running and no data is collected` and the TTL's end. With
-   `backup.offsite` on its `pvc` destination, the offsite claim is at `/offsite`, read-only.
+1. **Turn it on, with the image you will restore under.** In the release's values file set
+   `recovery.enabled: true` and `recovery.ttl` (for example `2h`, longer than the restore needs), and roll it
+   out. For a rollback, set the older `image.tag` in the same change, so the restore runs under the image
+   that will open the file.
+2. **Wait for the recovery pod.** `oc get pods -n $NS -l app=$REL` shows `1/2` ready (`0/1` with the proxy
+   off) and `Running`: the dashboard container is not ready, so the Service sends it nothing.
+   `oc logs -n $NS deploy/$REL -c dashboard` starts with `RECOVERY MODE`, `the app is NOT running and no data
+   is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the offsite claim is at
+   `/offsite`, read-only. The Deployment never reports available, so a pipeline step that waits for the
+   rollout reports it failed; that is expected.
 3. **Restore** with §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'`
-   instead of `oc debug` or a helper pod.
-4. **More time?** At the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and the log ends with the
-   commands that extend or leave recovery mode. A new `recovery.ttl` (for example `4h`) starts a new pod with
-   a new TTL counted from its start; `oc delete pod` does the same with the TTL unchanged. Either ends an
-   `oc exec` session in the old pod.
-5. **Turn it off**, and verify with §4c. Under Argo CD:
-   `oc patch applications.argoproj.io/$REL -n openshift-gitops --type merge -p '{"spec":{"source":{"helm":{"parameters":null}}}}'`,
-   or `argocd app unset $REL -p recovery.enabled -p recovery.ttl`. With Helm:
-   `helm upgrade $REL <chart> -n $NS --reset-then-reuse-values --set recovery.enabled=false`.
+   instead of `oc debug` or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
+   at the TTL the script exits and every process in the container stops with it, a restore still running
+   included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
+4. **More time?** At the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and the log ends with how to
+   extend or leave. Set a longer `recovery.ttl` (for example `4h`) in the values file and roll it out: the new
+   pod counts it from its start. `oc delete pod` starts the same TTL again in a new pod, with no values
+   change. Either replaces the pod and ends any `oc exec` session in it; so does an eviction or a node drain,
+   whose new pod also starts a new TTL. The time left is counted on the node's monotonic clock, so setting
+   the wall clock back does not lengthen it; if the node restarts under the pod, the TTL counts as reached.
+5. **Turn it off**, and verify with §4c: set `recovery.enabled: false` in the values file (keep a rollback's
+   older `image.tag`) and roll it out. When the change is applied the recovery pod stops at once and the app
+   starts on the restored file.
 
 Nothing is recorded while recovery mode is on, and no rule says so: `GroupSyncDashboardNotPolling` reads a
 gauge the stopped process no longer emits, so it returns nothing. With reporting on,
 `GroupSyncDashboardReportSnapshotStale` (warning) fires after about 50 minutes, because the report service's
 newest copy stops advancing. The TTL is the bound.
+
+**Development and troubleshooting only:** with plain Helm and no pipeline, the same change is
+`helm upgrade $REL <chart> -n $NS -f <values-file>`, with the chart reference and version the release already
+runs (`helm list -n $NS`) and the release's complete values file, now carrying `recovery`.
 
 **Without recovery mode** (the fallback, and any chart before 0.60.0), scale the writer to zero and use the
 `oc debug` pod of §4a or the helper pod of §4b:
@@ -1493,21 +1760,21 @@ New text:
   The pod has no liveness probe and a readiness probe that cannot pass, so it stays out of the Service; with
   `backup.offsite` on its `pvc` destination the offsite claim is mounted read-only at `/offsite`.
   `recovery.ttl` (2h) is counted from the pod's first start and kept in its `/tmp` across container
-  restarts; at the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and its log names the commands
-  that extend or leave recovery mode. The render refuses `replicaCount` other than 1,
-  `persistence.enabled=false` and a TTL that is not a positive duration. Set it through the release's values
-  (under Argo CD, the Application's Helm parameters), never with `oc set env`. No rule says recovery mode:
-  `GroupSyncDashboardNotPolling` does not fire, and with reporting on `GroupSyncDashboardReportSnapshotStale`
-  fires after about 50 minutes; the TTL is the bound. The default render is unchanged apart from the chart
-  version and what is computed from it (the pod's `checksum/config`, the offsite bind Job's name); no RBAC
-  change. The runbook's §4 uses recovery mode as the primary path and keeps `oc debug` as
-  the fallback.
+  restarts; at the TTL the script exits 1, every process in the container stops with it, the pod reads
+  `CrashLoopBackOff`, and its log says how to extend or leave recovery mode. The render refuses `replicaCount`
+  other than 1, `persistence.enabled=false` and a TTL that is not a positive duration. Set it in the
+  release's values file and roll it out through the deployment pipeline, never with `oc set env`. No rule
+  says recovery mode: `GroupSyncDashboardNotPolling` does not fire, and with reporting on
+  `GroupSyncDashboardReportSnapshotStale` fires after about 50 minutes; the TTL is the bound. The default
+  render is unchanged apart from the chart version and what is computed from it (the pod's `checksum/config`,
+  the offsite bind Job's name); no RBAC change. The runbook's §4 uses recovery mode as the primary path and
+  keeps `oc debug` as the fallback.
 - **The runbook says which card rows are the last poll's (Epic D composition review, K5).** Refresh stores nothing
 ```
 
 ### Block 19 — local-development/tests/test_recovery_mode.py: the script's tests
 
-§4.1: T303-8 to T303-12 and the restart, deadline-file and grammar tests.
+§4.1: T303-8 to T303-12 and the restart, clock, deadline-file, extension and grammar tests.
 
 <!-- block: local-development/tests/test_recovery_mode.py | create -->
 
@@ -1517,8 +1784,9 @@ New text:
 The script is `charts/group-sync-dashboard/scripts/recovery_mode.py`, shipped in a ConfigMap so it
 runs under the older image a rollback targets. These tests hold what the issue asks of it: it never
 imports the store or sqlite3 and never touches the data directory; it says what the pod is; it ends
-at the TTL with the commands that extend it; it stops on SIGTERM at once; and the TTL survives a
-container restart, which the kubelet performs at once after an exit.
+at the TTL saying how to extend it, through the release's values file and nothing else; it stops on
+SIGTERM at once; and the TTL survives a container restart, which the kubelet performs at once after
+an exit.
 """
 
 from __future__ import annotations
@@ -1533,12 +1801,17 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 import pytest
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "charts" / "group-sync-dashboard" / "scripts" / "recovery_mode.py"
 STAMP = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ gsd-recovery ")
 IDLE = "the app is NOT running and no data is collected"
+#: What the log at the TTL must never print (the operator, 2026-10-01): the values file through the release's
+#: deployment pipeline is the one way to change recovery mode, so no Helm or Argo CD command line.
+NOT_IN_THE_LOG = ("helm upgrade", "--set", "--reset-then-reuse-values", "--reuse-values", "argocd",
+                  "applications.argoproj.io", "oc patch", "oc delete", "parameters")
 
 
 def _module():
@@ -1557,13 +1830,13 @@ def _env(tmp: pathlib.Path, ttl: str, data: pathlib.Path | None = None) -> dict[
 
 def _run(env: dict[str, str], *args: str, timeout: float = 30) -> tuple[subprocess.CompletedProcess, float]:
     started = time.monotonic()
-    done = subprocess.run([sys.executable, *args, str(SCRIPT), "--release", "rel", "--namespace", "ns",
+    done = subprocess.run([sys.executable, *args, str(SCRIPT), "--release", "rel",
                            "--report-every", "0.5"], env=env, capture_output=True, text=True, timeout=timeout)
     return done, time.monotonic() - started
 
 
 def _start(env: dict[str, str]) -> subprocess.Popen:
-    return subprocess.Popen([sys.executable, str(SCRIPT), "--release", "rel", "--namespace", "ns"], env=env,
+    return subprocess.Popen([sys.executable, str(SCRIPT), "--release", "rel"], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
@@ -1602,23 +1875,21 @@ def test_t303_9_the_log_says_what_the_pod_is_then_counts_down_in_utc(tmp_path):
     for words in ("RECOVERY MODE", "GSD_RECOVERY_MODE=true", "GSD_RECOVERY_MODE_TTL=3s", IDLE,
                   f"data path {tmp_path / 'data' / 'gsd.db'} (not opened by this process)", "TTL 3s: ends ", "3s left"):
         assert words in banner, (words, banner)
-    countdown = [line for line in lines[4:] if line.endswith(f"left; {IDLE}")]
+    assert "check the time left before a restore" in lines[4] and "every process in the container stops" in lines[4]
+    countdown = [line for line in lines[5:] if line.endswith(f"left; {IDLE}")]
     assert len(countdown) >= 2, lines
 
 
-def test_t303_10_at_the_ttl_it_exits_1_and_names_the_commands(tmp_path):
+def test_t303_10_at_the_ttl_it_exits_1_and_says_how_to_extend_or_leave_through_the_values_file(tmp_path):
     done, took = _run(_env(tmp_path, "1s"))
     assert done.returncode == 1 and took < 1 + 1.5, (done.returncode, took)
     out = done.stdout
     assert "TTL 1s reached at " in out
-    patch = json.dumps({"spec": {"source": {"helm": {"parameters": [
-        {"name": "recovery.enabled", "value": "true"}, {"name": "recovery.ttl", "value": "2s"}]}}}})
-    assert f"oc patch applications.argoproj.io/rel -n openshift-gitops --type merge -p '{patch}'" in out
-    assert "helm upgrade rel <chart> -n ns --reset-then-reuse-values --set recovery.enabled=true --set recovery.ttl=2s" in out
-    assert "oc delete pod gsd-recovery-test -n ns" in out
-    assert "helm upgrade rel <chart> -n ns --reset-then-reuse-values --set recovery.enabled=false" in out
+    assert "set a longer recovery.ttl (for example 2s) in release rel's values file and roll it out" in out
+    assert "set recovery.enabled: false in release rel's values file and roll it out" in out
+    assert not [word for word in NOT_IN_THE_LOG if word in out.lower()], out
     last = out.splitlines()[-1]
-    assert STAMP.match(last) and "TTL 1s reached" in last and "recovery.ttl" in last and "recovery.enabled=false" in last
+    assert STAMP.match(last) and "TTL 1s reached" in last and "recovery.ttl" in last and "recovery.enabled: false" in last
 
 
 def test_t303_11_sigterm_stops_it_at_once_through_its_own_handler(tmp_path):
@@ -1658,20 +1929,57 @@ def test_the_ttl_survives_a_container_restart_and_an_expired_one_exits_at_once(t
         first.communicate(timeout=5)
     finally:
         first.kill()
-    ends = re.search(r"ends (\S+),", banner[3]).group(1)
     state = json.loads((tmp_path / "gsd-recovery.json").read_text())
-    assert state["deadline"] == ends and state["ttl"] == "2s"
+    assert f"ends {state['deadline']}," in banner[3] and state["ttl"] == "2s"
     second = _start(env)                                    # a restarted container, the same pod's /tmp
     try:
         again = _banner(second)
     finally:
         second.kill()
         second.communicate()
-    assert f"ends {ends}," in again[3] and "kept from this pod's first start" in again[3], again
+    ends_again = datetime.fromisoformat(re.search(r"ends (\S+),", again[3]).group(1)).timestamp()
+    assert abs(ends_again - state["deadline_epoch"]) <= 1.0, (again, state)
+    assert f"kept from this pod's first start at {state['started']}" in again[3], again
     time.sleep(max(0.0, state["deadline_epoch"] - time.time()) + 0.2)
     third, took = _run(env)
     assert third.returncode == 1 and took < 1.0, (third.returncode, took)
     assert "0s left (kept from this pod's first start" in third.stdout and "TTL 2s reached" in third.stdout.splitlines()[-1]
+
+
+def _record(tmp_path: pathlib.Path, **fields) -> None:
+    """A deadline record as the script writes it, on this machine's clocks, with `fields` replaced."""
+    module = _module()
+    now, mono = time.time(), time.monotonic()
+    record = {"ttl": "1h", "started": module.instant(now), "started_epoch": now, "deadline": module.instant(now + 3600),
+              "deadline_epoch": now + 3600, "deadline_monotonic": mono + 3600, "boot_id": module.boot_id()}
+    record.update(fields)
+    (tmp_path / "gsd-recovery.json").write_text(json.dumps(record))
+
+
+def test_a_backward_wall_clock_step_cannot_lengthen_the_ttl(tmp_path):
+    """Codex F1: the time left came from the wall clock, so setting it back gave the pod more time. It now
+    comes from the node's monotonic clock: a record whose wall-clock deadline is an hour away but whose
+    monotonic deadline has passed is expired at once, and the arithmetic never returns more than the TTL."""
+    module = _module()
+    record, kept = module.deadline(tmp_path / "state.json", 60.0, "1m", wall=1000.0, monotonic=5000.0, boot="b")
+    assert not kept and module.remaining(record, 60.0, 5010.0, "b") == 50.0    # 10 s on: 50 s left, whatever the wall says
+    assert module.remaining({**record, "deadline_monotonic": 9999.0}, 60.0, 5010.0, "b") == 60.0
+    _record(tmp_path, deadline_monotonic=time.monotonic() - 1)
+    done, took = _run(_env(tmp_path, "1h"))
+    assert done.returncode == 1 and took < 1.5 and "TTL 1h reached" in done.stdout.splitlines()[-1], done.stdout
+
+
+def test_a_node_restart_under_the_pod_counts_as_the_ttl_reached(tmp_path):
+    _record(tmp_path, boot_id="a-boot-that-is-not-this-one")
+    done, took = _run(_env(tmp_path, "1h"))
+    assert done.returncode == 1 and took < 1.5, (done.returncode, took)
+    assert "the node restarted since this pod's first start" in done.stdout
+
+
+def test_the_suggested_ttl_is_a_positive_duration_for_a_subsecond_ttl(tmp_path):
+    """Codex: a 250ms TTL suggested `0s`, which the chart refuses."""
+    done, _ = _run(_env(tmp_path, "250ms"))
+    assert done.returncode == 1 and "set a longer recovery.ttl (for example 1s)" in done.stdout
 
 
 @pytest.mark.parametrize("ttl", ["", "abc", "0s", "-5m", "7200"])
@@ -1681,11 +1989,14 @@ def test_a_ttl_that_is_not_a_positive_duration_exits_2(tmp_path, ttl):
     assert not (tmp_path / "gsd-recovery.json").exists()
 
 
-def test_a_deadline_file_that_cannot_be_read_exits_2_rather_than_restart_the_clock(tmp_path):
-    (tmp_path / "gsd-recovery.json").write_text("{not json")
+@pytest.mark.parametrize("bad", ["{not json", json.dumps({"deadline_epoch": 1.0, "started_epoch": 1.0, "boot_id": ""}),
+                                 json.dumps({"deadline_epoch": 1.0, "started_epoch": 1.0, "deadline_monotonic": "NaN",
+                                             "boot_id": ""})], ids=["not-json", "no-monotonic-deadline", "nan"])
+def test_a_deadline_file_that_cannot_be_read_exits_2_rather_than_restart_the_clock(tmp_path, bad):
+    (tmp_path / "gsd-recovery.json").write_text(bad)
     done, _ = _run(_env(tmp_path, "1h"))
     assert done.returncode == 2 and "cannot be used" in done.stdout and "Delete the pod" in done.stdout
-    assert (tmp_path / "gsd-recovery.json").read_text() == "{not json"
+    assert (tmp_path / "gsd-recovery.json").read_text() == bad
 
 
 def test_the_duration_grammar_and_the_printed_spans():
@@ -1698,7 +2009,7 @@ def test_the_duration_grammar_and_the_printed_spans():
 
 ### Block 20 — local-development/tests/test_chart_recovery_mode.py: the chart's tests
 
-§4.1: T303-1 to T303-7, T303-14 to T303-16, T303-19, and the switch, ConfigMap, offsite and grammar-parity tests.
+§4.1: T303-1 to T303-7, T303-14 to T303-16, T303-19, and the switch, ConfigMap, offsite, grammar-parity and values-file-path tests.
 
 <!-- block: local-development/tests/test_chart_recovery_mode.py | create -->
 
@@ -1765,7 +2076,7 @@ def _key(doc: dict) -> tuple[str, str]:
 def test_t303_1_recovery_runs_the_chart_script_on_the_same_volume_with_the_env():
     docs = _docs(**ON)
     dashboard = _container(docs)
-    assert dashboard["command"] == ["python3.14", "/scripts/recovery_mode.py", "--release", "t", "--namespace", "default"]
+    assert dashboard["command"] == ["python3.14", "/scripts/recovery_mode.py", "--release", "t"]
     assert "gsd.api:create_app" not in " ".join(dashboard["command"])
     env = _env(dashboard)
     assert env["GSD_RECOVERY_MODE"] == "true" and env["GSD_RECOVERY_MODE_TTL"] == "2h"
@@ -1803,6 +2114,9 @@ def test_t303_5_more_than_one_replica_is_refused():
     assert not ok and "recovery.enabled=true requires replicaCount: 1 (it is 2)" in out
     ok, out = render(replicaCount="0", **ON)
     assert not ok and "requires replicaCount: 1 (it is 0)" in out
+    # Codex F3: `int true` is 1, so a YAML boolean passed and rendered `replicas: true`
+    ok, out = render(replicaCount="true", **ON)
+    assert not ok and "requires replicaCount: 1 (it is true)" in out
 
 
 @pytest.mark.parametrize("ttl,why", [("abc", "is not a duration"), ("-5m", "is not a duration"),
@@ -1885,12 +2199,24 @@ def test_the_offsite_claim_is_mounted_read_only_as_the_cronjob_names_it(claim, e
     assert {"name": "offsite", "persistentVolumeClaim": {"claimName": expected}} in shipped
 
 
-def test_no_offsite_mount_without_a_pvc_destination():
-    s3 = {"backup__offsite__destination__type": "s3", "backup__offsite__destination__s3__existingSecret": "creds",
-          "backup__offsite__destination__s3__image__repository": "public.ecr.aws/aws-cli/aws-cli"}
-    for extra in ({}, {**OFFSITE, **s3}):
-        docs = _docs(**extra, **ON)
-        assert not [v for v in _deployment(docs)["spec"]["template"]["spec"]["volumes"] if v["name"] == "offsite"]
+S3 = {"backup__offsite__destination__type": "s3", "backup__offsite__destination__s3__existingSecret": "creds",
+      "backup__offsite__destination__s3__image__repository": "public.ecr.aws/aws-cli/aws-cli"}
+
+
+@pytest.mark.parametrize("extra", [{}, {"backup__offsite__enabled": "false"}, OFFSITE,
+                                   {**OFFSITE, "backup__offsite__destination__pvc__existingClaim": "my-offsite"},
+                                   {**OFFSITE, **S3}], ids=["default", "off", "pvc", "existing-claim", "s3"])
+def test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one(extra):
+    """The mount and the CronJob are decided by one switch today and by #304's helper next; whatever decides
+    them, the recovery pod mounts the claim the CronJob writes, and nothing when it writes none. A default
+    that turns offsite on (#304) must turn the mount on with it, or this test fails."""
+    docs = _docs(**extra, **ON)
+    mounted = [v["persistentVolumeClaim"]["claimName"] for v in _deployment(docs)["spec"]["template"]["spec"]["volumes"]
+               if v["name"] == "offsite"]
+    written = [v["persistentVolumeClaim"]["claimName"] for d in docs if d["kind"] == "CronJob"
+               for v in d["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]
+               if v["name"] == "offsite" and "persistentVolumeClaim" in v]
+    assert mounted == written, (mounted, written)
 
 
 @pytest.mark.parametrize("ttl", ["2h", "90m", "1h30m", "1.5s", "250ms", "abc", "0", "0s", "-5m", "7200", "2H"])
@@ -1909,16 +2235,51 @@ def _values_comment() -> str:
     return "\n".join(lines[start:end])
 
 
+def _between(text: str, start: str, end: str) -> str:
+    begin = text.index(start)
+    return text[begin:text.index(end, begin + len(start))]
+
+
 def test_t303_19_the_docs_name_the_switch_and_say_what_alerts():
     for doc in (CHART / "values.yaml", CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md"):
         text = doc.read_text()
         assert "recovery.enabled" in text and "recovery.ttl" in text, doc
     comment = re.sub(r"\s*\n#\s*", " ", _values_comment())
-    assert "the Application's Helm parameters" in comment and "never with `oc set env`" in comment.lower()
+    assert "values file" in comment and "deployment pipeline" in comment and "never with `oc set env`" in comment.lower()
     assert "GroupSyncDashboardNotPolling does not fire" in comment
     assert "GroupSyncDashboardReportSnapshotStale" in comment and "The TTL is the bound" in comment
+    # what the TTL ends (measured: an exec'd process is killed when PID 1 exits) and what restarts it
+    assert "every process in the container stops" in comment and "evicted" in comment and "0/1" in comment
+    runbook = (REPO / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    assert "Check the time left first" in runbook and "every process in the container stops" in runbook
     for doc in (CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):
         assert not re.search(r"NotPolling[^.]*(fires|covers)[^.]*recovery", doc.read_text()), doc
+
+
+def test_the_only_documented_path_is_the_values_file():
+    """The operator's rule (2026-10-01): recovery mode is set in the release's values file and rolled out through
+    the release's deployment pipeline. No Argo CD Application patch or parameter, no argocd or Helm command line
+    in the operator's path; Argo CD is named only to say why a hand edit is reverted, and a plain `helm upgrade
+    -f` only on the runbook's line for development and troubleshooting."""
+    readme = (CHART / "README.md").read_text()
+    runbook = _between((REPO / "docs" / "RUNBOOK_backup_restore.md").read_text(),
+                       "**Recovery mode is the primary path", "**Without recovery mode**")
+    assert runbook.count("**Development and troubleshooting only:**") == 1, "the plain Helm form has one labelled line"
+    operator_path, development = runbook.split("**Development and troubleshooting only:**")
+    texts = {
+        "values comment": re.sub(r"\s*\n#\s*", " ", _values_comment()),
+        "README section": _between(readme, "### Recovery mode", "\n#"),
+        "README upgrading": _between(readme, "**To restore the database, before or after an upgrade", "## Uninstall"),
+        "runbook": operator_path,
+        "CHANGELOG": _between((REPO / "docs" / "CHANGELOG.md").read_text(), "- **Recovery mode:", "\n- **"),
+    }
+    for name, text in texts.items():
+        assert "values file" in text, name
+        assert not [word for word in ("helm upgrade", "--set", "--reset-then-reuse-values", "argocd",
+                                      "applications.argoproj.io", "oc patch", "parameters") if word in text.lower()], name
+        for sentence in re.split(r"(?<=[.;])\s+", text):
+            assert "Argo CD" not in sentence or "revert" in sentence, (name, sentence)
+    assert "helm upgrade $REL <chart> -n $NS -f <values-file>" in development and "--set" not in development
 ```
 
 ### Block 21 — local-development/tests/test_values_defaults.py: the stated false default
