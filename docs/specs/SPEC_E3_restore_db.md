@@ -47,8 +47,8 @@ Decisions taken while specifying, on "easy to manage, best practice", the correc
 issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 2026-10-01 (note 17). Each is applied in
 §3 and §7 and held by a test in §4.
 
-1. **What this spec takes from SPEC_E2 (`465411cd`, in review), every name, so a review change to E2 can be carried
-   here mechanically.** Merge order: E2 before E3. E3's blocks apply to `21132a25` without E2's blocks and on top of
+1. **What this spec takes from SPEC_E2 (`465411cd`; merged as a spec on main at `1e4558ad`, same interface), every name, so a review change to E2 can be carried
+   here mechanically.** Merge order: E2 before E3. E3's blocks apply to `b5463d45` without E2's blocks and on top of
    them, and E2's on top of E3's, giving the same tree (measured, §4.3); E3 adds no chart change.
 
    | from E2 | where E3 uses it |
@@ -74,8 +74,9 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
    node's. E2's revision (`465411cd`) counts its deadline on the node's monotonic clock and ends the TTL at once when
    the node's boot ID changes; neither is visible in the pod spec. So `restore`, under its lock and before anything
    is written, also reads `/tmp/gsd-recovery.json` and computes E2's own answer (`recovery_left`, measured equal to
-   E2's `remaining` on the same record, §2.13); less than the margin, or a record it cannot read, refuses with exit
-   2. The TTL's end kills the container's processes, a restore among them (E2 §2.4), so the in-pod count is the one
+   E2's `remaining` on the same record, §2.13); less than the margin, or a record it cannot read (not JSON, a field
+   missing or of the wrong type, or a deadline that is not a finite number, which E2's own read refuses too),
+   refuses with exit 2. The TTL's end kills the container's processes, a restore among them (E2 §2.4), so the in-pod count is the one
    that decides; the laptop's is the early, cheap refusal T302-17 asks for.
 3. **Correction: the confirmation is asked on the laptop, between two exec sessions, and `restore` is bound to what
    `check` showed.** `python3.14 /dev/stdin` reads the whole stream as the program before it runs, so the program finds
@@ -103,7 +104,11 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
    or when it cannot write it (measured, §2.1), so the helper removes a `-wal` or `-journal` only when the close
    left it absent or empty; otherwise the restore stops at the fold with nothing removed. A file SQLite cannot open
    as a database (`DatabaseError`: not a database, or corrupt) is removed around, the set kept first: replacing such a
-   file is what a restore is for. From that moment `/data/gsd.db` alone is the whole old database, so a kill before
+   file is what a restore is for. A damaged file whose `-wal` holds page 1 is not such a file: SQLite opens it through
+   the `-wal`, raises nothing, and its close cannot write the `-wal` back (an explicit checkpoint says `database disk
+   image is malformed`; measured on a file overwritten and on one cut short by half, §2.1). The fold stops there as it
+   does for a held file, and its message names that cause as well and §4a, which restores over such a file by hand.
+   From that moment `/data/gsd.db` alone is the whole old database, so a kill before
    the rename loses nothing (T302-13, after-fold; measured, §4). `-journal` joins the live set because the store falls
    back to rollback mode on storage without shared memory (`local-development/gsd/store.py#stays in rollback-journal mode`),
    and a hot journal left beside another file corrupts it (§2.3).
@@ -125,10 +130,11 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
    `-journal` it now keeps: left beside the copy, an old hot journal is rolled back into it, and the restored file
    reads `database disk image is malformed` (measured, §2.3). §4b's off-volume path kept nothing before it
    overwrote `gsd.db`, and #300's issue does not list it (its T300-11 checks a keep step §4b does not have), so
-   blocks 7 and 8 give §4b and its S3 note the same keep and the same removal. And the kept set is the way back
+   blocks 7 and 8 give §4b and its S3 note the same keep, the same removal and §4a's order (note 20). And the kept set is the way back
    from a wrong restore, but its `gsd.db` copied alone can lack every row its `-wal` held: §4's "Undo a restore"
    (block 4) says to stay in recovery mode, fold the kept set first and restore its `gsd.db` with §4a, and the
-   script's last lines point there.
+   script's last lines point there. Because the Undo runs §4a, §4a writes the copy under a temporary name before it
+   removes anything and renames it after (note 20).
 10. **Versions.** The `_MIGRATIONS` comment and the README row are image content
     (`.github/workflows/publish.yml#'local-development/gsd/**'`, read by
     `local-development/check-app-version-bump.py#image_content_changes`), so the pull request takes the next
@@ -139,18 +145,21 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     about recovery mode says "Set `recovery.enabled: true` and `recovery.ttl: 2h` (or a longer `recovery.ttl`, or
     `recovery.enabled: false`) in this release's values file and roll it out through the release's deployment
     pipeline". Nothing prints an Argo CD patch, an `argocd` command, `helm upgrade` or `--set`; T302-4 asserts the
-    first and the third are absent. `oc delete pod` is printed as the way to restart the same TTL, because it is a
-    pod's restart, not a configuration change. The lab walk (§5) is development and uses the lab's values file with
+    first and the third are absent. Nothing offers `oc delete pod` either: SPEC_E2 (notes 5 and 16, on main) reads
+    the rule as covering any message a program prints, with the values file the only way to extend
+    (`test_no_refusal_offers_a_way_but_the_values_file`; note 20). The lab walk (§5) is development and uses the lab's values file with
     `release-crc.sh`. The mock's block 3 printed an Argo CD patch; PR #505 corrects the mock.
 12. **A backup name with a pod in it still lists.** #391 will put the pod into the scheduled backup's name; the
     pattern accepts anything between the stamp and `.db`, so the ID (the stamp) is unchanged by it.
 13. **The executable bit.** A block cannot carry a file mode. The implementing pull request runs
     `chmod +x local-development/restore-db.sh` after `--apply` (git records `100755`);
     `test_the_wrapper_is_executable` fails until it does.
-14. **The index.** This spec adds the thirty-seventh row against `21132a25`, after G1's (#239), at the end like D5's
-    (#244), and `local-development/tests/test_specs_index.py` excludes #302 from the rising-issue check as it does
-    #244. SPEC_E2 (#303) and the spec for #255 change the same count sentence, heading and test; whichever merges
-    later rebases them.
+14. **The index.** This spec adds the forty-second row against `f1423143`, after E5's (#304), at the end like D5's
+    (#244), and `local-development/tests/test_specs_index.py` excludes E3 from the rising-issue check by its id and pins
+    it to #302 (`assert ROWS["E3"]["issue"] == "302"`), as it does D5, G1, E2, G2, E4, G3 and E5: excluded by the
+    number, a row and header that both named another issue above #481 passed (note 20). Measured: with E3's row and
+    header both set to #999 the test fails with `AssertionError: ('E3 is #302', '999')`. A spec merged after this one
+    changes the same count sentence, heading and test, and rebases them.
 15. **The margin is ten minutes.** The whole restore at the lab's size is seconds (§2.11): about 10 s under the lab's
     emulation, extrapolated from the measured parts; ten minutes covers a database a hundred times the lab's
     (extrapolated, not measured) and refuses only in the last twelfth of the default 2h TTL. A constant, not a
@@ -175,9 +184,10 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
       before the live set is kept or touched, so a copy replaced between its header read and its hash cannot take
       the live name; one lock for `list`, `check` and `restore` (note 18); the "estimate" wording and the named
       rolled-back state (F3); one action per call (F4); its eight probes, as `tests/test_restore_db_safety.py`.
-    - **Rejected, with the reason:** Codex's "an SQLite open error propagates" (a live file that is not a database
-      could then never be restored over; OB3's split keeps the safety, since a failed open still removes nothing that
-      holds bytes); Codex's prose procedure to undo a restore by copying four names and renaming them one by one (OB3's
+    - **Rejected, with the reason:** Codex's "an SQLite open error propagates" (a live file SQLite cannot read at all
+      could then never be restored over; OB3's split keeps the safety: an open that fails for a reason outside the
+      file (locked, read-only, I/O) removes nothing that holds bytes, and a file SQLite cannot read is removed around
+      only after the keep; its limit, a damaged file whose `-wal` holds page 1, is note 6's and note 20's); Codex's prose procedure to undo a restore by copying four names and renaming them one by one (OB3's
       is shorter and uses commands the runbook already has: fold the kept set, then §4a); the `-shm` in the live-set
       fingerprint (a `--list` between the two sessions rewrites it, §2.2, and would refuse every such restore); OB3's
       single `sha256` line (replaced by the confirmation line).
@@ -192,6 +202,33 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
 19. **The snapshot comes first.** `restore` writes the copy to `gsd.db.restore.tmp` and checks it there before it keeps
     the live set: a refusal at that point leaves nothing changed and nothing kept. The keep then happens after the
     last check and before the first change, so every completed keep is a set as it was immediately before a change.
+
+20. **The confirmation pass of 2026-10-01 (OB3, in Grok's seat) on `159deef8`.** It killed the helper at every
+    traced line of a restore (3,134 SIGKILLs over seven live sets: the killed-writer `-wal`, another process holding
+    the file, a `gsd.db` the pod cannot write, three not-a-database shapes, a hot `-journal`) and 27 times inside
+    SQLite's close-time checkpoint: every state read as the old database or the copy, and every finished keep was the
+    live set byte for byte. Four changes followed:
+    - **The Undo, through §4a (blocks 4 to 6).** With `gsd.db` unwritable, "Undo a restore" as printed removed the
+      live `-wal` and then could not write the copy: `gsd.db` read 40 of 540 rows (all 58 states that had a keep).
+      §4a now writes the copy under a temporary name, removes, then renames (`os.replace` in the image's Python), so
+      a write that fails stops before anything is removed; measured again, all 58 end on the old database whole.
+      `test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written`.
+    - **A damaged file whose `-wal` holds page 1 (note 6).** Its fold refused on every attempt naming only a session
+      or a permission; the message now names damage and §4a. The test meant to guard the `DatabaseError` branch never
+      reached it (with the branch deleted, all 71 passed): its file now has a `-wal` without page 1, which the open
+      cannot read, and a second test holds the damaged shape.
+    - **No `oc delete pod` in any refusal (note 11),** as SPEC_E2 on main decided for the same rule.
+    - **A TTL record whose deadline is not a finite number** is refused with exit 2 as unreadable, as E2's own read
+      refuses it, instead of ending in a traceback (nothing was written either way).
+    - **§4b and the S3 note in §4a's order (beyond the pass, which left them unmeasured).** They removed the side
+      files and then wrote the copy onto `gsd.db`, the order F1 corrected in §4a. Both now write the copy under the
+      temporary name, then remove, then rename (blocks 7 and 8). §4b, run as printed against a `gsd.db` of mode 0444
+      beside a killed writer's `-wal` (500 rows), exits 0, keeps the set and leaves the copy alone (40 rows).
+      `test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go` holds all three paths (MF1 and MB, §4.2).
+    The index pin (note 14) follows D5's, G1's, E2's, G2's, E4's and G3's. Measured and left as scope (§3.6): a writer that opens the live file
+    and commits inside the few statements between the fold's check and the rename leaves its `-wal` beside the copy;
+    a session open before the restore cannot (its writes go to the `-wal` the fold unlinked, or SQLite refuses them
+    after the rename).
 
 **Open questions for the operator.** None.
 
@@ -259,6 +296,15 @@ with a reader holding it, a rename that then fails left `/data/gsd.db` at 40 row
 whole. A newer image's last transaction, carrying a schema entry this SQLite cannot parse, still folds (540 rows):
 neither `PRAGMA user_version` nor the close reads the schema, while `PRAGMA wal_checkpoint` does and raises
 `malformed database schema`.
+
+**A damaged file whose `-wal` holds page 1** (the confirmation pass of 2026-10-01, `c1_extra.py`, `corrupt-mech3`):
+a `gsd.db` overwritten with 15,000 bytes that are not a database, or cut to half of its 1,662,976 bytes, beside the
+1,046,512-byte `-wal` its writer left, which holds page 1 and a database of 657 pages. SQLite reads page 1 from the
+`-wal`, so `PRAGMA user_version` answers and nothing is raised; the close-time checkpoint does not happen (both files
+keep their sizes), and an explicit `PRAGMA wal_checkpoint(PASSIVE)` on a copy raises `database disk image is
+malformed`. The fold then stops as for a held file, every attempt. With a `-wal` that covers the whole database the same open folds it
+over the garbage; with no page 1 beside the file the open raises `file is not a database`, the `DatabaseError` the
+fold takes as "not a database".
 
 **What it settles.** The live set is kept whole, the old file is folded by SQLite before its journals are removed,
 and both happen before the rename (§3.6); a `-wal` or `-journal` SQLite did not empty is never removed.
@@ -525,7 +571,7 @@ step cannot lengthen; the pod spec's bound stays as the earlier refusal from the
 | Check the copy where it lies and swap in the bytes read | this spec at `167ecb9b` | the copy is a path another process can replace between the header read and the hash (Codex measured `user_version 20 -> 21` under an image that understands 20) | replaced: the snapshot beside the live file is checked again (schema and integrity) before anything else happens (note 19) |
 | Delete the old `-wal` and `-shm` (the runbook) | runbook §4a | between the delete and the rename `/data/gsd.db` alone lacks the `-wal`'s rows (0 of 500, §2.1) | replaced by open-and-close first (wal.html §4), then delete (note 6) |
 | Delete whatever is left after the open and close | this spec at `167ecb9b` | another process holding the file, or a file the pod cannot write, leaves the `-wal` unfolded with no error, so the delete takes its rows out of the live file (§2.1) | replaced: delete only an absent or empty `-wal`/`-journal`, else stop at the fold (note 6) |
-| Propagate every error of the open, and refuse any `-wal` left | Codex's review (F2) | safe, but a live file that is not a database, or a corrupt one, could never be restored over | rejected; OB3's split (note 17) |
+| Propagate every error of the open, and refuse any `-wal` left | Codex's review (F2) | safe, but a live file SQLite cannot read at all could never be restored over (measured: a file of garbage with no `-wal`, and with a `-wal` without page 1); a damaged file whose `-wal` holds page 1 is refused by both designs (§2.1) | rejected; OB3's split (note 17), its limit named in the refusal (note 6) |
 | `PRAGMA wal_checkpoint(TRUNCATE)` instead of the open and close | pragma.html | reads the schema, and raises `malformed database schema` on a database a newer image wrote, the very file a rollback restores over (§2.1) | rejected |
 | Lock `restore` only | this spec at `167ecb9b` | a `--list` or `check` in a second terminal holds the live file open while a restore folds and renames it | replaced: one lock for all three (note 18) |
 | Bound the TTL with the container's `startedAt` | the issue's correction 3 | wrong after a container restart (E2 keeps the TTL) | rejected; the pod's `startTime` (note 2) |
@@ -592,7 +638,7 @@ step cannot lengthen; the pod spec's bound stays as the earlier refusal from the
 ### 3.1 Two programs, one file each
 
 `local-development/restore-db.sh` (bash, 104 lines) runs on the laptop. `local-development/restore-db.py` (Python,
-788 lines with its docstrings) has four commands: `preflight` runs on the laptop's `python3` and reads the pod
+792 lines with its docstrings) has four commands: `preflight` runs on the laptop's `python3` and reads the pod
 list; `list`, `check <ID>` and `restore <ID>` run in the pod, one at a time (§3.7), streamed as `oc exec -i -n <ns>
 <pod> -c dashboard -- python3.14 /dev/stdin <command>` with the file on stdin. The helper imports only the standard
 library on the laptop, and in the pod `gsd.store` (for the schema the image understands) and `yaml` (to read
@@ -678,8 +724,10 @@ saying so, and then prints nothing until the swap is done. In order:
 4. **Keep.** Copy the live set into `pre-restore/<stamp>.tmp/`, each file fsynced, `chgrp 0` and `chmod g=u` on each
    (and on directories it creates), the directory fsynced, then renamed to `pre-restore/<stamp>/`.
 5. **Fold.** Open and close `gsd.db` once with SQLite (note 6). If a `gsd.db-wal` or `gsd.db-journal` still holds
-   bytes and the file is one SQLite can open as a database, SQLite did not fold it: exit 1 at the step `fold`,
-   nothing beside `gsd.db` removed. Otherwise remove `gsd.db-wal`, `gsd.db-shm` and `gsd.db-journal`.
+   bytes and the file is one SQLite can open as a database, SQLite did not fold it (another process holds it, the
+   pod cannot write it, or it is damaged so that its close cannot write the `-wal` back, §2.1): exit 1 at the step
+   `fold`, nothing beside `gsd.db` removed, the message naming the three and §4a. Otherwise remove `gsd.db-wal`,
+   `gsd.db-shm` and `gsd.db-journal`.
 6. **Swap.** `os.replace(gsd.db.restore.tmp, gsd.db)`, then fsync the directory.
 7. Print the kept set, what was removed, what was written and its sha256, `user_version <from> -> <to>`, the line
    saying to set `recovery.enabled: false` in the values file and roll it out, the way back (the kept set, and runbook
@@ -690,7 +738,10 @@ whole or the checked copy with no journal of the old one; and a `pre-restore/<st
 name, holds the whole live set as it was just before the first change.** Its scope: a restore run by this helper in
 the release's one recovery pod, on a filesystem that renames atomically within a directory (POSIX), with the process
 killed at any moment (SIGKILL, the container's end at the TTL, a deleted pod) or a step failing with an error, and
-with any other process in the pod holding the live file open. Kill points measured (T302-13): after the write, in the
+with any other process in the pod holding the live file open (a reader, or a session open before the restore:
+measured). Not a process that writes: one that opens the live file and commits inside the few statements between the
+fold's check and the rename leaves its `-wal` beside the copy (measured, note 20); nothing in recovery mode writes the
+database. Kill points measured (T302-13): after the write, in the
 middle of the keep, after the keep, after the fold, just before the rename, just after it. Each leaves the old
 database whole (540 rows) or the copy alone, and a later run completes the restore. A failure with an error removes
 the temporary copy and says what is on disk, by step (`test_a_failed_rename_names_the_state_and_leaves_the_old_database_whole`).
@@ -709,7 +760,8 @@ and operation, which the holder writes into the file. The kernel drops the lock 
 (§2.8), so a dropped session's restore holds it until it finishes and a killed one holds nothing. The lock is released
 between `check` and `restore`, while the laptop asks; the confirmation line (note 3) carries what the answer was
 given for across that gap. Scope: the helper's own operations; an `oc debug` pod, a hand-typed runbook block or a
-hand-made `oc exec` session is outside the lock, and the fold's check is what stands against the last.
+hand-made `oc exec` session is outside the lock, and the fold's check is what stands against the last when it holds
+the file as the fold runs (§3.6 for one that opens it later).
 
 ### 3.8 The TTL margin
 
@@ -717,8 +769,8 @@ hand-made `oc exec` session is outside the lock, and the fold's check is what st
 left by the pod spec's bound, and no restore writes anything with less than ten minutes left as SPEC_E2 counts
 it.** `preflight` computes `startTime + TTL - now` from the pod spec (note 2) before each session; `restore` computes
 E2's own `deadline_monotonic - monotonic` with the boot-ID check under its lock (§2.13). Each refuses naming the time
-left, and what to set: a longer `recovery.ttl` in the values file (a new pod, a new TTL), or `oc delete pod` (the same
-TTL again from now). Scope: restores started by the helper; `preflight` uses the laptop's clock, so a skew between it
+left, and what to set: a longer `recovery.ttl` in the values file (a new pod, a new TTL), the only way to extend
+(note 11). Scope: restores started by the helper; `preflight` uses the laptop's clock, so a skew between it
 and the node's moves only the early refusal. Ten minutes is note 15's number.
 
 ### 3.9 The move-aside note (runbook §6)
@@ -743,7 +795,8 @@ namespace, which the runbook's procedure already needs. No file under `charts/` 
 its RBAC are byte-identical (T302-19). The runbook's §4 opens with a paragraph that points at the script and keeps the
 commands below it as the fallback, and a second, "Undo a restore": stay in recovery mode, take a finished keep (never
 a `.tmp` one), fold it, and restore its `gsd.db` with §4a. §4a's and §4b's keep steps keep the live set, and both
-remove the `-journal` with the `-wal` and `-shm` (note 9).
+remove the `-journal` with the `-wal` and `-shm` (note 9); §4a, §4b and the S3 note write the copy under a temporary name
+before they remove anything and rename it after; the Undo depends on §4a's (note 20).
 
 ### 3.12 The CHANGELOG and the one-way comment
 
@@ -812,57 +865,80 @@ Added by the reviews of 2026-10-01 (note 17; each fails on the blocks of `167ecb
 |---|---|
 | `test_the_fold_removes_nothing_sqlite_did_not_fold` (OB3) | note 6, §3.6 step 5: another process holds the live file; the fold stops with nothing removed and the old database whole |
 | `test_the_fold_folds_a_database_a_newer_image_wrote` (OB3) | §2.1: the rollback shape still folds (a guard: passes before and after) |
-| `test_a_live_file_that_is_not_a_database_is_replaced_around` (OB3) | note 6: the fold's check never blocks a file SQLite cannot open (a guard) |
+| `test_a_live_file_that_is_not_a_database_is_replaced_around` (OB3; its file reshaped by note 20) | note 6: the fold's check never blocks a file SQLite cannot open: its `-wal` holds no page 1, so the open raises `DatabaseError` (a guard; red with that branch removed) |
 | `test_check_counts_every_history_table_the_store_keeps` (OB3) | note 16 |
 | `test_restore_refuses_a_copy_or_a_live_set_other_than_the_ones_check_showed` | note 3, the helper's half: a wrong sha256, size or fingerprint, and a partial confirmation, each exit 3 with nothing written |
 | `test_the_live_fingerprint_ignores_the_shm_a_reader_rewrites` | note 3, note 17: a rewritten `-shm` is no change |
-| `test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it[too-little-left, the-node-restarted, no-record]` | note 2, §2.13 |
+| `test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it[too-little-left, the-node-restarted, no-record, not-a-finite-number]` | note 2, §2.13 |
 | `test_the_restore_is_bound_to_what_check_showed` (wrapper) | note 3, the wrapper's half |
 | `test_list_keeps_a_long_source_apart_from_its_sidecar` (OB3) | §3.3 |
 | `test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file` (OB3) | note 9, block 4 |
 | `test_the_runbook_removes_every_journal_it_keeps` (OB3) | note 9, §2.3, blocks 5, 7 and 8 |
 | `tests/test_restore_db_safety.py`: `test_confirmed_candidate_bytes_are_bound_to_the_restore`, `test_confirmed_live_set_is_bound_to_the_loss_plan`, `test_written_snapshot_schema_is_checked_before_the_live_set_changes`, `test_fold_failure_preserves_the_live_journal`, `test_loss_plan_names_all_append_only_history_and_other_rolled_back_state`, `test_wrapper_rejects_two_actions[list-first, restore-first]`, `test_check_cannot_open_the_live_database_during_a_restore`, `test_runbook_explains_how_to_recover_a_kept_live_set` (Codex) | notes 3, 6, 16, 17, 18, 19; §3.2 |
 
+Added by the confirmation pass of 2026-10-01 (note 20; each fails on the blocks of `159deef8`):
+
+| test | holds |
+|---|---|
+| `test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written` | note 20, blocks 4 to 6: "Undo a restore" as printed, after a restore that stopped at the fold |
+| `test_a_damaged_live_file_whose_wal_holds_page_1_stops_at_the_fold_and_says_so` | note 6, §2.1, §3.6 step 5 |
+| `test_no_refusal_offers_a_way_but_the_values_file`, and T302-17's last assertion | note 11 |
+| `test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go` | note 20: §4a, §4b and the S3 note write under the temporary name, never onto `gsd.db` |
+| `test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it[not-a-finite-number]` | note 2 |
+
 ### 4.2 Each test fails without the change
 
-**On a clean tree at `21132a25`, before the blocks**, with the three new test modules copied in and run with
-`PYTHONPATH` at that tree's `local-development`: `71 failed in 2.36s`, none passing. The helper's tests fail on
+**On a clean tree of origin/main `b5463d45`, before the blocks**, with the three new test modules copied in and run
+with `PYTHONPATH` at that tree's `local-development`: `76 failed in 2.69s`, none passing (`75 failed` on `73cc7d08` in
+the confirmation pass; `71 failed` on `21132a25` with the 71 tests of `159deef8`). The helper's tests fail on
 `FileNotFoundError: … 'restore-db.py'` (opening it as the stream, or loading it; the kill drivers report it from their
 own process); the wrapper's on `bash` exiting 127, `restore-db.sh: No such file or directory`; T302-21 on
 `assert ('ONE-WAY' in '')`; the runbook tests on the two-name `rm` lines and the missing paragraphs;
-`test_the_wrapper_is_executable` on `assert False`. **After `--apply` and `chmod +x`:** `71 passed in 11.96s`.
+`test_the_wrapper_is_executable` on `assert False`. **After `--apply` and `chmod +x`:** `76 passed in 12.55s`.
 
 **Against the blocks of `167ecb9b`** the reviews measured their own probes failing: OB3's seven (`7 failed, 51
-passed` with its tests) and Codex's eight (`8 failed`); each is in the table above and passes here.
+passed` with its tests) and Codex's eight (`8 failed`); each is in the table above and passes here. **Against the
+blocks of `159deef8`** the confirmation pass's tests give `5 failed, 70 passed`, each on its own defect (note 20).
 
 **Mutations of the implemented tree**, each in a scratch copy of the applied tree, the three modules run against it
 (`mutate2.py`, §4.3). Each mutation turns red the tests named:
 
 | run | the change | result | tests that go red |
 |---|---|---|---|
-| M0 | none | 71 passed | — |
-| M1 | the old -wal removed without opening the file first (the runbook's order) | 7 failed, 64 passed | test_a_failed_rename_names_the_state_and_leaves_the_old_database_whole, test_fold_failure_preserves_the_live_journal, test_t302_13_a_kill_after_any_step_leaves_the_old_database_or_the_new_one, test_the_fold_folds_a_database_a_newer_image_wrote, test_the_fold_removes_nothing_sqlite_did_not_fold, test_the_fold_removes_the_wal_only_after_sqlite_has_written_it_back |
-| M2 | the live set kept as gsd.db alone | 7 failed, 64 passed | test_t302_11_yes_restores_without_asking, test_t302_12_the_live_set_is_kept_whole_with_its_wal, test_t302_13_a_kill_after_any_step_leaves_the_old_database_or_the_new_one, test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file |
-| M3 | the journals removed after the rename, not before | 9 failed, 62 passed | test_a_failed_rename_names_the_state_and_leaves_the_old_database_whole, test_a_live_file_that_is_not_a_database_is_replaced_around, test_t302_11_yes_restores_without_asking, test_t302_13_a_kill_after_any_step_leaves_the_old_database_or_the_new_one, test_t302_14_the_copy_replaces_the_database_with_no_journal_and_the_group_set |
-| M4 | no lock | 2 failed, 69 passed | test_check_cannot_open_the_live_database_during_a_restore, test_t302_16_a_second_restore_is_refused_while_one_runs |
-| M5 | the schema read through PRAGMA user_version | 1 failed, 70 passed | test_t302_8_a_truncated_copy_is_refused_by_integrity_check |
-| M6 | discarded as live minus copy | 1 failed, 70 passed | test_t302_10_check_prints_the_loss_window_and_the_rows_inserted_after_the_copy |
-| M7 | no uvicorn check | 2 failed, 69 passed | test_t302_5_a_uvicorn_process_or_a_missing_env_is_refused_in_the_pod, test_t302_5_uvicorn_in_the_pod_is_refused_by_the_helper_and_nothing_is_written |
-| M8 | the twins not compared | 1 failed, 70 passed | test_t302_2_a_byte_identical_offsite_twin_is_one_row_and_a_differing_one_is_refused |
-| M9 | no TTL margin in preflight | 2 failed, 69 passed | test_preflight_bounds_the_ttl_by_the_pods_start_not_the_containers_restart, test_t302_17_too_little_ttl_left_is_refused_from_the_pod_spec_alone |
-| M10 | the written bytes not compared with the checked digest | 1 failed, 70 passed | test_a_copy_that_changed_after_its_check_is_not_swapped_in |
-| M11 | a copy newer than the image accepted | 1 failed, 70 passed | test_t302_7_a_copy_newer_than_this_image_is_refused_with_both_numbers |
-| M12 | the fold's check: a -wal SQLite did not fold is removed | 2 failed, 69 passed | test_fold_failure_preserves_the_live_journal, test_the_fold_removes_nothing_sqlite_did_not_fold |
-| M13 | restore ignores the confirmation | 3 failed, 68 passed | test_confirmed_candidate_bytes_are_bound_to_the_restore, test_confirmed_live_set_is_bound_to_the_loss_plan, test_restore_refuses_a_copy_or_a_live_set_other_than_the_ones_check_showed |
-| M14 | HISTORY back to the issue's three | 2 failed, 69 passed | test_check_counts_every_history_table_the_store_keeps, test_loss_plan_names_all_append_only_history_and_other_rolled_back_state |
-| M15 | SOURCE back to 15 wide | 1 failed, 70 passed | test_list_keeps_a_long_source_apart_from_its_sidecar |
-| M16 | the wrapper drops the confirmation | 3 failed, 68 passed | test_confirmed_candidate_bytes_are_bound_to_the_restore, test_confirmed_live_set_is_bound_to_the_loss_plan, test_the_restore_is_bound_to_what_check_showed |
-| M17 | runbook §4a leaves the -journal | 2 failed, 69 passed | test_runbook_explains_how_to_recover_a_kept_live_set, test_the_runbook_removes_every_journal_it_keeps |
-| M18 | no in-pod TTL check | 2 failed, 69 passed | test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it |
-| M19 | the snapshot's schema not checked again | 1 failed, 70 passed | test_written_snapshot_schema_is_checked_before_the_live_set_changes |
-| M20 | two actions accepted by the wrapper | 1 failed, 70 passed | test_wrapper_rejects_two_actions |
-| M21 | the live fingerprint includes the -shm | 1 failed, 70 passed | test_the_live_fingerprint_ignores_the_shm_a_reader_rewrites |
-| M22 | check opens the live database without the lock | 1 failed, 70 passed | test_check_cannot_open_the_live_database_during_a_restore |
+| M0 | none | 76 passed | — |
+| M1 | the old -wal removed without opening the file first (the runbook's order) | 9 failed, 67 passed | test_a_damaged_live_file_whose_wal_holds_page_1_stops_at_the_fold_and_says_so, test_a_failed_rename_names_the_state_and_leaves_the_old_database_whole, test_fold_failure_preserves_the_live_journal, test_t302_13_a_kill_after_any_step_leaves_the_old_database_or_the_new_one, test_the_fold_folds_a_database_a_newer_image_wrote, test_the_fold_removes_nothing_sqlite_did_not_fold, test_the_fold_removes_the_wal_only_after_sqlite_has_written_it_back, test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written |
+| M2 | the live set kept as gsd.db alone | 8 failed, 68 passed | test_t302_11_yes_restores_without_asking, test_t302_12_the_live_set_is_kept_whole_with_its_wal, test_t302_13_a_kill_after_any_step_leaves_the_old_database_or_the_new_one, test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file, test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written |
+| M3 | the journals removed after the rename, not before | 10 failed, 66 passed | test_a_failed_rename_names_the_state_and_leaves_the_old_database_whole, test_a_live_file_that_is_not_a_database_is_replaced_around, test_t302_11_yes_restores_without_asking, test_t302_13_a_kill_after_any_step_leaves_the_old_database_or_the_new_one, test_t302_14_the_copy_replaces_the_database_with_no_journal_and_the_group_set, test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written |
+| M4 | no lock | 2 failed, 74 passed | test_check_cannot_open_the_live_database_during_a_restore, test_t302_16_a_second_restore_is_refused_while_one_runs |
+| M5 | the schema read through PRAGMA user_version | 1 failed, 75 passed | test_t302_8_a_truncated_copy_is_refused_by_integrity_check |
+| M6 | discarded as live minus copy | 1 failed, 75 passed | test_t302_10_check_prints_the_loss_window_and_the_rows_inserted_after_the_copy |
+| M7 | no uvicorn check | 2 failed, 74 passed | test_t302_5_a_uvicorn_process_or_a_missing_env_is_refused_in_the_pod, test_t302_5_uvicorn_in_the_pod_is_refused_by_the_helper_and_nothing_is_written |
+| M8 | the twins not compared | 1 failed, 75 passed | test_t302_2_a_byte_identical_offsite_twin_is_one_row_and_a_differing_one_is_refused |
+| M9 | no TTL margin in preflight | 3 failed, 73 passed | test_no_refusal_offers_a_way_but_the_values_file, test_preflight_bounds_the_ttl_by_the_pods_start_not_the_containers_restart, test_t302_17_too_little_ttl_left_is_refused_from_the_pod_spec_alone |
+| M10 | the written bytes not compared with the checked digest | 1 failed, 75 passed | test_a_copy_that_changed_after_its_check_is_not_swapped_in |
+| M11 | a copy newer than the image accepted | 1 failed, 75 passed | test_t302_7_a_copy_newer_than_this_image_is_refused_with_both_numbers |
+| M12 | the fold's check: a -wal SQLite did not fold is removed | 4 failed, 72 passed | test_a_damaged_live_file_whose_wal_holds_page_1_stops_at_the_fold_and_says_so, test_fold_failure_preserves_the_live_journal, test_the_fold_removes_nothing_sqlite_did_not_fold, test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written |
+| M13 | restore ignores the confirmation | 3 failed, 73 passed | test_confirmed_candidate_bytes_are_bound_to_the_restore, test_confirmed_live_set_is_bound_to_the_loss_plan, test_restore_refuses_a_copy_or_a_live_set_other_than_the_ones_check_showed |
+| M14 | HISTORY back to the issue's three | 2 failed, 74 passed | test_check_counts_every_history_table_the_store_keeps, test_loss_plan_names_all_append_only_history_and_other_rolled_back_state |
+| M15 | SOURCE back to 15 wide | 1 failed, 75 passed | test_list_keeps_a_long_source_apart_from_its_sidecar |
+| M16 | the wrapper drops the confirmation | 3 failed, 73 passed | test_confirmed_candidate_bytes_are_bound_to_the_restore, test_confirmed_live_set_is_bound_to_the_loss_plan, test_the_restore_is_bound_to_what_check_showed |
+| M17 | runbook §4a leaves the -journal | 2 failed, 74 passed | test_runbook_explains_how_to_recover_a_kept_live_set, test_the_runbook_removes_every_journal_it_keeps |
+| M18 | no in-pod TTL check | 3 failed, 73 passed | test_no_refusal_offers_a_way_but_the_values_file, test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it |
+| M19 | the snapshot's schema not checked again | 1 failed, 75 passed | test_written_snapshot_schema_is_checked_before_the_live_set_changes |
+| M20 | two actions accepted by the wrapper | 1 failed, 75 passed | test_wrapper_rejects_two_actions |
+| M21 | the live fingerprint includes the -shm | 1 failed, 75 passed | test_the_live_fingerprint_ignores_the_shm_a_reader_rewrites |
+| M22 | check opens the live database without the lock | 1 failed, 75 passed | test_check_cannot_open_the_live_database_during_a_restore |
+| MF1 | runbook §4a back to removing, then cat onto gsd.db | 2 failed, 74 passed | test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go, test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written |
+| MB | runbook §4b back to removing, then cat onto gsd.db | 1 failed, 75 passed | test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go |
+| MF2 | the fold's refusal without §4a's way for a damaged file | 1 failed, 75 passed | test_a_damaged_live_file_whose_wal_holds_page_1_stops_at_the_fold_and_says_so |
+| MN1 | a TTL refusal offers oc delete pod again | 1 failed, 75 passed | test_no_refusal_offers_a_way_but_the_values_file |
+| MN2 | a deadline that is not a finite number accepted | 1 failed, 75 passed | test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it |
+| MD | the open's DatabaseError branch deleted (it propagates) | 1 failed, 75 passed | test_a_live_file_that_is_not_a_database_is_replaced_around |
+
+All measured on the 76 tests of this revision on `b5463d45` (`mutate3.py`; a parametrized test counts once per case,
+its name once). MD deletes the branch, so the open's `DatabaseError` propagates, as the confirmation pass measured it;
+taking it as an `OperationalError` instead (`pass`) leaves all 76 green, because on that shape SQLite's failed open
+still folds and removes the `-wal`, so the fold has nothing to refuse either way.
 
 M1 is the runbook's own order (remove the `-wal` without opening the file): a kill after the removal, or a failed
 rename, leaves `/data/gsd.db` without the `-wal`'s 500 rows. M3 (the journals removed after the rename) leaves the
@@ -872,12 +948,12 @@ alone.
 
 ### 4.3 The proof
 
-§7 was not written by hand. The design was implemented in a detached worktree of `21132a25` (OB3's corrected blocks
-applied, then Codex's design merged in as note 17 says); a generator cut each block's Old text from `21132a25` and its
+§7 was not written by hand. The design was implemented in a detached worktree of `b5463d45` (OB3's corrected blocks
+applied, then Codex's design merged in as note 17 says, then the confirmation pass); a generator cut each block's Old text from `b5463d45` and its
 New text from the implemented copy, at whole lines, joining hunks fewer than ten lines apart unless that would enclose
 a fence line, with the fewest context lines that make the Old text unique, and checked that each file's blocks,
 applied in order, give the implemented file byte for byte: `13 blocks across 9 files reproduce the implemented copy`.
-Then, on a fresh detached worktree of `21132a25`:
+Then, on a fresh detached worktree of `b5463d45`:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E3_restore_db.md <tree>
     13 blocks check out across 9 files
@@ -889,13 +965,14 @@ After `--apply` every changed and created file is identical (`cmp`) to the imple
 
 | check | command | result |
 |---|---|---|
-| the new tests, before the blocks | the three new modules copied into the clean tree | `71 failed in 2.36s` (§4.2) |
-| the new tests, after | `pytest tests/test_restore_db.py tests/test_restore_db_wrapper.py tests/test_restore_db_safety.py -q -p no:cacheprovider` | `71 passed in 11.96s` |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6228 passed, 23 skipped, 655 deselected, 5 xfailed in 329.06s` (`6175` at `167ecb9b`, on `afa01bb8`) |
-| hermetic suite, this spec's commit alone | the same, in the spec's worktree before any block | `6178 passed, 23 skipped, 655 deselected, 5 xfailed in 311.76s`; it carries none of the new tests, and its count includes `test_docs_citations.py`'s checks of this spec's anchored citations |
+| the new tests, before the blocks | the three new modules copied into a clean tree of `b5463d45` | `76 failed in 2.69s` (§4.2) |
+| the new tests, after | `pytest tests/test_restore_db.py tests/test_restore_db_wrapper.py tests/test_restore_db_safety.py -q -p no:cacheprovider` | `76 passed in 12.55s` |
+| the blocks, on origin/main | `apply-spec-blocks.py` on an export of `b5463d45`, then `cmp` against the implemented copy; and on `f1423143` (SPEC_E5 merged; it changed only `docs/specs/` and `test_specs_index.py`) | `13 blocks check out across 9 files` on both; identical |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6348 passed, 26 skipped, 655 deselected, 5 xfailed in 330.23s` on `b5463d45` (`6265` on `73cc7d08` in the confirmation pass; `6228` at `159deef8` on `21132a25`; `6175` at `167ecb9b`, on `afa01bb8`) |
+| hermetic suite, this spec's commit alone | the same, in the spec's worktree before any block | `6293 passed, 26 skipped, 655 deselected, 5 xfailed in 303.99s`; it carries none of the new tests, and its count includes `test_docs_citations.py`'s checks of this spec's anchored citations |
 | browser suite | not run: no page, script or style of the application changes | — |
-| the chart | `git diff --stat 21132a25 -- charts/` on the applied tree | empty: no render and no RBAC rule can change (T302-19) |
-| with SPEC_E2 | E2's blocks (`465411cd`) then E3's, and E3's then E2's, each on an export of `21132a25` | `21 blocks check out across 12 files` and `13 blocks check out across 9 files` in both orders; `diff -r` of the two trees: identical. On the E2-first tree the three new modules and E2's `tests/test_recovery_mode.py` (18 tests) give `89 passed`, the TTL parity check included; E3's `recovery_left` equals E2's `remaining` on E2's own record (§2.13) |
+| the chart | `git diff --stat b5463d45 -- charts/` on the applied tree | empty: no render and no RBAC rule can change (T302-19) |
+| with SPEC_E2 | E2's blocks as merged on main (`b5463d45`, SPEC_E2 at `1e4558ad`) then E3's, and E3's then E2's, each on an export of `b5463d45` | `21 blocks check out across 12 files` and `13 blocks check out across 9 files` in both orders; `diff -r` of the two trees: identical. On the E2-first tree the three new modules and E2's `tests/test_recovery_mode.py` and `tests/test_chart_recovery_mode.py` (56 tests) give `132 passed`, the TTL parity check included; E3's `recovery_left` equals E2's `remaining` on every record E2 writes (§2.13) |
 | shell | `shellcheck` 0.11.0 on `restore-db.sh`; `bash -n` under macOS's `/bin/bash` 3.2.57 | clean; parses |
 | Python 3.9 | `ast.parse(source, feature_version=(3, 9))` on the helper (inside the tests) | parses |
 | markdown | `markdownlint-cli2` on the runbook, the CHANGELOG and `local-development/README.md`, and on the specs index | the same findings before and after (CHANGELOG MD012 ×1; runbook MD004 ×3, MD040 ×3), all on main already; the index: 0 |
@@ -958,16 +1035,16 @@ captures as PNG, and pinned to the merge sha on the issue.
 
 | file | added | removed |
 |---|---|---|
-| `local-development/restore-db.py` (new) | 788 | 0 |
+| `local-development/restore-db.py` (new) | 792 | 0 |
 | `local-development/restore-db.sh` (new) | 104 | 0 |
 | `local-development/gsd/store.py` | 4 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 44 | 12 |
+| `docs/RUNBOOK_backup_restore.md` | 57 | 19 |
 | `local-development/README.md` | 1 | 0 |
 | `docs/CHANGELOG.md` | 18 | 0 |
-| `local-development/tests/test_restore_db.py` (new) | 712 | 0 |
+| `local-development/tests/test_restore_db.py` (new) | 799 | 0 |
 | `local-development/tests/test_restore_db_wrapper.py` (new) | 166 | 0 |
 | `local-development/tests/test_restore_db_safety.py` (new) | 172 | 0 |
-| total | 2009 | 12 |
+| total | 2113 | 19 |
 
 The version fields `prepare-release.py` moves (Orchestrator's notes, 10) are not counted.
 
@@ -1022,6 +1099,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -1141,8 +1219,7 @@ def preflight(doc: dict, release: str, namespace: str, now: float, margin: float
     if "running" not in state:
         raise Refused(EXIT_POD, f"pod {name}: the dashboard container is not running ({', '.join(state) or 'no status yet'}). "
                                 "At the TTL recovery mode exits and the pod reads CrashLoopBackOff.\n"
-                                + _values_hint(longer)
-                                + f"\n  Or start the same TTL again: oc delete pod {name} -n {namespace}")
+                                + _values_hint(longer))
     ttl_text = env.get("GSD_RECOVERY_MODE_TTL") or ""
     ttl = ttl_seconds(ttl_text)
     started = status.get("startTime")
@@ -1153,8 +1230,7 @@ def preflight(doc: dict, release: str, namespace: str, now: float, margin: float
     if left < margin:
         raise Refused(EXIT_POD, f"pod {name}: at most {span(left)} of recovery.ttl {ttl_text} is left, less than the "
                                 f"{span(margin)} a restore keeps in hand: at the TTL the container exits and ends every "
-                                "oc exec in it.\n" + _values_hint(longer)
-                                + f"\n  Or start the same TTL again: oc delete pod {name} -n {namespace}")
+                                "oc exec in it.\n" + _values_hint(longer))
     return name, spec.get("image") or "unknown", left
 
 
@@ -1535,6 +1611,8 @@ def recovery_left(lay: Layout) -> float:
         record = json.loads(lay.state.read_text())
         deadline, recorded = float(record["deadline_monotonic"]), str(record["boot_id"])
         ttl = ttl_seconds(str(record["ttl"]))
+        if not math.isfinite(deadline):             # SPEC_E2's deadline() refuses the same record
+            raise ValueError(f"deadline_monotonic {deadline} is not a finite number")
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise Refused(EXIT_POD, f"the recovery TTL cannot be read from {lay.state} ({type(exc).__name__}: {exc}), so "
                                 "how long this container has before it exits is unknown; nothing was written")
@@ -1619,7 +1697,10 @@ def fold(lay: Layout) -> list[str]:
     a file a newer image wrote folds too. SQLite does neither, silently, while another process has the file open
     or when it cannot write it (measured, SPEC_E3 §2.1): a -wal or -journal that still holds bytes after the
     close was not folded, and removing it would take committed rows out of the live file, so the restore stops
-    here with nothing removed. A file SQLite cannot open as a database is removed around: the set was kept first."""
+    here with nothing removed. A file SQLite cannot open as a database is removed around: the set was kept first.
+    A damaged file whose -wal holds page 1 is not that file: SQLite opens it through the -wal, and its close cannot
+    write the -wal back (an explicit checkpoint says `database disk image is malformed`, SPEC_E3 §2.1), so it stops
+    here as a held file does, and the message names that cause too."""
     if lay.db.is_file():
         unreadable = False
         try:
@@ -1637,7 +1718,9 @@ def fold(lay: Layout) -> list[str]:
         if held and not unreadable:
             raise sqlite3.OperationalError(
                 f"SQLite did not fold {' and '.join(held)} into {lay.db} when it closed it: another process has the "
-                "database open (an oc exec session), or the file cannot be written. Nothing beside it was removed")
+                "database open (an oc exec session), the file cannot be written, or it is damaged so that SQLite cannot "
+                "write the -wal back into it. Nothing beside it was removed. If nothing holds it and it can be written, "
+                "it is damaged: restore over it by hand (docs/RUNBOOK_backup_restore.md, section 4a)")
     removed = []
     for suffix in SIDE_FILES:
         side = Path(f"{lay.db}{suffix}")
@@ -1651,12 +1734,10 @@ def cmd_restore(lay: Layout, rid: str, known: int, group: int, confirmed: tuple 
     with operation_lock(lay, f"restore {rid}"):
         left = recovery_left(lay)
         if left < MARGIN_SECONDS:
-            pod = os.environ.get("POD_NAME") or os.uname().nodename
             raise Refused(EXIT_POD, f"{span(left)} of the recovery TTL is left in this pod, as SPEC_E2's script counts "
                                     f"it, less than the {span(MARGIN_SECONDS)} a restore keeps in hand: at the TTL the "
                                     "container exits and ends this session. Nothing was written.\n"
-                                    + _values_hint("a longer recovery.ttl (a new pod, with a new TTL)")
-                                    + f"\n  Or start the same TTL again: oc delete pod {pod}")
+                                    + _values_hint("a longer recovery.ttl (a new pod, with a new TTL)"))
         row, digest = checked(lay, rid, known)
         if confirmed is not None:
             sha256, size, live_sha256 = confirmed
@@ -1946,17 +2027,18 @@ back; a directory whose name ends in `.tmp` is a keep that never finished, not a
 kept set's committed rows may sit only in its `gsd.db-wal`, so fold it before anything copies it: in the recovery pod,
 `oc exec -n $NS <pod> -c dashboard -- python3.14 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("PRAGMA user_version"); c.close()' /data/pre-restore/<stamp>/gsd.db`
 leaves that `gsd.db` whole and alone: SQLite folds the `-wal` into it and removes it with the `-shm`, and rolls a hot
-`-journal` back. If a `-wal` or `-journal` with bytes is still beside it afterwards, something else has it open; do
-not go on. Then restore it with §4a's commands, the kept `gsd.db` in place of the `gsd-….db` copy: they run
-`integrity_check` on it, keep the current live set first, and remove the current `-wal`, `-shm` and `-journal`
-before the copy takes the name. A kept `gsd.db` copied without the fold can lack every row its `-wal` held.
+`-journal` back. If a `-wal` or `-journal` with bytes is still beside it afterwards, something else has it open or
+it is damaged; do not go on. Then restore it with §4a's commands, the kept `gsd.db` in place of the `gsd-….db` copy:
+they run `integrity_check` on it, keep the current live set first, write it beside `gsd.db` under a temporary name,
+and remove the current `-wal`, `-shm` and `-journal` before it takes the name. A kept `gsd.db` copied without the
+fold can lack every row its `-wal` held.
 
 The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
 ```
 
 ### Block 5 — docs/RUNBOOK_backup_restore.md: §4a keeps the live set, not `gsd.db` alone, and removes all of it
 
-The fallback's keep step, corrected (T302-12's finding; §2.1), and its removal of every side file it keeps: a hot `-journal` left beside the copy is rolled back into it (measured, §2.3).
+The fallback's keep step, corrected (T302-12's finding; §2.1), and its removal of every side file it keeps: a hot `-journal` left beside the copy is rolled back into it (measured, §2.3). The copy is written under a temporary name before anything is removed and renamed after: removed first and written after, a write that failed left `gsd.db` without its `-wal`'s rows, and "Undo a restore" runs these commands (note 20).
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -1972,6 +2054,8 @@ if live.is_file():
 "
 rm -f /data/gsd.db-wal /data/gsd.db-shm
 cat /data/backup/gsd-….db > /data/gsd.db
+chgrp 0 /data/gsd.db && chmod g=u /data/gsd.db
+ls -l /data
 ```
 
 New text:
@@ -1986,8 +2070,11 @@ for name in (\"gsd.db\", \"gsd.db-wal\", \"gsd.db-shm\", \"gsd.db-journal\"):
         (keep / name).write_bytes(live.read_bytes())
         print(\"kept\", live, \"under\", keep)
 "
+cat /data/backup/gsd-….db > /data/gsd.db.restore.tmp
+chgrp 0 /data/gsd.db.restore.tmp && chmod g=u /data/gsd.db.restore.tmp
 rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal
-cat /data/backup/gsd-….db > /data/gsd.db
+python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.db\")"
+ls -l /data
 ```
 
 ### Block 6 — docs/RUNBOOK_backup_restore.md: §4a says why the set is kept, and that all of it goes
@@ -2011,14 +2098,16 @@ New text:
 
 The live **set** is kept, not `gsd.db` alone: a writer killed before a checkpoint leaves committed rows only in
 `gsd.db-wal`, and a kept `gsd.db` without it counted 0 of 500 such rows where the kept set counted 500 (#302).
+The copy is written under a temporary name and renamed onto `gsd.db` once the old side files are gone, so a write
+that fails (a full volume, a `gsd.db` the pod cannot write) stops before anything is removed.
 `-wal`, `-shm` and `-journal` **must** go: they belong to the file that was there before, and SQLite would
 replay a foreign WAL, or roll a foreign hot journal back, into the restored database. `chgrp 0` + `g=u` is the arbitrary-UID rule
 OpenShift runs under: the next pod may get a different UID and reads through the root group
 ```
 
-### Block 7 — docs/RUNBOOK_backup_restore.md: §4b keeps the live set before it overwrites, and removes all of it
+### Block 7 — docs/RUNBOOK_backup_restore.md: §4b keeps the live set, writes the copy beside gsd.db, then removes and renames
 
-The off-volume fallback kept nothing before `cat … > /data/gsd.db` and left a `-journal` beside the copy (the reviews of 2026-10-01; §3.11). The same keep as §4a, inside the pod's existing Python, and the same removal.
+The off-volume fallback kept nothing before `cat … > /data/gsd.db` and left a `-journal` beside the copy (the reviews of 2026-10-01; §3.11). The same keep as §4a, inside the pod's existing Python, and §4a's order: the copy written under a temporary name before the side files go, then renamed (note 20).
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -2036,6 +2125,8 @@ print("copy verified", h)
 EOF
 rm -f /data/gsd.db-wal /data/gsd.db-shm
 cat /offsite/gsd-….db > /data/gsd.db
+chgrp 0 /data/gsd.db && chmod g=u /data/gsd.db
+'
 ```
 
 New text:
@@ -2057,13 +2148,16 @@ for name in ("gsd.db", "gsd.db-wal", "gsd.db-shm", "gsd.db-journal"):
         (keep / name).write_bytes(live.read_bytes())
         print("kept", live, "under", keep)
 EOF
+cat /offsite/gsd-….db > /data/gsd.db.restore.tmp
+chgrp 0 /data/gsd.db.restore.tmp && chmod g=u /data/gsd.db.restore.tmp
 rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal
-cat /offsite/gsd-….db > /data/gsd.db
+python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.db\")"
+'
 ```
 
-### Block 8 — docs/RUNBOOK_backup_restore.md: the S3 path keeps and removes the same set
+### Block 8 — docs/RUNBOOK_backup_restore.md: the S3 path keeps, writes under the temporary name, then removes and renames
 
-A separate block because a bare fence line sits between §4b's command and this note.
+A separate block because a bare fence line sits between §4b's command and this note. The same order as §4a and §4b.
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
@@ -2074,15 +2168,22 @@ Old text:
 For an S3 copy: download it (§3), then, in the helper pod, run the `rm -f /data/gsd.db-wal
 /data/gsd.db-shm` line FIRST, stream the copy in —
 `cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db'` — and finish with
+the ownership lines. The order matters: a `-wal` that outlives the file it belonged to would be
+replayed into the restored database.
+
 ```
 
 New text:
 
 ```text
 
-For an S3 copy: download it (§3), then, in the helper pod, run the keep lines above and the `rm -f /data/gsd.db-wal
-/data/gsd.db-shm /data/gsd.db-journal` line FIRST, stream the copy in —
-`cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db'` — and finish with
+For an S3 copy: download it (§3), then, in the helper pod, run the keep lines above, stream the copy in under the
+temporary name — `cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db.restore.tmp'` — and
+finish with the last four lines above: the ownership lines, the `rm -f /data/gsd.db-wal
+/data/gsd.db-shm /data/gsd.db-journal` line, and the rename. The order matters: the copy is whole beside `gsd.db`
+before anything of the old file is removed, and a `-wal` that outlives the file it belonged to would be replayed
+into the restored database.
+
 ```
 
 ### Block 9 — local-development/README.md: the tools table names the script
@@ -2743,12 +2844,46 @@ def test_the_fold_folds_a_database_a_newer_image_wrote(pod: Pod, monkeypatch) ->
 
 
 def test_a_live_file_that_is_not_a_database_is_replaced_around(pod: Pod) -> None:
-    """A live gsd.db SQLite cannot open at all is no reason to refuse: the set was kept first (fold's docstring)."""
-    pod.db.write_bytes(b"not a database " * 1000)                  # its -wal and -shm stay beside it
+    """A live gsd.db SQLite cannot open at all is no reason to refuse: the set was kept first (fold's docstring).
+    SQLite cannot open it when nothing beside it holds page 1: here its -wal holds rows rewritten in place only, so
+    the open raises DatabaseError, which the fold takes as "not a database" (a fold that let it through refuses).
+    Over a -wal that holds page 1, SQLite opens such a file through the -wal instead (the next test)."""
+    code = ("import os, sqlite3, sys\n"
+            "c = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+            "c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.execute('PRAGMA wal_autocheckpoint=0'); c.execute('BEGIN')\n"
+            "c.execute(\"UPDATE sync_event SET v = 'Z' || substr(v, 2) WHERE id <= 40\")\n"
+            "c.execute('COMMIT'); os.kill(os.getpid(), 9)\n")
+    subprocess.run([sys.executable, "-c", code, str(pod.db)], check=False)
+    assert (pod.data / "gsd.db-wal").stat().st_size                # bytes no file but the lost one can take
+    pod.db.write_bytes(b"not a database " * 1000)
     result = pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}")
     assert result.returncode == 0, result.stderr
     assert sha(pod.db) == sha(next(pod.pre_upgrade.glob("pre-upgrade-*.db")))
     assert sorted(p.name for p in pod.data.iterdir() if p.is_file()) == ["gsd.db"]
+
+
+def test_a_damaged_live_file_whose_wal_holds_page_1_stops_at_the_fold_and_says_so(tmp_path: Path) -> None:
+    """A gsd.db cut short beside the -wal its writer left, page 1 among its frames: SQLite opens it through the -wal
+    and raises nothing, and its close cannot write the -wal back (an explicit checkpoint says `database disk image is
+    malformed`). The fold stops with nothing removed, and its message names damage and the manual path, not only a
+    session or a permission (review of the spec, 2026-10-01; SPEC_E3 §2.1)."""
+    p = Pod(tmp_path)
+    make_db(p.db, 40, KNOWN)
+    conn = sqlite3.connect(p.db)
+    conn.execute("CREATE TABLE pad (v BLOB)")
+    conn.executemany("INSERT INTO pad VALUES (?)", [(os.urandom(4000),) for _ in range(400)])
+    conn.commit()
+    conn.close()
+    older = tmp_path / "older.db"
+    make_db(older, 30, KNOWN - 1)
+    vacuum_copy(older, p.pre_upgrade / f"pre-upgrade-{STAMPS[2]}-schema-{KNOWN - 1}-to-{KNOWN}-pod-a.db")
+    kill_writer_after(p.db, 500)
+    p.db.write_bytes(p.db.read_bytes()[: p.db.stat().st_size // 2])
+    wal = (p.data / "gsd.db-wal").read_bytes()
+    result = p.run("restore", f"{KNOWN - 1}-{STAMPS[2]}")
+    assert result.returncode == 1 and "the restore failed at the step fold" in result.stderr, result.stderr
+    assert "damaged" in result.stderr and "section 4a" in result.stderr, result.stderr
+    assert (p.data / "gsd.db-wal").read_bytes() == wal and not (p.data / "gsd.db.restore.tmp").exists()
 
 
 def test_check_counts_every_history_table_the_store_keeps(tmp_path: Path) -> None:
@@ -2815,8 +2950,9 @@ def test_the_live_fingerprint_ignores_the_shm_a_reader_rewrites(pod: Pod) -> Non
                    "--expected-live-sha256", live).returncode == 0
 
 
-@pytest.mark.parametrize("left, boot", [(300.0, None), (7200.0, "a-boot-that-is-not-this-one"), (None, None)],
-                         ids=["too-little-left", "the-node-restarted", "no-record"])
+@pytest.mark.parametrize("left, boot", [(300.0, None), (7200.0, "a-boot-that-is-not-this-one"), (None, None),
+                                        (float("nan"), None)],
+                         ids=["too-little-left", "the-node-restarted", "no-record", "not-a-finite-number"])
 def test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it(pod: Pod, left, boot) -> None:
     """SPEC_E2's own answer, read in the pod as the restore starts: deadline_monotonic minus the clock, 0 on another
     boot, unknown without the record; each refuses with exit 2 and writes nothing (review of the spec, E2 rework)."""
@@ -2827,7 +2963,7 @@ def test_the_restore_reads_the_ttl_left_as_recovery_mode_counts_it(pod: Pod, lef
     before = tree(pod.data)
     result = pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}")
     assert result.returncode == 2, result.stderr
-    assert ("cannot be read" if left is None else "of the recovery TTL is left in this pod") in result.stderr
+    assert ("cannot be read" if left is None or left != left else "of the recovery TTL is left in this pod") in result.stderr
     assert tree(pod.data) == before and not pod.pre_restore.exists()
 
 
@@ -2853,6 +2989,58 @@ def test_the_runbooks_undo_folds_the_kept_set_into_one_whole_file(pod: Pod) -> N
     alone.mkdir()
     shutil.copy2(kept / "gsd.db", alone / "gsd.db")
     assert count(alone / "gsd.db") == 540 and not (kept / "gsd.db-wal").exists()
+
+
+def test_the_runbooks_undo_leaves_the_old_database_whole_when_gsd_db_cannot_be_written(pod: Pod) -> None:
+    """Runbook §4's "Undo a restore", run as printed after a restore that stopped at the fold (a gsd.db the pod
+    cannot write): §4a's commands keep the live set and remove its -wal, so the copy they put in its place must
+    already sit beside gsd.db under a temporary name. Removed first and written after, gsd.db read 40 of 540 rows
+    when the write was refused (the blocks of 159deef8; review of the spec, 2026-10-01)."""
+    if os.geteuid() == 0:
+        pytest.skip("root writes a 0444 file")
+    pod.db.chmod(0o444)
+    stopped = pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}")
+    assert stopped.returncode == 1 and "the restore failed at the step fold" in stopped.stderr, stopped.stderr
+    (kept,) = [d for d in pod.pre_restore.iterdir() if d.is_dir()]
+    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    fold = re.search(r"python3\.14 -c '([^']+)' /data/pre-restore/<stamp>/gsd\.db", runbook).group(1)
+    subprocess.run([sys.executable, "-c", fold, str(kept / "gsd.db")], check=True)
+    lines = runbook.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("oc debug -n $NS deploy/$REL -c dashboard -- sh -c '"))
+    body = "\n".join(lines[start + 1:lines.index("'", start + 1)])
+    script = (body.replace("/data/backup/gsd-….db", f"/data/pre-restore/{kept.name}/gsd.db").replace("/data", str(pod.data))
+              .replace("python3.14", sys.executable).replace("chgrp 0 ", f"chgrp {os.getgid()} "))
+    subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+    assert count(pod.db) == 540                                      # the old database whole, put back from the keep
+
+
+def test_no_refusal_offers_a_way_but_the_values_file(pod: Pod) -> None:
+    """The operator's rule as SPEC_E2 applies it (its notes 5 and 16): every message a program prints names the
+    release's values file as the way to extend or leave recovery mode, and a pod's deletion is not offered as one.
+    The three TTL refusals: the container not running, too little left by the pod spec, and as SPEC_E2 counts it."""
+    helper = _load(HELPER, "restore_db")
+    now = 1_790_000_000.0
+    env = {"GSD_RECOVERY_MODE": "true", "GSD_RECOVERY_MODE_TTL": "2h"}
+    start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 7000))
+    said = []
+    for doc in (_pods(env, start=start), _pods(env, start=start, running=False)):
+        with pytest.raises(helper.Refused) as refused:
+            helper.preflight(doc, "r", "n", now)
+        said.append(str(refused.value))
+    pod.ttl_left(100.0)
+    said.append(pod.run("restore", f"{KNOWN - 1}-{STAMPS[2]}").stderr)
+    for text in said:
+        assert "values file" in text and "oc delete" not in text, text
+
+
+def test_no_manual_path_writes_the_copy_onto_gsd_db_before_its_journals_go() -> None:
+    """Runbook §4a, §4b and the S3 note write the copy beside gsd.db under a temporary name and rename it after the
+    old side files are removed, so a write that fails (a full volume, a gsd.db the pod cannot write) stops before
+    anything is removed (confirmation pass of the spec, F1: removed first and written after, gsd.db read 40 of 540)."""
+    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    section = runbook.split("\n## 4.", 1)[1].split("\n## 5.", 1)[0]
+    assert not re.search(r"> /data/gsd\.db['\s]", section), "a manual path writes the copy onto /data/gsd.db itself"
+    assert section.count("> /data/gsd.db.restore.tmp") == 3            # §4a, §4b and the S3 note
 
 
 def test_the_runbook_removes_every_journal_it_keeps() -> None:
@@ -3012,7 +3200,7 @@ def test_t302_17_too_little_ttl_left_is_refused_from_the_pod_spec_alone(lab) -> 
                  pod_list=pods(RECOVERY, started_ago=2 * 3600 - 300))
     assert result.returncode == 2
     assert "of recovery.ttl 2h is left, less than the 10m a restore keeps in hand" in result.stderr
-    assert "a longer recovery.ttl" in result.stderr and "oc delete pod group-sync-dashboard-6c5d8f7b9d-q2x7m" in result.stderr
+    assert "a longer recovery.ttl" in result.stderr and "oc delete" not in result.stderr
     assert [c for c in calls(lab) if c.startswith("exec")] == []
 
 
