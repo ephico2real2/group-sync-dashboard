@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E8 #410)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 42, f"expected forty-two index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304) and E8 (#410); matched {sorted(rows)}"
+    assert len(rows) == 45, f"expected forty-five index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300) and E8 (#410); matched {sorted(rows)}"
     return rows
 
 
@@ -118,10 +118,18 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # E5 (#304), Epic E's offsite step, specified after G3: excluded the same way, by its id, and pinned to #304
     # (review of SPEC_E5, OB3 and OB2: excluded by the number alone, E5 mistyped as #504 passed every index test).
     assert ROWS["E5"]["issue"] == "304", ("E5 is #304", ROWS["E5"]["issue"])
-    # E8 (#410, filed 2026-09-26) is Epic E's release-safety step, PR A only, specified after E5: excluded by its id and
+    # E3 (#302) is Epic E's restore script, specified after S4f (#481): excluded from the rising-number assert by its id
+    # and pinned to #302, so a mistyped issue on that row still fails (confirmation pass of SPEC_E3, OB3, F3).
+    assert ROWS["E3"]["issue"] == "302", ("E3 is #302", ROWS["E3"]["issue"])
+    # E6 (#306) is Epic E's KPI backups card, specified after E3: excluded by its id and pinned to #306 the same way.
+    assert ROWS["E6"]["issue"] == "306", ("E6 is #306", ROWS["E6"]["issue"])
+    # E7 (#300), Epic E's sixth step, specified after E6: #300 predates the issues above it, so it is excluded by its
+    # id and pinned to #300 the same narrow way, and a mistyped issue on that row still fails.
+    assert ROWS["E7"]["issue"] == "300", ("E7 is #300", ROWS["E7"]["issue"])
+    # E8 (#410, filed 2026-09-26) is Epic E's release-safety step, PR A only, specified after E7: excluded by its id and
     # pinned to #410 the same narrow way, so a mistyped issue on that row still fails (SPEC_E8).
     assert ROWS["E8"]["issue"] == "410", ("E8 is #410", ROWS["E8"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E8")]
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
