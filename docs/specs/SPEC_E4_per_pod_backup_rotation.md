@@ -9,7 +9,7 @@
 | Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore bumps the chart PATCH that the values comment, the README and the alert text need. Against `dd51b91f` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26; SPEC_E3 (#302) and SPEC_E2 (#303) claim the same next numbers, so whichever merges second takes the next ones. No block carries a version field: the script writes them, as in SPEC_E3 |
 | Issue | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on main `dd51b91f` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift, image 2.0.0, Python 3.14.7, SQLite 3.53.4 in the pod). §7's blocks were cut from a copy of `dd51b91f` with the design implemented, and proved against a clean worktree of `dd51b91f` (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on main `dd51b91f` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift, image 2.0.0, Python 3.14.7, SQLite 3.53.4 in the pod). §7's blocks were cut from a copy of `dd51b91f` with the design implemented, and proved against a clean worktree of `dd51b91f` (§4.3). Revised the same day after the review of `29c67b03` by OB3 (in Grok's seat) and OB2 (in Codex's seat), on the orchestrator's decisions (Orchestrator's notes, 12), on a branch that merged main `f144a82b` (SPEC_G1, SPEC_E2 and SPEC_G2); the revised blocks are proved against `73cc7d08` and check out on `f144a82b`, which changes no file they touch |
 
 ## How to read this spec
 
@@ -47,7 +47,11 @@ apart from the maintained `path#anchor` citations.
    backups fail reports its neighbour's fresh time and `GroupSyncDashboardBackupStale` cannot see it. The fix costs
    one filter through the same helper the rotation uses (§3.4), and without it the budget of §3.6 cannot be
    observed in production: the critical alert is the only signal that a replica's own copies have stopped. Each pod
-   serves its own `/metrics`, so the series is already per pod. The KPI size line counts the bytes backups hold on
+   serves its own `/metrics`, so the series is already per pod. A pod with no copy of its own yet reads the whole
+   directory, as today (review of this spec): every rollout renames every pod, so with "no series" there a rollout
+   whose backups all fail would leave the alert nothing to fire on, where today it fires (§3.4). The Grafana
+   "Backup age" panel takes `min` over the pods' series for the same reason: its red step is the alert's
+   threshold, and `max` stays green while the alert fires for one stale replica. The KPI size line counts the bytes backups hold on
    the claim; the claim is shared, so every pod's copies are the right number for sizing `persistence.size`, and it
    is left as it is (T391-8). #306's backup card reads "the pod's own values" (the epic, 2026-09-26); when it shows
    a last-success time it should read it through `local-development/gsd/storage.py#backup_copies` with
@@ -83,9 +87,13 @@ apart from the maintained `path#anchor` citations.
 10. **Collisions with the specs in flight.** SPEC_E3 edits `docs/RUNBOOK_backup_restore.md` (§4) and
     `docs/CHANGELOG.md` (`## Unreleased`); this spec edits the runbook's first bullet and the same heading. Blocks
     are re-derived from main at implementation, per `docs/specs/README.md`, "Reconciliations", rule 5; a difference
-    is recorded here as a deviation. The index row this spec adds moves `local-development/tests/test_specs_index.py`'s
-    count to thirty-six and excludes #391 from its rising-issue order, as it excludes #244; SPEC_E3 makes the same
-    kind of edit for #302, so whichever merges second recounts.
+    is recorded here as a deviation. The index row this spec adds is the thirty-ninth, after SPEC_G1's, SPEC_E2's
+    and SPEC_G2's, which merged first (main `f144a82b`); `local-development/tests/test_specs_index.py` counts it and
+    excludes the row E4 from its rising-issue order by its id, pinned to #391, as G1 is pinned to #239, E2 to #303
+    and G2 to #255: an exclusion by the number alone let a mistyped issue on E4's row pass every index test (review of this
+    spec, OB3 F3 and OB2). D5's exclusion becomes the same shape, by its id and pinned to #244 (OB3 N1). SPEC_E3
+    makes the same kind of edit for #302, so whichever merges second recounts, in the test and in the index's own
+    "Thirty-… specifications" words, which no test reads.
 11. **Open for the operator (not decided here): what bounds the copies of pods that no longer exist?** Every
     rollout renames every pod (the lab's pod is `group-sync-dashboard-7b9485f499-jspfl`, measured), so under
     "rotate only your own" a departed pod's copies are rotated by nobody: each rollout at N replicas leaves up to
@@ -97,12 +105,45 @@ apart from the maintained `path#anchor` citations.
       values comment state the fact.
     - **(b) a neighbour also deletes another writer's copies older than a bound**, for example
       `(keep + 1) × intervalHours`. The cost: a replica whose backups fail loses its last good copies to its
-      neighbours once they pass the bound, the case where copies matter most. §3.7 gives the add-on exactly, and
-      shows that it changes no line the blocks below write: one function beside `backup_copies`, one loop after
-      the own rotation, and one value (off by default).
+      neighbours once they pass the bound, the case where copies matter most. §3.7 gives the add-on exactly: one
+      function beside `backup_copies`, one loop after the own rotation, one keyword threaded through, and one
+      value (off by default). It reshapes nothing the blocks below write; it edits six of their lines, each only to
+      thread the keyword or import the function (§3.7).
 
     A data-deletion policy, so the operator's. The blocks ship (a)'s behaviour, which is also what the per-pod
     databases already do; adding (b) later reshapes nothing.
+
+12. **The review of `29c67b03`: OB3 (in Grok's seat) and OB2 (in Codex's seat, Codex out of usage until
+    2026-10-03), decided by the orchestrator on 2026-10-01.** Both held the rotation: OB3 measured 648 scenarios on
+    the real `Poller`, 3,240 deletions above one replica, every one by the pod that wrote the file; OB2 measured that
+    pod names which prefix each other never cross, and that one replica is unchanged. Accepted, each traced and
+    applied here:
+    - **F1 (OB3, required): the metric must not lose its series after a rollout.** Block 15 read only the pod's own
+      copies; every rollout renames every pod, so if the new pods' backups all fail no pod exports
+      `gsd_backup_last_success_timestamp_seconds` and `GroupSyncDashboardBackupStale` can never fire, where on main
+      it fires (OB3's scenario S1). A pod with no copy of its own now reads the whole directory, as main does (§3.4;
+      blocks 14, 15, 22, 26, 28, 29, 30). Test
+      `test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory`: a regression guard against main,
+      and it fails on the first version's metric, `{} == {'gsd_backup_last_success_timestamp_seconds': 2000000}`
+      (measured again here, on a copy with the fallback removed). What it does not cover, as on main: a replica
+      that has failed since its pod started, beside a healthy one, reads its neighbour's copy (OB3's S2; a new alert
+      on `gsd_backup_failures_total` would be needed, beyond this issue).
+    - **F2 (OB3): the Grafana "Backup age" panel takes `min`** (blocks 31 and 32): its red step is the per-pod alert's
+      threshold, and `max` stays green while the alert fires for one replica.
+    - **F3 (OB3) and OB2's C6: E4 is excluded from the rising-issue order by its id and pinned to #391** (note 10).
+      A mutant proves it: E4's row and header mistyped as #491 pass every index test with an id exclusion and no pin
+      (82 passed), and fail with the pin.
+    - **N1 (OB3, volunteered): D5 is pinned to #244 the same way.** D5's row and header mistyped as #445 passed all
+      82 index tests on main's rule; with the pin, `assert '445' == '244'`.
+    - **F4 (OB3): answer (b) edits six of the blocks' lines**, each only to thread its keyword or import its function;
+      §3.7 and note 11 said "no line". Corrected wording, OB3's.
+    - **F5 (OB3) and OB2's blocks 24 and 26: copies named without a pod are never rotated above one replica.** Both
+      named the same fact; OB3's wording is taken, because it covers both sources of such copies (written at one
+      replica, and written by a release before #391) where OB2's named the first.
+    - **OB2: §3.6 names the mechanism** (a copy's owner is its name; a reused pod name continues its own history),
+      and **§3.7's add-on unlinks with `missing_ok=True`**, because two neighbours may delete the same departed copy.
+    Where the two overlapped (F3 and C6; F5 and blocks 24 and 26) one version is applied, as named above. OB2's
+    hunk to §6's line counts is superseded by counts measured again on the revised blocks. Nothing was rejected.
 
 ## 1. The mandate, and what is out of scope
 
@@ -354,17 +395,33 @@ copy at one replica as today, this pod's own above one. `replica_count` is read 
 `getattr(self.settings, "replica_count", 1)`, the module's own convention for optional settings
 (`getattr(self.settings, "login_capture_enabled", False)` and `getattr(self.settings, "fleet_ping_enabled", None)`
 in the same collector), so a collector given a settings object without
-the field reads it as one replica, today's behaviour. No copy of its own (a pod's first poll has not run yet):
-no series, the same "absent, never zero" rule the metric already follows. The alert's comment and description in
-`charts/group-sync-dashboard/templates/monitoring.yaml` say which copy it measures. The Grafana panel's
-`time() - max(gsd_backup_last_success_timestamp_seconds)` stays: it shows the newest backup of any replica, and the
-alert is per series, so per pod.
+the field reads it as one replica, today's behaviour.
+
+**A pod with no copy of its own reads the whole directory, as before this change**
+(`backup_copies(backupDir, owner) or backup_copies(backupDir, None)`). Above one replica every rollout renames
+every pod, so after a rollout no pod has a copy of its own until its first backup succeeds. Were that "no
+series", a rollout whose backups all fail would leave `GroupSyncDashboardBackupStale` nothing to fire on, where
+today the newest copy in the directory ages and the alert fires (review of this spec, measured: two replicas, the
+departed pods' copies 13 hours old, every new pod's backup failing; on `21132a25` both pods' series are 13 hours
+old and the rule's condition holds, with the own-copies-only reading neither pod has a series). With the
+fallback the alert sees everything it sees today, plus a replica whose own copies have stopped beside a healthy
+one; a replica that has never written a copy since its pod started still reads its neighbours' newest, as today.
+No copy in the directory at all: no series, the same "absent, never zero" rule the metric already follows. The
+alert's comment and description in `charts/group-sync-dashboard/templates/monitoring.yaml` say which copy it
+measures.
+
+**The Grafana "Backup age" panel takes `min`, not `max`.** Its red step is the alert's threshold
+(`local-development/tests/test_chart_grafana_dashboard.py#TestTheFile.test_panel_thresholds_equal_the_shipped_alert_thresholds`
+holds them equal), and the alert is per series, so per pod. With per-pod series,
+`time() - max(gsd_backup_last_success_timestamp_seconds)` is the freshest replica and stays green while the alert
+fires for a stale one; `min` is the stalest replica, so the panel turns red when the alert's condition holds for
+any pod. At one replica `min` and `max` of the one series are the same number.
 
 ### 3.5 What does not change
 
 The one-replica name and rotation; `snapshot()` and `_STAMP`; the offsite script; the KPI line; the pre-upgrade
-copy; the chart's templates other than the alert's text; every rendered RBAC rule (§4.3); `config.backup.*` and
-their defaults. No value is added.
+copy; the chart's templates other than the alert's text; the Grafana dashboard other than the "Backup age" panel
+(§3.4); every rendered RBAC rule (§4.3); `config.backup.*` and their defaults. No value is added.
 
 ### 3.6 The budget, over the system, with its scope
 
@@ -372,7 +429,11 @@ Scope: one release, one `config.backup.dir`, the pods of one ReplicaSet running 
 `replicaCount`. `keep` > 0 (with `keep: 0` nothing is ever rotated, as today).
 
 - **Above one replica, each live pod keeps exactly `min(copies it has written, keep)` of its own copies, and no pod
-  deletes a file it did not write.**
+  deletes a file it did not write.** Mechanically: no pod deletes a copy whose name carries another pod, or no
+  pod. A copy's owner is its name, never the process that wrote it, and the same name is what names the pod's
+  database (`/data/<pod>/gsd.db`), so a pod name seen again (a container restart, or a replacement that drew the
+  same name) continues the same history and rotates its earlier copies; a file an operator places in the
+  directory under a live pod's name is that pod's to rotate (review of this spec, OB2).
 - **At one replica, the directory holds at most `keep` copies**, as today.
 - **The copy `backup()` returned exists until its own pod has written `keep` newer ones**, so the `ok` that
   releases retention is always backed by a copy on the volume (until an operator removes it by hand).
@@ -404,7 +465,8 @@ it does not cross either.
 Not applied by this spec. If the operator answers (b), the add-on is: one function in
 `local-development/gsd/storage.py` beside `backup_copies`, using the same `BACKUP_NAME`; one keyword on `backup()`
 and `_vacuum_into` (`departed_before: datetime | None = None`); after the own rotation in `_vacuum_into`, when
-`owner is not None and departed_before is not None`, `unlink` each path `departed_copies` returns; one value,
+`owner is not None and departed_before is not None`, `unlink(missing_ok=True)` each path `departed_copies`
+returns (two neighbours may delete the same departed copy in the same interval; review of this spec, OB2); one value,
 `config.backup.departedMaxAgeHours` (0, off, by default; refused below `(keep + 1) × intervalHours` so a healthy
 pod's oldest copy is never inside the bound), rendered into the ConfigMap and read into `Settings`; and the poller
 passing `datetime.now(UTC) - timedelta(hours=…)`. The function, run on sample names (pod-a at `now` = 2026-10-01
@@ -426,9 +488,13 @@ def departed_copies(directory, owner: str, older_than: datetime) -> list[Path]:
 ['gsd-20260929T200000.000000Z-old-pod.db', 'gsd-20260929T200000.000000Z.db', 'gsd-20260930T050000.000000Z-pod-b.db']
 ```
 
-(pod-a's own 40-hour copy, pod-b's 10-hour copy and a `gsd-junk.db` were not returned.) No line the blocks below
-write is changed by it: `backup_copies`, the owner rule, the name and the metric stay; the add-on only adds a
-second pass. Under (b) the docs' sentence "stay until they are removed by hand" becomes "are deleted by a
+(pod-a's own 40-hour copy, pod-b's 10-hour copy and a `gsd-junk.db` were not returned.) It reshapes nothing the
+blocks below write: `backup_copies`, `BACKUP_NAME`, the owner rule, the name and the metric stay, and the add-on
+only adds a second pass. It does edit six of their lines, each only to thread the keyword or import the function
+(measured in review: the add-on applied to the applied tree, and the storage-seam test passes with the protocol
+line edited): the protocol's `backup` (block 2), the store's import (block 4), `Store.backup`'s signature and its
+call of `_vacuum_into` (blocks 5 and 6), `_vacuum_into`'s signature (block 7) and the poller's call (block 11).
+Under (b) the docs' sentence "stay until they are removed by hand" becomes "are deleted by a
 neighbour once older than `departedMaxAgeHours`". Its cost, again: a live replica whose backups have failed for
 longer than the bound loses its last good copies; `_backup_state` is then `failed`, so its retention is already
 held and no history is deleted on top.
@@ -451,6 +517,8 @@ held and no history is deleted on top.
 | T391-10 | the lab walk (§5) | not a hermetic test |
 | research | `TestCaptureAndBackupGauges.test_above_one_replica_the_backup_timestamp_is_this_pods_own` (`tests/test_metrics.py`) | the metric reads the newest copy of any pod, 3,000,000 (`x-pod-a`'s), not pod-a's own 1,000,000 (Orchestrator's notes, 4) |
 | research | `test_a_pod_is_its_whole_name_not_a_suffix_of_another` (`tests/test_backup.py`) | `backup_copies` does not exist (`ImportError`); it pins the whole-field comparison (notes, 3) |
+| review | `TestCaptureAndBackupGauges.test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory` (`tests/test_metrics.py`) | a regression guard: passes before and after; it fails on a metric that reads only the pod's own copies with no fallback, which leaves no series after a rollout (§3.4) |
+| review | `TestTheFile.test_backup_age_reads_the_stalest_replica` (`tests/test_chart_grafana_dashboard.py`) | the panel reads `max`, the freshest replica, so it stays green while the per-pod alert fires (§3.4) |
 
 T391-1, T391-2 and T391-6 drive the poller (`Poller._maybe_backup`) with `Settings(replica_count=…)` and
 `POD_NAME` set per pod, which is where the pod's identity meets `Store.backup`, and read each copy's owner from a
@@ -460,8 +528,9 @@ collects on a tree without them.
 
 ### 4.2 Each test, before and after
 
-**Before:** a copy of `dd51b91f` with only the eight test blocks of §7 applied (blocks 16 to 23; no code, no docs),
-the five touched test files run with that copy's `gsd` imported:
+**Before:** a copy of `73cc7d08` with only the nine test blocks of §7 applied (blocks 16 to 23 and 32; no code, no
+docs), the six touched test files run with that copy's `gsd` imported (the review measured the same on `dd51b91f`
+and `21132a25`):
 
 ```text
 FAILED tests/test_backup.py::test_two_replicas_sharing_one_directory_each_keep_their_own_keep
@@ -470,7 +539,8 @@ FAILED tests/test_backup.py::test_a_pod_is_its_whole_name_not_a_suffix_of_anothe
 FAILED tests/test_backup.py::test_the_docs_say_where_each_replicas_copies_are
 FAILED tests/test_history_retention.py::TestPollerPrune::test_a_replica_prunes_only_while_its_own_copy_exists
 FAILED tests/test_metrics.py::TestCaptureAndBackupGauges::test_above_one_replica_the_backup_timestamp_is_this_pods_own
-6 failed, 154 passed, 2 warnings in 3.03s
+FAILED tests/test_chart_grafana_dashboard.py::TestTheFile::test_backup_age_reads_the_stalest_replica
+7 failed, 177 passed, 1 skipped, 2 warnings in 7.72s
 ```
 
 Each for the reason §4.1 states; the assertion lines, in the same order:
@@ -482,20 +552,23 @@ ImportError: cannot import name 'backup_copies' from 'gsd.storage'
 AssertionError: runbook / assert 'gsd-<UTC stamp>Z-<pod name>.db' in 'Runbook — backing up and restoring …'
 assert [7] == [5, 7]
 {'gsd_backup_last_success_timestamp_seconds': 3000000.0} != {'gsd_backup_last_success_timestamp_seconds': 1000000}
+assert ['time() - max(gsd_backup_last_success_timestamp_seconds)'] == ['time() - min(gsd_backup_last_success_timestamp_seconds)']
 ```
 
-The regression guards T391-4 to T391-8 and every existing test in the five files are among the 154 that pass
-before the change. The two fakes take `**kwargs` (blocks 18 and 21) so that they are valid on both trees; with a
-keyword-only `owner` instead, the first run of this proof failed five existing retention tests on the base, which
-is how that shape was rejected.
+The regression guards T391-4 to T391-8, the review's fallback test and every existing test in the six files are
+among the 177 that pass before the change. The two fakes take `**kwargs` (blocks 18 and 21) so that they are valid
+on both trees; with a keyword-only `owner` instead, the first run of this proof failed five existing retention
+tests on the base, which is how that shape was rejected. The fallback test passes on the base because the base
+reads the whole directory; it fails, `{} == {'gsd_backup_last_success_timestamp_seconds': 2000000}`, on a metric
+that reads only the pod's own copies with no fallback, the shape this spec first had.
 
-**After:** the whole spec applied (§4.3), the same five files and the seam test:
+**After:** the whole spec applied (§4.3), the same six files and the seam test:
 
 ```text
-tests/test_backup.py tests/test_history_retention.py tests/test_offsite_backup_script.py tests/test_metrics.py tests/test_kpi.py
-160 passed, 2 warnings in 3.08s
+tests/test_backup.py tests/test_history_retention.py tests/test_offsite_backup_script.py tests/test_metrics.py tests/test_kpi.py tests/test_chart_grafana_dashboard.py
+184 passed, 1 skipped, 2 warnings in 7.06s
 tests/test_storage_seam.py
-152 passed in 0.64s
+152 passed in 0.68s
 ```
 
 ### 4.3 The proof
@@ -506,22 +579,27 @@ occurs once and holds two non-blank lines, and checked that each file's blocks, 
 implemented file. Then, on a clean `git worktree add --detach … dd51b91f`:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E4_per_pod_backup_rotation.md <worktree>
-    30 blocks check out across 14 files
+    32 blocks check out across 16 files
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E4_per_pod_backup_rotation.md <worktree> --apply
 
-After `--apply`, `cmp` finds every one of the 14 changed files identical to the implemented copy. On that applied
-tree, with `PYTHONPATH` at its `local-development` (`gsd` imported from the worktree, version 2.0.0):
+After `--apply`, `cmp` finds every one of the 14 changed files of the first 30 blocks identical to the implemented
+copy; blocks 14, 15, 22, 24, 26, 28 to 30 were corrected and 31 and 32 added in review, and the corrected spec checks
+out the same way against `dd51b91f`, `21132a25`, `73cc7d08` and `f144a82b` (32 blocks, 16 files; on `73cc7d08` and
+`f144a82b`, `cmp` finds all 16 applied files identical to the implemented copy). The checks below are on a copy
+of `73cc7d08` (SPEC_G1 and SPEC_E2 merged) with the revised blocks applied, `PYTHONPATH` at its `local-development`
+(`gsd` imported from the copy, version 2.0.0):
 
 | check | command | result |
 |---|---|---|
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6137 passed, 22 skipped, 655 deselected, 5 xfailed` (11 more than the base: the eleven new tests) |
-| the base, for comparison | the same run on a clean worktree of `dd51b91f` | `6126 passed, 22 skipped, 655 deselected, 5 xfailed` |
-| chart | `helm lint`; `helm template` of `dd51b91f` and of the applied chart, diffed, with default values, with the walk's values (§5), and with `monitoring.prometheusRule.enabled=true` | lint clean; in all three renders the only differences are the alert's comment (two lines) and description (one line becomes two); the config checksum and every label are unchanged |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6232 passed, 26 skipped, 655 deselected, 5 xfailed`, no failure. Against the base, `pytest --co` adds the thirteen new tests (the eleven of the first version and the two the review added); the rest of the difference is the citation, index and fence cases that this spec's file and index row bring (`test_docs_citations.py`, `test_specs_index.py`, `test_docs_diagrams.py`), and twelve citation ids whose line numbers moved in the runbook and the CHANGELOG |
+| the base, for comparison | the same run on a clean worktree of `73cc7d08` | `6190 passed, 26 skipped, 655 deselected, 5 xfailed` (the first version, on `dd51b91f`: `6126` before, `6137` after) |
+| chart | `helm lint`; `helm template` of `73cc7d08` and of the applied chart, diffed, with default values, with the walk's values (§5), and with `monitoring.prometheusRule.enabled=true` | lint clean; in all three renders 12 lines differ and only these: the alert's comment (one line becomes three) and description (one line becomes three), and the dashboard ConfigMap's "Backup age" panel (its description and its expression, `max` to `min`); the config checksum and every label are unchanged |
 | RBAC | `reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py` on the same three pairs of renders | 59 → 59, 56 → 56 and 59 → 59 rules; REMOVED 0, ADDED 0 in each |
-| the alert | the rendered `PrometheusRule` parsed with PyYAML | `description` reads `The newest backup in backupDir (above one replica, the newest this pod wrote) is {{ $value \| humanizeDuration }} old — at least two backup intervals. …` |
-| Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the nine changed Python files | all parse |
+| the alert | the rendered `PrometheusRule` parsed with PyYAML | `description` reads `The newest backup in backupDir (above one replica, the newest this pod wrote, or the directory's newest until it has written one) is {{ $value \| humanizeDuration }} old — at least two backup intervals. …` |
+| Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the ten changed Python files | all parse |
 | markdown | `markdownlint-cli2` on the runbook, the CHANGELOG and the chart README, base and applied | 17 findings before and after, the same per file and rule (MD004 9, MD040 7, MD012 1), all on main already; none new |
-| this spec | `pytest -q tests/test_specs_index.py tests/test_docs_citations.py` in the spec's own worktree | `1474 passed, 18 skipped`, with the index row added (36 rows; `test_specs_index.py` moves its count to thirty-six and excludes #391 from the rising-issue order, as it excludes #244) |
+| this spec | `pytest -q tests/test_specs_index.py tests/test_docs_citations.py` in the spec's own worktree | on this revision, merged with `f144a82b` (the index at thirty-nine rows; E4 and D5 excluded from the rising-issue order by their ids and pinned, Orchestrator's notes, 10): `1573 passed, 22 skipped`; the first version, at `29c67b03`, `1474 passed, 18 skipped` |
+| the index pins | mutants of `docs/specs/README.md` and the spec headers, `test_specs_index.py` | E4's row and header mistyped as #491: 82 passed with an id exclusion and no pin, 1 failed with the pin; D5's as #445: 82 passed on main's rule, 1 failed with the pin (`assert '445' == '244'`) |
 
 The browser suite was not run: no block touches `gsd/static/` or an API response.
 
@@ -602,7 +680,9 @@ The evidence (the values file, the logs, the listings, the metric reads) goes un
 - **Above one replica:** `/data/backup` holds `gsd-<stamp>-<pod>.db` files, `keep` per pod; each pod's log line
   `backup written to /data/backup/gsd-<stamp>-<pod>.db (4 kept)` counts its own; each pod's
   `gsd_backup_last_success_timestamp_seconds` is its own newest copy, so `GroupSyncDashboardBackupStale` fires for
-  the one replica whose backups stopped. The offsite CronJob ships the newest copy of whichever pod wrote last, as
+  the one replica whose backups stopped (a pod with no copy of its own yet reads the directory's newest, so after a
+  rollout whose backups all fail it still fires), and the Grafana "Backup age" panel shows the stalest replica.
+  The offsite CronJob ships the newest copy of whichever pod wrote last, as
   it shipped one pod's copy before. The KPI size line counts every pod's copies.
 - **Disk:** at N replicas, N × `keep` copies on the claim instead of `keep` in all, each about the size of that
   pod's database; plus, under the shipped behaviour, the copies of every departed pod until they are removed by
@@ -616,17 +696,19 @@ The evidence (the values file, the logs, the listings, the metric reads) goes un
 | `local-development/gsd/storage.py` | 45 | 1 |
 | `local-development/gsd/store.py` | 12 | 7 |
 | `local-development/gsd/poller.py` | 5 | 2 |
-| `local-development/gsd/metrics.py` | 7 | 4 |
+| `local-development/gsd/metrics.py` | 10 | 4 |
 | `local-development/tests/test_backup.py` | 164 | 0 |
 | `local-development/tests/test_history_retention.py` | 35 | 2 |
 | `local-development/tests/test_offsite_backup_script.py` | 20 | 0 |
-| `local-development/tests/test_metrics.py` | 49 | 1 |
+| `local-development/tests/test_metrics.py` | 71 | 1 |
 | `local-development/tests/test_kpi.py` | 11 | 0 |
-| `docs/RUNBOOK_backup_restore.md` | 5 | 1 |
-| `docs/CHANGELOG.md` | 14 | 0 |
-| `charts/group-sync-dashboard/README.md` | 11 | 1 |
+| `local-development/tests/test_chart_grafana_dashboard.py` | 8 | 0 |
+| `docs/RUNBOOK_backup_restore.md` | 6 | 1 |
+| `docs/CHANGELOG.md` | 16 | 0 |
+| `charts/group-sync-dashboard/README.md` | 13 | 1 |
 | `charts/group-sync-dashboard/values.yaml` | 5 | 0 |
-| `charts/group-sync-dashboard/templates/monitoring.yaml` | 4 | 2 |
+| `charts/group-sync-dashboard/templates/monitoring.yaml` | 6 | 2 |
+| `charts/group-sync-dashboard/dashboards/group-sync-dashboard.json` | 2 | 2 |
 
 Plus the version fields, the Chart.yaml history line and the CHANGELOG heading that `prepare-release.py --app`
 writes at implementation. No RBAC, no new value, no new template.
@@ -634,8 +716,9 @@ writes at implementation. No RBAC, no new value, no new template.
 ## 7. Implementation blocks
 
 Applied in this order: blocks 1 to 15 are the code (`storage.py`, `store.py`, `poller.py`, `metrics.py`), 16 to 23
-the tests, 24 to 30 the documents, the values comment, the alert's text and the CHANGELOG. Each was cut by the generator
-of §4.3; none carries a version field.
+the tests, 24 to 30 the documents, the values comment, the alert's text and the CHANGELOG, and 31 and 32 the Grafana
+"Backup age" panel and its test (review of this spec). Each was cut by the generator of §4.3, blocks 14, 15, 22, 24,
+26, 28 to 30 corrected and 31 and 32 added in review; none carries a version field.
 
 ### Block 1 — local-development/gsd/storage.py: the imports the naming rule uses
 
@@ -995,13 +1078,13 @@ New text:
 ```python
             "gsd_backup_last_success_timestamp_seconds",
             "Modification time of the newest backup file in backupDir; above one replica, "
-            "the newest this pod wrote. Read from the "
+            "the newest this pod wrote, or the directory's newest until it has written one. Read from the "
             "files rather than remembered from the last attempt, so it survives restarts "
 ```
 
-### Block 15 — local-development/gsd/metrics.py: the gauge reads this pod's own copies above one replica
+### Block 15 — local-development/gsd/metrics.py: the gauge reads this pod's own copies above one replica, the directory until it has one
 
-§3.4 and Orchestrator's notes, 4.
+§3.4 and Orchestrator's notes, 4: with no copy of its own (every pod, after a rollout) it reads the whole directory, as before, so a rollout whose backups all fail still ages a series the alert can fire on.
 
 <!-- block: local-development/gsd/metrics.py | edit -->
 
@@ -1020,11 +1103,14 @@ New text:
 ```python
             try:
                 # Above one replica, this pod's own copies (#391): a neighbour's fresh copy in the
-                # shared directory must not stand in for this replica's failing backups.
+                # shared directory must not stand in for this replica's failing backups. A pod with
+                # none yet (every pod, after a rollout) reads the whole directory, as before #391:
+                # with no series, a rollout whose backups all fail could never fire the alert.
                 owner = backup_owner(getattr(self.settings, "replica_count", 1))
+                mine = backup_copies(self.settings.backup_dir, owner)
                 newest = max(
                     (p.stat().st_mtime
-                     for p in backup_copies(self.settings.backup_dir, owner)),
+                     for p in mine or backup_copies(self.settings.backup_dir, None)),
                     default=None,
 ```
 
@@ -1379,7 +1465,7 @@ New text:
 
 ### Block 22 — local-development/tests/test_metrics.py: T391-7, and the gauge's per-pod reading
 
-T391-7 is a regression guard at one replica; the second test is the masking the issue found (Orchestrator's notes, 4).
+T391-7 is a regression guard at one replica; the second test is the masking the issue found (Orchestrator's notes, 4); the third is the fallback that keeps a series after a rollout (§3.4, review of this spec).
 
 <!-- block: local-development/tests/test_metrics.py | edit -->
 
@@ -1420,8 +1506,7 @@ New text:
     def test_above_one_replica_the_backup_timestamp_is_this_pods_own(self, tmp_path, monkeypatch):
         """#391 (the masking the issue found): above one replica the metric is this pod's newest copy, so a
         neighbour's fresh copy in the shared directory cannot hide this replica's failing backups from
-        GroupSyncDashboardBackupStale. On main it read the newest copy of any pod, 3,000,000. No copy of its own:
-        no series."""
+        GroupSyncDashboardBackupStale. On main it read the newest copy of any pod, 3,000,000."""
         import os
 
         from gsd.config import Settings
@@ -1436,9 +1521,32 @@ New text:
         store = Store(":memory:")
         try:
             text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+        finally:
+            store.close()
+        assert series(text, "gsd_backup_last_success_timestamp_seconds") == {
+            "gsd_backup_last_success_timestamp_seconds": 1_000_000}
+
+    def test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory(self, tmp_path, monkeypatch):
+        """#391, review of the spec: every rollout renames every pod, so after one no pod has a copy of its own.
+        If the new pods' backups all fail, the departed pods' copies age, and the metric must keep reading them,
+        as on main, or GroupSyncDashboardBackupStale has no series to fire on. Nothing in the directory at all:
+        no series, never zero."""
+        import os
+
+        from gsd.config import Settings
+        for name, mtime in (("gsd-20261001T000000.000000Z-departed-a.db", 1_000_000),
+                            ("gsd-20261001T060000.000000Z-departed-b.db", 2_000_000)):
+            (tmp_path / name).write_bytes(b"x")
+            os.utime(tmp_path / name, (mtime, mtime))
+        monkeypatch.setenv("POD_NAME", "new-pod")
+        settings = Settings(clusters=[], db_path=":memory:", backup_dir=str(tmp_path), replica_count=2)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
             assert series(text, "gsd_backup_last_success_timestamp_seconds") == {
-                "gsd_backup_last_success_timestamp_seconds": 1_000_000}
-            own.unlink()
+                "gsd_backup_last_success_timestamp_seconds": 2_000_000}
+            for path in tmp_path.glob("gsd-*.db"):
+                path.unlink()
             text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
             assert series(text, "gsd_backup_last_success_timestamp_seconds") == {}
         finally:
@@ -1501,8 +1609,9 @@ New text:
   (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim. Above one replica
   every pod writes `gsd-<UTC stamp>Z-<pod name>.db` into that same directory and keeps `keep` of its own:
   `keep` applies per replica, and no pod deletes another pod's copies. The copies of a pod that no longer
-  exists (a rollout renames every pod) stay until they are removed by hand, or until the release runs one
-  replica again, whose next backup keeps `keep` copies in all (#391);
+  exists (a rollout renames every pod), and the copies named without a pod (written at one replica, or by a
+  release before #391), stay until they are removed by hand, or until the release runs one replica again,
+  whose next backup keeps `keep` copies in all (#391);
 * **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
 ```
 
@@ -1550,12 +1659,14 @@ which pod responds.
 **Backups above one replica.** Every pod writes its scheduled backups into the one
 `config.backup.dir`, named `gsd-<UTC stamp>Z-<pod name>.db`, and keeps `config.backup.keep` of its
 own: `keep` applies per replica, no pod deletes another pod's copies, and each pod's
-`gsd_backup_last_success_timestamp_seconds` is its own newest copy. The directory holds
-`replicaCount × keep` copies, each about the size of one pod's database, and also the copies of pods
-that no longer exist: a rollout renames every pod, and nothing deletes a departed pod's copies, as
-nothing deletes its `/data/<pod name>/gsd.db`. `backup.offsite` still ships the single newest copy,
-which is one replica's. At one replica the name stays `gsd-<UTC stamp>Z.db` and `keep` bounds the
-whole directory ([runbook](../../docs/RUNBOOK_backup_restore.md)).
+`gsd_backup_last_success_timestamp_seconds` is its own newest copy (until it has written one, the
+directory's newest, so a rollout whose new pods all fail to back up still fires
+`GroupSyncDashboardBackupStale`). The directory holds `replicaCount × keep` copies, each about the size
+of one pod's database, and also the copies of pods that no longer exist and those named without a pod
+(written at one replica, or by a release before #391): a rollout renames every pod, and nothing deletes
+a departed pod's copies, as nothing deletes its `/data/<pod name>/gsd.db`. `backup.offsite` still ships
+the single newest copy, which is one replica's. At one replica the name stays `gsd-<UTC stamp>Z.db` and
+`keep` bounds the whole directory ([runbook](../../docs/RUNBOOK_backup_restore.md)).
 
 Four combinations are refused at template time rather than deployed broken:
 ```
@@ -1604,7 +1715,8 @@ New text:
 ```yaml
         # The only copy of the data that cannot be re-fetched from the cluster. The metric
         # reads the newest file in backupDir (above one replica, the newest that pod wrote,
-        # so each replica's series is its own), so this fires on every failure shape —
+        # so each replica's series is its own; a pod that has written none yet, as every pod
+        # after a rollout, reads the whole directory), so this fires on every failure shape —
         # including a wrong directory and rotation deleting everything. No series while
 ```
 
@@ -1626,7 +1738,8 @@ New text:
 
 ```yaml
             description: >-
-              The newest backup in backupDir (above one replica, the newest this pod wrote) is
+              The newest backup in backupDir (above one replica, the newest this pod wrote, or
+              the directory's newest until it has written one) is
               {{ `{{ $value | humanizeDuration }}` }} old —
               at least two backup intervals. The sync and membership history exists only in
 ```
@@ -1660,11 +1773,71 @@ which `local-development/prepare-release.py` does when the release is cut.
   released retention on it. Above one replica a copy is now named `gsd-<UTC stamp>Z-<pod name>.db` (the pod is
   `POD_NAME`), and a pod rotates only the copies whose name carries exactly its own pod, so each keeps `keep`
   of its own and none deletes another's; `gsd_backup_last_success_timestamp_seconds` reads the pod's own
-  copies, so `GroupSyncDashboardBackupStale` sees a replica whose backups fail beside a healthy one. At one
-  replica nothing changes: the name stays `gsd-<UTC stamp>Z.db`, `keep` bounds the whole directory, and the
-  metric reads every copy. The offsite CronJob still ships the newest `gsd-*.db` by name, the KPI size line
-  counts every pod's copies (the bytes on the claim), and report snapshots keep their name. The copies of a
-  pod that no longer exists are not rotated (a rollout renames every pod); the runbook and the chart README's
-  Scaling section say so.
+  copies, so `GroupSyncDashboardBackupStale` sees a replica whose backups fail beside a healthy one (a pod
+  with none yet reads the whole directory, as before, so a rollout whose backups all fail still alerts), and
+  the Grafana "Backup age" panel shows the stalest replica. At one replica nothing changes: the name stays
+  `gsd-<UTC stamp>Z.db`, `keep` bounds the whole directory, and the metric reads every copy. The offsite
+  CronJob still ships the newest `gsd-*.db` by name, the KPI size line counts every pod's copies (the bytes
+  on the claim), and report snapshots keep their name. The copies of a pod that no longer exists, and those
+  named without a pod, are not rotated above one replica (a rollout renames every pod); the runbook and the
+  chart README's Scaling section say so.
+
+```
+
+### Block 31 — charts/group-sync-dashboard/dashboards/group-sync-dashboard.json: "Backup age" shows the stalest replica
+
+§3.4 (review of this spec): the panel's red step is `GroupSyncDashboardBackupStale`'s threshold and the alert is per pod, so the panel takes `min` over the pods' series; at one replica it is the same number.
+
+<!-- block: charts/group-sync-dashboard/dashboards/group-sync-dashboard.json | edit -->
+
+Old text:
+
+```json
+      "title": "Backup age",
+      "description": "time() - gsd_backup_last_success_timestamp_seconds. Red at monitoring.prometheusRule.backupStaleSeconds (43200) — GroupSyncDashboardBackupStale. No data means backups are disabled or none exists yet.",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max(gsd_backup_last_success_timestamp_seconds)", "legendFormat": "backup age", "instant": true }
+```
+
+New text:
+
+```json
+      "title": "Backup age",
+      "description": "time() - gsd_backup_last_success_timestamp_seconds of the stalest replica (min over the pods; above one replica each pod's series is its own). Red at monitoring.prometheusRule.backupStaleSeconds (43200) — GroupSyncDashboardBackupStale. No data means backups are disabled or none exists yet.",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - min(gsd_backup_last_success_timestamp_seconds)", "legendFormat": "backup age", "instant": true }
+```
+
+### Block 32 — local-development/tests/test_chart_grafana_dashboard.py: the "Backup age" panel reads the stalest replica
+
+§3.4 (review of this spec); it fails on the base, whose panel reads `max`.
+
+<!-- block: local-development/tests/test_chart_grafana_dashboard.py | edit -->
+
+Old text:
+
+```python
+        assert red_step("Login capture: last successful read age") == rule["captureStalledSeconds"]
+        assert red_step("Backup age") == rule["backupStaleSeconds"]
+
+```
+
+New text:
+
+```python
+        assert red_step("Login capture: last successful read age") == rule["captureStalledSeconds"]
+        assert red_step("Backup age") == rule["backupStaleSeconds"]
+
+    def test_backup_age_reads_the_stalest_replica(self):
+        """#391: above one replica each pod's gsd_backup_last_success_timestamp_seconds is its own and
+        GroupSyncDashboardBackupStale fires per pod. The panel's red step is that alert's threshold (the test
+        above), so it shows the stalest replica: with max() it stayed green while the alert fired for one."""
+        board = json.loads(DASHBOARD.read_text())
+        panel = next(p for p in _walk_panels(board["panels"]) if p["title"] == "Backup age")
+        assert [t["expr"] for t in panel["targets"]] == ["time() - min(gsd_backup_last_success_timestamp_seconds)"]
 
 ```
