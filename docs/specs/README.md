@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Forty specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Forty-one specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The forty specifications
+## The forty-one specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -106,6 +106,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.60.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
 | E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
 | G3 | [`SPEC_G3_acknowledged_direct_grants.md`](SPEC_G3_acknowledged_direct_grants.md) — acknowledged direct grants: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label or exception annotation leaves the worklist, its counts, the alert and the reports' review figures, counted and listed; `group-sync-operator-helm` is a chart's provenance in the Group gate; no migration | G — access declared | — | app 2.2.0, chart 0.60.1 | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) | specified |
+| E7 | [`SPEC_E7_schema_line_and_runbook.md`](SPEC_E7_schema_line_and_runbook.md) — the schema line and the runbook's standard before every upgrade: `prepare-release.py --app` writes `**Schema N → M.**` under the release's reason when HEAD's highest migration is above the last application release's, read before any edit and refused on a shallow history; runbook §0 (the from-schema, an off-volume copy confirmed, the pre-upgrade copy's space) and §4 opened with the order recovery mode, `restore-db.sh`, recovery mode off, its fallback stopped by `replicaCount: 0` in the values file instead of `oc scale` | E — restore tools and release safety | — | no version change (a repository tool, tests and docs) | [#300](https://github.com/ephico2real2/group-sync-dashboard/issues/300) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
