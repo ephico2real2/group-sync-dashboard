@@ -6,7 +6,7 @@
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
 | Version on release | app 2.3.0; the chart takes the PATCH that `prepare-release.py --app` derives at implementation |
-| Version note | `publish.yml` lists itself in its own `on.push.paths` (`.github/workflows/publish.yml#this file`), so this change is an image input and takes an application MINOR (`docs/RELEASING.md#Neither`); it changes no chart template or value, and the chart moves only because `appVersion` does. Every `specified` row on origin/main `eade4c2a` claims app 2.1.0 (SPEC_G2, SPEC_E4, SPEC_E3, SPEC_E6) or 2.2.0 (SPEC_G3), so the next free MINOR is 2.3.0. The CI gate holds the number to exactly the next MINOR of the pull request's base (`local-development/check-app-version-bump.py#check`; measured in §4.3: from `6d532178` with §7 applied it refuses 2.3.0, `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0`, and accepts 2.1.0), so the implementing pull request takes main's next MINOR when it is opened and, by SPEC_E5's rule (its Version note), moves every other `specified` row whose application version is no longer above `pyproject.toml`. No block carries a version field: the implementing pull request applies §7, commits, then runs `prepare-release.py --app <main's next MINOR> --no-commit "…"`, as SPEC_E4 and SPEC_E3 do |
+| Version note | `publish.yml` lists itself in its own `on.push.paths` (`.github/workflows/publish.yml#this file`), so this change is an image input and takes an application MINOR (`docs/RELEASING.md#Neither`); it changes no chart template or value, and the chart moves only because `appVersion` does. Every `specified` row on origin/main `3acfda37` that claims an application version claims 2.1.0 (SPEC_G2, SPEC_E4, SPEC_E3, SPEC_E6) or 2.2.0 (SPEC_G3); SPEC_E7 and SPEC_E8 claim none, so the next free MINOR is 2.3.0. The CI gate holds the number to exactly the next MINOR of the pull request's base (`local-development/check-app-version-bump.py#check`; measured in §4.3: from `6d532178` with §7 applied it refuses 2.3.0, `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0`, and accepts 2.1.0), so the implementing pull request takes main's next MINOR when it is opened and, by SPEC_E5's rule (its Version note), moves every other `specified` row whose application version is no longer above `pyproject.toml` to the next MINOR above it, keeping each row's chart cell: if this spec merges first at 2.1.0, SPEC_G2, SPEC_E4, SPEC_E3 and SPEC_E6 move from app 2.1.0 to 2.2.0 in header and row, and SPEC_G3 (2.2.0) stays above and is left alone; if one of them merges first, its pull request moves this spec's cell instead. No block carries a version field: the implementing pull request applies §7, commits, then runs `prepare-release.py --app <main's next MINOR> --no-commit "…"`, as SPEC_E4 and SPEC_E3 do |
 | Issue | [#425](https://github.com/ephico2real2/group-sync-dashboard/issues/425) |
 | Status | specified |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "What must be accomplished", Test cases and "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on origin/main `6d532178` (application 2.0.0, chart 0.59.25) with the repository's Python 3.14 venv, helm v4.3.0, shellcheck and actionlint v1.7.12 (built from source into the scratch directory); read-only on quay.io (its public tag API, the registry's referrers endpoint and `oc image info`) and on the CRC lab (`oc get`); the last publish run, 36690887346, read with `gh run view --log`. §7's blocks were cut from a copy of `6d532178` with the design implemented and proved against a clean worktree of `6d532178` (§4.3). Before the commit origin/main moved to `eade4c2a` (SPEC_E6, #513), which changes only `docs/specs/` and the index test; the branch was fast-forwarded to it, the index row placed after E6's, and the blocks re-checked there |
@@ -54,7 +54,8 @@ their line numbers come from `curl -s <raw-url> | nl -ba`.
    you disagree:** the guard is A7, about fifteen lines.
 3. **A second, smaller correction: the two copies are two writes.** If the second copy or read-back fails, the
    dashboard's `:latest` has moved and the report's has not, until the job is re-run. The run is red and its
-   `::error::` names the image (T425-2 holds that the step stops at the first failure). Ordering the copies cannot
+   `::error::` names the image, for a refused copy as for a read-back mismatch (T425-2 holds that the step stops at
+   the first failure; `test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy` holds the annotation). Ordering the copies cannot
    remove this window, because the registry has no transaction across two repositories (§2.11); it is stated in the
    budget.
 4. **The version.** See the Version note above: 2.3.0 is the next free MINOR on the index today; the CI gate makes
@@ -71,12 +72,13 @@ their line numbers come from `curl -s <raw-url> | nl -ba`.
    November 19, 2026" (§2.10). Both images carry a skopeo with the two flags (1.13.3 and 1.21.0-dev; the flags exist
    since 1.6.0), so the job keeps `runs-on: ubuntu-latest` like the three it follows, and prints `skopeo --version`
    first, as the `publish` job's preflight does.
-7. **The index.** This spec's row follows SPEC_E6's in `docs/specs/README.md`, and
-   `local-development/tests/test_specs_index.py`'s count moves from 43 to 44. Like E2, G2, E4, G3, E5, E3 and E6, E9 is
+7. **The index.** This spec's row follows SPEC_E8's in `docs/specs/README.md` (origin/main `3acfda37`, where E7 and
+   E8 are rows 44 and 45), and `local-development/tests/test_specs_index.py`'s count moves from 45 to 46 ("Forty-six
+   specifications are indexed below", "## The forty-six specifications"). Like E2, G2, E4, G3, E5, E3, E6, E7 and E8, E9 is
    excluded from the rising issue numbers by its id and pinned to its issue, `assert ROWS["E9"]["issue"] == "425"`.
    Measured on this branch: with the pin, E9 mistyped as #525 in its row and header fails `AssertionError: ('E9 is
    #425', '525')`; with the pin removed, the same mutant passes every index test (§4.3).
-8. **Composition with SPEC_E8** (#410, PR A, branch `docs/spec-e8-410`, not on main). Both specs add a class at the
+8. **Composition with SPEC_E8** (#410, PR A, merged on origin/main `3acfda37` as #515; 18 blocks). Whichever applies second commits the first spec's blocks before applying its own: `apply-spec-blocks.py` refuses a dirty tree. Both specs add a class at the
    end of `local-development/tests/test_supply_chain.py`, both edit `docs/RELEASING.md`, `docs/DESIGN_supply_chain.md`
    and `docs/CHANGELOG.md`. Their Old texts do not overlap, and the one shared anchor (the file's last line, which
    E8's block 7 edits and this spec's block 3 inserts after) occurs once before and after either is applied. This
@@ -86,6 +88,21 @@ their line numbers come from `curl -s <raw-url> | nl -ba`.
    (§4.4). SPEC_E6 (on main, not yet implemented) shares only `docs/CHANGELOG.md` with this spec, and both insert
    under `## Unreleased` the same way, so either order applies. Whichever merges second re-runs its own `apply-spec-blocks.py` check before applying; no block needs
    to change.
+9. **The review of `24084b06` (OB2, in Codex's seat), decided by the orchestrator on 2026-10-01: the patch accepted
+   whole.** Each item was found by OB2 and re-measured here on origin/main `3acfda37` (§4.3, §4.4).
+   - **Accepted, Block 2:** both digests are checked before either copy, so a malformed second digest no longer leaves
+     the dashboard's `:latest` moved alone; a copy the registry refuses is a red run whose `::error::` names the image
+     and the remedy (re-run the job), where `set -e` had ended the step with skopeo's message only (§3.3 steps 1 and
+     2b, note 3, §6).
+   - **Accepted, Block 3:** the refused-copy test, the digest test over both digests, and two truth-table rows
+     ("signing switched off, but a dispatch from another branch" and "… but a red publish") that hold the parentheses
+     around the `attest` clause by evaluation, not only by the clause-string check.
+   - **Accepted, Block 11 and the prose:** the RELEASING row for a refused copy, §4.1, §4.3 (re-measured, not copied),
+     §4.4 and note 8 (SPEC_E8 merged as #515 with 18 blocks, a commit between the two applies), note 7 and the Version
+     note (where the colliding app-2.1.0 rows move under SPEC_E5's rule, read from main's index).
+   - **Kept rejected:** A7, the guard against a re-run moving `:latest` backwards; OB2 confirmed the decision on the
+     evidence (nothing resolves `:latest`; one re-run of the newest green run's job puts it right).
+   - **Rebased:** origin/main `3acfda37` merged into this branch; E9 is index row 46 (note 7).
 
 ## 1. The mandate, and what is out of scope
 
@@ -424,9 +441,14 @@ these), so "signing is on and `attest` was skipped" never moves `:latest`; T425-
 For each image, in order, dashboard then report:
 
 1. Refuse a digest that is not `sha256:` and 64 lowercase hex digits, as the build script refuses one it would record
-   (`local-development/build-and-push-external.sh#Exactly 64 hex digits`). Nothing is copied.
+   (`local-development/build-and-push-external.sh#Exactly 64 hex digits`). Both digests are checked before either copy,
+   so nothing is copied for either image (review of the spec, OB2: checked inside the per-image function, a bad report
+   digest moved the dashboard's `:latest` first).
 2. `skopeo copy --all --preserve-digests docker://<image>@<digest> docker://<image>:latest`. By digest: the source is
    the value `publish` recorded and `attest` signed, never a tag that could have moved since.
+2b. A copy the registry refuses is `::error::<image>:latest was not moved: the registry refused the copy of <digest>` and
+   exit 1, after skopeo's own message, so the run's annotation names the image (review of the spec, OB2: measured, the
+   step died on `set -e` with skopeo's stderr and no `::error::`).
 3. `skopeo inspect --no-tags --format '{{.Digest}}' docker://<image>:latest`, compared with `<digest>`. A difference
    is `::error::<image>:latest resolves to <found>, not <digest>, the digest this run pushed.` and exit 1; the second
    image is not attempted.
@@ -483,7 +505,7 @@ No chart README row or `values.yaml` comment changes: no value is added or chang
 |---|---|---|
 | T425-1 | `test_supply_chain.py::TestLatestFollowsTheNewestSignedMainBuild::test_each_image_is_copied_to_latest_from_this_runs_digest`: the step's env maps the four `needs.publish.outputs`, its code holds the copy line by digest, the read-back line and the two calls | `KeyError: 'latest'`: there is no such job |
 | T425-2 | `…::test_a_latest_that_resolves_elsewhere_is_a_red_run_naming_both_digests`: runs the step's real `run:` against a stub skopeo whose read-back answers another digest; exit 1, both digests in the `::error::`, exactly one copy made | the same `KeyError` |
-| T425-3 | `…::test_latest_moves_only_after_a_signed_publish_on_main`: `needs` is `[publish, attest]`, each clause is present, no `matrix.`, and the condition evaluated over eleven contexts (signed on main; signing off, in two spellings; attest failed; attest skipped with signing on, unset or `true`; publish red; no digests; no report digest; another branch; cancelled) | the same `KeyError` |
+| T425-3 | `…::test_latest_moves_only_after_a_signed_publish_on_main`: `needs` is `[publish, attest]`, each clause is present, no `matrix.`, and the condition evaluated over thirteen contexts (signed on main; signing off, in two spellings; attest failed; attest skipped with signing on, unset or `true`; publish red; no digests; no report digest; another branch; cancelled; signing off but another branch; signing off but a red publish — the last two hold the parentheses around the `attest` clause by evaluation, since `&&` binds tighter than `\|\|`) | the same `KeyError` |
 | T425-4 | `…::test_both_images_move_by_digest_and_never_by_tag`: the step run with matching answers exits 0; the stub's log holds exactly the two copies, each `@sha256:…` to `:latest`, and two reads of `:latest` | the same `KeyError` |
 | T425-5 | `tests/test_publish_release_decision.py`, unchanged | a regression guard: passes before and after (§4.3) |
 | T425-6 | `test_chart_image_reference.py::test_the_default_render_never_resolves_latest` (new): every container of either image in the default render ends `:<appVersion>`, and both images are present | a regression guard: passes before and after; it fails if a default ever resolved `:latest` |
@@ -495,7 +517,8 @@ Added by the research:
 | Test | Holds | Why it fails without the change |
 |---|---|---|
 | `…::test_the_password_reaches_skopeo_on_stdin_only` | the login uses `--password-stdin`, and the password is on no logged command line and in no output | the `KeyError` |
-| `…::test_a_digest_that_is_not_sixty_four_hex_moves_nothing` | `sha256:abc` is refused before any copy | the `KeyError` |
+| `…::test_a_digest_that_is_not_sixty_four_hex_moves_nothing` | `sha256:abc` as either digest is refused before any copy | the `KeyError` |
+| `…::test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy` | a copy the registry refuses is exit 1 with a `::error::` naming the image and the re-run; the earlier `moved   :` line stands | the `KeyError` |
 | `…::test_the_docs_say_what_latest_names` | D11, the RELEASING `latest` row and the flow's `latest  job` line exist | `AssertionError`: `DESIGN_supply_chain.md` has no D11 |
 
 The harness runs the step's `run:` from the parsed YAML with `/bin/bash --noprofile --norc -eo pipefail -c`, the
@@ -513,20 +536,21 @@ values as `''`, and the implicit `success()` over `needs` when no status functio
 
 ### 4.3 Before and after, measured
 
-On a throwaway worktree of `6d532178`, with the Python 3.14 venv and `PYTHONPATH` set to that tree:
+Re-measured for the revision on throwaway worktrees of origin/main `3acfda37` (application 2.0.0, chart 0.59.25), with
+the Python 3.14 venv and `PYTHONPATH` set to the tree under test; the version-gate rows were measured on `6d532178`,
+whose application and chart versions are the same.
 
 | Step | Command | Result |
 |---|---|---|
-| blocks check | `apply-spec-blocks.py SPEC_E9_latest_tag.md <clean 6d532178>` | `12 blocks check out across 8 files` |
-| before: the test blocks alone applied (3 and 4) | `pytest -q tests/test_supply_chain.py tests/test_chart_image_reference.py tests/test_publish_release_decision.py` | `8 failed, 52 passed`: the eight new tests of the class fail, seven with `KeyError: 'latest'` and the docs test with `AssertionError` on D11; the chart guard (T425-6) and `test_publish_release_decision.py` (T425-5) pass |
-| per file, before | `test_supply_chain.py` / `test_chart_image_reference.py` / `test_publish_release_decision.py` | `8 failed, 34 passed` / `9 passed` / `9 passed` |
-| after: all twelve blocks applied | the same three, plus `test_publish_paths.py` and `test_docs_citations.py` | `42 passed` / `9 passed` / `9 passed` / `9 passed` / `1560 passed, 22 skipped` |
-| the applied tree equals the tree the blocks were cut from | `diff -r -x .git <applied> <draft>` | no difference |
-| the whole hermetic suite, after | `pytest -q` in `local-development/` | `6997 passed, 30 skipped, 5 xfailed` (558 s) |
-| lint | `actionlint` v1.7.12 on `publish.yml` (shellcheck on); `shellcheck -s bash` on the step | no finding; SC2153 (info) only, for the step's `env` names |
-| the version gate | blocks committed, then `prepare-release.py --app 2.3.0 --no-commit`, committed, then `BASE=6d532178 check-app-version-bump.py` | exit 1: `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0` |
+| blocks check | `apply-spec-blocks.py SPEC_E9_latest_tag.md <clean 3acfda37>` | `12 blocks check out across 8 files` |
+| before: the test blocks alone applied (3 and 4) | `pytest -q` per file: `test_supply_chain.py` / `test_chart_image_reference.py` / `test_publish_release_decision.py` | `9 failed, 34 passed` / `9 passed` / `9 passed`: the nine tests of the class fail, eight with `KeyError: 'latest'` and the docs test with `AssertionError` on D11; the chart guard (T425-6) and T425-5 pass |
+| before, for the two tests the review added: the corrected Block 3 over the first pass's Block 2 (`24084b06`) | `pytest -q tests/test_supply_chain.py -k Latest` | `2 failed, 7 passed`: `test_a_digest_that_is_not_sixty_four_hex_moves_nothing`, `test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy` |
+| after: all twelve blocks applied | `test_supply_chain.py` / `test_chart_image_reference.py` / `test_publish_release_decision.py` / `test_publish_paths.py` / `test_docs_citations.py`; the five together | `43 passed` / `9 passed` / `9 passed` / `9 passed` / `1618 passed, 22 skipped`; together `1688 passed, 22 skipped` |
+| the whole hermetic suite, after | `pytest -q` in `local-development/` | `7065 passed, 30 skipped, 5 xfailed` (536 s) |
+| lint | `actionlint` v1.7.12 on `publish.yml` and `helm.yaml` (shellcheck on); `shellcheck -s bash` on the step | no finding; SC2153 (info) only, for the step's `env` names (`IMAGE`, `DIGEST`). actionlint's one note on `ci.yml` (SC2086, line 63) is on origin/main already |
+| the version gate (on `6d532178`) | blocks committed, then `prepare-release.py --app 2.3.0 --no-commit`, committed, then `BASE=6d532178 check-app-version-bump.py` | exit 1: `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0` |
 | | the same with `--app 2.1.0` | exit 0: `application version is the next MINOR or MAJOR; bump accepted`; chart `0.59.26` derived; `test_specs_index.py` then fails `('G2', 'app 2.1.0, chart 0.60.0', 'pyproject.toml is already 2.1.0')` until the colliding `specified` rows move (the Version note) |
-| the index pin | this branch, E9 mistyped as #525 in its row and header | with the pin `1 failed, 93 passed`, `AssertionError: ('E9 is #425', '525')`; pin removed `94 passed` |
+| the index pin | this branch, E9 mistyped as #525 in its row and header | with the pin `1 failed, 97 passed`, `AssertionError: ('E9 is #425', '525')`; pin removed `98 passed` |
 
 Mutants of the job, each applied alone to the applied tree and the class run (`pytest -k Latest`):
 
@@ -535,8 +559,10 @@ Mutants of the job, each applied alone to the applied tree and the class run (`p
 | the condition without `!cancelled()` | fails T425-3 (the clause check; with that check removed, the truth table's "signing switched off: attest skipped, follow publish" case fails too, through the implicit `success()`) |
 | without `\|\| vars.SUPPLY_CHAIN_SIGNING == 'false'` | 1 failed (T425-3) |
 | without `github.ref == 'refs/heads/main'` | 1 failed (T425-3) |
-| the copy's source by tag, `docker://${image}:${digest}` | 3 failed (T425-1, T425-2, T425-4) |
+| the copy's source by tag, `docker://${image}:${digest}` | 4 failed (T425-1, T425-4, `test_the_password_reaches_skopeo_on_stdin_only` and `test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy`, whose runs no longer exit as expected; T425-2 still sees its exit 1) |
 | the read-back's comparison removed | 1 failed (T425-2) |
+| the parentheses around the `attest` clause removed | 1 failed (T425-3: the clause check; with that check also removed, the truth table alone fails it at "signing switched off, but a dispatch from another branch") |
+| the digest check moved back inside `move_latest`, or the refused copy left to `set -e` | 1 failed each (`test_a_digest_that_is_not_sixty_four_hex_moves_nothing`, `test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy`) |
 | without `--preserve-digests` | 2 failed (T425-1, T425-4) |
 | the password on the command line (`--password`) | 1 failed (`test_the_password_reaches_skopeo_on_stdin_only`) |
 | `needs: [publish]` | 1 failed (T425-3) |
@@ -544,24 +570,26 @@ Mutants of the job, each applied alone to the applied tree and the class run (`p
 
 ### 4.4 Composition with SPEC_E8
 
-SPEC_E8's file was read from its branch (`docs/spec-e8-410` at `d5d14f5e`) and both specs were applied to two copies
-of this branch (origin/main `6d532178` plus this spec), in each order:
+SPEC_E8 as merged on origin/main (`3acfda37`, 18 blocks across 6 files) and this spec were applied to two copies of
+`3acfda37`, in each order, with a commit between the two applies, because `apply-spec-blocks.py` refuses a tree with
+uncommitted changes (re-measured in review, OB2; the first pass read E8 from its branch at `d5d14f5e`, 11 blocks):
 
-    $ apply-spec-blocks.py SPEC_E8… comp-a --apply && apply-spec-blocks.py SPEC_E9… comp-a --apply
-    11 blocks check out across 5 files
+    $ apply-spec-blocks.py SPEC_E8… comp-a --apply && git -C comp-a commit -qam e8 && apply-spec-blocks.py SPEC_E9… comp-a --apply
+    18 blocks check out across 6 files
     12 blocks check out across 8 files
-    $ apply-spec-blocks.py SPEC_E9… comp-b --apply && apply-spec-blocks.py SPEC_E8… comp-b --apply
+    $ apply-spec-blocks.py SPEC_E9… comp-b --apply && git -C comp-b commit -qam e9 && apply-spec-blocks.py SPEC_E8… comp-b --apply
     12 blocks check out across 8 files
-    11 blocks check out across 5 files
+    18 blocks check out across 6 files
     $ diff -r comp-a comp-b      # only the order of the two CHANGELOG entries and of the two test classes differs
     $ pytest -q tests/test_supply_chain.py tests/test_chart_image_reference.py tests/test_publish_release_decision.py \
         tests/test_publish_paths.py tests/test_docs_citations.py tests/test_release_crc.py      # in each copy
-    comp-a: 1708 passed, 22 skipped
-    comp-b: 1708 passed, 22 skipped
+    comp-a: 1745 passed, 22 skipped
+    comp-b: 1745 passed, 22 skipped
     $ actionlint publish.yml helm.yaml      # in each copy: no finding
 
-The four shared files: `test_supply_chain.py` (E8's blocks 4 to 7 edit the docstring, the imports, the constants and
-the last line; this spec inserts after the last line and adds no import and no module-level name), `RELEASING.md`
+The four shared files: `test_supply_chain.py` (E8's blocks 4 to 7 and 12 to 18 edit the docstring, the imports, the
+constants, the last line and its own class; this spec inserts after the last line and adds no import and no module-level
+name — which is why its tests loop rather than parametrize), `RELEASING.md`
 (E8 edits the chart flow and the table's first two rows; this spec the publish flow, the tag heading and table, and
 the table's last row), `DESIGN_supply_chain.md` (E8 edits D10's middle; this spec inserts after D10's last line) and
 `CHANGELOG.md` (both insert under `## Unreleased`, whose line stays unique).
@@ -599,8 +627,8 @@ The change writes nothing to the lab and changes nothing it runs. The walk prove
 ## 6. What an operator sees, and what it costs
 
 - **In the Actions run:** a fourth job, "Move :latest to this run's digests", after the two signing legs. Its log
-  shows the skopeo version and two `moved   : quay.io/…:latest -> sha256:…` lines. Red, it names the image and both
-  digests, and says to re-run the job.
+  shows the skopeo version and two `moved   : quay.io/…:latest -> sha256:…` lines. Red, it names the image (and both
+  digests, on a mismatch), says that an earlier `moved   :` line stands, and says to re-run the job.
 - **On quay:** `:latest` on both repositories, one history entry more per image per green publish. Pulling it gives
   the newest signed `main` build; `cosign verify` with the install guide's identity passes.
 - **On a cluster:** nothing. The chart deploys `:<appVersion>`.
@@ -700,22 +728,32 @@ name: publish
           # --password-stdin, never on the command line: the same rule as the build script.
           printf '%s' "${REGISTRY_PASSWORD}" \
             | skopeo login --username "${REGISTRY_USERNAME}" --password-stdin "${REGISTRY}" > /dev/null
-          move_latest() {
-            local image=$1 digest=$2 moved
-            # Exactly 64 hex digits, as the build script checks the digest it records.
-            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error::${image}: '${digest}' is not a sha256 digest, so its :latest was not moved."
+          refuse_unless_digest() {
+            # Exactly 64 hex digits, as the build script checks the digest it records. BOTH digests are
+            # checked before EITHER copy, so a bad second digest cannot leave the first image's :latest
+            # moved on its own.
+            if [[ ! "$2" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::$1: '$2' is not a sha256 digest, so neither :latest was moved."
               exit 1
             fi
-            skopeo copy --all --preserve-digests "docker://${image}@${digest}" "docker://${image}:latest"
+          }
+          move_latest() {
+            local image=$1 digest=$2 moved
+            if ! skopeo copy --all --preserve-digests "docker://${image}@${digest}" "docker://${image}:latest"; then
+              echo "::error::${image}:latest was not moved: the registry refused the copy of ${digest} (its message is above)."
+              echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
+              exit 1
+            fi
             moved=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${image}:latest")
             if [ "${moved}" != "${digest}" ]; then
               echo "::error::${image}:latest resolves to ${moved}, not ${digest}, the digest this run pushed."
-              echo "::error::Nothing else was changed. Inspect both, then re-run this job."
+              echo "::error::Any 'moved   :' line above stands. Inspect both, then re-run this job."
               exit 1
             fi
             echo "moved   : ${image}:latest -> ${digest}"
           }
+          refuse_unless_digest "${IMAGE}" "${DIGEST}"
+          refuse_unless_digest "${REPORT_IMAGE}" "${REPORT_DIGEST}"
           move_latest "${IMAGE}" "${DIGEST}"
           move_latest "${REPORT_IMAGE}" "${REPORT_DIGEST}"
 ```
@@ -745,12 +783,16 @@ class TestLatestFollowsTheNewestSignedMainBuild:
     STUB = """#!/bin/bash
 # A stand-in skopeo: logs its argv, swallows the password on stdin, remembers the digest each copy
 # names as its source, and answers a read-back with it (or with STUB_ANSWER when that is set).
+# A copy whose destination contains STUB_REFUSE fails, as a registry that refuses the write does.
 { printf 'skopeo'; printf ' %s' "$@"; printf '\\n'; } >> "${STUB_LOG}"
 for arg in "$@"; do source_ref=${last_ref:-}; last_ref=$arg; done
 case "$1" in
   --version) echo "skopeo version 1.13.3" ;;
   login) cat > /dev/null ;;
-  copy) printf '%s' "${source_ref##*@}" > "${STUB_STATE}" ;;
+  copy) if [ -n "${STUB_REFUSE:-}" ] && [[ "${last_ref}" == *"${STUB_REFUSE}"* ]]; then
+          echo "stub skopeo: writing manifest to ${last_ref}: denied" >&2; exit 1
+        fi
+        printf '%s' "${source_ref##*@}" > "${STUB_STATE}" ;;
   inspect) if [ -n "${STUB_ANSWER:-}" ]; then echo "${STUB_ANSWER}"; else cat "${STUB_STATE}"; echo; fi ;;
   *) echo "stub skopeo: unexpected $1" >&2; exit 2 ;;
 esac
@@ -761,7 +803,8 @@ esac
         return _jobs(PUBLISH)[cls.JOB]
 
     @classmethod
-    def _run(cls, tmp_path: pathlib.Path, *, answer: str = "", digest: str = NEW) -> tuple[subprocess.CompletedProcess, list[str]]:
+    def _run(cls, tmp_path: pathlib.Path, *, answer: str = "", digest: str = NEW, report_digest: str = NEW_REPORT,
+             refuse: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
         """Run the step's real `run:` with its env as GitHub would fill it; return the result and the stub's log."""
         stub_dir = tmp_path / "bin"
         stub_dir.mkdir()
@@ -773,13 +816,14 @@ esac
             "STUB_LOG": str(log),
             "STUB_STATE": str(tmp_path / "state"),
             "STUB_ANSWER": answer,
+            "STUB_REFUSE": refuse,
             "REGISTRY": "quay.io",
             "REGISTRY_USERNAME": "ephico2real+publisher",
             "REGISTRY_PASSWORD": "not-a-real-password",
             "IMAGE": "quay.io/ephico2real/group-sync-dashboard",
             "DIGEST": digest,
             "REPORT_IMAGE": "quay.io/ephico2real/group-sync-dashboard-report",
-            "REPORT_DIGEST": cls.NEW_REPORT,
+            "REPORT_DIGEST": report_digest,
         }
         step = _step(cls._job(), cls.STEP)
         done = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
@@ -856,6 +900,10 @@ esac
             ("no report digest", {"needs.publish.outputs.report_digest": ""}, False, False),
             ("a workflow_dispatch from another branch", {"github.ref": "refs/heads/feature"}, False, False),
             ("a cancelled run", {}, True, False),
+            # `&&` binds tighter than `||` (the expressions reference's operator table): without the
+            # parentheses, "signing off" alone would move :latest from any branch, after any publish.
+            ("signing switched off, but a dispatch from another branch", {"vars.SUPPLY_CHAIN_SIGNING": "false", "needs.attest.result": "skipped", "github.ref": "refs/heads/feature"}, False, False),
+            ("signing switched off, but a red publish", {"vars.SUPPLY_CHAIN_SIGNING": "false", "needs.attest.result": "skipped", "needs.publish.result": "failure"}, False, False),
         ]
         for why, change, cancelled, expected in cases:
             assert self._holds(job, {**green, **change}, cancelled=cancelled) is expected, why
@@ -883,10 +931,26 @@ esac
         assert "not-a-real-password" not in done.stdout + done.stderr
 
     def test_a_digest_that_is_not_sixty_four_hex_moves_nothing(self, tmp_path: pathlib.Path) -> None:
-        done, log = self._run(tmp_path, digest="sha256:abc")
+        """Both digests are checked before either copy: a bad REPORT digest must not leave the
+        dashboard's :latest moved on its own (review of SPEC_E9, OB2). A loop, not parametrize:
+        this file imports no pytest, and SPEC_E8 edits its import block."""
+        for bad in ("digest", "report_digest"):
+            (tmp_path / bad).mkdir()
+            done, log = self._run(tmp_path / bad, **{bad: "sha256:abc"})
+            assert done.returncode == 1, (bad, done.stdout + done.stderr)
+            assert "is not a sha256 digest" in done.stdout, bad
+            assert not [ln for ln in log if ln.startswith("skopeo copy")], (bad, log)
+
+    def test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy(self, tmp_path: pathlib.Path) -> None:
+        """The two copies are two writes (SPEC_E9 §3.5, residual 1): when the registry refuses the
+        second, the run is red and its `::error::` names the image and says to re-run the job — not
+        only skopeo's own stderr (review of SPEC_E9, OB2: measured, the step died on `set -e` with no
+        `::error::` at all)."""
+        done, log = self._run(tmp_path, refuse="group-sync-dashboard-report:latest")
         assert done.returncode == 1, done.stdout + done.stderr
-        assert "is not a sha256 digest" in done.stdout
-        assert not [ln for ln in log if ln.startswith("skopeo copy")], log
+        assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was not moved" in done.stdout, done.stdout
+        assert "re-run this job" in done.stdout.lower(), done.stdout
+        assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
 
     # T425-7
     def test_the_latest_job_holds_only_read(self) -> None:
@@ -1067,7 +1131,7 @@ the newest `main` build. It is not a release, and the chart never resolves it.
 
 ```markdown
 | the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |
-| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy, or `:latest` resolved to another digest afterwards; the `::error::` line names both digests | the immutable tags, the aliases and the signatures are already published, and nothing else changed. Re-run the failed `latest` job; it moves both images again |
+| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy (the `::error::` names the image, and says that any `moved   :` line above it stands), or `:latest` resolved to another digest afterwards (the `::error::` names both digests) | the immutable tags, the aliases and the signatures are already published; at most the dashboard's `:latest` has moved ahead of the report's. Re-run the failed `latest` job; it moves both images again |
 | `:latest` names an older build than the newest green publish on `main` | an older run's `latest` job was re-run after a newer run had moved the tag: a re-run copies its own run's digests | re-run the `latest` job of the newest green publish run on `main` |
 ```
 
