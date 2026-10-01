@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Thirty-five specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Thirty-six specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The thirty-five specifications
+## The thirty-six specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -101,6 +101,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | D5 | [`SPEC_D5_ca_visibility.md`](SPEC_D5_ca_visibility.md) — CA visibility: is this the enterprise root, and is it still valid? A warning thirty days before expiry, on #314's channel | D — reconnect | — | app 1.20.0, chart 0.59.22 | [#244](https://github.com/ephico2real2/group-sync-dashboard/issues/244) | released |
 | D6 | [`SPEC_D6_scrub_span.md`](SPEC_D6_scrub_span.md) — Scrub spans: a quoted text holding a secret is replaced whole; the spec's refusal of a password found in the words Rejoin writes is not applied (the operator's decision, 2026-09-29) | D — reconnect | — | app 1.19.0, chart 0.59.21 | [#465](https://github.com/ephico2real2/group-sync-dashboard/issues/465) | released |
 | S4f | [`SPEC_S4f_fleet_gate_backstop.md`](SPEC_S4f_fleet_gate_backstop.md) — the fleet gate's backstop: a deleted fleet Lease is put back from a copy beside the database, so `crc start` sends no refused password again and pings no second time in a day | S — cluster configuration | — | app 1.18.0, chart 0.59.20 | [#481](https://github.com/ephico2real2/group-sync-dashboard/issues/481) | released |
+| E3 | [`SPEC_E3_restore_db.md`](SPEC_E3_restore_db.md) — `restore-db.sh`: from the laptop, list every copy the recovery pod can restore by `<user_version>-<stamp>` ID, and restore one with the checks, the loss window, the live set kept and an atomic swap; the helper is streamed into the pod over `oc exec -i`, so it runs under the image a rollback targets | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
