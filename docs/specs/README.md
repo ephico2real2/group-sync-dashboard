@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Forty-six specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Forty-seven specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The forty-six specifications
+## The forty-seven specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -112,6 +112,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | E7 | [`SPEC_E7_schema_line_and_runbook.md`](SPEC_E7_schema_line_and_runbook.md) — the schema line and the runbook's standard before every upgrade: `prepare-release.py --app` writes `**Schema N → M.**` under the release's reason when HEAD's highest migration is above the last application release's, read before any edit, and refuses a shallow history, an unreadable `_MIGRATIONS` and a schema that fell; runbook §0 (the from-schema, an off-volume copy confirmed, the pre-upgrade copy's space) and §4 opened with the order recovery mode, `restore-db.sh`, recovery mode off, its fallback stopped by `replicaCount: 0` in the values file instead of `oc scale` | E — restore tools and release safety | — | no version change (a repository tool, tests and docs) | [#300](https://github.com/ephico2real2/group-sync-dashboard/issues/300) | specified |
 | E8 | [`SPEC_E8_chart_publish_label_gate.md`](SPEC_E8_chart_publish_label_gate.md) — the chart-publish label gate: `helm.yaml` copies an image to the chart-version tag only when both default images carry the chart's appVersion as their `org.opencontainers.image.version` label, on every Linux image behind each tag, and never over another application's own alias; `ci.yml` refuses a chart version whose tag is a released application's; PR A of #410 (PR B, #430, is held by the operator) | E — restore tools and release safety | — | no version change (workflow, tests and docs only) | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) | specified |
 | E9 | [`SPEC_E9_latest_tag.md`](SPEC_E9_latest_tag.md) — `:latest` follows the newest signed `main` build: a `latest` job in `publish.yml`, after `attest` has signed both digests and read the signatures back (after `publish` alone when signing is off), on `main` only, copies each digest to its image's `:latest` with the release aliases' `skopeo copy --all --preserve-digests` and reads it back, a mismatch a red run; the chart never resolves it | E — restore tools and release safety | — | app 2.3.0; the chart takes the PATCH that `prepare-release.py --app` derives at implementation | [#425](https://github.com/ephico2real2/group-sync-dashboard/issues/425) | specified |
+| G4 | [`SPEC_G4_namespaced_lease_grant.md`](SPEC_G4_namespaced_lease_grant.md) — the Lease grant namespaced: the dashboard's Leases granted by a Role and RoleBinding in the release namespace (`<fullname>-leases`), shipped in a chart release before the one that removes the ClusterRole's Lease rule, so an upgrade through both refuses the running pod no Lease call; the removal waits on the operator's agreement on #420 | G — access declared | — | chart 0.60.3 (step 1, adds the Role) and 0.60.4 (step 2, removes the ClusterRole rule), chart only | [#420](https://github.com/ephico2real2/group-sync-dashboard/issues/420) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
