@@ -9,7 +9,7 @@
 | Version note | No application version: the recovery program ships in the chart as a ConfigMap (the issue's decision 1), so nothing under `publish.yml`'s image paths changes. The chart takes a MINOR, 0.59.25 to 0.60.0, because it adds two values and a template (`Chart.yaml`'s own rule: "MAJOR and MINOR for behaviour"). If another chart change lands first, block 11 fails its check because its Old text is the version it replaces; the implementing pull request then takes the next free MINOR and corrects blocks 11, 14 and 18 (the three that name 0.60.0) here before applying (`docs/specs/README.md`, "Implementation blocks") |
 | Issue | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)" and the Epic E mock (PR #504). Measured on main `5c03a9b1` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and Python 3.14.7 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6, Argo CD v3.4.7). §7's blocks were cut from a copy of `5c03a9b1` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `b7b8e993` (OB3 in Grok's seat, Codex gpt-5.6-sol xhigh) and the operator's rules of 2026-10-01, re-cut from origin/main `dd51b91f` and proved again (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)" and the Epic E mock (PR #504). Measured on main `5c03a9b1` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and Python 3.14.7 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6, Argo CD v3.4.7). §7's blocks were cut from a copy of `5c03a9b1` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `b7b8e993` (OB3 in Grok's seat, Codex gpt-5.6-sol xhigh) and the operator's rules of 2026-10-01, re-cut from origin/main `dd51b91f` and proved again (§4.3); confirmed by OB2 the same day and re-cut from origin/main `21132a25` (note 16) |
 
 ## How to read this spec
 
@@ -89,7 +89,9 @@ the issue, the epic and the mock. Each is applied in §3 and §7 and held by a t
    (note 6). (c) "To leave: remove both parameters" becomes "set `recovery.enabled: false` in the release's
    values file and roll it out", which keeps everything else in that file, a rollback's `image.tag` included.
    (d) The log names nothing but the values file: the reviewed draft's `oc delete pod` line is gone from it
-   (the operator's rule covers "any message a program prints"); the runbook keeps it as a pod action. (e) The mock's caption "it never opens the database" and "1/2" ready are kept as they are.
+   (the operator's rule covers "any message a program prints"), and from the runbook (the confirmation pass,
+   note 16): the values file is the only way to extend. That an eviction or a drain starts a new TTL is stated
+   as a fact, not offered as a way. (e) The mock's caption "it never opens the database" and "1/2" ready are kept as they are.
 6. **The only path is the release's values file (the operator, 2026-10-01).** "Be careful with over
    complicating the argocd — we might be using applicationset in production and certain parameters are fixed.
    whatever things needs to happen to be supported by Helm values file directly. Argocd is just a conduit —
@@ -190,6 +192,16 @@ the issue, the epic and the mock. Each is applied in §3 and §7 and held by a t
     TTL. Added to the file: `deadline_monotonic` and `boot_id`, which the time left is counted from (§3.5); a
     reader that wants this script's own answer computes `deadline_monotonic - time.monotonic()` when `boot_id`
     matches the node's, and 0 otherwise. Removed: the script's `--namespace` argument (no reader).
+
+16. **The confirmation pass (OB2 in Codex's seat, 2026-10-01) on `465411cd`: CONFIRMED,** the monotonic bound,
+    the `replicaCount` text guard and the values-file path each re-measured. Its two optional items were taken,
+    the operator's rule applied strictly: block 13's Upgrading prose no longer names the `--reuse-values` flag
+    ("an upgrade that reuses an older chart's values"), and block 14's step 4 no longer offers `oc delete pod`;
+    block 20's `test_the_only_documented_path_is_the_values_file` forbids `--reuse-values` and `oc delete` too.
+    With the widened list, `465411cd`'s blocks fail that test (`1 failed, 55 passed` on `21132a25`) and these
+    pass. The branch merged origin/main `21132a25` (SPEC_G1, #239): the index carries G1's row then E2's,
+    thirty-seven rows, and `test_specs_index.py` keeps G1's pin to #239 and excludes E2 by its id, pinned to #303
+    the same way (a mutant with the issue mistyped as #330 fails: `AssertionError: ('E2 is #303', '330')`).
 
 **Open questions for the operator.** None.
 
@@ -788,8 +800,8 @@ Added by the research and the design:
 
 ### 4.2 Each test fails without the change, and mutations
 
-**On a clean tree of origin/main `dd51b91f`, before the blocks**, with the two new test modules copied in and run
-with `PYTHONPATH` at that tree's `local-development`: `51 failed, 5 passed in 3.29s`. The five that pass: the two
+**On a clean tree of origin/main `21132a25`, before the blocks**, with the two new test modules copied in and run
+with `PYTHONPATH` at that tree's `local-development`: `51 failed, 5 passed in 3.85s`. The five that pass: the two
 regression guards the issue says pass at the merge base, `test_t303_14_off_renders_exactly_the_default_and_the_dashboard_as_today`
 and `test_t303_16_no_rbac_rule_is_added_or_removed`, and three cases of
 `test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one` (`default`, `off`, `s3`), which hold
@@ -799,7 +811,9 @@ with empty stdout) or `FileNotFoundError` reading it; the render tests on the ig
 with the proxy off, `httpGet` where `tcpSocket` is expected, `'livenessProbe' not in …` false, `assert (not True)`
 where a refusal is expected, `set() == {('ConfigMap', 't-group-sync-dashboard-recovery')}`, a mount list `[]` where
 the CronJob writes a claim); the documentation tests on the missing text. **After `--apply`:** `56 passed in
-11.91s`. **On the reviewed draft's blocks (`b7b8e993`) applied to `dd51b91f`:** `11 failed, 45 passed`, the eleven
+13.30s`. **On the confirmed revision's blocks (`465411cd`) applied to `21132a25`:** `1 failed, 55 passed`, the one
+being `test_the_only_documented_path_is_the_values_file`, on the `--reuse-values` and `oc delete pod` the
+confirmation pass removed (note 16). **On the reviewed draft's blocks (`b7b8e993`) applied to `dd51b91f`:** `11 failed, 45 passed`, the eleven
 being T303-1 (its command still carried `--namespace`), T303-5 (`replicaCount=true` rendered), T303-9 (no line to
 check the time left), T303-10 (Argo CD patches and `--set` in the log), T303-19,
 `test_the_only_documented_path_is_the_values_file`, the clock and boot-ID tests, the sub-second extension, and the
@@ -836,11 +850,11 @@ reviewed draft's chart tests stayed green.
 
 ### 4.3 The proof
 
-§7 was not written by hand. The design was implemented in a detached copy of origin/main `dd51b91f` (the reviewed
-draft's blocks with OB3's corrected bodies applied, then this revision's changes); a generator cut each block's Old
-text from `dd51b91f` and its New text from the implemented copy, at whole lines, with the fewest context lines that
+§7 was not written by hand. The design was implemented in a detached copy of origin/main `21132a25` (the reviewed
+draft's blocks with OB3's corrected bodies applied, then the review revision's and the confirmation pass's changes);
+a generator cut each block's Old text from `21132a25` and its New text from the implemented copy, at whole lines, with the fewest context lines that
 make the Old text unique, and checked that each file's blocks, applied in order, give the implemented file byte for
-byte: `21 blocks across 12 files reproduce the dev copy`. Then, on a fresh detached worktree of `dd51b91f`:
+byte: `21 blocks across 12 files reproduce the dev copy`. Then, on a fresh detached worktree of `21132a25`:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E2_recovery_mode.md <tree>
     21 blocks check out across 12 files
@@ -851,14 +865,14 @@ After `--apply` every changed and created file is identical (`cmp`) to the imple
 
 | check | command | result |
 |---|---|---|
-| the new tests, before the blocks | the two new modules copied into a clean tree of `dd51b91f` | `51 failed, 5 passed` (§4.2) |
-| the new tests, after | `pytest tests/test_recovery_mode.py tests/test_chart_recovery_mode.py -q -p no:cacheprovider` | `56 passed in 11.91s` |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6182 passed, 22 skipped, 655 deselected, 5 xfailed in 327.99s` |
-| hermetic suite, this spec's commit alone | the same, in the spec's worktree before any block | `6159 passed, 25 skipped, 655 deselected, 5 xfailed in 305.94s` (the spec's branch, still at `5c03a9b1`'s code, with this revision of the spec and its index row); it carries none of the 56 new tests, and its count includes `test_docs_citations.py`'s checks of this spec's own anchored citations, three more of which skip because they name files the blocks create |
+| the new tests, before the blocks | the two new modules copied into a clean tree of `21132a25` | `51 failed, 5 passed` (§4.2) |
+| the new tests, after | `pytest tests/test_recovery_mode.py tests/test_chart_recovery_mode.py -q -p no:cacheprovider` | `56 passed in 13.30s` on `21132a25`; with `test_values_defaults.py` and `test_docs_citations.py`, `1461 passed, 19 skipped` |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6182 passed, 22 skipped, 655 deselected, 5 xfailed in 327.99s` on `dd51b91f` (the review revision; its blocks differ from these only in blocks 13, 14 and 20's prose and word list); the confirmation pass measured `6213 passed` on `21132a25` |
+| hermetic suite, this spec's commit alone | the same, in the spec's worktree before any block | `6159 passed, 25 skipped, 655 deselected, 5 xfailed in 305.94s` (the spec's branch at the review revision, still at `5c03a9b1`'s code, before it merged `21132a25`; not re-run after the merge); it carries none of the 56 new tests, and its count includes `test_docs_citations.py`'s checks of this spec's own anchored citations, three more of which skip because they name files the blocks create |
 | browser suite | not run: no page, script or style of the application changes | — |
 | chart | `helm lint` | `1 chart(s) linted, 0 chart(s) failed` |
-| the default render across commits | `helm template` of `dd51b91f` and of the applied chart, the chart label normalised in both, by default and with `backup.offsite.enabled=true` | one line differs by default, the dashboard pod template's `checksum/config` (it hashes the ConfigMap, chart label included); with offsite on, also the bind Job's name (it hashes `.Chart.Version`). The report Deployment's pod template is unchanged: its annotation is `checksum/reporting`, a hash of `.Values.reporting` (`charts/group-sync-dashboard/templates/report-deployment.yaml#checksum/reporting`) |
-| RBAC | `reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py` on the render of `dd51b91f` against the applied chart, recovery off and on, by default and with offsite on | `rules: before 59, after 59`, `REMOVED 0`, `ADDED 0`, all four |
+| the default render across commits | `helm template` of `dd51b91f` and of the applied chart (the review revision's measurement; the templates are unchanged since), the chart label normalised in both, by default and with `backup.offsite.enabled=true` | one line differs by default, the dashboard pod template's `checksum/config` (it hashes the ConfigMap, chart label included); with offsite on, also the bind Job's name (it hashes `.Chart.Version`). The report Deployment's pod template is unchanged: its annotation is `checksum/reporting`, a hash of `.Values.reporting` (`charts/group-sync-dashboard/templates/report-deployment.yaml#checksum/reporting`) |
+| RBAC | `reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py` on the render of `dd51b91f` against the applied chart, recovery off and on, by default and with offsite on; again on `21132a25`, recovery on | `rules: before 59, after 59`, `REMOVED 0`, `ADDED 0`, all five |
 | markdown | `markdownlint-cli2` on the runbook, the CHANGELOG and the chart README | the same findings before and after, per file and rule (README MD004 ×6, MD040 ×4; CHANGELOG MD012 ×1; runbook MD004 ×3, MD040 ×3), all on main already; none new |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the script (inside T303-12) | parses; CI's 3.11 job was not run here |
 | the script under image 2.0.0 | §2.5, read-only on the lab (the first draft's script); and OB3's review, under the published amd64 image on a podman machine with qemu: run to a 3 s TTL with `-X importtime`, `/data` sealed (mode 000) around three files | `--help` exits 0 on the lab; under the image: exit 1 at the TTL, 101 modules imported, none of `sqlite3`, `_sqlite3`, `gsd`, `/data` mtimes unchanged, `/tmp` holding only `gsd-recovery.json`; a restart after the deadline exits 1 in 0.69 s. This revision adds only `math` and `/proc/sys/kernel/random/boot_id` to what the script touches; it was not re-run under the image |
@@ -1588,8 +1602,8 @@ New text:
 **To restore the database, before or after an upgrade, use [recovery mode](#recovery-mode--recovery).**
 For a rollback, set the older `image.tag` and `recovery.enabled: true` in the same change to the
 values file, restore, then set `recovery.enabled: false` in the next one, keeping the older tag: the
-older image starts the app. The chart reads `recovery` so that its absence means off, so a
-`--reuse-values` upgrade from an older chart, which renders with that chart's defaults, still renders.
+older image starts the app. The chart reads `recovery` so that its absence means off, so an upgrade
+that reuses an older chart's values, which renders with that chart's defaults, still renders.
 
 ## Uninstall
 ```
@@ -1637,10 +1651,10 @@ in this release's values file and roll it out through the release's deployment p
    included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
 4. **More time?** At the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and the log ends with how to
    extend or leave. Set a longer `recovery.ttl` (for example `4h`) in the values file and roll it out: the new
-   pod counts it from its start. `oc delete pod` starts the same TTL again in a new pod, with no values
-   change. Either replaces the pod and ends any `oc exec` session in it; so does an eviction or a node drain,
-   whose new pod also starts a new TTL. The time left is counted on the node's monotonic clock, so setting
-   the wall clock back does not lengthen it; if the node restarts under the pod, the TTL counts as reached.
+   pod counts it from its start. The change replaces the pod and ends any `oc exec` session in it; so does an
+   eviction or a node drain, whose new pod also starts a new TTL. The time left is counted on the node's
+   monotonic clock, so setting the wall clock back does not lengthen it; if the node restarts under the pod,
+   the TTL counts as reached.
 5. **Turn it off**, and verify with §4c: set `recovery.enabled: false` in the values file (keep a rollback's
    older `image.tag`) and roll it out. When the change is applied the recovery pod stops at once and the app
    starts on the restored file.
@@ -2275,8 +2289,8 @@ def test_the_only_documented_path_is_the_values_file():
     }
     for name, text in texts.items():
         assert "values file" in text, name
-        assert not [word for word in ("helm upgrade", "--set", "--reset-then-reuse-values", "argocd",
-                                      "applications.argoproj.io", "oc patch", "parameters") if word in text.lower()], name
+        assert not [word for word in ("helm upgrade", "--set", "--reset-then-reuse-values", "--reuse-values", "argocd",
+                                      "applications.argoproj.io", "oc patch", "oc delete", "parameters") if word in text.lower()], name
         for sentence in re.split(r"(?<=[.;])\s+", text):
             assert "Argo CD" not in sentence or "revert" in sentence, (name, sentence)
     assert "helm upgrade $REL <chart> -n $NS -f <values-file>" in development and "--set" not in development
