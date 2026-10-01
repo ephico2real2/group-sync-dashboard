@@ -6,7 +6,7 @@
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
 | Version on release | chart 0.60.0 (chart only) |
-| Version note | No application version: `charts/**` is outside `publish.yml`'s image paths (`.github/workflows/publish.yml#NOTE charts/** is deliberately ABSENT`), and nothing else changes in the image. The chart takes a MINOR, 0.59.25 to 0.60.0, because a default changes and a value's grammar widens (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). **When specs claim the same numbers, the rule is:** a spec still `specified` must name a version above `Chart.yaml` (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), so whichever implementation merges first takes its number and, in the same pull request, moves every other `specified` spec whose chart version is not above the new `Chart.yaml` to the next free version above it, in its header and its index row, keeping its MINOR or PATCH and its application version. On origin/main `3b3d0010` those are SPEC_E2 (chart 0.60.0), SPEC_G2 (app 2.1.0, chart 0.60.0) and SPEC_E4 (app 2.1.0, chart 0.59.26): blocks 36 to 39 move them to chart 0.61.0, 0.61.0 and 0.60.1 (this spec changes no application version, so their app cells stay). Measured: §7 without blocks 36 to 39 fails that test with `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.60.0')`; with them the full hermetic suite passes (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull request re-derives blocks 36 to 41 before applying: it drops the cells that no longer collide and corrects the version in blocks 40 (the CHANGELOG entry) and 41 (`Chart.yaml`), with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). SPEC_E3 (#302, app 2.1.0, chart 0.59.26) is not on main; when it is, the same rule applies to it. The epic's build order puts #303 first, so the expected case is SPEC_E2's implementing pull request moving this spec to chart 0.61.0 |
+| Version note | No application version: `charts/**` is outside `publish.yml`'s image paths (`.github/workflows/publish.yml#NOTE charts/** is deliberately ABSENT`), and nothing else changes in the image. The chart takes a MINOR, 0.59.25 to 0.60.0, because a default changes and a value's grammar widens (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). **When specs claim the same numbers, the rule is:** a spec still `specified` must name a version above `Chart.yaml` (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), so whichever implementation merges first takes its number and, in the same pull request, moves every other `specified` spec whose chart version is not above the new `Chart.yaml` to the next free version above it, in its header and its index row, keeping its MINOR or PATCH and its application version. On origin/main `b5463d45` those are SPEC_E2 (chart 0.60.0), SPEC_G2 (app 2.1.0, chart 0.60.0) and SPEC_E4 (app 2.1.0, chart 0.59.26): blocks 36 to 39 move them to chart 0.61.0, 0.61.0 and 0.60.2, 0.60.1 being SPEC_G3's (this spec changes no application version, so their app cells stay). SPEC_G3 (app 2.2.0, chart 0.60.1) is already above 0.60.0 and is left alone. Measured: §7 without blocks 36 to 39 fails that test with `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.60.0')`; with them the full hermetic suite passes (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull request re-derives blocks 36 to 41 before applying: it drops the cells that no longer collide and corrects the version in blocks 40 (the CHANGELOG entry) and 41 (`Chart.yaml`), with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). SPEC_E3 (#302, app 2.1.0, chart 0.59.26) is not on main; when it is, the same rule applies to it. The epic's build order puts #303 first, so the expected case is SPEC_E2's implementing pull request moving this spec to chart 0.61.0 |
 | Issue | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) |
 | Status | specified |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code, from the issue's "Decisions and corrections (2026-10-01)", the epic's decisions of 2026-09-26, SPEC_M1 §3.8 and SPEC_E2 at `465411cd`. Measured on origin/main `21132a25` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and the repository's Python 3.14.7 (SQLite 3.53.4), and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `4dfde5e6` (OB3 in Grok's seat, OB2 in Codex's), after merging origin/main `3b3d0010` (SPEC G1, E2, G2 and E4); §7 re-cut from that merge and proved again (§4.3; Orchestrator's notes, 10) |
@@ -114,12 +114,12 @@ numbers come from `curl -s <raw-url> | nl -ba`.
    says "seventeen, nineteen with backup.offsite"; that is still true, so the board is left as it is. The
    chart README's heading keeps the words "The seventeen alerts",
    which two specs cite (`charts/group-sync-dashboard/README.md#The seventeen alerts`).
-8. **The index.** This spec's row follows SPEC_E4's in `docs/specs/README.md`, and
-   `local-development/tests/test_specs_index.py`'s count moves from 39 to 40. Like E2, G2 and E4, E5 is excluded
+8. **The index.** This spec's row follows SPEC_G3's in `docs/specs/README.md`, and
+   `local-development/tests/test_specs_index.py`'s count moves from 40 to 41. Like E2, G2, E4 and G3, E5 is excluded
    from the rising issue numbers by its id and pinned to its issue, `assert ROWS["E5"]["issue"] == "304"`, not by
    the number: excluded by the number alone, E5 mistyped as #504 in its row and its header passed every index
    check (OB3's mutant). Measured on the merge: with the pin, that mutant fails `AssertionError: ('E5 is #304',
-   '504')`; with the pin removed, it passes `86 passed`.
+   '504')`; with the pin removed, it passes `88 passed` (measured on the merge of origin/main `b5463d45`).
 9. **The stale alert after the second pass** (the review's N1). A run fails when either pass fails, so
    `GroupSyncDashboardOffsiteBackupStale` can fire while the six-hourly copies still leave the volume: a refused
    pre-upgrade copy fails every run until a newer upgrade replaces it or it is moved aside. The alert's
@@ -2517,7 +2517,7 @@ New text:
 
 ### Block 38 — docs/specs/SPEC_E4_per_pod_backup_rotation.md
 
-SPEC_E4's: app 2.1.0, chart 0.60.1.
+SPEC_E4's: app 2.1.0, chart 0.60.2 (0.60.1 is SPEC_G3's).
 
 <!-- block: docs/specs/SPEC_E4_per_pod_backup_rotation.md | edit -->
 
@@ -2532,7 +2532,7 @@ New text:
 
 ```text
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.1 |
+| Version on release | app 2.1.0, chart 0.60.2 |
 ```
 
 ### Block 39 — docs/specs/README.md
@@ -2556,7 +2556,7 @@ New text:
 | G1 | [`SPEC_G1_tier_declaration.md`](SPEC_G1_tier_declaration.md) — the access declaration: every route and page names the tier each reader gets, in `ACCESS_CONTROL.md` §3 and §4, and a test proves every cell per persona; SPEC_T1's status follows | G — access declared | — | no version change (tests and docs only) | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) | specified |
 | E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.61.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
 | G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.61.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
-| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.60.1 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
+| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.60.2 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
 ```
 
 ### Block 40 — docs/CHANGELOG.md
