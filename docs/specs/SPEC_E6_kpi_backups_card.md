@@ -6,10 +6,10 @@
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
 | Version on release | app 2.1.0, chart 0.59.26 |
-| Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which moves `pyproject.toml`, `gsd/__init__.py` and `Chart.yaml`'s `appVersion`, and with it the chart PATCH and its history line (the script's own rule). Against `73cc7d08` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26; SPEC_E2, SPEC_E3 and SPEC_E4 claim the same next numbers, so whichever merges later takes the next ones. No block carries a version field: the script writes them, as in SPEC_E3 and SPEC_E4 |
+| Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which moves `pyproject.toml`, `gsd/__init__.py` and `Chart.yaml`'s `appVersion`, and with it the chart PATCH and its history line (the script's own rule). Against origin/main `6d532178` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26. No block carries a version field: the script writes them, as in SPEC_E3 and SPEC_E4. **When specs claim the same numbers** (the rule SPEC_E5, #304, states): a spec still `specified` must name versions above `pyproject.toml` and `Chart.yaml` (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), so whichever implementation merges first takes its numbers and, in the same pull request, moves every other `specified` spec whose application or chart version is not above the new tree to the next free version above it, in its header and its index row, keeping its MINOR or PATCH. Read from `docs/specs/README.md` on `6d532178`, those are SPEC_G2 (app 2.1.0, chart 0.60.0), whose app moves to 2.3.0 (2.2.0 being SPEC_G3's); SPEC_E4 (app 2.1.0, chart 0.59.26), which moves to app 2.4.0 and chart 0.59.27; and SPEC_E3 (app 2.1.0, chart 0.59.26), which moves to app 2.5.0 and chart 0.59.28. SPEC_E2 and SPEC_E5 (chart 0.60.0) and SPEC_G3 (app 2.2.0, chart 0.60.1) are already above and stay. Measured: `6d532178` with this spec's blocks and `prepare-release.py --app 2.1.0 --no-commit` fails that test with `AssertionError: ('G2', 'app 2.1.0, chart 0.60.0', 'pyproject.toml is already 2.1.0')`; with G2 and E4 moved and E3 not, with `AssertionError: ('E3', 'app 2.1.0, chart 0.59.26', 'Chart.yaml is already 0.59.26')`; with the three moves, `tests/test_specs_index.py` and `tests/test_chart_versions.py` give `100 passed`. If another of them is implemented first, its pull request moves this spec's cells instead, and this spec's implementing pull request re-derives the moves against main before applying, with the reason under these notes |
 | Issue | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic, the committed mock (`docs/design/kpi-backups-mock.html`) and SPEC_E4 at `29c67b03` (in review). Measured on main `73cc7d08` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and Chromium (Playwright) on this machine, and read-only on the CRC lab (image 2.0.0). §7's blocks were cut from a copy of `73cc7d08` with the design implemented, and proved against a clean worktree of this spec's commit (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic, the committed mock (`docs/design/kpi-backups-mock.html`) and SPEC_E4 at `29c67b03` (in review). Measured on main `73cc7d08` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and Chromium (Playwright) on this machine, and read-only on the CRC lab (image 2.0.0). §7's blocks were cut from a copy of `73cc7d08` with the design implemented, and proved against a clean worktree of this spec's commit (§4.3). Revised the same day on the reviews of `1e194df3` (OB3 in Grok's seat, OB2 in Codex's seat; Orchestrator's notes, 13), rebased onto origin/main `6d532178` (SPEC_E5 and SPEC_E3 merged), and proved again there (§4.3) |
 
 ## How to read this spec
 
@@ -29,7 +29,8 @@ applied to a clean tree with
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E6_kpi_backups_card.md . --apply
 
 Line numbers into the code at `73cc7d08` are written as plain text, file:line without backticks, to keep them
-apart from the maintained `path#anchor` citations. This spec's own row in the index moves through the lifecycle
+apart from the maintained `path#anchor` citations. They hold on origin/main `6d532178` too: `git diff --stat 73cc7d08
+origin/main` over the files this spec cites or edits is empty. This spec's own row in the index moves through the lifecycle
 by the orchestrator's hand; no block touches it. A block found wrong during implementation is corrected here,
 with the reason under the Orchestrator's notes, before it is applied again.
 
@@ -77,8 +78,13 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
    (measured, §2.4), so raw UTC on this card would sit beside EDT everywhere else on the page. The payload keeps
    ISO-8601 UTC (the server's rule), every instant on the card is a `<time datetime="<UTC>">`, and its text is
    `fmtTime`'s: `2026-10-01 07:11:04 EDT` on the lab, `2026-10-01 11:11:04Z` where no zone is configured, which is
-   the mock's text exactly. T306-12 holds both. If the operator wants raw UTC here anyway, `kpiInstant` reads
-   `iso.replace("T", " ")` instead of `fmtTime(iso)`: one line, and the card then always reads `2026-10-01 11:11:04Z`.
+   the mock's text exactly. T306-12 holds both. If the operator wants raw UTC here anyway, `kpiStampText` (block 8),
+   the one function every instant on the card is printed through, the "next due by" date test included, reads
+   `(iso) => (iso ? iso.replace("T", " ") : "—")` instead of `(iso) => fmtTime(iso)`: one line, and T306-12's
+   display-zone assertion, which pins this decision, goes with it; the card then always reads `2026-10-01 11:11:04Z`.
+   The guard is `fmtTime`'s own: a payload without an instant (a server older than this card answers
+   `{"count", "bytes"}`, the shape three existing KPI tests send) prints `—`, where a bare `iso.replace` throws and
+   stops the whole KPI page's render (review of this spec, measured: 4 failed, 19 passed in `TestKpiPage`).
 6. **Correction folded into T306-3: the walk counts and sizes the same files.** On `73cc7d08` `count` increments
    before `stat()` (local-development/gsd/kpi/system.py:256-257): two copies and one name whose stat fails measured
    `{'count': 3, 'bytes': 12288}` (§2.1). The new walk stats each file once and counts it only when the stat
@@ -93,24 +99,27 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
 8. **T306-8's "the page shows neither '0 backups' nor 'never'" is checked on the card and the dashboard component.**
    Those are the two places the backup state is written. The disabled sentence avoids the word ("a setting, not a
    failure"), where the mock had `not "never"`.
-9. **SPEC_E4 (#391, in review at `29c67b03`): which numbers are per pod, which per volume, and what changes when it
-   lands.** Above one replica E4 names copies `gsd-<stamp>-<pod>.db`, adds `BACKUP_NAME`, `backup_owner` and
-   `backup_copies` to `local-development/gsd/storage.py`, makes `gsd_backup_last_success_timestamp_seconds` read only
-   the pod's own copies, and keeps the KPI size line counting every pod's (its note 4, its T391-8). The card follows
-   the same split:
+9. **SPEC_E4 (#391, merged as a spec at `66a6f325`): which numbers are per pod, which per volume, and what changes
+   when it lands.** Above one replica E4 names copies `gsd-<stamp>-<pod>.db`, adds `BACKUP_NAME`, `backup_owner` and
+   `backup_copies` to `local-development/gsd/storage.py`, makes `gsd_backup_last_success_timestamp_seconds` read the
+   pod's own copies, or the whole directory while the pod has none of its own (every pod after a rollout: E4 §3.4,
+   its review's F1), and keeps the KPI size line counting every pod's (its note 4, its T391-8). The card follows the
+   same split:
 
    | figure | per | why |
    |---|---|---|
    | `count`, `bytes` (the sub-line, the Copies kept tile's size) | volume | the bytes on the shared claim, what `persistence.size` must hold (E4 note 4) |
    | `kept` (the Copies kept tile, against `keep`) | pod | `keep` is per pod above one replica under E4 |
-   | `newest_at`, `newest_schema`, the stale and none-yet states | pod | the metric's rule under E4: a neighbour's fresh copy must not stand in for this pod's failing backups |
+   | `newest_at`, `newest_schema`, the stale and none-yet states | pod, else volume | the metric's rule under E4: a neighbour's fresh copy must not stand in for this pod's failing backups, and a pod with none of its own yet (after a rollout) reads the directory's newest, so the card turns stale when `GroupSyncDashboardBackupStale` fires |
    | `failures`, `failures_since` | pod (process) | the counter is per process already |
    | `pre_upgrade` | pod | `pre-upgrade/` is beside each pod's own database (SPEC_M1 §3.1) |
 
-   - **Old texts.** None of this spec's 24 Old texts is changed by E4, and none of E4's by this spec: this spec's
-     blocks check out on `73cc7d08` with E4's 30 blocks applied, and on `73cc7d08` alone (measured, §4.3).
+   - **Old texts.** None of this spec's 24 Old texts is changed by E4, and none of E4's 32 by this spec: this spec's
+     blocks check out on origin/main `6d532178` with E4's 32 blocks applied, and on `6d532178` alone; E4's check out
+     with this spec's applied; the two orders give the same tree but for the order of the two CHANGELOG entries
+     (measured, review of this spec).
    - **Behaviour.** E4's T391-8 asserts the whole `backups` dict, `== {"count": 3, "bytes": 45}`
-     (its block 23), so it fails once this spec lands (measured on `73cc7d08` + E4 + E6:
+     (its block 23), so it fails once this spec lands (measured on `6d532178` + E4 + E6:
      `AssertionError: assert {'enabled': T...tes': 45, ...} == {'count': 3, 'bytes': 45}`). And without the owner
      rule, `kept` and `newest_at` would stay per volume above one replica.
    - **The composition, applied by whichever of #391 and #306 merges second**, re-derived against main as the
@@ -119,13 +128,17 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
      1. `local-development/gsd/kpi/system.py`: below `from ..store import KNOWN_SCHEMA_VERSION, copy_schema, newest_pre_upgrade`,
         add `from ..storage import BACKUP_NAME, backup_owner`.
      2. The same file: `dashboard_data_bytes` as below (the signature gains `replica_count`, the docstring's
-        `kept` sentence changes, and the walk counts `kept` and takes `newest` over the own copies only).
+        `kept` and `newest_at` sentences change, and the walk counts `kept` over the own copies and takes `newest`
+        over them, or over every copy while there is none of its own, as the metric does).
      3. `local-development/gsd/api.py#build_app`: the call gains `replica_count=settings.replica_count`.
      4. E4's T391-8 (`test_the_backup_size_line_counts_every_replicas_copies`): its last line becomes
         `got = dashboard_data_bytes(str(db), str(backups))()["backups"]` and `assert (got["count"], got["bytes"]) == (3, 45)`.
      5. `local-development/API.md`, the `kept` row: "the copies this process's rotation keeps to `keep`: every
-        `gsd-*.db` at one replica; above one, the copies whose name carries this pod (#391)"; and in
-        `local-development/tests/test_kpi.py`'s `TestBackupsCard`, the test below.
+        `gsd-*.db` at one replica; above one, the copies whose name carries this pod (#391)", and the `newest_at`
+        row: "the newest `kept` copy's mtime, or the directory's newest while this pod has none of its own (above
+        one replica, after a rollout: #391), ISO-8601 UTC to the second: the rule of
+        `gsd_backup_last_success_timestamp_seconds`; `null` when there is none yet"; and in
+        `local-development/tests/test_kpi.py`'s `TestBackupsCard`, the two tests below.
 
      The function, as the composition writes it:
 
@@ -141,12 +154,14 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
          not "0 backups". Enabled, it is ONE walk of the directory's gsd-*.db (the size line's own glob): each file
          stat'd once and counted only when its stat succeeds, so `count` and `bytes` describe the same files (a
          copy rotated away between the glob and the stat is in neither). `count` and `bytes` are every copy on the
-         volume; `kept`, `newest_at` and `newest_schema` are this process's own copies, the ones its rotation keeps
-         to `keep`: every gsd-*.db at one replica, and above one the names that carry this pod (#391), the rule
-         `gsd_backup_last_success_timestamp_seconds` reads, compared in this walk rather than by a second listing.
-         `newest_at` is the newest own file's mtime, and `newest_schema` is read from that one file's header without
-         opening it in SQLite. `failures` is the counter /metrics exports, since `failures_since`: the instant this
-         process built it. `keep` and `interval_hours` are the settings the poller backs up with.
+         volume; `kept` is this process's own copies, the ones its rotation keeps to `keep`: every gsd-*.db at one
+         replica, and above one the names that carry this pod (#391). `newest_at` is the newest own copy's mtime,
+         or the directory's newest while this pod has none of its own (every pod, after a rollout): the rule
+         `gsd_backup_last_success_timestamp_seconds` reads, compared in this walk rather than by a second listing,
+         so the card turns stale when GroupSyncDashboardBackupStale fires. `newest_schema` is read from that one
+         file's header without opening it in SQLite. `failures` is the counter /metrics exports, since
+         `failures_since`: the instant this process built it. `keep` and `interval_hours` are the settings the
+         poller backs up with.
 
          `pre_upgrade` sits beside `backups`, not inside it: the copy before a migration (#301) is taken whether
          or not backups are enabled. One listing of its directory, nothing opened.
@@ -165,7 +180,7 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
                  wal = 0
              backups: dict = {"enabled": False}
              if backup_dir:
-                 count, size, kept, newest = 0, 0, 0, None
+                 count, size, kept, own, newest = 0, 0, 0, None, None
                  for f in Path(backup_dir).glob("gsd-*.db"):
                      try:
                          st = f.stat()
@@ -173,11 +188,14 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
                          continue
                      count += 1
                      size += st.st_size
+                     if newest is None or st.st_mtime > newest[0]:
+                         newest = (st.st_mtime, f)
                      if owner is not None and ((m := BACKUP_NAME.fullmatch(f.name)) is None or m.group(2) != owner):
                          continue
                      kept += 1
-                     if newest is None or st.st_mtime > newest[0]:
-                         newest = (st.st_mtime, f)
+                     if own is None or st.st_mtime > own[0]:
+                         own = (st.st_mtime, f)
+                 newest = own or newest      # none of its own yet: the directory's newest, as the metric reads
                  backups = {
                      "enabled": True, "dir": backup_dir, "count": count, "bytes": size, "kept": kept,
                      "newest_at": None if newest is None
@@ -192,7 +210,7 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
          return measure
      ```
 
-     The test it adds, in `TestBackupsCard` before `test_t306_16_one_view_lists_two_directories_opens_one_copy_and_writes_nothing`:
+     The tests it adds, in `TestBackupsCard` before `test_t306_16_one_view_lists_two_directories_opens_one_copy_and_writes_nothing`:
 
      ```python
      def test_above_one_replica_the_card_reads_this_pods_copies_as_the_metric_does(self, tmp_path, monkeypatch):
@@ -223,16 +241,45 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
          assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
          one = dashboard_data_bytes(str(db), str(backups), replica_count=1)()["backups"]
          assert (one["count"], one["kept"], one["newest_at"]) == (3, 3, "2026-10-01T11:11:05Z")
+
+     def test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory_as_the_metric_does(self, tmp_path, monkeypatch):
+         """SPEC_E6 with SPEC_E4 (#306, #391, E4's review F1): every rollout renames every pod, so after one no pod
+         has a copy of its own until its first backup succeeds. The card then reads the directory's newest, the copy
+         gsd_backup_last_success_timestamp_seconds reads, so a rollout whose backups all fail turns the card stale
+         when GroupSyncDashboardBackupStale fires; `kept` stays this pod's own: none."""
+         from types import SimpleNamespace
+
+         from gsd.kpi.system import dashboard_data_bytes
+         monkeypatch.setenv("POD_NAME", "new-pod")
+         db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+         backups = tmp_path / "backup"; backups.mkdir()
+         _copy(backups / "gsd-20261001T051103.798578Z-departed-a.db", 19, 4096, mtime=1790831464)
+         _copy(backups / "gsd-20261001T111104.000930Z-departed-b.db", 20, 4096, mtime=1790853064)
+         got = dashboard_data_bytes(str(db), str(backups), replica_count=2)()["backups"]
+         assert (got["count"], got["kept"], got["newest_at"], got["newest_schema"]) == (2, 0, "2026-10-01T11:11:04Z", 20)
+         store = Store(":memory:")
+         try:
+             text = generate_latest(build_registry(store, timedelta(seconds=120), settings=SimpleNamespace(
+                 backup_dir=str(backups), login_capture_enabled=False, replica_count=2))).decode()
+         finally:
+             store.close()
+         metric = next(float(line.split()[1]) for line in text.splitlines()
+                       if line.startswith("gsd_backup_last_success_timestamp_seconds "))
+         assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
      ```
 
-     Proved on `73cc7d08` + E4's 30 blocks + this spec's 24 blocks, the five edits applied by a script that took the
-     two fenced listings from this note's text: over `test_kpi.py`, `test_metrics.py`, `test_backup.py`,
+     Proved on origin/main `6d532178` + E4's 32 blocks + this spec's 24 blocks, the five edits applied by a script
+     that took the two fenced listings from this note's text: over `test_kpi.py`, `test_metrics.py`, `test_backup.py`,
      `test_history_retention.py`, `test_offsite_backup_script.py`, `test_storage_seam.py`, `test_pre_upgrade_copy.py`
-     and `test_docs_citations.py`, `1 failed, 1764 passed, 22 skipped` before the edits (the one is E4's T391-8) and
-     `1766 passed, 22 skipped` after. With `owner = None` in place of `backup_owner(replica_count)`, the new test
-     fails: `assert (3, 12288, 3) == (3, 12288, 1)`. The page needs no
-     change: the Copies kept tile already reads `kept` against `keep` and adds "N copies in all" when `count`
-     differs, and the none-yet state reads `newest_at`, not `count`.
+     and `test_docs_citations.py`, `1 failed, 1893 passed, 22 skipped` before the edits (the one is E4's T391-8) and
+     `1896 passed, 22 skipped` after. With `owner = None` in place of `backup_owner(replica_count)`, both tests
+     fail, the first with `assert (3, 12288, 3) == (3, 12288, 1)`; with `newest = own` in place of `newest = own or newest`, the
+     second fails: `assert (2, 0, None, None) == (2, 0, '2026-...1:11:04Z', 20)`, the reading this note first had,
+     under which a rollout whose backups all fail showed "failing: 3 failures since start; no good copy yet" with two
+     copies on the volume and could never turn stale while the alert fired (review of this spec, measured in the
+     browser harness). The page needs no change: the Copies kept tile already reads `kept` against `keep` and adds
+     "N copies in all" when `count` differs (after a rollout, `0/4 · 2 copies in all`), and the states read
+     `newest_at`, not `count`.
 10. **T306-15 corrected: the only `charts/` change is the release script's.** The issue asks for
     `git diff --stat main -- charts/` to be empty, and its Definition of Done asks for the application bump with
     `prepare-release.py --app`, which moves `Chart.yaml`'s `appVersion` and bumps the chart PATCH with a history
@@ -242,13 +289,45 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
     `version:`, `appVersion:` and history-comment lines the script writes; no template, value, RBAC rule or Grafana
     JSON. No block touches `charts/`.
 11. **Collisions with the specs in flight.** The index count and its test (`docs/specs/README.md`'s two
-    "thirty-eight" lines, `local-development/tests/test_specs_index.py`'s row count and its rising-issue exclusion,
-    which this spec extends to E6 pinned to #306 as E2 is to #303) are edited by every spec in flight; whichever
+    "forty-three" lines on `6d532178`, `local-development/tests/test_specs_index.py`'s row count and its rising-issue
+    exclusion, which this spec extends to E6 by its id, pinned to #306 as E2 to E5 and E3 are) are edited by every spec in flight; whichever
     merges later recounts. `docs/CHANGELOG.md`'s block inserts after `## Unreleased` and its Old text stays unique
     after any other insertion there. The runbook paragraph goes in "What a successful backup looks like", which
     neither SPEC_E3 (§4) nor SPEC_E4 (the first bullet) edits.
 12. **For the operator: none.** Note 5 is a correction made on the page's own written rule; it is called out so it
     can be overruled in one line.
+13. **The reviews of `1e194df3` (OB3 in Grok's seat, OB2 in Codex's seat), decided by the orchestrator on
+    2026-10-01.** Each is applied above and in §7 and measured again on `6d532178` (§4.3).
+    - **F1, the composition with SPEC_E4 as merged (OB3's C5 and OB2's C5, the same defect).** E4 as merged
+      (`66a6f325`, its block 15) makes the gauge read the whole directory while a pod has no copy of its own, every
+      pod after a rollout; note 9's function read own copies only, so after a rollout whose backups fail the card said
+      "failing: no good copy yet" with copies on the volume and could never turn stale while
+      `GroupSyncDashboardBackupStale` fired. Taken: OB3's note 9 whole (the function with the fallback, the second
+      test, the API.md `kept` and `newest_at` rows). Cross-checked against OB2's `fixed_function.py` and
+      `test_ob2_fallback.py`: the two functions differ only in a variable's name and their comments, and gave the same
+      `backups` on 400 random directories (pods, suffix names, replica counts 1 to 3, dangling and non-SQLite names:
+      `cases 400 behavioural differences 0`); OB2's test passes against OB3's function and covers the case OB3's second
+      test covers (no copy of the pod's own, two neighbours'), so it is not carried as a third test.
+    - **F2, note 5's revert (OB3's C4, superseding OB2's F2).** The revert was not one line: a bare `iso.replace`
+      throws on a payload without an instant and stops the whole KPI page (measured on the original blocks:
+      `4 failed, 19 passed` in `TestKpiPage`, `TypeError: Cannot read properties of undefined (reading 'replace')`),
+      `sameDay` stayed on `fmtTime` and printed a wrong "next due by" date (`2026-10-01 · next due by 02:00:00Z` for a
+      copy at 20:00Z in New York, after: `2026-10-01 · next due by 2026-10-02 02:00:00Z`), and block 24's CHANGELOG
+      said "an ISO-8601 UTC instant". Taken: OB3's block 8 (`kpiStampText`, the one function every instant is printed
+      through, its block 8 comment corrected where it said the value "stays on one line", C6) and block 24, and §6's
+      rows. With OB3's revert line, `TestKpiPage` gives `1 failed, 22 passed`, the one being T306-12's display-zone
+      assertion, which pins this decision (OB2 measured the same of its own form of the revert).
+    - **N1, the Last copy tile on a failing state with no copy (OB3, not asked).** The tile said "the first poll
+      cycle takes one" beside "failing: no good copy yet"; block 8 now says "the attempts since start are failing".
+      Beyond the review: T306-11 asserts it (block 19), failing on the original block 8 with
+      `AssertionError: the first poll cycle takes one`.
+    - **F3, the Version note (OB3's C8, OB2's F3).** Its rule ("whichever merges later takes the next ones") is the
+      opposite of what the ladder test enforces; it now follows SPEC_E5's rule, with the claims read from main's index
+      (the header). OB2's staleness items ("32 blocks", "merged as a spec", §4.3's E4 row) are corrected with it.
+    - **The rebase.** Onto origin/main `6d532178`: E6's row goes after E3's, the index reads forty-three, and
+      `test_specs_index.py` excludes E6 by its id and pins it to #306 (§4.3, the pin mutant).
+    - **Not taken:** OB3's suggestion to write T306-15 as a shell command (C7, offered as "not a defect"); note 10
+      keeps the check in words.
 
 ## 1. The mandate, and what is out of scope
 
@@ -588,7 +667,7 @@ the backup, its names, its rotation; the pre-upgrade copy's writer.
 | T306-8 | `TestKpiPage.test_t306_8_disabled_reads_disabled_never_zero` (`test_ui.py`; the harness's own payload) | no card: `Locator.get_attribute` times out on `.bk-state`; the sub-line read `+ 0 backups` |
 | T306-9 | `test_t306_9_enabled_with_no_copy_reads_no_copy_yet` (also: `keep` 0 shows no "/0" and the heading says "keep all") | no card |
 | T306-10 | `test_t306_10_older_than_two_intervals_reads_stale_with_the_instant` | no card |
-| T306-11 | `test_t306_11_failures_are_paired_with_the_last_good_instant` | no card |
+| T306-11 | `test_t306_11_failures_are_paired_with_the_last_good_instant` (also: failing with no copy at all, the Last copy tile reads "the attempts since start are failing", N1) | no card; on the reviewed draft's block 8, `AssertionError: the first poll cycle takes one` |
 | T306-12 | `test_t306_12_five_tiles_absolute_instants_and_the_repaint_keeps_the_card` (the route serves a healthy payload; `refresh()` runs the poll and the card is checked again; the display zone switched to America/New_York relabels the same instants) | no card |
 | T306-13 | `test_t306_13_every_state_fits_375_768_and_1280_in_light_and_dark` (five states × three widths × two themes; the state drawn is the one set, so a 60-second auto-refresh landing mid-loop cannot pass a check on the wrong card; `scrollWidth == clientWidth` for the page, the card within itself, no page error) | no card |
 | T306-14 | `TestCaptureAndBackupGauges.test_t306_14_the_backups_card_leaves_the_exposition_as_it_was` (`test_metrics.py`) | a regression guard: passes before and after |
@@ -602,8 +681,8 @@ the access-posture band apart from the card's (block 18).
 
 ### 4.2 Each test, before and after
 
-**Before**, on a clean worktree of `73cc7d08` with the three changed test modules copied in, `PYTHONPATH` at its
-`local-development`:
+**Before**, on a clean worktree of origin/main `6d532178` with the three changed test modules copied in, `PYTHONPATH`
+at its `local-development`:
 
 | run | result |
 |---|---|
@@ -634,9 +713,11 @@ Old text from `73cc7d08` and its New text from the implemented copy, at whole li
 (two of them carrying text) that make the Old text unique once the earlier blocks for the file are applied, and two
 blocks (the CHANGELOG's and the design README's) were narrowed by hand to the one line they change, because their
 neighbours are lines other specs in flight edit. It then checked that the blocks, applied in order, give the
-implemented files byte for byte: `24 blocks across 12 files reproduce the dev copy byte for byte`. Then:
+implemented files byte for byte: `24 blocks across 12 files reproduce the dev copy byte for byte`. On the reviews
+of `1e194df3` (Orchestrator's notes, 13), blocks 8 and 24 were taken whole from OB3's patch and block 19 gained N1's
+assertion; the 24 Old texts are unchanged and check out on origin/main `6d532178`. Then:
 
-On a fresh detached worktree of `73cc7d08` with this spec's commit content committed on it (the spec, the index row and the index
+On a fresh detached worktree of origin/main `6d532178` with this spec's commit content committed on it (the spec, the index row and the index
 test), with `PYTHONPATH` at its `local-development` (the imported `gsd` printed as that tree's, `2.0.0`):
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_E6_kpi_backups_card.md .
@@ -648,13 +729,13 @@ After `--apply` every changed file is identical (`cmp`) to the implemented copy.
 | check | command | result |
 |---|---|---|
 | the new and changed tests | `pytest tests/test_kpi.py tests/test_metrics.py -k 't306 or own_bytes'`; `pytest tests/test_ui.py -k TestKpiPage --browser chromium` | `9 passed`; `23 passed` |
-| the modules the change touches | `pytest tests/test_kpi.py tests/test_metrics.py tests/test_storage_seam.py tests/test_pre_upgrade_copy.py tests/test_type_scale.py tests/test_accessibility.py tests/test_docs_citations.py tests/test_specs_index.py tests/test_cluster_admin_tier.py` | `2370 passed, 22 skipped` |
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6217 passed, 26 skipped, 661 deselected, 5 xfailed` in 316.74 s; on `73cc7d08` without the spec or the blocks, `6190 passed, 26 skipped, 655 deselected, 5 xfailed`; the 27 more are the eight new tests (collected by name, diffed), 16 citation checks and one fence check of this spec's own text, and the two index checks of its row |
-| browser suite | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `657 passed` in 235.46 s; on `73cc7d08` the suite has 651 |
+| the modules the change touches | `pytest tests/test_kpi.py tests/test_metrics.py tests/test_storage_seam.py tests/test_pre_upgrade_copy.py tests/test_type_scale.py tests/test_accessibility.py tests/test_docs_citations.py tests/test_specs_index.py tests/test_cluster_admin_tier.py` | `2509 passed, 22 skipped` |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6361 passed, 26 skipped, 661 deselected, 5 xfailed` in 301.97 s; `6d532178` without the spec or the blocks collects 6365, so 27 more: the eight new tests, and the citation, fence and index checks of this spec's own text and row |
+| browser suite | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `657 passed` in 233.84 s; on `6d532178` the suite collects 651 |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on `store.py`, `kpi/system.py`, `api.py` and the three test modules | all parse; CI's 3.11 job was not run here. T306-16's audit events exist on 3.11 (§2.7) |
-| render check | the card in every state at 375, 768 and 1280 px, light and dark, with no zone (UTC) and with `America/New_York`, screenshotted from the browser harness | 60 renders, `scrollWidth == clientWidth` in all 60; looked at: the healthy card at 1280 px light in New York time, the none-yet card at 375 px dark, the disabled card at 1280 px light, the failing card at 768 px light, the stale card at 375 px dark |
+| render check | the card in every state at 375, 768 and 1280 px, light and dark, with no zone (UTC), `America/New_York` and `Asia/Kolkata`, screenshotted from the browser harness on the revised block 8, the state drawn checked against the state set | 90 renders, the page's `scrollWidth == clientWidth` and the card's `scrollWidth <= clientWidth` in all 90; looked at: the healthy card at 375 px light in Kolkata time (the zone label wraps under the time, never sideways) and the failing card at 1280 px dark in New York time |
 | markdown | `markdownlint-cli2` on `docs/CHANGELOG.md`, `docs/RUNBOOK_backup_restore.md`, `docs/design/README.md`, `local-development/API.md`, and the specs index | the same findings before and after, per file and rule (CHANGELOG MD012 ×1; runbook MD004 ×3, MD040 ×3; API.md MD004 ×2, MD012 ×1, MD018 ×1), all on main already; the index README: 0 |
-| the order against SPEC_E4 | E4's 30 blocks checked on `73cc7d08` + this spec; this spec's 24 checked and applied on `73cc7d08` + E4 | both check out; the composition (Orchestrator's notes, 9): `1766 passed, 22 skipped` |
+| the order against SPEC_E4 | E4's 32 blocks checked and applied on `6d532178` + this spec; this spec's 24 checked and applied on `6d532178` + E4 | both check out, and the two trees differ only in the order of the two CHANGELOG entries (`git ls-files -s` diffed); on `6d532178` + E4 + E6, `1 failed, 1893 passed, 22 skipped` (E4's T391-8), and with note 9's five edits, `1896 passed, 22 skipped` (Orchestrator's notes, 9) |
 | chart and RBAC | no block touches `charts/` | nothing to render; the RBAC diff is the implementing pull request's (§5 step 5) |
 
 The implemented copy, the generator, the probes and the screenshots ran from this spec's scratch directory and are
@@ -702,16 +783,16 @@ with the screenshots:
 | `local-development/gsd/store.py` | 33 | 0 |
 | `local-development/gsd/kpi/system.py` | 43 | 7 |
 | `local-development/gsd/api.py` | 6 | 1 |
-| `local-development/gsd/static/index.html` | 89 | 2 |
+| `local-development/gsd/static/index.html` | 93 | 2 |
 | `local-development/gsd/static/app.css` | 18 | 0 |
 | `local-development/tests/test_kpi.py` | 156 | 1 |
 | `local-development/tests/test_metrics.py` | 31 | 0 |
-| `local-development/tests/test_ui.py` | 146 | 2 |
+| `local-development/tests/test_ui.py` | 153 | 2 |
 | `local-development/API.md` | 29 | 1 |
 | `docs/RUNBOOK_backup_restore.md` | 6 | 0 |
 | `docs/design/README.md` | 1 | 1 |
-| `docs/CHANGELOG.md` | 10 | 0 |
-| total | 568 | 15 |
+| `docs/CHANGELOG.md` | 11 | 0 |
+| total | 580 | 15 |
 
 ## 7. Implementation blocks
 
@@ -989,7 +1070,7 @@ New text:
 
 ### Block 8 — local-development/gsd/static/index.html: the Backups card
 
-`kpiInstant`, `kpiBackupState` and `kpiBackups`, before `KPI_REFUSAL` (§3.5 to §3.7).
+`kpiStampText`, `kpiInstant`, `kpiBackupState` and `kpiBackups`, before `KPI_REFUSAL` (§3.5 to §3.7).
 
 <!-- block: local-development/gsd/static/index.html | edit -->
 
@@ -1017,10 +1098,14 @@ New text:
    wrong clock cannot make a fresh copy stale. */
 const KPI_BACKUP_STALE_INTERVALS = 2;   // the values comment's alert line, backupStaleSeconds: two intervals
 
-/* `part` "date" or "time" splits fmtTime's "YYYY-MM-DD HH:MM:SS<zone>" at its first space, for the tiles; a zone
-   label after the time ("11:03:38 EDT") is set small, as a tile's unit is, so the value stays on one line. */
+/* The text of every instant on the card: fmtTime's "YYYY-MM-DD HH:MM:SS<zone>", in the page's display zone with
+   its label. One function, so the "next due by" date test below reads exactly what the tiles print. */
+const kpiStampText = (iso) => fmtTime(iso);
+
+/* `part` "date" or "time" splits that text at its first space, for the tiles; a zone label after the time
+   ("11:03:38 EDT") is set small, as a tile's unit is: on a narrow tile it wraps under the time, never sideways. */
 function kpiInstant(iso, part) {
-  const text = fmtTime(iso), cut = text.indexOf(" ");
+  const text = kpiStampText(iso), cut = text.indexOf(" ");
   if (cut < 0 || !part) return `<time datetime="${esc(iso)}">${esc(text)}</time>`;
   if (part === "date") return `<time datetime="${esc(iso)}">${esc(text.slice(0, cut))}</time>`;
   const [clock, ...zone] = text.slice(cut + 1).split(" ");
@@ -1063,11 +1148,11 @@ function kpiBackups(k) {
     pre ? `${kpiInstant(pre.at)} · kept outside the rotation` : "one is taken before each schema migration; none on this volume yet");
   let tiles = preTile;
   if (b.enabled !== false) {
-    const sameDay = due && fmtTime(due).split(" ")[0] === fmtTime(b.newest_at).split(" ")[0];
+    const sameDay = due && kpiStampText(due).split(" ")[0] === kpiStampText(b.newest_at).split(" ")[0];
     const newer = b.newest_schema != null && b.newest_schema > b.known_schema;
     tiles = kpiTile("backup-last", "Last copy", b.newest_at ? kpiInstant(b.newest_at, "time") : "none yet",
         b.newest_at ? `${kpiInstant(b.newest_at, "date")}${due ? ` · next due by ${kpiInstant(due, sameDay ? "time" : null)}` : ""}`
-          : "the first poll cycle takes one", st.state === "stale" ? "critical" : "")
+          : b.failures ? "the attempts since start are failing" : "the first poll cycle takes one", st.state === "stale" ? "critical" : "")
       // keep 0 rotates nothing away (Store._vacuum_into), so there is no ceiling to show against.
       + kpiTile("backup-kept", "Copies kept", `${kpiNum(b.kept)}${b.keep ? `<span class="of">/${kpiNum(b.keep)}</span>` : ""}`,
         `${kpiBytes(b.bytes)} on the data volume${b.count !== b.kept ? ` · ${kpiNum(b.count)} copies in all` : ""}`)
@@ -1624,6 +1709,13 @@ New text:
         shown = dash.evaluate("(i) => fmtTime(i)", last)
         assert f"3 failures since start; last good copy {shown}" in state.inner_text()
         assert state.locator("time").first.get_attribute("datetime") == last
+        # Failing with no copy at all (a new install whose backupDir is unwritable): the Last copy tile agrees
+        # with the state line rather than promising the first poll cycle (review of this spec, OB3, N1).
+        dash.evaluate("""() => { Object.assign(data.kpi.system.dashboard.data.backups,
+            {newest_at: null, newest_schema: null, count: 0, kept: 0, bytes: 0}); render(); }""")
+        assert "3 failures since start; no good copy yet" in state.inner_text()
+        tile = self._card(dash).locator('[data-kpi="backup-last"] .note').inner_text()
+        assert tile == "the attempts since start are failing", tile
 
     def test_t306_12_five_tiles_absolute_instants_and_the_repaint_keeps_the_card(self, dash):
         """The healthy card with a pre-upgrade copy, served by the route so the 60-second refresh repaints from
@@ -1829,8 +1921,9 @@ New text:
 ## Unreleased
 
 - **A Backups card on the KPI page (#306, Epic E #385, `docs/specs/SPEC_E6_kpi_backups_card.md`).** Below System
-  status, from what the dashboard process already has: the last copy as an ISO-8601 UTC instant and when the next
-  is due, the copies kept against `config.backup.keep` and their size, the failures since the process started, the
+  status, from what the dashboard process already has: the last copy as an absolute instant in the page's display
+  zone, with its label (ISO-8601 UTC in the payload), and when the next is due, the copies kept against
+  `config.backup.keep` and their size, the failures since the process started, the
   newest copy's schema against what this build understands, and the newest pre-upgrade copy (#301). One state in
   words: healthy, no copy yet, failing, stale (older than two backup intervals), or disabled, which no longer reads
   "+ 0 backups" in the dashboard's size line ("backups disabled"). `/api/kpi`'s `system.dashboard.data.backups` is
