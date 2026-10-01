@@ -45,9 +45,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 47, f"expected forty-seven index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425) and G4 (#420); matched {sorted(rows)}"
+    assert len(rows) == 48, f"expected forty-eight index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420) and W1 (#426); matched {sorted(rows)}"
     return rows
 
 
@@ -135,7 +135,10 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # G4 (#420), Epic G's fourth step, specified after E9: excluded the same way, by its id, and pinned to #420, so a
     # mistyped issue on its row and header still fails (review of SPEC_G4, OB3 and OB2).
     assert ROWS["G4"]["issue"] == "420", ("G4 is #420", ROWS["G4"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4")]
+    # W1 (#426, filed 2026-09-27) is Epic E's optional blue-green step, specified after G4 and not scheduled: excluded by
+    # its id and pinned to #426 the same narrow way, so a mistyped issue on its row and header still fails (SPEC_W1).
+    assert ROWS["W1"]["issue"] == "426", ("W1 is #426", ROWS["W1"]["issue"])
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
