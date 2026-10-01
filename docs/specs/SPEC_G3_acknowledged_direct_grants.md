@@ -9,7 +9,7 @@
 | Version note | The blocks are written against main `dd51b91f` (application 2.0.0, chart 0.59.25), so blocks 66 to 69 and the CHANGELOG bullet (block 65) carry application 2.1.0 and chart 0.59.26. SPEC_G2 merges first and takes application 2.1.0 and chart 0.60.0, so at this spec's turn those five are re-derived to application 2.2.0 and chart 0.60.1 (a PATCH: no value is added, `appVersion` moves). Orchestrator's note 1 lists every block G2 touches |
 | Issue | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-01, written before any code from #503 (body refined 2026-10-01, "Decisions and corrections (2026-10-01)", and the comment of 2026-10-01 on the Namespaces card), its epic #387, the mock `docs/design/direct-user-grants-mock.html` and SPEC_G2 at `4c75c65b`. Measured on main `dd51b91f` on this machine (Python 3.14.7, SQLite 3.53.4) and read-only on the CRC lab (2026-10-01, 14:04Z). §7 was cut from an implemented copy of `dd51b91f` and proved against a clean tree and against a tree with SPEC_G2 applied first (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-01, written before any code from #503 (body refined 2026-10-01, "Decisions and corrections (2026-10-01)", and the comment of 2026-10-01 on the Namespaces card), its epic #387, the mock `docs/design/direct-user-grants-mock.html` and SPEC_G2 at `4c75c65b`. Measured on main `dd51b91f` on this machine (Python 3.14.7, SQLite 3.53.4) and read-only on the CRC lab (2026-10-01, 14:04Z). §7 was cut from an implemented copy of `dd51b91f` and proved against a clean tree and against a tree with SPEC_G2 applied first (§4.3). Revised the same day after the review of `aefde964` by OB3 and OB2 (orchestrator's note 5), on main `3b3d0010` (the same code as `dd51b91f`; SPEC_G1, SPEC_E2, SPEC_G2 and SPEC_E4 merged as specifications) |
 
 ## How to read this spec
 
@@ -43,8 +43,9 @@ orchestrator's notes, before it is applied again.
 ## Orchestrator's notes
 
 1. **Merge order: SPEC_G2 (#255) first, then this spec.** The epic's build order says so (#387, "Build order", row
-   3 depends on row 2), and G2 changes the same view and alert. The blocks apply to main `dd51b91f` as written, and
-   were checked against a tree with all 74 of G2's blocks applied first (§4.3):
+   3 depends on row 2), and G2 changes the same view and alert. SPEC_G2 is merged as a specification (main
+   `f144a82b`, its blocks not yet applied). The blocks apply to main's code as written (`f144a82b` has
+   `dd51b91f`'s code), and were checked against a tree with all 75 of main's SPEC_G2 blocks applied first (§4.3):
    - **Blocks 66 to 69** (the two `Chart.yaml` fields, `pyproject.toml`, `gsd/__init__.py`) fail after G2, because
      their Old text is the version G2 replaces. At this spec's turn they become application 2.1.0 → 2.2.0 and chart
      0.60.0 → 0.60.1, each history line placed after G2's, and block 65's CHANGELOG bullet names
@@ -66,8 +67,9 @@ orchestrator's notes, before it is applied again.
      `local-development/gsd/kube.py#_user_binding_views` and `_binding_views`, whose signatures G2 keeps, and never
      construct `UserBindingView`, whose `is_platform` field G2 removes. `tests/test_platform_classification_marker.py`
      gains its own `REVIEW_SITE` pattern instead of editing `SITE`, which G2 rewrites (G2 blocks 56–59).
-   - **Measured:** the 65 blocks that are not release fields, applied after G2's 74, check out, and the hermetic
-     suite passes on the result (§4.3).
+   - **Measured:** the 65 blocks that are not release fields, applied after main's SPEC_G2 (75 blocks), check out.
+     The hermetic suite on the result fails one test, the specs index's version check on SPEC_E2's row, which
+     SPEC_G2 applied alone fails too: both name chart 0.60.0 (§4.3).
 2. **Corrections to the issue, each with its evidence.**
    - **The reports' copy: the review figures, not every report.** The issue lists `snapshot.py:439, 448, 661-662,
      670`, and so names `Snapshot.user_bindings` itself. That method feeds six reports
@@ -87,8 +89,10 @@ orchestrator's notes, before it is applied again.
    - **The join's shape.** The issue's join on the bare tables is refused by SQLite: both tables have
      `binding_namespace`, `binding_name`, `role_kind` and `role_name`, and the existing unqualified queries read
      `ambiguous column name: role_name` (measured, §2.4). The join reads a subquery of `rbac_group_binding` whose
-     columns are renamed (`ack_*`). The planner flattens it into the same full primary-key lookup (EXPLAIN QUERY
-     PLAN, §2.4), and no existing query had to qualify a column.
+     columns are renamed (`ack_*`). The planner flattens it into the same full primary-key lookup in every query
+     that reads it (EXPLAIN QUERY PLAN, §2.4, held by a test), because none of them is DISTINCT: SQLite never
+     flattens the right side of a LEFT JOIN into a DISTINCT query, so the rollup's people query groups instead.
+     No existing query had to qualify a column.
    - **"Paged like `bindings`"** (T503-9) is read as: the same `limit` and `offset`, and never narrowed by
      `namespace`. The list belongs under the rollup, which is never narrowed either. The page fetches it with
      `offset` 0, and an API client can reach every row by paging.
@@ -104,8 +108,9 @@ orchestrator's notes, before it is applied again.
    - **`group-sync-operator-helm` is a constant beside `CHART_CONFIG_SOURCE`, not a values list.** The operator
      chart fixes the value to its chart name and gives it no values key ("The value is fixed to the chart name ...
      a configurable provenance invites a wrong one", its `_helpers.tpl` lines 41–43 at `65323a48`, §2.5). A values
-     list could only hold a value the estate cannot change, and it would add a chart key, a parser and a render
-     check for that. Under the values-file rule a fixed upstream fact is not a switch.
+     list could only hold a value neither chart lets the estate set (a Helm dependency `alias` renames it, which
+     opens the gate: noisy, never silent, measured with helm v4.3.0), and it would add a chart key, a parser and a
+     render check for that. Under the values-file rule a fixed upstream fact is not a switch.
    - **No migration.** The join reads what the binding refresh already stores (store.py:249-253, filled at
      kube.py:1892-1893), as the issue recommended. The schema, the report service's schema check and the lab's
      one-migration-branch rule are untouched.
@@ -116,6 +121,44 @@ orchestrator's notes, before it is applied again.
      `developer`), measured again at 2026-10-01T14:04:12Z: they stay ordinary rows, and this spec builds no rule
      for them. Labelling them would acknowledge them with no code change, but the OpenShift console writes them, so
      a label could be removed when the console rewrites them. That is the operator's call.
+
+5. **The review of `aefde964`** by OB3 (in Grok's seat) and OB2 (in Codex's seat; Codex was out of usage until
+   2026-10-03), decided by the orchestrator on 2026-10-01. Each accepted change is applied in §2.4, §3 and §7, and
+   measured again on the applied tree (§4).
+   - **Accepted, F1 (OB3; OB2's C4 is the same finding).** Block 10 wrote the rollup's people query as
+     `SELECT DISTINCT`. SQLite never flattens a subquery on the right of a LEFT JOIN into a DISTINCT query
+     (sqlite.org/optoverview.html, flattening constraint 3), so that query materialized the provenance subquery:
+     `MATERIALIZE`, `SCAN rbac_group_binding`, `AUTOMATIC COVERING INDEX`, on every load and repaint of the
+     Namespace audit tab. §2.4 had claimed no such scan. Block 10 now groups (`GROUP BY namespace, user_name`),
+     which gives the same pairs in the same order with the primary-key SEARCH.
+   - **Accepted, the plan test and the join test (OB3, F1's second half; OB2's block 43a).** The two reviews proposed
+     overlapping plan tests. OB3's is taken, because it is stricter:
+     - it requires the full seven-column SEARCH, not just the index name;
+     - it counts the nine joined queries the readers issue;
+     - it skips below SQLite 3.40.0, the release from which an aggregate query is flattened at all.
+     OB2's version is the same idea and is not applied a second time. OB3's
+     `test_the_join_matches_each_grant_to_its_own_binding_row` pins the join's conditions. OB3 dropped each of
+     the eight in turn, and all eight survived the 541 related tests of `aefde964`. With the two tests, each
+     mutant fails 1 or 2 of them (§4.2, M13). Both tests are in block 43.
+   - **Accepted, F2 (OB3).** Block 31's label claimed the acknowledged grants were "excluded from the direct-user
+     figures", while "Privileged direct grants" in the same list counts them (measured). The figure is right: it is
+     the privileged-access review's, which keeps access a person holds. So the label is what changes: "Acknowledged
+     direct grants (excluded from Direct user grants)". Block 51 gains
+     `test_t503_11_an_acknowledged_privileged_grant_is_still_privileged_access`, and §3.7 and block 65 say the same.
+   - **Accepted, docs (OB2's N2).** §3.2 gains a row naming the access and presence sites the rule deliberately
+     leaves alone.
+   - **Accepted, wording (OB3's N1 and N2, offered as optional).**
+     - N1: a Helm dependency `alias` renames the operator chart's value (measured with helm v4.3.0). Its
+       Group bindings then open the gate, which is noisy, never silent. The constant stays. Four sentences that
+       called the value unchangeable now say this (block 1, block 61, §2a D2, note 3).
+     - N2: `poller.refresh_bindings` returns before the direct-user list when the binding list fails, so neither
+       table changes. §3.9's row had filed that case under "alerting"; it now reads "frozen", beside the case of a
+       failed direct-user list.
+   - **The index.** G3 is the fortieth row, after G1, E2, G2 and E4, which merged first. It is excluded from the
+     rising-issue assert by its id and pinned with `assert ROWS["G3"]["issue"] == "503"`, as G1, E2, G2, E4 and D5
+     are (§4.2, M15).
+   - **Rejected: none.** The §2.4 cost table was re-measured whole for this revision, rather than mixing OB3's
+     re-measured rollup row with the first version's numbers.
 
 ## 1. The mandate, and what is out of scope
 
@@ -240,23 +283,34 @@ SEARCH rbac_group_binding USING INDEX sqlite_autoindex_rbac_group_binding_1 (clu
 ```
 
 The subquery is flattened: one primary-key SEARCH per `user_binding` row, no SCAN of `rbac_group_binding`, and no
-automatic index.
+automatic index. Every query that reads the join plans this way, on two conditions from SQLite's own flattening
+rules (sqlite.org/optoverview.html, constraint 3; `src/select.c`). The outer query must not be DISTINCT, in any
+version: the rollup's people query, written `SELECT DISTINCT`, read `MATERIALIZE (subquery-1)`, `SCAN
+rbac_group_binding` and `SEARCH (subquery-1) USING AUTOMATIC COVERING INDEX` (measured, lab and ×100), so block 10
+groups its pairs instead. And an aggregate outer query (every COUNT and GROUP BY here) is flattened only from
+SQLite 3.40.0 (`select.c` at version-3.39.0 still lists "(3c) the outer query may not be an aggregate"). The
+2.0.0 image runs SQLite 3.53.4 (`python3.14 -c 'import sqlite3; print(sqlite3.sqlite_version)'` in it), the
+version these plans were read on. `test_every_provenance_query_searches_rbac_group_binding_by_its_primary_key`
+reads every reader's plan and skips below 3.40.0.
 
-**The cost.** Each query was run 50 times, and the mean is shown in milliseconds. "Main" is `dd51b91f`, and
-"this spec" is the implemented copy. "×100" repeats every binding a hundred times under new names (95,000 and
-3,500 rows):
+**The cost.** Each query was run 50 times, and the mean is shown in milliseconds. "Main" is `f144a82b` (the same
+code as `dd51b91f`), and "this spec" is that tree with §7 applied. "×100" repeats every binding a hundred times
+under new names (95,000 and 3,500 rows). Re-measured for the revision of the spec, 2026-10-01:
 
 | query | main, lab | this spec, lab | main, ×100 | this spec, ×100 |
 |---|---|---|---|---|
-| worklist rows (`direct_user_bindings`, limit 200) | 0.022 | 0.039 | 0.556 | 1.218 |
-| worklist count | 0.003 | 0.008 | 0.197 | 0.852 |
-| rollup (`user_bindings_by_namespace`) | 0.023 | 0.072 | 0.712 | 11.777 |
-| acknowledged rows (limit 200) | — | 0.033 | — | 1.167 |
-| acknowledged count | — | 0.008 | — | 0.824 |
-| namespace index (`namespaces`) | 0.134 | 0.140 | 8.240 | 9.272 |
+| worklist rows (`direct_user_bindings`, limit 200) | 0.021 | 0.035 | 0.508 | 1.135 |
+| worklist count | 0.003 | 0.007 | 0.194 | 0.834 |
+| rollup (`user_bindings_by_namespace`) | 0.023 | 0.028 | 0.671 | 1.944 |
+| acknowledged rows (limit 200) | — | 0.029 | — | 1.089 |
+| acknowledged count | — | 0.007 | — | 0.813 |
+| namespace index (`namespaces`) | 0.122 | 0.140 | 7.433 | 8.592 |
+
+With the rollup's people query written `SELECT DISTINCT`, as the first version of block 10 had it, the rollup
+read 11.777 ms at ×100 here (12.583 ms in OB3's run of the review, 13.7 ms in OB2's): the SCAN above.
 
 At the lab's size every query stays under 0.15 ms. At a hundred times the lab, the rollup's two queries go from
-0.7 ms to 11.8 ms, read once per page load and per 60-second repaint of the Namespace audit tab. The worklist,
+0.7 ms to 1.9 ms, read once per page load and per 60-second repaint of the Namespace audit tab. The worklist,
 computed through this spec's code on the lab's own objects, reads 9 rows, 2 acknowledged and 24 platform, which are
 T503-14's numbers.
 
@@ -374,7 +428,7 @@ These are the "before" numbers of T503-14. PVC UIDs: `group-sync-dashboard-data`
 | option | source | cost here | decision |
 |---|---|---|---|
 | D1. A second constant beside `CHART_CONFIG_SOURCE` | §2.5 (the value is fixed upstream) | one constant and one tuple; the gate reads the tuple | **chosen** |
-| D2. A values list whose default holds both | the issue's alternative | a chart key, a loader, a render check and docs for a value no estate can change | rejected |
+| D2. A values list whose default holds both | the issue's alternative | a chart key, a loader, a render check and docs for a value neither chart lets an estate set (only a Helm dependency `alias` renames it, and that fails noisy: the gate opens, nothing is silenced) | rejected |
 
 **E. The acknowledged list on the wire.**
 
@@ -399,7 +453,7 @@ These are the "before" numbers of T503-14. PVC UIDs: `group-sync-dashboard-data`
 | a label selects, an annotation carries text (§2.1) | `acknowledgedGrants` in `local-development/gsd/static/index.html#function acknowledgedGrants(ub)` shows the label as `config-source: <value>` and the exception as quoted text |
 | an annotation value can be any string up to 256 KiB (§2.2) | the cell is escaped (`esc`) and wraps (`local-development/gsd/static/app.css#.ack td { overflow-wrap: anywhere; }`); `/metrics` never reads it (T503-12) |
 | comparable tools keep an acknowledged finding visible (§2.3) | `local-development/gsd/store.py#def acknowledged_user_bindings` and `#def acknowledged_user_binding_count`, served as `acknowledged_bindings` and `acknowledged` |
-| the seven-column key finds at most one row; the subquery flattens to a primary-key SEARCH (§2.4) | `local-development/gsd/store.py#_USER_PROVENANCE` matches all seven columns, `subject_kind = 'User' AND subject_namespace = ''` among them |
+| the seven-column key finds at most one row; the subquery flattens to a primary-key SEARCH unless the outer query is DISTINCT (§2.4) | `local-development/gsd/store.py#_USER_PROVENANCE` matches all seven columns, `subject_kind = 'User' AND subject_namespace = ''` among them; the rollup's people query groups instead of DISTINCT (block 10); `test_the_join_matches_each_grant_to_its_own_binding_row` pins each key column and `test_every_provenance_query_searches_rbac_group_binding_by_its_primary_key` every reader's plan |
 | the operator chart's value is fixed (§2.5) | `local-development/gsd/kube.py#OPERATOR_CHART_CONFIG_SOURCE` and `PROVENANCE_ONLY_CONFIG_SOURCES`, read by the gate in `_FINDING_CASE` |
 
 ## 3. The design
@@ -434,6 +488,7 @@ write by accident.
 | the findings report's "Bindings naming a person" | `is_platform=0` | the review rule; the acknowledged ones in their own table |
 | the compliance snapshot's "Direct user grants" | `is_platform=0` | the review rule; "Acknowledged direct grants" beside it |
 | the access reports, `namespaces_with_bindings`, the namespace page's "People who reach it" | access | unchanged: access (orchestrator's note 2) |
+| the compliance snapshot's "Privileged direct grants" and its privileged table (through `Snapshot.user_bindings`, compliance_snapshot.py:24-26), the users report's per-person `direct_bindings` (snapshot.py:512), `Snapshot.binding_namespaces` (snapshot.py:389, the namespace report's "observed" set), the refresh log line's "naming a person" (poller.py:725) | access, presence, or a log line | unchanged: none counts grants to review; each lists or counts access a person holds, or a namespace's presence on a binding (review of the spec, OB2's N2) |
 
 ### 3.3 Platform wins
 
@@ -486,8 +541,10 @@ acknowledged grant out, as it leaves a platform user's out, so it agrees with th
 and `acknowledged`. The RBAC findings report filters its "Bindings naming a person" table by the flag, adds the
 table "Acknowledged by the operator" (user, scope, role, binding, config-source, exception), and adds
 `acknowledged_user` to its totals. `Snapshot.counts` gains `acknowledged_user_bindings`, and its `user_bindings`
-becomes the review count. The compliance snapshot shows "Acknowledged direct grants (excluded from the direct-user
-figures)" beside the platform figure. The other reports change nothing.
+becomes the review count. The compliance snapshot shows "Acknowledged direct grants (excluded from Direct user
+grants)" beside the platform figure: its "Privileged direct grants", the privileged-access review's figure,
+keeps them, as that report does, so the label names the one figure they leave. The other reports change
+nothing.
 
 ### 3.8 The Group gate
 
@@ -507,7 +564,9 @@ unchanged.
 | the binding gains the label or the annotation | −1 | +1 | the next binding refresh (default 3600 s) |
 | the label and annotation are removed | +1 | −1 | the next binding refresh |
 | the binding list saw the label, the direct-user list then saw the user, in one refresh | −1 | +1 | that refresh |
-| the direct-user list saw a user the binding list did not (a binding created between the two calls, or a binding list that failed) | stays | 0 | until a refresh reads both: the alerting direction (tested) |
+| the direct-user list saw a user the binding list did not (a binding created between the two calls) | stays | 0 | until a refresh reads both: the alerting direction (tested) |
+| the binding list failed (the refresh returns before the direct-user list) | no change: both tables keep the last refresh that read them, so a label removed since stays acknowledged, as the unmanaged finding stays `ok` | no change | until the binding list reads again; the pod log says `binding refresh for <cluster> failed` |
+| the direct-user list failed after the binding list read | each kept row reads the fresh provenance: a label added or removed counts at once, a deleted binding's kept row stays a grant to review | follows the label | until the direct-user list reads again |
 | the label was removed between the two calls of one refresh | −1 for one more refresh | +1 | the next refresh; the unmanaged finding has the same staleness, one interval |
 | a platform identity's binding is labelled | not listed (platform) | 0 | — |
 | a restart, a second replica, a values edit | no change: each pod reads the same stored rows | | — |
@@ -555,7 +614,7 @@ requires. Against `dd51b91f`, those are application 2.1.0 and chart 0.59.26. Aft
 | T503-8 | `test_t503_8_a_self_readers_own_acknowledged_grant_stays_listed_and_the_count_is_withheld` (`tests/test_view_scoping.py`) | at self the viewer's own labelled grant is listed, `total` 1, the three acknowledged fields `null`, Home's `direct_count` 1; at the wide tier it leaves `bindings` and is listed with `team-x` | guard half passes; the new half fails: `KeyError: 'acknowledged'` |
 | T503-9 | `test_t503_9_the_acknowledged_grants_are_counted_and_listed_with_what_acknowledged_them`, `test_t503_9_the_acknowledged_list_pages_like_bindings_and_ignores_the_namespace_filter` (`tests/test_user_binding_paging.py`) | three acknowledged (two by the label, one by the exception) and one to review, a labelled platform row: `bindings` `jdoe`, `excluded_platform` 1, `acknowledged` 3 in order with `managed_source`/`exception`; `limit=2` pages them 2 + 1 with `acknowledged_truncated`; `namespace=pay` narrows `bindings` and not the list | `bindings` holds all four people; `KeyError: 'acknowledged_bindings'` |
 | T503-10 | `TestAcknowledgedGrantsDisclosure` (`tests/test_ui.py`): the count and the closed disclosure, each row with its label or its quoted exception; the open state across a repaint whose payload changed; nothing when the count is 0 or `null`; no horizontal overflow open or closed at 375, 768 and 1280 px, light and dark; the namespace page's `acknowledged` badge, header and tile | `#du-acknowledged` is never drawn: the page has no `acknowledgedGrants` |
-| T503-11 | `test_t503_11_the_snapshot_counts_by_the_review_rule_and_keeps_every_grant_as_access` (`tests/test_reporting_snapshot.py`), `test_t503_11_the_findings_report_lists_them_apart_and_the_snapshot_counts_them` (`tests/test_reporting_catalogue.py`) | the snapshot's `user_bindings` 1, `acknowledged_user_bindings` 2, `platform_user_bindings` 1, every row with its state; the findings report's direct-user table `frank` only, its acknowledged table the two with their label or text, totals 1/2/1; the compliance snapshot's figures 1 and 2; the access matrix still lists all three | `KeyError: 'acknowledged'`; the findings table lists all three |
+| T503-11 | `test_t503_11_the_snapshot_counts_by_the_review_rule_and_keeps_every_grant_as_access` (`tests/test_reporting_snapshot.py`), `test_t503_11_the_findings_report_lists_them_apart_and_the_snapshot_counts_them` and `test_t503_11_an_acknowledged_privileged_grant_is_still_privileged_access` (`tests/test_reporting_catalogue.py`) | the snapshot's `user_bindings` 1, `acknowledged_user_bindings` 2, `platform_user_bindings` 1, every row with its state; the findings report's direct-user table `frank` only, its acknowledged table the two with their label or text, totals 1/2/1; the compliance snapshot's figures 1 and 2; the access matrix still lists all three | `KeyError: 'acknowledged'`; the findings table lists all three |
 | T503-12 | `test_t503_12_the_alert_series_counts_alerts_and_names_nobody` (`tests/test_metrics.py`) | `gsd_alerts_total{kind="direct_user_binding"}` is 1 on the cluster with a grant to review and absent on the one whose only grant is acknowledged; no user, binding, label value or text in the exposition | the name half passes; the count half fails: `c2` alerts too |
 | T503-13 | `test_the_review_rule_pattern_sees_its_two_names_but_not_prose` and `test_every_python_site_that_decides_or_consumes_platform_is_marked` (`tests/test_platform_classification_marker.py`) | `REVIEW_SITE` finds `_USER_ACKNOWLEDGED` and `_USER_TO_REVIEW`; every such line is marked | regression guard: passes (nothing reads the names); mutation M5 (§4.2) shows it bite |
 | T503-14 | the lab walk, §5 | rows 11 → 9, acknowledged 0 → 2, the alert subject "11 direct user grants" → "9 direct user grants" | the lab runs 2.0.0 |
@@ -564,7 +623,12 @@ Added by the research: `test_a_binding_seen_by_one_list_call_and_not_the_other_k
 decision 2: one refresh whose direct-user list saw a labelled binding its binding list did not keeps it alerting,
 and the next refresh that reads both acknowledges it), `test_the_view_and_the_finding_read_one_rule` (for every
 person's row, acknowledged exactly when the unmanaged finding says `ok`, an empty label value included, §2.1), and
-`test_a_persons_own_grants_keep_the_acknowledged_ones` (`include_acknowledged`, §3.4), all in `tests/test_rbac.py`.
+`test_a_persons_own_grants_keep_the_acknowledged_ones` (`include_acknowledged`, §3.4),
+`test_the_join_matches_each_grant_to_its_own_binding_row` (two clusters, one binding name in two namespaces, one
+person on two bindings, two people on one binding, and a Group and a ServiceAccount named like the User on a
+labelled binding: each grant reads its own row, none twice) and
+`test_every_provenance_query_searches_rbac_group_binding_by_its_primary_key` (every reader of the join, nine
+queries, plans a primary-key SEARCH and no SCAN, MATERIALIZE or automatic index, §2.4), all in `tests/test_rbac.py`.
 
 ### 4.2 Each test fails without the change
 
@@ -602,7 +666,13 @@ FAILED tests/test_reporting_catalogue.py::...::test_t503_11_the_findings_report_
     AssertionError: assert ['frank', 'oc...ndor-support'] == ['frank']
 FAILED tests/test_metrics.py::...::test_t503_12_the_alert_series_counts_alerts_and_names_nobody
     AssertionError: {... cluster="c1" ...: 1.0, ... cluster="c2" ...: 1.0}
-15 failed, 8 passed
+FAILED tests/test_rbac.py::TestAcknowledgedDirectGrants::test_the_join_matches_each_grant_to_its_own_binding_row
+    AttributeError: 'Store' object has no attribute 'acknowledged_user_bindings'
+FAILED ...::test_every_provenance_query_searches_rbac_group_binding_by_its_primary_key
+    AttributeError: 'Store' object has no attribute 'acknowledged_user_bindings'
+FAILED tests/test_reporting_catalogue.py::...::test_t503_11_an_acknowledged_privileged_grant_is_still_privileged_access
+    AssertionError: assert (1, 1) == (0, 1)
+18 failed, 8 passed
 ```
 
 The 8 that pass are the guards: T503-3, T503-5, T503-6 and the five cases of
@@ -626,35 +696,42 @@ Mutations of the implemented copy, each in a full copy of the tree, each running
 | M10 | the snapshot's direct-user figure counts acknowledged rows | 2 failed, 58 passed | both T503-11 |
 | M11 | the page drops the disclosure under the worklist | 8 failed, 2 passed | T503-10: the count, the repaint, all six overflow cases |
 | M12 | the disclosure's state is kept in the DOM instead of `view` | 1 failed | T503-10: the open state across the repaint |
+| M13 | one condition of `_USER_PROVENANCE` dropped, each of the eight in turn (cluster, binding kind, namespace, binding name, user, `subject_kind`, `subject_namespace`, both subject conditions) | over the nine related test files: 2 failed (cluster, binding namespace, binding name, user, `subject_kind`, both subject conditions) or 1 failed (binding kind, `subject_namespace`), of 290 with 3 skipped | the plan test for all eight; the join test for the six that change a result |
+| M14 | the rollup's people query back to `SELECT DISTINCT` | 1 failed, 286 passed, 3 skipped | the plan test: `MATERIALIZE (subquery-1)`, `SCAN rbac_group_binding` |
+| M15 | G3's index row names #502 (`docs/specs/README.md` and the spec's header) | 1 failed, 85 passed (`tests/test_specs_index.py`, 40 rows) | the pin: `AssertionError: ('G3 is #503', '502')` |
 
 ### 4.3 The proof
 
-§7 was not written by hand. The design was implemented in a copy of `dd51b91f` (its full hermetic suite: `6149
-passed, 22 skipped, 665 deselected, 5 xfailed`), and each block's Old and New text was cut from that copy at whole
-lines with the shortest context that is unique at its turn. Eight blocks were then moved to anchors no SPEC_G2
-block changes (orchestrator's note 1). The 69 blocks, applied in order to a clean export of `dd51b91f`, give the
-implemented copy byte for byte (`cmp` over all 28 files).
+§7 was not written by hand. The design was implemented in a copy of `dd51b91f`, and each block's Old and New text
+was cut from that copy at whole lines with the shortest context that is unique at its turn. Eight blocks were then
+moved to anchors no SPEC_G2 block changes (orchestrator's note 1). The 69 blocks, applied in order to a clean
+export of `dd51b91f`, gave the implemented copy byte for byte (`cmp` over all 28 files). The review's corrections
+(note 5) changed blocks 1, 10, 31, 43, 51, 61 and 65 in place; the count stays 69.
 
-On a fresh `git worktree add --detach … dd51b91f`:
+The revision was proved on a fresh `git worktree add --detach … f144a82b`, main after SPEC_G1, SPEC_E2 and SPEC_G2
+merged as specifications, with the same code as `dd51b91f`. Main then took SPEC_E4 (`3b3d0010`), which changes no
+code (`git diff --stat f144a82b 3b3d0010 -- local-development/gsd charts` is empty); the check below was run there
+again, with the same result:
 
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G3_acknowledged_direct_grants.md <tree>
     69 blocks check out across 28 files
     python3 local-development/apply-spec-blocks.py docs/specs/SPEC_G3_acknowledged_direct_grants.md <tree> --apply
-    28 files changed, 797 insertions(+), 60 deletions(-)
+    28 files changed, 916 insertions(+), 62 deletions(-)
 
-After `--apply`, every changed file is identical (`cmp`) to the implemented copy. On that tree, with `PYTHONPATH` at
-its `local-development` (the imported `gsd` read `2.1.0` from it):
+On that tree, with `PYTHONPATH` at its `local-development`:
 
 | check | command | result |
 |---|---|---|
-| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `6149 passed, 22 skipped, 665 deselected, 5 xfailed`: the 23 new hermetic tests among them |
+| the new tests before | the test blocks alone (43–56) on a clean export of `f144a82b` | `18 failed`, each for §4.2's reason; the 8 guards pass |
+| hermetic suite | `pytest tests/ -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | `1 failed, 6252 passed, 26 skipped, 665 deselected, 5 xfailed`; the 26 new hermetic tests pass. The one failure is `test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached` on **SPEC_G2's** row: `('G2', 'app 2.1.0, chart 0.60.0', 'pyproject.toml is already 2.1.0')`. Applied alone on main, this spec's release fields take application 2.1.0, which SPEC_G2's specified row claims. In the build order G2 is implemented first, its row leaves `specified`, and blocks 66–69 are re-derived to 2.2.0 (orchestrator's note 1) |
 | browser suite | `pytest tests/test_ui.py -q -p no:cacheprovider --browser chromium` | `661 passed`: the 10 new ones among them |
-| the spec index and citations | `pytest tests/test_specs_index.py tests/test_docs_citations.py` in the spec's own tree | passed (§7's names resolve through the spec's blocks) |
+| mutations | §4.2's M13 (each of the eight join conditions), M14 (`SELECT DISTINCT`), M15 (the index pin) | each red, as §4.2 lists |
+| the spec index and citations | `pytest tests/test_specs_index.py tests/test_docs_citations.py` in the spec's own tree (40 rows, on `3b3d0010`) | `1587 passed, 22 skipped` |
 | markdown | `markdownlint-cli2` on the CHANGELOG, `API.md`, the exclusions document and `ACCESS_CONTROL.md`, before and after | the same 11 findings before and after (MD004 2, MD012 2, MD018 1, MD040 6), all already on main; the specs index: 0 |
-| chart | `helm lint`; `helm template t charts/group-sync-dashboard` of `dd51b91f` and of the applied tree (helm v4.3.0), diffed | lint clean; the only differences are the chart label (0.59.25 → 0.59.26) and `app.kubernetes.io/version` on 34 objects each, the two image tags following `appVersion`, and `checksum/config` |
+| chart | `helm lint`; `helm template t charts/group-sync-dashboard` of `f144a82b` and of the applied tree (helm v4.3.0), diffed | lint clean; the only differences are the chart label (0.59.25 → 0.59.26) and `app.kubernetes.io/version` on 34 objects each, the two image tags following `appVersion`, and `checksum/config` |
 | RBAC | every rendered Role, ClusterRole and binding, atom by atom (rule × group × resource × verb × name; binding × subject) | 66 before, 66 after; REMOVED 0, ADDED 0 |
 | Python 3.11 | `ast.parse(source, feature_version=(3, 11))` on the 20 changed Python files | all parse; CI's 3.11 job was not run here |
-| after SPEC_G2 | G2's 74 blocks applied to a clean `dd51b91f`, then this spec's blocks 1–65 | 65 apply, 66–69 do not (the release fields, orchestrator's note 1); the hermetic suite on that tree, a copy without `.git`: `6200 passed, 22 skipped, 675 deselected, 5 xfailed`, and 3 failed, each `fatal: not a git repository` (`test_build_and_push_report`, `test_migration_needs_app_release`, `test_tree_hygiene`: they read the tree through `git`), which pass on both git trees above |
+| after SPEC_G2 | main's SPEC_G2 (75 blocks) applied to a fresh worktree of `f144a82b`, then this spec's blocks 1–65 | 65 apply, 66–69 do not (the release fields, orchestrator's note 1); the hermetic suite on that git tree: `1 failed, 6307 passed, 26 skipped, 675 deselected, 5 xfailed`. The one failure is the same index test on **SPEC_E2's** row, `('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.60.0')`, and SPEC_G2 applied alone gives it too: SPEC_E2 and SPEC_G2 both name chart 0.60.0 on main. It is not this spec's, and it is reported to the orchestrator |
 
 The probes (§2.4's plan and timings, §2.7's classification, the mutation runs) ran in a scratch directory and are
 not committed. Each is described well enough to repeat: the plan and the timings build a `Store` from
@@ -705,7 +782,7 @@ is development):
 - **To acknowledge a grant:** label or annotate its binding through whatever owns it (the policy configuration, or
   the team's GitOps repository). The next binding refresh, by default within an hour, applies it. Nothing in this
   chart's values file changes.
-- **Time:** under 0.15 ms per query at the lab's size. At a hundred times the lab, the rollup takes 11.8 ms instead
+- **Time:** under 0.15 ms per query at the lab's size. At a hundred times the lab, the rollup takes 1.9 ms instead
   of 0.7 ms (§2.4).
 - **Code:** the table below.
 
@@ -713,17 +790,17 @@ Lines added and removed by §7, from `git diff --numstat` on the implemented cop
 
 | file | added | removed |
 |---|---|---|
-| `local-development/gsd/store.py` | 107 | 28 |
+| `local-development/gsd/store.py` | 113 | 30 |
 | `local-development/gsd/static/index.html` | 54 | 6 |
 | `local-development/gsd/api.py` | 31 | 4 |
 | `local-development/gsd/reporting/catalogue/binding_findings.py` | 14 | 3 |
 | `local-development/gsd/reporting/snapshot.py` | 13 | 4 |
-| `local-development/gsd/kube.py` | 8 | 0 |
+| `local-development/gsd/kube.py` | 9 | 0 |
 | `local-development/gsd/storage.py` | 6 | 0 |
 | `local-development/gsd/state.py` | 5 | 2 |
 | `local-development/gsd/static/app.css` | 5 | 0 |
 | `local-development/gsd/reporting/catalogue/compliance_snapshot.py` | 1 | 0 |
-| `local-development/tests/test_rbac.py` | 120 | 0 |
+| `local-development/tests/test_rbac.py` | 206 | 0 |
 | `local-development/tests/test_ui.py` | 88 | 0 |
 | `local-development/tests/test_namespaces_api.py` | 57 | 0 |
 | `local-development/tests/test_user_binding_paging.py` | 52 | 0 |
@@ -731,12 +808,12 @@ Lines added and removed by §7, from `git diff --numstat` on the implemented cop
 | `local-development/tests/test_view_scoping.py` | 30 | 0 |
 | `local-development/tests/test_metrics.py` | 28 | 0 |
 | `local-development/tests/reporting_seed.py` | 24 | 0 |
-| `local-development/tests/test_reporting_catalogue.py` | 24 | 0 |
+| `local-development/tests/test_reporting_catalogue.py` | 48 | 0 |
 | `local-development/tests/test_reporting_snapshot.py` | 18 | 0 |
 | `local-development/tests/test_platform_classification_marker.py` | 16 | 1 |
 | `local-development/API.md` | 22 | 2 |
-| `charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md` | 18 | 5 |
-| `docs/CHANGELOG.md` | 14 | 0 |
+| `charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md` | 19 | 5 |
+| `docs/CHANGELOG.md` | 15 | 0 |
 | `charts/group-sync-dashboard/Chart.yaml` | 6 | 2 |
 | `docs/ACCESS_CONTROL.md` | 1 | 1 |
 | `local-development/pyproject.toml` | 1 | 1 |
@@ -768,7 +845,8 @@ CHART_CONFIG_SOURCE = "group-sync-dashboard"
 # through that chart's extraSubjects or token.readers would read as a policy operator in use.
 OPERATOR_CHART_CONFIG_SOURCE = "group-sync-operator-helm"
 # The config-source values that never show a policy operator is in use: the two charts' own provenance. A
-# constant, not a values key, because neither chart lets an estate change its value.
+# constant, not a values key: each chart renders its own name and has no key for it. An umbrella chart that
+# aliases one renders the alias (Helm's .Chart.Name), which opens the gate as a policy value would: noisy, never silent.
 PROVENANCE_ONLY_CONFIG_SOURCES = (CHART_CONFIG_SOURCE, OPERATOR_CHART_CONFIG_SOURCE)
 ```
 
@@ -967,24 +1045,38 @@ New text:
                     GROUP BY namespace
 ```
 
-### Block 10 — local-development/gsd/store.py: the rollup's people follow the review rule
+### Block 10 — local-development/gsd/store.py: the rollup's people follow the review rule, grouped rather than DISTINCT so the join stays a primary-key SEARCH (§2.4)
 
 <!-- block: local-development/gsd/store.py | edit -->
 
 Old text:
 
 ```python
+                """SELECT DISTINCT
+                          CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                               ELSE binding_namespace END AS namespace,
+                          user_name
                      FROM user_binding
                     -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
                     WHERE cluster_id=? AND is_platform=0
+                    ORDER BY user_name""",
 ```
 
 New text:
 
 ```python
+                # GROUP BY, not DISTINCT (#503): SQLite never flattens a subquery on the right of a LEFT
+                # JOIN into a DISTINCT query (optoverview.html, flattening constraint 3), so DISTINCT read
+                # _USER_PROVENANCE by materializing it — a SCAN of all of rbac_group_binding and an
+                # automatic index — where GROUP BY keeps the primary-key SEARCH. The same pairs.
+                """SELECT CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                               ELSE binding_namespace END AS namespace,
+                          user_name
                      FROM user_binding""" + self._USER_PROVENANCE + """
                     -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's review rule (#503)
                     WHERE cluster_id=? AND """ + self._USER_TO_REVIEW + """
+                    GROUP BY namespace, user_name
+                    ORDER BY user_name""",
 ```
 
 ### Block 11 — local-development/gsd/store.py: `_direct_user_binding_where` takes `include_acknowledged`
@@ -1493,7 +1585,7 @@ New text:
 
 ```python
                                ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded from the direct-user figures)", c["platform_user_bindings"]),
-                               ("Acknowledged direct grants (excluded from the direct-user figures)", c["acknowledged_user_bindings"]),
+                               ("Acknowledged direct grants (excluded from Direct user grants)", c["acknowledged_user_bindings"]),
 ```
 
 ### Block 32 — local-development/gsd/static/index.html: the disclosure's state, closed on arrival (§3.6)
@@ -1883,6 +1975,92 @@ class TestAcknowledgedDirectGrants:
         assert [(r["user_name"], r["acknowledged"]) for r in own] == [("jdoe", 1)]
         assert store.count_direct_user_bindings("crc", user_name="jdoe", include_acknowledged=True) == 1
 
+    def test_the_join_matches_each_grant_to_its_own_binding_row(self, store, monkeypatch):
+        """The provenance join matches the whole primary key: the cluster, the binding (kind, namespace, name)
+        and the User subject. Each pair below differs from its neighbour in one of those only, so a join that
+        dropped one would lend a label to the wrong grant or count one grant twice."""
+        from gsd import poller
+        from gsd.config import ClusterConfig
+        from gsd.kube import _user_binding_views
+
+        def rb(ns, name, subjects, labelled):
+            labels = {"rbac.ocp.io/config-source": "team-x"} if labelled else {}
+            return {"kind": "RoleBinding", "metadata": {"name": name, "namespace": ns, "labels": labels},
+                    "roleRef": {"kind": "ClusterRole", "name": "edit"}, "subjects": subjects}
+
+        def user(name):
+            return {"kind": "User", "name": name}
+
+        objects = {"crc": [rb("ns-a", "edit", [user("jdoe")], True), rb("ns-b", "edit", [user("jdoe")], False),
+                           rb("ns-c", "bob-a", [user("bob")], True), rb("ns-c", "bob-b", [user("bob")], False),
+                           rb("ns-d", "pair", [user("ann"), user("cat")], True),
+                           rb("ns-e", "dev", [{"kind": "Group", "name": "dev"}, user("dev")], True),
+                           rb("ns-f", "builder", [{"kind": "ServiceAccount", "name": "builder", "namespace": "ci"},
+                                                  user("builder")], True),
+                           rb("ns-g", "shared", [user("eve")], True)],
+                   "other": [rb("ns-g", "shared", [user("eve")], False)]}
+
+        class FakeClient:
+            def __init__(self, cluster, timeout):
+                self.objects = objects[cluster.name]
+            def fetch_bindings(self):
+                return [v for o in self.objects for v in _binding_views(o, o["kind"])]
+            def fetch_user_bindings(self):
+                return [v for o in self.objects for v in _user_binding_views(o, o["kind"])]
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        store.upsert_cluster("other", "https://y", True)
+        for name in ("crc", "other"):
+            poller.refresh_bindings(store, ClusterConfig(name, "https://x", token_env="T"), timeout=5)
+        key = lambda rows: sorted((r["binding_namespace"], r["binding_name"], r["user_name"]) for r in rows)  # noqa: E731
+        acknowledged = [("ns-a", "edit", "jdoe"), ("ns-c", "bob-a", "bob"), ("ns-d", "pair", "ann"), ("ns-d", "pair", "cat"),
+                        ("ns-e", "dev", "dev"), ("ns-f", "builder", "builder"), ("ns-g", "shared", "eve")]
+        to_review = [("ns-b", "edit", "jdoe"), ("ns-c", "bob-b", "bob")]
+        assert key(store.acknowledged_user_bindings("crc")) == acknowledged
+        assert store.acknowledged_user_binding_count("crc") == 7
+        assert key(store.direct_user_bindings("crc")) == to_review and store.count_direct_user_bindings("crc") == 2
+        assert key(store.direct_user_bindings("crc", include_acknowledged=True)) == sorted(acknowledged + to_review)
+        assert key(store.direct_user_bindings("other")) == [("ns-g", "shared", "eve")]
+        assert store.acknowledged_user_binding_count("other") == 0
+
+    def test_every_provenance_query_searches_rbac_group_binding_by_its_primary_key(self, store, monkeypatch):
+        """Each query that reads _USER_PROVENANCE must look up a grant's own row by rbac_group_binding's
+        whole primary key, never read the subquery by materializing it: that is a SCAN of every subject
+        row on the cluster, ServiceAccounts and Groups included, plus an automatic index. SQLite never
+        flattens a subquery on the right of a LEFT JOIN into a DISTINCT query (optoverview.html,
+        flattening constraint 3), and a join that loses a key column loses the full SEARCH too."""
+        import sqlite3
+        if sqlite3.sqlite_version_info < (3, 40, 0):
+            pytest.skip("SQLite flattens a LEFT JOIN's subquery under an aggregate from 3.40.0 (select.c, rule 3c)")
+        self._refresh(store, monkeypatch, [
+            self._crb("jdoe-edit", "jdoe", labels={"rbac.ocp.io/config-source": "team-x"}),
+            self._crb("asmith-edit", "asmith")])
+        real, seen = Store._rows, []
+
+        def recording(self_, sql, params=()):
+            seen.append((sql, tuple(params)))
+            return real(self_, sql, params)
+
+        monkeypatch.setattr(Store, "_rows", recording)
+        store.direct_user_bindings("crc", limit=10)
+        store.count_direct_user_bindings("crc")
+        store.user_bindings_by_namespace("crc")
+        store.acknowledged_user_bindings("crc", limit=10)
+        store.acknowledged_user_binding_count("crc")
+        store.namespaces("crc")
+        store.namespace_detail("crc", "")
+        joined = [(sql, params) for sql, params in seen if "ack_cluster" in sql]
+        assert len(joined) == 9, len(joined)
+        search = ("SEARCH rbac_group_binding USING INDEX sqlite_autoindex_rbac_group_binding_1 (cluster_id=? AND "
+                  "binding_kind=? AND binding_namespace=? AND binding_name=? AND subject_kind=? AND "
+                  "subject_namespace=? AND group_name=?)")
+        for sql, params in joined:
+            plan = [r["detail"] for r in real(store, "EXPLAIN QUERY PLAN " + sql, params)]
+            assert any(line.startswith(search) for line in plan), (plan, sql)
+            assert not any(line.startswith(("SCAN rbac_group_binding", "MATERIALIZE")) or "AUTOMATIC" in line
+                           for line in plan), (plan, sql)
+
 
 class TestDirectUserAlert:
 ```
@@ -2264,9 +2442,33 @@ class TestAcknowledgedDirectGrants:
         assert (bf.totals["direct_user"], bf.totals["acknowledged_user"], bf.totals["platform_user"]) == (1, 2, 1)
         figures = {k: v for s in cs.sections for b in s.blocks if getattr(b, "items", None) for k, v in b.items}
         assert figures["Direct user grants"] == 1
-        assert figures["Acknowledged direct grants (excluded from the direct-user figures)"] == 2
+        assert figures["Acknowledged direct grants (excluded from Direct user grants)"] == 2
         matrix = next(b for s in am.sections for b in s.blocks if getattr(b, "title", "") == "Matrix")
         assert sorted(r[1] for r in matrix.rows) == ["frank", "ocp-oauth-bind-serviceid", "vendor-support"]
+
+    def test_t503_11_an_acknowledged_privileged_grant_is_still_privileged_access(self, tmp_path):
+        """An acknowledged grant leaves the review figure only. A break-glass cluster-admin that carries the
+        exception is still privileged access, so "Privileged direct grants" (the privileged-access review's
+        figure) and its table keep it, and the acknowledged figure names the one figure it is left out of."""
+        from gsd.store import Store
+        from reporting_seed import _iso
+        store = Store(str(tmp_path / "w.db"))
+        now = _iso(NOW)
+        store.upsert_cluster(CLUSTER, "https://api.crc.testing:6443", True)
+        store.record_poll(CLUSTER, "ok", None)
+        grant = {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "breakglass-admin",
+                 "role_kind": "ClusterRole", "role_name": "cluster-admin"}
+        store.replace_user_bindings(CLUSTER, [{**grant, "user_name": "breakglass", "is_platform": 0}], now)
+        store.replace_bindings(CLUSTER, [{**grant, "group_name": "breakglass", "subject_kind": "User",
+                                          "exception": "break-glass account, INC-1"}], now)
+        store.replace_operator_configs(CLUSTER, None, now)
+        d = tmp_path / "s"; d.mkdir(); path = write_snapshot(store, d)
+        store.close()
+        with Snapshot(path) as snap:
+            cs = _build(snap, "compliance-snapshot")
+        figures = {k: v for s in cs.sections for b in s.blocks if getattr(b, "items", None) for k, v in b.items}
+        assert (figures["Direct user grants"], figures["Privileged direct grants"]) == (0, 1)
+        assert figures["Acknowledged direct grants (excluded from Direct user grants)"] == 1
 ```
 
 ### Block 52 — local-development/tests/test_metrics.py: T503-12
@@ -2589,9 +2791,10 @@ New text:
 ```text
 - **Do not use `group-sync-dashboard` or `group-sync-operator-helm`.** These values are reserved for two charts' own
   RBAC: this chart's (`templates/_helpers.tpl`, `gsd.rbacLabels`) and the group-sync-operator chart's (its
-  `group-sync-operator-helm.rbacLabels`, from chart 0.14.1). Each chart sets its value on every RBAC object it
-  renders, and neither value can be changed. They silence those charts' bindings, but neither is ever taken as
-  evidence that a policy system is in use (#354, #503).
+  `group-sync-operator-helm.rbacLabels`, from chart 0.14.1). Each chart sets its own name on every RBAC object it
+  renders, with no values key for it. They silence those charts' bindings, but neither is ever taken as
+  evidence that a policy system is in use (#354, #503). An umbrella chart that installs either under a
+  dependency `alias` renders the alias instead, which counts as a policy system's value.
 ```
 
 ### Block 62 — charts/group-sync-dashboard/docs/UNMANAGED_GRANT_EXCLUSIONS.md: the Group gate names both values
@@ -2674,7 +2877,8 @@ New text:
   a user directly, on a binding carrying the `rbac.ocp.io/config-source` label (any value) or the
   `rbac.ocp.io/unmanaged-exception` annotation, is acknowledged: the rule the unmanaged finding already keeps. It
   leaves the Namespace audit worklist and its tiles, the namespace index's counts, the namespace page's count and
-  the direct-user alert's total, and the RBAC findings report's and the compliance snapshot's direct-user figures.
+  the direct-user alert's total, the RBAC findings report's direct-user table and the compliance snapshot's
+  "Direct user grants".
   `/user-bindings` counts it in `acknowledged`, beside `excluded_platform`, and lists it in `acknowledged_bindings`
   with its label value or its exception text; the tab shows the count and a disclosure listing each one. A platform
   user stays a platform user. A reader's own acknowledged grants stay on their self view and Home, and the access
