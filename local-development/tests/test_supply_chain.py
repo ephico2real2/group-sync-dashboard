@@ -11,7 +11,10 @@ WHY TEXT TESTS. None of this can run here: no registry, no OIDC token, no Fulcio
 is the shape — which job holds which permission, what is gated on what, that everything names the
 digest and never a tag — because every defect this repo has had in its workflows was a shape
 defect that a green run hid (#34, #37, the unpinned Grype). These read the real YAML and the real
-script rather than restating either.
+script rather than restating either. The exceptions are #410's two registry checks, the chart-publish
+label gate and the pull-request version check: their refusals are decisions over registry answers, so
+those steps are RUN, against a stub skopeo (TestTheChartPublishLabelGate,
+TestTheChartVersionIsNeverAReleasedApplicationVersion).
 
 BOTH STATES. Each switch is asserted as the literal expression the workflow evaluates: unset or
 anything but 'false' runs the job; 'false' skips it and leaves every other job untouched.
@@ -19,19 +22,28 @@ anything but 'false' runs the job; 'false' skips it and leaves every other job u
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import os
 import pathlib
 import re
 import subprocess
+import tokenize
 
+import pytest
 import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 PUBLISH = REPO / ".github" / "workflows" / "publish.yml"
 HELM = REPO / ".github" / "workflows" / "helm.yaml"
+CI = REPO / ".github" / "workflows" / "ci.yml"
 SCRIPT = REPO / "local-development" / "build-and-push-external.sh"
 REPORT_WRAPPER = REPO / "local-development" / "build-and-push-report.sh"   # the report image (C3)
 SCAN_DOC = REPO / "docs" / "image-vulnerability-scan.md"
 INSTALL_GUIDE = REPO / "docs" / "HELM_DOWNLOAD_AND_INSTALL.md"
+RELEASE_CRC = REPO / "local-development" / "release-crc.sh"   # the deploy-side label guard (#414)
+RELEASING = REPO / "docs" / "RELEASING.md"
 
 
 def _jobs(path: pathlib.Path) -> dict:
@@ -408,3 +420,363 @@ class TestTwoImagesOneChain:
         assert "Every image `publish.yml` pushes is signed" not in section, "a branch dispatch pushes unsigned (D9)"
         assert "A fork verifies against its own identity" not in section, "publish is skipped on forks"
         assert "Forks do not sign under this workflow" in section
+
+
+# ── The chart-publish label gate (#410, SPEC_E8) ─────────────────────────────────────────────────
+#
+# AN EXECUTED CLASS (with the pull-request check's, below). The label step's `run:` is lifted from the parsed
+# helm.yaml and run by bash
+# with the flags GitHub gives `shell: bash`, against a stub `skopeo` that answers from a registry kept in a JSON file
+# and logs every call — the real step, the real Chart.yaml and values.yaml, only the registry replaced (the harness
+# test_release_crc.py uses for the same guard's other half). The stub answers `inspect --config` on a manifest list
+# for linux/amd64, as the real skopeo answers for the runner's platform, so a reader that trusted that answer would
+# pass the stale-arm64 case below. `_push` with one version writes a bare manifest, not an index, so an index with no
+# Linux child needs two children.
+
+LABEL_STEP = "Label the image this chart version deploys"
+REGISTRY_NS = "quay.io/example"
+DASHBOARD = f"{REGISTRY_NS}/group-sync-dashboard"
+REPORT = f"{REGISTRY_NS}/group-sync-dashboard-report"
+CHART_FILE = REPO / "charts" / "group-sync-dashboard" / "Chart.yaml"
+VALUES_FILE = REPO / "charts" / "group-sync-dashboard" / "values.yaml"
+APP = re.search(r'^appVersion: "(\d+\.\d+\.\d+)"$', CHART_FILE.read_text(), re.M).group(1)
+CHART = re.search(r"^version: (\d+\.\d+\.\d+)$", CHART_FILE.read_text(), re.M).group(1)
+
+SKOPEO_STUB = r'''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["STUB_LOG"], "a") as log:
+    log.write("skopeo " + " ".join(args) + "\n")
+state = json.load(open(os.environ["STUB_REGISTRY"]))
+
+
+def resolve(ref):
+    ref = ref.removeprefix("docker://")
+    if ref in os.environ.get("STUB_UNREACHABLE", "").split():
+        sys.exit(f'pinging container registry {ref.split("/")[0]}: dial tcp: lookup: no such host')
+    if "@" in ref:
+        repo, digest = ref.split("@", 1)
+    else:
+        repo, tag = ref.rsplit(":", 1)
+        digest = state["tags"].get(f"{repo}:{tag}")
+    if f"{repo}@{digest}" not in state["manifests"]:
+        sys.exit(f"reading manifest {ref} in {repo}: manifest unknown")
+    return repo, digest, state["manifests"][f"{repo}@{digest}"]
+
+
+if args[0] == "login":
+    sys.stdin.read()
+elif args[0] == "copy":
+    _, digest, _ = resolve(args[-2])
+    state["tags"][args[-1].removeprefix("docker://")] = digest
+    json.dump(state, open(os.environ["STUB_REGISTRY"], "w"))
+elif args[0] == "inspect":
+    repo, digest, manifest = resolve(args[-1])
+    if "--format" in args:
+        print(digest)
+    elif "--config" in args:
+        if "manifests" in manifest:
+            amd64 = next(m["digest"] for m in manifest["manifests"] if m["platform"] == {"architecture": "amd64", "os": "linux"})
+            manifest = state["manifests"][f"{repo}@{amd64}"]
+        print(json.dumps(state["blobs"][f'{repo}@{manifest["config"]["digest"]}']))
+    else:
+        print(json.dumps(manifest))
+else:
+    sys.exit(f"stub skopeo: unexpected call {args}")
+'''
+
+
+def _digest(obj: dict) -> str:
+    return "sha256:" + hashlib.sha256(json.dumps(obj, sort_keys=True).encode()).hexdigest()
+
+
+def _push(registry: dict, repo: str, tag: str, *versions: str, platforms: tuple = (("amd64", "linux"), ("arm64", "linux"))) -> str:
+    """Push `repo:tag`: one version is one image on the first platform; two are an index of the first two.
+    A version of None is a child without the label (BuildKit's unknown/unknown attestation manifests)."""
+    children = []
+    for (arch, os_), version in zip(platforms, versions):
+        config = {"architecture": arch, "os": os_, "rootfs": {"type": "layers", "diff_ids": []},
+                  "config": {"Labels": {} if version is None else {"org.opencontainers.image.version": version}}}
+        registry["blobs"][f"{repo}@{_digest(config)}"] = config
+        manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": _digest(config)},
+                    "layers": []}
+        registry["manifests"][f"{repo}@{_digest(manifest)}"] = manifest
+        children.append({"mediaType": manifest["mediaType"], "digest": _digest(manifest),
+                         "platform": {"architecture": arch, "os": os_}})
+    top = registry["manifests"][f'{repo}@{children[0]["digest"]}'] if len(children) == 1 else {
+        "schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": children}
+    registry["manifests"][f"{repo}@{_digest(top)}"] = top
+    registry["tags"][f"{repo}:{tag}"] = _digest(top)
+    return _digest(top)
+
+
+def _released() -> dict:
+    """The registry as publish.yml leaves it after the release merge: both aliases carry the appVersion."""
+    registry: dict = {"tags": {}, "manifests": {}, "blobs": {}}
+    _push(registry, DASHBOARD, APP, APP)
+    _push(registry, REPORT, APP, APP)
+    return registry
+
+
+def _label(tmp_path: pathlib.Path, registry: dict, *, chart_version: str = CHART, pin: str = "",
+           credentials: bool = True, unreachable: str = "",
+           step: tuple[pathlib.Path, str, str] = (HELM, "release", LABEL_STEP)) -> tuple[subprocess.CompletedProcess, str, dict]:
+    """Run `step` (the label step unless told otherwise) as GitHub runs `shell: bash`, in a tree carrying the
+    real chart files."""
+    tree = tmp_path / "tree"
+    (tree / "charts" / "group-sync-dashboard").mkdir(parents=True)
+    (tree / "charts" / "group-sync-dashboard" / "Chart.yaml").write_text(
+        CHART_FILE.read_text().replace(f"\nversion: {CHART}\n", f"\nversion: {chart_version}\n", 1))
+    values = VALUES_FILE.read_text()
+    if pin:
+        values = values.replace('\n  tag: ""\n', f'\n  tag: "{pin}"\n', 1)
+    (tree / "charts" / "group-sync-dashboard" / "values.yaml").write_text(values)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "skopeo").write_text(SKOPEO_STUB)
+    (bindir / "skopeo").chmod(0o755)
+    state, log = tmp_path / "registry.json", tmp_path / "calls.log"
+    state.write_text(json.dumps(registry))
+    log.write_text("")
+    script = tmp_path / "step.sh"
+    script.write_text(_step(_jobs(step[0])[step[1]], step[2])["run"])
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "STUB_REGISTRY": str(state), "STUB_LOG": str(log),
+           "STUB_UNREACHABLE": unreachable, "REGISTRY": "quay.io", "REGISTRY_NAMESPACE": "example",
+           "REGISTRY_USERNAME": "robot" if credentials else "", "REGISTRY_PASSWORD": "not-a-secret" if credentials else ""}
+    done = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)], cwd=tree, env=env,
+                          capture_output=True, text=True)
+    return done, log.read_text(), json.loads(state.read_text())
+
+
+class TestTheChartPublishLabelGate:
+    def test_t410_1_a_stale_dashboard_alias_is_refused_before_anything_is_copied(self, tmp_path) -> None:
+        """#410 as measured on quay: `:0.39.0` existed before application 0.39.0 and was application 0.24.0."""
+        registry = _released()
+        _push(registry, DASHBOARD, APP, "0.24.0")
+        done, log, after = _label(tmp_path, registry)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"{DASHBOARD}:{APP} is application 0.24.0, not {APP} (#410)" in done.stdout
+        assert "skopeo copy" not in log and "skopeo login" not in log, log
+        assert f"{DASHBOARD}:{CHART}" not in after["tags"]
+
+    def test_t410_2_matching_labels_copy_and_compare_the_digest_as_today(self, tmp_path) -> None:
+        done, log, after = _label(tmp_path, _released())
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert f"skopeo copy --all --preserve-digests docker://{DASHBOARD}:{APP} docker://{DASHBOARD}:{CHART}" in log
+        assert after["tags"][f"{DASHBOARD}:{CHART}"] == after["tags"][f"{DASHBOARD}:{APP}"]
+        assert f"labelled: {DASHBOARD}:{CHART} -> {APP}" in done.stdout
+
+    def test_t410_3_a_pinned_dashboard_tag_is_copied_as_pinned(self, tmp_path) -> None:
+        registry = _released()
+        _push(registry, DASHBOARD, "1.4.0", "1.4.0")
+        _push(registry, DASHBOARD, APP, "0.24.0")      # the unpinned alias is not what the chart deploys
+        done, log, after = _label(tmp_path, registry, pin="1.4.0")
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert f"skopeo copy --all --preserve-digests docker://{DASHBOARD}:1.4.0 docker://{DASHBOARD}:{CHART}" in log
+        assert after["tags"][f"{DASHBOARD}:{CHART}"] == registry["tags"][f"{DASHBOARD}:1.4.0"]
+
+    def test_t410_18_the_run_log_names_the_label_compared_for_both_images(self, tmp_path) -> None:
+        """The issue's first-release check reads this log: both labels compared, each read before the copy."""
+        done, log, _ = _label(tmp_path, _released())
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert f"{DASHBOARD}:{APP} is application {APP}" in done.stdout
+        assert f"{REPORT}:{APP} is application {APP}" in done.stdout
+        assert log.index(f"skopeo inspect --raw docker://{REPORT}:{APP}") < log.index("skopeo copy")
+
+    def test_t410_19_a_pin_on_the_dashboard_leaves_the_report_checked(self, tmp_path) -> None:
+        """image.tag is the operator's choice for the dashboard only; the report still resolves appVersion, as
+        release-crc.sh's test_argocd_branch_still_checks_report_when_only_the_dashboard_tag_is_pinned holds."""
+        registry = _released()
+        _push(registry, DASHBOARD, "1.4.0", "1.4.0")
+        _push(registry, REPORT, APP, "0.24.0")
+        done, log, _ = _label(tmp_path, registry, pin="1.4.0")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"{DASHBOARD}:1.4.0 (pinned in values.yaml; not checked against appVersion)" in done.stdout
+        assert f"{REPORT}:{APP} is application 0.24.0, not {APP} (#410)" in done.stdout
+        assert "skopeo copy" not in log
+
+    def test_t410_4_a_stale_report_alias_is_refused(self, tmp_path) -> None:
+        registry = _released()
+        _push(registry, REPORT, APP, "1.9.0")
+        done, log, _ = _label(tmp_path, registry)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"{REPORT}:{APP} is application 1.9.0, not {APP} (#410)" in done.stdout
+        assert "skopeo copy" not in log
+
+    @pytest.mark.parametrize("arm64, published", [(APP, True), ("1.9.0", False)], ids=["every-child", "stale-arm64-child"])
+    def test_t410_5_every_linux_image_behind_a_list_carries_the_label(self, tmp_path, arm64, published) -> None:
+        registry = _released()
+        _push(registry, DASHBOARD, APP, APP, arm64)
+        done, log, _ = _label(tmp_path, registry)
+        assert (done.returncode == 0) is published, done.stdout + done.stderr
+        assert ("skopeo copy" in log) is published
+        if not published:
+            assert f"{DASHBOARD}:{APP} is application 1.9.0, {APP}, not {APP} (#410)" in done.stdout
+
+    def test_t410_6_a_missing_image_is_still_red_with_today_s_remedy(self, tmp_path) -> None:
+        registry = _released()
+        del registry["tags"][f"{DASHBOARD}:{APP}"]
+        done, log, _ = _label(tmp_path, registry)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"{DASHBOARD}:{APP} does not exist" in done.stdout
+        assert "./build-and-push-external.sh --release-tags" in done.stdout
+        assert "./build-and-push-report.sh --release-tags" in done.stdout
+        assert "skopeo copy" not in log
+
+    def test_t410_11_a_chart_version_that_is_an_application_alias_is_never_copied_over(self, tmp_path) -> None:
+        """Chart and application versions share one tag namespace: chart 1.0.0 would overwrite application 1.0.0's
+        alias, which a cluster, a mirror or a Helm release may pin (measured on quay: `:1.0.0` is application 1.0.0)."""
+        registry = _released()
+        alias = _push(registry, DASHBOARD, "1.0.0", "1.0.0")
+        done, log, after = _label(tmp_path, registry, chart_version="1.0.0")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"{DASHBOARD}:1.0.0 is application 1.0.0's own alias" in done.stdout
+        assert "skopeo copy" not in log
+        assert after["tags"][f"{DASHBOARD}:1.0.0"] == alias
+
+    def test_t410_12_a_chart_version_tag_publish_already_made_is_copied_again_unchanged(self, tmp_path) -> None:
+        """publish.yml's --release-tags copies the release to `:<chartVersion>` too (measured: `:0.59.24` written at
+        08:38:42 and again by helm.yaml at 08:47:38, one digest): the same digest is not a collision."""
+        registry = _released()
+        registry["tags"][f"{DASHBOARD}:{CHART}"] = registry["tags"][f"{DASHBOARD}:{APP}"]
+        done, log, _ = _label(tmp_path, registry)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "skopeo copy" in log
+
+    def test_t410_13_a_chart_version_tag_on_another_build_is_relabelled_as_today(self, tmp_path) -> None:
+        """A `:<chartVersion>` that names some other application (an earlier label of this chart version) is the
+        convenience tag this step owns; only another application's own alias is refused."""
+        registry = _released()
+        _push(registry, DASHBOARD, CHART, "1.21.0")
+        done, log, after = _label(tmp_path, registry)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert after["tags"][f"{DASHBOARD}:{CHART}"] == after["tags"][f"{DASHBOARD}:{APP}"]
+
+    def test_t410_14_a_missing_report_image_is_red_with_the_remedy(self, tmp_path) -> None:
+        registry = _released()
+        del registry["tags"][f"{REPORT}:{APP}"]
+        done, log, _ = _label(tmp_path, registry)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"{REPORT}:{APP} is not in the registry, or cannot be read" in done.stdout
+        assert "./build-and-push-report.sh --release-tags" in done.stdout
+        assert "skopeo copy" not in log
+
+    def test_t410_15_a_chart_version_tag_that_cannot_be_read_is_not_taken_as_absent(self, tmp_path) -> None:
+        """Unreachable is not absent: only the registry's `manifest unknown` lets the copy create the tag."""
+        done, log, _ = _label(tmp_path, _released(), unreachable=f"{DASHBOARD}:{CHART}")
+        assert "skopeo copy" not in log, log
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"cannot tell whether {DASHBOARD}:{CHART} exists" in done.stdout
+
+    def test_t410_16_the_label_is_read_and_compared_as_release_crc_sh_reads_it(self) -> None:
+        """One reading, two tools: helm.yaml asks skopeo (oc is not on the runner), release-crc.sh asks oc (skopeo is
+        not on a workstation), and both hand the same Python the same shape — the label set of every Linux image,
+        joined — and walk reporting.image.tag with the same code. Compared token by token, comments dropped."""
+        def code(text: str, start: str) -> str:
+            body = text.split(start, 1)[1]
+            body = body[:min(i for i in (body.find("\n'"), body.find("\nPY")) if i >= 0)]
+            tokens = tokenize.generate_tokens(io.StringIO(body.replace("'\\''", "'")).readline)
+            return " ".join(t.string for t in tokens if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE,
+                                                                       tokenize.INDENT, tokenize.DEDENT))
+        crc, run = RELEASE_CRC.read_text(), _step(_jobs(HELM)["release"], LABEL_STEP)["run"]
+        compare = 'print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or {}).get("org.opencontainers.image.version", "") for i in images})))'
+        assert compare in crc and compare in run
+        walker = "in_reporting = in_image = False"
+        assert code(crc, walker) == code(run, walker)
+        assert 'echo "ERROR: ${ref} is application ${version:-unknown}, not ${app_version} (#410)."' in crc
+        assert 'is application ${version:-unknown}, not ${APP_VERSION} (#410)' in run
+
+    def test_t410_17_without_credentials_the_step_still_warns_and_reads_nothing(self, tmp_path) -> None:
+        done, log, _ = _label(tmp_path, _released(), credentials=False)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "registry credentials are not set" in done.stdout
+        assert log == "", "no registry call is made without credentials, as today"
+
+    def test_t410_27_an_unreachable_registry_is_not_a_missing_image(self, tmp_path) -> None:
+        """Unreachable is not absent for the first probe either (OB2's review of c825182c, measured with
+        REGISTRY=quay.invalid): the existence check must not read a DNS failure, a 401 or a 429 as "the application
+        release was never published" and prescribe the --release-tags push for a transient outage."""
+        done, log, _ = _label(tmp_path, _released(), unreachable=f"{DASHBOARD}:{APP}")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"cannot tell whether {DASHBOARD}:{APP} exists" in done.stdout
+        assert "no such host" in done.stdout, "the registry's own words are in the annotation"
+        assert "does not exist" not in done.stdout and "--release-tags" not in done.stdout, done.stdout
+        assert "skopeo copy" not in log and "skopeo login" not in log, log
+
+    def test_t410_10_the_release_guide_says_what_the_label_refusal_means(self) -> None:
+        table = RELEASING.read_text().split("## What can go wrong, and what it looks like", 1)[1]
+        row = next((line for line in table.splitlines() if "is application" in line and "(#410)" in line), "")
+        assert "Label the image this chart version deploys" in row, row
+        assert "never retag" in row.lower() and "re-run" in row, row
+        collision = next((line for line in table.splitlines() if "own alias" in line), "")
+        assert "Chart.yaml" in collision, collision
+
+    def test_t410_20_the_dashboard_label_is_read_at_the_digest_the_copy_is_held_to(self, tmp_path) -> None:
+        """Orchestrator's note 5: the bytes whose label is checked are the bytes the post-copy comparison holds the
+        alias to, so a tag that moves between the reads ends in the digest-mismatch red run, never a pass."""
+        registry = _released()
+        done, log, _ = _label(tmp_path, registry)
+        assert done.returncode == 0, done.stdout + done.stderr
+        digest = registry["tags"][f"{DASHBOARD}:{APP}"]
+        assert f"skopeo inspect --raw docker://{DASHBOARD}@{digest}\n" in log, log
+        assert f"skopeo inspect --raw --config docker://{DASHBOARD}@{digest}\n" in log, log
+        assert f"--raw docker://{DASHBOARD}:{APP}\n" not in log, log
+
+    @pytest.mark.parametrize("platforms, versions, published", [
+        ((("amd64", "linux"), ("unknown", "unknown")), (APP, None), True),      # BuildKit's attestation child: not an image
+        ((("amd64", "linux"), ("amd64", "windows")), (APP, "1.9.0"), True),     # a non-Linux child is not what the chart runs
+        ((("amd64", "windows"), ("arm64", "windows")), ("1.9.0", "1.9.0"), False),   # an index with no Linux image: "" is not appVersion
+    ], ids=["attestation-child-skipped", "windows-child-skipped", "no-linux-child-refused"])
+    def test_t410_21_only_linux_children_are_read_as_release_crc_sh_filters_them(self, tmp_path, platforms, versions, published) -> None:
+        """`oc image info --filter-by-os='linux/.*'` keeps the Linux entries alone; the reader keeps the same set, so an
+        index that carries BuildKit's unknown/unknown attestation manifest (no config labels) is not a red run, and
+        an index with no Linux image is."""
+        registry = _released()
+        _push(registry, REPORT, APP, *versions, platforms=platforms)
+        done, log, _ = _label(tmp_path, registry)
+        assert (done.returncode == 0) is published, done.stdout + done.stderr
+        assert ("skopeo copy" in log) is published, log
+        if not published:
+            assert f"{REPORT}:{APP} is application unknown, not {APP} (#410)" in done.stdout
+
+
+class TestTheChartVersionIsNeverAReleasedApplicationVersion:
+    """The second writer of `:<chartVersion>` (SPEC_E8, Orchestrator's note 2): publish.yml's --release-tags
+    copies every application release there too, so a chart numbered like a released application overwrites
+    that application's alias on the release merge whatever helm.yaml refuses. ci.yml refuses the version in
+    the pull request instead. The step is lifted from the parsed ci.yml and run against the stub skopeo."""
+
+    STEP = (CI, "version-bump", "The chart version is not a released application version")
+
+    def test_t410_22_the_check_runs_in_the_pull_request_only_job_after_the_bump_check(self) -> None:
+        job = _jobs(CI)["version-bump"]
+        assert job["if"] == "github.event_name == 'pull_request'"
+        names = [s.get("name") for s in job["steps"]]
+        assert names.index("A change under charts/ requires a new Chart.yaml version") < names.index(self.STEP[2])
+
+    def test_t410_23_a_chart_version_that_is_a_released_application_version_is_refused(self, tmp_path) -> None:
+        registry = _released()
+        _push(registry, DASHBOARD, "1.0.0", "1.0.0")
+        done, log, _ = _label(tmp_path, registry, chart_version="1.0.0", step=self.STEP)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "chart version 1.0.0 is a released application version" in done.stdout
+        assert "skopeo copy" not in log and "skopeo login" not in log
+
+    def test_t410_24_a_chart_version_tag_that_is_this_chart_s_own_label_passes(self, tmp_path) -> None:
+        """`:0.59.25` is application 2.0.0's bytes (measured on quay): the tag is the chart's, not an alias."""
+        registry = _released()
+        registry["tags"][f"{DASHBOARD}:{CHART}"] = registry["tags"][f"{DASHBOARD}:{APP}"]
+        done, _, _ = _label(tmp_path, registry, step=self.STEP)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert f"{DASHBOARD}:{CHART} is application {APP}, not application {CHART}'s alias" in done.stdout
+
+    def test_t410_25_an_absent_tag_is_a_free_version(self, tmp_path) -> None:
+        done, _, _ = _label(tmp_path, _released(), step=self.STEP)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert f"{DASHBOARD}:{CHART} does not exist: the chart version is free" in done.stdout
+
+    def test_t410_26_unreachable_is_not_free(self, tmp_path) -> None:
+        done, _, _ = _label(tmp_path, _released(), unreachable=f"{DASHBOARD}:{CHART}", step=self.STEP)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"cannot tell whether {DASHBOARD}:{CHART} is a released application version" in done.stdout

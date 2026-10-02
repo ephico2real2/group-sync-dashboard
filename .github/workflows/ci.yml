@@ -125,6 +125,47 @@ jobs:
           done
           exit $status
 
+      # A CHART VERSION IS NEVER A RELEASED APPLICATION VERSION (#410, SPEC_E8). Chart versions and
+      # application versions share the dashboard repository's tags: publish.yml copies every
+      # application release to `:<chartVersion>` as well as `:<appVersion>`, and helm.yaml labels
+      # `:<chartVersion>` on every chart release. A chart numbered like a released application (chart
+      # 1.0.0 beside application 1.0.0) would therefore overwrite that application's own alias on the
+      # next release merge, by publish.yml, whatever helm.yaml's alias guard refuses. Refused here,
+      # before the version reaches main, by reading the tag's own version label (the repository is
+      # public; the read is anonymous, as helm.yaml's existence check is). Only the registry's
+      # "manifest unknown" means the tag is free; any other failure is a red check, not a pass.
+      # `skopeo inspect --config` on a manifest list answers for this runner's platform: the full
+      # every-Linux-image reading stays helm.yaml's; no published tag is a list today (measured).
+      - name: The chart version is not a released application version
+        env:
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+        run: |
+          set -euo pipefail
+          CHART=charts/group-sync-dashboard/Chart.yaml
+          CHART_VERSION=$(sed -n 's/^version: \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[[:blank:]]*$/\1/p' "$CHART" | head -1)
+          REPO="${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard"
+          probe_err=$(mktemp)
+          trap 'rm -f "${probe_err}"' EXIT
+          if config=$(skopeo inspect --raw --config "docker://${REPO}:${CHART_VERSION}" 2>"${probe_err}"); then
+            label=$(printf '%s' "${config}" | python3 -c 'import json, sys; print((json.load(sys.stdin).get("config", {}).get("Labels") or {}).get("org.opencontainers.image.version", ""))')
+            if [ "${label}" = "${CHART_VERSION}" ]; then
+              echo "::error file=${CHART}::chart version ${CHART_VERSION} is a released application version:"
+              echo "::error file=${CHART}::${REPO}:${CHART_VERSION} is labelled ${label}, and the next release merge would"
+              echo "::error file=${CHART}::copy another image over that alias (#410). Give the chart a version no"
+              echo "::error file=${CHART}::application release has used. Never retag or delete the existing tag:"
+              echo "::error file=${CHART}::something may pin it."
+              exit 1
+            fi
+            echo "${REPO}:${CHART_VERSION} is application ${label:-unknown}, not application ${CHART_VERSION}'s alias"
+          elif grep -qi 'manifest unknown' "${probe_err}"; then
+            echo "${REPO}:${CHART_VERSION} does not exist: the chart version is free"
+          else
+            echo "::error::cannot tell whether ${REPO}:${CHART_VERSION} is a released application version:"
+            echo "::error::$(head -c 400 "${probe_err}")"
+            exit 1
+          fi
+
   app-version-bump:
     name: App image changes bump the app version
     if: github.event_name == 'pull_request'

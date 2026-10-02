@@ -113,8 +113,9 @@ or the two-script route the release decision's warning names
 (`docs/RELEASING.md#When GitHub Actions is unavailable`), which publishes unsigned aliases. A release
 is two images now, and every statement of the manual route names both scripts. What nothing does:
 label or resolve the report image by chart version —
-`.github/workflows/helm.yaml#Label the image this chart version deploys` names the dashboard
-repository only, and the chart resolves the report image at appVersion, so
+`.github/workflows/helm.yaml#Label the image this chart version deploys` copies into the dashboard
+repository only (since #410 it reads the report image's version label before that copy, and copies
+nothing there), and the chart resolves the report image at appVersion, so
 `group-sync-dashboard-report:<chartVersion>` exists only from application releases. The first
 version of this step sat under `sbom` reading
 `steps.creds` and `steps.release`, which exist only in `publish` — step outputs are job-local, so it
