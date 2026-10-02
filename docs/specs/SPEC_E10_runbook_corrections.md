@@ -8,7 +8,7 @@
 | Version on release | no version change (docs, a repository tool and tests) |
 | Version note | The blocks touch `docs/`, `local-development/prepare-release.py` and `local-development/tests/`, none of them in `publish.yml`'s image paths, and nothing under `charts/`; `check-app-version-bump.py` measured on the applied tree says "no image content changed" (§4.3) |
 | Issue | [#533](https://github.com/ephico2real2/group-sync-dashboard/issues/533) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-02, written before any code from #533's body, #532's body and comment, the walk record (README findings F1–F6, `walk.log`) and the operator's two amendments of the same day relayed by the orchestrator (Orchestrator's notes, 1). Measured on origin/main `521c2bb0` (application 2.4.0, chart 0.61.2) with `oc` 4.22.13, helm v4.3.0 and Python 3.14, and on the CRC lab (OpenShift 4.22.7, OpenShift GitOps 1.21.4, Argo CD v3.4.7): one `oc debug --one-container` run, read-only reads, and the break-glass walk up to `restore-db.sh --list` with the lab put back as it was (§2.10). §7's blocks were proved on a throwaway tree of `521c2bb0` (§4.3) |
 
 ## How to read this spec

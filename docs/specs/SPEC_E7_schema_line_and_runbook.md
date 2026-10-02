@@ -8,7 +8,7 @@
 | Version on release | no version change (a repository tool, tests and docs) |
 | Version note | `local-development/prepare-release.py`, `local-development/tests/`, `docs/` and `.claude/` are outside `publish.yml`'s image paths (`.github/workflows/publish.yml#ONLY WHEN SOMETHING THAT GOES INTO THE IMAGE CHANGED`), and no block touches `charts/**`, so neither the application nor the chart version moves: the issue's "Target version: none" |
 | Issue | [#300](https://github.com/ephico2real2/group-sync-dashboard/issues/300) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's "Decisions and corrections (2026-10-01)" and its comment of the same day (the reason stays the first bullet). Measured on origin/main `b5463d45` (application 2.0.0, chart 0.59.25, schema 20) with Python 3.14.7, SQLite 3.53.4, git 2.55.0 and helm v4.3.0, and read-only on the CRC lab (OpenShift 4.22.7, image 2.0.0). §7's blocks were cut from a throwaway tree of `b5463d45` with SPEC_E2, SPEC_E3 (at `159deef8`), SPEC_E4 and SPEC_E5 (at `a5103cd6`) applied first, the epic's build order, and proved there and on three narrower bases. Revised the same day on OB2's review (Orchestrator's notes, 9) and rebased onto origin/main `eade4c2a` (SPEC_E3 and SPEC_E6 merged as specs); §4.2 and §4.3 re-measured on `eade4c2a` with SPEC_E2's and SPEC_E3's blocks applied |
 
 ## How to read this spec

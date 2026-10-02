@@ -8,7 +8,7 @@
 | Version on release | app 2.1.0, chart 0.60.1 |
 | Version note | The helper and the wrapper live outside the image (`local-development/restore-db.py`, `local-development/restore-db.sh`), but two of the blocks touch image content: the `_MIGRATIONS` comment (T302-21) in `local-development/gsd/store.py` and one row of `local-development/README.md`, both under `publish.yml`'s paths, so `local-development/check-app-version-bump.py` requires the next application MINOR. The implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore the chart PATCH. Against `21132a25` that is app 2.1.0 and chart 0.59.26; if SPEC_E2 (chart 0.60.0) lands first, the chart becomes 0.60.1. No block carries a version field: the script writes them (Orchestrator's notes, 10) |
 | Issue | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)", the operator's rules of 2026-10-01 on values files and Argo CD, and SPEC_E2 as it stands at `465411cd` (in review); revised the same day on the reviews of `167ecb9b` by OB3 (in Grok's seat) and Codex (Orchestrator's notes, 17). Measured on main `afa01bb8` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, image 2.0.0). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree of it (§4.3) |
 
 ## How to read this spec
