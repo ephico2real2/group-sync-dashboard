@@ -11,10 +11,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 ## Unreleased
 
 - **Above one replica, every pod keeps its own scheduled backups (#391, Epic E #385,
-  `docs/specs/SPEC_E4_per_pod_backup_rotation.md`).** Replicas share `config.backup.dir`, and each rotation
-  deleted by the bare `gsd-*.db` pattern there, so with two replicas and `keep: 4` each kept 2 of its own,
-  and with three replicas and `keep: 2` a pod's only copy was deleted by a neighbour after the poller had
-  released retention on it. Above one replica a copy is now named `gsd-<UTC stamp>Z-<pod name>.db` (the pod is
+  `docs/specs/SPEC_E4_per_pod_backup_rotation.md`; app 2.2.0, chart 0.60.2).** Replicas share
+  `config.backup.dir`, and each rotation deleted by the bare `gsd-*.db` pattern there, so with two replicas
+  and `keep: 4` each kept 2 of its own, and with three replicas and `keep: 2` a pod's only copy was deleted
+  by a neighbour after the poller had released retention on it. Above one replica a copy is now named
+  `gsd-<UTC stamp>Z-<pod name>.db` (the pod is
   `POD_NAME`), and a pod rotates only the copies whose name carries exactly its own pod, so each keeps `keep`
   of its own and none deletes another's; `gsd_backup_last_success_timestamp_seconds` reads the pod's own
   copies, so `GroupSyncDashboardBackupStale` sees a replica whose backups fail beside a healthy one (a pod
