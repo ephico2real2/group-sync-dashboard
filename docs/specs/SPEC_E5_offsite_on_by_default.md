@@ -169,6 +169,17 @@ numbers come from `curl -s <raw-url> | nl -ba`.
       `721a78db`'s chart with the same file `rules: before 65, after 65`, `REMOVED 0`, `ADDED 0`, bindings 8 and 8.
       The lab walk (§5) then takes the `true` path rather than the default, and observes the same objects.
 
+13. **The lab's values table, after PR #522 (`7c9ba624`), 2026-10-01.** #522 set `backup.offsite.enabled: true` with
+    the `pvc` destination in `environments/crc.yaml` and added its row to `environments/README.md`'s key table with
+    the chart default `false`. After this spec the chart default is the empty word, so on the merge of origin/main
+    `local-development/tests/test_environments_readme.py#test_every_claimed_chart_default_is_the_real_chart_default`
+    failed: `backup.offsite.enabled: README says default 'false', values.yaml says '""'`. Block 19a corrects the cell
+    to `""` and says what the lab's `true` now means: the strict form, not the switch that turns the copy on. The
+    `destination.type` row (`pvc`, redundant) is unchanged. Re-rendered with `environments/crc.yaml` from
+    `7c9ba624` on the applied chart: renders, the five offsite objects, the two alerts and
+    `--pre-upgrade-source /data/pre-upgrade`; RBAC against `7c9ba624`'s chart `rules: before 65, after 65`,
+    `REMOVED 0`, `ADDED 0`, bindings 8 and 8.
+
 ## 1. The mandate, and what is out of scope
 
 The issue (#304, "What must be accomplished"): a default install ships its backups off the data volume (the
@@ -758,7 +769,7 @@ migration, as SPEC_M1 §5 describes) is not part of this walk.
 
 ## 7. Implementation blocks
 
-Applied in this order: the script (1-5), the templates (6-9a), `values.yaml` (10), the documents (11-19), the tests (20-35), the version cells of the four other specs this chart version reaches (37-39c), the CHANGELOG (40) and the chart version (41). Every block is an edit; no file is created. Blocks 9a, 14 and 36 to 41 were re-cut at implementation (Orchestrator's notes, 12).
+Applied in this order: the script (1-5), the templates (6-9a), `values.yaml` (10), the documents (11-19a), the tests (20-35), the version cells of the four other specs this chart version reaches (37-39c), the CHANGELOG (40) and the chart version (41). Every block is an edit; no file is created. Blocks 9a, 14 and 36 to 41 were re-cut at implementation (Orchestrator's notes, 12).
 
 ### Block 1 — charts/group-sync-dashboard/scripts/offsite_backup.py
 
@@ -1743,6 +1754,24 @@ no CronJob in those combinations instead (`charts/group-sync-dashboard/templates
 | `backup.offsite.enabled: true` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
 | `backup.offsite.enabled: true` with `persistence.existingClaim` and no `persistence.accessMode` | the chart cannot read the live claim's mode, and one derived from `replicaCount` may not be the claim's |
 | `backup.offsite.enabled` set to a word other than `true`, `false` or empty | the switch is compared as a word, so a quoted `"false"` is off; a misspelt word must not decide whether the copy leaves the volume |
+```
+
+### Block 19a — environments/README.md
+
+The lab table's chart-default cell for `backup.offsite.enabled`, which PR #522 added while the default was `false` (Orchestrator's notes, 13).
+
+<!-- block: environments/README.md | edit -->
+
+Old text:
+
+```text
+| `backup.offsite.enabled` | `false` | `true` | lab override — the off-volume backup on (the operator, 2026-10-02): a CronJob copies the newest scheduled backup to its own claim every six hours, so a lost or corrupted data volume is not the only copy. Its ServiceAccount has no token and no grant (rendered RBAC unchanged, 65 rules) |
+```
+
+New text:
+
+```text
+| `backup.offsite.enabled` | `""` | `true` | lab override — the off-volume backup on (the operator, 2026-10-02). Since #304 the empty default turns it on here too; `true` is the strict form, which refuses a combination where the copy cannot work rather than rendering nothing: a CronJob copies the newest scheduled backup to its own claim every six hours, so a lost or corrupted data volume is not the only copy. Its ServiceAccount has no token and no grant (rendered RBAC unchanged, 65 rules) |
 ```
 
 ### Block 20 — local-development/tests/test_offsite_backup_script.py
