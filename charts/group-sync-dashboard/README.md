@@ -218,7 +218,7 @@ only because this process observed them, and nothing upstream can replay them.
 | `config.backup.enabled` | `true` | leave on. Writes `backupDir`/`backupIntervalHours`/`backupKeep` into the ConfigMap; disabling omits them, and an empty `backupDir` disables backups in the app |
 | `config.backup.dir` | `/data/backup` | on the PVC, so it counts against `persistence.size` |
 | `config.backup.intervalHours` | `6` | taken from the poll thread, and once immediately at startup |
-| `config.backup.keep` | `4` | 4 × 6h = the last day, at roughly the size of the database each |
+| `config.backup.keep` | `4` | 4 × 6h = the last day, at roughly the size of the database each; per replica above one ([Scaling](#scaling)) |
 
 `VACUUM INTO`, not a file copy: it holds a read transaction for the duration, so the output
 is consistent even while the poller writes. Copying `gsd.db` with a live WAL produces a torn
@@ -852,6 +852,18 @@ independently and derives its own copy. Current state converges within one poll;
 `sync_event` and `membership_event` timelines do **not** — each pod only holds what it saw
 while running, so the Service answers "when did this user leave?" differently depending on
 which pod responds.
+
+**Backups above one replica.** Every pod writes its scheduled backups into the one
+`config.backup.dir`, named `gsd-<UTC stamp>Z-<pod name>.db`, and keeps `config.backup.keep` of its
+own: `keep` applies per replica, no pod deletes another pod's copies, and each pod's
+`gsd_backup_last_success_timestamp_seconds` is its own newest copy (until it has written one, the
+directory's newest, so a rollout whose new pods all fail to back up still fires
+`GroupSyncDashboardBackupStale`). The directory holds `replicaCount × keep` copies, each about the size
+of one pod's database, and also the copies of pods that no longer exist and those named without a pod
+(written at one replica, or by a release before #391): a rollout renames every pod, and nothing deletes
+a departed pod's copies, as nothing deletes its `/data/<pod name>/gsd.db`. `backup.offsite` still ships
+the single newest copy, which is one replica's. At one replica the name stays `gsd-<UTC stamp>Z.db` and
+`keep` bounds the whole directory ([runbook](../../docs/RUNBOOK_backup_restore.md)).
 
 Four combinations are refused at template time rather than deployed broken:
 

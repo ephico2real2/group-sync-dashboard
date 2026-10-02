@@ -110,6 +110,14 @@ class TestTheFile:
         assert red_step("Login capture: last successful read age") == rule["captureStalledSeconds"]
         assert red_step("Backup age") == rule["backupStaleSeconds"]
 
+    def test_backup_age_reads_the_stalest_replica(self):
+        """#391: above one replica each pod's gsd_backup_last_success_timestamp_seconds is its own and
+        GroupSyncDashboardBackupStale fires per pod. The panel's red step is that alert's threshold (the test
+        above), so it shows the stalest replica: with max() it stayed green while the alert fired for one."""
+        board = json.loads(DASHBOARD.read_text())
+        panel = next(p for p in _walk_panels(board["panels"]) if p["title"] == "Backup age")
+        assert [t["expr"] for t in panel["targets"]] == ["time() - min(gsd_backup_last_success_timestamp_seconds)"]
+
     def test_the_text_panel_names_every_shipped_alert(self):
         monitoring = (CHART / "templates" / "monitoring.yaml").read_text()
         shipped = set(re.findall(r"- alert: (\w+)", monitoring))

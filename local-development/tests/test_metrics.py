@@ -489,7 +489,7 @@ class TestRuntimeCounters:
         from gsd.poller import Poller
 
         class FailingStore:
-            def backup(self, directory, keep=3):
+            def backup(self, directory, keep=3, **kwargs):
                 return None
 
         signals = RuntimeSignals()
@@ -642,6 +642,76 @@ class TestCaptureAndBackupGauges:
             "gsd_backup_last_success_timestamp_seconds"]
         expected = (tmp_path / "gsd-20260810T000000.000000Z.db").stat().st_mtime
         assert value == pytest.approx(expected, abs=1)
+
+    def test_at_one_replica_the_backup_timestamp_reads_every_copy(self, tmp_path, monkeypatch):
+        """T391-7, a regression guard (#391): at one replica the metric is the newest gsd-*.db's mtime whatever
+        follows the stamp, as before; POD_NAME is set and does not narrow it."""
+        import os
+
+        from gsd.config import Settings
+        older = tmp_path / "gsd-20261001T000000.000000Z.db"
+        newer = tmp_path / "gsd-20261001T060000.000000Z-pod-b.db"
+        for path, mtime in ((older, 1_000_000), (newer, 2_000_000)):
+            path.write_bytes(b"x")
+            os.utime(path, (mtime, mtime))
+        monkeypatch.setenv("POD_NAME", "pod-a")
+        settings = Settings(clusters=[], db_path=":memory:", backup_dir=str(tmp_path), replica_count=1)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+        finally:
+            store.close()
+        assert series(text, "gsd_backup_last_success_timestamp_seconds") == {
+            "gsd_backup_last_success_timestamp_seconds": 2_000_000}
+
+    def test_above_one_replica_the_backup_timestamp_is_this_pods_own(self, tmp_path, monkeypatch):
+        """#391 (the masking the issue found): above one replica the metric is this pod's newest copy, so a
+        neighbour's fresh copy in the shared directory cannot hide this replica's failing backups from
+        GroupSyncDashboardBackupStale. On main it read the newest copy of any pod, 3,000,000."""
+        import os
+
+        from gsd.config import Settings
+        own = tmp_path / "gsd-20261001T000000.000000Z-pod-a.db"
+        files = ((own, 1_000_000), (tmp_path / "gsd-20261001T060000.000000Z-pod-b.db", 2_000_000),
+                 (tmp_path / "gsd-20261001T070000.000000Z-x-pod-a.db", 3_000_000))
+        for path, mtime in files:
+            path.write_bytes(b"x")
+            os.utime(path, (mtime, mtime))
+        monkeypatch.setenv("POD_NAME", "pod-a")
+        settings = Settings(clusters=[], db_path=":memory:", backup_dir=str(tmp_path), replica_count=2)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+        finally:
+            store.close()
+        assert series(text, "gsd_backup_last_success_timestamp_seconds") == {
+            "gsd_backup_last_success_timestamp_seconds": 1_000_000}
+
+    def test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory(self, tmp_path, monkeypatch):
+        """#391, review of the spec: every rollout renames every pod, so after one no pod has a copy of its own.
+        If the new pods' backups all fail, the departed pods' copies age, and the metric must keep reading them,
+        as on main, or GroupSyncDashboardBackupStale has no series to fire on. Nothing in the directory at all:
+        no series, never zero."""
+        import os
+
+        from gsd.config import Settings
+        for name, mtime in (("gsd-20261001T000000.000000Z-departed-a.db", 1_000_000),
+                            ("gsd-20261001T060000.000000Z-departed-b.db", 2_000_000)):
+            (tmp_path / name).write_bytes(b"x")
+            os.utime(tmp_path / name, (mtime, mtime))
+        monkeypatch.setenv("POD_NAME", "new-pod")
+        settings = Settings(clusters=[], db_path=":memory:", backup_dir=str(tmp_path), replica_count=2)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+            assert series(text, "gsd_backup_last_success_timestamp_seconds") == {
+                "gsd_backup_last_success_timestamp_seconds": 2_000_000}
+            for path in tmp_path.glob("gsd-*.db"):
+                path.unlink()
+            text = generate_latest(build_registry(store, GRACE, settings=settings)).decode()
+            assert series(text, "gsd_backup_last_success_timestamp_seconds") == {}
+        finally:
+            store.close()
 
     def test_backup_timestamp_is_absent_when_backups_are_off_or_none_exist(self, tmp_path):
         from types import SimpleNamespace

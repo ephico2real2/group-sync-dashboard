@@ -8,7 +8,7 @@
 | Version on release | app 2.4.0, chart 0.60.2 |
 | Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore bumps the chart PATCH that the values comment, the README and the alert text need. Against `dd51b91f` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26; SPEC_E3 (#302) and SPEC_E2 (#303) claim the same next numbers, so whichever merges second takes the next ones. No block carries a version field: the script writes them, as in SPEC_E3 |
 | Issue | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on main `dd51b91f` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift, image 2.0.0, Python 3.14.7, SQLite 3.53.4 in the pod). §7's blocks were cut from a copy of `dd51b91f` with the design implemented, and proved against a clean worktree of `dd51b91f` (§4.3). Revised the same day after the review of `29c67b03` by OB3 (in Grok's seat) and OB2 (in Codex's seat), on the orchestrator's decisions (Orchestrator's notes, 12), on a branch that merged main `f144a82b` (SPEC_G1, SPEC_E2 and SPEC_G2); the revised blocks are proved against `73cc7d08` and check out on `f144a82b`, which changes no file they touch |
 
 ## How to read this spec

@@ -265,6 +265,17 @@ class TestCgroupSampler:
         (arts / "r2" / "run.json").write_bytes(b"{}")
         assert artifact_bytes(str(arts))() == {"bytes": 34, "files": 3}
 
+    def test_the_backup_size_line_counts_every_replicas_copies(self, tmp_path):
+        """T391-8, a regression guard (#391): the size line counts every gsd-*.db in backupDir, whichever pod
+        wrote it: the bytes on the shared claim, which is what it is for."""
+        from gsd.kpi.system import dashboard_data_bytes
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        for name, size in (("gsd-20261001T000000.000000Z.db", 10), ("gsd-20261001T010000.000000Z-pod-a.db", 15),
+                           ("gsd-20261001T020000.000000Z-pod-b.db", 20)):
+            (backups / name).write_bytes(b"b" * size)
+        assert dashboard_data_bytes(str(db), str(backups))()["backups"] == {"count": 3, "bytes": 45}
+
     def test_disk_is_statvfs_of_the_path(self, tmp_path):
         d = disk(str(tmp_path))
         assert d is not None and 0 < d.used_bytes <= d.total_bytes

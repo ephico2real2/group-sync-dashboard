@@ -45,7 +45,11 @@ See ``docs/storage-coupling.md``.
 
 from __future__ import annotations
 
+import os
+import re
+import socket
 from contextlib import AbstractContextManager
+from pathlib import Path
 from typing import Any, NotRequired, Protocol, TypedDict, runtime_checkable
 
 
@@ -370,7 +374,7 @@ class StorageBackend(Protocol):
 
     # -- backup --------------------------------------------------------------------------
 
-    def backup(self, directory: str, keep: int = 3) -> str | None: ...
+    def backup(self, directory: str, keep: int = 3, *, owner: str | None = None) -> str | None: ...
     def snapshot(self, directory: str, keep: int = 2) -> str | None:
         """A consistent copy for the report service; not a backup — see Store.snapshot."""
         ...
@@ -433,3 +437,43 @@ def open_backend(settings) -> StorageBackend:
         synchronous=settings.sqlite_synchronous,
         wal_checkpoint_mb=settings.sqlite_wal_checkpoint_mb,
     )
+
+
+# -- the scheduled backups' names (#391) ---------------------------------------------------------
+#
+# Above one replica every pod has its own database (/data/$POD_NAME/gsd.db), but config.backup.dir is
+# ONE directory on the shared volume. Rotating by the bare gsd-*.db pattern there let each pod delete
+# its neighbours' copies: two pods with keep 4 kept 2 of their own, and with three pods and keep 2 a
+# pod's only copy went, after backup() had returned it and the poller had released retention on it.
+# So above one replica a copy carries the pod that wrote it, and a pod rotates and reports only its
+# own. At one replica the name stays gsd-<stamp>.db and every gsd-*.db is the pod's, as before:
+# existing restores, the runbook and the restore tool read that name.
+
+#: gsd-<%Y%m%dT%H%M%S.%fZ>.db, or gsd-<stamp>-<pod>.db above one replica. The stamp holds no "-", so the
+#: owner is everything after the stamp's "-", compared whole: a glob such as gsd-*-<pod>.db would also
+#: take the copies of a pod whose name merely ends in "-<pod>".
+BACKUP_NAME = re.compile(r"gsd-(\d{8}T\d{6}\.\d{6}Z)(?:-(.+))?\.db")
+
+
+def backup_owner(replica_count: int) -> str | None:
+    """Whose scheduled backups this process writes, rotates and reports (#391).
+
+    None at one replica: every gsd-*.db in config.backup.dir is this pod's, as before. Above one, this
+    pod's name: POD_NAME (the chart's downward-API metadata.name), else the hostname, which Kubernetes
+    sets to the same name; the rule the leader election and the pre-upgrade copy already use.
+    """
+    if replica_count <= 1:
+        return None
+    return os.environ.get("POD_NAME") or socket.gethostname()
+
+
+def backup_copies(directory: str | Path, owner: str | None) -> list[Path]:
+    """The scheduled backups in `directory` that `owner` wrote, oldest first.
+
+    Ordered by name, which the UTC stamp leads, so name order is time order across every pod. owner None
+    is every gsd-*.db whatever follows the stamp: the rule at one replica, unchanged.
+    """
+    copies = sorted(Path(directory).glob("gsd-*.db"))
+    if owner is None:
+        return copies
+    return [p for p in copies if (m := BACKUP_NAME.fullmatch(p.name)) is not None and m.group(2) == owner]
