@@ -89,7 +89,7 @@ runs the default and would notice if the default stopped working.
 
 Two groups of keys `crc.yaml` sets are deliberately **not** rows in the table above: the
 `reporting.*` block — the P2/P4 feature configuration (which label keys the poller captures, which
-the Reports form offers as selector dimensions, the automated-run window, and the nightly schedule)
+the Reports form offers as selector dimensions, the automated-run window, and the weekly schedule)
 — and `clusters`, the poll targets (this cluster plus the mock OpenShift API). These are feature
 configuration, not privileged overrides: every one still has a chart default, so the headline claim
 above still holds, and each is documented inline in `crc.yaml` with the reasoning next to the value.
