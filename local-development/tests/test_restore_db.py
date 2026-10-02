@@ -797,3 +797,13 @@ def test_the_runbook_removes_every_journal_it_keeps() -> None:
     removes = re.findall(r"rm -f /data/gsd\.db-wal\s+/data/gsd\.db-shm[^\n`]*", section)
     assert len(removes) == 3 and all("/data/gsd.db-journal" in line for line in removes), removes
     assert section.count("for name in (") == 2                       # §4a and §4b keep the set first
+
+
+def test_the_s3_note_counts_the_lines_it_names() -> None:
+    """Runbook §4b's S3 note names three lines to finish with (the ownership line, the rm -f line, the rename):
+    the copy is already streamed in under the temporary name, so §4b's `cat /offsite/… > …restore.tmp` line,
+    the fourth from the end, must not be run again. The count has to match what it names."""
+    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    note = runbook.split("For an S3 copy:", 1)[1].split("\n\n", 1)[0]
+    assert "finish with the last three lines above" in note, note
+    assert "last four lines" not in note

@@ -248,6 +248,15 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     requires an Unreleased entry to name the chart the tree carries (measured on the applied tree: `AssertionError:
     Chart.yaml is 0.60.1 (last released 0.59.24) and no Unreleased entry names it`), as SPEC_E2's entry names chart
     0.60.0. So block 10's entry names `app 2.1.0, chart 0.60.1` after the spec's path, the one block corrected.
+22. **The review of PR #520 (2026-10-01, OB2 in Codex's seat; Codex and Cursor out of usage): approved; N1
+    accepted.** Runbook §4b's S3 note said "finish with the last four lines above" and named three; the fourth from
+    the end is §4b's `cat /offsite/… > /data/gsd.db.restore.tmp`, which for an S3 copy already streamed in under that
+    name would overwrite it with an offsite copy (or fail). Blocks 8 (the note: "the last three lines above: the
+    ownership line, …") and 11 (`test_the_s3_note_counts_the_lines_it_names`, failing on the old note) carry the
+    fix, and §6's counts follow (`test_restore_db.py` 809, total 2124). OB2's other measurements, all CONFIRMED: the
+    swap survives a real SIGKILL at 14 points (the old database whole or the copy alone, never neither), every one
+    of 22 refusals leaves `/data` and the copies byte-identical, and the preflight reads exactly what SPEC_E2's merged
+    chart renders.
 
 **Open questions for the operator.** None.
 
@@ -1060,10 +1069,10 @@ captures as PNG, and pinned to the merge sha on the issue.
 | `docs/RUNBOOK_backup_restore.md` | 57 | 19 |
 | `local-development/README.md` | 1 | 0 |
 | `docs/CHANGELOG.md` | 19 | 0 |
-| `local-development/tests/test_restore_db.py` (new) | 799 | 0 |
+| `local-development/tests/test_restore_db.py` (new) | 809 | 0 |
 | `local-development/tests/test_restore_db_wrapper.py` (new) | 166 | 0 |
 | `local-development/tests/test_restore_db_safety.py` (new) | 172 | 0 |
-| total | 2114 | 19 |
+| total | 2124 | 19 |
 
 The version fields `prepare-release.py` moves (Orchestrator's notes, 10) are not counted.
 
@@ -2198,7 +2207,7 @@ New text:
 
 For an S3 copy: download it (§3), then, in the helper pod, run the keep lines above, stream the copy in under the
 temporary name — `cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db.restore.tmp'` — and
-finish with the last four lines above: the ownership lines, the `rm -f /data/gsd.db-wal
+finish with the last three lines above: the ownership line, the `rm -f /data/gsd.db-wal
 /data/gsd.db-shm /data/gsd.db-journal` line, and the rename. The order matters: the copy is whole beside `gsd.db`
 before anything of the old file is removed, and a `-wal` that outlives the file it belonged to would be replayed
 into the restored database.
@@ -3071,6 +3080,16 @@ def test_the_runbook_removes_every_journal_it_keeps() -> None:
     removes = re.findall(r"rm -f /data/gsd\.db-wal\s+/data/gsd\.db-shm[^\n`]*", section)
     assert len(removes) == 3 and all("/data/gsd.db-journal" in line for line in removes), removes
     assert section.count("for name in (") == 2                       # §4a and §4b keep the set first
+
+
+def test_the_s3_note_counts_the_lines_it_names() -> None:
+    """Runbook §4b's S3 note names three lines to finish with (the ownership line, the rm -f line, the rename):
+    the copy is already streamed in under the temporary name, so §4b's `cat /offsite/… > …restore.tmp` line,
+    the fourth from the end, must not be run again. The count has to match what it names."""
+    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    note = runbook.split("For an S3 copy:", 1)[1].split("\n\n", 1)[0]
+    assert "finish with the last three lines above" in note, note
+    assert "last four lines" not in note
 ```
 
 ### Block 12 — local-development/tests/test_restore_db_wrapper.py: the wrapper's tests

@@ -353,7 +353,7 @@ oc delete -n $NS pod/gsd-restore
 
 For an S3 copy: download it (§3), then, in the helper pod, run the keep lines above, stream the copy in under the
 temporary name — `cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db.restore.tmp'` — and
-finish with the last four lines above: the ownership lines, the `rm -f /data/gsd.db-wal
+finish with the last three lines above: the ownership line, the `rm -f /data/gsd.db-wal
 /data/gsd.db-shm /data/gsd.db-journal` line, and the rename. The order matters: the copy is whole beside `gsd.db`
 before anything of the old file is removed, and a `-wal` that outlives the file it belonged to would be replayed
 into the restored database.
