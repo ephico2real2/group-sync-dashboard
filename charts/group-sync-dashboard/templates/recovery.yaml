@@ -1,0 +1,15 @@
+{{- if eq (include "gsd.recoveryEnabled" .) "true" }}
+# Recovery mode's script (#303), verbatim from scripts/recovery_mode.py; a test holds the two
+# identical. Rendered only while recovery.enabled is true, so the default render has no extra object.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gsd.fullname" . }}-recovery
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    app.kubernetes.io/component: recovery
+data:
+  recovery_mode.py: |
+{{ .Files.Get "scripts/recovery_mode.py" | indent 4 }}
+{{- end }}

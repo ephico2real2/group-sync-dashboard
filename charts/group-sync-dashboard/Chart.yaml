@@ -299,7 +299,11 @@ type: application
 # reconnect a cluster from the screen (#384).
 # CHART 0.59.25 (2026-09-30), PATCH: RUNBOOK section 1 says the card's connection row and tls chip
 # are the last poll's, not Refresh's (Epic D composition review, K5).
-version: 0.59.25
+# CHART 0.60.0 (2026-10-01), MINOR: recovery.enabled and recovery.ttl (#303, SPEC_E2). The dashboard
+# container runs the chart's recovery script (a ConfigMap rendered only while it is on) instead of
+# uvicorn, with no liveness probe and a readiness probe that cannot pass. The default render is
+# unchanged apart from this version and what is computed from it; no RBAC change; appVersion unchanged.
+version: 0.60.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

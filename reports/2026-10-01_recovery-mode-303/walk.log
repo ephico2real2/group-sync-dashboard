@@ -1,0 +1,99 @@
+== step 1 before — 2026-10-02T00:01:01Z
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+{'membership_event': 1843, 'sync_event': 2728, 'binding_event': 4328}
+user_version 20
+{"leader":true,"version":"2.0.0","commit":"b40b5cf82a","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+main ["../../environments/crc.yaml"] Synced Healthy
+
+== step 2 on (values-on.yaml) — 2026-10-02T00:16:37Z
+00:11:35Z  Synced     Degraded     Succeeded  successfully synced (all tasks run)
+00:11:50Z  Synced     Degraded     Succeeded  successfully synced (all tasks run)
+app: feat/303-recovery-mode ["../../reports/2026-10-01_recovery-mode-303/values-on.yaml"] 98d20df0b698956d12f50e12a64e1ae65c43856a
+group-sync-dashboard-85b694547d-d4b4b   1/2   Running   0     15m   10.217.1.206   crc   <none>   <none>
+recovery pod: pod/group-sync-dashboard-85b694547d-d4b4b
+image=quay.io/ephico2real/group-sync-dashboard:2.0.0 ready=false true restarts=0 started=2026-10-02T00:01:34Z
+2026-10-02T00:01:36Z gsd-recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=2h)
+2026-10-02T00:01:36Z gsd-recovery the app is NOT running and no data is collected
+2026-10-02T00:01:36Z gsd-recovery data path /data/gsd.db (not opened by this process)
+2026-10-02T00:01:36Z gsd-recovery TTL 2h: ends 2026-10-02T02:01:36Z, 2h left
+2026-10-02T00:01:36Z gsd-recovery check the time left before a restore: at the TTL this process exits and every process in the container stops with it
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+endpoints ready:  | notReady: 10.217.1.206
+Available=False MinimumReplicasUnavailable; Progressing=False ProgressDeadlineExceeded; 
+
+== step 3 holds (T303-17) — 2026-10-02T00:16:51Z, pod started 00:01:34Z
+restarts=0
+fd scan done
+/usr/sbin/sh: line 1: grep: command not found
+/usr/sbin/sh: line 1: tr: command not found
+
+-- frozen baseline (recovery pod, read-only connection; no writer runs)
+{'membership_event': 1843, 'sync_event': 2728, 'binding_event': 4328}
+user_version 20
+fd scan after the read: done
+self-heal check: sync=Synced valueFiles=["../../reports/2026-10-01_recovery-mode-303/values-on.yaml"]
+GSD_RECOVERY_MODE=true
+
+== step 4 a restart keeps the TTL — 2026-10-02T00:17:02Z
+kill rc=0
+restarts=1
+2026-10-02T00:17:04Z gsd-recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=2h)
+2026-10-02T00:17:04Z gsd-recovery the app is NOT running and no data is collected
+2026-10-02T00:17:04Z gsd-recovery data path /data/gsd.db (not opened by this process)
+2026-10-02T00:17:04Z gsd-recovery TTL 2h: ends 2026-10-02T02:01:36Z, 1h44m33s left (kept from this pod's first start at 2026-10-02T00:01:36Z; the container restarted)
+2026-10-02T00:17:04Z gsd-recovery check the time left before a restore: at the TTL this process exits and every process in the container stops with it
+-- previous container's last line:
+2026-10-02T00:17:02Z gsd-recovery SIGTERM: stopping (exit 0); the app was not running
+
+== step 6 SIGTERM as PID 1 (T303-11) — 2026-10-02T00:17:23Z
+pod "group-sync-dashboard-85b694547d-d4b4b" deleted from group-sync-dashboard namespace
+oc delete pod --wait took 0.74 s (grace period 30 s)
+
+== step 5 the TTL ends visibly (values-ttl3m.yaml) — 2026-10-02T00:21:22Z
+pod pod/group-sync-dashboard-5844df98b8-k46xb ttl=3m
+started=2026-10-02T00:17:47Z state=CrashLoopBackOff restarts=2
+-- the first container's banner and end (oc logs --previous of the latest restart, and the current)
+2026-10-02T00:21:04Z gsd-recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=3m)
+2026-10-02T00:21:04Z gsd-recovery the app is NOT running and no data is collected
+2026-10-02T00:21:04Z gsd-recovery data path /data/gsd.db (not opened by this process)
+2026-10-02T00:21:04Z gsd-recovery TTL 3m: ends 2026-10-02T00:21:04Z, 0s left (kept from this pod's first start at 2026-10-02T00:17:49Z; the container restarted)
+2026-10-02T00:21:04Z gsd-recovery check the time left before a restore: at the TTL this process exits and every process in the container stops with it
+...
+2026-10-02T00:21:04Z gsd-recovery check the time left before a restore: at the TTL this process exits and every process in the container stops with it
+2026-10-02T00:21:04Z gsd-recovery TTL 3m reached at 2026-10-02T00:21:04Z; exiting 1: the app is still NOT running and no data is collected
+2026-10-02T00:21:04Z gsd-recovery to extend: set a longer recovery.ttl (for example 6m) in release group-sync-dashboard's values file and roll it out through its deployment pipeline; the new pod counts it from its start
+2026-10-02T00:21:04Z gsd-recovery to leave: set recovery.enabled: false in release group-sync-dashboard's values file and roll it out; the app starts on /data/gsd.db
+2026-10-02T00:21:04Z gsd-recovery TTL 3m reached; exiting 1. Extend with recovery.ttl, leave with recovery.enabled: false, in the release's values file (lines above)
+-- describe (back-off)
+  Normal   Pulling         21s (x3 over 3m36s)   kubelet            spec.containers{dashboard}: Pulling image "quay.io/ephico2real/group-sync-dashboard:2.0.0"
+  Normal   Created         20s (x3 over 3m35s)   kubelet            spec.containers{dashboard}: Container created
+  Normal   Started         20s (x3 over 3m35s)   kubelet            spec.containers{dashboard}: Container started
+  Normal   Pulled          20s                   kubelet            spec.containers{dashboard}: Successfully pulled image "quay.io/ephico2real/group-sync-dashboard:2.0.0" in 616ms (616ms including waiting). Image size: 191126309 bytes.
+  Warning  Unhealthy       19s (x10 over 3m35s)  kubelet            spec.containers{dashboard}: Readiness probe failed: dial tcp 10.217.1.214:8080: connect: connection refused
+  Warning  BackOff         17s (x4 over 32s)     kubelet            spec.containers{dashboard}: Back-off restarting failed container dashboard in pod group-sync-dashboard-5844df98b8-k46xb_group-sync-dashboard(f8bc72bd-49f5-4f4a-abe7-72a79336e542)
+
+== step 7 off (values-off.yaml) — rollout started 2026-10-02T00:21:45Z
+operation phase at start: Succeeded
+release-crc finished 2026-10-02T00:22:33Z: exit=0
+00:22:33Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+-- step 7 checks — 2026-10-02T00:22:42Z
+group-sync-dashboard-79cf59bb67-g9ths                             2/2   Running     0     39s
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+{'membership_event': 1843, 'sync_event': 2728, 'binding_event': 4328}
+user_version 20
+{"leader":true,"version":"2.0.0","commit":"b40b5cf82a","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+endpoints ready: 10.217.1.221
+GSD_RECOVERY_MODE env present: |
+app: feat/303-recovery-mode Synced Healthy
+
+== step 8 RBAC — main (environments/crc.yaml) vs the branch (the walk's values files), rbac_rules.py
+-- recovery off
+rules: before 65, after 65
+REMOVED 0
+ADDED 0
+-- recovery on
+rules: before 65, after 65
+REMOVED 0
+ADDED 0

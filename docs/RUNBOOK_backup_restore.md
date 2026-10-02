@@ -185,6 +185,52 @@ From S3 use the CLI with a credential that holds `GetObject` — the backup cred
 The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
 file corrupt rather than error (`gsd/store.py#Store.__init__`).
 
+**Recovery mode is the primary path (chart 0.60.0 and later, #303).** The dashboard pod keeps its spec and
+its data volume but runs the chart's recovery script instead of the app
+(`charts/group-sync-dashboard/scripts/recovery_mode.py`), so nothing opens `gsd.db`, and it stays up until
+`recovery.ttl` (2h by default): a dropped `oc` session does not end it. It is a value like any other: set it
+in this release's values file and roll it out through the release's deployment pipeline. Never with
+`oc set env` or an edit of the Deployment: a GitOps tool such as Argo CD (selfHeal) reverts a hand edit.
+
+1. **Turn it on, with the image you will restore under.** In the release's values file set
+   `recovery.enabled: true` and `recovery.ttl` (for example `2h`, longer than the restore needs), and roll it
+   out. For a rollback, set the older `image.tag` in the same change, so the restore runs under the image
+   that will open the file.
+2. **Wait for the recovery pod.** `oc get pods -n $NS -l app=$REL` shows `1/2` ready (`0/1` with the proxy
+   off) and `Running`: the dashboard container is not ready, so the Service sends it nothing.
+   `oc logs -n $NS deploy/$REL -c dashboard` starts with `RECOVERY MODE`, `the app is NOT running and no data
+   is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the offsite claim is at
+   `/offsite`, read-only. The Deployment never reports available, so a pipeline step that waits for the
+   rollout reports it failed; that is expected. A pipeline that rolls a failed rollout back on its own (Helm's
+   `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry this
+   change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
+   restored.
+3. **Restore** with §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'`
+   instead of `oc debug` or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
+   at the TTL the script exits and every process in the container stops with it, a restore still running
+   included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
+4. **More time?** At the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and the log ends with how to
+   extend or leave. Set a longer `recovery.ttl` (for example `4h`) in the values file and roll it out: the new
+   pod counts it from its start. The change replaces the pod and ends any `oc exec` session in it; so does an
+   eviction or a node drain, whose new pod also starts a new TTL. The time left is counted on the node's
+   monotonic clock, so setting the wall clock back does not lengthen it; if the node restarts under the pod,
+   the TTL counts as reached.
+5. **Turn it off**, and verify with §4c: set `recovery.enabled: false` in the values file (keep a rollback's
+   older `image.tag`) and roll it out. When the change is applied the recovery pod stops at once and the app
+   starts on the restored file.
+
+Nothing is recorded while recovery mode is on, and no rule says so: `GroupSyncDashboardNotPolling` reads a
+gauge the stopped process no longer emits, so it returns nothing. With reporting on,
+`GroupSyncDashboardReportSnapshotStale` (warning) fires after about 50 minutes, because the report service's
+newest copy stops advancing. The TTL is the bound.
+
+**Development and troubleshooting only:** with plain Helm and no pipeline, the same change is
+`helm upgrade $REL <chart> -n $NS -f <values-file>`, with the chart reference and version the release already
+runs (`helm list -n $NS`) and the release's complete values file, now carrying `recovery`.
+
+**Without recovery mode** (the fallback, and any chart before 0.60.0), scale the writer to zero and use the
+`oc debug` pod of §4a or the helper pod of §4b:
+
 ```sh
 oc scale -n $NS deploy/$REL --replicas=0
 oc wait -n $NS --for=delete pod -l app=$REL --timeout=120s
@@ -192,7 +238,9 @@ oc wait -n $NS --for=delete pod -l app=$REL --timeout=120s
 
 ### 4a. From an on-volume copy
 
-A helper pod with the data claim, from the Deployment's own template:
+In recovery mode the dashboard pod already has the data claim: run the `sh -c '…'` body below with
+`oc exec -n $NS deploy/$REL -c dashboard --` in place of `oc debug -n $NS deploy/$REL -c dashboard --`.
+Otherwise, a helper pod with the data claim, from the Deployment's own template:
 
 ```sh
 oc debug -n $NS deploy/$REL -c dashboard -- sh -c '
@@ -221,8 +269,10 @@ OpenShift runs under: the next pod may get a different UID and reads through the
 
 ### 4b. From the off-volume claim
 
-A one-off pod mounting both claims (the `debug` pod has only the data claim). There is no
-`sleep`; Python idles instead:
+In recovery mode the dashboard pod mounts the offsite claim read-only at `/offsite` (with
+`backup.offsite` on its `pvc` destination): skip the helper pod and run the `oc exec` body below against
+`deploy/$REL -c dashboard`. Otherwise, a one-off pod mounting both claims (the `debug` pod has only the
+data claim). There is no `sleep`; Python idles instead:
 
 ```yaml
 apiVersion: v1
@@ -275,6 +325,9 @@ the offsite claim is attached elsewhere (a Job still running — wait for it) or
 node-local. Move the file via §3 instead.
 
 ### 4c. Bring it back and verify
+
+In recovery mode, turn it off (§4, step 5) instead of the `oc scale` below: the app starts on the restored
+file. The rest of this section is the same.
 
 ```sh
 oc scale -n $NS deploy/$REL --replicas=1
