@@ -5,6 +5,7 @@ rollup the leader writes once, and predicates the compliance snapshot shares."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -258,7 +259,8 @@ class TestCgroupSampler:
         backups = tmp_path / "backup"; backups.mkdir()
         (backups / "gsd-1.db").write_bytes(b"b" * 10); (backups / "gsd-2.db").write_bytes(b"b" * 15)
         mon = SystemMonitor(_sampler(tmp_path), str(tmp_path), own=("data", dashboard_data_bytes(str(db), str(backups))))
-        assert mon.view()["data"] == {"db_bytes": 100, "wal_bytes": 40, "backups": {"count": 2, "bytes": 25}}
+        data = mon.view()["data"]
+        assert (data["db_bytes"], data["wal_bytes"], data["backups"]["count"], data["backups"]["bytes"]) == (100, 40, 2, 25)
         assert dashboard_data_bytes(str(tmp_path / "missing.db"), None)() is None
         arts = tmp_path / "artifacts"; (arts / "r1").mkdir(parents=True); (arts / "r2").mkdir()
         (arts / "r1" / "run.json").write_bytes(b"{}"); (arts / "r1" / "report.html").write_bytes(b"h" * 30)
@@ -274,7 +276,8 @@ class TestCgroupSampler:
         for name, size in (("gsd-20261001T000000.000000Z.db", 10), ("gsd-20261001T010000.000000Z-pod-a.db", 15),
                            ("gsd-20261001T020000.000000Z-pod-b.db", 20)):
             (backups / name).write_bytes(b"b" * size)
-        assert dashboard_data_bytes(str(db), str(backups))()["backups"] == {"count": 3, "bytes": 45}
+        got = dashboard_data_bytes(str(db), str(backups))()["backups"]
+        assert (got["count"], got["bytes"]) == (3, 45)
 
     def test_disk_is_statvfs_of_the_path(self, tmp_path):
         d = disk(str(tmp_path))
@@ -556,6 +559,213 @@ class TestApi:
         assert body["system"]["report"] == {"as_of": "2026-09-19T00:00:00Z", "memory": {"used_bytes": 1, "limit_bytes": 2}}
         signals.note_report_system(None, "2026-09-19T00:01:00Z")
         assert kpi_client.get("/api/kpi", headers=H("root")).json()["system"]["report"] is None
+
+
+# ── the Backups card (#306) ──────────────────────────────────────────────────────────────
+
+def _copy(path: Path, schema: int, size: int = 4096, mtime: float | None = None) -> Path:
+    """A file shaped like a VACUUM INTO copy: SQLite's header string, user_version at offset 60."""
+    header = b"SQLite format 3\x00" + bytes(44) + schema.to_bytes(4, "big") + bytes(4)
+    path.write_bytes(header + bytes(size - len(header)))
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+    return path
+
+
+class TestBackupsCard:
+    """The data block's `backups` and `pre_upgrade` (#306), from what the dashboard process already has."""
+
+    def test_t306_1_disabled_is_enabled_false_and_nothing_else(self, tmp_path):
+        from gsd.kpi.system import dashboard_data_bytes
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        data = dashboard_data_bytes(str(db), "")()
+        assert data["backups"] == {"enabled": False}, "disabled must not read as 0 backups"
+
+    def test_t306_2_enabled_with_no_copy_yet_is_told_apart_from_disabled(self, tmp_path):
+        from gsd.kpi.system import dashboard_data_bytes
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        got = dashboard_data_bytes(str(db), str(backups))()["backups"]
+        assert (got["enabled"], got["count"], got["kept"], got["bytes"], got["newest_at"], got["newest_schema"]) == \
+            (True, 0, 0, 0, None, None)
+
+    def test_t306_3_count_bytes_and_newest_at_describe_the_same_files_as_the_metric(self, tmp_path):
+        """newest_at is the newest gsd-*.db's mtime, the rule of gsd_backup_last_success_timestamp_seconds, in
+        ISO-8601 UTC to the second. A name whose stat fails (a copy rotated away between the glob and the stat,
+        here a dangling link) is neither counted nor sized: today's walk counted it and sized nothing."""
+        from types import SimpleNamespace
+
+        from gsd.kpi.system import dashboard_data_bytes
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        _copy(backups / "gsd-20261001T051103.798578Z.db", 20, 4096, mtime=1790831464.28)
+        _copy(backups / "gsd-20261001T111104.000930Z.db", 20, 8192, mtime=1790853064.38)
+        measure = dashboard_data_bytes(str(db), str(backups))
+        got = measure()["backups"]
+        assert (got["count"], got["kept"], got["bytes"], got["newest_at"]) == (2, 2, 4096 + 8192, "2026-10-01T11:11:04Z")
+        gone = backups / "gsd-20261001T000000.000000Z.db"
+        gone.symlink_to(backups / "rotated-away")
+        assert (measure()["backups"]["count"], measure()["backups"]["bytes"]) == (2, 4096 + 8192)
+        gone.unlink()
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, timedelta(seconds=120), settings=SimpleNamespace(
+                backup_dir=str(backups), login_capture_enabled=False))).decode()
+        finally:
+            store.close()
+        metric = next(float(line.split()[1]) for line in text.splitlines()
+                      if line.startswith("gsd_backup_last_success_timestamp_seconds "))
+        assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
+
+    def test_t306_4_the_newest_schema_is_read_without_touching_the_copy(self, tmp_path):
+        """A real VACUUM INTO copy: its schema is read from the header, and the copy keeps its bytes and its
+        mtime, with no -wal or -shm beside it."""
+        import hashlib
+
+        from gsd.kpi.system import dashboard_data_bytes
+        from gsd.store import KNOWN_SCHEMA_VERSION
+        db = tmp_path / "gsd.db"
+        backups = tmp_path / "backup"
+        store = Store(str(db))
+        try:
+            copy = Path(store.backup(str(backups), keep=4))
+        finally:
+            store.close()
+        before = (hashlib.sha256(copy.read_bytes()).hexdigest(), copy.stat().st_mtime_ns)
+        got = dashboard_data_bytes(str(db), str(backups))()["backups"]
+        assert (got["newest_schema"], got["known_schema"]) == (KNOWN_SCHEMA_VERSION, KNOWN_SCHEMA_VERSION)
+        assert (hashlib.sha256(copy.read_bytes()).hexdigest(), copy.stat().st_mtime_ns) == before
+        assert sorted(p.name for p in backups.iterdir()) == [copy.name], "a -wal or -shm appeared beside the copy"
+
+    def test_t306_5_failures_keep_and_interval_come_from_the_process(self, tmp_path):
+        """The counter /metrics exports (RuntimeSignals.note_backup_failure) and the settings the poller backs
+        up with, through /api/kpi as the page reads them."""
+        db = str(tmp_path / "gsd.db")
+        _seed(db)
+        app = build_app(_settings(db, backup_dir=str(tmp_path / "backup"), backup_keep=4, backup_interval_hours=6),
+                        run_poller=False)
+        app.state.cluster_admin_resolver = _MapResolver({"root": "all"})
+        app.state.signals.note_backup_failure()
+        app.state.signals.note_backup_failure()
+        with TestClient(app) as client:
+            body = client.get("/api/kpi", headers=H("root")).json()
+        got = body["system"]["dashboard"]["data"]["backups"]
+        assert (got["failures"], got["keep"], got["interval_hours"], got["dir"]) == (2, 4, 6, str(tmp_path / "backup"))
+        assert got["failures_since"] <= body["as_of"] and got["failures_since"].endswith("Z")
+
+    def test_t306_6_the_newest_pre_upgrade_copy_by_name_or_null(self, tmp_path):
+        """Beside the database, outside backup.dir; read from the name, whether or not backups are enabled."""
+        from gsd.kpi.system import dashboard_data_bytes
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        pre = tmp_path / "pre-upgrade"; pre.mkdir()
+        measure = dashboard_data_bytes(str(db), "")
+        assert measure()["pre_upgrade"] is None
+        for name in ("pre-upgrade-20260920T010101.000000Z-schema-18-to-19-group-sync-dashboard-58bf7b9cb7-pgwcw.db",
+                     "pre-upgrade-20260925T064601.000000Z-schema-19-to-20-group-sync-dashboard-d568cf97b-88dxh.db"):
+            _copy(pre / name, int(name.split("-schema-")[1].split("-")[0]))
+            (pre / (name + ".sha256")).write_text(f"{'0' * 64}  {name}\n")
+        assert measure()["pre_upgrade"] == {"at": "2026-09-25T06:46:01Z", "from": 19, "to": 20}
+        for f in pre.iterdir():
+            f.unlink()
+        assert measure()["pre_upgrade"] is None
+
+    def test_above_one_replica_the_card_reads_this_pods_copies_as_the_metric_does(self, tmp_path, monkeypatch):
+        """SPEC_E6 with SPEC_E4 (#306, #391): above one replica `count` and `bytes` are every pod's copies (the
+        bytes on the shared claim), while `kept`, `newest_at` and `newest_schema` are this pod's own, the copies
+        gsd_backup_last_success_timestamp_seconds reads: a neighbour's fresh copy must not stand in for this
+        pod's failing backups. The owner is the whole field after the stamp, never a suffix."""
+        from types import SimpleNamespace
+
+        from gsd.kpi.system import dashboard_data_bytes
+        monkeypatch.setenv("POD_NAME", "pod-a")
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        _copy(backups / "gsd-20261001T051103.798578Z-pod-a.db", 19, 4096, mtime=1790831464)
+        _copy(backups / "gsd-20261001T111104.000930Z-pod-b.db", 20, 4096, mtime=1790853064)
+        _copy(backups / "gsd-20261001T111105.000000Z-x-pod-a.db", 20, 4096, mtime=1790853065)
+        got = dashboard_data_bytes(str(db), str(backups), replica_count=2)()["backups"]
+        assert (got["count"], got["bytes"], got["kept"]) == (3, 3 * 4096, 1)
+        assert (got["newest_at"], got["newest_schema"]) == ("2026-10-01T05:11:04Z", 19)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, timedelta(seconds=120), settings=SimpleNamespace(
+                backup_dir=str(backups), login_capture_enabled=False, replica_count=2))).decode()
+        finally:
+            store.close()
+        metric = next(float(line.split()[1]) for line in text.splitlines()
+                      if line.startswith("gsd_backup_last_success_timestamp_seconds "))
+        assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
+        one = dashboard_data_bytes(str(db), str(backups), replica_count=1)()["backups"]
+        assert (one["count"], one["kept"], one["newest_at"]) == (3, 3, "2026-10-01T11:11:05Z")
+
+    def test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory_as_the_metric_does(self, tmp_path, monkeypatch):
+        """SPEC_E6 with SPEC_E4 (#306, #391, E4's review F1): every rollout renames every pod, so after one no pod
+        has a copy of its own until its first backup succeeds. The card then reads the directory's newest, the copy
+        gsd_backup_last_success_timestamp_seconds reads, so a rollout whose backups all fail turns the card stale
+        when GroupSyncDashboardBackupStale fires; `kept` stays this pod's own: none."""
+        from types import SimpleNamespace
+
+        from gsd.kpi.system import dashboard_data_bytes
+        monkeypatch.setenv("POD_NAME", "new-pod")
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        _copy(backups / "gsd-20261001T051103.798578Z-departed-a.db", 19, 4096, mtime=1790831464)
+        _copy(backups / "gsd-20261001T111104.000930Z-departed-b.db", 20, 4096, mtime=1790853064)
+        got = dashboard_data_bytes(str(db), str(backups), replica_count=2)()["backups"]
+        assert (got["count"], got["kept"], got["newest_at"], got["newest_schema"]) == (2, 0, "2026-10-01T11:11:04Z", 20)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, timedelta(seconds=120), settings=SimpleNamespace(
+                backup_dir=str(backups), login_capture_enabled=False, replica_count=2))).decode()
+        finally:
+            store.close()
+        metric = next(float(line.split()[1]) for line in text.splitlines()
+                      if line.startswith("gsd_backup_last_success_timestamp_seconds "))
+        assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
+
+    def test_t306_16_one_view_lists_two_directories_opens_one_copy_and_writes_nothing(self, tmp_path):
+        """The read budget, measured with the interpreter's audit hooks in a child process (a hook cannot be
+        removed, so none is left in this one): one listing of backup.dir, one of pre-upgrade/, one read-only open
+        of the newest copy, and no other access under the data directory: no write, no rename, no SQLite open."""
+        import subprocess
+        import sys
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        _copy(backups / "gsd-20261001T051103.798578Z.db", 20, mtime=1790831464)
+        newest = _copy(backups / "gsd-20261001T111104.000930Z.db", 20, mtime=1790853064)
+        pre = tmp_path / "pre-upgrade"; pre.mkdir()
+        _copy(pre / "pre-upgrade-20260925T064601.000000Z-schema-19-to-20-pod.db", 19)
+        probe = (
+            "import json, os, sys\n"
+            "from gsd.kpi.system import CgroupSampler, SystemMonitor, dashboard_data_bytes\n"
+            "root, db, backups = (os.path.realpath(a) for a in sys.argv[1:4])\n"
+            "seen = []\n"
+            "def hook(event, args):\n"
+            "    if args and isinstance(args[0], (str, os.PathLike)):\n"
+            "        path = os.path.realpath(os.fspath(args[0]))\n"
+            "        if path.startswith(root):\n"
+            "            seen.append([event, path] + [a for a in args[1:3] if isinstance(a, (str, int))])\n"
+            "monitor = SystemMonitor(CgroupSampler(os.path.join(root, 'no-cgroup')), None,\n"
+            "                        own=('data', dashboard_data_bytes(db, backups)))\n"
+            "sys.addaudithook(hook)\n"
+            "view = monitor.view()\n"
+            "print(json.dumps({'seen': seen, 'schema': view['data']['backups'].get('newest_schema')}))\n")
+        done = subprocess.run([sys.executable, "-c", probe, str(tmp_path), str(db), str(backups)],
+                              capture_output=True, text=True, timeout=60,
+                              env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+        assert done.returncode == 0, done.stderr
+        out = json.loads(done.stdout)
+        root = os.path.realpath(tmp_path)
+        listings = sorted(path for event, path, *_ in out["seen"] if event in ("os.scandir", "os.listdir"))
+        assert listings == sorted([os.path.join(root, "backup"), os.path.join(root, "pre-upgrade")]), out["seen"]
+        opens = [entry for entry in out["seen"] if entry[0] == "open"]
+        assert [path for _, path, *_ in opens] == [os.path.realpath(newest)], opens
+        mode, flags = opens[0][2], opens[0][3]
+        assert "r" in mode and not set("wax+") & set(mode)
+        assert not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)
+        # pathlib.Path.glob is the pattern's own event (Python 3.13 on); the listing itself is the os.scandir above.
+        assert {event for event, *_ in out["seen"]} <= {"os.scandir", "os.listdir", "pathlib.Path.glob", "open"}, out["seen"]
+        assert out["schema"] == 20
 
 
 class TestReportService:

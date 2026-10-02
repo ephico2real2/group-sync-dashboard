@@ -1701,7 +1701,7 @@ function kpiComponent(name, sys, th, ownLine) {
       + (thrOver ? ` — over the ${th.throttled_percent}% mark, which is why this reads <em>watch</em>` : "");
   const diskLabel = name === "report" ? "Artefacts" : "Data volume";
   const own = name === "report" ? sys.artifacts : sys.data;
-  const ownBytes = own ? (name === "report" ? own.bytes : own.db_bytes + own.wal_bytes + (own.backups ? own.backups.bytes : 0)) : null;
+  const ownBytes = own ? (name === "report" ? own.bytes : own.db_bytes + own.wal_bytes + ((own.backups && own.backups.bytes) || 0)) : null;
   const diskVal = `<b>${ownBytes == null ? "—" : kpiBytes(ownBytes)}</b>${name === "report" && own ? ` · ${kpiNum(own.files)} files` : ""}`
     + (diskPct == null ? "" : ` · node disk ${kpiPct(diskPct, 0)} full`);
   return `<div class="comp" data-comp="${esc(name)}" data-state="${state}">
@@ -1758,6 +1758,96 @@ function kpiTile(id, label, value, note, flag) {
     <div class="label">${esc(label)}</div><div class="value">${value}</div><div class="note">${note}</div></div>`;
 }
 
+/* The Backups card (#306), built to docs/design/kpi-backups-mock.html. Every figure is the dashboard process's
+   own, from /api/kpi's system.dashboard.data: the one walk of the backup directory the size line already lists,
+   the failure counter /metrics exports and config.backup. No Prometheus query, so an estate without one sees it;
+   where Prometheus runs, GroupSyncDashboardBackupStale and the board's two backup panels say the same. Every
+   instant is absolute: the payload's ISO-8601 UTC in a <time datetime>, shown by fmtTime in the page's display
+   zone with its label, as every other time on the page is (THE SERVER STATES AN INSTANT; THE PAGE PRESENTS IT).
+   Stale is measured against the payload's as-of, the server's clock, as the sparklines are, so a browser with a
+   wrong clock cannot make a fresh copy stale. */
+const KPI_BACKUP_STALE_INTERVALS = 2;   // the values comment's alert line, backupStaleSeconds: two intervals
+
+/* The text of every instant on the card: fmtTime's "YYYY-MM-DD HH:MM:SS<zone>", in the page's display zone with
+   its label. One function, so the "next due by" date test below reads exactly what the tiles print. */
+const kpiStampText = (iso) => fmtTime(iso);
+
+/* `part` "date" or "time" splits that text at its first space, for the tiles; a zone label after the time
+   ("11:03:38 EDT") is set small, as a tile's unit is: on a narrow tile it wraps under the time, never sideways. */
+function kpiInstant(iso, part) {
+  const text = kpiStampText(iso), cut = text.indexOf(" ");
+  if (cut < 0 || !part) return `<time datetime="${esc(iso)}">${esc(text)}</time>`;
+  if (part === "date") return `<time datetime="${esc(iso)}">${esc(text.slice(0, cut))}</time>`;
+  const [clock, ...zone] = text.slice(cut + 1).split(" ");
+  return `<time datetime="${esc(iso)}">${esc(clock)}${zone.length ? `<span class="of"> ${esc(zone.join(" "))}</span>` : ""}</time>`;
+}
+
+/* One state per card, the most severe that holds, always a word on a badge (WCAG 1.4.1, never colour alone):
+   disabled, stale, failing, no copy yet, healthy. `due` is when the next copy is due at the latest. */
+function kpiBackupState(b, asOf, due) {
+  if (b.enabled === false) return { state: "disabled", cls: "unknown", word: "backups are disabled",
+    detail: "no backup directory is configured, so this process takes no copies: a setting, not a failure. To take them, set "
+      + "<span class=\"mono\">config.backup.enabled: true</span> in this release's values file and roll it out through the release's deployment pipeline." };
+  const failures = b.failures || 0;
+  const counted = `${kpiNum(failures)} failure${failures === 1 ? "" : "s"} since start`;
+  const last = b.newest_at ? kpiInstant(b.newest_at) : null;
+  const line = b.interval_hours ? KPI_BACKUP_STALE_INTERVALS * b.interval_hours : null;
+  if (last && line != null && Date.parse(asOf) - Date.parse(b.newest_at) > line * 3600000) {
+    return { state: "stale", cls: "critical", word: "stale",
+      detail: `last copy ${last}, past ${line} h (two intervals of ${b.interval_hours} h)${failures ? `; ${counted}` : ""}` };
+  }
+  if (failures) return { state: "failing", cls: "warning", word: "failing", detail: `${counted}; ${last ? `last good copy ${last}` : "no good copy yet"}` };
+  if (!last) return { state: "none", cls: "unknown", word: "no copy yet",
+    detail: `the first copy is taken on the first poll cycle after this process started (${kpiInstant(b.failures_since)})` };
+  return { state: "ok", cls: "ok", word: "healthy", detail: `last copy ${last}${due ? `; next due by ${kpiInstant(due)}` : ""}` };
+}
+
+function kpiBackups(k) {
+  const sys = k.system.dashboard;
+  const own = sys && sys.data;
+  if (!own || !own.backups) {
+    return `<section class="card kpi-page" data-card="backups"><h2>Backups</h2>
+      <div class="bk-state" data-state="unknown"><span class="badge unknown"><span class="glyph" aria-hidden="true"></span>unavailable</span>
+      <span class="d">the dashboard's database could not be read in this sample, so neither could its backups</span></div></section>`;
+  }
+  const b = own.backups, pre = own.pre_upgrade;
+  const due = b.newest_at && b.interval_hours
+    ? new Date(Date.parse(b.newest_at) + b.interval_hours * 3600000).toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+  const st = kpiBackupState(b, k.as_of, due);
+  const preTile = kpiTile("backup-preupgrade", "Pre-upgrade copy", pre ? `${kpiNum(pre.from)} → ${kpiNum(pre.to)}` : "none",
+    pre ? `${kpiInstant(pre.at)} · kept outside the rotation` : "one is taken before each schema migration; none on this volume yet");
+  let tiles = preTile;
+  if (b.enabled !== false) {
+    const sameDay = due && kpiStampText(due).split(" ")[0] === kpiStampText(b.newest_at).split(" ")[0];
+    const newer = b.newest_schema != null && b.newest_schema > b.known_schema;
+    tiles = kpiTile("backup-last", "Last copy", b.newest_at ? kpiInstant(b.newest_at, "time") : "none yet",
+        b.newest_at ? `${kpiInstant(b.newest_at, "date")}${due ? ` · next due by ${kpiInstant(due, sameDay ? "time" : null)}` : ""}`
+          : b.failures ? "the attempts since start are failing" : "the first poll cycle takes one", st.state === "stale" ? "critical" : "")
+      // keep 0 rotates nothing away (Store._vacuum_into), so there is no ceiling to show against.
+      + kpiTile("backup-kept", "Copies kept", `${kpiNum(b.kept)}${b.keep ? `<span class="of">/${kpiNum(b.keep)}</span>` : ""}`,
+        `${kpiBytes(b.bytes)} on the data volume${b.count !== b.kept ? ` · ${kpiNum(b.count)} copies in all` : ""}`)
+      + kpiTile("backup-failures", "Failures", kpiNum(b.failures), `since start ${kpiInstant(b.failures_since)}`, b.failures ? "warning" : "")
+      + kpiTile("backup-schema", "Newest copy's schema", `${kpiNum(b.newest_schema)}<span class="of">/${kpiNum(b.known_schema)}</span>`,
+        b.newest_schema == null ? (b.newest_at ? "the newest copy's header could not be read" : "no copy yet")
+          : newer ? `newer than this build understands (${kpiNum(b.known_schema)}): this image cannot restore it` : `this build understands ${kpiNum(b.known_schema)}`,
+        newer ? "critical" : "")
+      + preTile;
+  }
+  const where = b.enabled === false ? "on-volume · disabled"
+    : `on-volume · ${esc(b.dir)} · every ${kpiNum(b.interval_hours)} h · ${b.keep ? `keep ${kpiNum(b.keep)}` : "keep all"}`;
+  return `<section class="card kpi-page" data-card="backups">
+    <h2>Backups <span class="asof">${where}</span></h2>
+    <div class="bk-state" data-state="${st.state}"><span class="badge ${st.cls}"><span class="glyph" aria-hidden="true"></span>${esc(st.word)}</span>
+      <span class="d">${st.detail}</span></div>
+    <div class="kband bk${b.enabled === false ? " one" : ""}">${tiles}</div>
+    <div class="bk-rule"><div class="rule">Read by the dashboard process from what it already has: the backup directory the size line
+      above lists, the failure counter <span class="mono">/metrics</span> exports (<span class="mono">gsd_backup_failures_total</span>), counted
+      since this process started, and <span class="mono">config.backup</span>. No Prometheus, so it reads the same without one; where one
+      runs, <span class="mono">GroupSyncDashboardBackupStale</span> alerts on the same file. Stale is past two backup intervals, the alert's
+      line at the chart's defaults. The off-volume copy is not on this card: its signal is the offsite CronJob's.</div></div>
+  </section>`;
+}
+
 const KPI_REFUSAL = `This page reports the dashboard's own pods, the fleet's access posture and its trends —
          governance data about the clusters, not about the reader.`;
 
@@ -1808,7 +1898,7 @@ function kpiPage() {
   const retained = clusters.map((c) => ((k.trends[c] || {}).history_retained_since || {}).membership_event).filter(Boolean).sort()[0];
   const reportSince = clusters.map((c) => (k.trends[c] || {}).report_timeline_since).filter(Boolean).sort()[0];
   const ownLineDashboard = (own, disk) => own
-    ? `<div class="sub">gsd.db ${kpiBytes(own.db_bytes)} + WAL ${kpiBytes(own.wal_bytes)}${own.backups ? ` + ${own.backups.count} backups ${kpiBytes(own.backups.bytes)}` : ""}${disk.total_bytes ? `, on a ${kpiBytes(disk.total_bytes)} volume that shares the node's disk (${kpiBytes(disk.used_bytes)} of ${kpiBytes(disk.total_bytes)} used)` : ""}</div>` : "";
+    ? `<div class="sub">gsd.db ${kpiBytes(own.db_bytes)} + WAL ${kpiBytes(own.wal_bytes)}${!own.backups ? "" : own.backups.enabled === false ? " · backups disabled" : ` + ${own.backups.count} backups ${kpiBytes(own.backups.bytes)}`}${disk.total_bytes ? `, on a ${kpiBytes(disk.total_bytes)} volume that shares the node's disk (${kpiBytes(disk.used_bytes)} of ${kpiBytes(disk.total_bytes)} used)` : ""}</div>` : "";
   const ownLineReport = (own, disk) => disk.total_bytes
     ? `<div class="sub">${kpiBytes(disk.used_bytes)} of ${kpiBytes(disk.total_bytes)} used on the artefact volume's disk</div>` : "";
   const links = k.links || {};
@@ -1829,6 +1919,7 @@ function kpiPage() {
       ${kpiComponent("report", k.system.report, th, ownLineReport)}
     </div>
   </section>
+  ${kpiBackups(k)}
   <section class="card kpi-page">
     <h2>Access posture <span class="asof">as of last poll · ${clusters.length} cluster${clusters.length === 1 ? "" : "s"} · ${esc(clusters.join(" + "))}</span></h2>
     <div class="kband">

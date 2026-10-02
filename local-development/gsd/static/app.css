@@ -1473,16 +1473,34 @@ td.state-cell { min-width: 210px; }
 .kpi-page .btn.ghost { background: transparent; color: var(--accent); }
 .kpi-page .btn .ext { font-family: var(--font-mono); font-size: var(--text-xs); opacity: .8; }
 
+/* #306: the Backups card, to docs/design/kpi-backups-mock.html. One state line (a badge, its word, one mono
+   line of detail), five tiles on the band's hairline grid, and the rule. A disabled card keeps one tile, the
+   pre-upgrade copy, which is taken whether or not backups are on. */
+.kpi-page .bk-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-5);
+  padding: var(--space-7) var(--space-9); border-bottom: 1px solid var(--border); }
+.kpi-page .bk-state .badge { white-space: normal; max-width: 100%; }
+.kpi-page .bk-state .d { font-size: var(--text-sm); color: var(--text-secondary); font-family: var(--font-mono);
+  overflow-wrap: anywhere; min-width: 0; }
+.kpi-page .kband.bk { grid-template-columns: repeat(5, 1fr); }
+.kpi-page .kband.bk .kpi .note { overflow-wrap: anywhere; }
+.kpi-page .kband.bk.one { grid-template-columns: minmax(0, 1fr); }
+.kpi-page .kband.bk.one .kpi:last-child { grid-column: 1 / -1; }
+.kpi-page .bk-rule { padding: 0 var(--space-9) var(--space-8); }
+
 @media (prefers-reduced-motion: reduce) {
   .kpi-page .beat { animation: none; } .kpi-page .flash { animation: none; } .kpi-page .fill { transition: none; }
 }
 @media (max-width: 980px) {
   .kpi-page .kband { grid-template-columns: repeat(3, 1fr); }
+  .kpi-page .kband.bk { grid-template-columns: repeat(3, 1fr); }
+  .kpi-page .kband.bk .kpi:last-child { grid-column: span 2; }
   .kpi-page .trends { grid-template-columns: repeat(2, 1fr); }
   .kpi-page .sys { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .kpi-page .kband { grid-template-columns: repeat(2, 1fr); }
+  .kpi-page .kband.bk { grid-template-columns: repeat(2, 1fr); }
+  .kpi-page .kband.bk .kpi:last-child { grid-column: 1 / -1; }
   .kpi-page .trends { grid-template-columns: 1fr; }
   .kpi-page .meter-row { grid-template-columns: 72px 1fr; }
   .kpi-page .meter-val { grid-column: 2; text-align: left; min-width: 0; }

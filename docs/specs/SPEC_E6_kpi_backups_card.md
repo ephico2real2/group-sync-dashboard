@@ -5,10 +5,10 @@
 | Programme | Epic E (#385), restore tools and release safety; build-order step 5 of 9. Independent of the restore path (#303, #302); composes with SPEC_E4 (#391, step 3), see the Orchestrator's notes, 9 |
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.4.0, chart 0.61.4 |
+| Version on release | app 2.3.0, chart 0.61.1 |
 | Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which moves `pyproject.toml`, `gsd/__init__.py` and `Chart.yaml`'s `appVersion`, and with it the chart PATCH and its history line (the script's own rule). Against origin/main `6d532178` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26. No block carries a version field: the script writes them, as in SPEC_E3 and SPEC_E4. **When specs claim the same numbers** (the rule SPEC_E5, #304, states): a spec still `specified` must name versions above `pyproject.toml` and `Chart.yaml` (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), so whichever implementation merges first takes its numbers and, in the same pull request, moves every other `specified` spec whose application or chart version is not above the new tree to the next free version above it, in its header and its index row, keeping its MINOR or PATCH. Read from `docs/specs/README.md` on `6d532178`, those are SPEC_G2 (app 2.1.0, chart 0.60.0), whose app moves to 2.3.0 (2.2.0 being SPEC_G3's); SPEC_E4 (app 2.1.0, chart 0.59.26), which moves to app 2.4.0 and chart 0.59.27; and SPEC_E3 (app 2.1.0, chart 0.59.26), which moves to app 2.5.0 and chart 0.59.28. SPEC_E2 and SPEC_E5 (chart 0.60.0) and SPEC_G3 (app 2.2.0, chart 0.60.1) are already above and stay. Measured: `6d532178` with this spec's blocks and `prepare-release.py --app 2.1.0 --no-commit` fails that test with `AssertionError: ('G2', 'app 2.1.0, chart 0.60.0', 'pyproject.toml is already 2.1.0')`; with G2 and E4 moved and E3 not, with `AssertionError: ('E3', 'app 2.1.0, chart 0.59.26', 'Chart.yaml is already 0.59.26')`; with the three moves, `tests/test_specs_index.py` and `tests/test_chart_versions.py` give `100 passed`. If another of them is implemented first, its pull request moves this spec's cells instead, and this spec's implementing pull request re-derives the moves against main before applying, with the reason under these notes |
 | Issue | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic, the committed mock (`docs/design/kpi-backups-mock.html`) and SPEC_E4 at `29c67b03` (in review). Measured on main `73cc7d08` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and Chromium (Playwright) on this machine, and read-only on the CRC lab (image 2.0.0). §7's blocks were cut from a copy of `73cc7d08` with the design implemented, and proved against a clean worktree of this spec's commit (§4.3). Revised the same day on the reviews of `1e194df3` (OB3 in Grok's seat, OB2 in Codex's seat; Orchestrator's notes, 13), rebased onto origin/main `6d532178` (SPEC_E5 and SPEC_E3 merged), and proved again there (§4.3) |
 
 ## How to read this spec
@@ -328,6 +328,33 @@ issue and the mock. Each is applied in §3 and §7 and held by a test in §4.
       `test_specs_index.py` excludes E6 by its id and pins it to #306 (§4.3, the pin mutant).
     - **Not taken:** OB3's suggestion to write T306-15 as a shell command (C7, offered as "not a defect"); note 10
       keeps the check in words.
+14. **Implementation (2026-10-01, on origin/main `934a9fab`, application 2.2.0, chart 0.61.0): the version is
+    application 2.3.0, chart 0.61.1, not the header's 2.4.0 and 0.61.4; note 9's composition is blocks 25 to 30;
+    block 24 names the version.** All 24 blocks checked out unchanged on `934a9fab`.
+    - **The version.** `local-development/check-app-version-bump.py` accepts only the next MINOR or MAJOR
+      (`expected = (f"{major}.{minor + 1}.0", f"{major + 1}.0.0")`), so an image change on 2.2.0 is 2.3.0, as SPEC_E4
+      found (its Orchestrator's notes, 13). `prepare-release.py --app 2.3.0 --no-commit` moves `pyproject.toml`,
+      `gsd/__init__.py` and `appVersion` and derives the chart PATCH 0.61.0 → 0.61.1; its CHANGELOG heading and its
+      `merged` → `released` promotions are not kept, as for SPEC_E3 and SPEC_E4: Epic E's release cuts the heading.
+    - **The moves, re-derived against `934a9fab`** (the Version note's last sentence): the moves it lists are spent
+      (SPEC_E3 and SPEC_E4 are merged; SPEC_G2, at app 2.4.0, chart 0.63.0, is above the new tree). Read from
+      `docs/specs/README.md` on `934a9fab`, the `specified` claims at or below app 2.3.0 or chart 0.61.1 are
+      SPEC_E9 (app 2.3.0), which moves to the next free MINOR, app 2.6.0 (2.4.0 is SPEC_G2's, 2.5.0 SPEC_G3's), its
+      chart cell naming no number; and SPEC_G4 (chart 0.61.1 for step 1, 0.61.2 for step 2), whose step 1 moves to
+      the next free PATCH, 0.61.2, and whose step 2 to the next free after it, 0.61.4 (0.61.3 is SPEC_G3's; 0.61.4
+      was this spec's). SPEC_G2, SPEC_G3 (app 2.5.0, chart 0.61.3) and SPEC_W1 (chart 0.62.0) are above and stay.
+    - **Block 24 corrected:** with the chart at 0.61.1 and block 24 as reviewed,
+      `local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+      fails, `AssertionError: Chart.yaml is 0.61.1 (last released 0.59.24) and no Unreleased entry names it`, so the
+      entry's bold lead names `app 2.3.0, chart 0.61.1`, as SPEC_E3's and SPEC_E4's do (their notes 21 and 13), and
+      its first four lines are rewrapped; the rest of the entry is unchanged.
+    - **Blocks 25 to 30, note 9's five edits.** SPEC_E4 is on main (`6231020d`, `d3aa900a`), so this spec is the one
+      implemented second. With blocks 1 to 24 alone on `934a9fab`, SPEC_E4's T391-8 fails,
+      `AssertionError: assert {'enabled': T...tes': 45, ...} == {'count': 3, 'bytes': 45}`, as note 9 measured.
+      The edits are written as blocks so that the spec still reproduces the tree: block 25 is edit 1, block 26 is
+      edit 2 (note 9's function, whole, over the function blocks 4 and 5 leave), block 27 edit 3, block 28 edit 4,
+      block 29 the two tests of edit 5, block 30 its two `API.md` rows; their text is note 9's, taken from its two
+      fenced listings by a script.
 
 ## 1. The mandate, and what is out of scope
 
@@ -797,8 +824,8 @@ with the screenshots:
 ## 7. Implementation blocks
 
 Applied in this order: blocks 1 to 6 are the server (`store.py`, `kpi/system.py`, `api.py`), 7 to 13 the page
-(`index.html`, `app.css`), 14 to 19 the tests, 20 to 24 the documents. None carries a version field
-(Version note).
+(`index.html`, `app.css`), 14 to 19 the tests, 20 to 24 the documents, and 25 to 30 the composition with
+SPEC_E4 (Orchestrator's notes, 9 and 14). None carries a version field (Version note).
 
 ### Block 1 — local-development/gsd/store.py: `re`, for the pre-upgrade name
 
@@ -1920,10 +1947,10 @@ New text:
 ```text
 ## Unreleased
 
-- **A Backups card on the KPI page (#306, Epic E #385, `docs/specs/SPEC_E6_kpi_backups_card.md`).** Below System
-  status, from what the dashboard process already has: the last copy as an absolute instant in the page's display
-  zone, with its label (ISO-8601 UTC in the payload), and when the next is due, the copies kept against
-  `config.backup.keep` and their size, the failures since the process started, the
+- **A Backups card on the KPI page (#306, Epic E #385, `docs/specs/SPEC_E6_kpi_backups_card.md`; app 2.3.0,
+  chart 0.61.1).** Below System status, from what the dashboard process already has: the last copy as an absolute
+  instant in the page's display zone, with its label (ISO-8601 UTC in the payload), and when the next is due, the
+  copies kept against `config.backup.keep` and their size, the failures since the process started, the
   newest copy's schema against what this build understands, and the newest pre-upgrade copy (#301). One state in
   words: healthy, no copy yet, failing, stale (older than two backup intervals), or disabled, which no longer reads
   "+ 0 backups" in the dashboard's size line ("backups disabled"). `/api/kpi`'s `system.dashboard.data.backups` is
@@ -1931,4 +1958,292 @@ New text:
   (`local-development/API.md`); the same walk now counts and sizes the same files. No Prometheus query, no new
   metric, no new permission; `/metrics` and the Grafana board are unchanged.
 
+```
+
+### Block 25 — local-development/gsd/kpi/system.py: SPEC_E4's two names
+
+Orchestrator's notes, 9, edit 1: `BACKUP_NAME` and `backup_owner`, not `backup_copies`, which would list the directory a second time (§3.8).
+
+<!-- block: local-development/gsd/kpi/system.py | edit -->
+
+Old text:
+
+```python
+from ..store import KNOWN_SCHEMA_VERSION, copy_schema, newest_pre_upgrade
+
+log = logging.getLogger(__name__)
+```
+
+New text:
+
+```python
+from ..store import KNOWN_SCHEMA_VERSION, copy_schema, newest_pre_upgrade
+from ..storage import BACKUP_NAME, backup_owner
+
+log = logging.getLogger(__name__)
+```
+
+### Block 26 — local-development/gsd/kpi/system.py: `kept` and `newest_at` are this pod's own above one replica
+
+Orchestrator's notes, 9, edit 2: the function as note 9 writes it, over the function blocks 4 and 5 leave. The walk counts `kept` over the copies this pod's rotation keeps and takes the newest over them, or over every copy while there is none of its own, the rule `gsd_backup_last_success_timestamp_seconds` reads under SPEC_E4.
+
+<!-- block: local-development/gsd/kpi/system.py | edit -->
+
+Old text:
+
+```python
+def dashboard_data_bytes(db_path: str, backup_dir: str | None, *, keep: int | None = None,
+                         interval_hours: float | None = None, failures: Callable[[], int] | None = None):
+    """The dashboard's own bytes: the database file, its WAL, and the backups — what
+    `gsd_sqlite_wal_bytes` and the backup gauge already say, gathered for the page — and the KPI page's
+    Backups card (#306), from what this process already has.
+
+    `backups` is `{"enabled": False}` and nothing else when no backup directory is configured: disabled is
+    not "0 backups". Enabled, it is ONE walk of the directory's gsd-*.db (the size line's own glob): each file
+    stat'd once and counted only when its stat succeeds, so `count` and `bytes` describe the same files (a
+    copy rotated away between the glob and the stat is in neither). `count` and `bytes` are every copy on the
+    volume; `kept`, `newest_at` and `newest_schema` are this process's own copies, the ones its rotation keeps
+    to `keep`: today every gsd-*.db, so `kept` equals `count`. `newest_at` is the newest own file's mtime, the
+    rule of `gsd_backup_last_success_timestamp_seconds`, and `newest_schema` is read from that one file's
+    header without opening it in SQLite. `failures` is the counter /metrics exports, since `failures_since`:
+    the instant this process built it. `keep` and `interval_hours` are the settings the poller backs up with.
+
+    `pre_upgrade` sits beside `backups`, not inside it: the copy before a migration (#301) is taken whether
+    or not backups are enabled. One listing of its directory, nothing opened.
+    """
+    started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def measure() -> dict | None:
+        try:
+            db = os.stat(db_path).st_size
+        except OSError:
+            return None
+        try:
+            wal = os.stat(db_path + "-wal").st_size
+        except OSError:
+            wal = 0
+        backups: dict = {"enabled": False}
+        if backup_dir:
+            count, size, newest = 0, 0, None
+            for f in Path(backup_dir).glob("gsd-*.db"):
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                count += 1
+                size += st.st_size
+                if newest is None or st.st_mtime > newest[0]:
+                    newest = (st.st_mtime, f)
+            backups = {
+                "enabled": True, "dir": backup_dir, "count": count, "bytes": size, "kept": count,
+                "newest_at": None if newest is None
+                else datetime.fromtimestamp(newest[0], UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "newest_schema": None if newest is None else copy_schema(newest[1]),
+                "known_schema": KNOWN_SCHEMA_VERSION,
+                "failures": None if failures is None else failures(),
+                "failures_since": started,
+                "keep": keep, "interval_hours": interval_hours,
+            }
+        return {"db_bytes": db, "wal_bytes": wal, "backups": backups, "pre_upgrade": newest_pre_upgrade(db_path)}
+    return measure
+```
+
+New text:
+
+```python
+def dashboard_data_bytes(db_path: str, backup_dir: str | None, *, keep: int | None = None,
+                         interval_hours: float | None = None, failures: Callable[[], int] | None = None,
+                         replica_count: int = 1):
+    """The dashboard's own bytes: the database file, its WAL, and the backups — what
+    `gsd_sqlite_wal_bytes` and the backup gauge already say, gathered for the page — and the KPI page's
+    Backups card (#306), from what this process already has.
+
+    `backups` is `{"enabled": False}` and nothing else when no backup directory is configured: disabled is
+    not "0 backups". Enabled, it is ONE walk of the directory's gsd-*.db (the size line's own glob): each file
+    stat'd once and counted only when its stat succeeds, so `count` and `bytes` describe the same files (a
+    copy rotated away between the glob and the stat is in neither). `count` and `bytes` are every copy on the
+    volume; `kept` is this process's own copies, the ones its rotation keeps to `keep`: every gsd-*.db at one
+    replica, and above one the names that carry this pod (#391). `newest_at` is the newest own copy's mtime,
+    or the directory's newest while this pod has none of its own (every pod, after a rollout): the rule
+    `gsd_backup_last_success_timestamp_seconds` reads, compared in this walk rather than by a second listing,
+    so the card turns stale when GroupSyncDashboardBackupStale fires. `newest_schema` is read from that one
+    file's header without opening it in SQLite. `failures` is the counter /metrics exports, since
+    `failures_since`: the instant this process built it. `keep` and `interval_hours` are the settings the
+    poller backs up with.
+
+    `pre_upgrade` sits beside `backups`, not inside it: the copy before a migration (#301) is taken whether
+    or not backups are enabled. One listing of its directory, nothing opened.
+    """
+    started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    owner = backup_owner(replica_count)
+
+    def measure() -> dict | None:
+        try:
+            db = os.stat(db_path).st_size
+        except OSError:
+            return None
+        try:
+            wal = os.stat(db_path + "-wal").st_size
+        except OSError:
+            wal = 0
+        backups: dict = {"enabled": False}
+        if backup_dir:
+            count, size, kept, own, newest = 0, 0, 0, None, None
+            for f in Path(backup_dir).glob("gsd-*.db"):
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                count += 1
+                size += st.st_size
+                if newest is None or st.st_mtime > newest[0]:
+                    newest = (st.st_mtime, f)
+                if owner is not None and ((m := BACKUP_NAME.fullmatch(f.name)) is None or m.group(2) != owner):
+                    continue
+                kept += 1
+                if own is None or st.st_mtime > own[0]:
+                    own = (st.st_mtime, f)
+            newest = own or newest      # none of its own yet: the directory's newest, as the metric reads
+            backups = {
+                "enabled": True, "dir": backup_dir, "count": count, "bytes": size, "kept": kept,
+                "newest_at": None if newest is None
+                else datetime.fromtimestamp(newest[0], UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "newest_schema": None if newest is None else copy_schema(newest[1]),
+                "known_schema": KNOWN_SCHEMA_VERSION,
+                "failures": None if failures is None else failures(),
+                "failures_since": started,
+                "keep": keep, "interval_hours": interval_hours,
+            }
+        return {"db_bytes": db, "wal_bytes": wal, "backups": backups, "pre_upgrade": newest_pre_upgrade(db_path)}
+    return measure
+```
+
+### Block 27 — local-development/gsd/api.py: `build_app` passes the replica count
+
+Orchestrator's notes, 9, edit 3.
+
+<!-- block: local-development/gsd/api.py | edit -->
+
+Old text:
+
+```python
+                                       failures=lambda: signals.snapshot()["backup_failures"])))
+```
+
+New text:
+
+```python
+                                       failures=lambda: signals.snapshot()["backup_failures"],
+                                       replica_count=settings.replica_count)))
+```
+
+### Block 28 — local-development/tests/test_kpi.py: SPEC_E4's T391-8 reads the two figures it is about
+
+Orchestrator's notes, 9, edit 4: the whole-dict assertion fails once `backups` carries the card's fields.
+
+<!-- block: local-development/tests/test_kpi.py | edit -->
+
+Old text:
+
+```python
+        assert dashboard_data_bytes(str(db), str(backups))()["backups"] == {"count": 3, "bytes": 45}
+```
+
+New text:
+
+```python
+        got = dashboard_data_bytes(str(db), str(backups))()["backups"]
+        assert (got["count"], got["bytes"]) == (3, 45)
+```
+
+### Block 29 — local-development/tests/test_kpi.py: the card above one replica, as the metric reads
+
+Orchestrator's notes, 9, edit 5: the two tests, in `TestBackupsCard` before T306-16.
+
+<!-- block: local-development/tests/test_kpi.py | edit -->
+
+Old text:
+
+```python
+    def test_t306_16_one_view_lists_two_directories_opens_one_copy_and_writes_nothing(self, tmp_path):
+```
+
+New text:
+
+```python
+    def test_above_one_replica_the_card_reads_this_pods_copies_as_the_metric_does(self, tmp_path, monkeypatch):
+        """SPEC_E6 with SPEC_E4 (#306, #391): above one replica `count` and `bytes` are every pod's copies (the
+        bytes on the shared claim), while `kept`, `newest_at` and `newest_schema` are this pod's own, the copies
+        gsd_backup_last_success_timestamp_seconds reads: a neighbour's fresh copy must not stand in for this
+        pod's failing backups. The owner is the whole field after the stamp, never a suffix."""
+        from types import SimpleNamespace
+
+        from gsd.kpi.system import dashboard_data_bytes
+        monkeypatch.setenv("POD_NAME", "pod-a")
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        _copy(backups / "gsd-20261001T051103.798578Z-pod-a.db", 19, 4096, mtime=1790831464)
+        _copy(backups / "gsd-20261001T111104.000930Z-pod-b.db", 20, 4096, mtime=1790853064)
+        _copy(backups / "gsd-20261001T111105.000000Z-x-pod-a.db", 20, 4096, mtime=1790853065)
+        got = dashboard_data_bytes(str(db), str(backups), replica_count=2)()["backups"]
+        assert (got["count"], got["bytes"], got["kept"]) == (3, 3 * 4096, 1)
+        assert (got["newest_at"], got["newest_schema"]) == ("2026-10-01T05:11:04Z", 19)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, timedelta(seconds=120), settings=SimpleNamespace(
+                backup_dir=str(backups), login_capture_enabled=False, replica_count=2))).decode()
+        finally:
+            store.close()
+        metric = next(float(line.split()[1]) for line in text.splitlines()
+                      if line.startswith("gsd_backup_last_success_timestamp_seconds "))
+        assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
+        one = dashboard_data_bytes(str(db), str(backups), replica_count=1)()["backups"]
+        assert (one["count"], one["kept"], one["newest_at"]) == (3, 3, "2026-10-01T11:11:05Z")
+
+    def test_above_one_replica_a_pod_with_no_copy_of_its_own_reads_the_directory_as_the_metric_does(self, tmp_path, monkeypatch):
+        """SPEC_E6 with SPEC_E4 (#306, #391, E4's review F1): every rollout renames every pod, so after one no pod
+        has a copy of its own until its first backup succeeds. The card then reads the directory's newest, the copy
+        gsd_backup_last_success_timestamp_seconds reads, so a rollout whose backups all fail turns the card stale
+        when GroupSyncDashboardBackupStale fires; `kept` stays this pod's own: none."""
+        from types import SimpleNamespace
+
+        from gsd.kpi.system import dashboard_data_bytes
+        monkeypatch.setenv("POD_NAME", "new-pod")
+        db = tmp_path / "gsd.db"; db.write_bytes(b"d" * 100)
+        backups = tmp_path / "backup"; backups.mkdir()
+        _copy(backups / "gsd-20261001T051103.798578Z-departed-a.db", 19, 4096, mtime=1790831464)
+        _copy(backups / "gsd-20261001T111104.000930Z-departed-b.db", 20, 4096, mtime=1790853064)
+        got = dashboard_data_bytes(str(db), str(backups), replica_count=2)()["backups"]
+        assert (got["count"], got["kept"], got["newest_at"], got["newest_schema"]) == (2, 0, "2026-10-01T11:11:04Z", 20)
+        store = Store(":memory:")
+        try:
+            text = generate_latest(build_registry(store, timedelta(seconds=120), settings=SimpleNamespace(
+                backup_dir=str(backups), login_capture_enabled=False, replica_count=2))).decode()
+        finally:
+            store.close()
+        metric = next(float(line.split()[1]) for line in text.splitlines()
+                      if line.startswith("gsd_backup_last_success_timestamp_seconds "))
+        assert datetime.fromtimestamp(metric, UTC).strftime("%Y-%m-%dT%H:%M:%SZ") == got["newest_at"]
+
+    def test_t306_16_one_view_lists_two_directories_opens_one_copy_and_writes_nothing(self, tmp_path):
+```
+
+### Block 30 — local-development/API.md: the `kept` and `newest_at` rows above one replica
+
+Orchestrator's notes, 9, edit 5: the two rows as note 9 words them.
+
+<!-- block: local-development/API.md | edit -->
+
+Old text:
+
+```text
+| `kept` | the copies this process's rotation keeps to `keep`; today every `gsd-*.db`, so equal to `count` |
+| `newest_at` | the newest of the `kept` copies' mtime, ISO-8601 UTC to the second: the rule of `gsd_backup_last_success_timestamp_seconds`; `null` when there is none yet |
+```
+
+New text:
+
+```text
+| `kept` | the copies this process's rotation keeps to `keep`: every `gsd-*.db` at one replica; above one, the copies whose name carries this pod (#391) |
+| `newest_at` | the newest `kept` copy's mtime, or the directory's newest while this pod has none of its own (above one replica, after a rollout: #391), ISO-8601 UTC to the second: the rule of `gsd_backup_last_success_timestamp_seconds`; `null` when there is none yet |
 ```
