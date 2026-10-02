@@ -4,7 +4,12 @@ The sync timeline and membership history exist only because this process observe
 cluster cannot replay them (`gsd/store.py#Store.backup`). Three copies exist:
 
 * **on-volume** — `config.backup` writes `gsd-<UTC stamp>Z.db` under `config.backup.dir`
-  (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim;
+  (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim. Above one replica
+  every pod writes `gsd-<UTC stamp>Z-<pod name>.db` into that same directory and keeps `keep` of its own:
+  `keep` applies per replica, and no pod deletes another pod's copies. The copies of a pod that no longer
+  exists (a rollout renames every pod), and the copies named without a pod (written at one replica, or by a
+  release before #391), stay until they are removed by hand, or until the release runs one replica again,
+  whose next backup keeps `keep` copies in all (#391);
 * **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
   claim or to object storage, with a `.sha256` sidecar, after an integrity check
   (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`);

@@ -23,13 +23,12 @@ import logging
 import os
 import threading
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from prometheus_client import CollectorRegistry
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from . import __version__, state as st
-from .storage import StorageBackend
+from .storage import StorageBackend, backup_copies, backup_owner
 
 log = logging.getLogger(__name__)
 
@@ -802,7 +801,8 @@ class DashboardCollector:
 
         backup_ts = GaugeMetricFamily(
             "gsd_backup_last_success_timestamp_seconds",
-            "Modification time of the newest backup file in backupDir. Read from the "
+            "Modification time of the newest backup file in backupDir; above one replica, "
+            "the newest this pod wrote, or the directory's newest until it has written one. Read from the "
             "files rather than remembered from the last attempt, so it survives restarts "
             "and catches every failure shape, including a misconfigured directory. "
             "Absent when backups are disabled or none exists yet.",
@@ -810,9 +810,15 @@ class DashboardCollector:
         )
         if self.settings is not None and self.settings.backup_dir:
             try:
+                # Above one replica, this pod's own copies (#391): a neighbour's fresh copy in the
+                # shared directory must not stand in for this replica's failing backups. A pod with
+                # none yet (every pod, after a rollout) reads the whole directory, as before #391:
+                # with no series, a rollout whose backups all fail could never fire the alert.
+                owner = backup_owner(getattr(self.settings, "replica_count", 1))
+                mine = backup_copies(self.settings.backup_dir, owner)
                 newest = max(
                     (p.stat().st_mtime
-                     for p in Path(self.settings.backup_dir).glob("gsd-*.db")),
+                     for p in mine or backup_copies(self.settings.backup_dir, None)),
                     default=None,
                 )
             except OSError:

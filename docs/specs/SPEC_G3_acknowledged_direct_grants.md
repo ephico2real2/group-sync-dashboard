@@ -5,7 +5,7 @@
 | Programme | Epic G (#387), access declared, platform identities configured — build step 3 of 4. #255 (SPEC_G2, in review) comes before it and changes the same direct-user view, alert and page notes; #420 comes after |
 | Batch | G — access declared |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.2.0, chart 0.60.5 |
+| Version on release | app 2.5.0, chart 0.60.5 |
 | Version note | The blocks are written against main `dd51b91f` (application 2.0.0, chart 0.59.25), so blocks 66 to 69 and the CHANGELOG bullet (block 65) carry application 2.1.0 and chart 0.59.26. SPEC_G2 merges first and takes application 2.1.0 and chart 0.60.0, so at this spec's turn those five are re-derived to application 2.2.0 and chart 0.60.1 (a PATCH: no value is added, `appVersion` moves). Orchestrator's note 1 lists every block G2 touches |
 | Issue | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) |
 | Status | specified |

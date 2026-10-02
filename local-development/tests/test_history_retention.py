@@ -148,9 +148,9 @@ class _Recording(Store):
         self.calls.append("maintain")
         return super().maintain()
 
-    def backup(self, directory, keep=3):
+    def backup(self, directory, keep=3, **kwargs):
         self.calls.append("backup")
-        return super().backup(directory, keep)
+        return super().backup(directory, keep, **kwargs)
 
     def prune_membership_events(self, cluster_id, before_at, max_rows=5000):
         self.calls.append("prune_membership_events")
@@ -199,6 +199,39 @@ class TestPollerPrune:
         poller._next_backup = 0.0
         poller._after_poll(CLUSTER)
         assert _count(recording, "membership_event") == 0
+
+    def test_a_replica_prunes_only_while_its_own_copy_exists(self, tmp_path, monkeypatch):
+        """T391-3 (#391). Retention is released on "ok", which backup() returning a path sets. Two replicas
+        share one backup directory with keep 1: on main the second replica's rotation deleted the first's
+        copy after the first had pruned on it, so the rows it pruned were in no copy anywhere ([7] == [5, 7])."""
+        import sqlite3
+
+        shared = tmp_path / "backup"
+        replicas = []
+        for pod, rows in (("pod-a", 5), ("pod-b", 7)):
+            db = tmp_path / pod / "gsd.db"
+            store = Store(str(db))
+            store.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+            _seed(store, "membership_event", rows, days_ago=800)
+            settings = _settings(tmp_path, db_path=str(db), backup_dir=str(shared), backup_keep=1, replica_count=2)
+            replicas.append((pod, store, Poller(store, settings)))
+
+        def rows_in(path) -> int:
+            conn = sqlite3.connect(f"file:{path}?immutable=1", uri=True)
+            try:
+                return conn.execute("SELECT COUNT(*) FROM membership_event").fetchone()[0]
+            finally:
+                conn.close()
+
+        try:
+            for pod, _store, poller in replicas:
+                monkeypatch.setenv("POD_NAME", pod)
+                poller._after_poll(CLUSTER)
+            assert [_count(store, "membership_event") for _, store, _ in replicas] == [0, 0], "both pruned"
+            assert sorted(rows_in(p) for p in shared.glob("gsd-*.db")) == [5, 7]
+        finally:
+            for _pod, store, _poller in replicas:
+                store.close()
 
     def test_with_backups_disabled_retention_is_held(self, recording, tmp_path):
         """Nothing is ever deleted when config.backup is off: the history would have no copy

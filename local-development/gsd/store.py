@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from .storage import SqliteHealth, StorageHealth  # noqa: F401
+from .storage import SqliteHealth, StorageHealth, backup_copies  # noqa: F401
 from .kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED, qualified
 from .kube import CHART_CONFIG_SOURCE, GROUP_KIND, SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
@@ -1691,7 +1691,7 @@ class Store:
     # meant both of them knew the database was SQLite — the leak that made the "decoupled"
     # claim untrue. See gsd/storage.py.
 
-    def backup(self, directory: str, keep: int = 3) -> str | None:
+    def backup(self, directory: str, keep: int = 3, *, owner: str | None = None) -> str | None:
         """Write a consistent copy of the database to `directory`. Returns its path.
 
         THE ONLY EXISTENTIAL RISK IN THIS SYSTEM. The accumulated sync and membership
@@ -1712,8 +1712,13 @@ class Store:
         `keep` bounds the directory. Backups live on the same PVC this protects against,
         so they are the first half of the answer, not the whole one — a CronJob shipping
         them off the volume is the other half.
+
+        `owner` is the pod above one replica (storage.backup_owner, #391): the copy is named
+        gsd-<stamp>-<owner>.db and `keep` bounds that pod's own copies only, so a neighbour
+        sharing the directory never deletes one. None, at one replica, is gsd-<stamp>.db and
+        `keep` over every gsd-*.db, as before.
         """
-        return self._vacuum_into(directory, keep, what="backup")
+        return self._vacuum_into(directory, keep, what="backup", owner=owner)
 
     def snapshot(self, directory: str, keep: int = 2) -> str | None:
         """A consistent copy for the REPORT SERVICE, on its own cadence and in its own directory.
@@ -1728,7 +1733,7 @@ class Store:
         """
         return self._vacuum_into(directory, keep, what="report snapshot")
 
-    def _vacuum_into(self, directory: str, keep: int, *, what: str) -> str | None:
+    def _vacuum_into(self, directory: str, keep: int, *, what: str, owner: str | None = None) -> str | None:
         if self.path == ":memory:":
             return None
         target_dir = Path(directory)
@@ -1738,8 +1743,8 @@ class Store:
         # store relies on its fixed width for lexicographic ordering; a filename has no
         # such constraint and needs the extra digits.
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-        target = target_dir / f"gsd-{stamp}.db"
-        tmp = target_dir / f"gsd-{stamp}.db.tmp"
+        target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
+        tmp = target.with_name(target.name + ".tmp")
         try:
             # Inside the try: an unwritable or read-only directory must return None like every
             # other failure here, not raise into the poll thread.
@@ -1759,7 +1764,7 @@ class Store:
             except OSError:
                 pass
             return None
-        existing = sorted(target_dir.glob("gsd-*.db"))
+        existing = backup_copies(target_dir, owner)
         for stale in existing[:-keep] if keep > 0 else []:
             try:
                 stale.unlink()

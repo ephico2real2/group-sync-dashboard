@@ -374,11 +374,11 @@
       "id": 18,
       "type": "stat",
       "title": "Backup age",
-      "description": "time() - gsd_backup_last_success_timestamp_seconds. Red at monitoring.prometheusRule.backupStaleSeconds (43200) — GroupSyncDashboardBackupStale. No data means backups are disabled or none exists yet.",
+      "description": "time() - gsd_backup_last_success_timestamp_seconds of the stalest replica (min over the pods; above one replica each pod's series is its own). Red at monitoring.prometheusRule.backupStaleSeconds (43200) — GroupSyncDashboardBackupStale. No data means backups are disabled or none exists yet.",
       "gridPos": { "h": 6, "w": 6, "x": 0, "y": 37 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - max(gsd_backup_last_success_timestamp_seconds)", "legendFormat": "backup age", "instant": true }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "time() - min(gsd_backup_last_success_timestamp_seconds)", "legendFormat": "backup age", "instant": true }
       ],
       "fieldConfig": {
         "defaults": { "unit": "s", "decimals": 0, "noValue": "no backup", "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 0 }, { "color": "orange", "value": 21600 }, { "color": "red", "value": 43200 } ] } },

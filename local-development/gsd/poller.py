@@ -27,7 +27,7 @@ from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACH
 from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
 from .audit import AuditLogProgress, plan_audit_stamps
-from .storage import StorageBackend
+from .storage import StorageBackend, backup_owner
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -989,7 +989,10 @@ class Poller:
             return
         self._next_backup = now + self.settings.backup_interval_hours * 3600
         try:
-            if (self.store.backup(self.settings.backup_dir, keep=self.settings.backup_keep)
+            # Above one replica this pod's own copies only (#391): no neighbour sharing the directory
+            # deletes the copy that sets "ok" below, which is what releases retention.
+            if (self.store.backup(self.settings.backup_dir, keep=self.settings.backup_keep,
+                                  owner=backup_owner(self.settings.replica_count))
                     is None):
                 # None is the method's own failure contract (VACUUM error, unwritable
                 # directory) — already logged with the trace in the store; counted here,

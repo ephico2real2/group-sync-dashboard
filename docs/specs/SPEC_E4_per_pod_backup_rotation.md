@@ -5,10 +5,10 @@
 | Programme | Epic E (#385), restore tools and release safety; build-order step 3 of 9. Independent of #303 and #302; it runs early so that `restore-db.sh --list` (SPEC_E3) lists the copies an operator expects |
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.4.0, chart 0.60.2 |
+| Version on release | app 2.2.0, chart 0.60.2 |
 | Version note | The next free MINOR, filled at implementation. The change is in `local-development/gsd/` (image content), so the implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore bumps the chart PATCH that the values comment, the README and the alert text need. Against `dd51b91f` (application 2.0.0, chart 0.59.25) that is app 2.1.0 and chart 0.59.26; SPEC_E3 (#302) and SPEC_E2 (#303) claim the same next numbers, so whichever merges second takes the next ones. No block carries a version field: the script writes them, as in SPEC_E3 |
 | Issue | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on main `dd51b91f` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift, image 2.0.0, Python 3.14.7, SQLite 3.53.4 in the pod). §7's blocks were cut from a copy of `dd51b91f` with the design implemented, and proved against a clean worktree of `dd51b91f` (§4.3). Revised the same day after the review of `29c67b03` by OB3 (in Grok's seat) and OB2 (in Codex's seat), on the orchestrator's decisions (Orchestrator's notes, 12), on a branch that merged main `f144a82b` (SPEC_G1, SPEC_E2 and SPEC_G2); the revised blocks are proved against `73cc7d08` and check out on `f144a82b`, which changes no file they touch |
 
 ## How to read this spec
@@ -144,6 +144,22 @@ apart from the maintained `path#anchor` citations.
       and **§3.7's add-on unlinks with `missing_ok=True`**, because two neighbours may delete the same departed copy.
     Where the two overlapped (F3 and C6; F5 and blocks 24 and 26) one version is applied, as named above. OB2's
     hunk to §6's line counts is superseded by counts measured again on the revised blocks. Nothing was rejected.
+13. **Implementation (2026-10-01, on origin/main `093e17fe`, application 2.1.0, chart 0.60.1): the version is
+    application 2.2.0, chart 0.60.2, not the header's 2.4.0.** All 32 blocks checked out and were applied
+    unchanged (`git diff --numstat` equals §6's table, file by file); block 24's Old text still matches the
+    runbook's on-volume bullet with SPEC_E3 on main. The header named app 2.4.0 because #520 moved this spec past
+    the MINORs SPEC_G3 (2.2.0) and SPEC_E9 (2.3.0) claim, but `local-development/check-app-version-bump.py` accepts
+    only the next MINOR or MAJOR (`expected = (f"{major}.{minor + 1}.0", f"{major + 1}.0.0")`), so an image change
+    on 2.1.0 is 2.2.0. `prepare-release.py --app 2.2.0 --no-commit` moved `pyproject.toml`, `gsd/__init__.py` and
+    `appVersion` and derived the chart PATCH 0.60.1 → 0.60.2, this spec's own chart cell; its CHANGELOG heading and
+    its `merged` → `released` promotions are not kept, as for SPEC_E3 (`2205888f`). The tree now reaches SPEC_G3's
+    app 2.2.0, so its header and index row move to the next free MINOR, app 2.5.0 (2.3.0 is SPEC_E9's, 2.4.0
+    SPEC_G2's and SPEC_E6's), keeping its chart 0.60.5; no other `specified` cell is at or below app 2.2.0 or
+    chart 0.60.2. **Block 30 corrected after `--apply`:** with the chart at 0.60.2,
+    `local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+    failed, `AssertionError: Chart.yaml is 0.60.2 (last released 0.59.24) and no Unreleased entry names it`, so
+    the entry's bold lead names `app 2.2.0, chart 0.60.2`, as SPEC_E3's did (its Orchestrator's notes, 21), and its
+    first five lines are rewrapped; the rest of the entry is unchanged.
 
 ## 1. The mandate, and what is out of scope
 
@@ -1767,10 +1783,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 ## Unreleased
 
 - **Above one replica, every pod keeps its own scheduled backups (#391, Epic E #385,
-  `docs/specs/SPEC_E4_per_pod_backup_rotation.md`).** Replicas share `config.backup.dir`, and each rotation
-  deleted by the bare `gsd-*.db` pattern there, so with two replicas and `keep: 4` each kept 2 of its own,
-  and with three replicas and `keep: 2` a pod's only copy was deleted by a neighbour after the poller had
-  released retention on it. Above one replica a copy is now named `gsd-<UTC stamp>Z-<pod name>.db` (the pod is
+  `docs/specs/SPEC_E4_per_pod_backup_rotation.md`; app 2.2.0, chart 0.60.2).** Replicas share
+  `config.backup.dir`, and each rotation deleted by the bare `gsd-*.db` pattern there, so with two replicas
+  and `keep: 4` each kept 2 of its own, and with three replicas and `keep: 2` a pod's only copy was deleted
+  by a neighbour after the poller had released retention on it. Above one replica a copy is now named
+  `gsd-<UTC stamp>Z-<pod name>.db` (the pod is
   `POD_NAME`), and a pod rotates only the copies whose name carries exactly its own pod, so each keeps `keep`
   of its own and none deletes another's; `gsd_backup_last_success_timestamp_seconds` reads the pod's own
   copies, so `GroupSyncDashboardBackupStale` sees a replica whose backups fail beside a healthy one (a pod

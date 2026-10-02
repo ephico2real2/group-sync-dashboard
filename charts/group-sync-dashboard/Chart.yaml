@@ -305,7 +305,9 @@ type: application
 # unchanged apart from this version and what is computed from it; no RBAC change; appVersion unchanged.
 # CHART 0.60.1 (2026-10-01), PATCH: appVersion moves to application 2.1.0 (below); restore-db.sh
 # lists the database copies the recovery pod can restore and restores one (#302, SPEC_E3).
-version: 0.60.1
+# CHART 0.60.2 (2026-10-01), PATCH: appVersion moves to application 2.2.0 (below); per-pod backup
+# rotation above one replica (#391, SPEC_E4).
+version: 0.60.2
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -430,7 +432,8 @@ version: 0.60.1
 # 2.0.0 (2026-09-30). Epic D: reconnect a cluster from the screen (#384). MAJOR.
 # 2.1.0 (2026-10-01). restore-db.sh lists the database copies the recovery pod can restore and
 # restores one (#302, SPEC_E3). MINOR.
-appVersion: "2.1.0"
+# 2.2.0 (2026-10-01). per-pod backup rotation above one replica (#391, SPEC_E4). MINOR.
+appVersion: "2.2.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

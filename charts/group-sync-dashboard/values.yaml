@@ -351,6 +351,11 @@ config:
   # replicaCount is greater than 1, with backups on or off. It does not start if the copy cannot be
   # written. The copies of the newest three upgrades are kept, each about the size of the database, so
   # they count against persistence.size (docs/RUNBOOK_backup_restore.md §6).
+  #
+  # ABOVE ONE REPLICA every pod writes into this one dir as gsd-<stamp>-<pod>.db and keeps `keep` of
+  # its OWN: keep applies per replica, and no pod deletes another pod's copies. The copies of a pod
+  # that no longer exists are rotated by nobody (a rollout renames every pod). At one replica the name
+  # stays gsd-<stamp>.db and keep bounds the whole dir (the chart README's Scaling section).
   backup:
     enabled: true
     dir: /data/backup

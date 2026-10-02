@@ -10,6 +10,23 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Above one replica, every pod keeps its own scheduled backups (#391, Epic E #385,
+  `docs/specs/SPEC_E4_per_pod_backup_rotation.md`; app 2.2.0, chart 0.60.2).** Replicas share
+  `config.backup.dir`, and each rotation deleted by the bare `gsd-*.db` pattern there, so with two replicas
+  and `keep: 4` each kept 2 of its own, and with three replicas and `keep: 2` a pod's only copy was deleted
+  by a neighbour after the poller had released retention on it. Above one replica a copy is now named
+  `gsd-<UTC stamp>Z-<pod name>.db` (the pod is
+  `POD_NAME`), and a pod rotates only the copies whose name carries exactly its own pod, so each keeps `keep`
+  of its own and none deletes another's; `gsd_backup_last_success_timestamp_seconds` reads the pod's own
+  copies, so `GroupSyncDashboardBackupStale` sees a replica whose backups fail beside a healthy one (a pod
+  with none yet reads the whole directory, as before, so a rollout whose backups all fail still alerts), and
+  the Grafana "Backup age" panel shows the stalest replica. At one replica nothing changes: the name stays
+  `gsd-<UTC stamp>Z.db`, `keep` bounds the whole directory, and the metric reads every copy. The offsite
+  CronJob still ships the newest `gsd-*.db` by name, the KPI size line counts every pod's copies (the bytes
+  on the claim), and report snapshots keep their name. The copies of a pod that no longer exists, and those
+  named without a pod, are not rotated above one replica (a rollout renames every pod); the runbook and the
+  chart README's Scaling section say so.
+
 - **`restore-db.sh`: list the database copies the recovery pod can restore, and restore one (#302, Epic E #385,
   `docs/specs/SPEC_E3_restore_db.md`; app 2.1.0, chart 0.60.1).** `local-development/restore-db.sh --list` runs
   from the laptop with `oc` and

@@ -103,6 +103,26 @@ class TestShip:
         assert len(list(dest.glob("gsd-*.db"))) == 3
 
 
+    def test_above_one_replica_the_newest_copy_is_still_found_and_shipped(self, script, tmp_path, monkeypatch):
+        """T391-6, a regression guard (#391): above one replica the copies stay in config.backup.dir, the
+        CronJob's --source, under gsd-*.db, so the non-recursive glob still finds them, and the newest by name
+        is the newest written whichever pod wrote it."""
+        from test_backup import backup_cycle, replicas_sharing_one_directory
+
+        shared, replicas = replicas_sharing_one_directory(tmp_path, ("pod-a", "pod-b"), keep=4)
+        try:
+            for _ in range(3):
+                backup_cycle(replicas, monkeypatch)
+            newest = pathlib.Path(replicas[-1][1].returned[-1])
+            assert script.newest_backup(shared) == newest
+            dest = tmp_path / "offsite"
+            assert script.main(["--source", str(shared), "--dest", str(dest), "--keep", "2"]) == 0
+            assert [p.name for p in dest.glob("gsd-*.db")] == [newest.name]
+        finally:
+            for _pod, store, _poller in replicas:
+                store.close()
+
+
 class TestDurability:
     def test_an_empty_sidecar_beside_a_good_copy_means_copy_again_not_a_traceback(self, script, source, tmp_path, capsys):
         """Review of B1 (Cursor): a crash between creating and writing the sidecar leaves a 0-byte

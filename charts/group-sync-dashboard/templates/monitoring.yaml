@@ -279,7 +279,9 @@ spec:
               retention reaches, so the gap becomes permanent if it outlives the pod log.
 
         # The only copy of the data that cannot be re-fetched from the cluster. The metric
-        # reads the newest file in backupDir, so this fires on every failure shape —
+        # reads the newest file in backupDir (above one replica, the newest that pod wrote,
+        # so each replica's series is its own; a pod that has written none yet, as every pod
+        # after a rollout, reads the whole directory), so this fires on every failure shape —
         # including a wrong directory and rotation deleting everything. No series while
         # backups are disabled, so a deployment without backupDir never alerts.
         - alert: GroupSyncDashboardBackupStale
@@ -291,7 +293,9 @@ spec:
           annotations:
             summary: "No successful database backup within the expected window"
             description: >-
-              The newest file in backupDir is {{ `{{ $value | humanizeDuration }}` }} old —
+              The newest backup in backupDir (above one replica, the newest this pod wrote, or
+              the directory's newest until it has written one) is
+              {{ `{{ $value | humanizeDuration }}` }} old —
               at least two backup intervals. The sync and membership history exists only in
               this database; check gsd_backup_failures_total for active failures and the
               pod log for the cause.
