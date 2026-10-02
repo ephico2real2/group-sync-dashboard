@@ -8,7 +8,7 @@
 | Version on release | no version change (workflow, tests and docs only) |
 | Version note | The change touches `.github/workflows/helm.yaml`, `.github/workflows/ci.yml`, `local-development/tests/test_supply_chain.py`, `docs/RELEASING.md`, `docs/DESIGN_supply_chain.md` and `docs/CHANGELOG.md`. None is in `publish.yml`'s `on.push.paths` (the allowlist at `.github/workflows/publish.yml#ONLY WHEN SOMETHING THAT GOES INTO THE IMAGE CHANGED` names twelve paths: `local-development/gsd/**`, `pyproject.toml`, `README.md`, `uninstall-lists.py`, `image-proof.py`, `Containerfile`, `.containerignore`, `build-and-push-external.sh`, `Containerfile.report`, `report-image-proof.py`, `build-and-push-report.sh`, and `publish.yml` itself), so `ci.yml`'s "App image changes bump the app version" asks for no application bump; and none is under `charts/`, so "Chart changes bump the chart version" asks for no chart bump. The issue's Versions box says the same for PR A. SPEC_E5's rule for specs that claim the same numbers does not apply: this spec claims none |
 | Issue | [#410](https://github.com/ephico2real2/group-sync-dashboard/issues/410) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code, from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#385) and #414's merged guard. Measured on origin/main `f1423143` (application 2.0.0, chart 0.59.25): skopeo 1.13.3 (the version the `ubuntu-latest` runner carries) and 1.22.3 run in throwaway containers, read-only against quay.io, and quay's tag API read anonymously. §7's blocks were cut from a copy of `f1423143` with the design implemented and proved against a clean tree (§4.3). Revised the same day on OB2's review of `d5d14f5e` (Orchestrator's notes, "The review of `d5d14f5e`"): Blocks 12 to 18 are OB2's, the second writer's fix moved into this spec, and the branch merged origin/main `31e4f037` (SPEC E3, E6, E7), where every block was proved again (§4.3) |
 
 ## How to read this spec
@@ -97,8 +97,10 @@ review. Nothing is left open for the operator.
    and compares the copied alias with it. Reading the label at `@<that digest>` binds the three: the bytes checked,
    the digest compared, the alias written. A tag that moves between the reads ends in today's digest-mismatch red
    run, never in a pass (§3.2).
-6. **Unreachable is not absent.** Before the copy the step reads `:<chartVersion>`. Only the registry's
-   `manifest unknown` lets the copy create the tag; any other failure is a red run (§3.4). Measured with skopeo
+6. **Unreachable is not absent, at both probes.** Before the copy the step reads `:<chartVersion>`. Only the
+   registry's `manifest unknown` lets the copy create the tag; any other failure is a red run (§3.4). The same rule
+   holds for the existence check of `:<appVersion>` (Block 19, the review of PR #529). Only `manifest unknown` prints
+   the never-published remedy; any other failure is a red run that says "cannot tell" and asks for a re-run. Measured with skopeo
    1.13.3 and 1.22.3: the text is the same, the exit status is not (1 and 2), so the text is the signal (§2.5).
 7. **A missing report image becomes a red run** (T410-14). Today the step never looks at the report image. The
    issue's decision 1 makes the gate cover it, and `release-crc.sh` already refuses a missing one; a chart whose
@@ -128,6 +130,39 @@ OB2 approved the spec and supplied Blocks 12 to 18. Each decision is applied in 
 - **Corrected: §2.6's line** in `workflow-syntax.md` is 967, not 963 (re-read with `curl -s <raw> | nl -ba`).
 - **Rebased:** origin/main `31e4f037` merged in (SPEC E3 #512, E6 #513, E7 #514); E8 is the forty-fifth index row,
   excluded by its id and pinned to #410.
+
+### The review of PR #529 (OB2, in Codex's seat), decided by the orchestrator on 2026-10-02
+
+OB2 reviewed head `c825182c` against the real registry: it drove the lifted steps through a read-only skopeo 1.13.3
+with injected faults, and approved. Its recommended fix is accepted and applied as Blocks 19 to 23; its four
+observations are recorded and change nothing. The measurements below are OB2's.
+
+- **Accepted: F1, Blocks 19 to 23 (finder OB2).** The existence check of `:<appVersion>` (`2>/dev/null`) read an
+  unreachable registry as a missing image. Run with the real skopeo and `REGISTRY=quay.invalid`, it exited 1 and
+  printed `…:2.3.0 does not exist … the application release was never published …
+  ./build-and-push-external.sh --release-tags`. So a quay outage prescribed the disaster-recovery push for an image
+  that exists. The defect is older than this spec, but it sits in the step this spec owns, and note 6 had covered
+  the second probe only.
+  - The fix reuses the alias guard's `probe_err` and `grep -qi 'manifest unknown'` (Block 19). Only that text
+    prints the never-published remedy; any other failure is "cannot tell … re-run".
+  - There is one temporary file and one trap (Block 20 removes the alias guard's pair). A second `trap … EXIT` would
+    replace the first and leak the file.
+  - The fix also adds T410-27 (Block 21), a row in `docs/RELEASING.md` (Block 22) and one sentence in the
+    CHANGELOG (Block 23).
+  - Measured after the fix: `REGISTRY=quay.invalid` exits 1 with `cannot tell whether quay.invalid/…:2.3.0 exists
+    … no such host … Re-run this workflow once the registry answers.` Today's state still reaches the login with
+    the same calls, and an absent `:2.4.0` keeps the never-published message.
+  - §3.1, §3.6, §4.1 and note 6 are updated to match.
+- **Recorded, not changed: O1 to O4.**
+  - O1. `ci.yml`'s registry read runs on every pull request, docs-only ones included. `version-bump` therefore
+    depends on quay answering: an outage or a 429 turns open pull requests red until they are re-run. It is one
+    anonymous read, measured at 0.7 to 1.9 s. §3.7 accepts this.
+  - O2. Six early application versions (0.6.0, 0.7.0, 0.8.0, 0.10.0, 0.11.0, 0.12.0) were released, but each bare
+    tag already names another build. The check passes them, as §3.7's rule says: no alias is left to protect.
+  - O3. `ci.yml` reads the dashboard repository only. The report repository's 42 own-alias versions are a subset of
+    the dashboard's 51, so no version escapes the check today.
+  - O4. A report read that fails for a reason other than `manifest unknown` keeps §3.3's annotation "is not in the
+    registry, or cannot be read". skopeo's own reason is on stderr, in the run log.
 
 ## 1. The mandate, and what is out of scope
 
@@ -339,7 +374,8 @@ The step keeps its order and adds two checks before anything is written (decisio
 
     read Chart.yaml and values.yaml                        (today, plus the report pin)
     no registry credentials?  -> warning, exit 0            (today, unchanged)
-    does ${REPO}:${SOURCE} exist?  -> no: red run           (today, unchanged; reads SOURCE_DIGEST)
+    does ${REPO}:${SOURCE} exist?  -> no: red run           (today; reads SOURCE_DIGEST)
+                                   -> unreachable: red run  ("cannot tell", re-run: Block 19)
     NEW  label gate: both images, every Linux image         -> mismatch or unreadable: red run
     NEW  alias guard: is :<chartVersion> another app's own alias?  -> yes, or cannot tell: red run
     login, copy, read the alias back, compare digests       (today, unchanged)
@@ -422,7 +458,8 @@ person's choice (`workflow_dispatch`, or the next chart merge).
 
 `publish.yml`, `build-and-push-external.sh` and the `<appVersion>-<sha>` tags; `ci.yml`'s existing two steps of
 `version-bump` and every other job; the step's name, its credentials
-condition and its existing messages; the copy command and the digest comparison; chart-releaser and the
+condition and its existing messages, except the existence check's, which now tells an unreachable registry
+from a missing image (Block 19); the copy command and the digest comparison; chart-releaser and the
 attestations; every published tag.
 
 ### 3.7 The pull-request check (Block 14; Orchestrator's note 2)
@@ -447,8 +484,8 @@ labels, not the version numbers.
 
 ### 4.1 One test per case
 
-All in `local-development/tests/test_supply_chain.py`: T410-1 to T410-21 in class `TestTheChartPublishLabelGate`
-(Blocks 7 and 13), T410-22 to T410-26 in class `TestTheChartVersionIsNeverAReleasedApplicationVersion` (Block 18).
+All in `local-development/tests/test_supply_chain.py`: T410-1 to T410-21 and T410-27 in class
+`TestTheChartPublishLabelGate` (Blocks 7, 13 and 21), T410-22 to T410-26 in class `TestTheChartVersionIsNeverAReleasedApplicationVersion` (Block 18).
 Each step's `run` is lifted from the parsed workflow and run with `bash --noprofile --norc -eo pipefail` in a tree
 carrying the real `Chart.yaml` and `values.yaml`, against a stub `skopeo` that answers from a JSON registry and logs
 each call.
@@ -469,6 +506,7 @@ each call.
 | T410-15 | `test_t410_15_a_chart_version_tag_that_cannot_be_read_is_not_taken_as_absent` | the `:0.59.25` probe fails with "no such host" | no copy, exit 1, `cannot tell` | **fails**: copied |
 | T410-16 | `test_t410_16_the_label_is_read_and_compared_as_release_crc_sh_reads_it` | both files | the joining expression identical; the walker identical token for token; the refusal's words | **fails**: `helm.yaml` has neither |
 | T410-17 | `test_t410_17_without_credentials_the_step_still_warns_and_reads_nothing` | no credentials | exit 0, the warning, no registry call | passes (regression guard) |
+| T410-27 | `test_t410_27_an_unreachable_registry_is_not_a_missing_image` (OB2, the review of PR #529) | the `:<appVersion>` existence probe fails with "no such host" | exit 1, `cannot tell whether … exists` with the registry's words; no `does not exist`, no `--release-tags`, no login, no copy | **fails** on `c825182c`: the step prints `does not exist` and the `--release-tags` remedy |
 | T410-18 | `test_t410_18_the_run_log_names_the_label_compared_for_both_images` | both labelled 2.0.0 | both `is application 2.0.0` lines, read before the copy | **fails**: no such line |
 | T410-19 | `test_t410_19_a_pin_on_the_dashboard_leaves_the_report_checked` | dashboard pinned, report stale | exit 1 naming the report | **fails**: exit 0 |
 | T410-20 | `test_t410_20_the_dashboard_label_is_read_at_the_digest_the_copy_is_held_to` (OB2) | the released pair | the raw and config reads name `@<SOURCE_DIGEST>`, never `:2.0.0` | **fails**: no label read |
@@ -606,9 +644,10 @@ already exists at another digest; one read per pull request; no new tool, action
 
 ## 7. Implementation blocks
 
-Eighteen blocks, in the order `apply-spec-blocks.py` applies them. Blocks 1 to 3 are the `helm.yaml` change; 4 to
-7 the tests; 8 to 11 the documentation; 12 and 13 OB2's two guard tests (T410-20, T410-21); 14 the `ci.yml`
-pull-request check; 15 to 18 its harness changes and tests (T410-22 to T410-26). No block touches `charts/`, an image
+Twenty-three blocks, in the order `apply-spec-blocks.py` applies them. Blocks 1 to 3 are the `helm.yaml` change; 4
+to 7 the tests; 8 to 11 the documentation; 12 and 13 OB2's two guard tests (T410-20, T410-21); 14 the `ci.yml`
+pull-request check; 15 to 18 its harness changes and tests (T410-22 to T410-26); 19 to 23 the review of PR #529
+(the existence check's "cannot tell", T410-27, its RELEASING.md row and CHANGELOG sentence). No block touches `charts/`, an image
 input or this spec's index row.
 
 ### Block 1 — .github/workflows/helm.yaml: why the step now reads the label, in the step's comment
@@ -1433,4 +1472,88 @@ class TestTheChartVersionIsNeverAReleasedApplicationVersion:
         done, _, _ = _label(tmp_path, _released(), unreachable=f"{DASHBOARD}:{CHART}", step=self.STEP)
         assert done.returncode == 1, done.stdout + done.stderr
         assert f"cannot tell whether {DASHBOARD}:{CHART} is a released application version" in done.stdout
+```
+
+### Block 19 — .github/workflows/helm.yaml: the existence check tells an unreachable registry from a missing image (OB2, the review of PR #529, F1)
+
+<!-- block: .github/workflows/helm.yaml | edit -->
+```yaml
+          if ! SOURCE_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${SOURCE}" 2>/dev/null); then
+```
+
+```yaml
+          # Unreachable is not absent (Orchestrator's note 6) here too: only the registry's "manifest unknown" means
+          # the image was never published. Any other failure (DNS, 401, 429, a timeout) is "cannot tell", and the
+          # remedy is a re-run, never the disaster-recovery push the message below prescribes.
+          probe_err=$(mktemp)
+          trap 'rm -f "${probe_err}"' EXIT
+          if ! SOURCE_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${SOURCE}" 2>"${probe_err}"); then
+            if ! grep -qi 'manifest unknown' "${probe_err}"; then
+              echo "::error::cannot tell whether ${REPO}:${SOURCE} exists, so chart ${CHART_VERSION} is NOT published"
+              echo "::error::and nothing was copied:"
+              echo "::error::$(head -c 400 "${probe_err}")"
+              echo "::error::Re-run this workflow once the registry answers."
+              exit 1
+            fi
+```
+
+### Block 20 — .github/workflows/helm.yaml: one temporary file and one trap for both probes (OB2, the review of PR #529, F1)
+
+<!-- block: .github/workflows/helm.yaml | edit -->
+```yaml
+          probe_err=$(mktemp)
+          trap 'rm -f "${probe_err}"' EXIT
+          if TARGET_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${CHART_VERSION}" 2>"${probe_err}"); then
+```
+
+```yaml
+          if TARGET_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${CHART_VERSION}" 2>"${probe_err}"); then
+```
+
+### Block 21 — local-development/tests/test_supply_chain.py: T410-27, an unreachable registry is not a missing image (OB2, the review of PR #529, F1)
+
+<!-- block: local-development/tests/test_supply_chain.py | edit -->
+```python
+        assert log == "", "no registry call is made without credentials, as today"
+```
+
+```python
+        assert log == "", "no registry call is made without credentials, as today"
+
+    def test_t410_27_an_unreachable_registry_is_not_a_missing_image(self, tmp_path) -> None:
+        """Unreachable is not absent for the first probe either (OB2's review of c825182c, measured with
+        REGISTRY=quay.invalid): the existence check must not read a DNS failure, a 401 or a 429 as "the application
+        release was never published" and prescribe the --release-tags push for a transient outage."""
+        done, log, _ = _label(tmp_path, _released(), unreachable=f"{DASHBOARD}:{APP}")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"cannot tell whether {DASHBOARD}:{APP} exists" in done.stdout
+        assert "no such host" in done.stdout, "the registry's own words are in the annotation"
+        assert "does not exist" not in done.stdout and "--release-tags" not in done.stdout, done.stdout
+        assert "skopeo copy" not in log and "skopeo login" not in log, log
+```
+
+### Block 22 — docs/RELEASING.md: what "cannot tell whether <image>:<appVersion> exists" means (OB2, the review of PR #529, F1)
+
+<!-- block: docs/RELEASING.md | edit -->
+```markdown
+| chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
+```
+
+```markdown
+| chart release run is red at "Label the image this chart version deploys" with `cannot tell whether <image>:<appVersion> exists` | the registry did not answer "manifest unknown": DNS, a 401, a 429, a timeout. Nothing was copied and no chart was published; the image may well exist | re-run the release once the registry answers. Do not run the `--release-tags` scripts for this: that route is for an image that was never published |
+| chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
+```
+
+### Block 23 — docs/CHANGELOG.md: the entry names the existence check's new answer (OB2, the review of PR #529, F1)
+
+<!-- block: docs/CHANGELOG.md | edit -->
+```markdown
+  tag's own label; only `manifest unknown` means free). Workflows, tests and docs only: no application or chart
+  version.
+```
+
+```markdown
+  tag's own label; only `manifest unknown` means free). The step's existence check now tells an unreachable
+  registry from a missing image: only `manifest unknown` prints the never-published remedy, anything else is
+  "cannot tell, re-run". Workflows, tests and docs only: no application or chart version.
 ```

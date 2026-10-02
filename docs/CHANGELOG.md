@@ -10,6 +10,18 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The chart is published only when its default images are the application it names (#410, PR A, SPEC_E8).**
+  `helm.yaml`'s "Label the image this chart version deploys" read only whether `:<appVersion>` existed, so a tag
+  naming another build (`:0.39.0` was application 0.24.0) passed and was copied to the chart-version tag. It now reads
+  the `org.opencontainers.image.version` label of every Linux image behind both images' `:<appVersion>` (a pinned tag
+  stays the operator's) and refuses a mismatch, as `release-crc.sh` does before a deploy (#414); and it never copies
+  over a `:<chartVersion>` that is another application's own alias. Both refusals are red runs that copy and publish
+  nothing. `publish.yml` copies every application release to `:<chartVersion>` too, so `ci.yml`'s version-bump job
+  now refuses, in the pull request, a chart version whose tag is already that application's alias (read from the
+  tag's own label; only `manifest unknown` means free). The step's existence check now tells an unreachable
+  registry from a missing image: only `manifest unknown` prints the never-published remedy, anything else is
+  "cannot tell, re-run". Workflows, tests and docs only: no application or chart version.
+
 - **The release note says when the schema moves, and the runbook says what to do before every upgrade (#300, Epic E
   #385, `docs/specs/SPEC_E7_schema_line_and_runbook.md`).** `prepare-release.py --app` compares the highest
   `_MIGRATIONS` target at the commit that released the current application version with HEAD's, before it edits
