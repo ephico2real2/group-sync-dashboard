@@ -693,6 +693,17 @@ class TestTheChartPublishLabelGate:
         assert "registry credentials are not set" in done.stdout
         assert log == "", "no registry call is made without credentials, as today"
 
+    def test_t410_27_an_unreachable_registry_is_not_a_missing_image(self, tmp_path) -> None:
+        """Unreachable is not absent for the first probe either (OB2's review of c825182c, measured with
+        REGISTRY=quay.invalid): the existence check must not read a DNS failure, a 401 or a 429 as "the application
+        release was never published" and prescribe the --release-tags push for a transient outage."""
+        done, log, _ = _label(tmp_path, _released(), unreachable=f"{DASHBOARD}:{APP}")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert f"cannot tell whether {DASHBOARD}:{APP} exists" in done.stdout
+        assert "no such host" in done.stdout, "the registry's own words are in the annotation"
+        assert "does not exist" not in done.stdout and "--release-tags" not in done.stdout, done.stdout
+        assert "skopeo copy" not in log and "skopeo login" not in log, log
+
     def test_t410_10_the_release_guide_says_what_the_label_refusal_means(self) -> None:
         table = RELEASING.read_text().split("## What can go wrong, and what it looks like", 1)[1]
         row = next((line for line in table.splitlines() if "is application" in line and "(#410)" in line), "")

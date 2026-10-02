@@ -222,7 +222,19 @@ jobs:
           SOURCE="${PINNED:-$APP_VERSION}"
           echo "chart ${CHART_VERSION} deploys ${SOURCE}; labelling it"
 
-          if ! SOURCE_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${SOURCE}" 2>/dev/null); then
+          # Unreachable is not absent (Orchestrator's note 6) here too: only the registry's "manifest unknown" means
+          # the image was never published. Any other failure (DNS, 401, 429, a timeout) is "cannot tell", and the
+          # remedy is a re-run, never the disaster-recovery push the message below prescribes.
+          probe_err=$(mktemp)
+          trap 'rm -f "${probe_err}"' EXIT
+          if ! SOURCE_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${SOURCE}" 2>"${probe_err}"); then
+            if ! grep -qi 'manifest unknown' "${probe_err}"; then
+              echo "::error::cannot tell whether ${REPO}:${SOURCE} exists, so chart ${CHART_VERSION} is NOT published"
+              echo "::error::and nothing was copied:"
+              echo "::error::$(head -c 400 "${probe_err}")"
+              echo "::error::Re-run this workflow once the registry answers."
+              exit 1
+            fi
             echo "::error::${REPO}:${SOURCE} does not exist, so chart ${CHART_VERSION} cannot be"
             echo "::error::labelled, and this job stops here: the chart is NOT published until the"
             echo "::error::image exists (re-run this workflow once it does)."
@@ -270,8 +282,6 @@ jobs:
           # digest is copied again unchanged (publish.yml's --release-tags writes :<chartVersion> too); one that
           # names some other build is relabelled, as before. Only a tag that IS application <chartVersion> is
           # refused. Unreachable is not absent: only the registry's "manifest unknown" lets the copy create it.
-          probe_err=$(mktemp)
-          trap 'rm -f "${probe_err}"' EXIT
           if TARGET_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${CHART_VERSION}" 2>"${probe_err}"); then
             if [ "${TARGET_DIGEST}" != "${SOURCE_DIGEST}" ]; then
               if ! target_version=$(image_versions "${REPO}" "@${TARGET_DIGEST}"); then

@@ -18,8 +18,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   over a `:<chartVersion>` that is another application's own alias. Both refusals are red runs that copy and publish
   nothing. `publish.yml` copies every application release to `:<chartVersion>` too, so `ci.yml`'s version-bump job
   now refuses, in the pull request, a chart version whose tag is already that application's alias (read from the
-  tag's own label; only `manifest unknown` means free). Workflows, tests and docs only: no application or chart
-  version.
+  tag's own label; only `manifest unknown` means free). The step's existence check now tells an unreachable
+  registry from a missing image: only `manifest unknown` prints the never-published remedy, anything else is
+  "cannot tell, re-run". Workflows, tests and docs only: no application or chart version.
 
 - **The release note says when the schema moves, and the runbook says what to do before every upgrade (#300, Epic E
   #385, `docs/specs/SPEC_E7_schema_line_and_runbook.md`).** `prepare-release.py --app` compares the highest
