@@ -257,6 +257,14 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     swap survives a real SIGKILL at 14 points (the old database whole or the copy alone, never neither), every one
     of 22 refusals leaves `/data` and the copies byte-identical, and the preflight reads exactly what SPEC_E2's merged
     chart renders.
+23. **CI on PR #520 (2026-10-02): the test harness fed the helper as a file, so Linux imported the wrong `gsd`.**
+    `test_an_image_older_than_known_schema_version_reads_it_from_the_migrations` failed on both CI runners (`image
+    understands schema 20`, expected 17) and passed on macOS. Measured in a `python:3.14-slim` container: with a file
+    as stdin, `python /dev/stdin` puts the file's directory first on `sys.path` (`/src/local-development`, whose real
+    `gsd` then shadows the test's `PYTHONPATH`); with a pipe it is `/proc/self/fd`, as on the lab pod, where
+    `restore-db.sh` streams the helper through `oc exec -i`. macOS resolves `/dev/stdin` to `/dev/fd`, which hides it.
+    Block 11's `Pod.run` now pipes the source (`input=`), as the pod is given it; the helper is unchanged. Before, in
+    the container: `1 failed`; after: the three modules pass there.
 
 **Open questions for the operator.** None.
 
@@ -2401,10 +2409,11 @@ class Pod:
         environment = {**os.environ, "PYTHONPATH": str(LOCAL_DEV), "GSD_RECOVERY_MODE": "true",
                        "GSD_DB_PATH": str(self.db), "GSD_BACKUP_DIR": str(self.backup), "TMPDIR": str(self.tmp),
                        **(env or {})}
-        with HELPER.open("rb") as source:
-            return subprocess.run([sys.executable, "/dev/stdin", *args, "--offsite", str(self.offsite),
-                                   "--proc", str(self.proc), "--group", str(os.getgid())],
-                                  stdin=source, capture_output=True, text=True, env=environment, timeout=120)
+        # A pipe, as `oc exec -i` gives the pod: a file as stdin makes Linux resolve /dev/stdin to it, so
+        # sys.path[0] would be local-development/ and its gsd would shadow PYTHONPATH (macOS does not resolve it).
+        return subprocess.run([sys.executable, "/dev/stdin", *args, "--offsite", str(self.offsite),
+                               "--proc", str(self.proc), "--group", str(os.getgid())],
+                              input=HELPER.read_text(), capture_output=True, text=True, env=environment, timeout=120)
 
 
 @pytest.fixture

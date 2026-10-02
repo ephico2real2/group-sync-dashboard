@@ -118,10 +118,11 @@ class Pod:
         environment = {**os.environ, "PYTHONPATH": str(LOCAL_DEV), "GSD_RECOVERY_MODE": "true",
                        "GSD_DB_PATH": str(self.db), "GSD_BACKUP_DIR": str(self.backup), "TMPDIR": str(self.tmp),
                        **(env or {})}
-        with HELPER.open("rb") as source:
-            return subprocess.run([sys.executable, "/dev/stdin", *args, "--offsite", str(self.offsite),
-                                   "--proc", str(self.proc), "--group", str(os.getgid())],
-                                  stdin=source, capture_output=True, text=True, env=environment, timeout=120)
+        # A pipe, as `oc exec -i` gives the pod: a file as stdin makes Linux resolve /dev/stdin to it, so
+        # sys.path[0] would be local-development/ and its gsd would shadow PYTHONPATH (macOS does not resolve it).
+        return subprocess.run([sys.executable, "/dev/stdin", *args, "--offsite", str(self.offsite),
+                               "--proc", str(self.proc), "--group", str(os.getgid())],
+                              input=HELPER.read_text(), capture_output=True, text=True, env=environment, timeout=120)
 
 
 @pytest.fixture
