@@ -130,7 +130,13 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    application version change; image-changing issue PRs carry a MINOR bump and publish both tags too.
    A `--chart`-only merge builds no image (`docs/RELEASING.md`, the chart-only flow).
 2. **Release note.** Once `helm.yaml` has created the GitHub release, write the epic's summary (the children, their
-   merge shas, the lab evidence) into that release's body. The tag is the **chart** version just cut, not the
+   merge shas, the lab evidence) into that release's body. List in it every schema line the epic's children released
+   (#300): a child that added a migration carries `**Schema N → M.**` under its own MINOR heading in
+   `docs/CHANGELOG.md`, and the epic's MAJOR carries none, so an operator upgrading across the epic learns of each
+   move only here. On `main` after the release merged,
+   `awk '/^## Application [0-9]+\.0\.0 / && ++n == 2 {exit} /^## / {h = $0} /^- \*\*Schema / {print h; print $0}' docs/CHANGELOG.md`
+   prints each such heading and its line, up to the previous epic's MAJOR; when it prints nothing, write "No schema
+   change". The tag is the **chart** version just cut, not the
    application version: `gh release edit group-sync-dashboard-<chart-version> --notes-file <file>`.
 3. **Deploy.** After those workflows are green, deploy the published release with
    `local-development/release-crc.sh --argocd main`. That mode uses the chart on GitHub at `main` and the published

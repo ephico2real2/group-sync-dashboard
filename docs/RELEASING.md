@@ -221,7 +221,8 @@ What that does, and what you would do by hand without it:
 5. Write the `# CHART A.B.C (date), KIND: …` line above `version:` and the application paragraph
    above `appVersion:` — the file's history, newest nearest the field.
 6. Turn `## Unreleased` in `docs/CHANGELOG.md` into `## Application X — chart Y — date`, with the
-   reason as its first bullet and everything merged since the last release beneath it.
+   reason as its first bullet, the schema line under it when the release moves the schema (below), and
+   everything merged since the last release beneath it.
 7. Run `tests/test_chart_versions.py`. The script refuses to commit if it fails, and leaves the
    edits in the tree for you to read.
 8. Open the PR, merge it. `publish.yml` sees the version change and publishes both the immutable tag
@@ -231,6 +232,23 @@ The script refuses a dirty tree, a version that does not advance, a bump that le
 component non-zero, and a release branch that already exists; it commits to `release/app-X.Y.Z`
 with you as the only author and never touches `main` (`local-development/prepare-release.py#WHAT IT REFUSES`).
 All the edits land in one PR, or CI is red. That is the coupling working, not friction.
+
+**The schema line (#300).** An application release whose image migrates the database says so, directly under
+the reason:
+
+> - **Schema N → M.** The first start on this image migrates the database one way; the pre-upgrade copy (#301) and `restore-db.sh` (#302) are the way back.
+
+`N` is the highest `_MIGRATIONS` target at the commit that released the current application version, and `M`
+the highest at HEAD, both read with `git show` before anything is edited
+(`local-development/prepare-release.py#schema_since_app_release`, the helper #298's CI guard uses). The line
+appears only when `M` is above `N`, and a jump of more than one says so (`Schema 20 → 22`). A chart-only release
+builds no image and gets no line. A migration ships with the next MINOR in its own PR (below), so the line lands
+under that issue's `## Application X.Y.0` heading, the version whose image first migrates; an epic's MAJOR then
+carries none of its own, and the epic's GitHub release note lists its children's lines
+(`.claude/skills/epic/SKILL.md`, section 6). Finding that commit needs the full history: on a shallow clone an
+application release is refused before any edit, and the message names `actions/checkout`'s `fetch-depth: 0`
+(`git fetch --unshallow` on a laptop). A version bumped by hand, without the script, gets no line: nothing else
+writes it.
 
 ### A chart-only release
 
