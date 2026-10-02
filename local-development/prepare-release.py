@@ -220,8 +220,9 @@ def sentence(reason: str) -> str:
 
 # A spec index row, and a spec header, whose Status cell is `merged`: only the cell is matched, because
 # spec bodies use "merged" as history ("S1 (the Secret contract, merged)") and those words must stay.
+# An id is a batch letter, a number of any length (E10, #533) and a step letter or none (S4a).
 _INDEX_MERGED = re.compile(
-    r"^(?P<pre>\| (?P<id>[A-Z]\d[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)"
+    r"^(?P<pre>\| (?P<id>[A-Z]\d+[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)"
     r"[^|]*\| [^|]+\| (?:R\d|—) \| [^|]+ \| \[\#\d+\]\([^)]+\) \| )merged(?P<post> \|)$",
     re.M,
 )

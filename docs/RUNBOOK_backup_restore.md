@@ -37,7 +37,16 @@ its values file), do these three things. None of them stops the dashboard.
    every entry after the version you run (`gsd_build_info`'s `version` label on `/metrics`), up to and including
    the one you deploy, that carries a `**Schema N → M.**` line migrates the database on its first start
    (`local-development/prepare-release.py#SCHEMA_LINE`); an epic's GitHub release lists its children's lines. The
-   schema you leave is the one the running image understands, read without opening the live file:
+   version you run, and the two volume gauges step 3 compares, are read from `/metrics` through the pod's loopback,
+   where the app listens; nothing is opened or written, and `grep` runs on your workstation:
+
+   ````sh
+   oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/metrics | grep -E '^gsd_(build_info|volume_disk_(total|used)_bytes)\{'
+   ````
+
+   It prints three lines: `gsd_build_info{branch="main",commit="…",version="<the version you run>"} 1.0` and the two
+   gauges in bytes. The schema you leave is the one the running image understands, read without opening the live
+   file:
 
    ````sh
    oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'from gsd.store import KNOWN_SCHEMA_VERSION; print(KNOWN_SCHEMA_VERSION)'
@@ -89,9 +98,10 @@ its values file), do these three things. None of them stops the dashboard.
 
    `free` must be above `databases`. A copy needs at most its database's file and `-wal` together, and above one
    replica every pod copies its own at the same start, so the sum counts them all; `os.stat` opens no database.
-   Without `oc`, `/metrics` carries the volume's numbers: `gsd_volume_disk_total_bytes{component="dashboard"}` minus
-   `gsd_volume_disk_used_bytes{component="dashboard"}` is the free space, or more than the copy may use where the
-   filesystem keeps blocks for root (`mke2fs` reserves 5% by default).
+   Step 1's `/metrics` read printed the volume's numbers too, and Prometheus has them where it scrapes the dashboard:
+   `gsd_volume_disk_total_bytes{component="dashboard"}` minus `gsd_volume_disk_used_bytes{component="dashboard"}` is
+   the free space, or more than the copy may use where the filesystem keeps blocks for root (`mke2fs` reserves 5% by
+   default).
 
 ## What a successful backup looks like
 
@@ -178,12 +188,14 @@ c = sqlite3.connect(f"file:{p}?immutable=1", uri=True)
 print("integrity_check:", c.execute("PRAGMA integrity_check").fetchone()[0])
 print("user_version:", c.execute("PRAGMA user_version").fetchone()[0])
 for t in ("membership_event", "sync_event", "login_event"):
-    print(t, c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
+    n, top = c.execute(f"SELECT COUNT(*), COALESCE(MAX(id), 0) FROM {t}").fetchone()
+    print(t, n, "rows, highest id", top)
 ' /data/backup/gsd-20260904T061500.123456Z.db
 ```
 
 Expected: `integrity_check: ok`, a `user_version` equal to the running app's latest migration,
-and row counts that are plausible for the age of the copy.
+and row counts that are plausible for the age of the copy. Keep the three highest ids of the copy you restore: §4c
+counts the restored file up to them.
 
 In the CronJob's image the same check is one flag, and it also compares the sidecar:
 
@@ -277,7 +289,25 @@ From S3 use the CLI with a credential that holds `GetObject` — the backup cred
 recovery mode off and verify (step 5 and §4c). §4a and §4b are the same restore by hand, the fallback when the script
 cannot be used, and **Without recovery mode** below is the fallback for a chart that has none. Every change to the
 release goes through its values file and its deployment pipeline, never `oc scale` or `oc set env`: a GitOps
-controller that self-heals, Argo CD's for one, reverts a hand edit to an object it renders.
+controller that self-heals, Argo CD's for one, reverts a hand edit to an object it renders. The one exception is §4d,
+the break glass for an incident on a release Argo CD syncs, which pauses Argo CD's automated sync first, puts the pod
+into recovery mode by hand, restores with the same script and gives the release back to Git.
+
+> **Risks under Argo CD** (measured on the CRC lab with Argo CD v3.4.7, 2026-10-02; #533, #532)
+>
+> * **Argo CD left on during a hand edit.** With `syncPolicy.automated.selfHeal: true`, Argo CD puts back within a
+>   second a field it renders that was changed by hand (an `imagePullPolicy` changed by hand was back 0.7 s later),
+>   and leaves a field that only the hand edit added (an added variable was still there 4 min 38 s later, the
+>   Application reading Synced). A hand recovery edit is both: self-heal would restore the app's command and liveness
+>   probe and start the app, perhaps on a half-restored database, while the pod still carries the recovery variables.
+>   Pause automated sync first and confirm the pause held (§4d steps 1 and 2).
+> * **The endless retry.** Recovery mode never reports healthy, so a sync that turns it on through the values file
+>   fails at the Deployment's progress deadline and is retried under the Application's `syncPolicy.retry`, and every
+>   later change, `recovery.enabled: false` included, waits until the last retry has failed: 12 min 49 s on the lab
+>   with `limit: 3` and a 30 s backoff doubling up to 5 min (#532). A `limit` less than 0 retries without end, and an
+>   automated sync with no `retry` block retries 5 times. Meanwhile the Application reads OutOfSync with its
+>   operation Running (`Retrying attempt #N`), the new revision is not applied, and the recovery pod stays `1/2`.
+>   The way out is §4d step 7: pause, then end the running operation.
 
 **The script, in recovery mode (#302).** With the release's pod in recovery mode (#303: `recovery.enabled: true`
 in the release's values file), run `local-development/restore-db.sh --list` from your laptop, then
@@ -338,8 +368,10 @@ in this release's values file and roll it out through the release's deployment p
    monotonic clock, so setting the wall clock back does not lengthen it; if the node restarts under the pod,
    the TTL counts as reached.
 5. **Turn it off**, and verify with §4c: set `recovery.enabled: false` in the values file (keep a rollback's
-   older `image.tag`) and roll it out. When the change is applied the recovery pod stops at once and the app
-   starts on the restored file.
+   older `image.tag`) and roll it out. When the change is applied the recovery pod stops and the app starts on the
+   restored file. Where the release's GitOps controller retries a failed sync (a `syncPolicy.retry` policy), the
+   change waits until the retries of the sync that turned recovery on have run out, 12 min 49 s on the lab, and the
+   recovery pod keeps running until then (#532, a known limitation of this release, and the risks box above).
 
 Nothing is recorded while recovery mode is on, and no rule says so: `GroupSyncDashboardNotPolling` reads a
 gauge the stopped process no longer emits, so it returns nothing. With reporting on,
@@ -362,11 +394,14 @@ oc wait -n $NS --for=delete pod -l app=$REL --timeout=120s
 ### 4a. From an on-volume copy
 
 In recovery mode the dashboard pod already has the data claim: run the `sh -c '…'` body below with
-`oc exec -n $NS deploy/$REL -c dashboard --` in place of `oc debug -n $NS deploy/$REL -c dashboard --`.
-Otherwise, a helper pod with the data claim, from the Deployment's own template:
+`oc exec -n $NS deploy/$REL -c dashboard --` in place of `oc debug -n $NS deploy/$REL --one-container -c dashboard --`.
+Otherwise, a helper pod with the data claim, from the Deployment's own template, with the dashboard container alone:
+without `--one-container` the pod also runs the oauth-proxy sidecar, which never exits, and `oc debug` waits for every
+container of its pod, so it does not return (the #300 walk waited 5 min 13 s; with the flag the lab's run returned in
+3 s, exit 0, its pod removed). A body that fails makes the command fail:
 
 ```sh
-oc debug -n $NS deploy/$REL -c dashboard -- sh -c '
+oc debug -n $NS deploy/$REL --one-container -c dashboard -- sh -c '
 set -e
 ls -l /data /data/backup
 python3.14 -c "import sqlite3,sys; c=sqlite3.connect(\"file:\" + sys.argv[1] + \"?immutable=1\", uri=True); print(c.execute(\"PRAGMA integrity_check\").fetchone()[0])" /data/backup/gsd-….db
@@ -475,7 +510,9 @@ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/ver
 
 Expected: `{"leader":true,"version":"<the application version the release now runs>",…}`, the older one after a
 rollback, as `gsd_build_info` on `/metrics` says too (with `oauthProxy.enabled` the app binds loopback; `curl` from
-inside the pod is the honest check).
+inside the pod is the honest check). Straight after a rollout it can read `"leader":false`: the replaced pod's 30 s
+lease has not expired yet, and the new pod takes it when it does (about 10 s on the lab, after §4d step 6). Wait and
+read again.
 
 **The report pod stays NotReady until a new copy is written** after a restore from a newer image. The newest copy under
 `/data/report` is the one the previous image wrote, and the report service refuses a snapshot newer than it
@@ -507,18 +544,24 @@ changes the file's bytes, not its contents. Turn recovery mode on
 image that understands the first, by its `image.tag` in the values file. A rollback to an older image without
 restoring the database first stops the same way.
 
-Then the counts, on the live file this time (a normal open, the pod's own connection is the writer):
+Then the counts, on the live file this time (opened read-only beside the app's own connection), each up to the copy's
+highest id in that table, as §1 printed it:
 
 ```sh
 oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
-import sqlite3
+import sqlite3, sys
+assert len(sys.argv) == 4, "give the three highest ids of the copy, as §1 printed them"
 c = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
-for t in ("membership_event", "sync_event"):
-    print(t, c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
-'
+for t, top in zip(("membership_event", "sync_event", "login_event"), map(int, sys.argv[1:])):
+    print(t, c.execute(f"SELECT COUNT(*) FROM {t} WHERE id <= ?", (top,)).fetchone()[0], "rows up to id", top)
+' <membership-highest-id> <sync-highest-id> <login-highest-id>
 ```
 
-The numbers must equal the copy's (§1). The pod log shows `schema migration N applied` lines
+Each number must equal the copy's row count in §1. A count of the whole table does not: the leader polls as soon as it
+starts, and the rows it writes take ids above every id in the copy (SQLite's `AUTOINCREMENT`), so the #300 walk read
+2776 and then 2779 `sync_event` rows against the copy's 2770 while the count up to the copy's highest id stayed 2770.
+A count below the copy's means rows the copy had are gone; retention pruning them (**Retention after a restore**,
+below) is the one expected reason. The pod log shows `schema migration N applied` lines
 only if the copy predates the running version, each after a line about the pre-upgrade copy (§6): the
 copy that start wrote, or the one an earlier start of the same upgrade wrote; the first poll then
 rebuilds every cache table.
@@ -528,6 +571,134 @@ rebuilds every cache table.
 **Retention after a restore.** If `config.retention` windows are on, the leader starts pruning
 rows past the window 5,000 at a time on the first cycle after a successful backup. Restoring an
 old copy to *read* its history is a reason to set both windows to `0` first.
+
+### 4d. Break glass under Argo CD: pause, recovery mode by hand, give back
+
+For an incident on a release Argo CD syncs (#533; the operator's decision of 2026-10-02). It replaces steps 1, 2 and
+5 of the values-file path; the restore is the same script. Every step was walked on the CRC lab (Argo CD v3.4.7, chart
+0.61.2), the restore and step 7 included (SPEC_E10's §5 walk, 2026-10-02); the ApplicationSet case follows Argo CD's
+documentation. You need the right to patch the release's Application in Argo CD's namespace, `helm`, and a release at one replica (recovery
+mode and `restore-db.sh` need exactly one pod).
+
+1. **Find the Application, and whether an ApplicationSet owns it.** The Deployment's tracking annotation reads
+   `<APP>:apps/Deployment:<namespace>/<name>`; Argo CD's namespace is `openshift-gitops` on OpenShift GitOps:
+
+   ````sh
+   oc get deploy -n $NS $REL -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}{"\n"}'
+   APP=<the name before the first colon>; ARGO_NS=openshift-gitops
+   oc get application.argoproj.io/$APP -n $ARGO_NS -o jsonpath='{.metadata.ownerReferences[*].kind}{"\n"}'
+   ````
+
+   `ApplicationSet` in the output means a change to this Application's `spec.syncPolicy` "will, however, have no
+   effect" (Argo CD, "Temporarily toggling auto-sync for applications managed by ApplicationSets"): the ApplicationSet
+   puts it back unless it lists `/spec/syncPolicy` under `ignoreApplicationDifferences`. That is a change to the
+   ApplicationSet, made by its owners; ask them before you go on.
+2. **Pause automated sync, and confirm the pause held and no operation is running before you touch anything else:**
+
+   ````sh
+   oc patch application.argoproj.io/$APP -n $ARGO_NS --type merge -p '{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}'
+   oc get application.argoproj.io/$APP -n $ARGO_NS -o jsonpath='{.spec.syncPolicy.automated.enabled} {.status.operationState.phase}{"\n"}'
+   ````
+
+   It must print `false` and a phase that is not `Running`, and the same a minute later. With `enabled: false` Argo CD
+   runs neither automated sync nor self-heal for this Application ("controller will skip automated sync even if
+   `prune`, `self-heal` and `allowEmpty` are set"), and `prune` and `selfHeal` stay as they were for step 5. A sync
+   already running is not stopped by the pause: it goes on waiting for the Deployment to be healthy, which the hand
+   edit of step 3 never is, fails at the progress deadline and is retried, and each retry applies what Git renders
+   over the hand edit, so the app would start on a file a restore may still be writing. With `Running`, terminate the
+   operation first (step 7's command) and confirm again.
+3. **Put the pod into recovery mode by hand.** Setting `GSD_RECOVERY_MODE` alone is not enough: the app keeps running
+   with the variable set, and `restore-db.sh --list` refuses with `uvicorn is running here (pid 1)` (measured). The
+   edit is what `recovery.enabled: true` renders for the dashboard container
+   (`charts/group-sync-dashboard/templates/deployment.yaml#RECOVERY MODE (#303)`): the chart's recovery script, from
+   the chart version the release runs, in the ConfigMap the chart would create, as the container's command, with the
+   two variables and without the liveness probe (nothing serves `/healthz`, and a kill would end a restore). The
+   readiness probe stays and fails, so the Service sends the pod nothing. `TTL` is how long the pod waits for you (§4
+   step 1), counted from its start:
+
+   ````sh
+   oc get deploy -n $NS $REL -o jsonpath='{.metadata.labels.helm\.sh/chart}{"\n"}'
+   helm pull group-sync-dashboard --repo https://ephico2real2.github.io/group-sync-dashboard --version <the version after group-sync-dashboard-> --untar --untardir ./break-glass
+   oc create configmap -n $NS $REL-recovery --from-file=recovery_mode.py=./break-glass/group-sync-dashboard/scripts/recovery_mode.py
+   TTL=2h
+   oc patch -n $NS deploy/$REL --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard","command":["python3.14","/scripts/recovery_mode.py","--release","'$REL'"],"livenessProbe":null,"env":[{"name":"GSD_RECOVERY_MODE","value":"true"},{"name":"GSD_RECOVERY_MODE_TTL","value":"'$TTL'"}],"volumeMounts":[{"name":"recovery-script","mountPath":"/scripts","readOnly":true}]}],"volumes":[{"name":"recovery-script","configMap":{"name":"'$REL'-recovery","defaultMode":292}}]}}}}'
+   ````
+
+   The app stops before the recovery pod starts (the chart's `Recreate` strategy at one replica). Wait until
+   `oc get pods -n $NS -l app=$REL` shows one pod `1/2` `Running` whose log starts with `RECOVERY MODE` (§4 step 2);
+   on the lab it took 4 s. The offsite claim is not mounted by this edit: restore a copy that is only on `/offsite`
+   with §4b. For more time, run the patch again with a longer `TTL`; the new pod counts it from its start.
+4. **Restore** with the script, as **The script, in recovery mode** says. It accepted this pod on the lab (`recovery
+   mode, at least 1h59m56s of its TTL left`), listed its copies, and restored the newest (a loss window of 5m44s, no
+   rows discarded):
+
+   ````sh
+   local-development/restore-db.sh --list --namespace $NS --release $REL
+   local-development/restore-db.sh --from-version <ID> --namespace $NS --release $REL
+   ````
+
+5. **Give the release back to Git.** For a rollback, first commit the older `image.tag`, and anything else the
+   restored database needs, to the release's values file. Then end the pause, wait until Argo CD has applied, and
+   wait for the app:
+
+   ````sh
+   oc patch application.argoproj.io/$APP -n $ARGO_NS --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated/enabled"}]'
+   oc wait application.argoproj.io/$APP -n $ARGO_NS --for=jsonpath='{.status.sync.status}'=Synced --timeout=5m
+   oc rollout status -n $NS deploy/$REL
+   ````
+
+   With `selfHeal: true` Argo CD puts back the command and the liveness probe and the app starts on the restored file
+   (on the lab the command was back 2.6 s after the patch, the rollout done 19.8 s after, the Application
+   Synced/Healthy). The wait comes first because `oc rollout status` run before Argo CD's apply reports the recovery
+   rollout, which never completed: after ten minutes in recovery mode (the Deployment's progress deadline) it fails
+   at once with `exceeded its progress deadline` (measured). With `selfHeal` off and Git unchanged, automated sync
+   does not sync a revision it has already synced ("a second sync will not be attempted, unless `selfHeal` flag is
+   set to true"): sync the Application once from Argo CD, and the wait ends when it has (not measured). The
+   operator's alternative for a rollback is Argo CD's history and rollback, while still paused (Argo CD refuses it
+   while automated sync is on); commit the same values to Git before you end the pause, or automated sync takes the
+   release back to what Git says.
+6. **Remove what the hand edit added.** Argo CD applies only what it renders, so it leaves the two variables, the
+   `/scripts` mount and its volume in place and still reads Synced (measured). Remove them, and the ConfigMap, once
+   the app runs. The pod restarts once more (19 s on the lab); afterwards the pod template equals the one before the
+   incident (on the lab, 0 of 163 fields differed):
+
+   ````sh
+   oc patch -n $NS deploy/$REL --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard","env":[{"name":"GSD_RECOVERY_MODE","$patch":"delete"},{"name":"GSD_RECOVERY_MODE_TTL","$patch":"delete"}],"volumeMounts":[{"mountPath":"/scripts","$patch":"delete"}]}],"volumes":[{"name":"recovery-script","$patch":"delete"}]}}}}'
+   oc rollout status -n $NS deploy/$REL
+   oc delete configmap -n $NS $REL-recovery
+   ````
+
+   Then verify with §4c.
+7. **A sync that is already retrying (the endless retry in **Risks under Argo CD**).** When recovery mode was turned
+   on through the values file and the Application's operation reads Running with `Retrying attempt #N`, the pause
+   stops new automated syncs but not that operation: Argo CD retries a failed operation whatever the sync policy says,
+   up to its `limit`. On the lab, after the pause, retry #2 failed and the operation scheduled retry #3 and stayed
+   Running. **Incident step:** pause (step 2), then terminate the operation, from the Application's sync status in the
+   Argo CD UI or with the Argo CD CLI; a terminating operation is not retried. With the CLI logged in to Argo CD:
+
+   ````sh
+   argocd app terminate-op $APP
+   ````
+
+   Without a login, use the CLI's `--core` mode, with a CLI of the server's version (v3.4.7 on the lab): it talks to
+   the Kubernetes API with your kubeconfig and reads Argo CD's namespace from the kube context, so the context must
+   name `$ARGO_NS`; with another namespace it fails with `configmap "argocd-cm" not found` (measured). The first
+   command writes, into a file of its own, a context that names `$ARGO_NS` and your current context's cluster and user,
+   and no credentials; your kubeconfig is not changed. The component names are OpenShift GitOps's:
+
+   ````sh
+   printf 'apiVersion: v1\nkind: Config\ncurrent-context: break-glass\ncontexts:\n- name: break-glass\n  context:\n    cluster: %s\n    user: %s\n    namespace: %s\n' "$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}')" "$(oc config view --minify -o jsonpath='{.contexts[0].context.user}')" $ARGO_NS > ./argocd-context.yaml
+   KUBECONFIG=./argocd-context.yaml:${KUBECONFIG:-$HOME/.kube/config} argocd --core --redis-name openshift-gitops-redis --repo-server-name openshift-gitops-repo-server --server-name openshift-gitops-server --controller-name openshift-gitops-application-controller app terminate-op $APP
+   ````
+
+   It prints `Application '<APP>' operation terminating`. On the lab the phase read `Terminating` 0.9 s after the
+   command and `Failed` (`Operation terminated (retried 3 times).`) 2.08 s after it, and step 2's check then read
+   `false Failed`. Not measured: whether `terminate-op` needs the four component names (a read-only `argocd app get`
+   worked without them), and the UI path. The pod stays in the recovery mode the chart rendered, and steps 3 and 6 do
+   not apply. Restore (step 4), commit `recovery.enabled: false` to the values file, and end the pause (step 5): with
+   no operation running, automated sync takes the new revision at once. On the lab an operation started in the same
+   second, the app's command was back 21.0 s after the pause ended, and the Application read Synced/Healthy 40.5 s
+   after it.
 
 ## 5. Moving the data to a new claim (access mode change)
 

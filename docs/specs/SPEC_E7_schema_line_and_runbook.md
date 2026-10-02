@@ -701,7 +701,9 @@ as text under `reports/<date>_runbook-schema-line-300/`, the restore's terminal 
    newest backup; `recovery.enabled: false` rolled out; §4c's `oc rollout status` and `curl … /api/version`, whose
    output must match the shape §4c now shows; the row counts against §1's.
 6. **§4, the fallback.** `replicaCount: 0` in the lab's values file, rolled out; `oc wait --for=delete`; §4a's
-   `oc debug` body with the copy the walk restored in step 5 (the database is unchanged by it); `replicaCount: 1`,
+   `oc debug` body with the copy the walk restored in step 5 (it sets the database back to that copy and discards what
+   the app wrote since step 5: the #300 walk's F4 measured `sync_event` 2776 → 2770 and `login_event` 7992 → 7968;
+   corrected by SPEC_E10); `replicaCount: 1`,
    rolled out; §4c. Measured today, read-only: `helm template … --set replicaCount=0` renders and differs from the
    default render in `replicas`, the configuration's `replicaCount` and `checksum/config` only.
 7. **After.** The PVC UIDs again, unchanged; `prepare-release.py --app <next> "…" --no-commit` on a scratch clone with
