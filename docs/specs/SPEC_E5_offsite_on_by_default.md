@@ -180,6 +180,15 @@ numbers come from `curl -s <raw-url> | nl -ba`.
     `--pre-upgrade-source /data/pre-upgrade`; RBAC against `7c9ba624`'s chart `rules: before 65, after 65`,
     `REMOVED 0`, `ADDED 0`, bindings 8 and 8.
 
+14. **The review of PR #524, 2026-10-02 (OB2, Fable, in Codex's seat), F1, accepted (required).** A values file that
+    leaves `config.backup:` `dir:` blank gives a null, which removes the key (§2.2). Version 0.60.2 rendered it, and the
+    ConfigMap hands the app `backupDir: ""`, backups disabled. On head `3763be41` the default render failed:
+    `executing "gsd.offsiteBlocker" at <.Values.config.backup.dir>: wrong type for value; expected string; got
+    interface {}`, because `hasPrefix` cannot read a nil. `gsd.offsiteBlocker` now reads the dir as a word, with the
+    idiom `gsd.offsiteOn` uses for its own nil (block 6), so that release yields by default and `true` refuses it
+    with the existing empty-dir message. `TestYield::test_a_null_backup_dir_is_the_empty_dir` holds it (block 22):
+    on `3763be41` it fails with that type error, and it passes with the fix.
+
 ## 1. The mandate, and what is out of scope
 
 The issue (#304, "What must be accomplished"): a default install ships its backups off the data volume (the
@@ -1122,13 +1131,18 @@ ReadWriteOncePod
 # as the message an explicit `backup.offsite.enabled: true` refuses the render with; empty when none
 # holds. The default ("") yields on exactly these five. The offsite stanza's own values (destination
 # type, claim, keep, S3 Secret and image) are refused in backup-offsite.yaml in every state.
+# config.backup.dir is read as a word: a values file's `dir:` with no value is a null (the key removed),
+# which the ConfigMap already hands the app as "" (backups disabled) but `hasPrefix` cannot read. Nil
+# becomes "", so that release yields by default and `true` refuses it as the empty dir, never with a
+# type error (review of E5, OB2).
 {{- define "gsd.offsiteBlocker" -}}
+{{- $dir := ternary "" (toString .Values.config.backup.dir) (kindIs "invalid" .Values.config.backup.dir) -}}
 {{- if not .Values.persistence.enabled -}}
 backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway.
 {{- else if not .Values.config.backup.enabled -}}
 backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup.
-{{- else if or (not (hasPrefix "/data/" .Values.config.backup.dir)) (contains ".." .Values.config.backup.dir) -}}
-{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir -}}
+{{- else if or (not (hasPrefix "/data/" $dir)) (contains ".." $dir) -}}
+{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." $dir -}}
 {{- else if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) -}}
 backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way.
 {{- else if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}
@@ -2167,6 +2181,18 @@ class TestYield:
         values, message = CANNOT_WORK[case]
         ok, out = render(**values, **ON)
         assert not ok and "backup.offsite.enabled=true" in out and message in out, out[-600:]
+
+    def test_a_null_backup_dir_is_the_empty_dir(self, tmp_path):
+        """`config.backup.dir:` with no value is a null that removes the key (§2.2): the ConfigMap already
+        hands the app `backupDir: ""` for it, so the default steps aside and `true` refuses it as the empty
+        dir — never with Go's "wrong type for value" on a nil, which rendered on 0.60.2 and failed on 0.61.0."""
+        values = tmp_path / "values.yaml"
+        values.write_text("config:\n  backup:\n    dir:\n")
+        ok, out = render("-f", str(values))
+        assert ok, out
+        assert not _offsite_objects(out) and not _offsite_alerts(out)
+        ok, out = render("-f", str(values), **ON)
+        assert not ok and "config.backup.dir under /data/ with no '..' (it is \"\")" in out, out[-600:]
 
     def test_the_offsite_stanzas_own_mistakes_are_refused_in_the_default_too(self):
         """A destination value set by hand says offsite is wanted; stepping aside would hide that it

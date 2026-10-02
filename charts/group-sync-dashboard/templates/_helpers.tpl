@@ -211,13 +211,18 @@ ReadWriteOncePod
 # as the message an explicit `backup.offsite.enabled: true` refuses the render with; empty when none
 # holds. The default ("") yields on exactly these five. The offsite stanza's own values (destination
 # type, claim, keep, S3 Secret and image) are refused in backup-offsite.yaml in every state.
+# config.backup.dir is read as a word: a values file's `dir:` with no value is a null (the key removed),
+# which the ConfigMap already hands the app as "" (backups disabled) but `hasPrefix` cannot read. Nil
+# becomes "", so that release yields by default and `true` refuses it as the empty dir, never with a
+# type error (review of E5, OB2).
 {{- define "gsd.offsiteBlocker" -}}
+{{- $dir := ternary "" (toString .Values.config.backup.dir) (kindIs "invalid" .Values.config.backup.dir) -}}
 {{- if not .Values.persistence.enabled -}}
 backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway.
 {{- else if not .Values.config.backup.enabled -}}
 backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup.
-{{- else if or (not (hasPrefix "/data/" .Values.config.backup.dir)) (contains ".." .Values.config.backup.dir) -}}
-{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir -}}
+{{- else if or (not (hasPrefix "/data/" $dir)) (contains ".." $dir) -}}
+{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." $dir -}}
 {{- else if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) -}}
 backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way.
 {{- else if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}

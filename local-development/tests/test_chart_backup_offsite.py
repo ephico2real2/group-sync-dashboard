@@ -139,6 +139,18 @@ class TestYield:
         ok, out = render(**values, **ON)
         assert not ok and "backup.offsite.enabled=true" in out and message in out, out[-600:]
 
+    def test_a_null_backup_dir_is_the_empty_dir(self, tmp_path):
+        """`config.backup.dir:` with no value is a null that removes the key (§2.2): the ConfigMap already
+        hands the app `backupDir: ""` for it, so the default steps aside and `true` refuses it as the empty
+        dir — never with Go's "wrong type for value" on a nil, which rendered on 0.60.2 and failed on 0.61.0."""
+        values = tmp_path / "values.yaml"
+        values.write_text("config:\n  backup:\n    dir:\n")
+        ok, out = render("-f", str(values))
+        assert ok, out
+        assert not _offsite_objects(out) and not _offsite_alerts(out)
+        ok, out = render("-f", str(values), **ON)
+        assert not ok and "config.backup.dir under /data/ with no '..' (it is \"\")" in out, out[-600:]
+
     def test_the_offsite_stanzas_own_mistakes_are_refused_in_the_default_too(self):
         """A destination value set by hand says offsite is wanted; stepping aside would hide that it
         never runs."""
