@@ -307,7 +307,10 @@ type: application
 # lists the database copies the recovery pod can restore and restores one (#302, SPEC_E3).
 # CHART 0.60.2 (2026-10-01), PATCH: appVersion moves to application 2.2.0 (below); per-pod backup
 # rotation above one replica (#391, SPEC_E4).
-version: 0.60.2
+# CHART 0.61.0 (2026-10-01), MINOR: backup.offsite.enabled defaults to "" (on wherever it can work),
+# read as true, false or empty; the offsite CronJob also ships the newest pre-upgrade copy (#304,
+# SPEC_E5). appVersion unchanged.
+version: 0.61.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

@@ -14,7 +14,8 @@ import sqlite3
 
 import pytest
 
-from gsd.store import Store
+import gsd.store as store_module
+from gsd.store import KNOWN_SCHEMA_VERSION, Store
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "charts" / "group-sync-dashboard" / "scripts" / "offsite_backup.py"
 
@@ -335,3 +336,107 @@ class TestCheck:
         sidecar.write_text("0" * 64 + "  x\n")
         assert script.main(["--check", str(copy)]) == 1
         assert "empty or malformed" in capsys.readouterr().err
+
+
+def _pre_upgrade_copy(directory: pathlib.Path, stamp: str, rows: int = 1) -> pathlib.Path:
+    """A pre-upgrade copy as the store names it, with the store's sidecar (#301)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    copy = directory / f"pre-upgrade-{stamp}-schema-19-to-20-pod-a.db"
+    conn = sqlite3.connect(copy)
+    conn.execute("CREATE TABLE sync_event (id INTEGER)")
+    conn.executemany("INSERT INTO sync_event VALUES (?)", [(i,) for i in range(rows)])
+    conn.execute("PRAGMA user_version = 19")
+    conn.commit()
+    conn.close()
+    (directory / (copy.name + ".sha256")).write_text(f"{_sha(copy)}  {copy.name}\n")
+    return copy
+
+
+class TestPreUpgradePass:
+    """The second pass (#304; SPEC_M1 §3.8): the newest pre-upgrade copy, into its own directory."""
+
+    def test_the_newest_copy_ships_verified_and_three_are_kept(self, script, source, tmp_path, capsys):
+        """T304-13."""
+        backups, _ = source
+        pre, dest = tmp_path / "pre-upgrade", tmp_path / "offsite"
+        args = ["--source", str(backups), "--dest", str(dest), "--keep", "14", "--pre-upgrade-source", str(pre)]
+        for day in range(1, 6):
+            newest = _pre_upgrade_copy(pre, f"2026100{day}T000000.000000Z", rows=day)
+            assert script.main(args) == 0
+            shipped = dest / "pre-upgrade" / newest.name
+            assert _sha(shipped) == _sha(newest)
+            assert (dest / "pre-upgrade" / (newest.name + ".sha256")).read_text() == f"{_sha(newest)}  {newest.name}\n"
+        assert sorted(p.name for p in (dest / "pre-upgrade").glob("pre-upgrade-*.db")) == \
+            sorted(p.name for p in pre.glob("pre-upgrade-*.db"))[-script.PRE_UPGRADE_KEEP:]
+        assert len(list((dest / "pre-upgrade").glob("*.sha256"))) == script.PRE_UPGRADE_KEEP
+        out = capsys.readouterr().out
+        assert "integrity_check ok; user_version 19" in out and f"(keep={script.PRE_UPGRADE_KEEP})" in out
+
+    def test_a_copy_the_store_wrote_ships_and_checks(self, script, source, tmp_path, capsys):
+        """The store's own copy, name and sidecar, through the pass and then `--check` (the runbook's)."""
+        backups, _ = source
+        db = tmp_path / "data" / "gsd.db"
+        db.parent.mkdir()
+        Store(str(db)).close()
+        conn = sqlite3.connect(db)
+        conn.execute(f"PRAGMA user_version = {KNOWN_SCHEMA_VERSION - 1}")
+        conn.commit()
+        store_module._pre_upgrade_copy(conn, str(db), KNOWN_SCHEMA_VERSION - 1)
+        conn.close()
+        (copy,) = (db.parent / store_module.PRE_UPGRADE_DIR).glob("pre-upgrade-*.db")
+        dest = tmp_path / "offsite"
+        assert script.main(["--source", str(backups), "--dest", str(dest),
+                            "--pre-upgrade-source", str(db.parent / store_module.PRE_UPGRADE_DIR)]) == 0
+        assert script.main(["--check", str(dest / "pre-upgrade" / copy.name)]) == 0
+        assert "sidecar matches" in capsys.readouterr().out
+
+    def test_the_six_hourly_pass_is_unchanged_beside_it(self, script, source, tmp_path):
+        """T304-14: the same gsd-*.db is picked, and no pre-upgrade copy enters its destination or rotation."""
+        backups, store = source
+        alone, both = tmp_path / "alone", tmp_path / "both"
+        pre = tmp_path / "pre-upgrade"
+        for day in range(1, 5):
+            _pre_upgrade_copy(pre, f"2026100{day}T000000.000000Z")
+        for _ in range(3):
+            store.backup(str(backups), keep=10)
+            assert script.main(["--source", str(backups), "--dest", str(alone), "--keep", "2"]) == 0
+            assert script.main(["--source", str(backups), "--dest", str(both), "--keep", "2",
+                                "--pre-upgrade-source", str(pre)]) == 0
+        assert sorted(p.name for p in both.iterdir() if p.is_file()) == sorted(p.name for p in alone.iterdir())
+        assert not list(both.glob("pre-upgrade-*"))
+        assert len(list((both / "pre-upgrade").glob("pre-upgrade-*.db"))) == 1, "one per run, the newest"
+
+    @pytest.mark.parametrize("layout", ["absent", "empty"])
+    def test_no_copy_yet_is_not_a_failure(self, script, source, tmp_path, capsys, layout):
+        backups, _ = source
+        pre = tmp_path / "pre-upgrade"
+        if layout == "empty":
+            pre.mkdir()
+        assert script.main(["--source", str(backups), "--dest", str(tmp_path / "o"), "--pre-upgrade-source", str(pre)]) == 0
+        assert "nothing to ship" in capsys.readouterr().out
+
+    def test_a_copy_that_no_longer_matches_its_sidecar_is_refused(self, script, source, tmp_path, capsys):
+        """A copy changed on the volume would otherwise leave with a fresh sidecar vouching for it."""
+        backups, _ = source
+        pre, dest = tmp_path / "pre-upgrade", tmp_path / "offsite"
+        copy = _pre_upgrade_copy(pre, "20261001T000000.000000Z")
+        (pre / (copy.name + ".sha256")).write_text("0" * 64 + f"  {copy.name}\n")
+        assert script.main(["--source", str(backups), "--dest", str(dest), "--pre-upgrade-source", str(pre)]) == 1
+        assert "it is not the copy the store verified" in capsys.readouterr().err
+        assert not list((dest / "pre-upgrade").iterdir())
+        assert len(list(dest.glob("gsd-*.db"))) == 1, "the six-hourly pass still shipped"
+
+    def test_a_failing_six_hourly_pass_does_not_stop_the_pre_upgrade_pass(self, script, tmp_path, capsys):
+        empty, pre, dest = tmp_path / "backup", tmp_path / "pre-upgrade", tmp_path / "offsite"
+        empty.mkdir()
+        copy = _pre_upgrade_copy(pre, "20261001T000000.000000Z")
+        assert script.main(["--source", str(empty), "--dest", str(dest), "--pre-upgrade-source", str(pre)]) == 1
+        assert "has not written a backup yet" in capsys.readouterr().err
+        assert (dest / "pre-upgrade" / copy.name).is_file()
+
+    def test_the_names_and_the_count_are_the_stores(self, script):
+        """The script cannot import the store (it ships alone in a ConfigMap), so the two are held equal here."""
+        assert script.PRE_UPGRADE_KEEP == store_module.PRE_UPGRADE_KEEP
+        assert script.PRE_UPGRADE_DIR == store_module.PRE_UPGRADE_DIR
+        assert pathlib.Path("pre-upgrade-20261001T000000.000000Z-schema-19-to-20-pod-a.db").match(script.PRE_UPGRADE_PATTERN)
+        assert not pathlib.Path("gsd-20261001T000000.000000Z.db").match(script.PRE_UPGRADE_PATTERN)

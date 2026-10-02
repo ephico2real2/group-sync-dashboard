@@ -8,7 +8,7 @@
 | Version on release | chart 0.61.0 (chart only) |
 | Version note | No application version: `charts/**` is outside `publish.yml`'s image paths (`.github/workflows/publish.yml#NOTE charts/** is deliberately ABSENT`), and nothing else changes in the image. The chart takes a MINOR, 0.59.25 to 0.60.0, because a default changes and a value's grammar widens (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). **When specs claim the same numbers, the rule is:** a spec still `specified` must name a version above `Chart.yaml` (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), so whichever implementation merges first takes its number and, in the same pull request, moves every other `specified` spec whose chart version is not above the new `Chart.yaml` to the next free version above it, in its header and its index row, keeping its MINOR or PATCH and its application version. On origin/main `b5463d45` those are SPEC_E2 (chart 0.60.0), SPEC_G2 (app 2.1.0, chart 0.60.0) and SPEC_E4 (app 2.1.0, chart 0.59.26): blocks 36 to 39 move them to chart 0.61.0, 0.61.0 and 0.60.2, 0.60.1 being SPEC_G3's (this spec changes no application version, so their app cells stay). SPEC_G3 (app 2.2.0, chart 0.60.1) is already above 0.60.0 and is left alone. Measured: §7 without blocks 36 to 39 fails that test with `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.60.0')`; with them the full hermetic suite passes (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull request re-derives blocks 36 to 41 before applying: it drops the cells that no longer collide and corrects the version in blocks 40 (the CHANGELOG entry) and 41 (`Chart.yaml`), with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). SPEC_E3 (#302, app 2.1.0, chart 0.59.26) is not on main; when it is, the same rule applies to it. The epic's build order puts #303 first, so the expected case is SPEC_E2's implementing pull request moving this spec to chart 0.61.0 |
 | Issue | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code, from the issue's "Decisions and corrections (2026-10-01)", the epic's decisions of 2026-09-26, SPEC_M1 §3.8 and SPEC_E2 at `465411cd`. Measured on origin/main `21132a25` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and the repository's Python 3.14.7 (SQLite 3.53.4), and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `4dfde5e6` (OB3 in Grok's seat, OB2 in Codex's), after merging origin/main `3b3d0010` (SPEC G1, E2, G2 and E4); §7 re-cut from that merge and proved again (§4.3; Orchestrator's notes, 10) |
 
 ## How to read this spec
@@ -140,6 +140,54 @@ numbers come from `curl -s <raw-url> | nl -ba`.
       change.
 11. **For the operator:** none. The three-state switch was settled on 2026-09-26, the pre-upgrade pass on SPEC_M1
    §3.8, and the rest above on "easy to manage, best practice".
+12. **Re-cut at implementation, 2026-10-01, on origin/main `721a78db`** (application 2.2.0, chart 0.60.2: SPEC_E2,
+    SPEC_E3 and SPEC_E4 merged after §7 was cut). `apply-spec-blocks.py` stopped at `FAIL block 14
+    (docs/RUNBOOK_backup_restore.md | edit): Old text occurs 0 times`; checked block by block past that, blocks 37,
+    38, 39 and 41 failed the same way, and block 36 checked out against a spec that is no longer `specified`. Each
+    correction is mechanical; no design changed:
+    - **Block 9a, added** (note 1, "SPEC_E2 merges first"): `charts/group-sync-dashboard/templates/deployment.yaml`
+      line 60 still read the switch by truthiness. Old the first line of note 1, New the second.
+    - **Block 14**: its Old text led with the on-volume bullet's last line, which SPEC_E4's block 24 rewrote (#521;
+      SPEC_E7's note 7 found it). Re-cut as the off-volume bullet alone; the New text is unchanged.
+    - **Block 36, dropped**: SPEC_E2 is `merged` at chart 0.60.0, and the version rule reads `specified` specs only.
+    - **Blocks 37 to 39, re-derived** from `docs/specs/README.md` on `721a78db` under the Version note's rule. This
+      spec takes chart 0.61.0, the MINOR above 0.60.2 that its header already named (SPEC_E2's pull request moved
+      it). The `specified` specs whose chart cell 0.61.0 reaches move to the next version no spec claims, keeping
+      their MINOR or PATCH, their app cell and their order: SPEC_G2 0.61.0 → 0.63.0 (0.62.0 is SPEC_W1's, which
+      stays); SPEC_G4 0.60.3 and 0.60.4 → 0.61.1 and 0.61.2; SPEC_G3 0.60.5 → 0.61.3; SPEC_E6 0.60.6 → 0.61.4.
+      SPEC_E4 is `merged` and its cell stays; SPEC_E9 names no chart version. Blocks 37, 38, 38a, 38b (headers) and
+      39 to 39c (index rows).
+    - **Block 40**: first under `## Unreleased`, above SPEC_E4's entry rather than above K5's (three Epic E entries
+      now sit between them), and naming chart 0.61.0, the version `Chart.yaml` reaches
+      (`local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`).
+    - **Block 41**: Old is the tail SPEC_E4 left (`version: 0.60.2`), New 0.61.0 with the same history line.
+    - **`environments/crc.yaml` and PR #522** (open at implementation, head `68cfd97d`): it adds
+      `backup.offsite.enabled: true` with `destination.type: pvc` to the lab's values file, so §2.7's and §5's "sets
+      nothing under `backup`" and note 3's "none … sets a `backup.offsite` value" hold for `721a78db` only. Measured
+      with that file on the applied chart (helm v4.3.0): it renders, since `true` is strict and no blocker holds, with
+      the five objects, the two alerts and `--pre-upgrade-source /data/pre-upgrade` (one replica); RBAC against
+      `721a78db`'s chart with the same file `rules: before 65, after 65`, `REMOVED 0`, `ADDED 0`, bindings 8 and 8.
+      The lab walk (§5) then takes the `true` path rather than the default, and observes the same objects.
+
+13. **The lab's values table, after PR #522 (`7c9ba624`), 2026-10-01.** #522 set `backup.offsite.enabled: true` with
+    the `pvc` destination in `environments/crc.yaml` and added its row to `environments/README.md`'s key table with
+    the chart default `false`. After this spec the chart default is the empty word, so on the merge of origin/main
+    `local-development/tests/test_environments_readme.py#test_every_claimed_chart_default_is_the_real_chart_default`
+    failed: `backup.offsite.enabled: README says default 'false', values.yaml says '""'`. Block 19a corrects the cell
+    to `""` and says what the lab's `true` now means: the strict form, not the switch that turns the copy on. The
+    `destination.type` row (`pvc`, redundant) is unchanged. Re-rendered with `environments/crc.yaml` from
+    `7c9ba624` on the applied chart: renders, the five offsite objects, the two alerts and
+    `--pre-upgrade-source /data/pre-upgrade`; RBAC against `7c9ba624`'s chart `rules: before 65, after 65`,
+    `REMOVED 0`, `ADDED 0`, bindings 8 and 8.
+
+14. **The review of PR #524, 2026-10-02 (OB2, Fable, in Codex's seat), F1, accepted (required).** A values file that
+    leaves `config.backup:` `dir:` blank gives a null, which removes the key (§2.2). Version 0.60.2 rendered it, and the
+    ConfigMap hands the app `backupDir: ""`, backups disabled. On head `3763be41` the default render failed:
+    `executing "gsd.offsiteBlocker" at <.Values.config.backup.dir>: wrong type for value; expected string; got
+    interface {}`, because `hasPrefix` cannot read a nil. `gsd.offsiteBlocker` now reads the dir as a word, with the
+    idiom `gsd.offsiteOn` uses for its own nil (block 6), so that release yields by default and `true` refuses it
+    with the existing empty-dir message. `TestYield::test_a_null_backup_dir_is_the_empty_dir` holds it (block 22):
+    on `3763be41` it fails with that type error, and it passes with the fix.
 
 ## 1. The mandate, and what is out of scope
 
@@ -661,7 +709,8 @@ Every block of both specs applied cleanly in both orders.
 
 Not run in this phase: the lab is read-only here. The implementing pull request deploys the reviewed head with
 `local-development/release-crc.sh --argocd` (development: the lab's own release path) and walks it. The
-release's values (`environments/crc.yaml`) set nothing under `backup`, so the lab gets the default.
+release's values (`environments/crc.yaml`) set nothing under `backup`, so the lab gets the default; after PR
+#522 they set `enabled: true` with the `pvc` destination, which renders the same objects (Orchestrator's notes, 12).
 
 1. **Before.** Record the UIDs: `oc get pvc -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid`
    must show `group-sync-dashboard-data` `f065b7a4-535c-4ef1-868c-58f5afee4953` and
@@ -729,7 +778,7 @@ migration, as SPEC_M1 §5 describes) is not part of this walk.
 
 ## 7. Implementation blocks
 
-Applied in this order: the script (1-5), the templates (6-9), `values.yaml` (10), the documents (11-19), the tests (20-35), the version cells of the three other specs this chart version passes (36-39), the CHANGELOG (40) and the chart version (41). Every block is an edit; no file is created.
+Applied in this order: the script (1-5), the templates (6-9a), `values.yaml` (10), the documents (11-19a), the tests (20-35), the version cells of the four other specs this chart version reaches (37-39c), the CHANGELOG (40) and the chart version (41). Every block is an edit; no file is created. Blocks 9a, 14 and 36 to 41 were re-cut at implementation (Orchestrator's notes, 12).
 
 ### Block 1 — charts/group-sync-dashboard/scripts/offsite_backup.py
 
@@ -1082,13 +1131,18 @@ ReadWriteOncePod
 # as the message an explicit `backup.offsite.enabled: true` refuses the render with; empty when none
 # holds. The default ("") yields on exactly these five. The offsite stanza's own values (destination
 # type, claim, keep, S3 Secret and image) are refused in backup-offsite.yaml in every state.
+# config.backup.dir is read as a word: a values file's `dir:` with no value is a null (the key removed),
+# which the ConfigMap already hands the app as "" (backups disabled) but `hasPrefix` cannot read. Nil
+# becomes "", so that release yields by default and `true` refuses it as the empty dir, never with a
+# type error (review of E5, OB2).
 {{- define "gsd.offsiteBlocker" -}}
+{{- $dir := ternary "" (toString .Values.config.backup.dir) (kindIs "invalid" .Values.config.backup.dir) -}}
 {{- if not .Values.persistence.enabled -}}
 backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway.
 {{- else if not .Values.config.backup.enabled -}}
 backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup.
-{{- else if or (not (hasPrefix "/data/" .Values.config.backup.dir)) (contains ".." .Values.config.backup.dir) -}}
-{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir -}}
+{{- else if or (not (hasPrefix "/data/" $dir)) (contains ".." $dir) -}}
+{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." $dir -}}
 {{- else if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) -}}
 backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way.
 {{- else if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}
@@ -1292,6 +1346,24 @@ New text:
               {{ `{{ $value | humanizeDuration }}` }} ago — at least two schedule slots. A run
               fails when either of its passes fails: nothing newer is off the volume, or, at one
               replica, the newest pre-upgrade copy is refused while the six-hourly copies still ship.
+```
+
+### Block 9a — charts/group-sync-dashboard/templates/deployment.yaml
+
+SPEC_E2 is merged (#518), so its recovery pod's offsite mount takes the same helper as the CronJob (Orchestrator's notes, 1 and 12).
+
+<!-- block: charts/group-sync-dashboard/templates/deployment.yaml | edit -->
+
+Old text:
+
+```yaml
+{{- if and .Values.backup.offsite.enabled (eq .Values.backup.offsite.destination.type "pvc") }}
+```
+
+New text:
+
+```yaml
+{{- if and (eq (include "gsd.offsiteOn" .) "true") (eq .Values.backup.offsite.destination.type "pvc") }}
 ```
 
 ### Block 10 — charts/group-sync-dashboard/values.yaml
@@ -1545,14 +1617,13 @@ New text:
 
 ### Block 14 — docs/RUNBOOK_backup_restore.md
 
-The opening list: on by default, and the pre-upgrade copy.
+The opening list: on by default, and the pre-upgrade copy. Re-cut at implementation without SPEC_E4's on-volume line (Orchestrator's notes, 12).
 
 <!-- block: docs/RUNBOOK_backup_restore.md | edit -->
 
 Old text:
 
 ```text
-  (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim;
 * **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
   claim or to object storage, with a `.sha256` sidecar, after an integrity check
   (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`);
@@ -1561,7 +1632,6 @@ Old text:
 New text:
 
 ```text
-  (`/data/backup`) every `intervalHours`, keeping `keep` of them, on the data claim;
 * **off-volume** — `backup.offsite` (on by default wherever it can work) copies the newest of those to a
   second claim or to object storage, with a `.sha256` sidecar, after an integrity check
   (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`), and, at one replica with the second
@@ -1698,6 +1768,24 @@ no CronJob in those combinations instead (`charts/group-sync-dashboard/templates
 | `backup.offsite.enabled: true` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
 | `backup.offsite.enabled: true` with `persistence.existingClaim` and no `persistence.accessMode` | the chart cannot read the live claim's mode, and one derived from `replicaCount` may not be the claim's |
 | `backup.offsite.enabled` set to a word other than `true`, `false` or empty | the switch is compared as a word, so a quoted `"false"` is off; a misspelt word must not decide whether the copy leaves the volume |
+```
+
+### Block 19a — environments/README.md
+
+The lab table's chart-default cell for `backup.offsite.enabled`, which PR #522 added while the default was `false` (Orchestrator's notes, 13).
+
+<!-- block: environments/README.md | edit -->
+
+Old text:
+
+```text
+| `backup.offsite.enabled` | `false` | `true` | lab override — the off-volume backup on (the operator, 2026-10-02): a CronJob copies the newest scheduled backup to its own claim every six hours, so a lost or corrupted data volume is not the only copy. Its ServiceAccount has no token and no grant (rendered RBAC unchanged, 65 rules) |
+```
+
+New text:
+
+```text
+| `backup.offsite.enabled` | `""` | `true` | lab override — the off-volume backup on (the operator, 2026-10-02). Since #304 the empty default turns it on here too; `true` is the strict form, which refuses a combination where the copy cannot work rather than rendering nothing: a CronJob copies the newest scheduled backup to its own claim every six hours, so a lost or corrupted data volume is not the only copy. Its ServiceAccount has no token and no grant (rendered RBAC unchanged, 65 rules) |
 ```
 
 ### Block 20 — local-development/tests/test_offsite_backup_script.py
@@ -2094,6 +2182,18 @@ class TestYield:
         ok, out = render(**values, **ON)
         assert not ok and "backup.offsite.enabled=true" in out and message in out, out[-600:]
 
+    def test_a_null_backup_dir_is_the_empty_dir(self, tmp_path):
+        """`config.backup.dir:` with no value is a null that removes the key (§2.2): the ConfigMap already
+        hands the app `backupDir: ""` for it, so the default steps aside and `true` refuses it as the empty
+        dir — never with Go's "wrong type for value" on a nil, which rendered on 0.60.2 and failed on 0.61.0."""
+        values = tmp_path / "values.yaml"
+        values.write_text("config:\n  backup:\n    dir:\n")
+        ok, out = render("-f", str(values))
+        assert ok, out
+        assert not _offsite_objects(out) and not _offsite_alerts(out)
+        ok, out = render("-f", str(values), **ON)
+        assert not ok and "config.backup.dir under /data/ with no '..' (it is \"\")" in out, out[-600:]
+
     def test_the_offsite_stanzas_own_mistakes_are_refused_in_the_default_too(self):
         """A destination value set by hand says offsite is wanted; stepping aside would hide that it
         never runs."""
@@ -2475,107 +2575,171 @@ New text:
         dashboard_sas = [o for o in objects(out) if o["kind"] == "ServiceAccount" and not o["metadata"]["name"].endswith(("-report", "-secrets-mint", "-backup-offsite"))]
 ```
 
-### Block 36 — docs/specs/SPEC_E2_recovery_mode.md
+### Block 36 — dropped at implementation
 
-SPEC_E2's version cell moves above the chart this change ships: chart 0.61.0 (the Version note; the review's F1).
-
-<!-- block: docs/specs/SPEC_E2_recovery_mode.md | edit -->
-
-Old text:
-
-```text
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | chart 0.60.0 (chart only) |
-```
-
-New text:
-
-```text
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | chart 0.61.0 (chart only) |
-```
+SPEC_E2 is `merged` at chart 0.60.0 (#518); the version rule reads `specified` specs only, so its cell stays (Orchestrator's notes, 12).
 
 ### Block 37 — docs/specs/SPEC_G2_platform_users.md
 
-SPEC_G2's: app 2.1.0, chart 0.61.0.
+SPEC_G2's MINOR: chart 0.63.0 (0.61.0 is this spec's, 0.62.0 SPEC_W1's); app 2.4.0 kept.
 
 <!-- block: docs/specs/SPEC_G2_platform_users.md | edit -->
 
 Old text:
 
 ```text
-| Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.1.0, chart 0.60.0 |
+| Version on release | app 2.4.0, chart 0.61.0 |
 ```
 
 New text:
 
 ```text
-| Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.1.0, chart 0.61.0 |
+| Version on release | app 2.4.0, chart 0.63.0 |
 ```
 
-### Block 38 — docs/specs/SPEC_E4_per_pod_backup_rotation.md
+### Block 38 — docs/specs/SPEC_G4_namespaced_lease_grant.md
 
-SPEC_E4's: app 2.1.0, chart 0.60.2 (0.60.1 is SPEC_G3's).
+SPEC_G4's two PATCHes: chart 0.61.1 and 0.61.2, the first free above 0.61.0, keeping their order before SPEC_G3 and SPEC_E6.
 
-<!-- block: docs/specs/SPEC_E4_per_pod_backup_rotation.md | edit -->
+<!-- block: docs/specs/SPEC_G4_namespaced_lease_grant.md | edit -->
 
 Old text:
 
 ```text
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.59.26 |
+| Version on release | chart 0.60.3 (step 1, adds the Role) and 0.60.4 (step 2, removes the ClusterRole rule), chart only |
 ```
 
 New text:
 
 ```text
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.2 |
+| Version on release | chart 0.61.1 (step 1, adds the Role) and 0.61.2 (step 2, removes the ClusterRole rule), chart only |
+```
+
+### Block 38a — docs/specs/SPEC_G3_acknowledged_direct_grants.md
+
+SPEC_G3's PATCH: chart 0.61.3; app 2.5.0 kept.
+
+<!-- block: docs/specs/SPEC_G3_acknowledged_direct_grants.md | edit -->
+
+Old text:
+
+```text
+| Version on release | app 2.5.0, chart 0.60.5 |
+```
+
+New text:
+
+```text
+| Version on release | app 2.5.0, chart 0.61.3 |
+```
+
+### Block 38b — docs/specs/SPEC_E6_kpi_backups_card.md
+
+SPEC_E6's PATCH: chart 0.61.4; app 2.4.0 kept.
+
+<!-- block: docs/specs/SPEC_E6_kpi_backups_card.md | edit -->
+
+Old text:
+
+```text
+| Version on release | app 2.4.0, chart 0.60.6 |
+```
+
+New text:
+
+```text
+| Version on release | app 2.4.0, chart 0.61.4 |
 ```
 
 ### Block 39 — docs/specs/README.md
 
-The same three cells in the index, which `local-development/tests/test_specs_index.py#test_the_index_row_matches_the_spec_header` holds equal to the headers.
+SPEC_G2's index row, held equal to its header by `local-development/tests/test_specs_index.py#test_the_index_row_matches_the_spec_header`.
 
 <!-- block: docs/specs/README.md | edit -->
 
 Old text:
 
 ```text
-| G1 | [`SPEC_G1_tier_declaration.md`](SPEC_G1_tier_declaration.md) — the access declaration: every route and page names the tier each reader gets, in `ACCESS_CONTROL.md` §3 and §4, and a test proves every cell per persona; SPEC_T1's status follows | G — access declared | — | no version change (tests and docs only) | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) | specified |
-| E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
-| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.60.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
-| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
+| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.4.0, chart 0.61.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
 ```
 
 New text:
 
 ```text
-| G1 | [`SPEC_G1_tier_declaration.md`](SPEC_G1_tier_declaration.md) — the access declaration: every route and page names the tier each reader gets, in `ACCESS_CONTROL.md` §3 and §4, and a test proves every cell per persona; SPEC_T1's status follows | G — access declared | — | no version change (tests and docs only) | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) | specified |
-| E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.61.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
-| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.61.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
-| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.60.2 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
+| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.4.0, chart 0.63.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
+```
+
+### Block 39a — docs/specs/README.md
+
+SPEC_G4's index row, held equal to its header by `local-development/tests/test_specs_index.py#test_the_index_row_matches_the_spec_header`.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| G4 | [`SPEC_G4_namespaced_lease_grant.md`](SPEC_G4_namespaced_lease_grant.md) — the Lease grant namespaced: the dashboard's Leases granted by a Role and RoleBinding in the release namespace (`<fullname>-leases`), shipped in a chart release before the one that removes the ClusterRole's Lease rule, so an upgrade through both refuses the running pod no Lease call; the removal waits on the operator's agreement on #420 | G — access declared | — | chart 0.60.3 (step 1, adds the Role) and 0.60.4 (step 2, removes the ClusterRole rule), chart only | [#420](https://github.com/ephico2real2/group-sync-dashboard/issues/420) | specified |
+```
+
+New text:
+
+```text
+| G4 | [`SPEC_G4_namespaced_lease_grant.md`](SPEC_G4_namespaced_lease_grant.md) — the Lease grant namespaced: the dashboard's Leases granted by a Role and RoleBinding in the release namespace (`<fullname>-leases`), shipped in a chart release before the one that removes the ClusterRole's Lease rule, so an upgrade through both refuses the running pod no Lease call; the removal waits on the operator's agreement on #420 | G — access declared | — | chart 0.61.1 (step 1, adds the Role) and 0.61.2 (step 2, removes the ClusterRole rule), chart only | [#420](https://github.com/ephico2real2/group-sync-dashboard/issues/420) | specified |
+```
+
+### Block 39b — docs/specs/README.md
+
+SPEC_G3's index row, held equal to its header by `local-development/tests/test_specs_index.py#test_the_index_row_matches_the_spec_header`.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| G3 | [`SPEC_G3_acknowledged_direct_grants.md`](SPEC_G3_acknowledged_direct_grants.md) — acknowledged direct grants: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label or exception annotation leaves the worklist, its counts, the alert and the reports' review figures, counted and listed; `group-sync-operator-helm` is a chart's provenance in the Group gate; no migration | G — access declared | — | app 2.5.0, chart 0.60.5 | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) | specified |
+```
+
+New text:
+
+```text
+| G3 | [`SPEC_G3_acknowledged_direct_grants.md`](SPEC_G3_acknowledged_direct_grants.md) — acknowledged direct grants: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label or exception annotation leaves the worklist, its counts, the alert and the reports' review figures, counted and listed; `group-sync-operator-helm` is a chart's provenance in the Group gate; no migration | G — access declared | — | app 2.5.0, chart 0.61.3 | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) | specified |
+```
+
+### Block 39c — docs/specs/README.md
+
+SPEC_E6's index row, held equal to its header by `local-development/tests/test_specs_index.py#test_the_index_row_matches_the_spec_header`.
+
+<!-- block: docs/specs/README.md | edit -->
+
+Old text:
+
+```text
+| E6 | [`SPEC_E6_kpi_backups_card.md`](SPEC_E6_kpi_backups_card.md) — the KPI page's Backups card: the last copy as an instant and when the next is due, the copies kept against `keep`, the failures since start, the newest copy's schema against the build's and the newest pre-upgrade copy, in one of five states said in words (disabled, never "0 backups"), from what the dashboard process already has; no Prometheus, no new metric, no new permission; composes with SPEC_E4 | E — restore tools and release safety | — | app 2.4.0, chart 0.60.6 | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) | specified |
+```
+
+New text:
+
+```text
+| E6 | [`SPEC_E6_kpi_backups_card.md`](SPEC_E6_kpi_backups_card.md) — the KPI page's Backups card: the last copy as an instant and when the next is due, the copies kept against `keep`, the failures since start, the newest copy's schema against the build's and the newest pre-upgrade copy, in one of five states said in words (disabled, never "0 backups"), from what the dashboard process already has; no Prometheus, no new metric, no new permission; composes with SPEC_E4 | E — restore tools and release safety | — | app 2.4.0, chart 0.61.4 | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) | specified |
 ```
 
 ### Block 40 — docs/CHANGELOG.md
 
-The CHANGELOG entry with the upgrade note, first under `## Unreleased` (`local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release` holds the chart version to it); a configured destination is used (OB2's F2).
+The CHANGELOG entry with the upgrade note, first under `## Unreleased` (re-cut at implementation above SPEC_E4's entry, chart 0.61.0: Orchestrator's notes, 12) (`local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release` holds the chart version to it); a configured destination is used (OB2's F2).
 
 <!-- block: docs/CHANGELOG.md | edit -->
 
 Old text:
 
 ```text
-- **The runbook says which card rows are the last poll's (Epic D composition review, K5).** Refresh stores nothing
+- **Above one replica, every pod keeps its own scheduled backups (#391, Epic E #385,
 ```
 
 New text:
 
 ```text
 - **The off-volume backup is on wherever it can work, and it ships the newest pre-upgrade copy too (#304,
-  `docs/specs/SPEC_E5_offsite_on_by_default.md`; chart 0.60.0, no application change).**
+  `docs/specs/SPEC_E5_offsite_on_by_default.md`; chart 0.61.0, no application change).**
   `backup.offsite.enabled` is read as a word with three values. Empty, the new default, renders the
   offsite CronJob unless the copy cannot work in the release (persistence off; `config.backup` off or an
   empty `config.backup.dir`; a `config.backup.dir` outside `/data/`; `persistence.existingClaim` without
@@ -2598,7 +2762,7 @@ New text:
   next rollout: a destination that is configured is used. To keep offsite off, set
   `backup.offsite.enabled: false` in the release's values file and roll it out through the release's
   deployment pipeline.
-- **The runbook says which card rows are the last poll's (Epic D composition review, K5).** Refresh stores nothing
+- **Above one replica, every pod keeps its own scheduled backups (#391, Epic E #385,
 ```
 
 ### Block 41 — charts/group-sync-dashboard/Chart.yaml
@@ -2610,16 +2774,16 @@ The MINOR and its history line; `appVersion` unchanged.
 Old text:
 
 ```yaml
-# are the last poll's, not Refresh's (Epic D composition review, K5).
-version: 0.59.25
+# rotation above one replica (#391, SPEC_E4).
+version: 0.60.2
 ```
 
 New text:
 
 ```yaml
-# are the last poll's, not Refresh's (Epic D composition review, K5).
-# CHART 0.60.0 (2026-10-01), MINOR: backup.offsite.enabled defaults to "" (on wherever it can work),
+# rotation above one replica (#391, SPEC_E4).
+# CHART 0.61.0 (2026-10-01), MINOR: backup.offsite.enabled defaults to "" (on wherever it can work),
 # read as true, false or empty; the offsite CronJob also ships the newest pre-upgrade copy (#304,
 # SPEC_E5). appVersion unchanged.
-version: 0.60.0
+version: 0.61.0
 ```

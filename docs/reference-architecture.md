@@ -760,7 +760,9 @@ the same claim read-only, and a stdlib script shipped as a ConfigMap
 (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`) picks the newest `gsd-*.db` by
 name — the same rule `Store.backup` rotates by — streams it to a second claim or a staging
 directory while hashing it, opens the *copy* with `immutable=1` and runs `PRAGMA
-integrity_check`, then writes a `.sha256` sidecar and prunes to `keep`. Object storage goes
+integrity_check`, then writes a `.sha256` sidecar and prunes to `keep`. At one replica a second pass
+does the same for the newest pre-upgrade copy, into its own directory
+(`charts/group-sync-dashboard/scripts/offsite_backup.py#ship_pre_upgrade`). Object storage goes
 through an operator-supplied CLI image with a credential the chart never renders; the dashboard
 itself still holds no such credential, and the credential should hold `PutObject` alone so a
 leaked one cannot delete the history (pruning is a bucket lifecycle rule). The app cannot see the
@@ -1191,13 +1193,17 @@ No count in this heading, deliberately. It said "four" while the chart had grown
 | `oauthProxy.skipAuthRegex` no longer covering `/signed-out` while `logoutUrl` is set | sign-out would redirect to a path the proxy then demands a login for, so the reader lands back on the login page and the flow appears broken |
 
 `templates/backup-offsite.yaml` adds its own, all about mounting one claim twice and about where
-the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup.enabled is not a value`):
+the copy goes (`charts/group-sync-dashboard/templates/backup-offsite.yaml#backup.enabled is not a value`).
+The second to fourth rows refuse only an explicit `true`: the default, an empty `backup.offsite.enabled`, renders
+no CronJob in those combinations instead (`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.offsiteBlocker`):
 
 | Combination | Refused because |
 |---|---|
 | `backup.enabled` set at all | the on-volume switch is `config.backup.enabled`; a key that silently did nothing would look like a backup that was configured |
-| `backup.offsite.enabled` with `persistence.enabled=false`, `config.backup.enabled=false`, or `config.backup.dir` outside `/data/` | nothing to ship, a torn copy of the live file, or a directory the CronJob cannot see |
-| `backup.offsite.enabled` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
+| `backup.offsite.enabled: true` with `persistence.enabled=false`, `config.backup.enabled=false`, or `config.backup.dir` empty or outside `/data/` | nothing to ship, a torn copy of the live file, or a directory the CronJob cannot see |
+| `backup.offsite.enabled: true` with a `ReadWriteOncePod` data volume | one pod may ever mount it, so the Job could never schedule; `ReadWriteOnce` is derived into a required `podAffinity` instead |
+| `backup.offsite.enabled: true` with `persistence.existingClaim` and no `persistence.accessMode` | the chart cannot read the live claim's mode, and one derived from `replicaCount` may not be the claim's |
+| `backup.offsite.enabled` set to a word other than `true`, `false` or empty | the switch is compared as a word, so a quoted `"false"` is off; a misspelt word must not decide whether the copy leaves the volume |
 | `destination.type` not `pvc`/`s3`; `destination.pvc.existingClaim` equal to the data claim; `keep < 0`; `s3` without a Secret or an image | a destination that is not one, a copy on the volume it protects, an unbounded negative, or credentials/tools the chart refuses to invent |
 
 `_helpers.tpl` carries ten more, and they are validation rather than combination: `ingress.host`

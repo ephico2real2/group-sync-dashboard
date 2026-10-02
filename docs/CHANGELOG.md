@@ -10,6 +10,30 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The off-volume backup is on wherever it can work, and it ships the newest pre-upgrade copy too (#304,
+  `docs/specs/SPEC_E5_offsite_on_by_default.md`; chart 0.61.0, no application change).**
+  `backup.offsite.enabled` is read as a word with three values. Empty, the new default, renders the
+  offsite CronJob unless the copy cannot work in the release (persistence off; `config.backup` off or an
+  empty `config.backup.dir`; a `config.backup.dir` outside `/data/`; `persistence.existingClaim` without
+  `persistence.accessMode`; a `ReadWriteOncePod` data volume), and then renders nothing and fails
+  nothing. `true` keeps the refusal of each of those, message for message. `false` is off, and a quoted
+  `"false"` is now off too: it used to render the CronJob. Any other word refuses the render. The two
+  offsite alerts render exactly when the CronJob does. At `replicaCount` 1 with the `pvc` destination
+  the same run also ships the newest `pre-upgrade-*.db` from `/data/pre-upgrade` to
+  `/offsite/pre-upgrade`, after checking it against its `.sha256`, and keeps three there; no such copy
+  yet is not a failure. **Upgrade note:** a release that sets nothing gains, on the next rollout, a 5Gi
+  claim `<fullname>-backup-offsite` on the cluster's default StorageClass (`helm.sh/resource-policy:
+  keep`, and Argo CD's `Prune=false,Delete=false`), a one-shot bind Job, a CronJob, a ConfigMap, a
+  ServiceAccount with no grant and no token, and the alerts `GroupSyncDashboardOffsiteBackupStale` and
+  `GroupSyncDashboardOffsiteBackupUnobserved`; the second fires where kube-state-metrics is not scraped.
+  On a cluster with no default StorageClass the claim stays Pending until
+  `backup.offsite.destination.pvc.storageClass` names one. A values file that set an invalid
+  `backup.offsite.destination.*` value while offsite was off now fails the render with that value's
+  existing message, and a values file that filled in a valid destination (an `s3` stanza with its Secret
+  and image, or a `pvc` existing claim) while `enabled` was left unset now renders that CronJob on the
+  next rollout: a destination that is configured is used. To keep offsite off, set
+  `backup.offsite.enabled: false` in the release's values file and roll it out through the release's
+  deployment pipeline.
 - **Above one replica, every pod keeps its own scheduled backups (#391, Epic E #385,
   `docs/specs/SPEC_E4_per_pod_backup_rotation.md`; app 2.2.0, chart 0.60.2).** Replicas share
   `config.backup.dir`, and each rotation deleted by the bare `gsd-*.db` pattern there, so with two replicas

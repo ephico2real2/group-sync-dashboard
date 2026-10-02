@@ -299,8 +299,9 @@ spec:
               at least two backup intervals. The sync and membership history exists only in
               this database; check gsd_backup_failures_total for active failures and the
               pod log for the cause.
-        {{- if .Values.backup.offsite.enabled }}
+        {{- if eq (include "gsd.offsiteOn" .) "true" }}
 
+        # Rendered exactly when the offsite CronJob is: one helper decides both.
         # The app cannot see its own CronJob, so these two read kube-state-metrics. On
         # OpenShift the platform stack scrapes it for every namespace and user-workload rules
         # are evaluated against the Thanos querier that federates it, so the series is
@@ -317,8 +318,9 @@ spec:
             summary: "The off-volume backup CronJob has not succeeded within the expected window"
             description: >-
               {{ include "gsd.fullname" . }}-backup-offsite last succeeded
-              {{ `{{ $value | humanizeDuration }}` }} ago — at least two schedule slots. The
-              on-volume copies still land on the claim they protect; nothing newer is off it.
+              {{ `{{ $value | humanizeDuration }}` }} ago — at least two schedule slots. A run
+              fails when either of its passes fails: nothing newer is off the volume, or, at one
+              replica, the newest pre-upgrade copy is refused while the six-hourly copies still ship.
               `oc get jobs -l app.kubernetes.io/component=backup-offsite` and the failed pod's
               log name the cause; docs/RUNBOOK_backup_restore.md has the manual run.
         - alert: GroupSyncDashboardOffsiteBackupUnobserved
