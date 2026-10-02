@@ -493,7 +493,24 @@ red are the ones written for that property; the unmutated copy passes all 29.
 
 ### 4.3 The proof
 
-Provisional: measured below before this commit is final.
+Measured on 2026-10-02 in the scratch directory, with the repository's venv and `PYTHONPATH` set to the tree under
+test. The logs are not committed; their last lines are quoted.
+
+| run | tree | result |
+|---|---|---|
+| hermetic suite, before | a git checkout of main `2d20d0fb` | `6864 passed, 26 skipped, 661 deselected, 5 xfailed` |
+| hermetic suite, after | the same tree with every block applied (`apply-spec-blocks.py … --apply`) | `6899 passed, 23 skipped, 664 deselected, 5 xfailed` |
+| browser suite, before | main `2d20d0fb` | `657 passed` |
+| browser suite, after | with every block applied | `660 passed` |
+| the new and touched test files, after | with every block applied | `1937 passed, 19 skipped` |
+
+- **The arithmetic.** The 35 more hermetic passes are the 32 new tests plus 3 that skipped before and now run:
+  6864 + 32 + 3 = 6899, and 26 − 3 = 23 skipped. The browser suite gains the 3 new page tests.
+- **A baseline that does not count.** A first "before" run in an export with no git history failed 3 tests that
+  read git: `test_build_and_push_report`, `test_migration_needs_app_release` and `test_tree_hygiene`. It is not the
+  baseline; the git checkout above is.
+- **Fails before.** "Fails before the change" is §4.2's mutation table: each property's tests go red when only that
+  property is broken.
 
 ### 4.4 The probes
 
