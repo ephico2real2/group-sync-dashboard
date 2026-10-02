@@ -10,6 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **`:latest` names the newest signed `main` build of both images (#425, SPEC_E9, app 2.4.0, chart 0.61.2).** On
+  every green publish from `main`, a new `latest` job in `publish.yml` copies the digests that run pushed as
+  `<appVersion>-<sha>` to `:latest` of `group-sync-dashboard` and `group-sync-dashboard-report`, once `attest` has
+  signed them and read the signatures back (straight after `publish` when `SUPPLY_CHAIN_SIGNING` is `false`), with
+  the release aliases' server-side `skopeo copy --all --preserve-digests`, and reads each name back: a mismatch is a
+  red run. The chart never resolves `:latest`, so no cluster changes; the immutable tags, the `:<appVersion>` alias rule and the `publish` job's
+  `contents: read` are unchanged. `docs/RELEASING.md` gains the fourth tag, `DESIGN_supply_chain.md` decision D11.
+
 - **The chart is published only when its default images are the application it names (#410, PR A, SPEC_E8).**
   `helm.yaml`'s "Label the image this chart version deploys" read only whether `:<appVersion>` existed, so a tag
   naming another build (`:0.39.0` was application 0.24.0) passed and was copied to the chart-version tag. It now reads

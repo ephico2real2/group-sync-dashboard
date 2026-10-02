@@ -123,6 +123,24 @@ could never have run (review of C3, Codex); `tests/test_publish_paths.py` now ho
 output and matrix reference in the three workflows to a definition, because GitHub resolves an
 unknown reference to an empty string rather than an error.
 
+**D11 — `:latest` is the newest signed `main` build of each image, moved after its signature (#425).**
+The `latest` job copies, for both images, the digest the `publish` job recorded to `:latest` with the
+release aliases' `skopeo copy --all --preserve-digests`, and reads the name back, refusing a mismatch
+(`.github/workflows/publish.yml#Copy each digest to :latest, and read it back`). It is a job of its own
+that needs `attest`, so `:latest` never names a digest before its signature and SBOM attestation have
+been read back; the release aliases, by contrast, move inside `publish` before signing (D10). It runs on
+`refs/heads/main` only (D9), after a green `publish` that pushed both images, and after a green `attest`
+unless `SUPPLY_CHAIN_SIGNING` is `false`: then it follows `publish` alone and `:latest` is as unsigned
+as the rest of that run (D8). Nothing in this repository resolves `:latest` — the chart deploys
+`:<appVersion>` (`charts/group-sync-dashboard/templates/_helpers.tpl#gsd.image`) — so moving it on every
+merge changes no cluster, which is why the rule that keeps `:<appVersion>` still between releases does
+not apply to it. The disaster-recovery scripts do not move it: they have no signature to wait for.
+Two limits, stated: the two copies are two writes, so a failure between them leaves the dashboard's
+`:latest` one build ahead of the report's until the job is re-run (the run is red and names the image);
+and a re-run of an older run's `latest` job moves `:latest` back to that run's digests, because a
+re-run keeps its run's commit and job outputs — re-running the newest green run's `latest` job puts it
+right (`docs/RELEASING.md#What can go wrong, and what it looks like`).
+
 ## What this does not do
 
 - It does not verify on the cluster. OpenShift's `ImagePolicy` expresses Fulcio identities as an

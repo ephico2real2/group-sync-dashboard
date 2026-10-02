@@ -146,3 +146,32 @@ def test_a_malformed_digest_fails_the_render(bad: str, why: str) -> None:
     assert "skopeo inspect" in out, (
         "the failure must say how to obtain a correct digest, or it only says 'no'"
     )
+
+
+def test_the_default_render_never_resolves_latest() -> None:
+    """#425 moves `:latest` of both images on every publish from `main`, which is safe only because
+    the chart never resolves it: with `image.tag` and `reporting.image.tag` empty, every container
+    of either image renders `:<appVersion>`. A default that fell back to `:latest` would make each
+    merge to `main` the image a cluster pulls on its next container creation (`imagePullPolicy:
+    Always`), with no chart change to show for it."""
+    ok, out = render()
+    assert ok, out
+    own = (repository(), yaml.safe_load((CHART / "values.yaml").read_text())["reporting"]["image"]["repository"])
+
+    def images(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "image" and isinstance(value, str):
+                    yield value
+                else:
+                    yield from images(value)
+        elif isinstance(node, list):
+            for item in node:
+                yield from images(item)
+
+    rendered = [image for doc in yaml.safe_load_all(out) if doc for image in images(doc)]
+    ours = [image for image in rendered if image.rsplit(":", 1)[0] in own]
+    assert {image.rsplit(":", 1)[0] for image in ours} == set(own), rendered
+    # Only the chart's own two images: the S3 tool image's fallback tag is the operator's choice of tool, not
+    # one of the images #425 moves (backup-offsite.yaml), and it does not render by default.
+    assert all(image.endswith(f":{app_version()}") for image in ours), ours

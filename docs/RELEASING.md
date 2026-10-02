@@ -87,6 +87,9 @@ Every merge goes through one gate, then fans out to two independent workflows:
    attest  job   cosign sign (keyless) · SBOM attached · SLSA          SUPPLY_CHAIN_SIGNING
                  provenance in GitHub's store — each read back
                  before the run is green
+   latest  job   :latest of both images -> this run's digests, by      main only; after attest,
+                 skopeo copy, then read back. Never what the chart     or after publish when
+                 resolves (DESIGN_supply_chain.md D11)                 signing is off
 ```
 
 **`helm.yaml` — the chart.**
@@ -148,7 +151,7 @@ publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme a
 
 ---
 
-## Three tags, and why there are three
+## Four tags, and why there are four
 
 ```
   quay.io/ephico2real/group-sync-dashboard
@@ -166,6 +169,11 @@ publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme a
   │ 0.6.0                │ moves on  │ at chart-release │ a human asking "which       │
   │                      │ a CHART   │ time, by retag   │ image does chart 0.6.0      │
   │ <chartVersion>       │ release   │ (never a build)  │ deploy?"                    │
+  ├──────────────────────┼───────────┼──────────────────┼─────────────────────────────┤
+  │ latest               │ moves on  │ every green run  │ a human or a pipeline that  │
+  │                      │ EVERY     │ on main, once its│ wants the newest main build.│
+  │                      │ publish   │ signature is read│ NEVER what the chart        │
+  │                      │ on main   │ back (#425)      │ resolves.                   │
   └──────────────────────┴───────────┴──────────────────┴─────────────────────────────┘
 
   every row above is a TAG, i.e. a name. "never, by policy" is a promise this project keeps, not
@@ -341,6 +349,8 @@ uses it.
 | a new pod runs different bits than its neighbour | somebody republished an alias between the two container creations | pin `image.tag` to the sha form |
 | `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion — for the dashboard image, or (report pod only) for the report image | the app release was never published, or half of it was. Check `publish.yml`, then use `--release-tags` on both scripts |
 | the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |
+| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy (the `::error::` names the image, and says that any `moved   :` line above it stands), or `:latest` resolved to another digest afterwards (the `::error::` names both digests) | the immutable tags, the aliases and the signatures are already published; at most the dashboard's `:latest` has moved ahead of the report's. Re-run the failed `latest` job; it moves both images again |
+| `:latest` names an older build than the newest green publish on `main` | an older run's `latest` job was re-run after a newer run had moved the tag: a re-run copies its own run's digests | re-run the `latest` job of the newest green publish run on `main` |
 
 **The historical failures are worth knowing, because two of them reported success.** #34 published a
 chart pinning an image two merges old — including a release that was missing a data-exposure fix.

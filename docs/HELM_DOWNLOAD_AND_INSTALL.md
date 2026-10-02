@@ -341,6 +341,11 @@ reference the same way. The signature and the SBOM attestation are OCI referrers
 `skopeo copy --all` copies an image index and its platform images, not a subject's referrers — a
 mirror copies them with `oras cp --recursive` (or re-signs at the destination), then verifies there.
 
+`:latest` is one more name for a signed digest, of either image: after every green publish on `main` it
+is copied from the digest that run signed, once the signature has been read back
+(`DESIGN_supply_chain.md#D11`), so the command above with `:latest` in place of `:0.15.0-<sha>` verifies
+the newest `main` build. It is not a release, and the chart never resolves it.
+
 **The SBOM.** Attached to the image as an attestation. Extract it and scan it:
 
 ```sh

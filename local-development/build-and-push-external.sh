@@ -36,6 +36,10 @@
 # environment receives a copy of the digest, which is how .github/workflows/publish.yml hands it
 # to the job that signs it. --release-tags therefore needs skopeo, which ships beside podman.
 #
+# `:latest` IS NOT MOVED HERE. publish.yml's `latest` job moves it once the signature of the run's
+# digest has been read back (#425); this script signs nothing, so it leaves `:latest` where the last
+# green publish put it.
+#
 # Configuration comes from .env (gitignored) or the environment. Credentials are never
 # written to disk by this script, never echoed, and never passed on a command line that
 # would show up in `ps`.
