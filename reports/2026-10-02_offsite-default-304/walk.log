@@ -1,0 +1,47 @@
+== step 1 before — 2026-10-02T03:38:33Z
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+
+== step 2 deploy (Argo CD on main) and the objects — 2026-10-02T03:42:51Z
+app: 934a9fabc1198fdbae4bf7dca4f9c2d0aa073853 Synced Healthy
+chart group-sync-dashboard-0.61.0
+cronjob.batch/group-sync-dashboard-backup-offsite   15 */6 * * *   <none>   False   0     <none>   36m
+configmap/group-sync-dashboard-backup-offsite   1     36m
+serviceaccount/group-sync-dashboard-backup-offsite   36m
+group-sync-dashboard-backup-offsite 7f505595-db2e-40be-a4ee-c6ed271c42b6 Bound crc-csi-hostpath-provisioner 149Gi keep=keep argo=Prune=false,Delete=false,PruneLast=true
+-- the PrometheusRule on the lab (monitoring.prometheusRule.enabled)
+group-sync-dashboard   92m
+
+== steps 3 and 6 the alert, read in the platform Prometheus — 2026-10-02T03:43:03Z
+GroupSyncDashboardOffsiteBackupStale
+GroupSyncDashboardOffsiteBackupUnobserved
+-- kube_cronjob_status_last_successful_time
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"kube_cronjob_status_last_successful_time","container":"kube-rbac-proxy-main","cronjob":"group-sync-dashboard-backup-offsite","endpoint":"https-main","job":"kube-state-metrics","namespace":"group-sync-dashboard","servi
+-- absent(...) (the rule's expression)
+{"status":"success","data":{"resultType":"vector","result":[]}}
+-- ALERTS
+{"status":"success","data":{"resultType":"vector","result":[]}}
+gsd-offsite-check-030651   Complete   1/1   6s    36m
+
+== step 4 a manual run under chart 0.61.0 — 2026-10-02T03:43:15Z
+ship args: 
+job.batch/manual-20261002034315 created
+job.batch/manual-20261002034315 condition met
+copied /data/backup/gsd-20261002T034300.088262Z.db -> /offsite/gsd-20261002T034300.088262Z.db (14295040 bytes, sha256 b6e1458933b15ce0cd7206d920841ff3ff73d1921cb12eb9a53fa7f02740e47e)
+integrity_check ok; user_version 20; membership_event rows 1843; sync_event rows 2761
+pruned 0 older copies (keep=14)
+no pre-upgrade-*.db under /data/pre-upgrade: nothing to ship (one is written only when an image upgrades the schema)
+
+== step 5 the copy verifies (runbook §1's --check, as printed) — 2026-10-02T03:43:36Z
+job.batch/verify-1790912616 created
+job.batch/verify-1790912616 condition met
+/offsite/gsd-20261002T034300.088262Z.db: integrity_check ok
+sha256 b6e1458933b15ce0cd7206d920841ff3ff73d1921cb12eb9a53fa7f02740e47e
+sidecar matches
+user_version 20; membership_event rows 1843; sync_event rows 2761
+
+== step 7 after — 2026-10-02T03:43:42Z
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
