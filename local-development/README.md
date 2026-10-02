@@ -18,6 +18,7 @@ Run everything below from **this** directory.
 |---|---|
 | `release-crc.sh` | build + push + deploy against **CRC's built-in registry**. Portable nowhere else |
 | `prepare-release.py` | the four version fields, the Chart.yaml history line, the changelog heading, the branch and the commit, from `--app`/`--chart` and a reason; runs the version test first (`../docs/RELEASING.md`) |
+| `restore-db.sh` | list the database copies the recovery pod can restore, and restore one (#302); it streams `restore-db.py` into the pod. `../docs/RUNBOOK_backup_restore.md` section 4 |
 | `clusters.example.yaml` | template for `clusters.yaml`, the local poller config |
 | `clusters.yaml` | your local config. Gitignored |
 | `crc-ca.crt` | CRC's CA, extracted from kubeconfig. Gitignored, regenerable |

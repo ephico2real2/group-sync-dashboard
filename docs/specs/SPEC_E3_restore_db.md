@@ -5,10 +5,10 @@
 | Programme | Epic E (#385), restore tools and release safety; build-order step 2 of 9. It runs inside #303's recovery pod (SPEC_E2), which merges first |
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.5 |
+| Version on release | app 2.1.0, chart 0.60.1 |
 | Version note | The helper and the wrapper live outside the image (`local-development/restore-db.py`, `local-development/restore-db.sh`), but two of the blocks touch image content: the `_MIGRATIONS` comment (T302-21) in `local-development/gsd/store.py` and one row of `local-development/README.md`, both under `publish.yml`'s paths, so `local-development/check-app-version-bump.py` requires the next application MINOR. The implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore the chart PATCH. Against `21132a25` that is app 2.1.0 and chart 0.59.26; if SPEC_E2 (chart 0.60.0) lands first, the chart becomes 0.60.1. No block carries a version field: the script writes them (Orchestrator's notes, 10) |
 | Issue | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)", the operator's rules of 2026-10-01 on values files and Argo CD, and SPEC_E2 as it stands at `465411cd` (in review); revised the same day on the reviews of `167ecb9b` by OB3 (in Grok's seat) and Codex (Orchestrator's notes, 17). Measured on main `afa01bb8` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, image 2.0.0). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree of it (§4.3) |
 
 ## How to read this spec
@@ -229,6 +229,16 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     and commits inside the few statements between the fold's check and the rename leaves its `-wal` beside the copy;
     a session open before the restore cannot (its writes go to the `-wal` the fold unlinked, or SQLite refuses them
     after the rename).
+
+21. **The implementing pull request's versions (2026-10-01, on origin/main `64d52877`, SPEC_E2 merged at chart
+    0.60.0, application 2.0.0).** The 13 blocks checked out unchanged (`13 blocks check out across 9 files`), so none
+    was corrected. The Version note's derivation is taken as written: `prepare-release.py --app 2.1.0 --no-commit`
+    moves the chart a PATCH, 0.60.0 to 0.60.1, so the header and the index row read chart 0.60.1, not the 0.60.5
+    PR #518 assigned when it moved this spec's 0.59.26 (taking 0.60.5 with `--chart` would have put SPEC_G3's
+    0.60.1, SPEC_E4's 0.60.2 and SPEC_G4's 0.60.3 at or below `Chart.yaml`). Under SPEC_E5's rule the same pull
+    request moves the `specified` specs the tree now reaches, keeping each MINOR or PATCH: SPEC_G3's chart 0.60.1 to
+    0.60.5 (0.60.2 to 0.60.4 are SPEC_E4's and SPEC_G4's), and the application 2.1.0 of SPEC_G2, SPEC_E4 and SPEC_E6
+    to 2.4.0 (2.2.0 is SPEC_G3's, 2.3.0 SPEC_E9's), their chart cells unchanged.
 
 **Open questions for the operator.** None.
 

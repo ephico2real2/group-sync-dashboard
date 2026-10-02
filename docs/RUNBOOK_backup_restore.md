@@ -182,6 +182,28 @@ From S3 use the CLI with a credential that holds `GetObject` — the backup cred
 
 ## 4. Restore
 
+**The script, in recovery mode (#302).** With the release's pod in recovery mode (#303: `recovery.enabled: true`
+in the release's values file), run `local-development/restore-db.sh --list` from your laptop, then
+`local-development/restore-db.sh --from-version <ID>` with an ID it printed. It does what §4a and §4b do by hand,
+for a scheduled backup, a pre-upgrade copy (§6) or a copy on the offsite claim when recovery mode mounts it: it
+refuses a copy newer than the image, a sidecar that does not match and a failed `integrity_check`; it shows what the
+restore discards and asks; it keeps the live set (`gsd.db` with its `-wal` and `-shm`) under
+`/data/pre-restore/<stamp>/`; and it writes the copy under a temporary name, with `chgrp 0` and `chmod g=u`,
+before it renames it onto `gsd.db`. It refuses unless the release's one pod is in recovery mode with at least ten
+minutes of `recovery.ttl` left. The commands below stay as the fallback, and as the specification the script
+implements (`docs/specs/SPEC_E3_restore_db.md`).
+
+**Undo a restore.** The live set the script replaced is kept under `/data/pre-restore/<stamp>/`, and it is the way
+back; a directory whose name ends in `.tmp` is a keep that never finished, not a set. Stay in recovery mode. The
+kept set's committed rows may sit only in its `gsd.db-wal`, so fold it before anything copies it: in the recovery pod,
+`oc exec -n $NS <pod> -c dashboard -- python3.14 -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("PRAGMA user_version"); c.close()' /data/pre-restore/<stamp>/gsd.db`
+leaves that `gsd.db` whole and alone: SQLite folds the `-wal` into it and removes it with the `-shm`, and rolls a hot
+`-journal` back. If a `-wal` or `-journal` with bytes is still beside it afterwards, something else has it open or
+it is damaged; do not go on. Then restore it with §4a's commands, the kept `gsd.db` in place of the `gsd-….db` copy:
+they run `integrity_check` on it, keep the current live set first, write it beside `gsd.db` under a temporary name,
+and remove the current `-wal`, `-shm` and `-journal` before it takes the name. A kept `gsd.db` copied without the
+fold can lack every row its `-wal` held.
+
 The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
 file corrupt rather than error (`gsd/store.py#Store.__init__`).
 
@@ -249,21 +271,28 @@ ls -l /data /data/backup
 python3.14 -c "import sqlite3,sys; c=sqlite3.connect(\"file:\" + sys.argv[1] + \"?immutable=1\", uri=True); print(c.execute(\"PRAGMA integrity_check\").fetchone()[0])" /data/backup/gsd-….db
 python3.14 -c "
 import pathlib, time
-live = pathlib.Path(\"/data/gsd.db\")
-if live.is_file():
-    keep = pathlib.Path(\"/data/pre-restore\"); keep.mkdir(parents=True, exist_ok=True)
-    (keep / (\"gsd.db.\" + str(int(time.time())))).write_bytes(live.read_bytes())
-    print(\"kept the live file under /data/pre-restore\")
+keep = pathlib.Path(\"/data/pre-restore\") / time.strftime(\"%Y%m%dT%H%M%SZ\", time.gmtime())
+for name in (\"gsd.db\", \"gsd.db-wal\", \"gsd.db-shm\", \"gsd.db-journal\"):
+    live = pathlib.Path(\"/data\") / name
+    if live.is_file():
+        keep.mkdir(parents=True, exist_ok=True)
+        (keep / name).write_bytes(live.read_bytes())
+        print(\"kept\", live, \"under\", keep)
 "
-rm -f /data/gsd.db-wal /data/gsd.db-shm
-cat /data/backup/gsd-….db > /data/gsd.db
-chgrp 0 /data/gsd.db && chmod g=u /data/gsd.db
+cat /data/backup/gsd-….db > /data/gsd.db.restore.tmp
+chgrp 0 /data/gsd.db.restore.tmp && chmod g=u /data/gsd.db.restore.tmp
+rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal
+python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.db\")"
 ls -l /data
 '
 ```
 
-`-wal`/`-shm` **must** go: they belong to the file that was there before, and SQLite would
-replay a foreign WAL into the restored database. `chgrp 0` + `g=u` is the arbitrary-UID rule
+The live **set** is kept, not `gsd.db` alone: a writer killed before a checkpoint leaves committed rows only in
+`gsd.db-wal`, and a kept `gsd.db` without it counted 0 of 500 such rows where the kept set counted 500 (#302).
+The copy is written under a temporary name and renamed onto `gsd.db` once the old side files are gone, so a write
+that fails (a full volume, a `gsd.db` the pod cannot write) stops before anything is removed.
+`-wal`, `-shm` and `-journal` **must** go: they belong to the file that was there before, and SQLite would
+replay a foreign WAL, or roll a foreign hot journal back, into the restored database. `chgrp 0` + `g=u` is the arbitrary-UID rule
 OpenShift runs under: the next pod may get a different UID and reads through the root group
 (`local-development/Containerfile#chgrp -R 0 /data`).
 
@@ -299,26 +328,35 @@ oc apply -f gsd-restore.yaml && oc wait -n $NS --for=condition=Ready pod/gsd-res
 oc exec -n $NS gsd-restore -- sh -c '
 set -e
 python3.14 /dev/stdin <<EOF
-import hashlib, pathlib, sqlite3
+import hashlib, pathlib, sqlite3, time
 p = pathlib.Path("/offsite/gsd-….db")
 h = hashlib.sha256(p.read_bytes()).hexdigest()
 assert h == p.with_name(p.name + ".sha256").read_text().split()[0], "sidecar mismatch"
 c = sqlite3.connect(f"file:{p}?immutable=1", uri=True)
 assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 print("copy verified", h)
+keep = pathlib.Path("/data/pre-restore") / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+for name in ("gsd.db", "gsd.db-wal", "gsd.db-shm", "gsd.db-journal"):
+    live = pathlib.Path("/data") / name
+    if live.is_file():
+        keep.mkdir(parents=True, exist_ok=True)
+        (keep / name).write_bytes(live.read_bytes())
+        print("kept", live, "under", keep)
 EOF
-rm -f /data/gsd.db-wal /data/gsd.db-shm
-cat /offsite/gsd-….db > /data/gsd.db
-chgrp 0 /data/gsd.db && chmod g=u /data/gsd.db
+cat /offsite/gsd-….db > /data/gsd.db.restore.tmp
+chgrp 0 /data/gsd.db.restore.tmp && chmod g=u /data/gsd.db.restore.tmp
+rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal
+python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.db\")"
 '
 oc delete -n $NS pod/gsd-restore
 ```
 
-For an S3 copy: download it (§3), then, in the helper pod, run the `rm -f /data/gsd.db-wal
-/data/gsd.db-shm` line FIRST, stream the copy in —
-`cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db'` — and finish with
-the ownership lines. The order matters: a `-wal` that outlives the file it belonged to would be
-replayed into the restored database.
+For an S3 copy: download it (§3), then, in the helper pod, run the keep lines above, stream the copy in under the
+temporary name — `cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db.restore.tmp'` — and
+finish with the last four lines above: the ownership lines, the `rm -f /data/gsd.db-wal
+/data/gsd.db-shm /data/gsd.db-journal` line, and the rename. The order matters: the copy is whole beside `gsd.db`
+before anything of the old file is removed, and a `-wal` that outlives the file it belonged to would be replayed
+into the restored database.
 
 **Both claims RWO on different nodes?** The helper pod needs both attached; if it stays Pending,
 the offsite claim is attached elsewhere (a Job still running — wait for it) or the classes are

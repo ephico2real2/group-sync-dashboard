@@ -724,6 +724,10 @@ def _seed_observation_markers(conn: sqlite3.Connection) -> None:
         conn.execute(sql)
 
 
+# Migrations are ONE-WAY: nothing undoes one, and once one has run an image older than it refuses the database
+# (#305). The way back is the copy taken before it ran, pre-upgrade/pre-upgrade-<stamp>-schema-<from>-to-<to>-<pod>.db
+# beside the database (_pre_upgrade_copy, #301), restored under the older image with local-development/restore-db.sh
+# in recovery mode (#302, #303), or by hand with docs/RUNBOOK_backup_restore.md section 4.
 _MIGRATIONS: list[tuple[int, str, list[str]]] = [
     (
         1,
