@@ -314,7 +314,12 @@ type: application
 # Backups card (#306, SPEC_E6).
 # CHART 0.61.2 (2026-10-02), PATCH: appVersion moves to application 2.4.0 (below); :latest follows
 # the newest signed main build (#425, SPEC_E9).
-version: 0.61.2
+# CHART 0.61.3 (2026-10-02), PATCH: appVersion moves to application 3.0.0 (below); Epic E, restore
+# tools and release safety (#385): recovery mode (#303), restore-db.sh (#302), per-pod backup
+# rotation (#391), off-volume backup on by default (#304), the KPI Backups card (#306), the schema
+# line and the runbook's checks (#300), the chart-publish label gate (#410), :latest (#425), the
+# runbook's break glass under Argo CD (#533).
+version: 0.61.3
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -442,7 +447,11 @@ version: 0.61.2
 # 2.2.0 (2026-10-01). per-pod backup rotation above one replica (#391, SPEC_E4). MINOR.
 # 2.3.0 (2026-10-01). the KPI page's Backups card (#306, SPEC_E6). MINOR.
 # 2.4.0 (2026-10-02). :latest follows the newest signed main build (#425, SPEC_E9). MINOR.
-appVersion: "2.4.0"
+# 3.0.0 (2026-10-02). Epic E, restore tools and release safety (#385): recovery mode (#303),
+# restore-db.sh (#302), per-pod backup rotation (#391), off-volume backup on by default (#304), the
+# KPI Backups card (#306), the schema line and the runbook's checks (#300), the chart-publish label
+# gate (#410), :latest (#425), the runbook's break glass under Argo CD (#533). MAJOR.
+appVersion: "3.0.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

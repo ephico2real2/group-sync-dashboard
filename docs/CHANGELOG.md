@@ -8,7 +8,9 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 3.0.0 — chart 0.61.3 — 2026-10-02
+
+- **Epic E, restore tools and release safety (#385): recovery mode (#303), restore-db.sh (#302), per-pod backup rotation (#391), off-volume backup on by default (#304), the KPI Backups card (#306), the schema line and the runbook's checks (#300), the chart-publish label gate (#410), :latest (#425), the runbook's break glass under Argo CD (#533).**
 
 - **The backup runbook, corrected from the #300 walk, with a break glass under Argo CD; #532 stated as a known
   limitation (#533, Epic E #385, `docs/specs/SPEC_E10_runbook_corrections.md`).** §4a's helper is `oc debug

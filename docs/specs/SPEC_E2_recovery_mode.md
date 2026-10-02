@@ -8,7 +8,7 @@
 | Version on release | chart 0.60.0 (chart only) |
 | Version note | No application version: the recovery program ships in the chart as a ConfigMap (the issue's decision 1), so nothing under `publish.yml`'s image paths changes. The chart takes a MINOR, 0.59.25 to 0.60.0, because it adds two values and a template (`Chart.yaml`'s own rule: "MAJOR and MINOR for behaviour"). If another chart change lands first, block 11 fails its check because its Old text is the version it replaces; the implementing pull request then takes the next free MINOR and corrects blocks 11, 14 and 18 (the three that name 0.60.0) here before applying (`docs/specs/README.md`, "Implementation blocks") |
 | Issue | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)" and the Epic E mock (PR #504). Measured on main `5c03a9b1` (application 2.0.0, chart 0.59.25) with helm v4.3.0 and Python 3.14.7 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, Kubernetes v1.35.6, Argo CD v3.4.7). §7's blocks were cut from a copy of `5c03a9b1` with the design implemented, and proved against a clean tree (§4.3). Revised the same day on the reviews of `b7b8e993` (OB3 in Grok's seat, Codex gpt-5.6-sol xhigh) and the operator's rules of 2026-10-01, re-cut from origin/main `dd51b91f` and proved again (§4.3); confirmed by OB2 the same day and re-cut from origin/main `21132a25` (note 16) |
 
 ## How to read this spec
