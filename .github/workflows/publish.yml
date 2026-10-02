@@ -43,6 +43,10 @@
 # exactly `contents: read` — the property tests/test_publish_release_decision.py calls
 # load-bearing — while only `attest` holds `id-token: write`. Each has a repository-variable
 # switch, documented on the job.
+#
+# A THIRD JOB, `latest`, runs once the signatures have been read back (or straight after `publish`
+# when signing is switched off) and moves `:latest` of both images to the digests this run pushed,
+# on `main` only (#425). It holds `contents: read` like the others.
 name: publish
 
 on:
@@ -536,3 +540,99 @@ jobs:
           gh attestation verify "oci://${IMAGE}@${DIGEST}" \
             --repo "${GITHUB_REPOSITORY}" \
             --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/publish.yml"
+
+  # ── :latest, the newest signed main build ────────────────────────────────────────────────────
+  #
+  # #425 (SPEC_E9). For both images, `:latest` names the digest the newest green run on `main`
+  # pushed as <appVersion>-<sha>. Nothing in this repository resolves it: the chart deploys
+  # `:<appVersion>` (image.tag ships "" and gsd.image falls back to .Chart.AppVersion), so moving
+  # it cannot change what a cluster runs. It is for a person or a pipeline that wants the newest
+  # `main` build without reading a run log; a release is still `:<appVersion>`.
+  #
+  # A JOB OF ITS OWN, AFTER `attest`, so `:latest` never names a digest whose signature has not
+  # been written and read back. The release aliases move inside `publish`, before signing, and D10
+  # records what that costs; this tag does not have to. When SUPPLY_CHAIN_SIGNING is 'false' there
+  # is no `attest` to wait for, and it follows `publish` alone.
+  #
+  # THE CONDITION, one clause per rule:
+  #   !cancelled()                 `attest` is skipped when signing is off, and a skipped job in
+  #                                `needs` skips this one unless a status function is named
+  #   publish succeeded            the run is the unit: a report build that failed after the
+  #                                dashboard's push moves neither `:latest`
+  #   both digests are non-empty   no credentials, nothing pushed, nothing to move
+  #   github.ref is main           a dispatch from another branch pushes unsigned images (D9)
+  #   attest succeeded, or the     signed and read back first; GitHub reports one result for
+  #   signing switch is 'false'    both legs, so one image's failed signature moves neither
+  #
+  # BY DIGEST, NEVER BY TAG. The source is <image>@<digest> as `publish` recorded it, so a tag
+  # moved in the meantime cannot be what `:latest` copies. The copy and the read-back are the
+  # release aliases' (build-and-push-external.sh, "COPIED IN THE REGISTRY"): server side, the
+  # manifest byte-identical or a refusal, then the name resolved and compared.
+  #
+  # A RE-RUN COPIES ITS OWN RUN'S DIGESTS. Re-running this job on an older run points `:latest`
+  # back at that run's build; re-running it on the newest green run puts it right (SPEC_E9 §3.5).
+  latest:
+    name: "Move :latest to this run's digests"
+    needs: [publish, attest]
+    if: >-
+      !cancelled()
+      && needs.publish.result == 'success'
+      && needs.publish.outputs.digest != ''
+      && needs.publish.outputs.report_digest != ''
+      && github.ref == 'refs/heads/main'
+      && (needs.attest.result == 'success' || vars.SUPPLY_CHAIN_SIGNING == 'false')
+    runs-on: ubuntu-latest
+    permissions:
+      # The registry write is the robot credential's; the job's token reads and nothing more.
+      contents: read
+    steps:
+      - name: Copy each digest to :latest, and read it back
+        shell: bash
+        env:
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+          IMAGE: ${{ needs.publish.outputs.image }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          REPORT_IMAGE: ${{ needs.publish.outputs.report_image }}
+          REPORT_DIGEST: ${{ needs.publish.outputs.report_digest }}
+        run: |
+          set -euo pipefail
+          skopeo --version
+          # --password-stdin, never on the command line: the same rule as the build script.
+          printf '%s' "${REGISTRY_PASSWORD}" \
+            | skopeo login --username "${REGISTRY_USERNAME}" --password-stdin "${REGISTRY}" > /dev/null
+          refuse_unless_digest() {
+            # Exactly 64 hex digits, as the build script checks the digest it records. BOTH digests are
+            # checked before EITHER copy, so a bad second digest cannot leave the first image's :latest
+            # moved on its own.
+            if [[ ! "$2" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::$1: '$2' is not a sha256 digest, so neither :latest was moved."
+              exit 1
+            fi
+          }
+          move_latest() {
+            local image=$1 digest=$2 moved
+            if ! skopeo copy --all --preserve-digests "docker://${image}@${digest}" "docker://${image}:latest"; then
+              echo "::error::${image}:latest was not moved: the registry refused the copy of ${digest} (its message is above)."
+              echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
+              exit 1
+            fi
+            # The read-back can fail on its own (the registry stopped answering after the copy): under
+            # `set -e` alone that was skopeo's stderr and no annotation, with the tag already moved.
+            if ! moved=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${image}:latest"); then
+              echo "::error::${image}:latest was copied from ${digest} but could not be read back (skopeo's message is above), so this run cannot tell what it names."
+              echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
+              exit 1
+            fi
+            if [ "${moved}" != "${digest}" ]; then
+              echo "::error::${image}:latest resolves to ${moved}, not ${digest}, the digest this run pushed."
+              echo "::error::Any 'moved   :' line above stands. Inspect both, then re-run this job."
+              exit 1
+            fi
+            echo "moved   : ${image}:latest -> ${digest}"
+          }
+          refuse_unless_digest "${IMAGE}" "${DIGEST}"
+          refuse_unless_digest "${REPORT_IMAGE}" "${REPORT_DIGEST}"
+          move_latest "${IMAGE}" "${DIGEST}"
+          move_latest "${REPORT_IMAGE}" "${REPORT_DIGEST}"

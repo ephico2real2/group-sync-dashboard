@@ -422,6 +422,225 @@ class TestTwoImagesOneChain:
         assert "Forks do not sign under this workflow" in section
 
 
+# ── :latest follows the newest signed main build (#425, SPEC_E9) ─────────────────────────────
+
+
+class TestLatestFollowsTheNewestSignedMainBuild:
+    """The `latest` job moves `:latest` of both images to the digests this run pushed, after
+    `attest` has signed and read them back, on `main` only, by the release aliases' server-side
+    copy and read-back. The shape is read from the real YAML like the rest of this file; the step's
+    `run:` is also EXECUTED, by bash with the flags GitHub gives `shell: bash`, against a stub
+    `skopeo` that logs every call — the real step, only the registry replaced — because its
+    refusals are decisions over what the registry answers, and only a run shows them."""
+
+    JOB = "latest"
+    STEP = "Copy each digest to :latest"
+    NEW = "sha256:" + "a" * 64        # the dashboard digest this run pushed
+    NEW_REPORT = "sha256:" + "b" * 64  # the report digest this run pushed
+    OTHER = "sha256:" + "c" * 64      # what a wrong :latest resolves to
+    STUB = """#!/bin/bash
+# A stand-in skopeo: logs its argv, swallows the password on stdin, remembers the digest each copy
+# names as its source, and answers a read-back with it (or with STUB_ANSWER when that is set).
+# A copy whose destination contains STUB_REFUSE fails, as a registry that refuses the write does.
+# A read-back of a name containing STUB_UNREADABLE fails, as a registry that stopped answering does.
+{ printf 'skopeo'; printf ' %s' "$@"; printf '\\n'; } >> "${STUB_LOG}"
+for arg in "$@"; do source_ref=${last_ref:-}; last_ref=$arg; done
+case "$1" in
+  --version) echo "skopeo version 1.13.3" ;;
+  login) cat > /dev/null ;;
+  copy) if [ -n "${STUB_REFUSE:-}" ] && [[ "${last_ref}" == *"${STUB_REFUSE}"* ]]; then
+          echo "stub skopeo: writing manifest to ${last_ref}: denied" >&2; exit 1
+        fi
+        printf '%s' "${source_ref##*@}" > "${STUB_STATE}" ;;
+  inspect) if [ -n "${STUB_UNREADABLE:-}" ] && [[ "${last_ref}" == *"${STUB_UNREADABLE}"* ]]; then
+             echo "stub skopeo: pinging container registry quay.io: 503 Service Unavailable" >&2; exit 1
+           fi
+           if [ -n "${STUB_ANSWER:-}" ]; then echo "${STUB_ANSWER}"; else cat "${STUB_STATE}"; echo; fi ;;
+  *) echo "stub skopeo: unexpected $1" >&2; exit 2 ;;
+esac
+"""
+
+    @classmethod
+    def _job(cls) -> dict:
+        return _jobs(PUBLISH)[cls.JOB]
+
+    @classmethod
+    def _run(cls, tmp_path: pathlib.Path, *, answer: str = "", digest: str = NEW, report_digest: str = NEW_REPORT,
+             refuse: str = "", unreadable: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
+        """Run the step's real `run:` with its env as GitHub would fill it; return the result and the stub's log."""
+        stub_dir = tmp_path / "bin"
+        stub_dir.mkdir()
+        (stub_dir / "skopeo").write_text(cls.STUB)
+        (stub_dir / "skopeo").chmod(0o755)
+        log = tmp_path / "skopeo.log"
+        env = {
+            "PATH": f"{stub_dir}:/usr/bin:/bin",
+            "STUB_LOG": str(log),
+            "STUB_STATE": str(tmp_path / "state"),
+            "STUB_ANSWER": answer,
+            "STUB_REFUSE": refuse,
+            "STUB_UNREADABLE": unreadable,
+            "REGISTRY": "quay.io",
+            "REGISTRY_USERNAME": "ephico2real+publisher",
+            "REGISTRY_PASSWORD": "not-a-real-password",
+            "IMAGE": "quay.io/ephico2real/group-sync-dashboard",
+            "DIGEST": digest,
+            "REPORT_IMAGE": "quay.io/ephico2real/group-sync-dashboard-report",
+            "REPORT_DIGEST": report_digest,
+        }
+        step = _step(cls._job(), cls.STEP)
+        done = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+                              env=env, capture_output=True, text=True, check=False)
+        return done, (log.read_text().splitlines() if log.exists() else [])
+
+    @staticmethod
+    def _holds(job: dict, context: dict[str, str], *, cancelled: bool = False) -> bool:
+        """The job's `if:` evaluated over a context the way GitHub evaluates this grammar: string
+        literals, `==` and `!=` ignoring case, `&&`, `||`, parentheses, `!cancelled()`, an unset
+        context value read as an empty string, and the implicit `success()` (every job in `needs`
+        succeeded) that GitHub adds when the condition names no status function. Anything outside
+        that grammar fails the guard below, so the evaluation cannot mean something the workflow
+        does not."""
+        condition = job["if"]
+        assert re.fullmatch(r"[\w.'()!=&|/ -]+", condition), condition
+        expr = condition.replace("!cancelled()", f" (not {cancelled}) ").replace("&&", " and ").replace("||", " or ")
+        expr = re.sub(r"'([^']*)'", lambda m: repr(m.group(1).lower()), expr)
+        expr = re.sub(r"\b(?:needs|vars|github)\.[\w.-]+", lambda m: repr(context.get(m.group(0), "").lower()), expr)
+        assert "!" not in expr.replace("!=", ""), expr
+        held = bool(eval(expr, {"__builtins__": {}}))   # the repository's own workflow text, guarded above
+        if not re.search(r"\b(?:success|failure|always|cancelled)\(\)", condition):
+            held = held and not cancelled and all(context.get(f"needs.{name}.result") == "success" for name in job["needs"])
+        return held
+
+    # T425-1
+    def test_each_image_is_copied_to_latest_from_this_runs_digest(self) -> None:
+        step = _step(self._job(), self.STEP)
+        assert step["env"]["IMAGE"] == "${{ needs.publish.outputs.image }}"
+        assert step["env"]["DIGEST"] == "${{ needs.publish.outputs.digest }}"
+        assert step["env"]["REPORT_IMAGE"] == "${{ needs.publish.outputs.report_image }}"
+        assert step["env"]["REPORT_DIGEST"] == "${{ needs.publish.outputs.report_digest }}"
+        code = "\n".join(ln for ln in step["run"].splitlines() if not ln.strip().startswith("#"))
+        assert 'skopeo copy --all --preserve-digests "docker://${image}@${digest}" "docker://${image}:latest"' in code
+        assert "skopeo inspect --no-tags --format '{{.Digest}}' \"docker://${image}:latest\"" in code
+        assert 'move_latest "${IMAGE}" "${DIGEST}"' in code
+        assert 'move_latest "${REPORT_IMAGE}" "${REPORT_DIGEST}"' in code
+
+    # T425-2
+    def test_a_latest_that_resolves_elsewhere_is_a_red_run_naming_both_digests(self, tmp_path: pathlib.Path) -> None:
+        done, log = self._run(tmp_path, answer=self.OTHER)
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert self.OTHER in done.stdout and self.NEW in done.stdout, done.stdout
+        assert "::error::" in done.stdout
+        copies = [ln for ln in log if ln.startswith("skopeo copy")]
+        assert len(copies) == 1, f"the run must stop at the first mismatch, not move the second image: {log}"
+
+    # T425-3
+    def test_latest_moves_only_after_a_signed_publish_on_main(self) -> None:
+        job = self._job()
+        assert job["needs"] == ["publish", "attest"]
+        condition = job["if"]
+        for clause in ("!cancelled()", "needs.publish.result == 'success'", "github.ref == 'refs/heads/main'",
+                       "needs.publish.outputs.digest != ''", "needs.publish.outputs.report_digest != ''",
+                       "(needs.attest.result == 'success' || vars.SUPPLY_CHAIN_SIGNING == 'false')"):
+            assert clause in condition, clause
+        assert "matrix." not in condition, "a job-level `if` cannot read the matrix context"
+        green = {
+            "needs.publish.result": "success",
+            "needs.publish.outputs.digest": self.NEW,
+            "needs.publish.outputs.report_digest": self.NEW_REPORT,
+            "needs.attest.result": "success",
+            "github.ref": "refs/heads/main",
+        }
+        cases = [
+            ("a signed publish on main", {}, False, True),
+            ("signing switched off: attest skipped, follow publish", {"vars.SUPPLY_CHAIN_SIGNING": "false", "needs.attest.result": "skipped"}, False, True),
+            ("signing switched off, written in capitals", {"vars.SUPPLY_CHAIN_SIGNING": "FALSE", "needs.attest.result": "skipped"}, False, True),
+            ("a signature that failed or was not read back", {"needs.attest.result": "failure"}, False, False),
+            ("signing on but attest skipped", {"needs.attest.result": "skipped"}, False, False),
+            ("signing on (any other word) but attest skipped", {"vars.SUPPLY_CHAIN_SIGNING": "true", "needs.attest.result": "skipped"}, False, False),
+            ("a red publish", {"needs.publish.result": "failure"}, False, False),
+            ("no credentials: nothing pushed", {"needs.publish.outputs.digest": "", "needs.publish.outputs.report_digest": ""}, False, False),
+            ("no report digest", {"needs.publish.outputs.report_digest": ""}, False, False),
+            ("a workflow_dispatch from another branch", {"github.ref": "refs/heads/feature"}, False, False),
+            ("a cancelled run", {}, True, False),
+            # `&&` binds tighter than `||` (the expressions reference's operator table): without the
+            # parentheses, "signing off" alone would move :latest from any branch, after any publish.
+            ("signing switched off, but a dispatch from another branch", {"vars.SUPPLY_CHAIN_SIGNING": "false", "needs.attest.result": "skipped", "github.ref": "refs/heads/feature"}, False, False),
+            ("signing switched off, but a red publish", {"vars.SUPPLY_CHAIN_SIGNING": "false", "needs.attest.result": "skipped", "needs.publish.result": "failure"}, False, False),
+        ]
+        for why, change, cancelled, expected in cases:
+            assert self._holds(job, {**green, **change}, cancelled=cancelled) is expected, why
+
+    # T425-4
+    def test_both_images_move_by_digest_and_never_by_tag(self, tmp_path: pathlib.Path) -> None:
+        done, log = self._run(tmp_path)
+        assert done.returncode == 0, done.stdout + done.stderr
+        copies = [ln for ln in log if ln.startswith("skopeo copy")]
+        assert copies == [
+            f"skopeo copy --all --preserve-digests docker://quay.io/ephico2real/group-sync-dashboard@{self.NEW} "
+            "docker://quay.io/ephico2real/group-sync-dashboard:latest",
+            f"skopeo copy --all --preserve-digests docker://quay.io/ephico2real/group-sync-dashboard-report@{self.NEW_REPORT} "
+            "docker://quay.io/ephico2real/group-sync-dashboard-report:latest",
+        ], log
+        reads = [ln for ln in log if ln.startswith("skopeo inspect")]
+        assert len(reads) == 2 and all(ln.endswith(":latest") for ln in reads), log
+        assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+
+    def test_the_password_reaches_skopeo_on_stdin_only(self, tmp_path: pathlib.Path) -> None:
+        done, log = self._run(tmp_path)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "skopeo login --username ephico2real+publisher --password-stdin quay.io" in log, log
+        assert not any("not-a-real-password" in ln for ln in log), "the password was on a command line"
+        assert "not-a-real-password" not in done.stdout + done.stderr
+
+    def test_a_digest_that_is_not_sixty_four_hex_moves_nothing(self, tmp_path: pathlib.Path) -> None:
+        """Both digests are checked before either copy: a bad REPORT digest must not leave the
+        dashboard's :latest moved on its own (review of SPEC_E9, OB2). A loop, not parametrize:
+        this file imports no pytest, and SPEC_E8 edits its import block."""
+        for bad in ("digest", "report_digest"):
+            (tmp_path / bad).mkdir()
+            done, log = self._run(tmp_path / bad, **{bad: "sha256:abc"})
+            assert done.returncode == 1, (bad, done.stdout + done.stderr)
+            assert "is not a sha256 digest" in done.stdout, bad
+            assert not [ln for ln in log if ln.startswith("skopeo copy")], (bad, log)
+
+    def test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy(self, tmp_path: pathlib.Path) -> None:
+        """The two copies are two writes (SPEC_E9 §3.5, residual 1): when the registry refuses the
+        second, the run is red and its `::error::` names the image and says to re-run the job — not
+        only skopeo's own stderr (review of SPEC_E9, OB2: measured, the step died on `set -e` with no
+        `::error::` at all)."""
+        done, log = self._run(tmp_path, refuse="group-sync-dashboard-report:latest")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was not moved" in done.stdout, done.stdout
+        assert "re-run this job" in done.stdout.lower(), done.stdout
+        assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+
+    def test_a_read_back_that_cannot_be_made_is_a_red_run_naming_the_image_and_the_remedy(self, tmp_path: pathlib.Path) -> None:
+        """The read-back is a second registry call after the copy: when it fails on its own (the
+        registry stopped answering), the tag has already been moved and the run must say which image
+        it cannot vouch for and what to do — not only skopeo's stderr under `set -e` (review of #530,
+        OB2: measured, exit 1 with no `::error::` for either image). The earlier `moved   :` line
+        stands, as for a refused copy."""
+        done, log = self._run(tmp_path, unreadable="group-sync-dashboard-report:latest")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was copied from" in done.stdout, done.stdout
+        assert "could not be read back" in done.stdout and "re-run this job" in done.stdout.lower(), done.stdout
+        assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+        assert len([ln for ln in log if ln.startswith("skopeo copy")]) == 2, log
+
+    # T425-7
+    def test_the_latest_job_holds_only_read(self) -> None:
+        assert self._job()["permissions"] == {"contents": "read"}
+        assert _jobs(PUBLISH)["publish"]["permissions"] == {"contents": "read"}
+
+    def test_the_docs_say_what_latest_names(self) -> None:
+        releasing = (REPO / "docs" / "RELEASING.md").read_text()
+        design = (REPO / "docs" / "DESIGN_supply_chain.md").read_text()
+        assert "**D11 — `:latest` is the newest signed `main` build" in design
+        assert "│ latest               │" in releasing
+        assert "latest  job" in releasing
+
+
 # ── The chart-publish label gate (#410, SPEC_E8) ─────────────────────────────────────────────────
 #
 # AN EXECUTED CLASS (with the pull-request check's, below). The label step's `run:` is lifted from the parsed
