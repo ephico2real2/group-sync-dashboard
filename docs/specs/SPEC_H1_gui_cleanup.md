@@ -5,10 +5,10 @@
 | Programme | none: the operator's request of 2026-10-02 (#542), scheduled ahead of #532 and Epic G |
 | Batch | H — housekeeping |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 3.3.0, chart 0.64.0 |
+| Version on release | app 3.1.0, chart 0.62.0 |
 | Version note | The next free MINOR is filled at implementation. The change is image content (both services and the page) and adds a chart value, so the implementing pull request runs `local-development/prepare-release.py --app <next free MINOR> --chart <next free MINOR> --no-commit "…"`: the chart takes a MINOR because a value is added (the index's version ladder), not the PATCH `--app` alone derives. No block carries a version field. Read from `docs/specs/README.md` on `2d20d0fb` (application 3.0.0, chart 0.61.3), the numbers already claimed are G3 (app 3.1.0, chart 0.61.6), G2 (app 3.2.0, chart 0.63.0), G4 (chart 0.61.4 and 0.61.5) and W1 (chart 0.62.0), so the next free pair above all of them, keeping the rows' order, is app 3.3.0 and chart 0.64.0. This spec is scheduled ahead of Epic G: under the rule SPEC_E5 states (`local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`), whichever implementation merges first takes the next free numbers then, and in the same pull request moves every `specified` spec whose numbers are no longer above the tree, in its header and its index row, keeping its MINOR or PATCH |
 | Issue | [#542](https://github.com/ephico2real2/group-sync-dashboard/issues/542) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-02, written before any code from #542 (its body, "The change", with the operator's decisions of 2026-10-02) and the mandate's design questions. Measured on main `2d20d0fb` (application 3.0.0, chart 0.61.3) on this machine (Python 3.14.7, FastAPI 0.141.1, Starlette 1.6.0, helm v4, Chromium through Playwright). The CRC lab was down during authoring (the operator was rebooting it): its figures are the ones #542 and the mandate measured on 2026-10-02, cited as such, and every further lab read is stated as not measured, with its command (§5). §7's blocks were cut from a copy of `2d20d0fb` with the design implemented and proved against a clean worktree of this spec's commit (§4.3) |
 
 ## How to read this spec

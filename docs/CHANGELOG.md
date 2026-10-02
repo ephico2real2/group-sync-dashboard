@@ -10,8 +10,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
-- **Delete report runs and database copies from the page (#542, `docs/specs/SPEC_H1_gui_cleanup.md`;
-  `housekeeping.enabled`, on by default).** A cluster administrator (the cluster-admin tier, #322, behind a
+- **Delete report runs and database copies from the page (#542, `docs/specs/SPEC_H1_gui_cleanup.md`, app 3.1.0,
+  chart 0.62.0; `housekeeping.enabled`, on by default).** A cluster administrator (the cluster-admin tier, #322, behind a
   proxy-verified identity) deletes a finished report run from the Library tab's run drawer and a database copy from
   the KPI page's new **Database copies** card, or cleans either up once with a tighter bound picked on the page:
   report runs older than N days beyond the newest K of each schedule and cluster (all runs, the manual runs, or one
