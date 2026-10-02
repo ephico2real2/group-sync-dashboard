@@ -35,7 +35,7 @@ implementation blocks (`docs/specs/README.md`, "Implementation blocks"), applied
    change the env for recovery mode and let the application be restored. Then update values.yaml in git to match the
    working version or rollback using argocd."* And: *"note the risk if argocd is on and the endless retry"*, as a
    short Risks box at the top of §4. So §4d is a break glass that names Argo CD's own controls and hand edits, and
-   the values-file rule (`.claude/skills/issue/SKILL.md`, the operator's rule of 2026-10-01) still governs every
+   the values-file rule (`docs/specs/SPEC_E2_recovery_mode.md`, Orchestrator's notes, the operator's direction of 2026-10-01; held by `local-development/tests/test_chart_recovery_mode.py#test_the_only_documented_path_is_the_values_file`) still governs every
    other line of §4: `test_t300_10` keeps its prohibitions for §4 and exempts exactly the Risks box and §4d (block 16).
 2. **The operator's "change the env for recovery mode" is not enough, measured; the hand edit is the chart's own
    recovery render.** `oc set env … GSD_RECOVERY_MODE=true GSD_RECOVERY_MODE_TTL=2h` with Argo CD paused restarted
@@ -85,6 +85,20 @@ implementation blocks (`docs/specs/README.md`, "Implementation blocks"), applied
    -- argocd-application-controller version` started a second controller process in that pod (it logged "ArgoCD
    Application Controller is starting", `v3.4.7+7b6113c`) before the closed pipe ended it. A process listing straight
    after showed PID 1 alone. Nothing it did was observed; the version came from that line.
+10. **The review of `8ef0c17e` (OB2, in Codex's seat), decided by the orchestrator on 2026-10-02: approved, both
+    findings accepted.** OB2 walked §4d on the lab twice, up to the restore and not including it; each walk returned
+    the lab to the chart's render (0 of 163 template fields, the Application spec byte-equal, PVC UIDs unchanged).
+    - **F1 (measured), accepted:** step 5's `oc rollout status`, run before Argo CD's apply, reports the recovery
+      rollout, which never completed; after the Deployment's ten-minute progress deadline it fails at once
+      (`exceeded its progress deadline`). Step 5 now waits for the Application to read Synced first (block 12), and
+      T533-6 holds the order (block 17).
+    - **F2 (from Argo CD's source), accepted:** the pause does not stop an operation already Running
+      (`processRequestedAppOperation` never reads the policy); its retries re-apply Git's render over the hand edit.
+      Step 2 prints `{.status.operationState.phase}` beside `enabled`, requires "not `Running`", and terminates a
+      running operation first (blocks 12, 17).
+    - Note 1's citation of the values-file rule corrected to SPEC_E2's notes and the test that holds it.
+    - Remarks, not changed: §4d step 3's `helm pull --untar` is not re-runnable as a block (the text already says to
+      re-run only the patch); `/api/version` can read `"leader":false` for a few seconds after the give-back.
 
 ## 1. The mandate, and what is out of scope
 
@@ -384,12 +398,14 @@ Seven steps, each a command block that was walked except where it says otherwise
 1. Find the Application from the Deployment's `argocd.argoproj.io/tracking-id` annotation and read its
    `ownerReferences`; an ApplicationSet owner means the pause holds only with `ignoreApplicationDifferences` on
    `/spec/syncPolicy`.
-2. Pause (`automated.enabled: false`) and confirm `false`, again a minute later, before anything else.
+2. Pause (`automated.enabled: false`) and confirm `false` with no operation `Running`, again a minute later, before
+   anything else; a running operation is terminated first (step 7's command), because its retries re-apply Git's render.
 3. The recovery edit: the chart version from the `helm.sh/chart` label, the script from `helm pull` of that version,
    the ConfigMap `$REL-recovery`, one strategic patch. Why the variables alone do not do it, measured. Release at one
    replica (recovery mode and `restore-db.sh` need one pod).
 4. `restore-db.sh --list`, then `--from-version <ID>`, as **The script, in recovery mode** says.
-5. Give back: a rollback commits its `image.tag` to Git first; remove `automated.enabled`; `oc rollout status`. With
+5. Give back: a rollback commits its `image.tag` to Git first; remove `automated.enabled`; wait for Synced (before it,
+   `oc rollout status` reports the recovery rollout, which fails at once after the progress deadline, measured); `oc rollout status`. With
    `selfHeal` off and Git unchanged, sync once by hand (documented, not measured). Argo CD's rollback while paused is
    the operator's alternative, with Git made to agree before the pause ends.
 6. Remove what the edit added (the removal patch, the rollout, the ConfigMap), then §4c.
@@ -821,17 +837,20 @@ mode and `restore-db.sh` need exactly one pod).
    effect" (Argo CD, "Temporarily toggling auto-sync for applications managed by ApplicationSets"): the ApplicationSet
    puts it back unless it lists `/spec/syncPolicy` under `ignoreApplicationDifferences`. That is a change to the
    ApplicationSet, made by its owners; ask them before you go on.
-2. **Pause automated sync, and confirm the pause held before you touch anything else:**
+2. **Pause automated sync, and confirm the pause held and no operation is running before you touch anything else:**
 
    ````sh
    oc patch application.argoproj.io/$APP -n $ARGO_NS --type merge -p '{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}'
-   oc get application.argoproj.io/$APP -n $ARGO_NS -o jsonpath='{.spec.syncPolicy.automated.enabled}{"\n"}'
+   oc get application.argoproj.io/$APP -n $ARGO_NS -o jsonpath='{.spec.syncPolicy.automated.enabled} {.status.operationState.phase}{"\n"}'
    ````
 
-   It must print `false`, and still `false` a minute later. With `enabled: false` Argo CD runs neither automated sync
-   nor self-heal for this Application ("controller will skip automated sync even if `prune`, `self-heal` and
-   `allowEmpty` are set"), and `prune` and `selfHeal` stay as they were for step 5. A sync already running is not
-   stopped by the pause: see step 7.
+   It must print `false` and a phase that is not `Running`, and the same a minute later. With `enabled: false` Argo CD
+   runs neither automated sync nor self-heal for this Application ("controller will skip automated sync even if
+   `prune`, `self-heal` and `allowEmpty` are set"), and `prune` and `selfHeal` stay as they were for step 5. A sync
+   already running is not stopped by the pause: it goes on waiting for the Deployment to be healthy, which the hand
+   edit of step 3 never is, fails at the progress deadline and is retried, and each retry applies what Git renders
+   over the hand edit, so the app would start on a file a restore may still be writing. With `Running`, terminate the
+   operation first (step 7's command) and confirm again.
 3. **Put the pod into recovery mode by hand.** Setting `GSD_RECOVERY_MODE` alone is not enough: the app keeps running
    with the variable set, and `restore-db.sh --list` refuses with `uvicorn is running here (pid 1)` (measured). The
    edit is what `recovery.enabled: true` renders for the dashboard container
@@ -862,20 +881,25 @@ mode and `restore-db.sh` need exactly one pod).
    ````
 
 5. **Give the release back to Git.** For a rollback, first commit the older `image.tag`, and anything else the
-   restored database needs, to the release's values file. Then end the pause and wait for the app:
+   restored database needs, to the release's values file. Then end the pause, wait until Argo CD has applied, and
+   wait for the app:
 
    ````sh
    oc patch application.argoproj.io/$APP -n $ARGO_NS --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated/enabled"}]'
+   oc wait application.argoproj.io/$APP -n $ARGO_NS --for=jsonpath='{.status.sync.status}'=Synced --timeout=5m
    oc rollout status -n $NS deploy/$REL
    ````
 
    With `selfHeal: true` Argo CD puts back the command and the liveness probe and the app starts on the restored file
    (on the lab the command was back 2.6 s after the patch, the rollout done 19.8 s after, the Application
-   Synced/Healthy). With `selfHeal` off and Git unchanged, automated sync does not sync a revision it has already
-   synced ("a second sync will not be attempted, unless `selfHeal` flag is set to true"): sync the Application once
-   from Argo CD (not measured). The operator's alternative for a rollback is Argo CD's history and rollback, while
-   still paused (Argo CD refuses it while automated sync is on); commit the same values to Git before you end the
-   pause, or automated sync takes the release back to what Git says.
+   Synced/Healthy). The wait comes first because `oc rollout status` run before Argo CD's apply reports the recovery
+   rollout, which never completed: after ten minutes in recovery mode (the Deployment's progress deadline) it fails
+   at once with `exceeded its progress deadline` (measured). With `selfHeal` off and Git unchanged, automated sync
+   does not sync a revision it has already synced ("a second sync will not be attempted, unless `selfHeal` flag is
+   set to true"): sync the Application once from Argo CD, and the wait ends when it has (not measured). The
+   operator's alternative for a rollback is Argo CD's history and rollback, while still paused (Argo CD refuses it
+   while automated sync is on); commit the same values to Git before you end the pause, or automated sync takes the
+   release back to what Git says.
 6. **Remove what the hand edit added.** Argo CD applies only what it renders, so it leaves the two variables, the
    `/scripts` mount and its volume in place and still reads Synced (measured). Remove them, and the ConfigMap, once
    the app runs. The pod restarts once more (19 s on the lab); afterwards the pod template equals the one before the
@@ -1148,9 +1172,9 @@ def test_t533_5_section_4_states_the_risks_under_argo_cd_before_step_1() -> None
 
 
 def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> None:
-    """§4d, the break glass: the pause comes first and is confirmed before the hand edit, the restore is the script,
-    and the give-back ends with what the edit added removed. §4d is §4's last subsection, because T300-10 exempts it
-    whole."""
+    """§4d, the break glass: the pause comes first and is confirmed, with the operation's phase beside it, before the
+    hand edit; the restore is the script; the give-back waits for Argo CD's apply before `oc rollout status`, and
+    ends with what the edit added removed. §4d is §4's last subsection, because T300-10 exempts it whole."""
     body = section("4")
     assert re.findall(r"^### (4\w)\. ", body, re.M) == ["4a", "4b", "4c", "4d"]
     glass = body.split("### 4d.", 1)[1]
@@ -1159,11 +1183,13 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
         r"argocd\.argoproj\.io/tracking-id",
         "{.metadata.ownerReferences[*].kind}",
         """--type merge -p '{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}'""",
-        "{.spec.syncPolicy.automated.enabled}",
+        "{.spec.syncPolicy.automated.enabled} {.status.operationState.phase}",
         "oc create configmap -n $NS $REL-recovery",
         '"command":["python3.14","/scripts/recovery_mode.py"',
         "restore-db.sh --list",
         '[{"op":"remove","path":"/spec/syncPolicy/automated/enabled"}]',
+        "--for=jsonpath='{.status.sync.status}'=Synced",
+        "oc rollout status -n $NS deploy/$REL",
         '"$patch":"delete"',
         "oc delete configmap -n $NS $REL-recovery",
         "argocd app terminate-op $APP",
@@ -1174,8 +1200,13 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
         assert hits, f"§4d prints no command with {step!r}"
         where.append(hits[0])
     assert where == sorted(where), "§4d's commands are out of order"
+    # the give-back's rollout status comes after the wait for Synced: before Argo CD's apply it reports the recovery
+    # rollout, which never completed, and after the progress deadline it fails at once (measured on the lab)
+    assert where[steps.index("--for=jsonpath='{.status.sync.status}'=Synced")] < where[steps.index("oc rollout status -n $NS deploy/$REL")]
     prose = flat(glass)
-    for words in ("ignoreApplicationDifferences", "uvicorn is running here", "Incident step", "selfHeal", "0 of 163"):
+    for words in ("ignoreApplicationDifferences", "uvicorn is running here", "Incident step", "selfHeal", "0 of 163",
+                  "a phase that is not `Running`", "each retry applies what Git renders over the hand edit",
+                  "exceeded its progress deadline"):
         assert words in prose, words
 
 
