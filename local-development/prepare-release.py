@@ -19,6 +19,9 @@ and release stay where they are, downstream of a merge (docs/RELEASING.md#The wh
 WHAT IT DERIVES. `--app` alone bumps the chart PATCH, because moving appVersion is a chart change
 and the release guide requires the bump — that is the precedent of chart 0.7.1, 0.9.1, 0.9.2 and
 0.9.4. An explicit --chart wins. KIND (MAJOR, MINOR, PATCH) is the semver component that moved.
+An application release whose HEAD carries a higher `_MIGRATIONS` target than the commit that
+released the current version gets the schema line under its reason in the changelog (SCHEMA_LINE,
+#300): the first start on its image migrates the database one way.
 
 WHAT IT REFUSES. A dirty tree (a release commit must contain exactly the release). A version that
 does not advance, or that moves a component while leaving a lower one non-zero (0.10.0 -> 0.11.1
@@ -28,6 +31,11 @@ a topic branch carries that branch's commits into a pull request based on main. 
 fails — the edits are left in the tree for inspection, and nothing is committed. A reason with an
 unbalanced backtick or an asterisk (the changelog bullet is already bold, and a code span must
 close), or with no letter or digit in it, or spanning any line boundary (\r and U+2028 included).
+An application release on a history too shallow to reach the commit that released the current
+version, or whose store.py there or at HEAD cannot be read (checked before anything is edited):
+without it the schema line cannot be decided. An application release whose HEAD carries a lower
+highest `_MIGRATIONS` target than that commit (also before any edit): its image would refuse every
+database that release migrated.
 
 NO Co-Authored-By TRAILER. The operator cutting the release is its sole author.
 """
@@ -57,6 +65,10 @@ VERSION_TEST = HERE / "tests" / "test_chart_versions.py"
 SEMVER = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$", re.ASCII)
 # Chart.yaml's comments are written to this width; a generated line should read like its neighbours.
 COMMENT_WIDTH = 100
+# The changelog bullet an application release carries when its image migrates the database (#300). One
+# line, so an epic's release note collects its children's with one grep (.claude/skills/epic/SKILL.md §6).
+SCHEMA_LINE = ("- **Schema {then} → {now}.** The first start on this image migrates the database one way; "
+               "the pre-upgrade copy (#301) and `restore-db.sh` (#302) are the way back.")
 
 
 class ReleaseError(Exception):
@@ -308,6 +320,28 @@ def run(args: argparse.Namespace) -> int:
             and git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0):
         raise ReleaseError(f"branch {branch} already exists; nothing was changed. Delete or rename it.")
 
+    # ── The schema this release moves (#300) ──────────────────────────────────────────────────
+    # Read before any edit, so a history that cannot answer refuses with nothing changed. A chart-only
+    # release builds no image, so it migrates nothing and reads no history.
+    schema_line = ""
+    if args.app:
+        try:
+            released_at, then, now = schema_since_app_release(REPO)
+        except (ReleaseError, SyntaxError, ValueError, AttributeError, IndexError) as err:
+            # ReleaseError: a shallow history, a `git show` that fails, a non-integer target. The rest: a
+            # store.py that does not parse, or a `_MIGRATIONS` entry that is not the literal tuple the helper
+            # reads (an empty one included).
+            raise ReleaseError(f"cannot tell whether application {app_new} migrates the database, so nothing "
+                               f"was changed: {err}") from None
+        if now < then:
+            raise ReleaseError(f"_MIGRATIONS reaches {now} at HEAD but {then} at {released_at[:10]} (application "
+                               f"{app_old}), so this image would refuse every database that release migrated; "
+                               "nothing was changed")
+        if now > then:
+            schema_line = SCHEMA_LINE.format(then=then, now=now)
+        print(f"schema  : {then} at {released_at[:10]} (application {app_old}), {now} at HEAD; "
+              + ("the changelog entry says so" if schema_line else "no schema line"))
+
     # ── The edits ─────────────────────────────────────────────────────────────────────────────
     changed: list[pathlib.Path] = [CHART, CHANGELOG]
     chart_text = CHART.read_text()
@@ -337,10 +371,12 @@ def run(args: argparse.Namespace) -> int:
     else:
         heading = f"## Chart {chart_new} — application {app_old} — {args.date}"
     bullet = f"- **{reason}.**\n"
+    if schema_line:
+        bullet += f"\n{schema_line}\n"
     log = CHANGELOG.read_text()
     if re.search(r"^## Unreleased[ \t]*$", log, re.M):
         # The heading that has been collecting bullets since the last release becomes this one;
-        # the reason goes first and the collected bullets follow it.
+        # the reason goes first, the schema line under it, and the collected bullets follow.
         log = replace_line(log, r"^## Unreleased[ \t]*$", heading + "\n\n" + bullet.rstrip("\n"), "Unreleased")
     else:
         log = insert_before_line(log, r"^## ", heading + "\n\n" + bullet + "\n", "first release heading")
