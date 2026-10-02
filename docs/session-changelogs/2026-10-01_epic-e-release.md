@@ -38,7 +38,8 @@ committed under `reports/`. 32 PRs merged in all (#504–#531, #536–#539).**
 ## Part 2 — Epic E built, child by child (2026-10-01 19:45 → 2026-10-02 10:52)
 
 Each child went through the same steps: OB1-lite implemented it from its spec, one review, the merge, then a CRC
-walk. The walk's evidence is committed under `reports/` and posted on the issue, pinned to the merge sha.
+walk, except #529 and #530, which have no walk folder. Each walk's evidence is committed under `reports/` and posted
+on the issue, pinned to the merge sha.
 
 - **#303, recovery mode (SPEC_E2): PR #518, `64d52877`, 2026-10-01 19:45.** Walk: `reports/2026-10-01_recovery-mode-303/`.
 - **#302, `restore-db.sh` (SPEC_E3): PR #520, `093e17fe`, 21:06.** Walk: `reports/2026-10-02_restore-db-302/`.
@@ -47,7 +48,8 @@ walk. The walk's evidence is committed under `reports/` and posted on the issue,
     and on Linux `/dev/stdin` then resolves to the file, so that file's directory came first on `sys.path` and
     imported the wrong `gsd`.
   - **The first hypothesis was refuted:** it blamed the working directory, and a measurement refuted that before
-    any fix was written.
+    any fix was written. That measurement was not committed; the memory note *python-dev-stdin-file-vs-pipe* is its
+    record.
   - The fix (pass the text with `input=`) was corrected in the spec first: SPEC_E3, Orchestrator's note 23.
 - **#391, per-pod backup rotation (SPEC_E4): PR #521, `721a78db`, 21:37.** Walk: #523.
 - **The lab's offsite backup to its PVC: PR #522, `7c9ba624`, 22:04 (operator's request).** It set
@@ -72,7 +74,7 @@ walk. The walk's evidence is committed under `reports/` and posted on the issue,
     git, then unpause.
   - Measured on the lab:
     - pausing alone did not stop the running operation;
-    - `argocd app terminate-op` ended it in 2.08 s;
+    - `argocd app terminate-op` ended it in at most 2.08 s;
     - the app was back 40.5 s after unpausing;
     - the restored template differed in 0 of 163 fields.
 
@@ -80,8 +82,8 @@ walk. The walk's evidence is committed under `reports/` and posted on the issue,
 
 - Cut with `prepare-release.py --app 3.0.0`: chart 0.61.3, and SPEC_E2–E10 moved to `released`. The script could not
   open the PR because the branch was not yet pushed, so it was pushed and the PR opened by hand.
-- **Found by CI:** two `specified` specs named versions that were no longer above the new tree. SPEC_G2 said app
-  2.6.0, and SPEC_G3 said app 2.5.0 with chart 0.61.3.
+- **Found by CI:** SPEC_G2 said app 2.6.0, no longer above the new tree. The test stops at the first spec it fails, so
+  CI named only G2; SPEC_G3, at app 2.5.0 with chart 0.61.3, broke the same rule and was moved with it.
   - Under SPEC_E5's version rule each moved to the next free number, keeping its kind of bump and its order: G3 to
     app 3.1.0 with chart 0.61.6, G2 to app 3.2.0 with chart 0.63.0 kept.
   - Fixed in commit `c7e986f8`, then merged.
