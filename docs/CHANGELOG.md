@@ -10,6 +10,22 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The backup runbook, corrected from the #300 walk, with a break glass under Argo CD; #532 stated as a known
+  limitation (#533, Epic E #385, `docs/specs/SPEC_E10_runbook_corrections.md`).** §4a's helper is `oc debug
+  --one-container`: without it the debug pod also ran the oauth-proxy sidecar, which never exits, and `oc debug` never
+  returned (with it: 3 s, exit 0, its pod removed). §1 prints each table's highest id and §4c counts the restored file
+  up to it, because the leader's first polls add rows a whole count cannot match. §0 prints the `/metrics` read for
+  `gsd_build_info` and the two volume gauges. §4 opens with the risks under Argo CD, and the new §4d is the break glass
+  for an incident on a release Argo CD syncs: pause automated sync and confirm it held, put the pod into recovery mode
+  by hand (the chart's recovery script in a ConfigMap and one patch; `GSD_RECOVERY_MODE` alone leaves the app
+  running), restore with `restore-db.sh`, give the release back to Git, then remove what the hand edit added, which
+  Argo CD leaves in place. **The risks §4 now states, and a known limitation (#532):** with Argo CD left on, self-heal puts back the fields it renders
+  within a second (0.7 s measured) and would start the app during a hand-edited restore; and on the values-file path,
+  turning recovery mode off under a sync `retry` policy waits until the retries of the sync that turned it on have
+  failed, 12 min 49 s on the lab with `limit: 3`, without end with a `limit` below 0; §4d step 7 is the way out.
+  SPEC_E7 §5 step 6 now says the fallback's restore sets the database back to the copy, and `prepare-release.py`
+  reads a two-digit spec id. No application or chart change.
+
 - **`:latest` names the newest signed `main` build of both images (#425, SPEC_E9, app 2.4.0, chart 0.61.2).** On
   every green publish from `main`, a new `latest` job in `publish.yml` copies the digests that run pushed as
   `<appVersion>-<sha>` to `:latest` of `group-sync-dashboard` and `group-sync-dashboard-report`, once `attest` has

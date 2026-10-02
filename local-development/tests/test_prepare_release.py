@@ -343,8 +343,13 @@ def test_a_release_promotes_merged_status_cells(sandbox: pathlib.Path) -> None:
         " [#1](https://github.com/ephico2real2/group-sync-dashboard/issues/1) | merged |\n"
         "| Z2 | [`SPEC_Z2_example.md`](SPEC_Z2_example.md) — example | Z | — | chart 9.0.0 |"
         " [#2](https://github.com/ephico2real2/group-sync-dashboard/issues/2) | in progress |\n"
+        # a two-digit id (E10, #533): a row the pattern cannot read leaves its merged header behind, and the release
+        # is refused
+        "| Z10 | [`SPEC_Z10_example.md`](SPEC_Z10_example.md) — example | Z | — | chart 9.0.0 |"
+        " [#3](https://github.com/ephico2real2/group-sync-dashboard/issues/3) | merged |\n"
     )
-    for name, status in (("SPEC_Z1_example.md", "merged"), ("SPEC_Z2_example.md", "in progress")):
+    for name, status in (("SPEC_Z1_example.md", "merged"), ("SPEC_Z2_example.md", "in progress"),
+                         ("SPEC_Z10_example.md", "merged")):
         (specs / name).write_text(
             "# SPEC\n\n| | |\n|---|---|\n| Release | — after |\n"
             "| Version on release | chart 9.0.0 |\n"
@@ -359,6 +364,8 @@ def test_a_release_promotes_merged_status_cells(sandbox: pathlib.Path) -> None:
     index = (specs / "README.md").read_text()
     assert re.search(r"\| Z1 \|.*\| released \|$", index, re.M)
     assert re.search(r"\| Z2 \|.*\| in progress \|$", index, re.M)
+    assert re.search(r"\| Z10 \|.*\| released \|$", index, re.M)
+    assert "| Status | released |" in (specs / "SPEC_Z10_example.md").read_text()
     z1 = (specs / "SPEC_Z1_example.md").read_text()
     assert "| Status | released |" in z1
     assert "S1 (the Secret contract, merged) stays merged." in z1

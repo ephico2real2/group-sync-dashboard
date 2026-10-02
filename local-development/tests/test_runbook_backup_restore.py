@@ -4,12 +4,23 @@ restore-db.sh (#302) with the manual paths as the fallback, and the section numb
 The runbook is the procedure an operator follows at 03:00, so these read it as text: a heading renumbered or a
 stale command left in place is a wrong instruction no other test sees. The store's refusals cite "§4" and "§6"
 (gsd/store.py), a chart refusal cites "§5", and the chart README links "#6-pre-upgrade-copies".
+
+#533 corrected four instructions the #300 walk ran as printed, and added §4's risks under Argo CD and the §4d break
+glass (docs/specs/SPEC_E10_runbook_corrections.md); their tests are T533-1 to T533-7.
 """
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+
+import pytest
+import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 RUNBOOK = REPO / "docs" / "RUNBOOK_backup_restore.md"
@@ -80,12 +91,15 @@ def test_t300_10_section_4_is_recovery_mode_and_the_script_with_oc_debug_as_the_
     assert any(line.startswith("oc debug -n $NS deploy/$REL") for line in code), "the fallback keeps oc debug"
     assert not [line for line in code if line.startswith("oc scale")], "no oc scale in §4's commands"
     assert "`replicaCount: 0` in this release's values file" in body
-    # the only Helm command line is the one labelled for development and troubleshooting
+    # the only Helm command line is the one labelled for development and troubleshooting; the break glass (§4d, the
+    # last subsection) and the risks box it answers are the one place where Argo CD's controls and hand edits are the
+    # path (#533, the operator's decision of 2026-10-02); elsewhere Argo CD is named for what it reverts, §4d or #532
     operator = re.sub(r"\*\*Development and troubleshooting only:\*\*.*?\n\n", "", body, flags=re.S)
+    operator = "\n".join(line for line in operator.split("### 4d.", 1)[0].splitlines() if not line.startswith(">"))
     for word in ("helm upgrade", "--set", "argocd", "applications.argoproj.io", "oc patch", "oc set env deploy"):
         assert word not in operator.lower(), word
     for sentence in re.split(r"(?<=[.;:])\s+", operator):
-        assert "Argo CD" not in sentence or "revert" in sentence, sentence
+        assert "Argo CD" not in sentence or any(word in sentence for word in ("revert", "§4d", "#532")), sentence
 
 
 def test_t300_11_no_stale_version_and_the_fallback_keeps_the_wal() -> None:
@@ -117,3 +131,184 @@ def test_t300_12_the_sections_the_code_cites_keep_their_numbers() -> None:
             linked.update(re.findall(r"\]\([^)\s]*RUNBOOK_backup_restore\.md#([\w-]+)\)", path.read_text(errors="replace")))
     assert "6-pre-upgrade-copies" in linked
     assert linked <= anchors, f"links to anchors the runbook does not have: {linked - anchors}"
+
+
+# ── #533: the corrections from the #300 walk, and the break glass under Argo CD (SPEC_E10) ─────────────────────────
+
+def python_body(text: str, first_line: str) -> str:
+    """The Python of the first `python3.14 -c '…'` command in `text` whose code starts with `first_line`: from the
+    line after the opening quote to the line before the closing one, as the operator's shell passes it."""
+    start = text.index(f"-c '\n{first_line}\n") + len("-c '\n")
+    return text[start:text.index("\n'", start)] + "\n"
+
+
+def flat(text: str) -> str:
+    """Prose with its line breaks, indentation and blockquote markers folded, so a wrapped phrase still matches."""
+    return " ".join(" ".join(re.sub(r"^\s*>\s?", "", line) for line in text.splitlines()).split())
+
+
+def test_t533_1_oc_debug_runs_the_dashboard_container_alone() -> None:
+    """§4a's helper pod is `oc debug` of the Deployment, which copies every container of its template. With the
+    oauth-proxy sidecar copied the pod never completes and `oc debug` never returns (the #300 walk, F2); with
+    `--one-container` it ran the body, exited 0 in 3 s and removed its pod (SPEC_E10 §2.2). Every `oc debug` command
+    the runbook prints carries the flag."""
+    uses = re.findall(r"oc debug [^`\n]*", TEXT)
+    assert uses, "the runbook prints no oc debug command"
+    assert all("--one-container" in use for use in uses), [use for use in uses if "--one-container" not in use]
+
+
+def test_t533_2_section_4c_counts_up_to_the_copys_highest_id(tmp_path: pathlib.Path) -> None:
+    """§4c compared whole-table counts with the copy's, which fails as soon as the leader polls (the #300 walk read
+    2776, then 2779 `sync_event` rows against the copy's 2770). §1 now prints each table's highest id and §4c counts
+    the live file up to it. Both snippets run here as printed: on a copy, and on a live file holding the copy's rows
+    and rows written after the restore, which take higher ids (AUTOINCREMENT)."""
+    tables = {"membership_event": 5, "sync_event": 7, "login_event": 3}
+    copy, live = tmp_path / "copy.db", tmp_path / "gsd.db"
+    c = sqlite3.connect(copy)
+    for table, rows in tables.items():
+        c.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT)")
+        c.executemany(f"INSERT INTO {table} (note) VALUES (?)", [("copy",)] * rows)
+    c.commit()
+    c.close()
+    shutil.copyfile(copy, live)
+    c = sqlite3.connect(live)                       # the leader's first polls after the restore
+    c.executemany("INSERT INTO sync_event (note) VALUES (?)", [("after",)] * 6)
+    c.executemany("INSERT INTO login_event (note) VALUES (?)", [("after",)] * 2)
+    c.commit()
+    c.close()
+    printed = subprocess.run([sys.executable, "-c", python_body(section("1"), "import sqlite3, sys"), str(copy)],
+                             capture_output=True, text=True, check=True).stdout
+    tops = []
+    for table, rows in tables.items():
+        found = re.search(rf"^{table} (\d+) rows, highest id (\d+)$", printed, re.M)
+        assert found, f"§1 prints no row count and highest id for {table}: {printed!r}"
+        assert int(found[1]) == rows, (table, printed)
+        tops.append(found[2])
+    count = python_body(section("4").split("### 4c.", 1)[1], "import sqlite3, sys").replace("/data/gsd.db", str(live))
+    counted = subprocess.run([sys.executable, "-c", count, *tops], capture_output=True, text=True, check=True).stdout
+    for table, rows in tables.items():
+        found = re.search(rf"^{table} (\d+) rows up to id (\d+)$", counted, re.M)
+        assert found and int(found[1]) == rows, (table, counted)
+
+
+def test_t533_3_section_0_prints_the_metrics_read() -> None:
+    """§0 named `gsd_build_info` and the two `gsd_volume_disk_*` gauges and printed no command to read them (the #300
+    walk, F6). It prints one read through the pod's loopback, and its filter keeps exactly the three series the lab
+    served (SPEC_E10 §2.4) and nothing else of a scrape."""
+    reads = [line for line in code_lines(section("0")) if "curl -s http://127.0.0.1:8080/metrics" in line]
+    assert len(reads) == 1, reads
+    assert reads[0].startswith("oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/metrics | grep -E '")
+    pattern = re.compile(reads[0].split("grep -E '", 1)[1].rsplit("'", 1)[0])
+    scrape = [
+        'gsd_build_info{branch="main",commit="521c2bb0b4",version="2.4.0"} 1.0',
+        'gsd_volume_disk_used_bytes{component="dashboard"} 1.34537723904e+11',
+        'gsd_volume_disk_total_bytes{component="dashboard"} 1.60456224768e+11',
+        "# HELP gsd_build_info Always 1; the running build is carried in the labels.",
+        "gsd_backup_last_success_timestamp_seconds 1.7904500667085032e+09",
+    ]
+    assert [line for line in scrape if pattern.search(line)] == scrape[:3]
+
+
+def test_t533_4_spec_e7_says_the_fallback_restore_sets_the_database_back() -> None:
+    """SPEC_E7 §5 step 6 said §4a's restore of the copy step 5 restored leaves "the database … unchanged". The app had
+    written rows in between, and the restore discarded them (the #300 walk, F4)."""
+    spec = (REPO / "docs" / "specs" / "SPEC_E7_schema_line_and_runbook.md").read_text()
+    step = spec.split("6. **§4, the fallback.**", 1)[1].split("\n7. ", 1)[0]
+    assert "the database is unchanged by it" not in step
+    assert "sets the database back to that copy" in flat(step)
+
+
+def test_t533_5_section_4_states_the_risks_under_argo_cd_before_step_1() -> None:
+    """The operator's decision of 2026-10-02: the two risks Argo CD brings to a restore are stated at the top of §4,
+    with the lab's numbers, and step 5 no longer says the recovery pod stops "at once" (#532)."""
+    body = section("4")
+    assert "> **Risks under Argo CD**" in body and body.index("> **Risks under Argo CD**") < body.index("1. **Turn it on")
+    risks = flat("\n".join(line for line in body.splitlines() if line.startswith(">")))
+    for words in ("selfHeal: true", "0.7 s", "4 min 38 s", "Pause automated sync first", "12 min 49 s", "limit: 3",
+                  "less than 0", "retries 5 times", "#532", "§4d step 7"):
+        assert words in risks, words
+    step5 = flat(body.split("5. **Turn it off**", 1)[1].split("\n\n", 1)[0])
+    assert "stops at once" not in step5, "under a retrying sync the recovery pod does not stop at once (#532)"
+    for words in ("#532", "12 min 49 s", "known limitation"):
+        assert words in step5, words
+
+
+def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> None:
+    """§4d, the break glass: the pause comes first and is confirmed, with the operation's phase beside it, before the
+    hand edit; the restore is the script; the give-back waits for Argo CD's apply before `oc rollout status`, and
+    ends with what the edit added removed. §4d is §4's last subsection, because T300-10 exempts it whole."""
+    body = section("4")
+    assert re.findall(r"^### (4\w)\. ", body, re.M) == ["4a", "4b", "4c", "4d"]
+    glass = body.split("### 4d.", 1)[1]
+    code = code_lines(glass)
+    steps = [
+        r"argocd\.argoproj\.io/tracking-id",
+        "{.metadata.ownerReferences[*].kind}",
+        """--type merge -p '{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}'""",
+        "{.spec.syncPolicy.automated.enabled} {.status.operationState.phase}",
+        "oc create configmap -n $NS $REL-recovery",
+        '"command":["python3.14","/scripts/recovery_mode.py"',
+        "restore-db.sh --list",
+        '[{"op":"remove","path":"/spec/syncPolicy/automated/enabled"}]',
+        "--for=jsonpath='{.status.sync.status}'=Synced",
+        "oc rollout status -n $NS deploy/$REL",
+        '"$patch":"delete"',
+        "oc delete configmap -n $NS $REL-recovery",
+        "argocd app terminate-op $APP",
+    ]
+    where = []
+    for step in steps:
+        hits = [i for i, line in enumerate(code) if step in line]
+        assert hits, f"§4d prints no command with {step!r}"
+        where.append(hits[0])
+    assert where == sorted(where), "§4d's commands are out of order"
+    # the give-back's rollout status comes after the wait for Synced: before Argo CD's apply it reports the recovery
+    # rollout, which never completed, and after the progress deadline it fails at once (measured on the lab)
+    assert where[steps.index("--for=jsonpath='{.status.sync.status}'=Synced")] < where[steps.index("oc rollout status -n $NS deploy/$REL")]
+    prose = flat(glass)
+    for words in ("ignoreApplicationDifferences", "uvicorn is running here", "Incident step", "selfHeal", "0 of 163",
+                  "a phase that is not `Running`", "each retry applies what Git renders over the hand edit",
+                  "exceeded its progress deadline"):
+        assert words in prose, words
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+def test_t533_7_the_hand_edit_is_what_recovery_mode_renders_and_the_removal_takes_back_what_it_added() -> None:
+    """§4d's hand edit must be the chart's recovery mode for the dashboard container, or the pod it makes is not the
+    recovery pod `restore-db.sh` and SPEC_E2 promise; and step 6 must remove exactly what it added, because Argo CD
+    leaves every field it does not render (SPEC_E10 §2.10)."""
+    glass = section("4").split("### 4d.", 1)[1]
+    prefix = "oc patch -n $NS deploy/$REL --type strategic -p '"
+    patches = [line[len(prefix):].rsplit("'", 1)[0] for line in code_lines(glass) if line.startswith(prefix)]
+    assert len(patches) == 2, patches
+    add, remove = (json.loads(p.replace("'$REL'", "group-sync-dashboard").replace("'$TTL'", "2h")) for p in patches)
+
+    def dashboard(*flags: str) -> tuple[dict, dict]:
+        out = subprocess.run(["helm", "template", "group-sync-dashboard", str(REPO / "charts" / "group-sync-dashboard"),
+                              "--set", "ingress.host=t.example.com", *flags],
+                             capture_output=True, text=True, check=True).stdout
+        pod = next(d for d in yaml.safe_load_all(out) if d and d["kind"] == "Deployment"
+                   and d["metadata"]["name"] == "group-sync-dashboard")["spec"]["template"]["spec"]
+        return pod, next(c for c in pod["containers"] if c["name"] == "dashboard")
+
+    recovery_pod, recovery = dashboard("--set", "recovery.enabled=true")
+    normal_pod, normal = dashboard()
+    edit_pod = add["spec"]["template"]["spec"]
+    edit = edit_pod["containers"][0]
+    assert edit["name"] == "dashboard" and edit["command"] == recovery["command"]
+    assert edit["livenessProbe"] is None and "livenessProbe" not in recovery and "livenessProbe" in normal
+    rendered = {e["name"]: e.get("value") for e in recovery["env"]}
+    assert {e["name"]: e["value"] for e in edit["env"]} == {n: rendered[n] for n in ("GSD_RECOVERY_MODE", "GSD_RECOVERY_MODE_TTL")}
+    assert edit["volumeMounts"] == [m for m in recovery["volumeMounts"] if m["mountPath"] == "/scripts"]
+    assert edit_pod["volumes"] == [v for v in recovery_pod["volumes"] if v["name"] == "recovery-script"]
+    # what the edit adds is not in the normal render, so Argo CD never takes it away: only step 6 does
+    assert not {e["name"] for e in edit["env"]} & {e["name"] for e in normal["env"]}
+    assert "/scripts" not in {m["mountPath"] for m in normal["volumeMounts"]}
+    assert "recovery-script" not in {v["name"] for v in normal_pod["volumes"]}
+    undo_pod = remove["spec"]["template"]["spec"]
+    undo = undo_pod["containers"][0]
+    assert undo["name"] == "dashboard"
+    assert all(item.get("$patch") == "delete" for item in [*undo["env"], *undo["volumeMounts"], *undo_pod["volumes"]])
+    assert {e["name"] for e in undo["env"]} == {e["name"] for e in edit["env"]}
+    assert {m["mountPath"] for m in undo["volumeMounts"]} == {m["mountPath"] for m in edit["volumeMounts"]}
+    assert {v["name"] for v in undo_pod["volumes"]} == {v["name"] for v in edit_pod["volumes"]}
