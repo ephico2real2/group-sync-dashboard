@@ -5,10 +5,10 @@
 | Programme | Epic E (#385), restore tools and release safety; build-order step 8 of 9, the release-safety child that moves `:latest`. Independent of every other child; SPEC_E8 (#410, PR A, on its own branch) edits the same test file and three of the same documents, and §4.4 shows the two compose in either order |
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.6.0; the chart takes the PATCH that `prepare-release.py --app` derives at implementation |
+| Version on release | app 2.4.0, chart 0.61.2 |
 | Version note | `publish.yml` lists itself in its own `on.push.paths` (`.github/workflows/publish.yml#this file`), so this change is an image input and takes an application MINOR (`docs/RELEASING.md#Neither`); it changes no chart template or value, and the chart moves only because `appVersion` does. Every `specified` row on origin/main `3acfda37` that claims an application version claims 2.1.0 (SPEC_G2, SPEC_E4, SPEC_E3, SPEC_E6) or 2.2.0 (SPEC_G3); SPEC_E7 and SPEC_E8 claim none, so the next free MINOR is 2.3.0. The CI gate holds the number to exactly the next MINOR of the pull request's base (`local-development/check-app-version-bump.py#check`; measured in §4.3: from `6d532178` with §7 applied it refuses 2.3.0, `expected exactly 2.1.0 (next MINOR) or 3.0.0 (next MAJOR), got 2.3.0`, and accepts 2.1.0), so the implementing pull request takes main's next MINOR when it is opened and, by SPEC_E5's rule (its Version note), moves every other `specified` row whose application version is no longer above `pyproject.toml` to the next MINOR above it, keeping each row's chart cell: if this spec merges first at 2.1.0, SPEC_G2, SPEC_E4, SPEC_E3 and SPEC_E6 move from app 2.1.0 to 2.2.0 in header and row, and SPEC_G3 (2.2.0) stays above and is left alone; if one of them merges first, its pull request moves this spec's cell instead. No block carries a version field: the implementing pull request applies §7, commits, then runs `prepare-release.py --app <main's next MINOR> --no-commit "…"`, as SPEC_E4 and SPEC_E3 do |
 | Issue | [#425](https://github.com/ephico2real2/group-sync-dashboard/issues/425) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "What must be accomplished", Test cases and "Decisions and corrections (2026-10-01)") and the epic's "Decisions settled (2026-10-01)". Measured on origin/main `6d532178` (application 2.0.0, chart 0.59.25) with the repository's Python 3.14 venv, helm v4.3.0, shellcheck and actionlint v1.7.12 (built from source into the scratch directory); read-only on quay.io (its public tag API, the registry's referrers endpoint and `oc image info`) and on the CRC lab (`oc get`); the last publish run, 36690887346, read with `gh run view --log`. §7's blocks were cut from a copy of `6d532178` with the design implemented and proved against a clean worktree of `6d532178` (§4.3). Before the commit origin/main moved to `eade4c2a` (SPEC_E6, #513), which changes only `docs/specs/` and the index test; the branch was fast-forwarded to it, the index row placed after E6's, and the blocks re-checked there |
 
 ## How to read this spec
@@ -103,6 +103,18 @@ their line numbers come from `curl -s <raw-url> | nl -ba`.
    - **Kept rejected:** A7, the guard against a re-run moving `:latest` backwards; OB2 confirmed the decision on the
      evidence (nothing resolves `:latest`; one re-run of the newest green run's job puts it right).
    - **Rebased:** origin/main `3acfda37` merged into this branch; E9 is index row 46 (note 7).
+10. **Corrected for implementation on origin/main `ffe9de32` (2026-10-02): app 2.4.0, chart 0.61.2.** Main is
+    application 2.3.0 and chart 0.61.1 (`local-development/pyproject.toml`, `Chart.yaml`), so
+    `check-app-version-bump.py` accepts only 2.4.0, not the header's 2.6.0, and `prepare-release.py --app 2.4.0
+    --no-commit` derives chart 0.61.2 (measured on a throwaway copy of `ffe9de32`: `version: 0.61.2`; its `schema  :`
+    line reads `20 at c57f292707 (application 2.3.0), 20 at HEAD; no schema line`). The header and the index row say so,
+    and the spec moves to `merged`. Block 12's lead names `app 2.4.0, chart 0.61.2`, because
+    `local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+    fails when no Unreleased entry names the chart version `Chart.yaml` reaches. Under SPEC_E5's rule the tree now reaches
+    two `specified` rows of `docs/specs/README.md` on `ffe9de32`: SPEC_G2's app 2.4.0 moves to 2.6.0 (2.5.0 is SPEC_G3's;
+    its chart 0.63.0 kept), and SPEC_G4's step 1, chart 0.61.2, moves to 0.61.4 (0.61.3 is SPEC_G3's) with its step 2
+    to 0.61.5, so step 2 stays above step 1. SPEC_G3 (app 2.5.0, chart 0.61.3) and SPEC_W1 (chart 0.62.0) are above
+    the new tree and stay. Note 7's index count was already applied on main (forty-eight rows); no block changes for it.
 
 ## 1. The mandate, and what is out of scope
 
@@ -1146,12 +1158,12 @@ the newest `main` build. It is not a release, and the chart never resolves it.
 ```markdown
 ## Unreleased
 
-- **`:latest` names the newest signed `main` build of both images (#425, SPEC_E9).** On every green publish from
-  `main`, a new `latest` job in `publish.yml` copies the digests that run pushed as `<appVersion>-<sha>` to `:latest`
-  of `group-sync-dashboard` and `group-sync-dashboard-report`, once `attest` has signed them and read the signatures
-  back (straight after `publish` when `SUPPLY_CHAIN_SIGNING` is `false`), with the release aliases' server-side
-  `skopeo copy --all --preserve-digests`, and reads each name back: a mismatch is a red run. The chart never resolves
-  `:latest`, so no cluster changes; the immutable tags, the `:<appVersion>` alias rule and the `publish` job's
+- **`:latest` names the newest signed `main` build of both images (#425, SPEC_E9, app 2.4.0, chart 0.61.2).** On
+  every green publish from `main`, a new `latest` job in `publish.yml` copies the digests that run pushed as
+  `<appVersion>-<sha>` to `:latest` of `group-sync-dashboard` and `group-sync-dashboard-report`, once `attest` has
+  signed them and read the signatures back (straight after `publish` when `SUPPLY_CHAIN_SIGNING` is `false`), with
+  the release aliases' server-side `skopeo copy --all --preserve-digests`, and reads each name back: a mismatch is a
+  red run. The chart never resolves `:latest`, so no cluster changes; the immutable tags, the `:<appVersion>` alias rule and the `publish` job's
   `contents: read` are unchanged. `docs/RELEASING.md` gains the fourth tag, `DESIGN_supply_chain.md` decision D11.
 
 ```
