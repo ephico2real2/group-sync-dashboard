@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Forty-eight specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Forty-nine specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -62,7 +62,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The forty-eight specifications
+## The forty-nine specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -114,6 +114,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | E9 | [`SPEC_E9_latest_tag.md`](SPEC_E9_latest_tag.md) — `:latest` follows the newest signed `main` build: a `latest` job in `publish.yml`, after `attest` has signed both digests and read the signatures back (after `publish` alone when signing is off), on `main` only, copies each digest to its image's `:latest` with the release aliases' `skopeo copy --all --preserve-digests` and reads it back, a mismatch a red run; the chart never resolves it | E — restore tools and release safety | — | app 2.4.0, chart 0.61.2 | [#425](https://github.com/ephico2real2/group-sync-dashboard/issues/425) | merged |
 | G4 | [`SPEC_G4_namespaced_lease_grant.md`](SPEC_G4_namespaced_lease_grant.md) — the Lease grant namespaced: the dashboard's Leases granted by a Role and RoleBinding in the release namespace (`<fullname>-leases`), shipped in a chart release before the one that removes the ClusterRole's Lease rule, so an upgrade through both refuses the running pod no Lease call; the removal waits on the operator's agreement on #420 | G — access declared | — | chart 0.61.4 (step 1, adds the Role) and 0.61.5 (step 2, removes the ClusterRole rule), chart only | [#420](https://github.com/ephico2real2/group-sync-dashboard/issues/420) | specified |
 | W1 | [`SPEC_W1_rollout_blue_green.md`](SPEC_W1_rollout_blue_green.md) — blue-green with Argo Rollouts, off by default: a Rollout takes the Deployment's pod template (`workloadRef`, `scaleDown: onsuccess`), so with no controller the Deployment keeps serving; each version opens its own database seeded from the running version's newest copy, so green migrates its own copy before the switch; promotion, abort and undo are values in the release's values file; specified and reviewed, not scheduled (the operator's "last north star") | W — workload strategy | — | chart 0.62.0 (chart only) | [#426](https://github.com/ephico2real2/group-sync-dashboard/issues/426) | specified |
+| E10 | [`SPEC_E10_runbook_corrections.md`](SPEC_E10_runbook_corrections.md) — the backup runbook corrected from the #300 walk and given a break glass under Argo CD: §4a's `oc debug --one-container`, §4c's counts up to the copy's highest id (§1 prints it), §0's `/metrics` read, SPEC_E7 §5 step 6; §4 opens with the risks under Argo CD (self-heal during a hand edit, the endless retry) and §4d pauses automated sync, puts the pod into recovery mode by hand, restores with `restore-db.sh` and gives the release back to Git; #532's delay stated as a known limitation; `prepare-release.py` reads a two-digit spec id | E — restore tools and release safety | — | no version change (docs, a repository tool and tests) | [#533](https://github.com/ephico2real2/group-sync-dashboard/issues/533) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
