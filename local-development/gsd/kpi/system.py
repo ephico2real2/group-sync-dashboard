@@ -26,8 +26,13 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+
+from ..store import KNOWN_SCHEMA_VERSION, copy_schema, newest_pre_upgrade
+from ..storage import BACKUP_NAME, backup_owner
 
 log = logging.getLogger(__name__)
 
@@ -237,9 +242,32 @@ class SystemMonitor:
         return view or None
 
 
-def dashboard_data_bytes(db_path: str, backup_dir: str | None):
+def dashboard_data_bytes(db_path: str, backup_dir: str | None, *, keep: int | None = None,
+                         interval_hours: float | None = None, failures: Callable[[], int] | None = None,
+                         replica_count: int = 1):
     """The dashboard's own bytes: the database file, its WAL, and the backups — what
-    `gsd_sqlite_wal_bytes` and the backup gauge already say, gathered for the page."""
+    `gsd_sqlite_wal_bytes` and the backup gauge already say, gathered for the page — and the KPI page's
+    Backups card (#306), from what this process already has.
+
+    `backups` is `{"enabled": False}` and nothing else when no backup directory is configured: disabled is
+    not "0 backups". Enabled, it is ONE walk of the directory's gsd-*.db (the size line's own glob): each file
+    stat'd once and counted only when its stat succeeds, so `count` and `bytes` describe the same files (a
+    copy rotated away between the glob and the stat is in neither). `count` and `bytes` are every copy on the
+    volume; `kept` is this process's own copies, the ones its rotation keeps to `keep`: every gsd-*.db at one
+    replica, and above one the names that carry this pod (#391). `newest_at` is the newest own copy's mtime,
+    or the directory's newest while this pod has none of its own (every pod, after a rollout): the rule
+    `gsd_backup_last_success_timestamp_seconds` reads, compared in this walk rather than by a second listing,
+    so the card turns stale when GroupSyncDashboardBackupStale fires. `newest_schema` is read from that one
+    file's header without opening it in SQLite. `failures` is the counter /metrics exports, since
+    `failures_since`: the instant this process built it. `keep` and `interval_hours` are the settings the
+    poller backs up with.
+
+    `pre_upgrade` sits beside `backups`, not inside it: the copy before a migration (#301) is taken whether
+    or not backups are enabled. One listing of its directory, nothing opened.
+    """
+    started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    owner = backup_owner(replica_count)
+
     def measure() -> dict | None:
         try:
             db = os.stat(db_path).st_size
@@ -249,15 +277,35 @@ def dashboard_data_bytes(db_path: str, backup_dir: str | None):
             wal = os.stat(db_path + "-wal").st_size
         except OSError:
             wal = 0
-        backups = {"count": 0, "bytes": 0}
+        backups: dict = {"enabled": False}
         if backup_dir:
+            count, size, kept, own, newest = 0, 0, 0, None, None
             for f in Path(backup_dir).glob("gsd-*.db"):
                 try:
-                    backups["count"] += 1
-                    backups["bytes"] += f.stat().st_size
+                    st = f.stat()
                 except OSError:
-                    pass
-        return {"db_bytes": db, "wal_bytes": wal, "backups": backups}
+                    continue
+                count += 1
+                size += st.st_size
+                if newest is None or st.st_mtime > newest[0]:
+                    newest = (st.st_mtime, f)
+                if owner is not None and ((m := BACKUP_NAME.fullmatch(f.name)) is None or m.group(2) != owner):
+                    continue
+                kept += 1
+                if own is None or st.st_mtime > own[0]:
+                    own = (st.st_mtime, f)
+            newest = own or newest      # none of its own yet: the directory's newest, as the metric reads
+            backups = {
+                "enabled": True, "dir": backup_dir, "count": count, "bytes": size, "kept": kept,
+                "newest_at": None if newest is None
+                else datetime.fromtimestamp(newest[0], UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "newest_schema": None if newest is None else copy_schema(newest[1]),
+                "known_schema": KNOWN_SCHEMA_VERSION,
+                "failures": None if failures is None else failures(),
+                "failures_since": started,
+                "keep": keep, "interval_hours": interval_hours,
+            }
+        return {"db_bytes": db, "wal_bytes": wal, "backups": backups, "pre_upgrade": newest_pre_upgrade(db_path)}
     return measure
 
 

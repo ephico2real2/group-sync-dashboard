@@ -19,6 +19,7 @@ import hashlib
 import logging
 import os
 import json
+import re
 import shutil
 import socket
 import sqlite3
@@ -1191,6 +1192,38 @@ class StorePreUpgradeCopyFailed(Exception):
 def _pre_upgrade_copies(directory: Path) -> list[Path]:
     """The copies in `directory`, oldest first."""
     return sorted(directory.glob("pre-upgrade-*.db"))
+
+
+#: The name _pre_upgrade_copy gives a copy, read back for the KPI page (#306): the stamp, the schema it was
+#: taken at and the schema the migration went to. The pod after them is not read.
+PRE_UPGRADE_NAME = re.compile(r"pre-upgrade-(\d{8}T\d{6}\.\d{6}Z)-schema-(\d+)-to-(\d+)-.+\.db")
+
+
+def newest_pre_upgrade(db_path: str) -> dict | None:
+    """The newest pre-upgrade copy beside the database, read from its name (#306): `{"at", "from", "to"}`,
+    `at` in ISO-8601 UTC to the second. One listing of the directory; no copy is opened. None when there is
+    no copy (the directory exists only once a migration has run on this volume)."""
+    for copy in reversed(_pre_upgrade_copies(Path(db_path).parent / PRE_UPGRADE_DIR)):
+        if (match := PRE_UPGRADE_NAME.fullmatch(copy.name)) is not None:
+            at = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S.%fZ")
+            return {"at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "from": int(match.group(2)), "to": int(match.group(3))}
+    return None
+
+
+def copy_schema(path: str | Path) -> int | None:
+    """A copy's schema, `PRAGMA user_version`, read from the file's header rather than through SQLite (#306):
+    the 4-byte big-endian integer at offset 60 (sqlite.org/fileformat2.html). Exact for a backup or a
+    pre-upgrade copy, which VACUUM INTO writes whole, in rollback-journal mode, with no -wal; not for the live
+    database, whose -wal may hold a newer first page. One read-only open of 64 bytes: no lock, no -wal or
+    -shm, nothing written. None when the file cannot be read or is not an SQLite database."""
+    try:
+        with open(path, "rb") as fh:
+            header = fh.read(64)
+    except OSError:
+        return None
+    if len(header) < 64 or not header.startswith(b"SQLite format 3\x00"):
+        return None
+    return int.from_bytes(header[60:64], "big")
 
 
 def _pre_upgrade_copy(conn: sqlite3.Connection, db_path: str, version: int) -> None:

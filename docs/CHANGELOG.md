@@ -10,6 +10,17 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A Backups card on the KPI page (#306, Epic E #385, `docs/specs/SPEC_E6_kpi_backups_card.md`; app 2.3.0,
+  chart 0.61.1).** Below System status, from what the dashboard process already has: the last copy as an absolute
+  instant in the page's display zone, with its label (ISO-8601 UTC in the payload), and when the next is due, the
+  copies kept against `config.backup.keep` and their size, the failures since the process started, the
+  newest copy's schema against what this build understands, and the newest pre-upgrade copy (#301). One state in
+  words: healthy, no copy yet, failing, stale (older than two backup intervals), or disabled, which no longer reads
+  "+ 0 backups" in the dashboard's size line ("backups disabled"). `/api/kpi`'s `system.dashboard.data.backups` is
+  `{"enabled": false}` when backups are off and carries the card's fields when on, with `pre_upgrade` beside it
+  (`local-development/API.md`); the same walk now counts and sizes the same files. No Prometheus query, no new
+  metric, no new permission; `/metrics` and the Grafana board are unchanged.
+
 - **The off-volume backup is on wherever it can work, and it ships the newest pre-upgrade copy too (#304,
   `docs/specs/SPEC_E5_offsite_on_by_default.md`; chart 0.61.0, no application change).**
   `backup.offsite.enabled` is read as a word with three values. Empty, the new default, renders the

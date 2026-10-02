@@ -34,6 +34,12 @@ and third come from a throwaway pod that worked on *copies* of a backup, not fro
 pod's own output. The commands are below each picture, and lines not relevant to the picture are left out. `grep` and
 `tail` run on your workstation; the pod has neither.
 
+Without a terminal, the KPI page's **Backups** card (the cluster-admin tier, #306) shows what the first picture
+shows, read by the dashboard process itself and with no Prometheus: the newest copy's instant (the last-success
+metric's file), the copies kept against `keep` and their size, the failures since the process started, the newest
+copy's schema against the one the running image understands, and the newest pre-upgrade copy (§6). One state, in
+words: healthy, no copy yet, failing, stale (older than two backup intervals), or disabled.
+
 **The six-hourly backup (the live pod).** The log line names the file and how many are kept, and the listing shows
 that many copies. The §1 check on the newest copy says `integrity_check: ok`, with a `user_version` equal to the
 running app's. Failures are zero, and the last-success metric is the newest file's time. In this capture the metric

@@ -1121,7 +1121,12 @@ only.*
                           "throttled_periods": 196, "throttled_seconds": 5.06,
                           "cores_used": 0.02, "throttled_fraction": 0.0, "rate_interval_seconds": 60.0},
                   "disk": {"used_bytes": 27000000000, "total_bytes": 32000000000},
-                  "data": {"db_bytes": 2400000, "wal_bytes": 4200000, "backups": {"count": 4, "bytes": 8500000}}},
+                  "data": {"db_bytes": 2400000, "wal_bytes": 4200000,
+                           "backups": {"enabled": true, "dir": "/data/backup", "count": 4, "bytes": 8500000,
+                                       "kept": 4, "newest_at": "2026-09-19T12:11:04Z", "newest_schema": 20, "known_schema": 20,
+                                       "failures": 0, "failures_since": "2026-09-18T23:09:50Z",
+                                       "keep": 4, "interval_hours": 6.0},
+                           "pre_upgrade": {"at": "2026-09-18T23:09:45Z", "from": 19, "to": 20}}},
     "report": null
   }
 }
@@ -1154,6 +1159,29 @@ page draws on every meter and names in its rule line; `links` carries the doors 
 the chart's `console.url` or, when that is empty, the URL the poll thread discovered from
 `openshift-config-managed/console-public`; `observe` is the console's namespace-workloads dashboard
 scoped to the pod's own namespace (`…/dev-monitoring/ns/<ns>?dashboard=dashboard-k8s-resources-workloads-namespace` — the namespace in the path, because the console's project selector, which the graphs' tenancy requests carry, is set only from a `/ns/<name>` path segment).
+
+`data.backups` and `data.pre_upgrade` are the KPI page's Backups card (#306), read by the dashboard process
+from what it already has: no Prometheus query, so an estate without one gets the same answer. With no backup
+directory configured (`config.backup.enabled: false`), `backups` is `{"enabled": false}` and nothing else:
+disabled, which is not "0 backups". Enabled, it carries:
+
+| field | what it is |
+|---|---|
+| `enabled` | `true` |
+| `dir` | `config.backup.dir`, the directory the poller writes `gsd-*.db` into |
+| `count`, `bytes` | the `gsd-*.db` files in it and their total size, from one walk; a file whose stat fails (rotated away during the walk) is in neither. Every copy on the volume: the dashboard's size line |
+| `kept` | the copies this process's rotation keeps to `keep`: every `gsd-*.db` at one replica; above one, the copies whose name carries this pod (#391) |
+| `newest_at` | the newest `kept` copy's mtime, or the directory's newest while this pod has none of its own (above one replica, after a rollout: #391), ISO-8601 UTC to the second: the rule of `gsd_backup_last_success_timestamp_seconds`; `null` when there is none yet |
+| `newest_schema` | that file's schema, read from its SQLite header (offset 60) without opening it in SQLite; `null` when there is no copy or its header is not SQLite's |
+| `known_schema` | the schema this build understands (`KNOWN_SCHEMA_VERSION`): a copy above it cannot be restored under this image |
+| `failures`, `failures_since` | `gsd_backup_failures_total`, the backups that failed since this process started, and the instant it started counting |
+| `keep`, `interval_hours` | `config.backup.keep` and `config.backup.intervalHours`, as the poller uses them; `keep` 0 rotates nothing away |
+
+`pre_upgrade` is the newest copy taken before a schema migration (#301), read from its name in
+`pre-upgrade/` beside the database: `{"at", "from", "to"}`, or `null` when there is none. It is reported
+whether or not backups are enabled, because that copy is taken either way. The page derives the card's state
+from these fields, against the payload's `as_of`: stale is a newest copy older than two `interval_hours`, the
+`GroupSyncDashboardBackupStale` line at the chart's defaults.
 
 ### `GET /api/whoami`
 

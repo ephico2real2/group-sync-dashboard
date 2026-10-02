@@ -738,6 +738,37 @@ class TestCaptureAndBackupGauges:
         finally:
             store.close()
 
+    def test_t306_14_the_backups_card_leaves_the_exposition_as_it_was(self, tmp_path):
+        """T306-14, a regression guard (#306): the KPI page's Backups card reads what /metrics reads and adds
+        nothing to it. The same store, signals and backup directory render the same families and label sets,
+        and the same backup values, before and after the card's walk; and no family is the card's."""
+        from types import SimpleNamespace
+
+        from gsd.kpi.system import dashboard_data_bytes
+        from gsd.metrics import RuntimeSignals
+        db = tmp_path / "gsd.db"
+        backups = tmp_path / "backup"
+        store = Store(str(db))
+        try:
+            store.backup(str(backups), keep=4)
+            signals = RuntimeSignals()
+            signals.note_backup_failure()
+            settings = SimpleNamespace(backup_dir=str(backups), login_capture_enabled=False)
+
+            def exposition() -> list[str]:
+                text = generate_latest(build_registry(store, GRACE, signals=signals, settings=settings)).decode()
+                return sorted(line if line.startswith(("#", "gsd_backup_")) else line.rsplit(" ", 1)[0]
+                              for line in text.splitlines())
+
+            before = exposition()
+            card = dashboard_data_bytes(str(db), str(backups))()
+            assert exposition() == before
+        finally:
+            store.close()
+        assert card["backups"]["count"] == 1
+        assert "gsd_backup_failures_total 1.0" in before
+        assert not [line for line in before if line.startswith("# HELP") and "card" in line.lower()]
+
 
 class TestGroupCountCliffMetric:
     def _store(self, silence=None):

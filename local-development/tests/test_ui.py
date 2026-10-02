@@ -1448,8 +1448,8 @@ class TestKpiPage:
     def test_the_five_sections_render_from_the_payload(self, dash):
         self._open(dash)
         headings = [h.split("\n")[0].strip() for h in dash.locator("section.kpi-page > h2").all_inner_texts()]
-        assert headings[:4] == ["System status", "Access posture", "Trends", "Clusters"]
-        assert dash.locator(".kpi-page .kband .kpi").count() == 6
+        assert headings[:5] == ["System status", "Backups", "Access posture", "Trends", "Clusters"]
+        assert dash.locator(".kpi-page .kband:not(.bk) .kpi").count() == 6
         assert dash.locator(".kpi-page .trend").count() == 4
         assert dash.locator(".kpi-page .comp").count() == 2
         assert dash.locator(".kpi-page .kdoor").count() == 1
@@ -1658,6 +1658,157 @@ class TestKpiPage:
         assert dash.evaluate("() => getComputedStyle(document.querySelector('.kpi-page .beat')).animationName") == "none"
         dash.emulate_media(reduced_motion="no-preference")
         assert dash.evaluate("() => getComputedStyle(document.querySelector('.kpi-page .beat')).animationName") == "kpi-beat"
+
+    # ── the Backups card (#306) ──
+    # Each state as a server sends it, every instant placed against the payload's own as-of, the clock the card
+    # measures stale against. The harness configures no backup directory, so the served payload is "disabled".
+    BACKUP_STATES = ("disabled", "none", "stale", "failing", "healthy")
+    SET_BACKUPS = """([state, withPre]) => {
+        const at = Date.parse(data.kpi.as_of);
+        const iso = (s) => new Date(at + s * 1000).toISOString().replace(/\\.\\d{3}Z$/, "Z");
+        const on = {enabled: true, dir: "/data/backup", count: 4, kept: 4, bytes: 2621440, newest_at: iso(-3600), newest_schema: 20,
+                    known_schema: 20, failures: 0, failures_since: iso(-86400), keep: 4, interval_hours: 6};
+        data.kpi.system.dashboard.data.backups = {
+          disabled: {enabled: false},
+          none: {...on, count: 0, kept: 0, bytes: 0, newest_at: null, newest_schema: null},
+          stale: {...on, newest_at: iso(-13 * 3600)},
+          failing: {...on, failures: 3},
+          healthy: on,
+        }[state];
+        data.kpi.system.dashboard.data.pre_upgrade = withPre ? {at: "2026-09-25T06:46:01Z", from: 19, to: 20} : null;
+        render();
+        return iso(-3600); }"""
+
+    def _backups(self, dash, state, pre=False):
+        return dash.evaluate(self.SET_BACKUPS, [state, pre])
+
+    def _card(self, dash):
+        return dash.locator('section.kpi-page[data-card="backups"]')
+
+    def test_t306_8_disabled_reads_disabled_never_zero(self, dash):
+        """The harness's own payload: no backup directory. The card and the sub-line say disabled; nothing in the
+        card or the dashboard component reads "0 backups" or "never", and the data volume's bytes stay a number."""
+        self._open(dash)
+        card = self._card(dash)
+        assert card.locator(".bk-state").get_attribute("data-state") == "disabled"
+        assert card.locator(".bk-state .badge").inner_text().strip() == "backups are disabled"
+        comp = dash.locator('.kpi-page .comp[data-comp="dashboard"]')
+        assert "backups disabled" in comp.locator(".sub").nth(1).inner_text()
+        for text in (card.inner_text(), comp.inner_text()):
+            assert "0 backups" not in text and "never" not in text.lower(), text
+        assert "NaN" not in comp.locator(".meter-val").last.inner_text()
+        assert card.locator(".kpi").count() == 1, "disabled keeps only the pre-upgrade tile"
+
+    def test_t306_9_enabled_with_no_copy_reads_no_copy_yet(self, dash):
+        self._open(dash)
+        self._backups(dash, "none")
+        state = self._card(dash).locator(".bk-state")
+        assert state.get_attribute("data-state") == "none"
+        assert state.locator(".badge").inner_text().strip() == "no copy yet"
+        # keep 0 keeps every copy (Store._vacuum_into rotates nothing): no "/0" ceiling, "keep all" in the heading
+        dash.evaluate("() => { data.kpi.system.dashboard.data.backups.keep = 0; render(); }")
+        assert self._card(dash).locator('[data-kpi="backup-kept"] .value').inner_text().strip() == "0"
+        assert "keep all" in self._card(dash).locator("h2").inner_text()
+
+    def test_t306_10_older_than_two_intervals_reads_stale_with_the_instant(self, dash):
+        self._open(dash)
+        self._backups(dash, "stale")
+        state = self._card(dash).locator(".bk-state")
+        assert state.get_attribute("data-state") == "stale"
+        assert state.locator(".badge").inner_text().strip() == "stale"
+        newest = dash.evaluate("() => data.kpi.system.dashboard.data.backups.newest_at")
+        shown = dash.evaluate("(i) => fmtTime(i)", newest)
+        assert f"last copy {shown}, past 12 h" in state.inner_text()
+        assert state.locator("time").first.get_attribute("datetime") == newest
+        # Measured against the payload's as-of, the server's clock, never the browser's: a payload three days
+        # behind this browser, with a copy an hour older than its as-of, is healthy.
+        skewed = dash.evaluate("""() => { const at = Date.now() - 3 * 86400000;
+            const iso = (ms) => new Date(ms).toISOString().replace(/\\.\\d{3}Z$/, "Z");
+            data.kpi.as_of = iso(at);
+            Object.assign(data.kpi.system.dashboard.data.backups, {newest_at: iso(at - 3600000), failures: 0});
+            render(); return document.querySelector('[data-card="backups"] .bk-state').dataset.state; }""")
+        assert skewed == "ok", skewed
+
+    def test_t306_11_failures_are_paired_with_the_last_good_instant(self, dash):
+        self._open(dash)
+        last = self._backups(dash, "failing")
+        state = self._card(dash).locator(".bk-state")
+        assert state.get_attribute("data-state") == "failing"
+        shown = dash.evaluate("(i) => fmtTime(i)", last)
+        assert f"3 failures since start; last good copy {shown}" in state.inner_text()
+        assert state.locator("time").first.get_attribute("datetime") == last
+        # Failing with no copy at all (a new install whose backupDir is unwritable): the Last copy tile agrees
+        # with the state line rather than promising the first poll cycle (review of this spec, OB3, N1).
+        dash.evaluate("""() => { Object.assign(data.kpi.system.dashboard.data.backups,
+            {newest_at: null, newest_schema: null, count: 0, kept: 0, bytes: 0}); render(); }""")
+        assert "3 failures since start; no good copy yet" in state.inner_text()
+        tile = self._card(dash).locator('[data-kpi="backup-last"] .note').inner_text()
+        assert tile == "the attempts since start are failing", tile
+
+    def test_t306_12_five_tiles_absolute_instants_and_the_repaint_keeps_the_card(self, dash):
+        """The healthy card with a pre-upgrade copy, served by the route so the 60-second refresh repaints from
+        the same payload: five tiles, every instant an ISO-8601 UTC <time>, no age, and the card still there."""
+        served: list[str] = []
+
+        def healthy(route):
+            body = route.fetch().json()
+            at = datetime.fromisoformat(body["as_of"].replace("Z", "+00:00"))
+            stamp = lambda s: (at + timedelta(seconds=s)).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+            body["system"]["dashboard"]["data"]["backups"] = {
+                "enabled": True, "dir": "/data/backup", "count": 4, "kept": 4, "bytes": 2621440, "newest_at": stamp(-3600),
+                "newest_schema": 20, "known_schema": 20, "failures": 0, "failures_since": stamp(-86400),
+                "keep": 4, "interval_hours": 6}
+            body["system"]["dashboard"]["data"]["pre_upgrade"] = {"at": "2026-09-25T06:46:01Z", "from": 19, "to": 20}
+            route.fulfill(json=body)
+            served.append(body["as_of"])
+        dash.route("**/api/kpi", healthy)
+        self._open(dash)
+        dash.wait_for_selector('.bk-state[data-state="ok"]', timeout=10_000)
+        card = self._card(dash)
+
+        def check():
+            tiles = card.locator(".kband.bk .kpi").evaluate_all("els => els.map(e => e.dataset.kpi)")
+            assert tiles == ["backup-last", "backup-kept", "backup-failures", "backup-schema", "backup-preupgrade"]
+            stamps = card.locator("time").evaluate_all("els => els.map(e => [e.getAttribute('datetime'), e.textContent])")
+            assert stamps and all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", iso) for iso, _ in stamps), stamps
+            for iso, text in stamps:   # each shown as fmtTime shows it: whole, its date, or what follows the date
+                full = dash.evaluate("(i) => fmtTime(i)", iso)
+                assert text in (full, full.split(" ", 1)[0], full.split(" ", 1)[-1]), (iso, text, full)
+            assert " ago" not in card.inner_text()
+            assert "19 → 20" in card.locator('[data-kpi="backup-preupgrade"]').inner_text()
+            assert card.locator('[data-kpi="backup-kept"] .value').inner_text().replace("\n", "") == "4/4"
+
+        check()
+        polls = len(served)
+        dash.evaluate("() => refresh()")          # the page's poll, as the 60-second timer runs it
+        assert len(served) > polls, "the repaint did not fetch /api/kpi"
+        check()
+        # The page's display zone, as /api/version names it: the same instants, labelled in that zone.
+        utc = card.locator('[data-kpi="backup-last"] time').first.get_attribute("datetime")
+        dash.evaluate("() => { setDisplayZone({name: 'America/New_York', abbrev: 'EDT'}); render(); }")
+        shown = card.locator('[data-kpi="backup-last"] .value').inner_text()
+        assert shown.endswith(("EDT", "EST")) and card.locator('[data-kpi="backup-last"] time').first.get_attribute("datetime") == utc
+        check()
+        dash.evaluate("() => { setDisplayZone(null); render(); }")
+
+    def test_t306_13_every_state_fits_375_768_and_1280_in_light_and_dark(self, dash):
+        errors: list[str] = []
+        dash.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(dash)
+        for theme in ("light", "dark"):
+            dash.evaluate("(t) => document.documentElement.setAttribute('data-theme', t)", theme)
+            for width in (375, 768, 1280):
+                dash.set_viewport_size({"width": width, "height": 900})
+                for state in self.BACKUP_STATES:
+                    self._backups(dash, state, pre=True)
+                    drawn = self._card(dash).locator(".bk-state").get_attribute("data-state")
+                    assert drawn == {"healthy": "ok"}.get(state, state), (state, drawn)   # the state measured is the one set
+                    sizes = dash.evaluate("() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+                    assert sizes[0] == sizes[1], f"{state} at {width} px, {theme}: scrolls sideways {sizes}"
+                    card = dash.evaluate("""() => { const c = document.querySelector('[data-card="backups"]');
+                        return [c.scrollWidth, c.clientWidth]; }""")
+                    assert card[0] <= card[1], f"{state} at {width} px, {theme}: the card overflows {card}"
+        assert not errors, errors
 
 
 class TestNamespaces:
