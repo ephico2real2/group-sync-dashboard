@@ -1,0 +1,29 @@
+# The walk's temporary grant (after reports/2026-09-30_release-2.0.0-walk/scripts/grant.yaml): `developer` passes the
+# cluster-admin tier (`visibility.clusterAdminSar`, `update clusterrolebindings` on the host) for the length of the
+# KPI step. That tier gates the KPI tab (`require_cluster_admin` in local-development/gsd/api.py). Created by run.sh,
+# removed by run.sh's explicit delete and by its exit trap, both through the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-306-crb-update
+  labels:
+    walk.gsd.lab/run: kpi-backups-306-2026-10-02
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-306-crb-update-developer
+  labels:
+    walk.gsd.lab/run: kpi-backups-306-2026-10-02
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-306-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

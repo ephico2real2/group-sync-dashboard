@@ -1,0 +1,190 @@
+# SPEC_E6 §5 walk (#306), CRC lab; written by scripts/run.sh
+# started 2026-10-02T04:30:11Z; kube context crc-admin
+
+## Step 1 — before  (2026-10-02T04:30:11Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"c57f2927070faa8ee8c6d741bd3f94c903b41e1a"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,RESTARTS:.status.containerStatuses[*].restartCount,IMAGE:.spec.containers[0].image
+NAME                                          START                  RESTARTS   IMAGE
+group-sync-dashboard-846bdd4b7f-nf7zq         2026-10-02T04:23:57Z   0,0        quay.io/ephico2real/group-sync-dashboard:2.3.0
+group-sync-dashboard-report-65ff4fb56-x4np6   2026-10-02T04:23:57Z   0          quay.io/ephico2real/group-sync-dashboard-report:2.3.0
+gsd-offsite-check-030651-6kwg7                2026-10-02T03:06:51Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+manual-20261002034315-t5lzj                   2026-10-02T03:43:15Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+verify-1790912616-km2gt                       2026-10-02T03:43:37Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/api/version").read().decode())'
+{"leader":true,"version":"2.3.0","commit":"c57f292707","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io,secrets -A -l walk.gsd.lab/run=kpi-backups-306-2026-10-02 -o name
+$ oc get configmap -n group-sync-dashboard group-sync-dashboard-config -o jsonpath='{.data.clusters\.yaml}' | grep -n -E '^(backupDir|backupIntervalHours|backupKeep|replicaCount):'
+9:backupDir: "/data/backup"
+10:backupIntervalHours: 6
+11:backupKeep: 4
+92:replicaCount: 1
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- ls -la --time-style=full-iso /data/backup
+total 55824
+drwxrwsr-x. 2 1000790000 1000790000      158 2026-10-02 00:24:39.278534557 -0400 .
+drwxrwsr-x. 6 root       1000790000      145 2026-10-02 00:24:04.278365423 -0400 ..
+-rw-rw-r--. 1 1000790000 1000790000 14282752 2026-10-01 22:10:27.577213925 -0400 gsd-20261002T021026.489567Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14290944 2026-10-01 22:39:15.783549155 -0400 gsd-20261002T023914.880113Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14295040 2026-10-01 23:43:00.688614657 -0400 gsd-20261002T034300.088262Z.db
+-rw-r--r--. 1 1000790000 1000790000 14295040 2026-10-02 00:24:39.208534218 -0400 gsd-20261002T042438.581853Z.db
+
+## Step 5 — T306-15: git diff --name-only <merge base of #526> -- charts/  (2026-10-02T04:30:13Z)
+$ git -C '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306' diff --name-only 53efb10bd2d73a77c77aaccb7c503577a7041b4a c57f2927070faa8ee8c6d741bd3f94c903b41e1a -- charts/
+charts/group-sync-dashboard/Chart.yaml
+$ git -C '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306' diff 53efb10bd2d73a77c77aaccb7c503577a7041b4a c57f2927070faa8ee8c6d741bd3f94c903b41e1a -- charts/ | grep -E '^[+-]' | grep -v -E '^(\+\+\+|---) '
+-version: 0.61.0
++# CHART 0.61.1 (2026-10-01), PATCH: appVersion moves to application 2.3.0 (below); the KPI page's
++# Backups card (#306, SPEC_E6).
++version: 0.61.1
+-appVersion: "2.2.0"
++# 2.3.0 (2026-10-01). the KPI page's Backups card (#306, SPEC_E6). MINOR.
++appVersion: "2.3.0"
+
+## Step 5 — the rendered RBAC rules, main before #526 against c57f2927, -f environments/crc.yaml -f the Application's valuesObject  (2026-10-02T04:30:13Z)
+$ helm template group-sync-dashboard '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before/charts/group-sync-dashboard' -n group-sync-dashboard -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before/environments/crc.yaml' -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/values-object.json' > '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before.yaml' && grep -c '^kind: ' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before.yaml'
+44
+$ helm template group-sync-dashboard '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after/charts/group-sync-dashboard' -n group-sync-dashboard -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after/environments/crc.yaml' -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/values-object.json' > '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after.yaml' && grep -c '^kind: ' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after.yaml'
+44
+$ '/Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before.yaml' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after.yaml'
+rules: before 65, after 65
+REMOVED 0
+ADDED 0
+$ diff <(grep -v -E '^ *(helm.sh/chart|app.kubernetes.io/version|checksum/[a-z-]+): ' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before.yaml') <(grep -v -E '^ *(helm.sh/chart|app.kubernetes.io/version|checksum/[a-z-]+): ' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after.yaml') | head -40; echo "rendered lines differing beyond the chart/version labels and checksums: $(diff <(grep -v -E '^ *(helm.sh/chart|app.kubernetes.io/version|checksum/[a-z-]+): ' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/before.yaml') <(grep -v -E '^ *(helm.sh/chart|app.kubernetes.io/version|checksum/[a-z-]+): ' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-306-tmp/rbac/after.yaml') | grep -c -E '^[<>]')"
+2099c2099
+<           image: quay.io/ephico2real/group-sync-dashboard:2.2.0
+---
+>           image: quay.io/ephico2real/group-sync-dashboard:2.3.0
+2439c2439
+<           image: quay.io/ephico2real/group-sync-dashboard-report:2.2.0
+---
+>           image: quay.io/ephico2real/group-sync-dashboard-report:2.3.0
+2620c2620
+<   name: group-sync-dashboard-backup-offsite-bind-90bce88b
+---
+>   name: group-sync-dashboard-backup-offsite-bind-4e95868a
+2653c2653
+<           image: quay.io/ephico2real/group-sync-dashboard:2.2.0
+---
+>           image: quay.io/ephico2real/group-sync-dashboard:2.3.0
+2728c2728
+<               image: quay.io/ephico2real/group-sync-dashboard:2.2.0
+---
+>               image: quay.io/ephico2real/group-sync-dashboard:2.3.0
+2835c2835
+<               image: quay.io/ephico2real/group-sync-dashboard-report:2.2.0
+---
+>               image: quay.io/ephico2real/group-sync-dashboard-report:2.3.0
+2945c2945
+<               image: quay.io/ephico2real/group-sync-dashboard-report:2.2.0
+---
+>               image: quay.io/ephico2real/group-sync-dashboard-report:2.3.0
+3054c3054
+<               image: quay.io/ephico2real/group-sync-dashboard-report:2.2.0
+---
+>               image: quay.io/ephico2real/group-sync-dashboard-report:2.3.0
+rendered lines differing beyond the chart/version labels and checksums: 16
+
+## Step 6 — the disabled state is the browser harness's (T306-8), run at c57f2927 in this worktree  (2026-10-02T04:30:14Z)
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/local-development' && PYTHONPATH='/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/local-development' '/Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python' -m pytest tests/test_ui.py -p no:cacheprovider --browser chromium -q -k 'test_t306_8 or test_t306_13' 2>&1 | tail -3
+..                                                                       [100%]
+2 passed, 655 deselected in 2.54s
+
+## The grant  (2026-10-02T04:30:16Z)
+$ oc create -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/reports/2026-10-02_kpi-backups-306/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-306-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-306-crb-update-developer created
+grant created at 2026-10-02T04:30:17Z
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+yes
+waited for the tier's cache until 2026-10-02T04:31:27Z
+
+## Steps 2, 3, 4 — walk.py kpi (the cluster-admin tier)  (2026-10-02T04:31:27Z)
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py kpi
+2026-10-02T04:31:27Z mode                                                      : kpi
+2026-10-02T04:31:31Z logged in                                                 : https://group-sync-dashboard.apps-crc.testing
+2026-10-02T04:31:31Z PASS whoami: developer with the cluster-admin tier        : {"user": "developer", "cluster_admin": true}
+2026-10-02T04:31:31Z PASS the KPIs tab is offered                              : ["Home", "Overview", "KPIs", "Groups", "Users", "Access granted", "RBAC policy", "Kyverno", "Namespace audit", "Logins", "Usage", "Reports", "Library", "Cluster Configurations"]
+2026-10-02T04:31:33Z KPI page card headings, in order                          : ["System status", "Backups", "Access posture", "Trends", "Clusters"]
+2026-10-02T04:31:33Z PASS the Backups card is directly below System status     : ["System status", "Backups", "Access posture", "Trends", "Clusters"]
+2026-10-02T04:31:33Z PASS no visible 'Dashboard API error'                     : 
+2026-10-02T04:31:33Z the card (DOM)                                            : {"heading": "Backups on-volume \u00b7 /data/backup \u00b7 every 6 h \u00b7 keep 4", "state": "ok", "badge": "healthy", "detail": "last copy 2026-10-02 00:24:39 EDT; next due by 2026-10-02 06:24:39 EDT", "tiles": {"backup-last": {"label": "LAST COPY", "value": "00:24:39 EDT", "note": "2026-10-02 \u00b7 next due by 06:24:39 EDT", "datetimes": ["2026-10-02T04:24:39Z", "2026-10-02T04:24:39Z", "2026-10-02T10:24:39Z"]}, "backup-kept": {"label": "COPIES KEPT", "value": "4/4", "note": "55Mi on the data volume", "datetimes": []}, "backup-failures": {"label": "FAILURES", "value": "0", "note": "since start 2026-10-02 00:24:04 EDT", "datetimes": ["2026-10-02T04:24:04Z"]}, "backup-schema": {"label": "NEWEST COPY'S SCHEMA", "value": "20/20", "note": "this build understands 20", "datetimes": []}, "backup-preupgrade": {"label": "PRE-UPGRADE COPY", "value": "none", "note": "one is taken before each schema migration; none on this volume yet", "datetimes": []}}}
+2026-10-02T04:31:33Z GET /api/kpi on the session: system.dashboard.data.{backups,pre_upgrade}: {"http": 200, "as_of": "2026-10-02T04:31:33Z", "backups": {"enabled": true, "dir": "/data/backup", "count": 4, "bytes": 57163776, "kept": 4, "newest_at": "2026-10-02T04:24:39Z", "newest_schema": 20, "known_schema": 20, "failures": 0, "failures_since": "2026-10-02T04:24:04Z", "keep": 4, "interval_hours": 6}, "pre_upgrade": null}
+2026-10-02T04:31:35Z /metrics in the pod (127.0.0.1:8080), gsd_backup_*        : ["gsd_backup_failures_total 0.0", "gsd_backup_last_success_timestamp_seconds 1.7909150792085342e+09"]
+2026-10-02T04:31:36Z https://group-sync-dashboard.apps-crc.testing/metrics, gsd_backup_*: ["gsd_backup_failures_total 0.0", "gsd_backup_last_success_timestamp_seconds 1.7909150792085342e+09"]
+2026-10-02T04:31:36Z PASS the card and both /metrics reads within the same minute: 2.9 s from the card read
+2026-10-02T04:31:36Z PASS the pod's and the route's gsd_backup_* agree         : {"pod": {"gsd_backup_failures_total": 0.0, "gsd_backup_last_success_timestamp_seconds": 1790915079.2085342}, "route": {"gsd_backup_failures_total": 0.0, "gsd_backup_last_success_timestamp_seconds": 1790915079.2085342}}
+2026-10-02T04:31:36Z PASS T306-17 last copy: card time[datetime] == the metric truncated to the second, UTC: {"card": "2026-10-02T04:24:39Z", "metric": 1790915079.2085342, "metric_utc_s": "2026-10-02T04:24:39Z"}
+2026-10-02T04:31:36Z PASS T306-17 failures: the Failures tile == gsd_backup_failures_total: {"tile": "0", "metric": 0.0}
+2026-10-02T04:31:36Z newest copy under /data/backup: path, header[:16], bytes read, offset 60 (big-endian u32), mtime: ["/data/backup/gsd-20261002T042438.581853Z.db", "53514c69746520666f726d6174203300", "64", "20", "1790915079.2085342"]
+2026-10-02T04:31:36Z PASS step 4: the header is SQLite's                       : ["53514c69746520666f726d6174203300", "64"]
+2026-10-02T04:31:36Z FAIL step 4: the schema tile's newest_schema == offset 60 of the newest copy: {"tile": "20/20", "offset_60": "1790915079.2085342"}
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/reports/2026-10-02_kpi-backups-306/scripts/walk.py", line 269, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/reports/2026-10-02_kpi-backups-306/scripts/walk.py", line 261, in main
+    {"kpi": mode_kpi, "refused": mode_refused}[mode](page)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/reports/2026-10-02_kpi-backups-306/scripts/walk.py", line 197, in mode_kpi
+    metric_dt is not None and abs(float(head[5]) - ts) < 1e-3, {"mtime": head[5], "metric": ts})
+                                        ~~~~^^^
+IndexError: list index out of range
+
+## The grant's delete  (2026-10-02T04:31:36Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/specs/impl/wt-walk306/reports/2026-10-02_kpi-backups-306/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io "gsd-walk-306-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-306-crb-update-developer" deleted
+grant deleted at 2026-10-02T04:31:37Z; held 80 s
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io,secrets -A -l walk.gsd.lab/run=kpi-backups-306-2026-10-02 -o name
+waited 70 s for the tier's cache until 2026-10-02T04:32:47Z
+
+## The lower tier — walk.py refused (no grant)  (2026-10-02T04:32:47Z)
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py refused
+2026-10-02T04:32:47Z mode                                                      : refused
+2026-10-02T04:32:51Z logged in                                                 : https://group-sync-dashboard.apps-crc.testing
+2026-10-02T04:32:51Z PASS whoami: developer without the cluster-admin tier     : {"user": "developer", "cluster_admin": false}
+2026-10-02T04:32:51Z PASS the KPIs tab is not offered                          : ["Home", "Overview", "Groups", "Users", "Access granted", "RBAC policy", "Kyverno", "Namespace audit", "Logins", "Usage", "Reports", "Library"]
+2026-10-02T04:32:53Z the KPI page as rendered                                  : KPIs Withheld, not empty. This page reports the dashboard's own pods, the fleet's access posture and its trends — governance data about the clusters, not about the reader. For administrators only. Nothing on this page is broken and nothing is missing from the cluster — this view is simply not part of yours.
+2026-10-02T04:32:53Z PASS the KPI page is the refusal card                     : 
+2026-10-02T04:32:53Z PASS no Backups card on the page                          : 0
+2026-10-02T04:32:53Z PASS GET /api/kpi on the session answers 403              : {"http": 403}
+2026-10-02T04:32:53Z shot                                                      : screenshots/kpi-refused-developer-1280-light.png
+2026-10-02T04:32:53Z PASS no visible 'Dashboard API error'                     : 
+2026-10-02T04:32:53Z PASS no page errors                                       : []
+2026-10-02T04:32:53Z failures                                                  : []
+
+## Step 7 — after  (2026-10-02T04:32:53Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"c57f2927070faa8ee8c6d741bd3f94c903b41e1a"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,RESTARTS:.status.containerStatuses[*].restartCount,IMAGE:.spec.containers[0].image
+NAME                                          START                  RESTARTS   IMAGE
+group-sync-dashboard-846bdd4b7f-nf7zq         2026-10-02T04:23:57Z   0,0        quay.io/ephico2real/group-sync-dashboard:2.3.0
+group-sync-dashboard-report-65ff4fb56-x4np6   2026-10-02T04:23:57Z   0          quay.io/ephico2real/group-sync-dashboard-report:2.3.0
+gsd-offsite-check-030651-6kwg7                2026-10-02T03:06:51Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+manual-20261002034315-t5lzj                   2026-10-02T03:43:15Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+verify-1790912616-km2gt                       2026-10-02T03:43:37Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/api/version").read().decode())'
+{"leader":true,"version":"2.3.0","commit":"c57f292707","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io,secrets -A -l walk.gsd.lab/run=kpi-backups-306-2026-10-02 -o name
+walk exit=1 at 2026-10-02T04:32:54Z
+
+## exit trap  (2026-10-02T04:32:54Z)
+No resources found
+No resources found
+can-i after the trap: no
