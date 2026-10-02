@@ -310,7 +310,9 @@ type: application
 # CHART 0.61.0 (2026-10-01), MINOR: backup.offsite.enabled defaults to "" (on wherever it can work),
 # read as true, false or empty; the offsite CronJob also ships the newest pre-upgrade copy (#304,
 # SPEC_E5). appVersion unchanged.
-version: 0.61.0
+# CHART 0.61.1 (2026-10-01), PATCH: appVersion moves to application 2.3.0 (below); the KPI page's
+# Backups card (#306, SPEC_E6).
+version: 0.61.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -436,7 +438,8 @@ version: 0.61.0
 # 2.1.0 (2026-10-01). restore-db.sh lists the database copies the recovery pod can restore and
 # restores one (#302, SPEC_E3). MINOR.
 # 2.2.0 (2026-10-01). per-pod backup rotation above one replica (#391, SPEC_E4). MINOR.
-appVersion: "2.2.0"
+# 2.3.0 (2026-10-01). the KPI page's Backups card (#306, SPEC_E6). MINOR.
+appVersion: "2.3.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
