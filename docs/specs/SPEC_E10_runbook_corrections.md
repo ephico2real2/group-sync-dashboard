@@ -99,6 +99,32 @@ implementation blocks (`docs/specs/README.md`, "Implementation blocks"), applied
     - Note 1's citation of the values-file rule corrected to SPEC_E2's notes and the test that holds it.
     - Remarks, not changed: §4d step 3's `helm pull --untar` is not re-runnable as a block (the text already says to
       re-run only the patch); `/api/version` can read `"leader":false` for a few seconds after the give-back.
+11. **The §5 walk (2026-10-02, PR #537), decided by the orchestrator: W1–W3 accepted, O1 routed to #532.** The record
+    is `reports/2026-10-02_runbook-corrections-533/` (`README.md`, `walk.log`, branch `reports/533-runbook-walk`,
+    `6090b79f`). Every runbook instruction the walk ran worked as printed; the corrections are to what the text says
+    was measured.
+    - **W1:** §4d's introduction said the restore and step 7 were not walked, and step 7 ended "Not measured on the
+      lab". Both were walked: the break-glass restore (walk step 6.4: a loss window of `15:10:31Z -> 15:16:16Z
+      (5m44s)`, 0 rows discarded; after step 6, 0 of 163 template fields differed, 6.6) and `terminate-op` (3e′:
+      issued 15:06:30.720Z, `Terminating` at 15:06:31.653Z, `Failed` with `Operation terminated (retried 3 times).`
+      at 15:06:32.802Z, so +0.9 s and +2.08 s; the pause at 15:03:12.55Z did not stop the operation, retry #2 failed
+      and #3 was scheduled at 15:03:25.9Z while paused; the pause ended 15:07:52.508Z, an operation started 15:07:52Z,
+      the command was uvicorn at 15:08:13.544Z, +21.0 s, Synced/Healthy at 15:08:33.030Z, +40.5 s). Block 12 states
+      them; T533-6 (block 17) holds them.
+    - **W2:** step 7's command assumes a logged-in `argocd` CLI. The walk ran it in `--core` mode with the v3.4.7 CLI,
+      through a kubeconfig overlay naming a context with namespace `openshift-gitops` and no credentials, with the
+      four OpenShift GitOps component names (and `--config` in its scratch directory, which the runbook does not
+      need); without the overlay it failed with `configmap "argocd-cm" not found`. Block 12 prints that form beside
+      the logged-in one; the overlay's `printf` is not the walk's file, and was proved here to resolve to the lab's
+      server with namespace `openshift-gitops` (`oc config view --minify`, local, the shared context unchanged).
+      Not measured: whether `terminate-op` needs the component names (a read-only `app get` worked without them), and
+      the UI path.
+    - **W3:** §4c's expected `"leader":true` read `false` at 15:17:40Z straight after step 6's rollout; the replaced
+      pod's 30 s lease expired and the new pod took it at 15:17:50.4Z (`walk.log`, `gsd.leader`). Block 22 says to
+      wait and read again; T533-2 (block 17) holds it. This is note 10's remark, now measured.
+    - **O1, routed to #532:** under §4d, `restore-db.sh --list` says `/offsite is not mounted (recovery mode mounts
+      the offsite claim only when backup.offsite uses its pvc destination)` on a release that uses it, and its closing
+      line names the values-file path. The script's wording is outside this spec.
 
 ## 1. The mandate, and what is out of scope
 
@@ -529,8 +555,9 @@ Step 7 of §4d (terminate a retrying operation) is walked only if the operator a
 
 ## 7. Implementation blocks
 
-Twenty-one blocks, in order: the runbook (1–12), SPEC_E7 (13), the CHANGELOG (14), the runbook's tests (15–17),
-`prepare-release.py` and its test (18–20), and the restore test that runs §4a's body (21). New runbook code blocks use four backticks
+Twenty-two blocks, in order: the runbook (1–12), SPEC_E7 (13), the CHANGELOG (14), the runbook's tests (15–17),
+`prepare-release.py` and its test (18–20), the restore test that runs §4a's body (21), and §4c's leader read (22, from
+the §5 walk; Orchestrator's notes, 11). New runbook code blocks use four backticks
 (`local-development/apply-spec-blocks.py#FENCE` ends a block's fence at the first line of exactly three; SPEC_E7's
 Orchestrator's notes, 6).
 
@@ -820,8 +847,8 @@ New text:
 
 For an incident on a release Argo CD syncs (#533; the operator's decision of 2026-10-02). It replaces steps 1, 2 and
 5 of the values-file path; the restore is the same script. Every step was walked on the CRC lab (Argo CD v3.4.7, chart
-0.61.2) except the restore itself, the ApplicationSet case and step 7, which follow Argo CD's documentation. You need
-the right to patch the release's Application in Argo CD's namespace, `helm`, and a release at one replica (recovery
+0.61.2), the restore and step 7 included (SPEC_E10's §5 walk, 2026-10-02); the ApplicationSet case follows Argo CD's
+documentation. You need the right to patch the release's Application in Argo CD's namespace, `helm`, and a release at one replica (recovery
 mode and `restore-db.sh` need exactly one pod).
 
 1. **Find the Application, and whether an ApplicationSet owns it.** The Deployment's tracking annotation reads
@@ -873,7 +900,8 @@ mode and `restore-db.sh` need exactly one pod).
    on the lab it took 4 s. The offsite claim is not mounted by this edit: restore a copy that is only on `/offsite`
    with §4b. For more time, run the patch again with a longer `TTL`; the new pod counts it from its start.
 4. **Restore** with the script, as **The script, in recovery mode** says. It accepted this pod on the lab (`recovery
-   mode, at least 1h59m56s of its TTL left`) and listed its copies:
+   mode, at least 1h59m56s of its TTL left`), listed its copies, and restored the newest (a loss window of 5m44s, no
+   rows discarded):
 
    ````sh
    local-development/restore-db.sh --list --namespace $NS --release $REL
@@ -915,16 +943,33 @@ mode and `restore-db.sh` need exactly one pod).
 7. **A sync that is already retrying (the endless retry in **Risks under Argo CD**).** When recovery mode was turned
    on through the values file and the Application's operation reads Running with `Retrying attempt #N`, the pause
    stops new automated syncs but not that operation: Argo CD retries a failed operation whatever the sync policy says,
-   up to its `limit`. **Incident step:** pause (step 2), then terminate the operation, from the Application's sync
-   status in the Argo CD UI or with the Argo CD CLI; a terminating operation is not retried:
+   up to its `limit`. On the lab, after the pause, retry #2 failed and the operation scheduled retry #3 and stayed
+   Running. **Incident step:** pause (step 2), then terminate the operation, from the Application's sync status in the
+   Argo CD UI or with the Argo CD CLI; a terminating operation is not retried. With the CLI logged in to Argo CD:
 
    ````sh
    argocd app terminate-op $APP
    ````
 
-   The pod stays in the recovery mode the chart rendered, and steps 3 and 6 do not apply. Restore (step 4), commit
-   `recovery.enabled: false` to the values file, and end the pause (step 5): with no operation running, automated
-   sync takes the new revision. Not measured on the lab.
+   Without a login, use the CLI's `--core` mode, with a CLI of the server's version (v3.4.7 on the lab): it talks to
+   the Kubernetes API with your kubeconfig and reads Argo CD's namespace from the kube context, so the context must
+   name `$ARGO_NS`; with another namespace it fails with `configmap "argocd-cm" not found` (measured). The first
+   command writes, into a file of its own, a context that names `$ARGO_NS` and your current context's cluster and user,
+   and no credentials; your kubeconfig is not changed. The component names are OpenShift GitOps's:
+
+   ````sh
+   printf 'apiVersion: v1\nkind: Config\ncurrent-context: break-glass\ncontexts:\n- name: break-glass\n  context:\n    cluster: %s\n    user: %s\n    namespace: %s\n' "$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}')" "$(oc config view --minify -o jsonpath='{.contexts[0].context.user}')" $ARGO_NS > ./argocd-context.yaml
+   KUBECONFIG=./argocd-context.yaml:${KUBECONFIG:-$HOME/.kube/config} argocd --core --redis-name openshift-gitops-redis --repo-server-name openshift-gitops-repo-server --server-name openshift-gitops-server --controller-name openshift-gitops-application-controller app terminate-op $APP
+   ````
+
+   It prints `Application '<APP>' operation terminating`. On the lab the phase read `Terminating` 0.9 s after the
+   command and `Failed` (`Operation terminated (retried 3 times).`) 2.08 s after it, and step 2's check then read
+   `false Failed`. Not measured: whether `terminate-op` needs the four component names (a read-only `argocd app get`
+   worked without them), and the UI path. The pod stays in the recovery mode the chart rendered, and steps 3 and 6 do
+   not apply. Restore (step 4), commit `recovery.enabled: false` to the values file, and end the pause (step 5): with
+   no operation running, automated sync takes the new revision at once. On the lab an operation started in the same
+   second, the app's command was back 21.0 s after the pause ended, and the Application read Synced/Healthy 40.5 s
+   after it.
 
 ## 5. Moving the data to a new claim (access mode change)
 ```
@@ -1127,6 +1172,8 @@ def test_t533_2_section_4c_counts_up_to_the_copys_highest_id(tmp_path: pathlib.P
     for table, rows in tables.items():
         found = re.search(rf"^{table} (\d+) rows up to id (\d+)$", counted, re.M)
         assert found and int(found[1]) == rows, (table, counted)
+    # right after a rollout the replaced pod still holds the lease (the §5 walk read "leader":false for about 10 s)
+    assert "Wait and read again" in flat(section("4").split("### 4c.", 1)[1])
 
 
 def test_t533_3_section_0_prints_the_metrics_read() -> None:
@@ -1207,6 +1254,10 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
     for words in ("ignoreApplicationDifferences", "uvicorn is running here", "Incident step", "selfHeal", "0 of 163",
                   "a phase that is not `Running`", "each retry applies what Git renders over the hand edit",
                   "exceeded its progress deadline"):
+        assert words in prose, words
+    # the §5 walk (2026-10-02) ran the restore and step 7; without an Argo CD login the CLI needs its --core form
+    assert "Not measured on the lab" not in prose and "except the restore itself" not in prose
+    for words in ("argocd --core", 'configmap "argocd-cm" not found', "Operation terminated (retried 3 times)", "5m44s"):
         assert words in prose, words
 
 
@@ -1336,4 +1387,27 @@ New text:
 ```text
     start = next(i for i, line in enumerate(lines)
                  if line.startswith("oc debug -n $NS deploy/$REL --one-container -c dashboard -- sh -c '"))
+```
+
+
+### Block 22 — docs/RUNBOOK_backup_restore.md: §4c, the leader read straight after a rollout
+
+T533-2 (Orchestrator's notes, 11, W3).
+
+<!-- block: docs/RUNBOOK_backup_restore.md | edit -->
+
+Old text:
+
+```text
+rollback, as `gsd_build_info` on `/metrics` says too (with `oauthProxy.enabled` the app binds loopback; `curl` from
+inside the pod is the honest check).
+```
+
+New text:
+
+```text
+rollback, as `gsd_build_info` on `/metrics` says too (with `oauthProxy.enabled` the app binds loopback; `curl` from
+inside the pod is the honest check). Straight after a rollout it can read `"leader":false`: the replaced pod's 30 s
+lease has not expired yet, and the new pod takes it when it does (about 10 s on the lab, after §4d step 6). Wait and
+read again.
 ```

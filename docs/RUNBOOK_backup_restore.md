@@ -510,7 +510,9 @@ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/ver
 
 Expected: `{"leader":true,"version":"<the application version the release now runs>",…}`, the older one after a
 rollback, as `gsd_build_info` on `/metrics` says too (with `oauthProxy.enabled` the app binds loopback; `curl` from
-inside the pod is the honest check).
+inside the pod is the honest check). Straight after a rollout it can read `"leader":false`: the replaced pod's 30 s
+lease has not expired yet, and the new pod takes it when it does (about 10 s on the lab, after §4d step 6). Wait and
+read again.
 
 **The report pod stays NotReady until a new copy is written** after a restore from a newer image. The newest copy under
 `/data/report` is the one the previous image wrote, and the report service refuses a snapshot newer than it
@@ -574,8 +576,8 @@ old copy to *read* its history is a reason to set both windows to `0` first.
 
 For an incident on a release Argo CD syncs (#533; the operator's decision of 2026-10-02). It replaces steps 1, 2 and
 5 of the values-file path; the restore is the same script. Every step was walked on the CRC lab (Argo CD v3.4.7, chart
-0.61.2) except the restore itself, the ApplicationSet case and step 7, which follow Argo CD's documentation. You need
-the right to patch the release's Application in Argo CD's namespace, `helm`, and a release at one replica (recovery
+0.61.2), the restore and step 7 included (SPEC_E10's §5 walk, 2026-10-02); the ApplicationSet case follows Argo CD's
+documentation. You need the right to patch the release's Application in Argo CD's namespace, `helm`, and a release at one replica (recovery
 mode and `restore-db.sh` need exactly one pod).
 
 1. **Find the Application, and whether an ApplicationSet owns it.** The Deployment's tracking annotation reads
@@ -627,7 +629,8 @@ mode and `restore-db.sh` need exactly one pod).
    on the lab it took 4 s. The offsite claim is not mounted by this edit: restore a copy that is only on `/offsite`
    with §4b. For more time, run the patch again with a longer `TTL`; the new pod counts it from its start.
 4. **Restore** with the script, as **The script, in recovery mode** says. It accepted this pod on the lab (`recovery
-   mode, at least 1h59m56s of its TTL left`) and listed its copies:
+   mode, at least 1h59m56s of its TTL left`), listed its copies, and restored the newest (a loss window of 5m44s, no
+   rows discarded):
 
    ````sh
    local-development/restore-db.sh --list --namespace $NS --release $REL
@@ -669,16 +672,33 @@ mode and `restore-db.sh` need exactly one pod).
 7. **A sync that is already retrying (the endless retry in **Risks under Argo CD**).** When recovery mode was turned
    on through the values file and the Application's operation reads Running with `Retrying attempt #N`, the pause
    stops new automated syncs but not that operation: Argo CD retries a failed operation whatever the sync policy says,
-   up to its `limit`. **Incident step:** pause (step 2), then terminate the operation, from the Application's sync
-   status in the Argo CD UI or with the Argo CD CLI; a terminating operation is not retried:
+   up to its `limit`. On the lab, after the pause, retry #2 failed and the operation scheduled retry #3 and stayed
+   Running. **Incident step:** pause (step 2), then terminate the operation, from the Application's sync status in the
+   Argo CD UI or with the Argo CD CLI; a terminating operation is not retried. With the CLI logged in to Argo CD:
 
    ````sh
    argocd app terminate-op $APP
    ````
 
-   The pod stays in the recovery mode the chart rendered, and steps 3 and 6 do not apply. Restore (step 4), commit
-   `recovery.enabled: false` to the values file, and end the pause (step 5): with no operation running, automated
-   sync takes the new revision. Not measured on the lab.
+   Without a login, use the CLI's `--core` mode, with a CLI of the server's version (v3.4.7 on the lab): it talks to
+   the Kubernetes API with your kubeconfig and reads Argo CD's namespace from the kube context, so the context must
+   name `$ARGO_NS`; with another namespace it fails with `configmap "argocd-cm" not found` (measured). The first
+   command writes, into a file of its own, a context that names `$ARGO_NS` and your current context's cluster and user,
+   and no credentials; your kubeconfig is not changed. The component names are OpenShift GitOps's:
+
+   ````sh
+   printf 'apiVersion: v1\nkind: Config\ncurrent-context: break-glass\ncontexts:\n- name: break-glass\n  context:\n    cluster: %s\n    user: %s\n    namespace: %s\n' "$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}')" "$(oc config view --minify -o jsonpath='{.contexts[0].context.user}')" $ARGO_NS > ./argocd-context.yaml
+   KUBECONFIG=./argocd-context.yaml:${KUBECONFIG:-$HOME/.kube/config} argocd --core --redis-name openshift-gitops-redis --repo-server-name openshift-gitops-repo-server --server-name openshift-gitops-server --controller-name openshift-gitops-application-controller app terminate-op $APP
+   ````
+
+   It prints `Application '<APP>' operation terminating`. On the lab the phase read `Terminating` 0.9 s after the
+   command and `Failed` (`Operation terminated (retried 3 times).`) 2.08 s after it, and step 2's check then read
+   `false Failed`. Not measured: whether `terminate-op` needs the four component names (a read-only `argocd app get`
+   worked without them), and the UI path. The pod stays in the recovery mode the chart rendered, and steps 3 and 6 do
+   not apply. Restore (step 4), commit `recovery.enabled: false` to the values file, and end the pause (step 5): with
+   no operation running, automated sync takes the new revision at once. On the lab an operation started in the same
+   second, the app's command was back 21.0 s after the pause ended, and the Application read Synced/Healthy 40.5 s
+   after it.
 
 ## 5. Moving the data to a new claim (access mode change)
 

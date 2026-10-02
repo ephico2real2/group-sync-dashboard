@@ -189,6 +189,8 @@ def test_t533_2_section_4c_counts_up_to_the_copys_highest_id(tmp_path: pathlib.P
     for table, rows in tables.items():
         found = re.search(rf"^{table} (\d+) rows up to id (\d+)$", counted, re.M)
         assert found and int(found[1]) == rows, (table, counted)
+    # right after a rollout the replaced pod still holds the lease (the §5 walk read "leader":false for about 10 s)
+    assert "Wait and read again" in flat(section("4").split("### 4c.", 1)[1])
 
 
 def test_t533_3_section_0_prints_the_metrics_read() -> None:
@@ -269,6 +271,10 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
     for words in ("ignoreApplicationDifferences", "uvicorn is running here", "Incident step", "selfHeal", "0 of 163",
                   "a phase that is not `Running`", "each retry applies what Git renders over the hand edit",
                   "exceeded its progress deadline"):
+        assert words in prose, words
+    # the §5 walk (2026-10-02) ran the restore and step 7; without an Argo CD login the CLI needs its --core form
+    assert "Not measured on the lab" not in prose and "except the restore itself" not in prose
+    for words in ("argocd --core", 'configmap "argocd-cm" not found', "Operation terminated (retried 3 times)", "5m44s"):
         assert words in prose, words
 
 
