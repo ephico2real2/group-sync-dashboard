@@ -206,6 +206,48 @@ ReadWriteOncePod
 {{- end -}}
 {{- end -}}
 
+# ── Off-volume backup ─────────────────────────────────────────────────────────────────────
+# gsd.offsiteBlocker: the first of the five conditions under which the offsite CronJob cannot work,
+# as the message an explicit `backup.offsite.enabled: true` refuses the render with; empty when none
+# holds. The default ("") yields on exactly these five. The offsite stanza's own values (destination
+# type, claim, keep, S3 Secret and image) are refused in backup-offsite.yaml in every state.
+{{- define "gsd.offsiteBlocker" -}}
+{{- if not .Values.persistence.enabled -}}
+backup.offsite.enabled=true requires persistence.enabled=true. With an emptyDir there is no volume to ship a backup off, and the history it would protect resets on every restart anyway.
+{{- else if not .Values.config.backup.enabled -}}
+backup.offsite.enabled=true requires config.backup.enabled=true. The CronJob ships the VACUUM INTO files the dashboard writes under config.backup.dir; with that off there is nothing to ship, and copying the live gsd.db with its WAL would produce a torn file that opens and restores — the worst kind of backup.
+{{- else if or (not (hasPrefix "/data/" .Values.config.backup.dir)) (contains ".." .Values.config.backup.dir) -}}
+{{- printf "backup.offsite.enabled=true requires config.backup.dir under /data/ with no '..' (it is %q). The CronJob mounts the data claim at /data, read-only, and reads the backups from there." .Values.config.backup.dir -}}
+{{- else if and .Values.persistence.existingClaim (not .Values.persistence.accessMode) -}}
+backup.offsite.enabled=true with persistence.existingClaim requires persistence.accessMode set to that claim's access mode: helm cannot read the live claim, and an emptied accessMode derives ReadWriteOncePod or ReadWriteMany from replicaCount, which may not be what the claim was created with. ReadWriteOncePod is refused either way.
+{{- else if eq (include "gsd.accessMode" .) "ReadWriteOncePod" -}}
+backup.offsite.enabled=true cannot work with a ReadWriteOncePod data volume: that mode lets exactly ONE pod mount the claim, so the CronJob pod would stay Pending forever. Set persistence.accessMode to ReadWriteOnce (the CronJob is then pinned to the dashboard's node by podAffinity) or ReadWriteMany. accessModes are immutable on an existing claim — docs/RUNBOOK_backup_restore.md covers moving the data to a new one.
+{{- end -}}
+{{- end -}}
+
+# gsd.offsiteOn: backup.offsite.enabled read as a WORD, never by truthiness. "true" or "false":
+#   ""     (the default) on wherever the copy can work, off with no error where it cannot;
+#   true   on, and backup-offsite.yaml refuses each blocker by name;
+#   false  off.
+# A template `if` takes the string "false" as true and "" as false, and Sprig's `default` takes an
+# explicit false as empty, so the value is printed and compared. A boolean prints as its word; YAML
+# 1.1's yes/no/on/off arrive as booleans; a null removes the key, which is the default. Any other
+# word refuses the render. Everything that must follow the CronJob calls this one helper: the
+# CronJob's objects, its two alerts (monitoring.yaml), the recovery pod's offsite mount (SPEC_E2).
+{{- define "gsd.offsiteOn" -}}
+{{- $raw := .Values.backup.offsite.enabled -}}
+{{- $word := ternary "" (toString $raw) (kindIs "invalid" $raw) -}}
+{{- if eq $word "true" -}}
+true
+{{- else if eq $word "false" -}}
+false
+{{- else if eq $word "" -}}
+{{- ternary "true" "false" (eq (include "gsd.offsiteBlocker" .) "") -}}
+{{- else -}}
+{{- fail (printf "backup.offsite.enabled is %q, which is not one of its three values: empty (\"\", the default: on wherever the off-volume copy can work, and nothing where it cannot), true (on, and the render refuses a combination that cannot work) or false (off). Set one of them in this release's values file and roll it out through the release's deployment pipeline." $word) -}}
+{{- end -}}
+{{- end -}}
+
 # ---------------------------------------------------------------------------
 # Session cookie lifetime
 # ---------------------------------------------------------------------------

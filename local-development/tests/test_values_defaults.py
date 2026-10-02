@@ -21,7 +21,6 @@ KEPT_OFF = {
     "oauthProxy.skipProviderButton": "operator decision 2026-09-05: people log in from the OpenShift screen",
     "oauthProxy.requestLogging": "review finding: oauth-proxy logs the full request URI, the OAuth callback code included",
     "rbac.identities": "C2: a grant (get/list identities.user.openshift.io) the chart does not otherwise need, so off under the 0.14.0 rule",
-    "backup.offsite.enabled": "B1: needs a destination the chart cannot choose (a second claim or a bucket and a credential); a CronJob with nowhere to write is a red Job every six hours",
     "session.idleTimeout.enabled": "C4: it signs people out — a session policy the platform team chooses",
     "rbac.namespaces": "C3: a grant (get/list namespaces, core group) the chart does not otherwise need — off under the 0.14.0 rule; the namespace report attests absence only with it",
     "reporting.window.enabled": "P4: an operational rail the operator opts into (a timezone + hours + days); off = automated runs are never gated",
@@ -40,7 +39,13 @@ FLIPPED = (
     "monitoring.serviceMonitor.enabled",
     "monitoring.prometheusRule.enabled",
     "monitoring.grafanaDashboard.cr.enabled",
+    # #304: on wherever it can work. Its default is the empty word, not `true`: `true` is the strict
+    # form that refuses a combination the default steps aside from.
+    "backup.offsite.enabled",
 )
+
+# Flipped switches whose default is "" (on wherever it can work) rather than true.
+ON_WHERE_IT_CAN_WORK = ("backup.offsite.enabled",)
 
 # Documents an operator follows. Records (reviews, the changelog's history, superseded designs and
 # the spec bodies) are deliberately not held: a record quotes the state it recorded.
@@ -90,7 +95,10 @@ def test_the_only_false_defaults_are_the_stated_exceptions() -> None:
         f"listed but no longer false: {sorted(set(KEPT_OFF) - false_keys)}"
     )
     for key in FLIPPED:
-        assert values[key] is True, key
+        if key in ON_WHERE_IT_CAN_WORK:
+            assert values[key] == "", key
+        else:
+            assert values[key] is True, key
 
 
 def _line_of(key: str, lines: list[str]) -> int:

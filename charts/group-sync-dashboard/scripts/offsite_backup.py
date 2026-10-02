@@ -17,6 +17,11 @@ failing loudly on any of them:
      across a kill between the two renames, which the next run repairs;
   5. prune --dest to --keep copies (0 keeps everything), sidecars with their copies.
 
+With --pre-upgrade-source, a second pass does the same for the newest pre-upgrade-*.db the store
+writes beside the database before a migration (#301), into <dest>/pre-upgrade, keeping
+PRE_UPGRADE_KEEP, and refuses a copy whose bytes no longer match the sidecar the store wrote. The two
+passes are independent: a failure in one does not stop the other, and either fails the run (#304).
+
 Idempotent: a destination copy that already matches its sidecar is left alone and the run still
 succeeds, so a schedule denser than the app's backups is harmless. Every failure raises
 BackupError and exits 1 with the reason on stderr — the CronJob's status is the only signal the
@@ -42,6 +47,11 @@ from pathlib import Path
 
 CHUNK = 1024 * 1024
 PATTERN = "gsd-*.db"
+#: The pre-upgrade copies (#301): beside the database, outside PATTERN, the newest by name. Kept to the
+#: count the store keeps on the volume (gsd/store.py PRE_UPGRADE_KEEP; a test holds the two equal).
+PRE_UPGRADE_PATTERN = "pre-upgrade-*.db"
+PRE_UPGRADE_DIR = "pre-upgrade"
+PRE_UPGRADE_KEEP = 3
 SIDECAR_LINE = re.compile(r"([0-9A-Fa-f]{64})[ \t]+(.+?)\r?\n?")
 PART_SUFFIX = ".part"
 SUM_SUFFIX = ".sha256"
@@ -52,16 +62,16 @@ class BackupError(Exception):
     """A failure the operator must see. Every one exits non-zero with its message."""
 
 
-def newest_backup(source: Path) -> Path:
+def newest_backup(source: Path, pattern: str = PATTERN) -> Path:
     if not source.is_dir():
         raise BackupError(
             f"source {source} is not a directory — is config.backup.dir mounted here, "
             f"and is config.backup.enabled on?"
         )
-    candidates = sorted(p for p in source.glob(PATTERN) if p.is_file())
+    candidates = sorted(p for p in source.glob(pattern) if p.is_file())
     if not candidates:
         raise BackupError(
-            f"no {PATTERN} under {source}: the dashboard has not written a backup yet "
+            f"no {pattern} under {source}: the dashboard has not written a backup yet "
             f"(it takes one on its first poll), or config.backup is off"
         )
     return candidates[-1]
@@ -155,17 +165,17 @@ def fsync_directory(directory: Path) -> None:
         os.close(fd)
 
 
-def prune(dest: Path, keep: int) -> int:
+def prune(dest: Path, keep: int, pattern: str = PATTERN) -> int:
     """Store.backup's rule: sorted(glob)[:-keep] goes. 0 keeps everything. Sidecars follow their
     copies; a sidecar whose copy is gone, and any .part a killed run left, go too (review of B1)."""
-    for transient in (*dest.glob(PATTERN + PART_SUFFIX), *dest.glob(PATTERN + SUM_SUFFIX + PART_SUFFIX)):
+    for transient in (*dest.glob(pattern + PART_SUFFIX), *dest.glob(pattern + SUM_SUFFIX + PART_SUFFIX)):
         transient.unlink(missing_ok=True)
-    copies = sorted(p for p in dest.glob(PATTERN) if p.is_file())
+    copies = sorted(p for p in dest.glob(pattern) if p.is_file())
     victims = copies[:-keep] if keep > 0 else []
     for stale in victims:
         stale.unlink()
         stale.with_name(stale.name + SUM_SUFFIX).unlink(missing_ok=True)
-    for orphan in dest.glob(PATTERN + SUM_SUFFIX):
+    for orphan in dest.glob(pattern + SUM_SUFFIX):
         if not orphan.with_name(orphan.name[: -len(SUM_SUFFIX)]).is_file():
             orphan.unlink(missing_ok=True)
     return len(victims)
@@ -174,7 +184,7 @@ def prune(dest: Path, keep: int) -> int:
 REPICK_ATTEMPTS = 3
 
 
-def ship(source: Path, dest: Path, keep: int) -> int:
+def ship(source: Path, dest: Path, keep: int, pattern: str = PATTERN, *, require_source_sidecar: bool = False) -> int:
     try:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -182,7 +192,7 @@ def ship(source: Path, dest: Path, keep: int) -> int:
     if dest.resolve() == source.resolve():
         raise BackupError(f"destination {dest} IS the source directory — that is not off the volume")
     # A SIGKILL mid-copy skips `finally`; whatever .part a killed run left is not a copy and goes now.
-    prune(dest, 0)
+    prune(dest, 0, pattern)
 
     # The app writes backups on its own timer (Store.backup), so the newest file can change while
     # this one is being copied — the picked file stays readable through its open descriptor, and
@@ -190,7 +200,7 @@ def ship(source: Path, dest: Path, keep: int) -> int:
     # the destination ends the run holding the newest; past that, keep the verified copy and say so
     # in the log rather than chase a source that keeps moving (review of B1, both passes).
     for attempt in range(1, REPICK_ATTEMPTS + 1):
-        newest = newest_backup(source)
+        newest = newest_backup(source, pattern)
         target = dest / newest.name
         sidecar = dest / (newest.name + SUM_SUFFIX)
         if target.exists() and sidecar.exists():
@@ -205,6 +215,13 @@ def ship(source: Path, dest: Path, keep: int) -> int:
         published = False
         try:
             source_digest, size = copy_hashed(newest, part)
+            if require_source_sidecar:
+                # The store writes this sidecar before the copy takes its name (#301): bytes that no longer
+                # match it changed on the volume, and a fresh sidecar here would vouch for them.
+                recorded = sidecar_expected(newest.with_name(newest.name + SUM_SUFFIX), newest.name)
+                if recorded != source_digest:
+                    raise BackupError(f"{newest}: the bytes read hash to {source_digest}, but its sidecar on the "
+                                      f"volume records {recorded or 'no digest'}; it is not the copy the store verified")
             # Verify what the DESTINATION persisted, not only what was read: a copy the storage
             # altered by a same-length value is still a structurally valid database, so
             # integrity_check alone would pass it (review of B1, Codex).
@@ -238,7 +255,7 @@ def ship(source: Path, dest: Path, keep: int) -> int:
         print(f"integrity_check ok; user_version {facts['user_version']}; "
               + "; ".join(f"{t} rows {facts[t]}" for t in HISTORY_TABLES))
         try:
-            later = newest_backup(source)
+            later = newest_backup(source, pattern)
         except BackupError:
             later = newest
         # Re-pick only when the name moved FORWARD: if the picked file vanished and an older one
@@ -250,9 +267,20 @@ def ship(source: Path, dest: Path, keep: int) -> int:
         else:
             print(f"note: {later.name} landed during the copy; it ships on the next run")
 
-    removed = prune(dest, keep)
+    removed = prune(dest, keep, pattern)
     print(f"pruned {removed} older cop{'y' if removed == 1 else 'ies'} (keep={keep})")
     return 0
+
+
+def ship_pre_upgrade(source: Path, dest: Path) -> int:
+    """The second pass (#304; SPEC_M1 §3.8): the newest pre-upgrade copy, checked against the sidecar the
+    store wrote, into its own directory. No copy is not a failure: the store takes one only when an image
+    upgrades the schema, so a new install has none."""
+    if not source.is_dir() or not any(p.is_file() for p in source.glob(PRE_UPGRADE_PATTERN)):
+        print(f"no {PRE_UPGRADE_PATTERN} under {source}: nothing to ship (one is written only when an image "
+              f"upgrades the schema)")
+        return 0
+    return ship(source, dest, PRE_UPGRADE_KEEP, PRE_UPGRADE_PATTERN, require_source_sidecar=True)
 
 
 def check(path: Path) -> int:
@@ -283,13 +311,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dest", type=Path, help="where the newest one goes")
     parser.add_argument("--keep", type=int, default=0, help="copies to keep at --dest; 0 keeps all")
     parser.add_argument("--check", type=Path, metavar="FILE", help="verify one copy and exit")
+    parser.add_argument("--pre-upgrade-source", type=Path, metavar="DIR",
+                        help=f"also ship the newest {PRE_UPGRADE_PATTERN} under DIR to <dest>/{PRE_UPGRADE_DIR}, "
+                             f"keeping {PRE_UPGRADE_KEEP}")
     args = parser.parse_args(argv)
+    if args.check is not None:
+        return run_pass(lambda: check(args.check))
+    if args.source is None or args.dest is None:
+        parser.error("--source and --dest are required unless --check is given")
+    status = run_pass(lambda: ship(args.source, args.dest, args.keep))
+    if args.pre_upgrade_source is not None:
+        status |= run_pass(lambda: ship_pre_upgrade(args.pre_upgrade_source, args.dest / PRE_UPGRADE_DIR))
+    return status
+
+
+def run_pass(step) -> int:
+    """One pass: its return code, or 1 with the reason on stderr."""
     try:
-        if args.check is not None:
-            return check(args.check)
-        if args.source is None or args.dest is None:
-            parser.error("--source and --dest are required unless --check is given")
-        return ship(args.source, args.dest, args.keep)
+        return step()
     except BackupError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

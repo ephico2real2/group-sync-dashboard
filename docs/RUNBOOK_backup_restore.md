@@ -10,9 +10,10 @@ cluster cannot replay them (`gsd/store.py#Store.backup`). Three copies exist:
   exists (a rollout renames every pod), and the copies named without a pod (written at one replica, or by a
   release before #391), stay until they are removed by hand, or until the release runs one replica again,
   whose next backup keeps `keep` copies in all (#391);
-* **off-volume** — `backup.offsite` (off by default) copies the newest of those to a second
-  claim or to object storage, with a `.sha256` sidecar, after an integrity check
-  (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`);
+* **off-volume** — `backup.offsite` (on by default wherever it can work) copies the newest of those to a
+  second claim or to object storage, with a `.sha256` sidecar, after an integrity check
+  (`charts/group-sync-dashboard/scripts/offsite_backup.py#ship`), and, at one replica with the second
+  claim, the newest pre-upgrade copy as well (§6);
 * **pre-upgrade** — from the application release after 0.36.0, before a new image upgrades the database it
   writes the database as it was to `pre-upgrade/` beside it, with a `.sha256` sidecar, even when scheduled
   backups are disabled (§6).
@@ -156,7 +157,19 @@ Expected log:
 copied /data/backup/gsd-….db -> /offsite/gsd-….db (NNN bytes, sha256 …)
 integrity_check ok; user_version 9; membership_event rows N; sync_event rows M
 pruned 0 older copies (keep=14)
+no pre-upgrade-*.db under /data/pre-upgrade: nothing to ship (one is written only when an image upgrades the schema)
 ```
+
+The last line is the second pass, which runs at one replica with the `pvc` destination. Once an upgrade
+has written a pre-upgrade copy (§6), that line is replaced by the pass's own three lines, which name
+`/data/pre-upgrade/pre-upgrade-….db -> /offsite/pre-upgrade/pre-upgrade-….db`, its `integrity_check ok`
+and `pruned 0 older copies (keep=3)`. The pass checks the copy against the `.sha256` beside it first and
+keeps the newest three. The two passes are independent: a failure in one does not stop the other, and
+either fails the Job. A pass that prints `ERROR: … it is not the copy the store verified` has found a copy whose
+bytes no longer match the checksum the dashboard wrote when it took it: do not restore from it. Every run fails on
+it, and `GroupSyncDashboardOffsiteBackupStale` fires while the six-hourly copies still ship, until a newer upgrade
+writes a newer copy or that copy and its `.sha256` are moved out of `pre-upgrade/` (to `/data/pre-restore/`, as §6
+does); the next run then ships the newest copy that verifies.
 
 A second run straight after says `already shipped: … matches its sidecar; nothing to copy`.
 A failure prints `ERROR: <reason>` and the Job goes Failed — that is the signal the
@@ -449,8 +462,10 @@ version, needs no copy.
 
 * **Where.** `pre-upgrade/` beside the database: `/data/pre-upgrade/` when there is one replica, or
   `/data/<pod-name>/pre-upgrade/` when `replicaCount` is greater than 1. It is written even when scheduled
-  backups are disabled, and the six-hourly rotation, the offsite CronJob, the backup metric and the KPI size
-  line never include it.
+  backups are disabled, and the six-hourly rotation, the backup metric and the KPI size line never include it.
+* **Off the volume.** At one replica, the offsite CronJob's `pvc` destination also receives the newest copy,
+  in `/offsite/pre-upgrade/` under the same name, checked against its `.sha256` first; the newest three are
+  kept there (§2). The copies of the six-hourly backups in `/offsite` never include it.
 * **Name.** `pre-upgrade-<UTC stamp>-schema-<from>-to-<to>-<pod>.db`. The two numbers are database schema
   versions, not application versions, and `<pod>` is the pod that took the copy. `<from>` is the copy's schema:
   restore it under an image that understands that schema or a newer one; an older image refuses to start (§4c).

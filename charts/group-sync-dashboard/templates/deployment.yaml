@@ -57,7 +57,7 @@ refused here rather than by the script after the pod has started.
 {{- end }}
 {{- /* The offsite claim, read-only, so #302's restore can list the offsite copies: the same switch
 and the same claim the CronJob renders with (backup-offsite.yaml). */}}
-{{- if and .Values.backup.offsite.enabled (eq .Values.backup.offsite.destination.type "pvc") }}
+{{- if and (eq (include "gsd.offsiteOn" .) "true") (eq .Values.backup.offsite.destination.type "pvc") }}
 {{- $offsiteClaim = .Values.backup.offsite.destination.pvc.existingClaim | default (printf "%s-backup-offsite" (include "gsd.fullname" .)) }}
 {{- end }}
 {{- end }}

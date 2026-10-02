@@ -37,10 +37,13 @@ def test_default_reporting_render_is_yaml_and_all_selectors_match_only_their_wor
     assert _matches(rs, rl) and not _matches(rs, dl)
     assert _matches(service["spec"]["selector"], rl)
     assert _matches(monitor["spec"]["selector"]["matchLabels"], service["metadata"]["labels"])
+    # The report schedule's CronJob, and the offsite CronJob that renders by default (#304): neither
+    # pod is selected by either budget.
     cronjobs = [d for d in docs if d.get("kind") == "CronJob"]
-    assert len(cronjobs) == 1
-    cl = cronjobs[0]["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
-    assert not _matches(ds, cl) and not _matches(rs, cl)
+    assert sorted(d["metadata"]["name"] for d in cronjobs) == [f"{dashboard_name}-backup-offsite", f"{report_name}-weekly"]
+    for cronjob in cronjobs:
+        cl = cronjob["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
+        assert not _matches(ds, cl) and not _matches(rs, cl)
 
 
 def test_the_report_deployment_carries_the_two_tier_retention_env():
@@ -88,7 +91,7 @@ def test_report_manifests_have_unique_labels_and_the_service_monitor_selector_ma
     labels = service["metadata"]["labels"]
     assert all(labels.get(k) == v for k, v in service["spec"]["selector"].items())
     assert labels["app.kubernetes.io/name"].endswith("-report") and "app" not in labels
-    cron = next(d for d in docs if d.get("kind") == "CronJob")
+    cron = next(d for d in docs if d.get("kind") == "CronJob" and d["metadata"]["name"] == "t-group-sync-dashboard-report-weekly")
     assert cron["metadata"]["labels"]["app.kubernetes.io/component"] == "report-schedule"
 
 
@@ -415,7 +418,7 @@ class TestDerivations:
         assert done.returncode == 0, done.stderr
         import yaml as _yaml
         docs = [d for d in _yaml.safe_load_all(done.stdout) if d]
-        cron = next(d for d in docs if d.get("kind") == "CronJob")
+        cron = next(d for d in docs if d.get("kind") == "CronJob" and d["metadata"]["name"] == "t-group-sync-dashboard-report-a")
         env = {e["name"]: e.get("value") for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
         assert cron["spec"]["suspend"] is True

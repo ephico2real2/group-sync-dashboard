@@ -1,5 +1,5 @@
-"""The off-volume backup CronJob renders only when asked, and refuses the combinations that
-could never work.
+"""The off-volume backup CronJob renders wherever it can work, steps aside where it cannot, and,
+asked for explicitly with `true`, refuses the combinations that could never work (#304).
 
 These shell out to `helm template` because the guards ARE Helm templating; the rendered
 objects are what ships. The script the ConfigMap carries is tested on its own in
@@ -20,7 +20,18 @@ SCRIPT = CHART / "scripts" / "offsite_backup.py"
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 
-ON = {"backup__offsite__enabled": "true"}
+ON = {"backup__offsite__enabled": "true"}          # the strict form
+# The five conditions the default steps aside from, each as (values, the message `true` refuses it with).
+CANNOT_WORK = {
+    "on-volume backup off": ({"config__backup__enabled": "false"}, "config.backup.enabled=true"),
+    "derived ReadWriteOncePod": ({"reporting__enabled": "false", "persistence__accessMode": ""}, "Pending forever"),
+    "persistence off": ({"persistence__enabled": "false", "reporting__enabled": "false"}, "persistence.enabled=true"),
+    "empty backup dir": ({"config__backup__dir": ""}, "under /data/"),
+    "backup dir outside /data/": ({"config__backup__dir": "/backup"}, "under /data/"),
+    "backup dir walking out of /data/": ({"config__backup__dir": "/data/../etc"}, "under /data/"),
+    "existing data claim, no access mode": ({"persistence__existingClaim": "mine", "persistence__accessMode": "",
+                                             "reporting__enabled": "false"}, "cannot read the live claim"),
+}
 S3 = {
     **ON,
     "backup__offsite__destination__type": "s3",
@@ -30,13 +41,22 @@ S3 = {
 }
 
 
-def render(**values):
+def render(*flags, **values):
     """Render the chart. Returns (ok, combined output). `__` in a key is `.`."""
-    args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com"]
+    args = ["helm", "template", "t", str(CHART), "--set", "ingress.host=t.example.com", *flags]
     for key, value in values.items():
         args += ["--set", f"{key.replace('__', '.')}={value}"]
     done = subprocess.run(args, capture_output=True, text=True)
     return done.returncode == 0, done.stdout + done.stderr
+
+
+def _offsite_objects(out):
+    return [d for d in _docs(out) if (d.get("metadata", {}).get("labels") or {}).get("app.kubernetes.io/component") == "backup-offsite"]
+
+
+def _offsite_alerts(out):
+    return [r["alert"] for d in _docs(out) if d.get("kind") == "PrometheusRule"
+            for g in d["spec"]["groups"] for r in g["rules"] if "Offsite" in r.get("alert", "")]
 
 
 def _docs(out):
@@ -54,16 +74,23 @@ def _pod(cronjob):
 
 
 class TestSwitch:
-    def test_nothing_renders_by_default(self):
+    def test_the_default_ships_the_copy_off_the_volume(self):
+        """T304-1: with no value set, the CronJob and everything it needs render: the script, an
+        account with no token, the 5Gi claim that survives an uninstall, and the bind Job."""
+        values = yaml.safe_load((CHART / "values.yaml").read_text())
+        assert values["backup"]["offsite"]["enabled"] == ""
         ok, out = render()
         assert ok, out
         docs = _docs(out)
-        assert not [d for d in docs if d.get("kind") == "CronJob"]
-        assert not [d for d in docs if d.get("metadata", {}).get("name", "").endswith("-backup-offsite")]
-        # the rules render by default since 0.36.0: the two offsite alerts stay behind the switch (the
-        # shipped Grafana board's text panel names them as "backup.offsite.enabled only", which is fine)
-        alerts = [r["alert"] for d in docs if d.get("kind") == "PrometheusRule" for g in d["spec"]["groups"] for r in g["rules"] if "alert" in r]
-        assert not [a for a in alerts if "Offsite" in a], alerts
+        _one(docs, "CronJob")
+        assert _one(docs, "ConfigMap")["data"]["offsite_backup.py"].strip() == SCRIPT.read_text().strip()
+        assert _one(docs, "ServiceAccount")["automountServiceAccountToken"] is False
+        pvc = _one(docs, "PersistentVolumeClaim")
+        assert pvc["spec"]["resources"]["requests"]["storage"] == "5Gi"
+        assert pvc["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+        assert pvc["metadata"]["annotations"]["argocd.argoproj.io/sync-options"] == "Prune=false,Delete=false,PruneLast=true"
+        assert "storageClassName" not in pvc["spec"], "the cluster's default class, unless one is named"
+        assert len([d for d in docs if d.get("kind") == "Job" and "-backup-offsite-bind-" in d["metadata"]["name"]]) == 1
 
     def test_enabled_renders_the_four_objects(self):
         ok, out = render(**ON)
@@ -80,7 +107,7 @@ class TestSwitch:
         assert cm["data"]["offsite_backup.py"].strip() == SCRIPT.read_text().strip()
 
     def test_the_serviceaccount_has_no_token_and_no_grant(self):
-        ok, out = render(**ON)
+        ok, out = render()
         assert ok, out
         docs = _docs(out)
         sa = _one(docs, "ServiceAccount")
@@ -93,6 +120,62 @@ class TestSwitch:
     def test_backup_enabled_is_refused_as_the_wrong_key(self):
         ok, out = render(backup__enabled="true")
         assert not ok and "config.backup.enabled" in out and "backup.offsite.enabled" in out
+
+
+class TestYield:
+    """T304-2 to T304-7: where the copy cannot work, the default renders nothing of offsite and fails
+    nothing; with only the default flipped to `true` each of these renders failed."""
+
+    @pytest.mark.parametrize("case", sorted(CANNOT_WORK))
+    def test_the_default_steps_aside(self, case):
+        ok, out = render(**CANNOT_WORK[case][0])
+        assert ok, out
+        assert not _offsite_objects(out) and not _offsite_alerts(out)
+
+    @pytest.mark.parametrize("case", sorted(CANNOT_WORK))
+    def test_true_still_refuses_with_the_reason(self, case):
+        """T304-8: anyone who set `true` keeps the refusal, message and all."""
+        values, message = CANNOT_WORK[case]
+        ok, out = render(**values, **ON)
+        assert not ok and "backup.offsite.enabled=true" in out and message in out, out[-600:]
+
+    def test_the_offsite_stanzas_own_mistakes_are_refused_in_the_default_too(self):
+        """A destination value set by hand says offsite is wanted; stepping aside would hide that it
+        never runs."""
+        ok, out = render(backup__offsite__destination__type="nfs")
+        assert not ok and "is not a destination" in out
+
+
+class TestTheSwitchIsAWord:
+    """T304-9 to T304-11: true, false or empty, read as words; anything else refused by name."""
+
+    def test_false_is_off(self):
+        ok, out = render(backup__offsite__enabled="false")
+        assert ok, out
+        assert not _offsite_objects(out) and not _offsite_alerts(out)
+
+    @pytest.mark.parametrize("word,on", [("false", False), ("true", True), ("", True)])
+    def test_a_quoted_word_means_what_it_says(self, word, on):
+        ok, out = render("--set-string", f"backup.offsite.enabled={word}")
+        assert ok, out
+        assert bool(_offsite_objects(out)) is on and bool(_offsite_alerts(out)) is on
+
+    @pytest.mark.parametrize("word", ["yes", "ture", "0", "False"])
+    def test_any_other_word_is_refused_naming_the_three(self, word):
+        ok, out = render("--set-string", f"backup.offsite.enabled={word}")
+        assert not ok
+        assert f'backup.offsite.enabled is "{word}"' in out
+        assert 'empty ("", the default' in out and "true (on" in out and "false (off)" in out
+
+    @pytest.mark.parametrize("text,on", [('"false"', False), ("no", False), ("off", False), ("yes", True), ("", True)])
+    def test_a_values_file_reads_the_same(self, tmp_path, text, on):
+        """The release's values file is the path. YAML 1.1's no/off/yes arrive as booleans, and an empty
+        value is a null that removes the key, which is the default."""
+        values = tmp_path / "values.yaml"
+        values.write_text(f"backup:\n  offsite:\n    enabled: {text}\n")
+        ok, out = render("-f", str(values))
+        assert ok, out
+        assert bool(_offsite_objects(out)) is on
 
 
 class TestPvcDestination:
@@ -120,6 +203,18 @@ class TestPvcDestination:
         assert ship["command"][ship["command"].index("--source") + 1] == "/data/backup"
         assert ship["command"][ship["command"].index("--keep") + 1] == "14"
         assert ship["securityContext"]["readOnlyRootFilesystem"] is True
+
+    def test_the_newest_pre_upgrade_copy_ships_too_at_one_replica(self):
+        """T304-13 (the chart half): at one replica the copies are in /data/pre-upgrade, beside
+        /data/gsd.db; above one each pod has its own directory, and none is named."""
+        ok, out = render()
+        assert ok, out
+        (ship,) = _pod(_one(_docs(out), "CronJob"))["spec"]["containers"]
+        assert ship["command"][ship["command"].index("--pre-upgrade-source") + 1] == "/data/pre-upgrade"
+        ok, out = render(replicaCount="2", leaderElection__enabled="false", reporting__enabled="false")
+        assert ok, out
+        (ship,) = _pod(_one(_docs(out), "CronJob"))["spec"]["containers"]
+        assert "--pre-upgrade-source" not in ship["command"]
 
     def test_the_pod_does_not_match_the_service_selector(self):
         """A Job pod with no readiness probe is Ready as soon as it runs; carrying the
@@ -321,6 +416,7 @@ class TestS3Destination:
         assert stage["command"][:2] == ["python3.14", "/scripts/offsite_backup.py"]
         assert stage["command"][stage["command"].index("--dest") + 1] == "/stage"
         assert stage["command"][stage["command"].index("--keep") + 1] == "0"
+        assert "--pre-upgrade-source" not in stage["command"], "the s3 destination ships the six-hourly copy only"
         assert upload["image"] == "public.ecr.aws/aws-cli/aws-cli:2.17.0"
         assert upload["envFrom"] == [{"secretRef": {"name": "backup-creds"}}]
         assert [m["name"] for m in upload["volumeMounts"] if m["name"] == "data"] == [], \
@@ -350,9 +446,35 @@ class TestAlerts:
                 return {r["alert"]: r for g in d["spec"]["groups"] for r in g["rules"]}
         raise AssertionError("no PrometheusRule rendered")
 
-    def test_the_two_rules_render_only_with_the_cronjob(self):
-        assert "GroupSyncDashboardOffsiteBackupStale" not in self._rules()
-        rules = self._rules(**ON)
+    @pytest.mark.parametrize("case", ["default", "true", "false", "quoted false", *sorted(CANNOT_WORK)])
+    def test_the_two_rules_render_exactly_when_the_cronjob_does(self, case):
+        """T304-12: one helper decides both, so they cannot drift apart in any state."""
+        flags, values = (), {}
+        if case == "true":
+            values = ON
+        elif case == "false":
+            values = {"backup__offsite__enabled": "false"}
+        elif case == "quoted false":
+            flags = ("--set-string", "backup.offsite.enabled=false")
+        elif case in CANNOT_WORK:
+            values = CANNOT_WORK[case][0]
+        ok, out = render(*flags, monitoring__prometheusRule__enabled="true", **values)
+        assert ok, out
+        cronjob = [d for d in _docs(out) if d.get("kind") == "CronJob" and d["metadata"]["name"].endswith("-backup-offsite")]
+        expected = ["GroupSyncDashboardOffsiteBackupStale", "GroupSyncDashboardOffsiteBackupUnobserved"] if cronjob else []
+        assert sorted(_offsite_alerts(out)) == expected
+        assert bool(cronjob) is (case in ("default", "true"))
+
+    def test_a_refused_pre_upgrade_copy_is_named_by_the_alert_and_the_runbook(self):
+        """A run fails when either pass fails (§3.6): the stale alert must not say that nothing newer left the
+        volume, and the runbook must say how a refused pre-upgrade copy stops failing every run."""
+        description = self._rules()["GroupSyncDashboardOffsiteBackupStale"]["annotations"]["description"]
+        assert "pre-upgrade copy is refused" in description and "nothing newer is off it." not in description
+        runbook = (CHART.parents[1] / "docs" / "RUNBOOK_backup_restore.md").read_text().split("## 3.", 1)[0]
+        assert "it is not the copy the store verified" in runbook and "/data/pre-restore/" in runbook
+
+    def test_the_two_rules_watch_the_cronjob(self):
+        rules = self._rules()
         stale = rules["GroupSyncDashboardOffsiteBackupStale"]
         absent = rules["GroupSyncDashboardOffsiteBackupUnobserved"]
         for rule in (stale, absent):

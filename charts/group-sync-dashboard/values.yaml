@@ -1025,11 +1025,28 @@ persistence:
 # else: a second claim, or object storage. Together they are the whole answer; either alone
 # is half. Restore, and how to verify a copy without restoring: docs/RUNBOOK_backup_restore.md.
 #
-# OFF BY DEFAULT because it needs a destination the chart cannot choose for you — a second
-# claim on a DIFFERENT StorageClass, or a bucket and a credential — and a CronJob rendered with
-# nowhere to write is a red Job on every schedule. Nothing else about it is optional once on:
-# the copy is hashed, opened and integrity-checked BEFORE it counts, and the Job exits
-# non-zero on any of those.
+# ON WHEREVER IT CAN WORK. `enabled` is read as a word, one of three:
+#   ""     (the default) on, unless the copy cannot work here; then nothing renders and nothing
+#          fails. It cannot work with: persistence off; config.backup off, or an empty
+#          config.backup.dir (the app reads that as backups disabled); a config.backup.dir outside
+#          /data/; persistence.existingClaim without persistence.accessMode; a ReadWriteOncePod
+#          data volume (below).
+#   true   on, and the render REFUSES each of those with the reason.
+#   false  off. A quoted "false" is off too; any other word refuses the render.
+# Set it in this release's values file and roll it out through the release's deployment pipeline.
+# The CronJob and its two alerts follow the same decision.
+#
+# The default destination is a second claim on the cluster's DEFAULT StorageClass: off the volume,
+# not necessarily off the storage (on CRC the default class is the data claim's own). Name a
+# different class in destination.pvc.storageClass for that. A cluster with no default class leaves
+# the claim Pending, and the bind Job below fails after its 600 s deadline, until one is named.
+# Once on, nothing is optional: the copy is hashed, opened and integrity-checked BEFORE it counts,
+# and the Job exits non-zero on any of those.
+#
+# THE PRE-UPGRADE COPY TOO. At replicaCount 1, with the pvc destination, the same run also ships the
+# newest copy the dashboard takes before a schema upgrade (/data/pre-upgrade; see config.backup
+# above) to /offsite/pre-upgrade, checked against its .sha256, keeping three. No such copy yet is
+# not a failure. The s3 destination ships the six-hourly copy only.
 #
 # WHO RUNS IT. The dashboard image, with a Python-stdlib script the chart ships as a
 # ConfigMap (scripts/offsite_backup.py, mounted at /scripts). The image has no tar, rsync or
@@ -1042,8 +1059,8 @@ persistence:
 #                     dashboard's node with a required podAffinity. A dashboard scaled to zero
 #                     then leaves the Job Pending until activeDeadlineSeconds fails it — the
 #                     honest outcome: no dashboard, no new copy to ship.
-#   ReadWriteOncePod  exactly one pod, ever. The chart REFUSES to render rather than ship a
-#                     Job that can never schedule.
+#   ReadWriteOncePod  exactly one pod, ever. The default renders no CronJob; `true` REFUSES to
+#                     render rather than ship a Job that can never schedule.
 #
 # ALERTING. The app cannot see this Job. With monitoring.prometheusRule.enabled the chart adds
 # two rules on kube_cronjob_status_last_successful_time (kube-state-metrics): stale, and
@@ -1064,7 +1081,7 @@ persistence:
 # and no bind Job renders.
 backup:
   offsite:
-    enabled: false
+    enabled: ""    # "" on wherever it can work | true on, refusing what cannot work | false off
     # Cron, in the controller manager's time zone. Every six hours, to match
     # config.backup.intervalHours. There is nothing to align to: the app's backups run on a
     # timer from pod start, not the clock, so any offset is arbitrary and :15 is as good as any.

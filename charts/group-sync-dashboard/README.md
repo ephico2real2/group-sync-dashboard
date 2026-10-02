@@ -238,13 +238,23 @@ them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 
 ### Off-volume backup — `backup.offsite`
 
-**Off by default** — it needs a destination the chart cannot choose for you. Once on, the copy is
-hashed, opened and integrity-checked before it counts, and the Job fails loudly otherwise.
-Restore and verification: [`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
+**On wherever it can work.** `backup.offsite.enabled` is read as a word: empty (the default) renders
+the CronJob unless the copy cannot work in this release, and then renders nothing and fails nothing;
+`true` renders it and refuses those combinations with the reason; `false` turns it off (a quoted
+`"false"` too); any other word refuses the render. Set it in the release's values file and roll it out
+through the release's deployment pipeline. The default destination is a 5Gi claim on the cluster's
+default StorageClass, which is off the volume but not necessarily off the storage: name a different
+class in `destination.pvc.storageClass` for that. A cluster with no default StorageClass leaves the claim
+Pending, and its bind Job fails after 600 s, so the rollout reports a failure until
+`destination.pvc.storageClass` names a class. The copy is hashed, opened and integrity-checked before it
+counts, and the Job fails loudly otherwise. At one replica with the `pvc` destination the
+same run also ships the newest pre-upgrade copy ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies))
+to `/offsite/pre-upgrade`, keeping three. Restore and verification:
+[`docs/RUNBOOK_backup_restore.md`](../../docs/RUNBOOK_backup_restore.md).
 
 | Key | Default | Notes |
 |---|---|---|
-| `backup.offsite.enabled` | `false` | renders a CronJob, a ConfigMap with `scripts/offsite_backup.py`, a grant-less ServiceAccount, and (type `pvc`, no `existingClaim`) a second PVC. **Refused** with `persistence.enabled=false`, `config.backup.enabled=false`, a `config.backup.dir` outside `/data/`, or a `ReadWriteOncePod` data volume |
+| `backup.offsite.enabled` | `""` | renders a CronJob, a ConfigMap with `scripts/offsite_backup.py`, a grant-less ServiceAccount, and (type `pvc`, no `existingClaim`) a second PVC with its bind Job. Empty: **nothing renders**, and nothing fails, with `persistence.enabled=false`, `config.backup.enabled=false`, a `config.backup.dir` that is empty or outside `/data/`, `persistence.existingClaim` without `persistence.accessMode`, or a `ReadWriteOncePod` data volume. `true`: each of those is **refused**. `false`: off. Any other word is refused |
 | `backup.offsite.schedule` | `"15 */6 * * *"` | cron; match `config.backup.intervalHours`. The app's backups run on a timer from pod start, so there is nothing to align to |
 | `backup.offsite.concurrencyPolicy` | `Forbid` | a slow copy must not overlap the next |
 | `backup.offsite.successfulJobsHistoryLimit` / `failedJobsHistoryLimit` | `3` / `3` | |
@@ -515,14 +525,14 @@ defaults). The TTL is the bound. The procedure is the runbook's
 | `monitoring.serviceMonitor.enabled` | `true` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent — set it `false` on a bare Kubernetes without them). On by default since 0.36.0: user-workload monitoring is on on the clusters this chart is for |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `true` | **seventeen** alerts — two of them render only with `reporting.enabled` (the default) — nineteen with `backup.offsite.enabled`; see below |
+| `monitoring.prometheusRule.enabled` | `true` | **nineteen** alerts — two of them render only with `reporting.enabled` (the default), two only where the offsite CronJob renders (the default, which steps aside where it cannot work); see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |
 | `monitoring.prometheusRule.walMiB` | `256` | MiB. 25% of the default 1Gi PVC. Raise it with `persistence.size` |
 | `monitoring.prometheusRule.captureStalledSeconds` | `1800` | seconds without a successful oauth-log read before login capture counts as stalled. Capture rides the poll thread, so this **must stay well above `config.pollIntervalSeconds`** — same reasoning as `notPollingSeconds` |
 | `monitoring.prometheusRule.backupStaleSeconds` | `43200` | seconds since the newest backup file before the copy counts as stale. Keep at ~2× `config.backupIntervalHours` × 3600 — one missed backup is a blip, two is a broken mechanism |
-| `monitoring.prometheusRule.offsiteBackupStaleSeconds` | `43200` | seconds since the off-volume CronJob last succeeded (`kube_cronjob_status_last_successful_time`, kube-state-metrics). Two slots of `backup.offsite.schedule`. Rendered only with `backup.offsite.enabled` |
+| `monitoring.prometheusRule.offsiteBackupStaleSeconds` | `43200` | seconds since the off-volume CronJob last succeeded (`kube_cronjob_status_last_successful_time`, kube-state-metrics). Two slots of `backup.offsite.schedule`. Rendered only where the offsite CronJob renders |
 | `monitoring.prometheusRule.for.*` | see below | the `for:` duration on each alert |
 | `monitoring.grafanaDashboard.enabled` | `""` | `""` **follows `monitoring.serviceMonitor.enabled`**; `true`/`false` are explicit; anything else refuses to render. A ConfigMap labelled `grafana_dashboard: "1"` carrying `dashboards/group-sync-dashboard.json` byte-for-byte — no CRD, cannot fail an install |
 | `monitoring.grafanaDashboard.cr.enabled` | `true` | the `GrafanaDashboard` CR for grafana-operator v5 (#161), rendered **only where the cluster serves `grafana.integreatly.org/v1beta1`** (`.Capabilities.APIVersions` — live on install/upgrade, `--api-versions` under `helm template`, the cluster's list under Argo CD): a cluster without the operator installs cleanly and gets the CR on the first upgrade after the `openshift-grafana` chart lands. Argo CD passes the live cluster's API versions to its `helm template` and keys its manifest cache on them (`util/helm/cmd.go`, `controller/state.go`, `reposerver/cache/cache.go` — read 2026-09-19), so the CR appears on the next render after the operator; Flux runs a real install. Only a bare `helm template` / Kustomize `helmCharts` render omits it unless given `--api-versions grafana.integreatly.org/v1beta1`. `.instanceSelector` (default the `openshift-grafana` release `grafana`) and `.datasource` (the datasource **uid**, default `openshift-thanos`) are refused empty |
@@ -609,7 +619,7 @@ evaluated. That is a statement of intent, not an isolation boundary — OpenShif
 `basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
 every authenticated identity including this one.
 
-#### The seventeen alerts (nineteen with `backup.offsite`)
+#### The seventeen alerts, and two more wherever the offsite CronJob renders (the default)
 
 | Alert | Fires on | `for` |
 |---|---|---|
@@ -627,8 +637,8 @@ every authenticated identity including this one.
 | `GroupSyncDashboardBackupStale` | the newest file in `backupDir` is older than `backupStaleSeconds` — the only copy of the un-refetchable history has stopped being taken | `for.backupStale`, `30m` |
 | `GroupSyncDashboardReportUsagePullFailing` | the dashboard's poller could not pull the report service's usage feed (token mismatch, Service/TLS, or a shape change) and has not succeeded in the window — runs are not lost, the Usage tab's Reports table stops advancing. Rendered only with `reporting.enabled` | `for.reportPull`, `30m` |
 | `GroupSyncDashboardReportSnapshotStale` | `gsd_report_snapshot_age_seconds` above four snapshot intervals — the dashboard's leader is not writing copies, so a report would print stale data with an honest "data as of" line. Rendered only with `reporting.enabled` | `for.reportSnapshot`, `30m` |
-| `GroupSyncDashboardOffsiteBackupStale` | *(`backup.offsite.enabled` only)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume | `for.offsiteBackupStale`, `30m` |
-| `GroupSyncDashboardOffsiteBackupUnobserved` | *(`backup.offsite.enabled` only)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
+| `GroupSyncDashboardOffsiteBackupStale` | *(only where the offsite CronJob renders)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume, or the newest pre-upgrade copy is refused (a run fails when either pass fails; the pod's log says which) | `for.offsiteBackupStale`, `30m` |
+| `GroupSyncDashboardOffsiteBackupUnobserved` | *(only where the offsite CronJob renders)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
 | `GroupSyncDashboardPodThrottled` | a pod's throttled share of scheduler periods above `kpi.thresholds.throttledPercent` (1 %) over 15m — the saturation signal the KPI page marks amber; raise its CPU limit | `for.podThrottled`, `15m` |
 | `GroupSyncDashboardPodMemoryHigh` | a pod above `kpi.thresholds.memoryPercent` (80 %) of its cgroup memory limit — the next step is the OOM kill | `for.podMemoryHigh`, `15m` |
 | `GroupSyncDashboardVolumeDiskFull` | the filesystem under a pod's volume above `kpi.thresholds.diskPercent` (80 %) — on a hostPath volume, the node's disk | `for.volumeDiskFull`, `30m` |

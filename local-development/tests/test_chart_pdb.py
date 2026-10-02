@@ -71,17 +71,20 @@ class TestThePdbSelectsTheDeploymentOnly:
         selector = _one(docs, "PodDisruptionBudget", "t-group-sync-dashboard")["spec"]["selector"]["matchLabels"]
         deployment = _one(docs, "Deployment", "t-group-sync-dashboard")
         assert _matches(selector, deployment["spec"]["template"]["metadata"]["labels"])
-        jobs = [d for d in docs if d.get("kind") == "Job"]
-        assert len(jobs) == 1, [d["metadata"]["name"] for d in jobs]   # secrets mint only
-        for job in jobs:
-            labels = job["spec"]["template"]["metadata"]["labels"]
+        # Every Job-owned pod template in the default render: the secrets mint, and the offsite
+        # claim's bind Job and CronJob, which render by default since #304.
+        pods = {d["metadata"]["name"]: d["spec"]["template"]["metadata"]["labels"] for d in docs if d.get("kind") == "Job"}
+        pods.update({d["metadata"]["name"]: d["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
+                     for d in docs if d.get("kind") == "CronJob"})
+        assert sorted(labels["app.kubernetes.io/component"] for labels in pods.values()) == \
+            ["backup-offsite", "backup-offsite", "secrets-mint"], sorted(pods)
+        for name, labels in pods.items():
             assert not _matches(selector, labels), (
-                f"{job['metadata']['name']}: a Job-owned pod in the budget fails it "
+                f"{name}: a Job-owned pod in the budget fails it "
                 f"(jobs.batch has no scale subresource) and blocks every drain"
             )
             # Still identifiable as this release's pod, just not as the workload.
             assert labels["app.kubernetes.io/instance"] == "t"
-            assert labels["app.kubernetes.io/component"] == "secrets-mint", labels
 
     def test_a_pod_label_that_collides_with_a_selector_label_is_refused(self):
         """Second-pass review (Cursor): `podLabels.app=x` used to win by last-key-wins, so the
