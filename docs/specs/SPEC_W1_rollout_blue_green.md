@@ -84,10 +84,9 @@ implementation blocks, applied in order:
    is applied on `41b30524`). Measured from their text, with `rollout.enabled: true`:
    - SPEC_E2's recovery mode runs its script on the same pod and `/data`, and prints `GSD_DB_PATH`; with the flag on that
      path is a colour's (`/data/rs-<hash>/gsd.db`). SPEC_E3's `restore-db.sh` restores into `/data/gsd.db` (its "live
-     set"), which no colour opens while the flag is on: a restore there would change nothing a reader sees. **When E2 is
-     on main, the implementing pull request adds a refusal of `recovery.enabled: true` with `rollout.enabled: true` to
-     `gsd.rolloutGuards`** ("turn blue-green off first, docs/BLUE_GREEN.md 'Turn it off'"), with a test. Not written now:
-     `recovery` is not a value on main.
+     set"), which no colour opens while the flag is on: a restore there would change nothing a reader sees. **`gsd.rolloutGuards`
+     refuses `recovery.enabled: true` with `rollout.enabled: true`** ("Turn blue-green off first"), nil-safe, so it holds
+     before and after `recovery` is a value on main (block 2; T426-11 `[recovery]`; note 10).
    - SPEC_E5's offsite pass reads `--pre-upgrade-source /data/pre-upgrade`; with the flag on, a migration's copy is in
      `/data/rs-<hash>/pre-upgrade/`, so that pass prints "nothing to ship". Blue's whole directory is the way back
      instead (§3.1). When E5 is on main, the guide says so in its "What changes when it is on" list.
@@ -105,6 +104,19 @@ implementation blocks, applied in order:
    - Q1. Keep #426 in Epic E as "specified, not scheduled", or move it to its own epic? (the epic's open question 3)
    - Q2. The lab walk (§5) needs a RolloutManager from ephico2real2/openshift-gitops-helm-chart#2, still an open issue
      with no pull request (measured 2026-10-01: `gh pr list` shows only #1, merged). Unchanged since the draft.
+10. **Review of 2026-10-01, OB2 (Fable 5.1, in Codex's seat), on `12128abf`; every item accepted.** C2 refuted the budget
+    in two places and C4 named a risk; the fix is OB2's patch, carried into the blocks:
+    - **Accepted:** the fleet gate's `fleet-gate.json` (#481) sits beside the database and no copy carries it; the seed
+      now carries it (block 1, `GATE_FILE`, `other_colours`, `carry_gate`; block 17, two tests). OB1-lite added one line
+      to OB2's first test, a pre-flag copy beside `/data/gsd.db`, so that the preference for the newest other colour is
+      pinned (mutant M12 survived without it).
+    - **Accepted:** the refusal of `recovery.enabled: true` with the flag on is a block now, nil-safe (block 2; block 18,
+      the `[recovery]` case and the guide test), replacing note 6's promise.
+    - **Accepted:** the guide's refusal row, its "Blue loses the lease during the preview" section and the gate sentence
+      (block 13); §2.6's row, §3.3 r, §3.5's scope, §3.6 row 12.
+    - **Accepted, recorded:** on PR #518's head (`98d20df0`, SPEC_E2 implemented, not merged), blocks 8, 11, 16 and 19 no
+      longer check (measured, each block alone: "Old text occurs 0 times"). Note 1 already commits the implementing pull
+      request to re-check every block; this is that measurement.
 
 ## 1. The mandate, and what is out of scope
 
@@ -223,6 +235,7 @@ in `syncRolloutStatusBlueGreen`, neither of which anything here relies on.
 | Leader election | the Lease name is the release's; blue holds it while serving; green is a standby that serves reads and writes only activity to its own file | required on (refused off); the lease moves to green within 45 s of blue stopping (§3.5) |
 | The pre-upgrade copy (#301, SPEC_M1) | written beside the file opened, so in `/data/rs-<green>/pre-upgrade/` | green migrates only its own copy; blue's whole directory is the way back |
 | The report service and its claim | a separate `Recreate` Deployment reading the newest snapshot from `/data/report`; it refuses a newer schema and accepts an older one | unchanged; the report-artifacts claim is untouched |
+| The fleet gate's copy (#481, SPEC_S4f) | `fleet-gate.json` sits beside the database (`local-development/gsd/fleetstate.py#GATE_FILE`); no `VACUUM INTO` copy carries it, so a seeded colour would start without it, and a fleet Lease deleted before its first sweep would read as "nothing was kept" | the seed carries it from the newest other colour, else from beside `/data/gsd.db` (block 1, `carry_gate`; two tests) |
 | Disk | each colour holds a database, its `-wal` and its pre-upgrade copies | the seed keeps its own directory and the four most recently written others (§3.3 f) |
 | Recovery mode, `restore-db.sh`, offsite pre-upgrade, the KPI card (SPEC_E2, E3, E5, E6) | not on main; with the flag on they read or write `/data/gsd.db` or `/data/pre-upgrade` | re-derived when they ship (Orchestrator's notes, 6) |
 
@@ -305,7 +318,7 @@ the flag off nothing new renders and the render equals main's apart from the cha
 | o | The traffic plugin | not needed | §2.3 |
 | p | RBAC | the chart adds and removes no Role or binding; the controller gets its own from the GitOps operator | §4.3: 70 and 70 atoms, REMOVED 0, ADDED 0 |
 | q | The preview Service's labels | not the selector labels | the ServiceMonitor selects Services by them and would scrape green twice |
-| r | Refused renders | no Rollout API; `replicaCount` ≠ 1; persistence off; a mode other than `ReadWriteMany`; leader election off; a strategy other than `blueGreen`; no copy source | each refusal names the value to set in the release's values file |
+| r | Refused renders | no Rollout API; `replicaCount` ≠ 1; persistence off; a mode other than `ReadWriteMany`; leader election off; a strategy other than `blueGreen`; no copy source; `recovery.enabled: true` (SPEC_E2, nil-safe) | each refusal names the value to set in the release's values file |
 
 ### 3.4 Every operation is a value
 
@@ -325,7 +338,9 @@ ApplicationSet parameter, sync-wave, action or sync option is part of this desig
 ### 3.5 The data window, as a budget
 
 **Budget:** per release, the history green lacks is what blue wrote between the copy green seeded from and green's
-first poll as leader. Scope: one release, one namespace, `replicaCount: 1`, leader election on.
+first poll as leader. Scope: one release, one namespace, `replicaCount: 1`, leader election on, **while blue holds the
+lease** through the preview (when it does not, §3.6 row 12). The fleet gate's state is not in the window: the seed
+carries `fleet-gate.json`, and #481's backstop covers the gate until green's first sweep writes its own (§2.6).
 
 | Part | Bound | Source |
 |---|---|---|
@@ -354,6 +369,7 @@ the flag on and no controller, every restart of the Deployment's pod on a new te
 | 9 | Promotion left at `true` | the next release is promoted as soon as green is ready, with no pause | the guide's "Promote" |
 | 10 | An undo past a migration after blue's directory was pruned | blue seeds from green's newer copy and #305 refuses it: blue never becomes ready and green keeps serving | `StoreSchemaTooNew`; restore green's pre-upgrade copy into blue's directory (runbook section 6) |
 | 11 | Clock skew between nodes larger than the gap between a colour's last write and the newest copy | a returning colour keeps its own file instead of reseeding | the seed log says which it chose |
+| 12 | Blue loses the lease during a preview (a stall longer than the 30 s lease) | green takes it, polls and records into its own file; blue, still the pod readers reach, stops polling and does not take it back while green renews. Promote: nothing lost. Abort: green's polls stay in green's directory, a gap in blue's history | the page's last poll time stops moving; the guide's "Blue loses the lease during the preview" |
 
 ### 3.7 The guarantee, as a budget
 
@@ -381,8 +397,8 @@ Deployment or the Rollout bypasses the render's refusals, and a GitOps controlle
 | T426-8 | `::test_the_configmap_carries_the_script_verbatim` | no ConfigMap | FAILED | passed |
 | T426-9 | `::test_the_rollout_keeps_one_old_colour_and_waits_for_a_person_by_default` | no Rollout | FAILED | passed |
 | T426-10 | `::test_the_rollout_adds_no_rbac`, and the RBAC diff of §4.3 | regression guard | passed | passed |
-| T426-11 | `::test_an_unsafe_combination_is_refused[replicas\|rwop\|rwo\|no-persistence\|no-election\|canary\|no-seed-source]`, each asserting the "Set …" sentence | no guard: rc 0 | 7 FAILED | 7 passed |
-| T426-12 | `test_colour_seed_script.py`: the ten cases of the seed's table (new colour, newest across both directories, empty volume, database without copy, restart, newer copy same schema, retry after abort, undo past a migration, corrupt copy, prune) | no script: `FileNotFoundError` in the fixture | 10 ERROR | 10 passed; FAILED under M3, M4, M5, M6 |
+| T426-11 | `::test_an_unsafe_combination_is_refused[replicas\|rwop\|rwo\|no-persistence\|no-election\|canary\|no-seed-source\|recovery]`, each asserting its sentence; `::test_the_guide_names_the_recovery_refusal_and_the_lease_flip_during_the_preview` | no guard: rc 0; no guide | 9 FAILED | 9 passed; `[recovery]` FAILED under M13 |
+| T426-12 | `test_colour_seed_script.py`: the ten cases of the seed's table (new colour, newest across both directories, empty volume, database without copy, restart, newer copy same schema, retry after abort, undo past a migration, corrupt copy, prune), and the fleet gate's copy carried from the newest other colour before the pre-flag one, and from beside `/data/gsd.db` the first time | no script: `FileNotFoundError` in the fixture | 12 ERROR | 12 passed; FAILED under M3, M4, M5, M6, M11, M12 |
 | T426-13 | `test_values_defaults.py::test_the_only_false_defaults_are_the_stated_exceptions`, `::test_every_kept_off_boolean_has_a_reason_comment_above_it` | KEPT_OFF names keys `values.yaml` lacks | 2 FAILED | passed |
 | T426-14 | `test_colour_seed_script.py::test_the_seed_log_names_the_copy_and_its_age`; the bound in `docs/BLUE_GREEN.md` "What green does not have" and §3.5 | no script | ERROR | passed; FAILED under M9 |
 | T426-15 | the figure: `docs/diagrams/render.py`, light and dark, looked at | no figure on main | — | two PNGs written and read; `375 px viewport: scrollWidth 375` (§4.3) |
@@ -392,7 +408,8 @@ Deployment or the Rollout bypasses the render's refusals, and a GitOps controlle
 ### 4.2 The mutations
 
 Each on a copy of the applied tree, running `tests/test_chart_rollout.py` and `tests/test_colour_seed_script.py`
-(29 tests): every one gives `1 failed, 28 passed`, failing the test named.
+(33 tests): M1 to M10 and M12 and M13 each give `1 failed, 32 passed`, M11 `2 failed, 31 passed`, failing the test
+named. M1 to M10 were measured on the first revision (29 tests, `1 failed, 28 passed` each); M11 to M13 on this one.
 
 | | Mutation | The test that fails |
 |---|---|---|
@@ -406,19 +423,23 @@ Each on a copy of the applied tree, running `tests/test_chart_rollout.py` and `t
 | M8 | the copy's stamp read as everything between `gsd-` and `.db` (the draft's) | `test_a_copy_named_with_a_pod_after_its_stamp_still_parses` |
 | M9 | the seed log drops the copy's age | `test_the_seed_log_names_the_copy_and_its_age` |
 | M10 | the prerequisite refusal says "pass --api-versions" (the draft's) | `test_without_the_crd_the_render_is_refused_and_names_the_prerequisite` |
+| M11 | the seed never calls `carry_gate` | both fleet-gate tests |
+| M12 | `carry_gate` prefers the copy beside `/data/gsd.db` to the newest other colour's | `test_a_new_colour_carries_the_fleet_gate_copy_of_the_newest_other_colour` |
+| M13 | the `recovery.enabled` refusal removed | `test_an_unsafe_combination_is_refused[recovery]` |
 
 ### 4.3 The proof
 
 | Gate | Command | Result |
 |---|---|---|
 | the blocks | `apply-spec-blocks.py` on a clean `git worktree add --detach … 41b30524`, then `--apply` | `19 blocks check out across 14 files`; the applied tree equals the proof tree byte for byte (`diff -rq`, `.git` and caches excluded) |
-| before | the three test files on `41b30524` with blocks 17 to 19 only | `17 failed, 7 passed, 12 errors` |
-| after | the same files with every block | `36 passed` |
-| the hermetic suite | `pytest -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py`, main and applied | main `41b30524`: `6467 passed, 26 skipped, 655 deselected, 5 xfailed`. Applied: `1 failed, 6499 passed, 26 skipped, 655 deselected, 5 xfailed`; the one failure is `test_specs_index.py::test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`, `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.62.0')`: the version ladder's signal that this spec, applied today, would jump above specs that ship first (Orchestrator's notes, 8) |
+| before | the three test files on `41b30524` with blocks 17 to 19 only | `19 failed, 7 passed, 14 errors` (first revision: `17 failed, 7 passed, 12 errors`) |
+| after | the same files with every block | `40 passed` (first revision: `36 passed`) |
+| the review's four checks | OB2's new tests on the first revision's applied tree, then with its fix | `4 failed, 29 passed` → `33 passed` in `test_chart_rollout.py` and `test_colour_seed_script.py` (OB2 counted the guide test apart: `3 failed, 29 passed` → `32`) |
+| the hermetic suite (first revision, `12128abf`; not re-run for the review's revision) | `pytest -q -p no:cacheprovider --deselect tests/test_ui.py --deselect tests/test_live_smoke.py`, main and applied | main `41b30524`: `6467 passed, 26 skipped, 655 deselected, 5 xfailed`. Applied: `1 failed, 6499 passed, 26 skipped, 655 deselected, 5 xfailed`; the one failure is `test_specs_index.py::test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`, `AssertionError: ('E2', 'chart 0.60.0 (chart only)', 'Chart.yaml is already 0.62.0')`: the version ladder's signal that this spec, applied today, would jump above specs that ship first (Orchestrator's notes, 8) |
 | the default render (T426-1) | `helm template group-sync-dashboard charts/group-sync-dashboard`, and with `-f environments/crc.yaml`, main against applied | 2925 and 3329 lines each; 35 and 40 lines differ, every one a `helm.sh/chart` label or the `checksum/config` that hashes the labelled ConfigMap; **0 lines** with `Chart.yaml` held at 0.59.25 |
 | the flag on | `helm template … -f environments/crc.yaml --api-versions argoproj.io/v1alpha1/Rollout --set rollout.enabled=true` | rc 0; kinds as main plus one Rollout, one Service, one ConfigMap; still two PersistentVolumeClaims |
 | RBAC (T426-10) | every (Role or ClusterRole, apiGroup, resource, verb) and (binding, roleRef, subject) atom, `crc.yaml` main against the flag on | 70 and 70; REMOVED 0, ADDED 0 |
-| lint | `helm lint charts/group-sync-dashboard` (Helm v4.3.0), flag off and `--set rollout.enabled=true` | `1 chart(s) linted, 0 chart(s) failed` both; with the flag on lint has no Rollout API and reports the refusal as `level=INFO msg="funcMap fail"` with the values-file sentence |
+| lint | `helm lint charts/group-sync-dashboard` (Helm v4.3.0), flag off and `--set rollout.enabled=true` | `1 chart(s) linted, 0 chart(s) failed` both; with the flag on lint has no Rollout API and reports the refusal as `level=INFO msg="funcMap fail"` with the values-file sentence (re-run on the review's revision: the same). `--set recovery.enabled=true` with the flag on: rc 1; alone: rc 0 |
 | the figure (T426-15) | `docs/diagrams/render.py docs/diagrams/rollout-blue-green/source.html <out> rollout-blue-green` | two PNGs written (433901 and 435056 bytes), the light one read; `375 px viewport: scrollWidth 375` |
 | the index | `pytest tests/test_specs_index.py tests/test_docs_citations.py` in the spec's worktree; the W1 row and header mutated to `#427` in a copy | `1802 passed, 22 skipped`, W1's 29 citations each checked, none skipped; the mutant: `1 failed, 101 passed`, `AssertionError: ('W1 is #426', '427')` |
 | Markdown | `markdownlint-cli2` on the applied `docs/BLUE_GREEN.md`, `docs/README.md` and the chart `README.md` | `docs/BLUE_GREEN.md`: 0 issues; the other two: 10 findings, as on main |
@@ -463,7 +484,7 @@ when the operator gives the lab:
 
 Nineteen blocks over fourteen files, in apply order: the seed script, the templates, the values, the chart's version and
 README, the guide, the figure's page, the docs index, the CHANGELOG, the tests. Lines added and removed per file (the
-proof tree against `41b30524`): `colour_seed.py` +160, `_helpers.tpl` +59, `deployment.yaml` +43, `rollout.yaml` +64, `values.yaml` +21, `Chart.yaml` +3 −1, the chart `README.md` +2, `docs/BLUE_GREEN.md` +314, `source.html` +253, `docs/README.md` +1, `CHANGELOG.md` +8, `test_colour_seed_script.py` +185, `test_chart_rollout.py` +145, `test_values_defaults.py` +2.
+proof tree against `41b30524`): `colour_seed.py` +186, `_helpers.tpl` +62, `deployment.yaml` +43, `rollout.yaml` +64, `values.yaml` +21, `Chart.yaml` +3 −1, the chart `README.md` +2, `docs/BLUE_GREEN.md` +335, `source.html` +253, `docs/README.md` +1, `CHANGELOG.md` +8, `test_colour_seed_script.py` +207, `test_chart_rollout.py` +155, `test_values_defaults.py` +2.
 
 The figure's PNGs cannot be blocks. With the blocks applied, render them from the repository root and read both before
 committing (development):
@@ -522,6 +543,9 @@ from pathlib import Path
 
 PATTERN = "gsd-*.db"
 COLOUR_PREFIX = "rs-"
+# The fleet gate's copy kept beside the database (gsd/fleetstate.py#GATE_FILE, #481): no VACUUM INTO copy
+# carries it, so a colour takes the newest other colour's, else the one beside /data/gsd.db before the flag.
+GATE_FILE = "fleet-gate.json"
 # The stamp's fixed width, 20260927T101500.123456Z: a copy whose name carries more after it (a pod's
 # name, above one replica) still parses.
 STAMP_WIDTH = 23
@@ -585,9 +609,30 @@ def seed(copy: Path, db: Path) -> None:
           f"the copy was written {age:.0f} s ago")
 
 
+def other_colours(data: Path, own: Path) -> list[Path]:
+    """Every colour directory but this one, the most recently written first."""
+    return sorted((d for d in data.glob(COLOUR_PREFIX + "*") if d.is_dir() and d != own),
+                  key=last_write, reverse=True)
+
+
+def carry_gate(data: Path, own: Path) -> None:
+    """Put the fleet gate's copy beside this colour's database when it has none: the newest other colour's, else
+    the pre-flag one beside /data/gsd.db. Without it a Lease deleted before this colour's first sweep reads as
+    "nothing was kept", and a password its gate held back may be sent once more (SPEC_S4f)."""
+    target = own / GATE_FILE
+    if target.exists():
+        return
+    for source in [*(d / GATE_FILE for d in other_colours(data, own)), data / GATE_FILE]:
+        if source.is_file():
+            tmp = target.with_name(target.name + ".seed")
+            shutil.copyfile(source, tmp)
+            os.replace(tmp, target)
+            print(f"carried {source} to {target}: the fleet gate's copy beside the database (#481)")
+            return
+
+
 def prune(data: Path, own: Path, keep_others: int) -> None:
-    others = sorted((d for d in data.glob(COLOUR_PREFIX + "*") if d.is_dir() and d != own),
-                    key=last_write, reverse=True)
+    others = other_colours(data, own)
     for stale in others[keep_others:]:
         shutil.rmtree(stale)
         print(f"removed {stale}: older than the newest {keep_others} other colours")
@@ -625,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
                             f"on its next poll, and this init container is retried until then")
         else:
             print(f"no database under {data}: a new install, {args.db} starts empty")
+        if args.db.exists():
+            carry_gate(data, own)
         prune(data, own, args.keep_others)
     except (SeedError, sqlite3.Error, OSError, ValueError) as exc:
         print(f"colour seed refused: {exc}", file=sys.stderr)
@@ -701,6 +748,9 @@ refusal names the value to set in the release's values file, the only path a rel
 {{- end -}}
 {{- if not .Values.leaderElection.enabled -}}
 {{- fail "rollout.enabled: true requires leaderElection.enabled: true: blue and green run at once, and only the lease holder may poll and write the copies a new colour starts from. Set leaderElection.enabled: true in this release's values file." -}}
+{{- end -}}
+{{- if eq (toString ((.Values.recovery | default dict).enabled)) "true" -}}
+{{- fail "rollout.enabled: true cannot run with recovery.enabled: true: recovery mode is one pod holding the data volume with the app stopped, and a Rollout would start it as a preview colour beside the serving one, never ready and never promoted, so nothing stops. Turn blue-green off first (docs/BLUE_GREEN.md, \"Turn it off\"), then set recovery.enabled: true in this release's values file." -}}
 {{- end -}}
 {{- if not (include "gsd.seedSources" .) -}}
 {{- fail "rollout.enabled: true needs a copy for green to start from: set reporting.enabled: true (a snapshot every reporting.snapshot.intervalSeconds) or config.backup.enabled: true with config.backup.dir under /data/ in this release's values file." -}}
@@ -1140,6 +1190,7 @@ Roll it out through the release's deployment pipeline. The chart refuses to rend
 | `leaderElection.enabled: false` | only the lease holder may poll and write copies |
 | `rollout.strategy` is not `blueGreen` | a canary would split readers across two histories |
 | `reporting.enabled` and `config.backup.enabled` both off | green has no copy to start from |
+| `recovery.enabled: true` | recovery mode is one pod holding the volume with the app stopped; a Rollout would start it as a preview colour that is never ready, and nothing stops. Turn blue-green off first |
 
 What changes when it is on:
 
@@ -1235,6 +1286,22 @@ newer colours exist. Promote soon after the check to keep the window short.
 The same holds, with no preview, every time the Deployment's own pod restarts on a new template while the flag is
 on and no controller runs: the new pod is a new colour.
 
+## Blue loses the lease during the preview
+
+Blue renews its Lease every 10 seconds and the Lease lasts 30 seconds. If blue stalls for longer than that during a
+preview (a long garbage collection, a node under pressure, a partition), green's elector takes the Lease: green polls
+and records into **its own** file, and blue, still the pod readers reach, stops polling. Blue does not take the
+Lease back while green renews it, so the page's last poll time stops moving until the release ends:
+
+- **promote**: green serves with the history it recorded; nothing is lost;
+- **abort**: green is scaled down, its Lease expires 30 seconds later and blue takes it within 45 seconds
+  (`gsd/leader.py#LeaderElector.stop`, `gsd/poller.py#STANDBY_RECHECK_SECONDS`); the polls green recorded while
+  it led stay in green's directory, a gap in blue's history for the time green led.
+
+This is why the chart refuses leader election above one replica (`templates/deployment.yaml`, "pods that lose the
+lease stop polling but KEEP SERVING reads from their own database"): blue-green runs that shape on purpose, for the
+length of a preview only. Keep previews short; the seed and the dashboard log say which pod led.
+
 ## When there is no controller
 
 With the flag on and no controller, the Rollout is inert. **The Deployment keeps serving**, because only the
@@ -1274,6 +1341,10 @@ The seed script is `charts/group-sync-dashboard/scripts/colour_seed.py`. It runs
 | exists | not newer than the file | keeps the file (a restart) |
 | exists | newer, of a schema the file has reached | sets the directory aside, copies the newest in |
 | exists | newer, of a newer schema | keeps the file (an undo past a migration) |
+
+Before that it carries the fleet gate's copy, `fleet-gate.json` (`gsd/fleetstate.py#FileBackstop`, #481), from the
+newest other colour, or from beside `/data/gsd.db` the first time, because no database copy carries it: without
+it a Lease deleted before this colour's first sweep would read as "nothing was kept".
 
 Then it keeps its own directory and the four most recently written others, and removes the rest. Disk: up to five
 colour directories, each about the database's size with its pre-upgrade copies, on `persistence.size`.
@@ -1818,6 +1889,28 @@ def test_prune_keeps_its_own_and_the_four_newest_other_colours(script, tmp_path)
         age(tmp_path / f"rs-old{n}", seconds)
     assert run(script, tmp_path) == 0
     assert sorted(p.name for p in tmp_path.glob("rs-*")) == ["rs-green", "rs-old2", "rs-old3", "rs-old4", "rs-old5"]
+
+
+def test_a_new_colour_carries_the_fleet_gate_copy_of_the_newest_other_colour(script, tmp_path):
+    """#481's backstop lives beside the database and no VACUUM INTO copy carries it (gsd/fleetstate.py#FileBackstop):
+    a colour with none takes the newest other colour's, by that colour's last write, before the pre-flag one."""
+    make_copy(tmp_path, 3)
+    (tmp_path / "fleet-gate.json").write_text('{"pre-flag": {}}')
+    for name, seconds, text in (("rs-blue", 60, '{"blue": {}}'), ("rs-older", 600, '{"older": {}}')):
+        make_db(tmp_path / name / "gsd.db", 1)
+        (tmp_path / name / "fleet-gate.json").write_text(text)
+        age(tmp_path / name, seconds)
+    assert run(script, tmp_path) == 0
+    assert (tmp_path / "rs-green" / "fleet-gate.json").read_text() == '{"blue": {}}'
+
+
+def test_the_first_colour_carries_the_fleet_gate_copy_from_beside_data_gsd_db(script, tmp_path):
+    """The flag just turned on: the copy sat beside /data/gsd.db, and the Deployment's first colour takes it."""
+    make_copy(tmp_path, 3)
+    make_db(tmp_path / "gsd.db", 1)
+    (tmp_path / "fleet-gate.json").write_text('{"pre-flag": {}}')
+    assert run(script, tmp_path) == 0
+    assert (tmp_path / "rs-green" / "fleet-gate.json").read_text() == '{"pre-flag": {}}'
 ```
 
 #### Block 18 — local-development/tests/test_chart_rollout.py: the render tests, T426-1 to T426-11
@@ -1964,11 +2057,21 @@ def test_the_rollout_adds_no_rbac():
     ({"leaderElection__enabled": "false"}, "Set leaderElection.enabled: true"),
     ({"rollout__strategy": "canary"}, "Set rollout.strategy: blueGreen"),
     ({"reporting__enabled": "false", "config__backup__enabled": "false"}, "a copy for green to start from"),
-], ids=["replicas", "rwop", "rwo", "no-persistence", "no-election", "canary", "no-seed-source"])
+    # SPEC_E2's recovery mode (#303): nil-safe, so it holds before and after `recovery` is a value on main.
+    ({"recovery__enabled": "true"}, "Turn blue-green off first"),
+], ids=["replicas", "rwop", "rwo", "no-persistence", "no-election", "canary", "no-seed-source", "recovery"])
 def test_an_unsafe_combination_is_refused(values, reason):
     ok, out = render(rollout__enabled="true", **values)
     assert not ok
     assert reason in out
+
+
+def test_the_guide_names_the_recovery_refusal_and_the_lease_flip_during_the_preview():
+    """Two cases the design has to state: the refusal of recovery mode with the flag on (SPEC_E2), and blue losing
+    the lease to green during a preview (the chart refuses this shape at replicaCount > 1 for the same reason)."""
+    guide = (CHART.parents[1] / "docs" / "BLUE_GREEN.md").read_text()
+    assert "| `recovery.enabled: true` |" in guide
+    assert "## Blue loses the lease during the preview" in guide
 ```
 
 #### Block 19 — local-development/tests/test_values_defaults.py: the two false defaults as stated exceptions, T426-13
