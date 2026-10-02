@@ -303,7 +303,9 @@ type: application
 # container runs the chart's recovery script (a ConfigMap rendered only while it is on) instead of
 # uvicorn, with no liveness probe and a readiness probe that cannot pass. The default render is
 # unchanged apart from this version and what is computed from it; no RBAC change; appVersion unchanged.
-version: 0.60.0
+# CHART 0.60.1 (2026-10-01), PATCH: appVersion moves to application 2.1.0 (below); restore-db.sh
+# lists the database copies the recovery pod can restore and restores one (#302, SPEC_E3).
+version: 0.60.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -426,7 +428,9 @@ version: 0.60.0
 # 1.20.0 (2026-09-29). Each cluster card lists its trusted certificates' subject, issuer and dates, says whether one is the pinned enterprise root, and shows the fix under a verify failure; a CA within thirty days of expiry warns on the Cluster Configurations banner (#244). MINOR.
 # 1.21.0 (2026-09-30). A card whose last poll failed TLS verification wears a `verify failed` warning chip instead of the green `verified` one; the `ca:` mode text is unchanged (#492). MINOR.
 # 2.0.0 (2026-09-30). Epic D: reconnect a cluster from the screen (#384). MAJOR.
-appVersion: "2.0.0"
+# 2.1.0 (2026-10-01). restore-db.sh lists the database copies the recovery pod can restore and
+# restores one (#302, SPEC_E3). MINOR.
+appVersion: "2.1.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

@@ -238,7 +238,12 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     0.60.1, SPEC_E4's 0.60.2 and SPEC_G4's 0.60.3 at or below `Chart.yaml`). Under SPEC_E5's rule the same pull
     request moves the `specified` specs the tree now reaches, keeping each MINOR or PATCH: SPEC_G3's chart 0.60.1 to
     0.60.5 (0.60.2 to 0.60.4 are SPEC_E4's and SPEC_G4's), and the application 2.1.0 of SPEC_G2, SPEC_E4 and SPEC_E6
-    to 2.4.0 (2.2.0 is SPEC_G3's, 2.3.0 SPEC_E9's), their chart cells unchanged.
+    to 2.4.0 (2.2.0 is SPEC_G3's, 2.3.0 SPEC_E9's), their chart cells unchanged. Of the script's edits the pull
+    request keeps the version fields and the two Chart.yaml paragraphs, and not its CHANGELOG heading or its status
+    promotion (the precedent of `f842627c`, app 1.21.0): on a clean tree it turned `## Unreleased` into `## Application
+    2.1.0 — chart 0.60.1 — 2026-10-01` and moved SPEC_E2 and this spec to `released`, while Epic E's release is 3.0.0
+    (this header's Release row) and seven `specified` specs (G2, E4, G3, E6, E7, E8, E9) anchor their CHANGELOG block
+    on `## Unreleased`, which would then no longer check out. The heading is cut by Epic E's release.
 
 **Open questions for the operator.** None.
 
