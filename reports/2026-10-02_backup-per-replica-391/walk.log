@@ -1,0 +1,118 @@
+== step 1 the lab release's PVC UIDs — 2026-10-02T02:40:57Z
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+
+== step 2 the throwaway release gsd391 in gsd-391-walk, chart at the merge commit 721a78db — 2026-10-02T02:40:57Z
+Error from server (NotFound): namespaces "gsd-391-walk" not found
+NAME: gsd391
+LAST DEPLOYED: Thu Oct  1 21:40:57 2026
+NAMESPACE: gsd-391-walk
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+
+== step 3 six backups per pod — 2026-10-02T02:51:21Z
+-- pod/gsd391-group-sync-dashboard-5fd7ccb685-4hbh7
+2026-10-01 22:41:12,306-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024112.279754Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db (1 kept)
+2026-10-01 22:43:12,181-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024312.101663Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db (2 kept)
+2026-10-01 22:45:11,086-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024511.009105Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db (3 kept)
+2026-10-01 22:47:10,823-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024710.796050Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db (4 kept)
+2026-10-01 22:49:10,805-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024910.778198Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db (4 kept)
+2026-10-01 22:51:10,912-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T025110.884152Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db (4 kept)
+['gsd_backup_last_success_timestamp_seconds 1.790909470896362e+09']
+own newest /data/backup/gsd-20261002T025110.884152Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db 1790909470.896362
+-- pod/gsd391-group-sync-dashboard-5fd7ccb685-f76v4
+2026-10-01 22:41:12,315-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024112.289076Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db (1 kept)
+2026-10-01 22:43:12,183-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024312.104609Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db (2 kept)
+2026-10-01 22:45:11,088-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024511.011371Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db (3 kept)
+2026-10-01 22:47:10,823-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024710.796678Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db (4 kept)
+2026-10-01 22:49:10,811-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T024910.783721Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db (4 kept)
+2026-10-01 22:51:10,912-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T025110.884315Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db (4 kept)
+['gsd_backup_last_success_timestamp_seconds 1.790909470896362e+09']
+own newest /data/backup/gsd-20261002T025110.884315Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db 1790909470.896362
+-- ls -l /data/backup
+total 10080
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:45 gsd-20261002T024511.009105Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:45 gsd-20261002T024511.011371Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:47 gsd-20261002T024710.796050Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:47 gsd-20261002T024710.796678Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:49 gsd-20261002T024910.778198Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:49 gsd-20261002T024910.783721Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:51 gsd-20261002T025110.884152Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+-rw-r--r--. 1 1001140000 1001140000 1290240 Oct  1 22:51 gsd-20261002T025110.884315Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+
+== step 4 delete one pod — 2026-10-02T02:51:37Z
+pod "gsd391-group-sync-dashboard-5fd7ccb685-f76v4" deleted from gsd-391-walk namespace
+-- replacement pod/gsd391-group-sync-dashboard-5fd7ccb685-fztn7: 02:58:10Z
+2026-10-01 22:51:46,501-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T025146.423713Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db (1 kept)
+2026-10-01 22:53:46,306-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T025346.276798Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db (2 kept)
+2026-10-01 22:55:45,279-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T025545.199420Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db (3 kept)
+2026-10-01 22:57:44,998-0400 INFO    gsd.store backup written to /data/backup/gsd-20261002T025744.929892Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db (4 kept)
+-- ls -l /data/backup
+gsd-20261002T024511.011371Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T024710.796678Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T024910.783721Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T025110.884152Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025110.884315Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T025146.423713Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+gsd-20261002T025310.797677Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025346.276798Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+gsd-20261002T025510.731038Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025545.199420Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+gsd-20261002T025710.787653Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025744.929892Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+files 12 {'4hbh7': 4, 'fztn7': 4, 'f76v4': 4}
+
+== step 4 result — 2026-10-02T02:58:28Z
+-- ls -l /data/backup
+gsd-20261002T024511.011371Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T024710.796678Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T024910.783721Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T025110.884152Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025110.884315Z-gsd391-group-sync-dashboard-5fd7ccb685-f76v4.db
+gsd-20261002T025146.423713Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+gsd-20261002T025310.797677Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025346.276798Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+gsd-20261002T025510.731038Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025545.199420Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+gsd-20261002T025710.787653Z-gsd391-group-sync-dashboard-5fd7ccb685-4hbh7.db
+gsd-20261002T025744.929892Z-gsd391-group-sync-dashboard-5fd7ccb685-fztn7.db
+files 12 {'4hbh7': 4, 'fztn7': 4, 'f76v4': 4}
+
+[exited with code 0]
+
+== step 6 clean up what the walk created, by name — 2026-10-02T02:58:28Z
+-- before: the walk namespace's claims, and cluster-scoped objects of release gsd391
+gsd391-group-sync-dashboard-data   96d107ab-9c75-4e52-b8e6-2b6263ff2b37
+clusterrole.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-login-capture-audit
+clusterrole.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-reader
+clusterrole.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-report-auditor
+clusterrolebinding.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-auth-delegator
+clusterrolebinding.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-login-capture-audit
+clusterrolebinding.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-ra-5b5b511d1c04
+clusterrolebinding.rbac.authorization.k8s.io/gsd391-group-sync-dashboard-reader
+These resources were kept due to the resource policy:
+[PersistentVolumeClaim] gsd391-group-sync-dashboard-data
+
+release "gsd391" uninstalled
+persistentvolumeclaim "gsd391-group-sync-dashboard-data" deleted from gsd-391-walk namespace
+namespace "gsd-391-walk" deleted
+-- after
+Error from server (NotFound): namespaces "gsd-391-walk" not found
+(no cluster-scoped objects left above means clean)
+-- the lab release's PVC UIDs
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+
+== step 7 the lab release on the merged code — 2026-10-02T02:58:47Z
+main rev=721a78dbab06b5b4ae3ed0078a6734f465036b29 Synced Healthy
+{"leader":true,"version":"2.2.0","commit":"721a78dbab","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+gsd-20261002T012959.378126Z.db
+gsd-20261002T013307.487457Z.db
+gsd-20261002T021026.489567Z.db
+gsd-20261002T023914.880113Z.db
+replicas=1
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3

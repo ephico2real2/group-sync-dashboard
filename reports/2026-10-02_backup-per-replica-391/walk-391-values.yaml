@@ -1,0 +1,15 @@
+# T391-10 (#391): a throwaway release at two replicas. Development only: the lab release refuses
+# replicaCount > 1 (reporting, cluster-Secret writes, saTokenLookup), so the walk runs its own release.
+replicaCount: 2
+leaderElection:
+  enabled: false
+reporting:
+  enabled: false
+clusterConfig:
+  secrets:
+    writes:
+      enabled: false
+config:
+  backup:
+    intervalHours: 0.02
+    keep: 4
