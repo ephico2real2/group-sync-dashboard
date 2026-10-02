@@ -24,7 +24,8 @@ INDEX = SPECS / "README.md"
 INDEX_ROW = re.compile(
     # ids A–D are the 2026-09 programme's batches on its R1–R7 ladder; a later batch (E, #229; S, #230) sits
     # after the ladder with `—` for its release, and its header's Release row starts with the same dash
-    r"^\| (?P<id>[A-Z]\d[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
+    # an id is a batch letter, a number of any length (E10, #533) and a step letter or none (S4a)
+    r"^\| (?P<id>[A-Z]\d+[a-z]?) \| \[`(?P<file>SPEC_[A-Za-z0-9_]+\.md)`\]\([^)]+\)[^|]*\| [^|]+\| "
     r"(?P<release>R\d|—) \| (?P<version>[^|]+?) \| \[#(?P<issue>\d+)\]\([^)]+\) \| (?P<status>[^|]+?) \|$",
     re.M,
 )
@@ -45,9 +46,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426, E10 #533)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 48, f"expected forty-eight index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420) and W1 (#426); matched {sorted(rows)}"
+    assert len(rows) == 49, f"expected forty-nine index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420), W1 (#426) and E10 (#533); matched {sorted(rows)}"
     return rows
 
 
@@ -138,7 +139,11 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # W1 (#426, filed 2026-09-27) is Epic E's optional blue-green step, specified after G4 and not scheduled: excluded by
     # its id and pinned to #426 the same narrow way, so a mistyped issue on its row and header still fails (SPEC_W1).
     assert ROWS["W1"]["issue"] == "426", ("W1 is #426", ROWS["W1"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1")]
+    # E10 (#533, filed 2026-10-02) is Epic E's last child before 3.0.0, the runbook corrections from the #300 walk and
+    # the break glass: excluded by its id and pinned to #533 the same narrow way, so a later row for a lower number
+    # (#532) needs no change here and a mistyped issue on its row and header still fails (SPEC_E10, note 6).
+    assert ROWS["E10"]["issue"] == "533", ("E10 is #533", ROWS["E10"]["issue"])
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1", "E10")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
