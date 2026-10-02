@@ -263,6 +263,30 @@ ReadWriteOncePod
 {{- end -}}
 {{- end -}}
 
+# Recovery mode (#303). Both reads are nil-safe: `helm upgrade --reuse-values` onto this chart from
+# one without the `recovery` block renders with the OLD chart's values (Helm's reuseValues sets
+# chart.Values to them), so `.Values.recovery` is absent there and a bare field access would fail
+# the default render. The switch is read as a word and anything but true/false is refused: a quoted
+# "false" from --set-string would otherwise be a non-empty string, which a template `if` treats as
+# true, and turning recovery on stops the dashboard.
+{{- define "gsd.recoveryEnabled" -}}
+{{- $v := toString ((.Values.recovery | default dict).enabled) -}}
+{{- if eq $v "true" -}}
+true
+{{- else if has $v (list "false" "" "<nil>") -}}
+false
+{{- else -}}
+{{- fail (printf "recovery.enabled %q is not true or false. It turns recovery mode on (the dashboard stops and the pod waits for a restore) or off." $v) -}}
+{{- end -}}
+{{- end -}}
+
+# The recovery TTL as typed, `2h` when the key is absent. Not `default`: Helm's default treats a
+# numeric 0 as empty, and `ttl: 0` must be refused by name, not become two hours.
+{{- define "gsd.recoveryTtl" -}}
+{{- $r := .Values.recovery | default dict -}}
+{{- if hasKey $r "ttl" -}}{{- toString $r.ttl -}}{{- else -}}2h{{- end -}}
+{{- end -}}
+
 # ── Per-user visibility ──────────────────────────────────────────────────────────────
 # Every read below is nil-safe on purpose: commenting out the sub-keys in a values file
 # leaves `visibility:` (or `adminSar:`) present-but-nil, which a bare field access — and

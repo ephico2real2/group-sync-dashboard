@@ -5,7 +5,7 @@
 | Programme | Epic G (#387), access declared, platform identities configured — build step 2 of 4. #239 (SPEC_G1) comes before it; #503 comes after it and changes the same direct-user view and alert |
 | Batch | G — access declared |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.1.0, chart 0.60.0 |
+| Version on release | app 2.1.0, chart 0.61.0 |
 | Issue | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) |
 | Status | specified |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from #255 (body refined 2026-09-30, "Decisions and corrections (2026-10-01)"), its epic #387 and main `afa01bb8` (application 2.0.0, chart 0.59.25). Measured on this machine (Python 3.14.7, helm v4.3.0) and read-only on the CRC lab (2026-10-01, 13:06–13:07Z). §7 was cut from an implemented copy of `afa01bb8` and proved against a clean tree (§4.3). Revised the same day after the review of `4c75c65b` by OB3 (in Grok's seat) and Codex, on the orchestrator's decisions (Orchestrator's notes, 4), on a branch that merged main `21132a25` (SPEC G1, #506); the corrected blocks were proved again on that main (§4.2, §4.3) |
