@@ -147,6 +147,36 @@ issue, and what this spec shares with the other Epic E specs. Each is applied in
      `test_t300_6_a_schema_that_fell_is_refused_before_anything_is_edited`.
    - **Prose:** §3.3 names the three refusals; §4.1's T300-6 row names the two tests; §4.2's counts are
      re-measured (11 failing before, 43 passing after); §2.3's GitLab quote follows upstream's "rolling back to".
+10. **The review of PR #528 (2026-10-02), by OB2 in Codex's seat, decided by the orchestrator: F1 and F2 accepted,
+    F3 not applied.**
+    - **F1: an empty `_MIGRATIONS` entry was a traceback.** `highest_migration` reads `entry.elts[0]`
+      (`local-development/prepare-release.py#highest_migration`), so `(),` raised `IndexError`, which block 4 did not
+      catch. OB2 measured it on the head `2f643921`: `IndexError: list index out of range` from `entry.elts[0]`,
+      exit 1. Block 4 now catches `IndexError` too, with a comment that names the empty entry. Block 9 runs
+      `test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited` twice, once with `*EXTRA,` and
+      once with `(),`. Measured on `2f643921` with only the test change: the `[empty-tuple]` case fails ("so nothing
+      was changed" is not in the Traceback) and `[starred]` passes. With block 4 changed, both pass.
+    - **F2: §4 step 3 did not name the script's target.** `local-development/restore-db.sh` defaults `--namespace`
+      and `--release` to `group-sync-dashboard` (lines 6, 7, 23 and 24), but the runbook's opening sets
+      `NS=group-sync`. Block 16's step 3 now says "each with `--namespace $NS --release $REL` unless both are the
+      script's defaults (`group-sync-dashboard`)", and block 22's `test_t300_10` asserts that phrase. Measured on
+      `2f643921` with only the test change: `test_t300_10` fails on the new assert, and passes once block 16 is
+      changed. SPEC_E3's own paragraph ("The script, in recovery mode (#302)") has the same omission. It is SPEC_E3's
+      text and is not changed here.
+    - **F3, not applied: the operator's open question (below).** OB2 measured that this programme's MINOR flow drops
+      the schema line. The three MINORs since 2.0.0 (`2205888f` 2.1.0, `d3aa900a` 2.2.0, `91c5c0f1` 2.3.0) ran
+      `prepare-release.py --app … --no-commit` on their branches and kept only Chart.yaml, `pyproject.toml` and
+      `__init__.py` (SPEC_E6's note 14: "Epic E's release cuts the heading"). A line written on such a branch is
+      therefore lost with the changelog edit, and the MAJOR cut later on `main` finds `then == now` and writes none.
+      In OB2's clone, a migration 21 committed with version 2.4.0 and the changelog untouched gave this on
+      `--app 3.0.0`: `schema  : 21 at 9b5385762f (application 2.4.0), 21 at HEAD; no schema line`. OB2 offered a
+      guard in `tests/test_migration_needs_app_release.py`: when the commit that released HEAD's version carries a
+      higher schema than the commit that released the version before it, `docs/CHANGELOG.md` must contain the exact
+      `SCHEMA_LINE`. OB2 measured it passing on this history (2.3.0 at `c57f2927` and 2.2.0 at `721a78db` are both
+      schema 20) and failing on the clone until the bullet is kept. OB2 also offered a matching sentence for block 11.
+      None of this is built. It waits on the operator's answer to the open question below.
+    - **Counts after the review.** With only the test blocks applied on a tree without the change, §4.2's run fails
+      12, not 11: the parametrized T300-6 case adds one. With every block applied, the three files pass 44, not 43.
 
 **Open question for the operator (not decided, not built).** Should CI also hold the schema line for a release
 whose version is bumped by hand, without `prepare-release.py`? One way is a test that every changelog heading whose
@@ -792,9 +822,10 @@ New text:
     if args.app:
         try:
             released_at, then, now = schema_since_app_release(REPO)
-        except (ReleaseError, SyntaxError, ValueError, AttributeError) as err:
+        except (ReleaseError, SyntaxError, ValueError, AttributeError, IndexError) as err:
             # ReleaseError: a shallow history, a `git show` that fails, a non-integer target. The rest: a
-            # store.py that does not parse, or a `_MIGRATIONS` entry that is not the literal tuple the helper reads.
+            # store.py that does not parse, or a `_MIGRATIONS` entry that is not the literal tuple the helper
+            # reads (an empty one included).
             raise ReleaseError(f"cannot tell whether application {app_new} migrates the database, so nothing "
                                f"was changed: {err}") from None
         if now < then:
@@ -1037,11 +1068,13 @@ def test_t300_6_a_shallow_history_is_refused_before_anything_is_edited(sandbox: 
     assert git(clone, "status", "--porcelain").strip() == ""
 
 
-def test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited(sandbox: pathlib.Path) -> None:
-    """A store.py the helper cannot read (here an entry that is not a literal tuple) is a refusal with the
-    script's message, not a traceback, and nothing is edited."""
+@pytest.mark.parametrize("broken", ["\n    *EXTRA,", "\n    (),"], ids=["starred", "empty-tuple"])
+def test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited(sandbox: pathlib.Path,
+                                                                                     broken: str) -> None:
+    """A store.py the helper cannot read (an entry that is not a literal tuple, and an empty tuple whose first
+    element the helper indexes) is a refusal with the script's message, not a traceback, and nothing is edited."""
     store = sandbox / STORE
-    store.write_text(store.read_text().replace(MIGRATIONS_OPEN, MIGRATIONS_OPEN + "\n    *EXTRA,"))
+    store.write_text(store.read_text().replace(MIGRATIONS_OPEN, MIGRATIONS_OPEN + broken))
     git(sandbox, "commit", "-qam", "a _MIGRATIONS entry the parser cannot read")
     before = current(sandbox)
     done = run(sandbox, "--app", _next_app_minor(sandbox), "Unreadable", "--no-commit")
@@ -1326,9 +1359,10 @@ New text:
 
 ```text
 3. **Restore** with `local-development/restore-db.sh --list`, then `--from-version <ID>` (**The script, in recovery
-   mode**, above); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use §4a or
-   §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'` instead of `oc debug` or a
-   helper pod. **Check the time left first** (the last `left` line of `oc logs`):
+   mode**, above), each with `--namespace $NS --release $REL` unless both are the script's defaults
+   (`group-sync-dashboard`); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use
+   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'` instead of `oc debug`
+   or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
 ```
 
 ### Block 17 — docs/RUNBOOK_backup_restore.md: §4, without recovery mode: the writer stops through the values file, not `oc scale`
@@ -1530,6 +1564,7 @@ def test_t300_10_section_4_is_recovery_mode_and_the_script_with_oc_debug_as_the_
         assert words in order, words
     assert "recovery.enabled: true" in body and "local-development/restore-db.sh --list" in body
     assert "--from-version <ID>" in body
+    assert "--namespace $NS --release $REL" in body, "the script defaults to group-sync-dashboard for both; the runbook's NS is not it"
     code = code_lines(body)
     assert any(line.startswith("oc debug -n $NS deploy/$REL") for line in code), "the fallback keeps oc debug"
     assert not [line for line in code if line.startswith("oc scale")], "no oc scale in §4's commands"

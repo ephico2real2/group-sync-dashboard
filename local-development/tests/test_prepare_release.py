@@ -481,11 +481,13 @@ def test_t300_6_a_shallow_history_is_refused_before_anything_is_edited(sandbox: 
     assert git(clone, "status", "--porcelain").strip() == ""
 
 
-def test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited(sandbox: pathlib.Path) -> None:
-    """A store.py the helper cannot read (here an entry that is not a literal tuple) is a refusal with the
-    script's message, not a traceback, and nothing is edited."""
+@pytest.mark.parametrize("broken", ["\n    *EXTRA,", "\n    (),"], ids=["starred", "empty-tuple"])
+def test_t300_6_an_unreadable_migrations_list_is_refused_before_anything_is_edited(sandbox: pathlib.Path,
+                                                                                     broken: str) -> None:
+    """A store.py the helper cannot read (an entry that is not a literal tuple, and an empty tuple whose first
+    element the helper indexes) is a refusal with the script's message, not a traceback, and nothing is edited."""
     store = sandbox / STORE
-    store.write_text(store.read_text().replace(MIGRATIONS_OPEN, MIGRATIONS_OPEN + "\n    *EXTRA,"))
+    store.write_text(store.read_text().replace(MIGRATIONS_OPEN, MIGRATIONS_OPEN + broken))
     git(sandbox, "commit", "-qam", "a _MIGRATIONS entry the parser cannot read")
     before = current(sandbox)
     done = run(sandbox, "--app", _next_app_minor(sandbox), "Unreadable", "--no-commit")

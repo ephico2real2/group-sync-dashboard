@@ -327,9 +327,10 @@ def run(args: argparse.Namespace) -> int:
     if args.app:
         try:
             released_at, then, now = schema_since_app_release(REPO)
-        except (ReleaseError, SyntaxError, ValueError, AttributeError) as err:
+        except (ReleaseError, SyntaxError, ValueError, AttributeError, IndexError) as err:
             # ReleaseError: a shallow history, a `git show` that fails, a non-integer target. The rest: a
-            # store.py that does not parse, or a `_MIGRATIONS` entry that is not the literal tuple the helper reads.
+            # store.py that does not parse, or a `_MIGRATIONS` entry that is not the literal tuple the helper
+            # reads (an empty one included).
             raise ReleaseError(f"cannot tell whether application {app_new} migrates the database, so nothing "
                                f"was changed: {err}") from None
         if now < then:

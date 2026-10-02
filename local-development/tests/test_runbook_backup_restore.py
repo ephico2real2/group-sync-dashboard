@@ -75,6 +75,7 @@ def test_t300_10_section_4_is_recovery_mode_and_the_script_with_oc_debug_as_the_
         assert words in order, words
     assert "recovery.enabled: true" in body and "local-development/restore-db.sh --list" in body
     assert "--from-version <ID>" in body
+    assert "--namespace $NS --release $REL" in body, "the script defaults to group-sync-dashboard for both; the runbook's NS is not it"
     code = code_lines(body)
     assert any(line.startswith("oc debug -n $NS deploy/$REL") for line in code), "the fallback keeps oc debug"
     assert not [line for line in code if line.startswith("oc scale")], "no oc scale in §4's commands"

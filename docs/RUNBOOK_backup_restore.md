@@ -325,9 +325,10 @@ in this release's values file and roll it out through the release's deployment p
    change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
    restored.
 3. **Restore** with `local-development/restore-db.sh --list`, then `--from-version <ID>` (**The script, in recovery
-   mode**, above); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use §4a or
-   §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'` instead of `oc debug` or a
-   helper pod. **Check the time left first** (the last `left` line of `oc logs`):
+   mode**, above), each with `--namespace $NS --release $REL` unless both are the script's defaults
+   (`group-sync-dashboard`); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use
+   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'` instead of `oc debug`
+   or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
    at the TTL the script exits and every process in the container stops with it, a restore still running
    included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
 4. **More time?** At the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and the log ends with how to
