@@ -618,7 +618,13 @@ jobs:
               echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
               exit 1
             fi
-            moved=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${image}:latest")
+            # The read-back can fail on its own (the registry stopped answering after the copy): under
+            # `set -e` alone that was skopeo's stderr and no annotation, with the tag already moved.
+            if ! moved=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${image}:latest"); then
+              echo "::error::${image}:latest was copied from ${digest} but could not be read back (skopeo's message is above), so this run cannot tell what it names."
+              echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
+              exit 1
+            fi
             if [ "${moved}" != "${digest}" ]; then
               echo "::error::${image}:latest resolves to ${moved}, not ${digest}, the digest this run pushed."
               echo "::error::Any 'moved   :' line above stands. Inspect both, then re-run this job."

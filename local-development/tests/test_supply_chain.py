@@ -442,6 +442,7 @@ class TestLatestFollowsTheNewestSignedMainBuild:
 # A stand-in skopeo: logs its argv, swallows the password on stdin, remembers the digest each copy
 # names as its source, and answers a read-back with it (or with STUB_ANSWER when that is set).
 # A copy whose destination contains STUB_REFUSE fails, as a registry that refuses the write does.
+# A read-back of a name containing STUB_UNREADABLE fails, as a registry that stopped answering does.
 { printf 'skopeo'; printf ' %s' "$@"; printf '\\n'; } >> "${STUB_LOG}"
 for arg in "$@"; do source_ref=${last_ref:-}; last_ref=$arg; done
 case "$1" in
@@ -451,7 +452,10 @@ case "$1" in
           echo "stub skopeo: writing manifest to ${last_ref}: denied" >&2; exit 1
         fi
         printf '%s' "${source_ref##*@}" > "${STUB_STATE}" ;;
-  inspect) if [ -n "${STUB_ANSWER:-}" ]; then echo "${STUB_ANSWER}"; else cat "${STUB_STATE}"; echo; fi ;;
+  inspect) if [ -n "${STUB_UNREADABLE:-}" ] && [[ "${last_ref}" == *"${STUB_UNREADABLE}"* ]]; then
+             echo "stub skopeo: pinging container registry quay.io: 503 Service Unavailable" >&2; exit 1
+           fi
+           if [ -n "${STUB_ANSWER:-}" ]; then echo "${STUB_ANSWER}"; else cat "${STUB_STATE}"; echo; fi ;;
   *) echo "stub skopeo: unexpected $1" >&2; exit 2 ;;
 esac
 """
@@ -462,7 +466,7 @@ esac
 
     @classmethod
     def _run(cls, tmp_path: pathlib.Path, *, answer: str = "", digest: str = NEW, report_digest: str = NEW_REPORT,
-             refuse: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
+             refuse: str = "", unreadable: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
         """Run the step's real `run:` with its env as GitHub would fill it; return the result and the stub's log."""
         stub_dir = tmp_path / "bin"
         stub_dir.mkdir()
@@ -475,6 +479,7 @@ esac
             "STUB_STATE": str(tmp_path / "state"),
             "STUB_ANSWER": answer,
             "STUB_REFUSE": refuse,
+            "STUB_UNREADABLE": unreadable,
             "REGISTRY": "quay.io",
             "REGISTRY_USERNAME": "ephico2real+publisher",
             "REGISTRY_PASSWORD": "not-a-real-password",
@@ -609,6 +614,19 @@ esac
         assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was not moved" in done.stdout, done.stdout
         assert "re-run this job" in done.stdout.lower(), done.stdout
         assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+
+    def test_a_read_back_that_cannot_be_made_is_a_red_run_naming_the_image_and_the_remedy(self, tmp_path: pathlib.Path) -> None:
+        """The read-back is a second registry call after the copy: when it fails on its own (the
+        registry stopped answering), the tag has already been moved and the run must say which image
+        it cannot vouch for and what to do — not only skopeo's stderr under `set -e` (review of #530,
+        OB2: measured, exit 1 with no `::error::` for either image). The earlier `moved   :` line
+        stands, as for a refused copy."""
+        done, log = self._run(tmp_path, unreadable="group-sync-dashboard-report:latest")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was copied from" in done.stdout, done.stdout
+        assert "could not be read back" in done.stdout and "re-run this job" in done.stdout.lower(), done.stdout
+        assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+        assert len([ln for ln in log if ln.startswith("skopeo copy")]) == 2, log
 
     # T425-7
     def test_the_latest_job_holds_only_read(self) -> None:

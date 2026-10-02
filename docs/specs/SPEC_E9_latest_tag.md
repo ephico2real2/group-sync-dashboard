@@ -115,6 +115,19 @@ their line numbers come from `curl -s <raw-url> | nl -ba`.
     its chart 0.63.0 kept), and SPEC_G4's step 1, chart 0.61.2, moves to 0.61.4 (0.61.3 is SPEC_G3's) with its step 2
     to 0.61.5, so step 2 stays above step 1. SPEC_G3 (app 2.5.0, chart 0.61.3) and SPEC_W1 (chart 0.62.0) are above
     the new tree and stay. Note 7's index count was already applied on main (forty-eight rows); no block changes for it.
+11. **The review of PR #530 (OB2, in Codex's seat, head `b06ee631`), decided by the orchestrator on 2026-10-02:
+    approved, every claim confirmed, and its recommended F1 accepted.** F1: a read-back that cannot be made (the
+    registry stops answering after the copy) ended the step under `set -e` with skopeo's stderr and no `::error::`,
+    with the tag already moved. Measured by OB2 with a stub whose `inspect` of one name exits 1: exit 1, `copies
+    made: 1` (first image) and `2` (second), `'::error::' lines: 0` in both. Block 2 now wraps the read-back in
+    `if ! moved=$(…); then` with an `::error::` naming the image, the digest it was copied from and the re-run (§3.3
+    step 3b); Block 3 adds the stub switch `STUB_UNREADABLE` and
+    `test_a_read_back_that_cannot_be_made_is_a_red_run_naming_the_image_and_the_remedy` (§4.1); Block 11's row names
+    the third cause. Re-measured on this branch: the new test against `b06ee631`'s `publish.yml` `1 failed`
+    (`AssertionError`, no `::error::` in the output), with the fix `1 passed`. Observations recorded, no change asked:
+    podman-remote on the review Mac writes no `--digestfile` (irrelevant to CI, which runs podman natively); the E8
+    race between `helm.yaml`'s label step and `publish`'s aliases is real but bounded by `ci.yml`'s run time and is
+    E8's documented red-and-re-run path, not this spec's.
 
 ## 1. The mandate, and what is out of scope
 
@@ -464,6 +477,10 @@ For each image, in order, dashboard then report:
 3. `skopeo inspect --no-tags --format '{{.Digest}}' docker://<image>:latest`, compared with `<digest>`. A difference
    is `::error::<image>:latest resolves to <found>, not <digest>, the digest this run pushed.` and exit 1; the second
    image is not attempted.
+3b. A read-back that cannot be made (the registry stopped answering after the copy) is
+   `::error::<image>:latest was copied from <digest> but could not be read back …` and exit 1, after skopeo's own
+   message, so the annotation names the image whose tag has moved unverified and the remedy, as 2b does (review of
+   #530, OB2: measured, under `set -e` alone the step ended with skopeo's stderr and no `::error::`).
 4. Print `moved   : <image>:latest -> <digest>`, the build script's log format.
 
 The step logs in once, with the password on stdin. It prints `skopeo --version` first, so a runner image without
@@ -531,6 +548,7 @@ Added by the research:
 | `…::test_the_password_reaches_skopeo_on_stdin_only` | the login uses `--password-stdin`, and the password is on no logged command line and in no output | the `KeyError` |
 | `…::test_a_digest_that_is_not_sixty_four_hex_moves_nothing` | `sha256:abc` as either digest is refused before any copy | the `KeyError` |
 | `…::test_a_refused_copy_is_a_red_run_naming_the_image_and_the_remedy` | a copy the registry refuses is exit 1 with a `::error::` naming the image and the re-run; the earlier `moved   :` line stands | the `KeyError` |
+| `…::test_a_read_back_that_cannot_be_made_is_a_red_run_naming_the_image_and_the_remedy` | a read-back that fails on its own is exit 1 with a `::error::` naming the image, the digest it was copied from and the re-run; the earlier `moved   :` line stands (review of #530, OB2) | the `KeyError`; on the first implementation (`b06ee631`), `AssertionError`: exit 1 with no `::error::` |
 | `…::test_the_docs_say_what_latest_names` | D11, the RELEASING `latest` row and the flow's `latest  job` line exist | `AssertionError`: `DESIGN_supply_chain.md` has no D11 |
 
 The harness runs the step's `run:` from the parsed YAML with `/bin/bash --noprofile --norc -eo pipefail -c`, the
@@ -756,7 +774,13 @@ name: publish
               echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
               exit 1
             fi
-            moved=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${image}:latest")
+            # The read-back can fail on its own (the registry stopped answering after the copy): under
+            # `set -e` alone that was skopeo's stderr and no annotation, with the tag already moved.
+            if ! moved=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${image}:latest"); then
+              echo "::error::${image}:latest was copied from ${digest} but could not be read back (skopeo's message is above), so this run cannot tell what it names."
+              echo "::error::Any 'moved   :' line above stands. Re-run this job; it moves both images again."
+              exit 1
+            fi
             if [ "${moved}" != "${digest}" ]; then
               echo "::error::${image}:latest resolves to ${moved}, not ${digest}, the digest this run pushed."
               echo "::error::Any 'moved   :' line above stands. Inspect both, then re-run this job."
@@ -796,6 +820,7 @@ class TestLatestFollowsTheNewestSignedMainBuild:
 # A stand-in skopeo: logs its argv, swallows the password on stdin, remembers the digest each copy
 # names as its source, and answers a read-back with it (or with STUB_ANSWER when that is set).
 # A copy whose destination contains STUB_REFUSE fails, as a registry that refuses the write does.
+# A read-back of a name containing STUB_UNREADABLE fails, as a registry that stopped answering does.
 { printf 'skopeo'; printf ' %s' "$@"; printf '\\n'; } >> "${STUB_LOG}"
 for arg in "$@"; do source_ref=${last_ref:-}; last_ref=$arg; done
 case "$1" in
@@ -805,7 +830,10 @@ case "$1" in
           echo "stub skopeo: writing manifest to ${last_ref}: denied" >&2; exit 1
         fi
         printf '%s' "${source_ref##*@}" > "${STUB_STATE}" ;;
-  inspect) if [ -n "${STUB_ANSWER:-}" ]; then echo "${STUB_ANSWER}"; else cat "${STUB_STATE}"; echo; fi ;;
+  inspect) if [ -n "${STUB_UNREADABLE:-}" ] && [[ "${last_ref}" == *"${STUB_UNREADABLE}"* ]]; then
+             echo "stub skopeo: pinging container registry quay.io: 503 Service Unavailable" >&2; exit 1
+           fi
+           if [ -n "${STUB_ANSWER:-}" ]; then echo "${STUB_ANSWER}"; else cat "${STUB_STATE}"; echo; fi ;;
   *) echo "stub skopeo: unexpected $1" >&2; exit 2 ;;
 esac
 """
@@ -816,7 +844,7 @@ esac
 
     @classmethod
     def _run(cls, tmp_path: pathlib.Path, *, answer: str = "", digest: str = NEW, report_digest: str = NEW_REPORT,
-             refuse: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
+             refuse: str = "", unreadable: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
         """Run the step's real `run:` with its env as GitHub would fill it; return the result and the stub's log."""
         stub_dir = tmp_path / "bin"
         stub_dir.mkdir()
@@ -829,6 +857,7 @@ esac
             "STUB_STATE": str(tmp_path / "state"),
             "STUB_ANSWER": answer,
             "STUB_REFUSE": refuse,
+            "STUB_UNREADABLE": unreadable,
             "REGISTRY": "quay.io",
             "REGISTRY_USERNAME": "ephico2real+publisher",
             "REGISTRY_PASSWORD": "not-a-real-password",
@@ -963,6 +992,19 @@ esac
         assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was not moved" in done.stdout, done.stdout
         assert "re-run this job" in done.stdout.lower(), done.stdout
         assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+
+    def test_a_read_back_that_cannot_be_made_is_a_red_run_naming_the_image_and_the_remedy(self, tmp_path: pathlib.Path) -> None:
+        """The read-back is a second registry call after the copy: when it fails on its own (the
+        registry stopped answering), the tag has already been moved and the run must say which image
+        it cannot vouch for and what to do — not only skopeo's stderr under `set -e` (review of #530,
+        OB2: measured, exit 1 with no `::error::` for either image). The earlier `moved   :` line
+        stands, as for a refused copy."""
+        done, log = self._run(tmp_path, unreadable="group-sync-dashboard-report:latest")
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert "::error::quay.io/ephico2real/group-sync-dashboard-report:latest was copied from" in done.stdout, done.stdout
+        assert "could not be read back" in done.stdout and "re-run this job" in done.stdout.lower(), done.stdout
+        assert f"moved   : quay.io/ephico2real/group-sync-dashboard:latest -> {self.NEW}" in done.stdout
+        assert len([ln for ln in log if ln.startswith("skopeo copy")]) == 2, log
 
     # T425-7
     def test_the_latest_job_holds_only_read(self) -> None:
@@ -1143,7 +1185,7 @@ the newest `main` build. It is not a release, and the chart never resolves it.
 
 ```markdown
 | the first publish of a NEW image name (the report image was the first, 0.18.0) is red at its push, or green and then every fresh install pulls `unauthorized` for that image | quay.io creates a repository on push only if the pushing account may create one in the namespace, and creates it **private**; the chart pulls anonymously | create the repository in the quay.io UI **public**, grant the robot account write on it, then publish. Measured 2026-09-11: `group-sync-dashboard-report` did not exist before 0.18.0's first publish |
-| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy (the `::error::` names the image, and says that any `moved   :` line above it stands), or `:latest` resolved to another digest afterwards (the `::error::` names both digests) | the immutable tags, the aliases and the signatures are already published; at most the dashboard's `:latest` has moved ahead of the report's. Re-run the failed `latest` job; it moves both images again |
+| the publish run is red at "Copy each digest to :latest, and read it back" | the registry refused the copy (the `::error::` names the image, and says that any `moved   :` line above it stands), `:latest` resolved to another digest afterwards (the `::error::` names both digests), or the read-back could not be made (the `::error::` names the image and the digest it was copied from) | the immutable tags, the aliases and the signatures are already published; at most the dashboard's `:latest` has moved ahead of the report's. Re-run the failed `latest` job; it moves both images again |
 | `:latest` names an older build than the newest green publish on `main` | an older run's `latest` job was re-run after a newer run had moved the tag: a re-run copies its own run's digests | re-run the `latest` job of the newest green publish run on `main` |
 ```
 
