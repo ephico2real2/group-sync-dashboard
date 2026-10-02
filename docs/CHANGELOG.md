@@ -10,6 +10,21 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The release note says when the schema moves, and the runbook says what to do before every upgrade (#300, Epic E
+  #385, `docs/specs/SPEC_E7_schema_line_and_runbook.md`).** `prepare-release.py --app` compares the highest
+  `_MIGRATIONS` target at the commit that released the current application version with HEAD's, before it edits
+  anything, and when HEAD's is higher writes a bullet under the release's reason: `Schema N → M.`, the first start
+  on the image migrates the database one way, and the pre-upgrade copy (#301) and `restore-db.sh` (#302) are the way
+  back. A chart-only release reads nothing and gets no line; an application release on a shallow clone is refused
+  with nothing edited. `docs/RELEASING.md` says what the line means and when it appears, and the epic skill's
+  release note lists the children's lines. `docs/RUNBOOK_backup_restore.md` gains §0, "Before every upgrade": read
+  the schema lines and the schema you leave (the running image's `KNOWN_SCHEMA_VERSION`, no live file opened), take
+  an off-volume copy and confirm it (§2 with the offsite CronJob, §3 without), and check the free space the
+  pre-upgrade copy needs. §4 opens with the order (recovery mode, `restore-db.sh`, recovery mode off), points its
+  steps at the script, stops the writer of the manual fallback with `replicaCount: 0` in the values file instead of
+  `oc scale`, and drops two stale lines: the `0.15.0` image pinned in §4b's helper pod and the `0.15.0` expected from
+  `/api/version` in §4c. No application or chart change.
+
 - **A Backups card on the KPI page (#306, Epic E #385, `docs/specs/SPEC_E6_kpi_backups_card.md`; app 2.3.0,
   chart 0.61.1).** Below System status, from what the dashboard process already has: the last copy as an absolute
   instant in the page's display zone, with its label (ISO-8601 UTC in the payload), and when the next is due, the

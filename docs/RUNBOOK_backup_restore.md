@@ -27,6 +27,72 @@ Everything below uses only what the pod has: `sh`, `cat`, `ls`, `rm`, `chgrp`, `
 NS=group-sync; REL=group-sync-dashboard
 ```
 
+## 0. Before every upgrade
+
+The first start of an image that moves the schema upgrades the database one way (§6), and the copy it takes first
+stays on the volume it protects. Before you change the image a release runs (a new chart version, or `image.tag` in
+its values file), do these three things. None of them stops the dashboard.
+
+1. **Read whether the upgrade migrates the database, and note the schema you leave.** In `docs/CHANGELOG.md`,
+   every entry after the version you run (`gsd_build_info`'s `version` label on `/metrics`), up to and including
+   the one you deploy, that carries a `**Schema N → M.**` line migrates the database on its first start
+   (`local-development/prepare-release.py#SCHEMA_LINE`); an epic's GitHub release lists its children's lines. The
+   schema you leave is the one the running image understands, read without opening the live file:
+
+   ````sh
+   oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'from gsd.store import KNOWN_SCHEMA_VERSION; print(KNOWN_SCHEMA_VERSION)'
+   ````
+
+   While the dashboard runs, its database is at exactly this number: a newer one is refused at startup
+   (`gsd/store.py#StoreSchemaTooNew`) and an older one is migrated up to it (`gsd/store.py#_migrate`). Note it: it is
+   the `<from>` in the pre-upgrade copy's name (§6), and a copy at this schema restores under the image you run now
+   (§4).
+2. **Take a copy off the volume, and confirm it landed.** Whether the release has the offsite CronJob decides how:
+
+   ````sh
+   oc get cronjob -n $NS $REL-backup-offsite
+   ````
+
+   * **It exists** (`backup.offsite` on): run it now (§2). The copy landed when the Job is `Complete` and its log
+     says `copied … -> …` followed by `integrity_check ok; user_version` with step 1's number, or `already shipped:
+     … matches its sidecar` (a scheduled run shipped the same backup and verified it then):
+
+     ````sh
+     J=manual-$(date +%s)
+     oc create job -n $NS --from=cronjob/$REL-backup-offsite $J
+     oc wait -n $NS --for=condition=complete job/$J --timeout=1800s
+     oc logs -n $NS job/$J --all-containers | grep -E '^(copied|already shipped|integrity_check)'
+     ````
+
+     Without `oc`, where Prometheus reads kube-state-metrics, §2's query gives the last scheduled success, and
+     `GroupSyncDashboardOffsiteBackupStale` not firing says it is recent: that copy is at most one
+     `backup.offsite.schedule` old.
+   * **It does not** (`NotFound`): copy the newest on-volume backup to your workstation (§3), and check it there
+     with §1's snippet run with `python3`: `integrity_check: ok`, and a `user_version` equal to step 1's number.
+
+     ````sh
+     B=$(oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'import glob; print(sorted(glob.glob("/data/backup/gsd-*.db"))[-1])')
+     oc exec -n $NS deploy/$REL -c dashboard -- cat "$B" > "$(basename "$B")"
+     sha256sum "$(basename "$B")"
+     ````
+
+   Either way the copy is the newest six-hourly backup (`config.backup.intervalHours`); what changed after it is in
+   the live database and, when the schema moves, in the pre-upgrade copy the new image takes on the volume.
+3. **Know where the pre-upgrade copy goes, and that it fits.** When step 1 found a schema line, the new image's
+   first start writes the database as it is to `/data/pre-upgrade/` (`/data/<pod-name>/pre-upgrade/` above one
+   replica) before it migrates, and refuses to start, changing nothing, while the free space there is below the
+   database's size (§6). Compare the two:
+
+   ````sh
+   oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'import glob, os, shutil; print("free", shutil.disk_usage("/data").free); print("databases", sum(os.stat(p).st_size for p in glob.glob("/data/gsd.db") + glob.glob("/data/gsd.db-wal") + glob.glob("/data/*/gsd.db") + glob.glob("/data/*/gsd.db-wal")))'
+   ````
+
+   `free` must be above `databases`. A copy needs at most its database's file and `-wal` together, and above one
+   replica every pod copies its own at the same start, so the sum counts them all; `os.stat` opens no database.
+   Without `oc`, `/metrics` carries the volume's numbers: `gsd_volume_disk_total_bytes{component="dashboard"}` minus
+   `gsd_volume_disk_used_bytes{component="dashboard"}` is the free space, or more than the copy may use where the
+   filesystem keeps blocks for root (`mke2fs` reserves 5% by default).
+
 ## What a successful backup looks like
 
 Three pictures from the CRC lab (`reports/2026-09-26_epic-b-release/`). The first is the live dashboard pod. The second
@@ -206,6 +272,13 @@ From S3 use the CLI with a credential that holds `GetObject` — the backup cred
 
 ## 4. Restore
 
+**In order.** Turn recovery mode on through the release's values file, with the image you will restore under (steps
+1 and 2 below); list the copies and restore one with `restore-db.sh` (**The script, in recovery mode**, next); turn
+recovery mode off and verify (step 5 and §4c). §4a and §4b are the same restore by hand, the fallback when the script
+cannot be used, and **Without recovery mode** below is the fallback for a chart that has none. Every change to the
+release goes through its values file and its deployment pipeline, never `oc scale` or `oc set env`: a GitOps
+controller that self-heals, Argo CD's for one, reverts a hand edit to an object it renders.
+
 **The script, in recovery mode (#302).** With the release's pod in recovery mode (#303: `recovery.enabled: true`
 in the release's values file), run `local-development/restore-db.sh --list` from your laptop, then
 `local-development/restore-db.sh --from-version <ID>` with an ID it printed. It does what §4a and §4b do by hand,
@@ -251,8 +324,11 @@ in this release's values file and roll it out through the release's deployment p
    `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry this
    change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
    restored.
-3. **Restore** with §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'`
-   instead of `oc debug` or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
+3. **Restore** with `local-development/restore-db.sh --list`, then `--from-version <ID>` (**The script, in recovery
+   mode**, above), each with `--namespace $NS --release $REL` unless both are the script's defaults
+   (`group-sync-dashboard`); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use
+   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'` instead of `oc debug`
+   or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
    at the TTL the script exits and every process in the container stops with it, a restore still running
    included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
 4. **More time?** At the TTL the script exits 1, the pod reads `CrashLoopBackOff`, and the log ends with how to
@@ -274,11 +350,12 @@ newest copy stops advancing. The TTL is the bound.
 `helm upgrade $REL <chart> -n $NS -f <values-file>`, with the chart reference and version the release already
 runs (`helm list -n $NS`) and the release's complete values file, now carrying `recovery`.
 
-**Without recovery mode** (the fallback, and any chart before 0.60.0), scale the writer to zero and use the
-`oc debug` pod of §4a or the helper pod of §4b:
+**Without recovery mode** (the fallback, and any chart before 0.60.0), stop the writer the same way: set
+`replicaCount: 0` in this release's values file and roll it out through its deployment pipeline (it changes the
+Deployment's `replicas` and the configuration's copy of the number, not the claim or its access mode), then use the
+`oc debug` pod of §4a or the helper pod of §4b. Wait until the pod is gone:
 
 ```sh
-oc scale -n $NS deploy/$REL --replicas=0
 oc wait -n $NS --for=delete pod -l app=$REL --timeout=120s
 ```
 
@@ -336,7 +413,7 @@ spec:
   securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
   containers:
     - name: restore
-      image: quay.io/ephico2real/group-sync-dashboard:0.15.0   # the running tag
+      image: <the Deployment's image>   # oc get deploy -n $NS $REL -o jsonpath='{.spec.template.spec.containers[0].image}'
       command: ["python3.14", "-c", "import time; time.sleep(3600)"]
       securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
       volumeMounts:
@@ -388,17 +465,17 @@ node-local. Move the file via §3 instead.
 
 ### 4c. Bring it back and verify
 
-In recovery mode, turn it off (§4, step 5) instead of the `oc scale` below: the app starts on the restored
-file. The rest of this section is the same.
+Turn recovery mode off (§4, step 5); on the fallback, set `replicaCount` back to its value (1) in the values file
+and roll it out. The app starts on the restored file:
 
 ```sh
-oc scale -n $NS deploy/$REL --replicas=1
 oc rollout status -n $NS deploy/$REL
 oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/version
 ```
 
-Expected: `{"leader": true, "version": "0.15.0", …}` (with `oauthProxy.enabled` the app binds
-loopback; `curl` from inside the pod is the honest check).
+Expected: `{"leader":true,"version":"<the application version the release now runs>",…}`, the older one after a
+rollback, as `gsd_build_info` on `/metrics` says too (with `oauthProxy.enabled` the app binds loopback; `curl` from
+inside the pod is the honest check).
 
 **The report pod stays NotReady until a new copy is written** after a restore from a newer image. The newest copy under
 `/data/report` is the one the previous image wrote, and the report service refuses a snapshot newer than it
@@ -425,10 +502,10 @@ gsd.store.StoreSchemaTooNew: database schema 21 is newer than this dashboard und
 The refusal comes before this image runs any of its own schema, migrations or seeds, so the
 newer build's data is kept as it was. One physical change is possible: if the copy carries a committed
 `gsd.db-wal`, SQLite folds it into `gsd.db` when the refusing connection closes (a checkpoint). That
-changes the file's bytes, not its contents. Scale to 0
+changes the file's bytes, not its contents. Turn recovery mode on
 (§4) and either restore a copy whose `user_version` is at or below the second number, or deploy the
-image that understands the first. A rollback to an older image without restoring the database first
-stops the same way.
+image that understands the first, by its `image.tag` in the values file. A rollback to an older image without
+restoring the database first stops the same way.
 
 Then the counts, on the live file this time (a normal open, the pod's own connection is the writer):
 
