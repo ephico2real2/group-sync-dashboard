@@ -10,6 +10,25 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **`restore-db.sh`: list the database copies the recovery pod can restore, and restore one (#302, Epic E #385,
+  `docs/specs/SPEC_E3_restore_db.md`; app 2.1.0, chart 0.60.1).** `local-development/restore-db.sh --list` runs
+  from the laptop with `oc` and
+  prints one row per copy (a scheduled backup, a pre-upgrade copy, a copy on the offsite claim): its ID
+  (`<user_version>-<the copy's own stamp>`), schema, stamp, size, source, sidecar verdict and whether the pod's
+  image understands it. `--from-version <ID>` refuses a copy newer than the image, a sidecar that does not match and
+  a failed `integrity_check`; prints the loss window, an estimate of the rows of the five history tables inserted
+  after the copy and the other state that rolls back; asks (`--yes` does not), and restores only the copy and the
+  live set the question was about. It writes the copy under a temporary name and checks it there, keeps the live set
+  under `/data/pre-restore/<stamp>/`, opens and closes the old file so SQLite folds its `-wal` in (and stops, removing
+  nothing, when SQLite did not), removes `-wal`, `-shm` and `-journal`, and renames the copy onto `gsd.db` with
+  `chgrp 0` and `chmod g=u`. It refuses unless the release's one pod is in recovery mode (#303) with ten minutes of
+  `recovery.ttl` left, and while another `--list`, check or restore runs in the pod; it never deletes, moves or
+  rotates a copy. The helper, `local-development/restore-db.py`, is streamed into the pod over `oc exec -i`, so it
+  runs under the image a rollback targets; nothing is added to the image or to any ServiceAccount. The runbook's §4
+  points at it, says how to undo a restore from the kept set, and keeps the manual paths as the fallback: §4a and
+  §4b now keep the live set and remove its `-journal` as well. `_MIGRATIONS` says that migrations are one-way and
+  names the way back.
+
 - **Recovery mode: the dashboard pod with its data volume mounted and the app stopped, for a restore (#303,
   Epic E #385, `docs/specs/SPEC_E2_recovery_mode.md`; chart 0.60.0, no application change).**
   `recovery.enabled=true` runs the chart's recovery script (`charts/group-sync-dashboard/scripts/recovery_mode.py`,

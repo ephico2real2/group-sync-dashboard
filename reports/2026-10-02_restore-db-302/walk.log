@@ -1,0 +1,190 @@
+== step 1 before — 2026-10-02T01:28:15Z
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+{'membership_event': (1843, 1843), 'sync_event': (2737, 178092), 'binding_event': (4328, 4328), 'kyverno_result_event': (0, None), 'login_event': (7950, 7998)}
+user_version 20
+/usr/sbin/sh: line 1: head: command not found
+command terminated with exit code 127
+app: main Synced Healthy
+total 27808
+drwxrwsr-x. 2 1000790000 1000790000      158 Oct  1 20:22 backup
+-rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+-rw-rw-r--. 1 1000790000 1000790000 15851520 Oct  1 21:27 gsd.db
+-rw-rw-r--. 1 1000790000 1000790000    32768 Oct  1 21:28 gsd.db-shm
+-rw-rw-r--. 1 1000790000 1000790000  4544392 Oct  1 21:28 gsd.db-wal
+drwxrwsr-x. 2 1000790000 1000790000       82 Oct  1 21:24 report
+
+ls: cannot access '/data/pre-upgrade': No such file or directory
+
+gsd-20261001T111104.000930Z.db
+gsd-20261001T171104.101378Z.db
+gsd-20261001T231104.217727Z.db
+gsd-20261002T002214.892756Z.db
+
+== step 2 an upgrade to the walk-only schema 21 — 2026-10-02T01:30:47Z (release-crc.sh, Helm mode, from local commit 47dd3a18 on walk/302-schema21-local, never pushed; image only in the lab's internal registry)
+version : 2.1.0
+commit  : 47dd3a18ac  (branch walk/302-schema21-local)
+tag     : 2.1.0-47dd3a18ac
+built   : group-sync-dashboard:2.1.0-47dd3a18ac (stamp verified)
+built   : group-sync-dashboard-report:2.1.0-47dd3a18ac (stamp verified)
+running : 47dd3a18ac — verified in-pod
+Error from server (NotFound): applications.argoproj.io "group-sync-dashboard" not found
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+2026-10-01 21:29:59,214-0400 INFO    gsd.store pre-upgrade copy written before migrating schema 20 -> 21: /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db (14270464 bytes, 0.14 s)
+2026-10-01 21:29:59,215-0400 INFO    gsd.store schema migration 21 applied: no-op for the #302 lab walk
+total 13940
+-rw-r--r--. 1 1000790000 1000790000 14270464 Oct  1 21:29 pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db
+-rw-r--r--. 1 1000790000 1000790000      159 Oct  1 21:29 pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db.sha256
+user_version 21
+
+== step 3 recovery mode under the branch's real image — 2026-10-02T01:32:20Z (release-crc.sh --values reports/2026-10-02_restore-db-302/values-recovery.yaml, Helm mode, from the PR worktree)
+version : 2.1.0
+commit  : 756d24cece  (branch feat/302-restore-db)
+tag     : 2.1.0-756d24cece
+built   : group-sync-dashboard:2.1.0-756d24cece (stamp verified)
+built   : group-sync-dashboard-report:2.1.0-756d24cece (stamp verified)
+group-sync-dashboard-6f5978c89f-sng7h   1/2   Running   0     26s
+image=image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:2.1.0-756d24cece
+2026-10-02T01:31:55Z gsd-recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=2h)
+2026-10-02T01:31:55Z gsd-recovery the app is NOT running and no data is collected
+2026-10-02T01:31:55Z gsd-recovery data path /data/gsd.db (not opened by this process)
+2026-10-02T01:31:55Z gsd-recovery TTL 2h: ends 2026-10-02T03:31:55Z, 2h left
+
+== step 4 --list — 2026-10-02T01:32:20Z
+pod      group-sync-dashboard-6f5978c89f-sng7h · recovery mode, at least 1h59m33s of its TTL left
+image    image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:2.1.0-756d24cece
+image    understands schema 20 and older
+live     /data/gsd.db · user_version 21
+ID                          SCHEMA  STAMP (UTC)                  SIZE  SOURCE              SIDECAR   THIS IMAGE
+21-20261002T012959.378126Z  21      2026-10-02T01:29:59Z    13.61 MiB  backup              none      no (21 > 20)
+20-20261002T012959.076526Z  20      2026-10-02T01:29:59Z    13.61 MiB  pre-upgrade         ok        yes
+20-20261002T002214.892756Z  20      2026-10-02T00:22:14Z    13.61 MiB  backup              none      yes
+20-20261001T231104.217727Z  20      2026-10-01T23:11:04Z    13.60 MiB  backup              none      yes
+20-20261001T171104.101378Z  20      2026-10-01T17:11:04Z    13.58 MiB  backup              none      yes
+# 5 candidates. none: no .sha256 beside it (scheduled backups write none), so integrity_check is its only check. mismatch: --from-version refuses it.
+# offsite: /offsite is not mounted (recovery mode mounts the offsite claim only when backup.offsite uses its pvc destination)
+note: /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db was taken before an upgrade to schema 21, which this image does not understand. Before that upgrade is tried again, move it and its .sha256 out of /data/pre-upgrade (to /data/pre-restore/, for example), or the new attempt finds it and takes no copy of what this image writes from now on (docs/RUNBOOK_backup_restore.md, section 6). This script moves nothing.
+exit=0
+
+== step 5 the refusals — 2026-10-02T01:32:33Z
+before: sh: line 1: sha256sum: command not found
+before: total 15524
+before: drwxrwsr-x. 2 1000790000 1000790000      158 Oct  1 21:29 backup
+before: -rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+before: -rw-rw-r--. 1 1000790000 1000790000 15851520 Oct  1 21:31 gsd.db
+before: -rw-rw-r--. 1 1000790000 1000790000    32768 Oct  1 21:32 gsd.db-shm
+before: -rw-rw-r--. 1 1000790000 1000790000        0 Oct  1 21:32 gsd.db-wal
+before: drwxrwsr-x. 2 1000790000 1000790000     4096 Oct  1 21:29 pre-upgrade
+before: drwxrwsr-x. 2 1000790000 1000790000       82 Oct  1 21:29 report
+pod      group-sync-dashboard-6f5978c89f-sng7h · recovery mode, at least 1h59m20s of its TTL left
+image    image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:2.1.0-756d24cece
+refused: 21-20261002T012959.378126Z: database schema 21 is newer than this dashboard understands (20); restore a copy at or below schema 20, or run the image that understands 21. The newest copy this image understands: --from-version 20-20261002T012959.076526Z (source pre-upgrade).
+command terminated with exit code 3
+exit=3
+after:  sh: line 1: sha256sum: command not found
+after:  total 15524
+after:  drwxrwsr-x. 2 1000790000 1000790000      158 Oct  1 21:29 backup
+after:  -rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+after:  -rw-rw-r--. 1 1000790000 1000790000 15851520 Oct  1 21:31 gsd.db
+after:  -rw-rw-r--. 1 1000790000 1000790000    32768 Oct  1 21:32 gsd.db-shm
+after:  -rw-rw-r--. 1 1000790000 1000790000        0 Oct  1 21:32 gsd.db-wal
+after:  drwxrwsr-x. 2 1000790000 1000790000     4096 Oct  1 21:29 pre-upgrade
+after:  drwxrwsr-x. 2 1000790000 1000790000       82 Oct  1 21:29 report
+
+== step 6 the restore — 2026-10-02T01:32:40Z (--yes in place of answering y: this shell has no terminal)
+pod      group-sync-dashboard-6f5978c89f-sng7h · recovery mode, at least 1h59m13s of its TTL left
+image    image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/group-sync-dashboard:2.1.0-756d24cece
+candidate    /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db · 13.61 MiB · pre-upgrade
+integrity    ok  (PRAGMA integrity_check on the copy, opened immutable)
+sidecar      ok: /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db.sha256 matches
+schema       copy 20 · live 21 · this image understands 20 and older
+loss window  2026-10-02T01:29:59Z -> 2026-10-02T01:32:41Z (2m42s): what the dashboard recorded since is discarded
+             table                    live   in copy   discarded
+             membership_event         1843      1843           0
+             sync_event               2740      2737           3
+             binding_event            4328      4328           0
+             kyverno_result_event        0         0           0
+             login_event              7950      7950           0
+             discarded is an estimate: the live rows with an id above the copy's highest. Not live minus copy (retention may have pruned rows the copy still has); after an earlier restore two branches of history can reuse ids, which no id count can tell apart.
+             also rolled back, not counted: the current users, groups and bindings, the poll and login capture state, dashboard_user_activity, kpi_daily, report_run and the current Kyverno results. The first poll reads the clusters again; the activity, KPI and report records do not come back.
+confirmation sha256=37794bd1e4f5c08f01c12f362fa9168a8774d240934add25723b8937ad62d6f4 size=14270464 live-sha256=05856233f71ea82c2cd6b8c648dc9ad23bb7dcbe2a884365fa294dc61f7ed094
+note: /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db was taken before an upgrade to schema 21, which this image does not understand. Before that upgrade is tried again, move it and its .sha256 out of /data/pre-upgrade (to /data/pre-restore/, for example), or the new attempt finds it and takes no copy of what this image writes from now on (docs/RUNBOOK_backup_restore.md, section 6). This script moves nothing.
+checked again  20-20261002T012959.076526Z: schema 20 (this image understands 20), sidecar ok, integrity_check ok; 1h59m13s of the recovery TTL left
+kept         /data/pre-restore/20261002T013241.786235Z/  gsd.db, gsd.db-wal, gsd.db-shm (the live set, as found)
+removed      nothing (after opening and closing the old file, which folds its -wal into it)
+written      /data/gsd.db <- /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db · sha256 37794bd1e4f5c08f01c12f362fa9168a8774d240934add25723b8937ad62d6f4 · chgrp 0 · chmod g=u
+user_version 21 -> 20
+restored. Set recovery.enabled: false in this release's values file and roll it out through the release's deployment pipeline: the app starts on the restored file.
+way back     /data/pre-restore/20261002T013241.786235Z/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, "Undo a restore", puts it back (fold it first: its rows may be only in its -wal)
+note: /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db was taken before an upgrade to schema 21, which this image does not understand. Before that upgrade is tried again, move it and its .sha256 out of /data/pre-upgrade (to /data/pre-restore/, for example), or the new attempt finds it and takes no copy of what this image writes from now on (docs/RUNBOOK_backup_restore.md, section 6). This script moves nothing.
+exit=0
+total 13944
+drwxrwsr-x. 2 1000790000 1000790000      158 Oct  1 21:29 backup
+-rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+-rw-rw-r--. 1 1000790000          0 14270464 Oct  1 21:32 gsd.db
+drwxrwsr-x. 3 1000790000          0       37 Oct  1 21:32 pre-restore
+drwxrwsr-x. 2 1000790000 1000790000     4096 Oct  1 21:29 pre-upgrade
+drwxrwsr-x. 2 1000790000 1000790000       82 Oct  1 21:29 report
+
+total 15512
+-rw-rw-r--. 1 1000790000 0 15851520 Oct  1 21:32 gsd.db
+-rw-rw-r--. 1 1000790000 0    32768 Oct  1 21:32 gsd.db-shm
+-rw-rw-r--. 1 1000790000 0        0 Oct  1 21:32 gsd.db-wal
+
+== step 7 move the -to-21- copy aside (runbook §6; the walker, not the script) — 2026-10-02T01:32:50Z
+moved /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db.sha256 -> /data/pre-restore/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db.sha256
+moved /data/pre-upgrade/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db -> /data/pre-restore/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db
+ls /data/pre-upgrade:
+total 0
+ls /data/pre-restore:
+total 13940
+drwxrwsr-x. 2 1000790000          0       56 Oct  1 21:32 20261002T013241.786235Z
+-rw-rw-r--. 1 1000790000 1000790000 14270464 Oct  1 21:29 pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db
+-rw-rw-r--. 1 1000790000 1000790000      159 Oct  1 21:29 pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db.sha256
+
+== step 8 recovery off — rollout started 2026-10-02T01:33:00Z (release-crc.sh --values reports/2026-10-02_restore-db-302/values-off.yaml)
+exit=0
+-- step 8 checks — 2026-10-02T01:33:44Z
+tag     : 2.1.0-756d24cece
+running : 756d24cece — verified in-pod
+group-sync-dashboard-5756d84f78-62pnz   2/2   Running   0     38s
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+{"leader":true,"version":"2.1.0","commit":"756d24cece","branch":"feat/302-restore-db","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+user_version 20
+membership_event total 1843 in copy 1843
+sync_event total 2740 in copy 2737
+binding_event total 4328 in copy 4328
+kyverno_result_event total 0 in copy 0
+login_event total 7950 in copy 7950
+-- step 8, rows at or below the copy's highest id, per history table
+  File "<string>", line 8
+    print(f"{t:22} copy {n:6}  live id<=copy max {at_or_below:6}  {\"equal\" if n == at_or_below else \"DIFFERENT\"}")
+                                                                    ^
+SyntaxError: unexpected character after line continuation character
+command terminated with exit code 1
+-- step 8, rows at or below the copy's highest id, per history table
+copy pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db user_version 20
+membership_event       copy   1843  live id<=copy max   1843  equal
+sync_event             copy   2737  live id<=copy max   2737  equal
+binding_event          copy   4328  live id<=copy max   4328  equal
+kyverno_result_event   copy      0  live id<=copy max      0  equal
+login_event            copy   7950  live id<=copy max   7950  equal
+
+== step 5 (cont.) a run with recovery off — 2026-10-02T01:34:09Z
+refused: pod group-sync-dashboard-5756d84f78-62pnz is not in recovery mode: its dashboard container has no GSD_RECOVERY_MODE=true, so the dashboard may be writing the database.
+  Set recovery.enabled: true and recovery.ttl: 2h in this release's values file and roll it out through the release's deployment pipeline (docs/RUNBOOK_backup_restore.md, section 4). Not with oc set env: recovery mode is the chart's recovery.enabled, and a hand edit of the Deployment is not it.
+exit=2
+
+== step 9 the chart diff against the merge base (T302-19)
+ charts/group-sync-dashboard/Chart.yaml | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+-version: 0.60.0
++# CHART 0.60.1 (2026-10-01), PATCH: appVersion moves to application 2.1.0 (below); restore-db.sh
++# lists the database copies the recovery pod can restore and restores one (#302, SPEC_E3).
++version: 0.60.1
+-appVersion: "2.0.0"
++# 2.1.0 (2026-10-01). restore-db.sh lists the database copies the recovery pod can restore and
++# restores one (#302, SPEC_E3). MINOR.
++appVersion: "2.1.0"

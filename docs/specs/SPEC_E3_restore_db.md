@@ -5,10 +5,10 @@
 | Programme | Epic E (#385), restore tools and release safety; build-order step 2 of 9. It runs inside #303's recovery pod (SPEC_E2), which merges first |
 | Batch | E — restore tools and release safety |
 | Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.5 |
+| Version on release | app 2.1.0, chart 0.60.1 |
 | Version note | The helper and the wrapper live outside the image (`local-development/restore-db.py`, `local-development/restore-db.sh`), but two of the blocks touch image content: the `_MIGRATIONS` comment (T302-21) in `local-development/gsd/store.py` and one row of `local-development/README.md`, both under `publish.yml`'s paths, so `local-development/check-app-version-bump.py` requires the next application MINOR. The implementing pull request runs `local-development/prepare-release.py --app <the next free MINOR> --no-commit "…"`, which also moves `appVersion` and therefore the chart PATCH. Against `21132a25` that is app 2.1.0 and chart 0.59.26; if SPEC_E2 (chart 0.60.0) lands first, the chart becomes 0.60.1. No block carries a version field: the script writes them (Orchestrator's notes, 10) |
 | Issue | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue (its "Decisions and corrections (2026-10-01)"), the epic's "Decisions settled (2026-10-01)", the operator's rules of 2026-10-01 on values files and Argo CD, and SPEC_E2 as it stands at `465411cd` (in review); revised the same day on the reviews of `167ecb9b` by OB3 (in Grok's seat) and Codex (Orchestrator's notes, 17). Measured on main `afa01bb8` (application 2.0.0, chart 0.59.25) with Python 3.14.7 and SQLite 3.53.4 on this machine, and read-only on the CRC lab (OpenShift 4.22.7, image 2.0.0). §7's blocks were cut from a copy of `21132a25` with the design implemented, and proved against a clean tree of it (§4.3) |
 
 ## How to read this spec
@@ -229,6 +229,42 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     and commits inside the few statements between the fold's check and the rename leaves its `-wal` beside the copy;
     a session open before the restore cannot (its writes go to the `-wal` the fold unlinked, or SQLite refuses them
     after the rename).
+
+21. **The implementing pull request's versions (2026-10-01, on origin/main `64d52877`, SPEC_E2 merged at chart
+    0.60.0, application 2.0.0).** The 13 blocks checked out (`13 blocks check out across 9 files`) and applied; only
+    block 10 was corrected afterwards, below. The Version note's derivation is taken as written: `prepare-release.py --app 2.1.0 --no-commit`
+    moves the chart a PATCH, 0.60.0 to 0.60.1, so the header and the index row read chart 0.60.1, not the 0.60.5
+    PR #518 assigned when it moved this spec's 0.59.26 (taking 0.60.5 with `--chart` would have put SPEC_G3's
+    0.60.1, SPEC_E4's 0.60.2 and SPEC_G4's 0.60.3 at or below `Chart.yaml`). Under SPEC_E5's rule the same pull
+    request moves the `specified` specs the tree now reaches, keeping each MINOR or PATCH: SPEC_G3's chart 0.60.1 to
+    0.60.5 (0.60.2 to 0.60.4 are SPEC_E4's and SPEC_G4's), and the application 2.1.0 of SPEC_G2, SPEC_E4 and SPEC_E6
+    to 2.4.0 (2.2.0 is SPEC_G3's, 2.3.0 SPEC_E9's), their chart cells unchanged. Of the script's edits the pull
+    request keeps the version fields and the two Chart.yaml paragraphs, and not its CHANGELOG heading or its status
+    promotion (the precedent of `f842627c`, app 1.21.0): on a clean tree it turned `## Unreleased` into `## Application
+    2.1.0 — chart 0.60.1 — 2026-10-01` and moved SPEC_E2 and this spec to `released`, while Epic E's release is 3.0.0
+    (this header's Release row) and seven `specified` specs (G2, E4, G3, E6, E7, E8, E9) anchor their CHANGELOG block
+    on `## Unreleased`, which would then no longer check out. The heading is cut by Epic E's release. With
+    `## Unreleased` kept, `local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+    requires an Unreleased entry to name the chart the tree carries (measured on the applied tree: `AssertionError:
+    Chart.yaml is 0.60.1 (last released 0.59.24) and no Unreleased entry names it`), as SPEC_E2's entry names chart
+    0.60.0. So block 10's entry names `app 2.1.0, chart 0.60.1` after the spec's path, the one block corrected.
+22. **The review of PR #520 (2026-10-01, OB2 in Codex's seat; Codex and Cursor out of usage): approved; N1
+    accepted.** Runbook §4b's S3 note said "finish with the last four lines above" and named three; the fourth from
+    the end is §4b's `cat /offsite/… > /data/gsd.db.restore.tmp`, which for an S3 copy already streamed in under that
+    name would overwrite it with an offsite copy (or fail). Blocks 8 (the note: "the last three lines above: the
+    ownership line, …") and 11 (`test_the_s3_note_counts_the_lines_it_names`, failing on the old note) carry the
+    fix, and §6's counts follow (`test_restore_db.py` 809, total 2124). OB2's other measurements, all CONFIRMED: the
+    swap survives a real SIGKILL at 14 points (the old database whole or the copy alone, never neither), every one
+    of 22 refusals leaves `/data` and the copies byte-identical, and the preflight reads exactly what SPEC_E2's merged
+    chart renders.
+23. **CI on PR #520 (2026-10-02): the test harness fed the helper as a file, so Linux imported the wrong `gsd`.**
+    `test_an_image_older_than_known_schema_version_reads_it_from_the_migrations` failed on both CI runners (`image
+    understands schema 20`, expected 17) and passed on macOS. Measured in a `python:3.14-slim` container: with a file
+    as stdin, `python /dev/stdin` puts the file's directory first on `sys.path` (`/src/local-development`, whose real
+    `gsd` then shadows the test's `PYTHONPATH`); with a pipe it is `/proc/self/fd`, as on the lab pod, where
+    `restore-db.sh` streams the helper through `oc exec -i`. macOS resolves `/dev/stdin` to `/dev/fd`, which hides it.
+    Block 11's `Pod.run` now pipes the source (`input=`), as the pod is given it; the helper is unchanged. Before, in
+    the container: `1 failed`; after: the three modules pass there.
 
 **Open questions for the operator.** None.
 
@@ -1040,11 +1076,11 @@ captures as PNG, and pinned to the merge sha on the issue.
 | `local-development/gsd/store.py` | 4 | 0 |
 | `docs/RUNBOOK_backup_restore.md` | 57 | 19 |
 | `local-development/README.md` | 1 | 0 |
-| `docs/CHANGELOG.md` | 18 | 0 |
-| `local-development/tests/test_restore_db.py` (new) | 799 | 0 |
+| `docs/CHANGELOG.md` | 19 | 0 |
+| `local-development/tests/test_restore_db.py` (new) | 809 | 0 |
 | `local-development/tests/test_restore_db_wrapper.py` (new) | 166 | 0 |
 | `local-development/tests/test_restore_db_safety.py` (new) | 172 | 0 |
-| total | 2113 | 19 |
+| total | 2124 | 19 |
 
 The version fields `prepare-release.py` moves (Orchestrator's notes, 10) are not counted.
 
@@ -2179,7 +2215,7 @@ New text:
 
 For an S3 copy: download it (§3), then, in the helper pod, run the keep lines above, stream the copy in under the
 temporary name — `cat gsd-….db | oc exec -i -n $NS gsd-restore -- sh -c 'cat > /data/gsd.db.restore.tmp'` — and
-finish with the last four lines above: the ownership lines, the `rm -f /data/gsd.db-wal
+finish with the last three lines above: the ownership line, the `rm -f /data/gsd.db-wal
 /data/gsd.db-shm /data/gsd.db-journal` line, and the rename. The order matters: the copy is whole beside `gsd.db`
 before anything of the old file is removed, and a `-wal` that outlives the file it belonged to would be replayed
 into the restored database.
@@ -2226,7 +2262,8 @@ New text:
 ## Unreleased
 
 - **`restore-db.sh`: list the database copies the recovery pod can restore, and restore one (#302, Epic E #385,
-  `docs/specs/SPEC_E3_restore_db.md`).** `local-development/restore-db.sh --list` runs from the laptop with `oc` and
+  `docs/specs/SPEC_E3_restore_db.md`; app 2.1.0, chart 0.60.1).** `local-development/restore-db.sh --list` runs
+  from the laptop with `oc` and
   prints one row per copy (a scheduled backup, a pre-upgrade copy, a copy on the offsite claim): its ID
   (`<user_version>-<the copy's own stamp>`), schema, stamp, size, source, sidecar verdict and whether the pod's
   image understands it. `--from-version <ID>` refuses a copy newer than the image, a sidecar that does not match and
@@ -2372,10 +2409,11 @@ class Pod:
         environment = {**os.environ, "PYTHONPATH": str(LOCAL_DEV), "GSD_RECOVERY_MODE": "true",
                        "GSD_DB_PATH": str(self.db), "GSD_BACKUP_DIR": str(self.backup), "TMPDIR": str(self.tmp),
                        **(env or {})}
-        with HELPER.open("rb") as source:
-            return subprocess.run([sys.executable, "/dev/stdin", *args, "--offsite", str(self.offsite),
-                                   "--proc", str(self.proc), "--group", str(os.getgid())],
-                                  stdin=source, capture_output=True, text=True, env=environment, timeout=120)
+        # A pipe, as `oc exec -i` gives the pod: a file as stdin makes Linux resolve /dev/stdin to it, so
+        # sys.path[0] would be local-development/ and its gsd would shadow PYTHONPATH (macOS does not resolve it).
+        return subprocess.run([sys.executable, "/dev/stdin", *args, "--offsite", str(self.offsite),
+                               "--proc", str(self.proc), "--group", str(os.getgid())],
+                              input=HELPER.read_text(), capture_output=True, text=True, env=environment, timeout=120)
 
 
 @pytest.fixture
@@ -3051,6 +3089,16 @@ def test_the_runbook_removes_every_journal_it_keeps() -> None:
     removes = re.findall(r"rm -f /data/gsd\.db-wal\s+/data/gsd\.db-shm[^\n`]*", section)
     assert len(removes) == 3 and all("/data/gsd.db-journal" in line for line in removes), removes
     assert section.count("for name in (") == 2                       # §4a and §4b keep the set first
+
+
+def test_the_s3_note_counts_the_lines_it_names() -> None:
+    """Runbook §4b's S3 note names three lines to finish with (the ownership line, the rm -f line, the rename):
+    the copy is already streamed in under the temporary name, so §4b's `cat /offsite/… > …restore.tmp` line,
+    the fourth from the end, must not be run again. The count has to match what it names."""
+    runbook = (LOCAL_DEV.parent / "docs" / "RUNBOOK_backup_restore.md").read_text()
+    note = runbook.split("For an S3 copy:", 1)[1].split("\n\n", 1)[0]
+    assert "finish with the last three lines above" in note, note
+    assert "last four lines" not in note
 ```
 
 ### Block 12 — local-development/tests/test_restore_db_wrapper.py: the wrapper's tests
