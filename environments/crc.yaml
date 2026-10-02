@@ -185,3 +185,11 @@ clusterConfig:
 platformNamespaces:
   additionalSuffixes: ["-operator", "-manager", "-provisioner"]
   additionalNames: ["kyverno", "group-sync-dashboard"]
+
+# Off-volume backup on the lab, to the chart's pvc destination (a 5Gi claim on the default class, keep 14):
+# the operator, 2026-10-02 — "turn on offsite backup using the pvc for now".
+backup:
+  offsite:
+    enabled: true
+    destination:
+      type: pvc
