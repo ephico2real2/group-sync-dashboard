@@ -11845,3 +11845,170 @@ class TestAPartialExportFitsAPhone:
         assert "partial" in dash.locator("#export-note").inner_text()
         overflow = dash.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
         assert overflow <= 0, f"the page scrolls {overflow}px sideways at 375px"
+
+
+@pytest.fixture(scope="module")
+def housekeeping_server(tmp_path_factory):
+    """#542 (SPEC_H1): the reporting rig with `housekeeping.enabled`, a data volume holding copies, and the
+    dashboard's server-to-server calls reaching the same report app through the `app.state.report_client` seam.
+    `root` passes the cluster-admin tier; `auditor` passes the wide tier only — the negative control."""
+    from datetime import UTC as _UTC, datetime as _dt
+    from fastapi.testclient import TestClient
+    from gsd.reporting.artifacts import Run
+    from gsd.reporting.config import REPORT_NAMES, ReportSettings
+    from gsd.reporting.server import build_report_app
+    from gsd.store import Store as _Store
+
+    root = tmp_path_factory.mktemp("gsd-housekeeping")
+    db = str(root / "ui.db")
+    _seed(db)
+    snapshots, artifacts, token = root / "snapshots", root / "artifacts", root / "token"
+    snapshots.mkdir(); artifacts.mkdir(); token.write_bytes(REPORT_SECRET)
+    writer = _Store(db)
+    assert writer.snapshot(str(snapshots), keep=2)
+    writer.close()
+    now = _dt.now(_UTC)
+    for days in (9, 5, 1):
+        (root / "backup").mkdir(exist_ok=True)
+        (root / "backup" / f"gsd-{(now - timedelta(days=days)).strftime('%Y%m%dT%H%M%S.%fZ')}.db").write_bytes(b"SQLite format 3\x00")
+    for days in (8, 2):
+        kept = root / "pre-restore" / (now - timedelta(days=days)).strftime("%Y%m%dT%H%M%S.%fZ")
+        kept.mkdir(parents=True)
+        (kept / "gsd.db").write_bytes(b"SQLite format 3\x00")
+    report_app = build_report_app(ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=False,
+                                                 enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
+                                                 housekeeping_enabled=True), secret=REPORT_SECRET)
+    store = report_app.state.store
+
+    def run(rid, days, schedule=None, status="done", report="groups"):
+        at = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.create(Run(id=rid, report=report, cluster="crc-local", params={}, formats=["html"],
+                         generated_by=f"schedule:{schedule}" if schedule else "jane.smith", generated_by_note="n",
+                         schedule=schedule, requested_at=at, started_at=at, finished_at=at if status == "done" else None,
+                         status=status, bytes={"html": 1000, "json": 500} if status == "done" else {}))
+        if status == "done":
+            store.write(rid, "html", b"<p>run</p>")
+
+    run("20260901T000000.000000Z-man1", 20)
+    for i in range(3):     # a retired schedule's runs: no section shows them, the cleanup's scope still names them
+        run(f"2026090{i + 2}T000000.000000Z-nna{i}", 10 - i, schedule="nightly-namespace-access", report="namespace-access")
+    run("20260909T000000.000000Z-runn", 0, status="running")
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
+                  ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X", identity="none")],
+        db_path=db, backup_dir=str(root / "backup"), login_capture_enabled=True, oauth_proxy_enabled=True,
+        reporting_url="http://report", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
+        housekeeping_enabled=True,
+    )
+    dash_app = build_app(settings, run_poller=False)
+    dash_app.state.tier_resolver = _TierByName("root", "auditor")
+    dash_app.state.cluster_admin_resolver = _TierByName("root")
+    dash_app.state.report_client = TestClient(report_app, base_url="http://report")
+
+    async def router(scope, receive, send):
+        if scope["type"] == "lifespan":
+            return
+        target = report_app if scope.get("path", "").startswith("/report") else dash_app
+        await target(scope, receive, send)
+
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(router, host="127.0.0.1", port=port, log_level="warning", lifespan="off"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("housekeeping dashboard server did not start")
+    yield base, report_app, root
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestHousekeepingPage:
+    """#542 (SPEC_H1): the page's deletes. T542-8: a reader below the cluster-admin tier is shown no control; T542-12:
+    a cluster administrator deletes a run from the drawer, cleans up a retired schedule's runs through the preview,
+    and deletes a copy from the KPI page, the newest backup's row saying why it stays."""
+
+    def test_t542_8_below_the_tier_there_is_no_control(self, browser, housekeeping_server):
+        base, _, _ = housekeeping_server
+        ctx, page, errors = _reports_page(browser, base, "auditor")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local&run=20260901T000000.000000Z-man1")
+            page.wait_for_selector("#library-drawer #drawer-copy-link")
+            assert page.evaluate("() => data.version.features.housekeeping") is True     # the deployment's switch is on
+            assert page.locator("#drawer-delete").count() == 0
+            assert page.locator("#lib-cleanup").count() == 0
+            assert page.locator("#tab-kpi").count() == 0                                 # and so no copies card
+            assert page.evaluate("async () => (await fetch('/api/housekeeping/copies')).status") == 403
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_t542_12_a_cluster_administrator_deletes_previews_and_confirms(self, browser, housekeeping_server):
+        base, report_app, root = housekeeping_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local&run=20260901T000000.000000Z-man1")
+            page.wait_for_selector("#drawer-delete")
+            page.click("#drawer-delete")
+            page.wait_for_function("() => document.getElementById('drawer-delete').textContent === 'Confirm delete'")
+            assert "cannot be undone" in page.locator("#drawer-delete-msg").inner_text()
+            page.click("#drawer-delete")
+            page.wait_for_function("() => !document.getElementById('library-drawer')")
+            assert report_app.state.store.get("20260901T000000.000000Z-man1") is None
+            page.wait_for_selector("#hk-runs-note")
+            assert page.locator("#hk-runs-note").inner_text() == "Run 20260901T000000.000000Z-man1 deleted."
+
+            page.select_option("#hk-runs-scope", "schedule:nightly-namespace-access")
+            page.fill("#hk-runs-days", "0"); page.dispatch_event("#hk-runs-days", "change")
+            page.fill("#hk-runs-keep", "0"); page.dispatch_event("#hk-runs-keep", "change")
+            page.click("#hk-runs-preview")
+            page.wait_for_selector("#hk-runs-preview .hk-list")
+            assert page.locator("#hk-runs-preview .hk-list li").count() == 3
+            assert report_app.state.store.get("20260902T000000.000000Z-nna0") is not None   # a preview deletes nothing
+            page.click("#hk-runs-confirm")
+            page.wait_for_function("() => (document.getElementById('hk-runs-note') || {}).textContent?.startsWith('Deleted 3 runs')")
+            assert all(report_app.state.store.get(f"2026090{i + 2}T000000.000000Z-nna{i}") is None for i in range(3))
+            assert report_app.state.store.get("20260909T000000.000000Z-runn") is not None   # running: never deleted
+
+            page.goto(base + "#page=kpi")
+            page.wait_for_selector("#hk-copies table")
+            rows = page.locator("#hk-copies tbody tr")
+            assert rows.count() == 5
+            newest = sorted(p.name for p in (root / "backup").iterdir())[-1]
+            assert "kept: the newest scheduled backup" in page.locator(f"tr[data-hk-row='backup/{newest}']").inner_text()
+            assert page.locator(f"tr[data-hk-row='backup/{newest}'] button").count() == 0
+            oldest = sorted(p.name for p in (root / "backup").iterdir())[0]
+            button = page.locator(f"[data-hk-copy='backup/{oldest}']")
+            button.click()
+            page.wait_for_function(f"() => document.querySelector(\"[data-hk-copy='backup/{oldest}']\").textContent === 'Confirm delete'")
+            page.locator(f"[data-hk-copy='backup/{oldest}']").click()
+            page.wait_for_function(f"() => !document.querySelector(\"tr[data-hk-row='backup/{oldest}']\")")
+            assert not (root / "backup" / oldest).exists() and (root / "backup" / newest).exists()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_cards_fit_a_phone(self, browser, housekeeping_server):
+        base, _, _ = housekeeping_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": 375, "height": 800})
+            # Each card's own elements, outside its table's scroll box, stay inside the viewport. The page as a whole is
+            # not measured on the KPI page: the Backups card's heading carries config.backup.dir, and this rig's
+            # temporary path is long enough to push it past 375 px with or without these cards (SPEC_H1 §4.4).
+            for where, card in (("#page=library&cluster=crc-local", "#lib-cleanup"), ("#page=kpi", "#hk-copies")):
+                page.goto(base + where)
+                page.wait_for_selector(card + (" table" if card == "#hk-copies" else ""))
+                outside = page.evaluate("""(card) => { const vw = document.documentElement.clientWidth;
+                  return [...document.querySelectorAll(card + ' *')].filter((e) => !e.closest('.scroll-x')
+                    && e.getBoundingClientRect().right > vw + 1).map((e) => e.tagName + '.' + e.className); }""", card)
+                assert outside == [], f"{where}: {outside} reach past 375px"
+            assert not errors, errors
+        finally:
+            ctx.close()

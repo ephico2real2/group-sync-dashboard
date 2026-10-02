@@ -1147,6 +1147,31 @@ backup:
         stagingSizeLimit: 2Gi
 
 # ---------------------------------------------------------------------------
+# Deleting reports and database copies from the page (#542, docs/specs/SPEC_H1_gui_cleanup.md)
+# ---------------------------------------------------------------------------
+# A cluster administrator (visibility.clusterAdminSar, #322) deletes a report run from the Library
+# tab's run drawer, a database copy from the KPI page, or cleans either up once with a tighter bound
+# picked on the page: a preview of exactly what goes, then a confirm. NOTHING IS SAVED: the standing
+# policy is still reporting.retention and config.backup in this values file. Every deletion is one
+# audit log line naming the person, and gsd_housekeeping_deleted_total counts them by kind, no names.
+#
+# What can go: report runs that finished (never one queued or running), and the copies in three
+# directories on the data volume — config.backup.dir, and pre-upgrade/ and pre-restore/ beside the
+# database. The newest copy in each of the three is always kept (the newest backup, the newest
+# pre-upgrade copy, the newest pre-restore set), so a restore always has a copy and a way back.
+# Never the report service's snapshot (/data/report), the live database or anything else.
+#
+# DEFAULT ON (the chart's defaults rule): no RBAC, no credential, no second image — the deletion is
+# file work in the pods' own volumes, the report run deleted by the report service at the
+# dashboard's request with the token both pods already mount. It needs a proxy-verified identity, so
+# with oauthProxy.enabled or visibility.enabled false every deletion is refused. Set
+# `housekeeping.enabled: false` in this release's values file and roll it out through the release's
+# deployment pipeline where only the standing retention may remove evidence: the page then shows no
+# control and neither pod registers a delete route.
+housekeeping:
+  enabled: true
+
+# ---------------------------------------------------------------------------
 # Reporting — the report service (docs/specs/SPEC_C3_reporting_microservice.md)
 # ---------------------------------------------------------------------------
 # A SECOND POD, on its own image, that renders evidence documents — the namespace access report

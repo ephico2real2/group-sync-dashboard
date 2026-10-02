@@ -114,6 +114,9 @@ spec:
               value: {{ .Values.rbac.namespaces | quote }}
             - name: GSD_REPORT_BINDING_INTERVAL_SECONDS
               value: {{ .Values.config.bindingIntervalSeconds | quote }}
+            # The two delete routes the dashboard calls with the service token (#542, SPEC_H1); off, neither exists.
+            - name: GSD_REPORT_HOUSEKEEPING_ENABLED
+              value: {{ .Values.housekeeping.enabled | quote }}
             # The captured Namespace-metadata DIMENSIONS the namespace-access report selects on, as a JSON
             # array (same transport as namespaceMetadataLabels). The report pod reads these; the dashboard
             # poller captures under reporting.namespaceMetadata.labels.

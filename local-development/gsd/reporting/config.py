@@ -223,6 +223,9 @@ class ReportSettings:
     #: One worker renders at a time; the queue is bounded so a burst answers 429 rather than
     #: piling up renders the pod's memory limit then ends.
     max_queued_runs: int = 8
+    #: The page's deletes (#542, SPEC_H1): DELETE /report/api/runs/{id} and POST /report/api/runs/cleanup, for the
+    #: dashboard's service token only. Off, neither route exists, so the token cannot delete a run.
+    housekeeping_enabled: bool = False
     log_level: str = "INFO"
     git_commit: str = field(default_factory=lambda: os.environ.get("GSD_GIT_COMMIT", "unknown"))
 
@@ -268,6 +271,7 @@ def load_report_settings() -> ReportSettings:
         binding_interval_seconds=_int_env("GSD_REPORT_BINDING_INTERVAL_SECONDS", 3600, lo=1, hi=86400),
         namespace_selector_labels=_selector_labels_env(),
         max_queued_runs=_int_env("GSD_REPORT_MAX_QUEUED_RUNS", 8, lo=1, hi=100),
+        housekeeping_enabled=_bool_env("GSD_REPORT_HOUSEKEEPING_ENABLED", False),
         log_level=os.environ.get("GSD_LOG_LEVEL", "INFO"),
         window=_window_env(),
     )

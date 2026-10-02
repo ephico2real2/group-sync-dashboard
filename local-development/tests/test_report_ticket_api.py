@@ -38,7 +38,8 @@ class TestTheTicket:
 
     def test_the_wide_tier_gets_a_ticket_bound_to_its_own_name(self, tmp_path):
         c = _client(tmp_path)
-        assert c.get("/api/version").json()["features"] == {"export": True, "reporting": True, "reporting_prefix": "/report"}
+        assert c.get("/api/version").json()["features"] == {"export": True, "reporting": True, "reporting_prefix": "/report",
+                                                             "housekeeping": False}   # #542: off in the code, on in the chart
         body = c.get("/api/report/ticket", headers=ADMIN).json()
         assert body["expires_in"] == 120 and body["prefix"] == "/report" and body["viewer"] == "root"
         claims = verify(SECRET, body["ticket"], "root")

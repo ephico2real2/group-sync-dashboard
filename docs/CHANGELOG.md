@@ -8,6 +8,26 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **Delete report runs and database copies from the page (#542, `docs/specs/SPEC_H1_gui_cleanup.md`;
+  `housekeeping.enabled`, on by default).** A cluster administrator (the cluster-admin tier, #322, behind a
+  proxy-verified identity) deletes a finished report run from the Library tab's run drawer and a database copy from
+  the KPI page's new **Database copies** card, or cleans either up once with a tighter bound picked on the page:
+  report runs older than N days beyond the newest K of each schedule and cluster (all runs, the manual runs, or one
+  schedule, a retired one included), copies older than N days in one directory or all three. A cleanup is a preview
+  of exactly what goes, then a confirm bound to that set by its digest: a set that changed in between is refused
+  (409) with the new preview, and nothing is deleted. **Nothing is saved**: `reporting.retention` and
+  `config.backup` stay the standing policy. The copies are those in `config.backup.dir` and in `pre-upgrade/` and
+  `pre-restore/` beside the database, and the newest of each directory is always kept, so a restore keeps a copy
+  and a way back; a queued or running run is never deleted; `/data/report`, the live database and anything else on
+  the volume are never listed. Every deleted item is one audit line naming the person (`report-run-deleted …` /
+  `db-copy-deleted … by=<viewer>`) and one count in the new `gsd_housekeeping_deleted_total{kind}`, which names no
+  one. The report service gains `DELETE /report/api/runs/{id}` and `POST /report/api/runs/cleanup` for the service
+  token only, registered with the same value. No RBAC change: every rendered rule and binding, before and after,
+  63 lines, none removed and none added. `housekeeping.enabled: false` in the release's values file removes every
+  route and control.
+
 ## Application 3.0.0 — chart 0.61.3 — 2026-10-02
 
 - **Epic E, restore tools and release safety (#385): recovery mode (#303), restore-db.sh (#302), per-pod backup rotation (#391), off-volume backup on by default (#304), the KPI Backups card (#306), the schema line and the runbook's checks (#300), the chart-publish label gate (#410), :latest (#425), the runbook's break glass under Argo CD (#533).**

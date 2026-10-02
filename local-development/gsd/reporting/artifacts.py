@@ -20,10 +20,20 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from pathlib import Path
 
+from ..housekeeping import CleanupChanged, set_digest
+
 log = logging.getLogger(__name__)
 
 FORMATS = ("json", "html", "pdf")
 STATUSES = ("queued", "running", "done", "failed")
+
+
+class RunInFlight(Exception):
+    """A queued or running run was asked to be deleted: it is still the worker's (#542)."""
+
+    def __init__(self, run: "Run") -> None:
+        super().__init__(f"run {run.id} is {run.status}")
+        self.run = run
 
 
 @dataclass
@@ -337,6 +347,48 @@ class ArtifactStore:
         with self._lock:
             return self._retention(scheduled_keep=scheduled_keep, scheduled_days=scheduled_days,
                                    manual_days=manual_days, manual_max_runs=manual_max_runs, overrides=overrides)
+
+    def delete(self, run_id: str) -> Run:
+        """Remove one finished run and its files, at the dashboard's request (#542). Under the lock prune() takes,
+        so the two never delete one run twice. A queued or running run is the worker's: refused, as prune() never
+        dooms one. KeyError when there is no such run."""
+        with self._lock:
+            run = self._runs[run_id]
+            if run.status not in ("done", "failed"):
+                raise RunInFlight(run)
+            shutil.rmtree(self._dir(run.id), ignore_errors=True)
+            self._runs.pop(run.id, None)
+        return run
+
+    def cleanup(self, *, scope: str, older_than_days: int, keep_newest: int, now: datetime,
+                confirm: str | None) -> list[Run]:
+        """A one-off cleanup (#542): the finished runs in `scope` completed before `now - older_than_days`, beyond
+        the newest `keep_newest` of their (schedule, cluster), manual runs being one group per cluster. Without
+        `confirm` nothing is deleted: the list is the preview. With it, the list is computed again under the
+        lock that deletes it, and deleted only when its digest is `confirm`; otherwise CleanupChanged carries the
+        list as it is now. Ages are retention's (`retention_stamp`): completion, else the id."""
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        cutoff = now - timedelta(days=older_than_days)
+        with self._lock:
+            finished = [r for r in self._runs.values() if r.status in ("done", "failed")]
+            if scope == "manual":
+                finished = [r for r in finished if not r.schedule]
+            elif scope.startswith("schedule:"):
+                finished = [r for r in finished if r.schedule == scope.split(":", 1)[1]]
+            groups: dict[tuple[str, str], list[Run]] = {}
+            for r in sorted(finished, key=lambda r: (retention_stamp(r), r.id), reverse=True):
+                groups.setdefault((r.schedule or "", r.cluster), []).append(r)
+            plan = sorted((r for group in groups.values() for i, r in enumerate(group)
+                           if i >= keep_newest and retention_stamp(r) < cutoff), key=lambda r: r.id)
+            if confirm is None:
+                return plan
+            if set_digest(r.id for r in plan) != confirm:
+                raise CleanupChanged(plan)
+            for r in plan:
+                shutil.rmtree(self._dir(r.id), ignore_errors=True)
+                self._runs.pop(r.id, None)
+        return plan
 
     def disk_bytes(self) -> int:
         total = 0

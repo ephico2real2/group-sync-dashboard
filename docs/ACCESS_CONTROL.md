@@ -152,6 +152,7 @@ subset. (Access granted has one: a reader's own path, above.)
 | `/api/clusters/{c}/operator-configs` | **403** | all |
 | `/api/kpi` | **403** | **403** unless the reader passes the cluster-admin tier (#322) |
 | `/api/clusterconfigs` and its four write routes | **403** | **403** unless the reader passes the cluster-admin tier (#322); the writes also need `clusterConfig.secrets.writes.enabled` |
+| `/api/housekeeping/**`: the copies listing and the four delete routes (#542) | **403** | **403** unless the reader passes the cluster-admin tier (#322) with a proxy-verified identity; exist only with `housekeeping.enabled` |
 | `/api/clusters` | reachable; cluster-wide `operator_configs` withheld | full card |
 | `/api/clusters/{c}/groupsyncs` | full CR health **minus `ldap_filter` and `error_message`** | full row |
 | `/api/clusters/{c}/groupsyncs/{name}/events` | unchanged at both tiers | same |
