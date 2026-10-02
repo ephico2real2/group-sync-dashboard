@@ -1,0 +1,667 @@
+# SPEC_E7 §5 walk (#300) on CRC; runbook docs/RUNBOOK_backup_restore.md at origin/main 2e7d33be. On this lab NS=group-sync-dashboard REL=group-sync-dashboard (the runbook's example is NS=group-sync).
+
+== step 1 before: PVC UIDs, the lab — 2026-10-02T05:32:32Z
+$ oc get pvc -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+[exit 0]
+$ oc get application group-sync-dashboard -n openshift-gitops -o jsonpath='{.spec.source.targetRevision} {.spec.source.helm.valueFiles} {.status.sync.status} {.status.sync.revision} {.status.health.status}{"\n"}'
+main ["../../environments/crc.yaml"] Synced 2e7d33be3b06968cd4b12d06c846afe43f5bf27c Healthy
+[exit 0]
+$ oc get deploy -n $NS $REL -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+quay.io/ephico2real/group-sync-dashboard:2.3.0
+[exit 0]
+
+== step 2 — §0 step 1: does the upgrade migrate, and the schema you leave — 2026-10-02T05:32:32Z
+# The lab runs 2.3.0 and no upgrade is planned in this walk: the CHANGELOG read is the schema lines present, for the record.
+$ grep -n 'Schema [0-9]* → [0-9]*' <worktree>/docs/CHANGELOG.md || echo '(no **Schema N → M.** line in docs/CHANGELOG.md yet)'
+(no **Schema N → M.** line in docs/CHANGELOG.md yet)
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'from gsd.store import KNOWN_SCHEMA_VERSION; print(KNOWN_SCHEMA_VERSION)'
+20
+[exit 0]
+# gsd_build_info's version label from /metrics (the runbook names the metric, prints no command; read through the pod's loopback):
+$ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/metrics | grep '^gsd_build_info'
+gsd_build_info{branch="main",commit="c57f292707",version="2.3.0"} 1.0
+[exit 0]
+
+== step 3 — §0 step 2: a copy off the volume — 2026-10-02T05:32:43Z
+$ oc get cronjob -n $NS $REL-backup-offsite
+NAME                                  SCHEDULE       TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+group-sync-dashboard-backup-offsite   15 */6 * * *   <none>     False     0        <none>          146m
+[exit 0]
+# It exists (backup.offsite on, pvc destination): the Job branch, its four commands in one shell as printed.
+$ J=manual-$(date +%s)
+oc create job -n $NS --from=cronjob/$REL-backup-offsite $J
+oc wait -n $NS --for=condition=complete job/$J --timeout=1800s
+oc logs -n $NS job/$J --all-containers | grep -E '^(copied|already shipped|integrity_check)'
+echo "J=$J"
+job.batch/manual-1790919163 created
+job.batch/manual-1790919163 condition met
+copied /data/backup/gsd-20261002T042438.581853Z.db -> /offsite/gsd-20261002T042438.581853Z.db (14295040 bytes, sha256 7b761734d4398409fba4c1e14ed7e412142f76aae734dc3ec3693564e0f962f0)
+integrity_check ok; user_version 20; membership_event rows 1843; sync_event rows 2770
+J=manual-1790919163
+[exit 0]
+
+== step 4 — §0 step 3: where the pre-upgrade copy goes, and that it fits — 2026-10-02T05:32:58Z
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c 'import glob, os, shutil; print("free", shutil.disk_usage("/data").free); print("databases", sum(os.stat(p).st_size for p in glob.glob("/data/gsd.db") + glob.glob("/data/gsd.db-wal") + glob.glob("/data/*/gsd.db") + glob.glob("/data/*/gsd.db-wal")))'
+free 26973138944
+databases 19084832
+[exit 0]
+# The two /metrics gauges (read through the pod's loopback):
+$ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/metrics | grep -E '^gsd_volume_disk_(total|used)_bytes\{component="dashboard"'
+gsd_volume_disk_used_bytes{component="dashboard"} 1.33483065344e+11
+gsd_volume_disk_total_bytes{component="dashboard"} 1.60456224768e+11
+[exit 0]
+
+== step 5a — §4 steps 1-2: recovery mode on through the lab's pipeline (branch reports/300-runbook-walk @ 17cffec0) — 2026-10-02T05:33:41Z
+# ARGOCD_WAIT_TIMEOUT=240: the recovery Deployment never reports available, so the waiter is expected to fail (runbook §4 step 2); the env var only shortens that wait from 900 s.
+$ cd <worktree> && ARGOCD_WAIT_TIMEOUT=240 local-development/release-crc.sh --argocd reports/300-runbook-walk --values reports/2026-10-02_runbook-schema-line-300/values-recovery.yaml
+argocd  : group-sync-dashboard -> revision reports/300-runbook-walk (17cffec0d4), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:2.3.0 is application 2.3.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:2.3.0 is application 2.3.0
+values  : reports/2026-10-02_runbook-schema-line-300/values-recovery.yaml (the Application's valueFiles)
+05:33:44Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 2e7d33be3b06968cd4b12d06c846afe43f5bf27c, want 17cffec0d4) successfully synced (all tasks run)
+05:34:00Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+05:34:15Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:34:30Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:34:45Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:35:00Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:35:16Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:35:31Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:35:46Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:36:01Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:36:17Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:36:32Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:36:47Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:37:02Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:37:18Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:37:33Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:37:48Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+ERROR: group-sync-dashboard did not reach Synced/Healthy in 240s
+  Deployment/group-sync-dashboard health=Progressing: Waiting for rollout to finish: 0 of 1 updated replicas are available...
+[exit 1]
+$ oc get pods -n $NS -l app=$REL
+NAME                                    READY   STATUS    RESTARTS   AGE
+group-sync-dashboard-74484cb5fd-hvqqd   1/2     Running   0          3m45s
+[exit 0]
+$ oc logs -n $NS deploy/$REL -c dashboard
+2026-10-02T05:34:05Z gsd-recovery RECOVERY MODE (GSD_RECOVERY_MODE=true, GSD_RECOVERY_MODE_TTL=2h)
+2026-10-02T05:34:05Z gsd-recovery the app is NOT running and no data is collected
+2026-10-02T05:34:05Z gsd-recovery data path /data/gsd.db (not opened by this process)
+2026-10-02T05:34:05Z gsd-recovery TTL 2h: ends 2026-10-02T07:34:05Z, 2h left
+2026-10-02T05:34:05Z gsd-recovery check the time left before a restore: at the TTL this process exits and every process in the container stops with it
+[exit 0]
+$ oc get application group-sync-dashboard -n openshift-gitops -o jsonpath='{.spec.source.targetRevision} {.spec.source.helm.valueFiles} {.status.sync.status} {.status.sync.revision} {.status.health.status}{"\n"}'
+reports/300-runbook-walk ["../../reports/2026-10-02_runbook-schema-line-300/values-recovery.yaml"] Synced 17cffec0d44cecf8d7493c99d60b1ee6e26f7f6f Progressing
+[exit 0]
+$ oc get deploy -n $NS $REL -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+quay.io/ephico2real/group-sync-dashboard:2.3.0
+[exit 0]
+# §4 step 2: with backup.offsite on its pvc destination the offsite claim is at /offsite, read-only:
+$ oc get deploy -n $NS $REL -o jsonpath='{range .spec.template.spec.containers[0].volumeMounts[*]}{.name} {.mountPath} {.readOnly}{"\n"}{end}'
+config /etc/gsd true
+data /data 
+tmp /tmp 
+curlrc /etc/curl true
+report-token /etc/gsd/report true
+service-ca /etc/gsd/service-ca true
+trusted-ca-injected /etc/pki/ca-trust/extracted/pem/injected true
+recovery-script /scripts true
+offsite /offsite true
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- ls -l /offsite
+total 41888
+-rw-rw-r--. 1 1000790000 1000790000 14290944 Oct  1 23:06 gsd-20261002T023914.880113Z.db
+-rw-rw-r--. 1 1000790000 1000790000       97 Oct  1 23:06 gsd-20261002T023914.880113Z.db.sha256
+-rw-rw-r--. 1 1000790000 1000790000 14295040 Oct  1 23:43 gsd-20261002T034300.088262Z.db
+-rw-rw-r--. 1 1000790000 1000790000       97 Oct  1 23:43 gsd-20261002T034300.088262Z.db.sha256
+-rw-rw-r--. 1 1000790000 1000790000 14295040 Oct  2 01:32 gsd-20261002T042438.581853Z.db
+-rw-rw-r--. 1 1000790000 1000790000       97 Oct  2 01:32 gsd-20261002T042438.581853Z.db.sha256
+[exit 0]
+
+== step 5b — §4 step 3: restore-db.sh --list — 2026-10-02T05:37:57Z
+$ cd <worktree> && local-development/restore-db.sh --list --namespace $NS --release $REL
+pod      group-sync-dashboard-74484cb5fd-hvqqd · recovery mode, at least 1h56m5s of its TTL left
+image    quay.io/ephico2real/group-sync-dashboard:2.3.0
+image    understands schema 20 and older
+live     /data/gsd.db · user_version 20
+ID                          SCHEMA  STAMP (UTC)                  SIZE  SOURCE              SIDECAR   THIS IMAGE
+20-20261002T042438.581853Z  20      2026-10-02T04:24:38Z    13.63 MiB  backup+offsite      ok        yes
+20-20261002T034300.088262Z  20      2026-10-02T03:43:00Z    13.63 MiB  backup+offsite      ok        yes
+20-20261002T023914.880113Z  20      2026-10-02T02:39:14Z    13.63 MiB  backup+offsite      ok        yes
+20-20261002T021026.489567Z  20      2026-10-02T02:10:26Z    13.62 MiB  backup              none      yes
+# 4 candidates. none: no .sha256 beside it (scheduled backups write none), so integrity_check is its only check. mismatch: --from-version refuses it.
+[exit 0]
+
+== step 5c — §1 on the copy to be restored (the counts §4c compares against) — 2026-10-02T05:38:15Z
+$ oc exec -n $NS deploy/$REL -c dashboard -- ls -l /data/backup
+oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
+import sqlite3, sys
+p = sys.argv[1]
+c = sqlite3.connect(f"file:{p}?immutable=1", uri=True)
+print("integrity_check:", c.execute("PRAGMA integrity_check").fetchone()[0])
+print("user_version:", c.execute("PRAGMA user_version").fetchone()[0])
+for t in ("membership_event", "sync_event", "login_event"):
+    print(t, c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
+' /data/backup/gsd-20261002T042438.581853Z.db
+total 55824
+-rw-rw-r--. 1 1000790000 1000790000 14282752 Oct  1 22:10 gsd-20261002T021026.489567Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14290944 Oct  1 22:39 gsd-20261002T023914.880113Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14295040 Oct  1 23:43 gsd-20261002T034300.088262Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14295040 Oct  2 00:24 gsd-20261002T042438.581853Z.db
+integrity_check: ok
+user_version: 20
+membership_event 1843
+sync_event 2770
+login_event 7968
+[exit 0]
+
+== step 5d — §4 step 3: restore-db.sh --from-version (the newest backup); --yes in place of answering y: this shell has no terminal — 2026-10-02T05:38:17Z
+$ cd <worktree> && local-development/restore-db.sh --from-version 20-20261002T042438.581853Z --yes --namespace $NS --release $REL 2>&1 | tee -a <scratch>/restore-terminal.txt; exit ${PIPESTATUS[0]}
+pod      group-sync-dashboard-74484cb5fd-hvqqd · recovery mode, at least 1h55m45s of its TTL left
+image    quay.io/ephico2real/group-sync-dashboard:2.3.0
+candidate    /data/backup/gsd-20261002T042438.581853Z.db · 13.63 MiB · backup+offsite
+integrity    ok  (PRAGMA integrity_check on the copy, opened immutable)
+sidecar      ok: /offsite/gsd-20261002T042438.581853Z.db.sha256 matches
+schema       copy 20 · live 20 · this image understands 20 and older
+loss window  2026-10-02T04:24:38Z -> 2026-10-02T05:38:20Z (1h13m42s): what the dashboard recorded since is discarded
+             table                    live   in copy   discarded
+             membership_event         1843      1843           0
+             sync_event               2782      2770          12
+             binding_event            4328      4328           0
+             kyverno_result_event        0         0           0
+             login_event              7992      7968          24
+             discarded is an estimate: the live rows with an id above the copy's highest. Not live minus copy (retention may have pruned rows the copy still has); after an earlier restore two branches of history can reuse ids, which no id count can tell apart.
+             also rolled back, not counted: the current users, groups and bindings, the poll and login capture state, dashboard_user_activity, kpi_daily, report_run and the current Kyverno results. The first poll reads the clusters again; the activity, KPI and report records do not come back.
+confirmation sha256=7b761734d4398409fba4c1e14ed7e412142f76aae734dc3ec3693564e0f962f0 size=14295040 live-sha256=dce423ceaeccf9e7fb09251f690bc2fc67f9a4c88be3c5e0cc2dafdefa2cac88
+checked again  20-20261002T042438.581853Z: schema 20 (this image understands 20), sidecar ok, integrity_check ok; 1h55m41s of the recovery TTL left
+kept         /data/pre-restore/20261002T053826.893557Z/  gsd.db, gsd.db-wal, gsd.db-shm (the live set, as found)
+removed      nothing (after opening and closing the old file, which folds its -wal into it)
+written      /data/gsd.db <- /data/backup/gsd-20261002T042438.581853Z.db · sha256 7b761734d4398409fba4c1e14ed7e412142f76aae734dc3ec3693564e0f962f0 · chgrp 0 · chmod g=u
+user_version 20 -> 20
+restored. Set recovery.enabled: false in this release's values file and roll it out through the release's deployment pipeline: the app starts on the restored file.
+way back     /data/pre-restore/20261002T053826.893557Z/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, "Undo a restore", puts it back (fold it first: its rows may be only in its -wal)
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- ls -l /data /data/pre-restore
+/data:
+total 13968
+drwxrwsr-x. 2 1000790000 1000790000      158 Oct  2 00:24 backup
+-rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+-rw-rw-r--. 1 1000790000 root       14295040 Oct  2 01:38 gsd.db
+drwxrwsr-x. 4 1000790000 1000790000     4096 Oct  2 01:38 pre-restore
+drwxrwsr-x. 2 1000790000 1000790000        6 Oct  1 21:32 pre-upgrade
+drwxrwsr-x. 2 1000790000 1000790000       82 Oct  2 01:30 report
+
+/data/pre-restore:
+total 13940
+drwxrwsr-x. 2 1000790000 1000790000       56 Oct  1 21:32 20261002T013241.786235Z
+drwxrwsr-x. 2 1000790000 root             56 Oct  2 01:38 20261002T053826.893557Z
+-rw-rw-r--. 1 1000790000 1000790000 14270464 Oct  1 21:29 pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db
+-rw-rw-r--. 1 1000790000 1000790000      159 Oct  1 21:29 pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db.sha256
+[exit 0]
+
+== step 5e — §4 step 5: recovery mode off through the lab's pipeline — 2026-10-02T05:38:43Z
+$ cd <worktree> && local-development/release-crc.sh --argocd reports/300-runbook-walk --values reports/2026-10-02_runbook-schema-line-300/values-off.yaml
+argocd  : group-sync-dashboard -> revision reports/300-runbook-walk (17cffec0d4), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:2.3.0 is application 2.3.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:2.3.0 is application 2.3.0
+values  : reports/2026-10-02_runbook-schema-line-300/values-off.yaml (the Application's valueFiles)
+05:38:46Z  Synced     Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:39:01Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:39:16Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:39:32Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:39:47Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:40:02Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:40:17Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:40:32Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:40:48Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:41:03Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:41:18Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:41:33Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:41:48Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:42:04Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:42:19Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:42:34Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:42:49Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:43:05Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:43:20Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:43:35Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:43:50Z  OutOfSync  Progressing  Running    (status is for the previous spec) waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:44:05Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #1 at 5:44AM.
+05:44:21Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #1 at 5:44AM.
+05:44:36Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #1 at 5:44AM.
+05:44:51Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #1 at 5:44AM.
+05:45:06Z  OutOfSync  Degraded     Running    (status is for the previous spec) Retrying operation. Attempt #1
+05:45:21Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:45:36Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:45:51Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:46:07Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:46:22Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:46:37Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:46:52Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #2 at 5:46AM.
+05:47:07Z  OutOfSync  Degraded     Running    (status is for the previous spec) Retrying operation. Attempt #2
+05:47:22Z  OutOfSync  Degraded     Running    (status is for the previous spec) waiting for deletion of hook batch/Job/group-sync-dashboard-backup-offsite-bind-4e95868a
+05:47:37Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:47:53Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:48:08Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:48:23Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:48:38Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:48:53Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:49:08Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:49:23Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:49:38Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:49:54Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:50:09Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:50:24Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:50:39Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:50:55Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:51:10Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:51:25Z  OutOfSync  Degraded     Running    (status is for the previous spec) one or more synchronization tasks completed unsuccessfully. Retrying attempt #3 at 5:49AM.
+05:51:40Z  OutOfSync  Degraded     Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+05:51:55Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:52:11Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+[exit 0]
+
+== step 5f — §4c: bring it back and verify — 2026-10-02T05:52:11Z
+$ oc rollout status -n $NS deploy/$REL
+deployment "group-sync-dashboard" successfully rolled out
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/version
+{"leader":true,"version":"2.3.0","commit":"c57f292707","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/metrics | grep '^gsd_build_info'
+gsd_build_info{branch="main",commit="c57f292707",version="2.3.0"} 1.0
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
+import sqlite3
+c = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
+for t in ("membership_event", "sync_event"):
+    print(t, c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
+'
+membership_event 1843
+sync_event 2776
+[exit 0]
+$ oc logs -n $NS deploy/$REL -c dashboard | grep -E 'schema migration|pre-upgrade copy|leader' | tail -5
+2026-10-02 01:51:58,213-0400 INFO    gsd.leader leader election: lease held by 'group-sync-dashboard-846bdd4b7f-nf7zq' has expired, taking it
+2026-10-02 01:51:58,283-0400 INFO    gsd.leader became leader (group-sync-dashboard/group-sync-dashboard as group-sync-dashboard-846bdd4b7f-dm66h)
+[exit 0]
+$ oc get pods -n $NS
+NAME                                                      READY   STATUS      RESTARTS   AGE
+grafana-openshift-grafana-deployment-cc8d47b67-kjs2f      2/2     Running     8          12d
+grafana-operator-controller-manager-v5-58748cb7d4-wlpf9   1/1     Running     9          12d
+group-sync-dashboard-846bdd4b7f-dm66h                     2/2     Running     0          23s
+group-sync-dashboard-report-65ff4fb56-x4np6               1/1     Running     0          88m
+gsd-offsite-check-030651-6kwg7                            0/1     Completed   0          165m
+manual-1790919163-kzrvp                                   0/1     Completed   0          19m
+manual-20261002034315-t5lzj                               0/1     Completed   0          128m
+mock-openshift-7777cc654b-8zr2l                           1/1     Running     4          12d
+mock-privateca-757657f7cf-5gnr4                           1/1     Running     4          11d
+mock-selfsigned-79f8c4f48f-rqw86                          1/1     Running     4          11d
+mock-trusted-756fbcdb8c-49jfn                             1/1     Running     4          11d
+verify-1790912616-km2gt                                   0/1     Completed   0          128m
+[exit 0]
+== step 5g — the counts against the copy's, bounded by the copy's highest id (the leader polled before §4c's count ran) — 2026-10-02T05:55:27Z
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
+import sqlite3
+live = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
+copy = sqlite3.connect("file:/data/backup/gsd-20261002T042438.581853Z.db?immutable=1", uri=True)
+for t in ("membership_event", "sync_event", "binding_event", "login_event"):
+    n, top = copy.execute(f"SELECT COUNT(*), MAX(id) FROM {t}").fetchone()
+    total = live.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+    below = live.execute(f"SELECT COUNT(*) FROM {t} WHERE id <= ?", (top,)).fetchone()[0]
+    print(f"{t:18} copy {n:5}  live {total:5}  live id<=copy max {below:5}  " + ("equal" if below == n else "DIFFERENT"))
+'
+membership_event   copy  1843  live  1843  live id<=copy max  1843  equal
+sync_event         copy  2770  live  2776  live id<=copy max  2770  equal
+binding_event      copy  4328  live  4328  live id<=copy max  4328  equal
+login_event        copy  7968  live  7992  live id<=copy max  7968  equal
+[exit 0]
+
+== step 6a — before the fallback: the live counts (the app has run since step 5f, so §4a's restore of the same copy discards what it wrote) — 2026-10-02T05:55:58Z
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
+import sqlite3
+c = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
+for t in ("membership_event", "sync_event", "binding_event", "login_event"):
+    print(t, c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
+'
+membership_event 1843
+sync_event 2776
+binding_event 4328
+login_event 7992
+[exit 0]
+
+== step 6b — §4 'Without recovery mode': replicaCount 0 through the lab's pipeline — 2026-10-02T05:55:59Z
+$ cd <worktree> && local-development/release-crc.sh --argocd reports/300-runbook-walk --values reports/2026-10-02_runbook-schema-line-300/values-replicas0.yaml
+argocd  : group-sync-dashboard -> revision reports/300-runbook-walk (17cffec0d4), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:2.3.0 is application 2.3.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:2.3.0 is application 2.3.0
+values  : reports/2026-10-02_runbook-schema-line-300/values-replicas0.yaml (the Application's valueFiles)
+05:56:02Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+05:56:17Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+05:56:32Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+[exit 0]
+$ oc wait -n $NS --for=delete pod -l app=$REL --timeout=120s
+[exit 0]
+$ oc get deploy -n $NS $REL -o jsonpath='replicas={.spec.replicas} ready={.status.readyReplicas}{"\n"}'
+replicas=0 ready=
+[exit 0]
+$ oc get pods -n $NS -l app=$REL
+No resources found in group-sync-dashboard namespace.
+[exit 0]
+
+== step 6c — §4a's oc debug body as printed; gsd-….db is /data/backup/gsd-20261002T042438.581853Z.db, the copy step 5 restored — 2026-10-02T05:56:42Z
+$ oc debug -n $NS deploy/$REL -c dashboard -- sh -c '
+set -e
+ls -l /data /data/backup
+python3.14 -c "import sqlite3,sys; c=sqlite3.connect(\"file:\" + sys.argv[1] + \"?immutable=1\", uri=True); print(c.execute(\"PRAGMA integrity_check\").fetchone()[0])" /data/backup/gsd-20261002T042438.581853Z.db
+python3.14 -c "
+import pathlib, time
+keep = pathlib.Path(\"/data/pre-restore\") / time.strftime(\"%Y%m%dT%H%M%SZ\", time.gmtime())
+for name in (\"gsd.db\", \"gsd.db-wal\", \"gsd.db-shm\", \"gsd.db-journal\"):
+    live = pathlib.Path(\"/data\") / name
+    if live.is_file():
+        keep.mkdir(parents=True, exist_ok=True)
+        (keep / name).write_bytes(live.read_bytes())
+        print(\"kept\", live, \"under\", keep)
+"
+cat /data/backup/gsd-20261002T042438.581853Z.db > /data/gsd.db.restore.tmp
+chgrp 0 /data/gsd.db.restore.tmp && chmod g=u /data/gsd.db.restore.tmp
+rm -f /data/gsd.db-wal /data/gsd.db-shm /data/gsd.db-journal
+python3.14 -c "import os; os.replace(\"/data/gsd.db.restore.tmp\", \"/data/gsd.db\")"
+ls -l /data
+'
+Starting pod/group-sync-dashboard-debug-tqbw8, command was: python3.14 -m uvicorn gsd.api:create_app --factory --host 127.0.0.1 --port 8080 --workers 1
+/data:
+total 14212
+drwxrwsr-x. 2 1000790000 1000790000      158 Oct  2 01:52 backup
+-rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+-rw-rw-r--. 1 1000790000 1000790000 14544896 Oct  2 01:56 gsd.db
+drwxrwsr-x. 4 1000790000 1000790000     4096 Oct  2 01:38 pre-restore
+drwxrwsr-x. 2 1000790000 1000790000        6 Oct  1 21:32 pre-upgrade
+drwxrwsr-x. 2 1000790000 1000790000       82 Oct  2 01:52 report
+
+/data/backup:
+total 55844
+-rw-rw-r--. 1 1000790000 1000790000 14290944 Oct  1 22:39 gsd-20261002T023914.880113Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14295040 Oct  1 23:43 gsd-20261002T034300.088262Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14295040 Oct  2 00:24 gsd-20261002T042438.581853Z.db
+-rw-rw-r--. 1 1000790000 1000790000 14303232 Oct  2 01:52 gsd-20261002T055203.083906Z.db
+ok
+kept /data/gsd.db under /data/pre-restore/20261002T055647Z
+total 13968
+drwxrwsr-x. 2 1000790000 1000790000      158 Oct  2 01:52 backup
+-rw-rw-r--. 1 1000790000 1000790000      362 Oct  1 14:00 fleet-gate.json
+-rw-rw-r--. 1 1000790000 root       14295040 Oct  2 01:56 gsd.db
+drwxrwsr-x. 5 1000790000 1000790000     4096 Oct  2 01:56 pre-restore
+drwxrwsr-x. 2 1000790000 1000790000        6 Oct  1 21:32 pre-upgrade
+drwxrwsr-x. 2 1000790000 1000790000       82 Oct  2 01:52 report
+
+Removing debug pod ...
+[exit 1]
+$ oc get pods -n $NS -l app=$REL
+No resources found in group-sync-dashboard namespace.
+[exit 0]
+# Observed while the command above had not returned (started 05:56:42Z; the keep stamp says the body ran at 05:56:47Z; the pod was 5m13s old at the check):
+#   oc get pods: group-sync-dashboard-debug-tqbw8   1/2   NotReady   0   5m13s
+#   events: two containers created and started in the debug pod — the dashboard image and
+#   registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15 (the oauth-proxy sidecar, copied from the Deployment).
+# The body had run to its last line (ls -l /data above); oc debug kept waiting while the sidecar ran.
+# The walker sent SIGINT to the local oc debug (as Ctrl-C would): it printed "Removing debug pod ..." and exited 1;
+# afterwards no debug pod is left (oc get pods | grep debug: none).
+
+== step 6d — §4c on the fallback: replicaCount 1 through the lab's pipeline — 2026-10-02T06:02:47Z
+$ cd <worktree> && local-development/release-crc.sh --argocd reports/300-runbook-walk --values reports/2026-10-02_runbook-schema-line-300/values-replicas1.yaml
+argocd  : group-sync-dashboard -> revision reports/300-runbook-walk (17cffec0d4), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:2.3.0 is application 2.3.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:2.3.0 is application 2.3.0
+values  : reports/2026-10-02_runbook-schema-line-300/values-replicas1.yaml (the Application's valueFiles)
+06:02:50Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:03:05Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+06:03:20Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+06:03:36Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+[exit 0]
+
+== step 6e — §4c — 2026-10-02T06:03:36Z
+$ oc rollout status -n $NS deploy/$REL
+deployment "group-sync-dashboard" successfully rolled out
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/version; echo
+{"leader":true,"version":"2.3.0","commit":"c57f292707","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
+import sqlite3
+c = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
+for t in ("membership_event", "sync_event"):
+    print(t, c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
+'
+membership_event 1843
+sync_event 2779
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- python3.14 -c '
+import sqlite3
+live = sqlite3.connect("file:/data/gsd.db?mode=ro", uri=True)
+copy = sqlite3.connect("file:/data/backup/gsd-20261002T042438.581853Z.db?immutable=1", uri=True)
+for t in ("membership_event", "sync_event", "binding_event", "login_event"):
+    n, top = copy.execute(f"SELECT COUNT(*), MAX(id) FROM {t}").fetchone()
+    total = live.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+    below = live.execute(f"SELECT COUNT(*) FROM {t} WHERE id <= ?", (top,)).fetchone()[0]
+    print(f"{t:18} copy {n:5}  live {total:5}  live id<=copy max {below:5}  " + ("equal" if below == n else "DIFFERENT"))
+'
+membership_event   copy  1843  live  1843  live id<=copy max  1843  equal
+sync_event         copy  2770  live  2779  live id<=copy max  2770  equal
+binding_event      copy  4328  live  4328  live id<=copy max  4328  equal
+login_event        copy  7968  live  7992  live id<=copy max  7968  equal
+[exit 0]
+$ oc get pods -n $NS -l app=$REL
+NAME                                    READY   STATUS    RESTARTS   AGE
+group-sync-dashboard-846bdd4b7f-4tzfb   2/2     Running   0          31s
+[exit 0]
+
+== step 7b — prepare-release.py --app 2.4.0 "walk" --no-commit on scratch clones of origin/main (2e7d33be) — 2026-10-02T06:04:08Z
+# with21: origin/main plus one local commit adding (21, "no-op for the #300 lab walk", ["SELECT 1"]) to _MIGRATIONS; without: origin/main as it is.
+$ cd <scratch>/clones/with21/local-development && PYTHONPATH=<scratch>/clones/with21/local-development <checkout>/local-development/.venv/bin/python prepare-release.py --app 2.4.0 'walk' --no-commit | grep -E '^schema  :'
+schema  : 20 at c57f292707 (application 2.3.0), 21 at HEAD; the changelog entry says so
+[exit 0]
+$ grep -n 'Schema [0-9]* → [0-9]*' <scratch>/clones/with21/docs/CHANGELOG.md || echo '(no schema line in docs/CHANGELOG.md)'
+15:- **Schema 20 → 21.** The first start on this image migrates the database one way; the pre-upgrade copy (#301) and `restore-db.sh` (#302) are the way back.
+[exit 0]
+$ cd <scratch>/clones/without/local-development && PYTHONPATH=<scratch>/clones/without/local-development <checkout>/local-development/.venv/bin/python prepare-release.py --app 2.4.0 'walk' --no-commit | grep -E '^schema  :'
+schema  : 20 at c57f292707 (application 2.3.0), 20 at HEAD; no schema line
+[exit 0]
+$ grep -n 'Schema [0-9]* → [0-9]*' <scratch>/clones/without/docs/CHANGELOG.md || echo '(no schema line in docs/CHANGELOG.md)'
+(no schema line in docs/CHANGELOG.md)
+[exit 0]
+# the edits each run left (--no-commit), and the entry heading with the line under its reason:
+$ git -C <scratch>/clones/with21 status --short; sed -n '/^## 2.4.0/,/^## /p' <scratch>/clones/with21/docs/CHANGELOG.md | sed -n 1,6p
+ M charts/group-sync-dashboard/Chart.yaml
+ M docs/CHANGELOG.md
+ M docs/specs/README.md
+ M docs/specs/SPEC_E2_recovery_mode.md
+ M docs/specs/SPEC_E3_restore_db.md
+ M docs/specs/SPEC_E4_per_pod_backup_rotation.md
+ M docs/specs/SPEC_E5_offsite_on_by_default.md
+ M docs/specs/SPEC_E6_kpi_backups_card.md
+ M docs/specs/SPEC_E7_schema_line_and_runbook.md
+ M local-development/gsd/__init__.py
+ M local-development/pyproject.toml
+[exit 0]
+$ git -C <scratch>/clones/without status --short; sed -n '/^## 2.4.0/,/^## /p' <scratch>/clones/without/docs/CHANGELOG.md | sed -n 1,6p
+ M charts/group-sync-dashboard/Chart.yaml
+ M docs/CHANGELOG.md
+ M docs/specs/README.md
+ M docs/specs/SPEC_E2_recovery_mode.md
+ M docs/specs/SPEC_E3_restore_db.md
+ M docs/specs/SPEC_E4_per_pod_backup_rotation.md
+ M docs/specs/SPEC_E5_offsite_on_by_default.md
+ M docs/specs/SPEC_E6_kpi_backups_card.md
+ M docs/specs/SPEC_E7_schema_line_and_runbook.md
+ M local-development/gsd/__init__.py
+ M local-development/pyproject.toml
+[exit 0]
+$ git -C <scratch>/clones/with21 diff -U1 docs/CHANGELOG.md
+diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md
+index f6853bcd..b1af63bb 100644
+--- a/docs/CHANGELOG.md
++++ b/docs/CHANGELOG.md
+@@ -10,3 +10,7 @@ which `local-development/prepare-release.py` does when the release is cut.
+ 
+-## Unreleased
++## Application 2.4.0 — chart 0.61.2 — 2026-10-02
++
++- **walk.**
++
++- **Schema 20 → 21.** The first start on this image migrates the database one way; the pre-upgrade copy (#301) and `restore-db.sh` (#302) are the way back.
+ 
+[exit 0]
+$ git -C <scratch>/clones/without diff -U1 docs/CHANGELOG.md
+diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md
+index f6853bcd..b9b41829 100644
+--- a/docs/CHANGELOG.md
++++ b/docs/CHANGELOG.md
+@@ -10,3 +10,5 @@ which `local-development/prepare-release.py` does when the release is cut.
+ 
+-## Unreleased
++## Application 2.4.0 — chart 0.61.2 — 2026-10-02
++
++- **walk.**
+ 
+[exit 0]
+
+== step 7a — after: PVC UIDs — 2026-10-02T06:04:33Z
+$ oc get pvc -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+[exit 0]
+
+== step 7c — the lab handed back: release-crc.sh --argocd main — 2026-10-02T06:04:34Z
+$ cd <worktree> && local-development/release-crc.sh --argocd main
+argocd  : group-sync-dashboard -> revision main (ffe9de3266), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:2.3.0 is application 2.3.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:2.3.0 is application 2.3.0
+06:04:36Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 17cffec0d44cecf8d7493c99d60b1ee6e26f7f6f, want ffe9de3266) successfully synced (all tasks run)
+06:04:51Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:05:07Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:05:22Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:05:37Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:05:52Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:06:07Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:06:23Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:06:38Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:06:53Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:07:08Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:07:23Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:07:38Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:07:54Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:08:09Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:08:24Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:08:39Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:08:55Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:09:10Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:09:25Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:09:40Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:09:55Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:10:11Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:10:26Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:10:41Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:10:57Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:11:12Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:11:27Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:11:42Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:11:57Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:12:12Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:12:28Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:12:43Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:12:58Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:13:13Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:13:28Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:13:44Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:13:59Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:14:14Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:14:29Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:14:44Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:14:59Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:15:15Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:15:30Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:15:45Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:16:00Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:16:15Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:16:30Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:16:46Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:17:01Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:17:16Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:17:31Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:17:46Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:18:01Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:18:16Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:18:32Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:18:47Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:19:02Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:19:17Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:19:32Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:19:48Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+ERROR: group-sync-dashboard did not reach Synced/Healthy in 900s
+[exit 1]
+$ oc get application group-sync-dashboard -n openshift-gitops -o jsonpath='{.spec.source.targetRevision} {.spec.source.helm.valueFiles} {.status.sync.status} {.status.sync.revision} {.status.health.status}{"\n"}'
+main ["../../environments/crc.yaml"] Synced ffe9de32665fa203951e052be97150970f69c181 Healthy
+[exit 0]
+$ oc get pods -n $NS -l app=$REL
+NAME                                    READY   STATUS    RESTARTS   AGE
+group-sync-dashboard-846bdd4b7f-4tzfb   2/2     Running   0          16m
+[exit 0]
+$ oc exec -n $NS deploy/$REL -c dashboard -- curl -s http://127.0.0.1:8080/api/version; echo
+{"leader":true,"version":"2.3.0","commit":"c57f292707","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report"},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+[exit 0]
+$ oc get pvc -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+[exit 0]
+
+== step 7d — why argocd-wait.sh read 'status is for the previous spec' for 900 s while the Application was Synced/Healthy on main — 2026-10-02T06:20:08Z
+$ oc get application group-sync-dashboard -n openshift-gitops -o json | python3 -c '
+import json, sys
+a = json.load(sys.stdin); st = a["status"]
+spec, cmp = a["spec"]["source"], st["sync"].get("comparedTo", {}).get("source", {})
+print("equal, as the waiter tests it:", json.dumps(spec, sort_keys=True) == json.dumps(cmp, sort_keys=True))
+print("spec.helm keys      :", sorted(spec.get("helm", {})), "parameters =", spec.get("helm", {}).get("parameters"))
+print("comparedTo.helm keys:", sorted(cmp.get("helm", {})))
+s2 = dict(spec, helm={k: v for k, v in spec["helm"].items() if k != "parameters"})
+print("equal without the empty parameters:", json.dumps(s2, sort_keys=True) == json.dumps(cmp, sort_keys=True))
+print("operation finished:", st.get("operationState", {}).get("finishedAt"), "revision", st["sync"].get("revision"))'
+equal, as the waiter tests it: False
+spec.helm keys      : ['parameters', 'releaseName', 'valueFiles', 'valuesObject'] parameters = []
+comparedTo.helm keys: ['releaseName', 'valueFiles', 'valuesObject']
+equal without the empty parameters: True
+operation finished: 2026-10-02T06:03:24Z revision ffe9de32665fa203951e052be97150970f69c181
+[exit 0]
+# chart at main ffe9de32 (PR #529 merged during the walk) vs 2e7d33be: unchanged (version 0.61.1, appVersion 2.3.0); values-replicas1.yaml renders the same as environments/crc.yaml (checked with helm template before the walk). So the hand-back had nothing to sync and ran no operation (operation finished 06:03:24Z = the replicaCount-1 sync).
+
+== the render checks (local helm template, read-only): replicaCount 0 vs crc.yaml, and replicaCount 1 vs crc.yaml — 2026-10-02T06:20:29Z
+$ cd <worktree> && diff <(helm template group-sync-dashboard charts/group-sync-dashboard -n group-sync-dashboard -f environments/crc.yaml) <(helm template group-sync-dashboard charts/group-sync-dashboard -n group-sync-dashboard -f reports/2026-10-02_runbook-schema-line-300/values-replicas0.yaml)
+722c722
+<     replicaCount: 1
+---
+>     replicaCount: 0
+2144c2144
+<   replicas: 1
+---
+>   replicas: 0
+2162c2162
+<         checksum/config: 64e8ac71d6ed0b2b296e27ae3665aaf3d70c3a398007b32e133674f70420402d
+---
+>         checksum/config: 43302c2827b0fdc25592668fd5d5cfa486b4884739c9342233e58ae78cfb62d1
+[exit 1]
+$ cd <worktree> && diff <(helm template group-sync-dashboard charts/group-sync-dashboard -n group-sync-dashboard -f environments/crc.yaml) <(helm template group-sync-dashboard charts/group-sync-dashboard -n group-sync-dashboard -f reports/2026-10-02_runbook-schema-line-300/values-replicas1.yaml) && echo 'identical renders'
+identical renders
+[exit 0]
+$ git -C <checkout> diff --stat 2e7d33be ffe9de32 -- charts/ | tail -1; echo '(empty: no chart change)'
+(empty: no chart change)
+[exit 0]
