@@ -331,6 +331,13 @@ they run `integrity_check` on it, keep the current live set first, write it besi
 and remove the current `-wal`, `-shm` and `-journal` before it takes the name. A kept `gsd.db` copied without the
 fold can lack every row its `-wal` held.
 
+**Deleting copies from the page (#542).** Nothing rotates `pre-restore/`: every restore adds a set. A cluster
+administrator removes the ones no longer needed from the KPI page's **Database copies** card (one at a time, or a
+cleanup previewed and confirmed), which also lists the scheduled backups and the pre-upgrade copies. The newest copy
+of each directory is never deleted there: the newest backup (this section always has a copy to restore), the newest
+pre-upgrade copy (§6) and the newest pre-restore set (the undo of the last restore). The page runs only while the
+app serves, so it plays no part in recovery mode and changes nothing in the steps above.
+
 The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
 file corrupt rather than error (`gsd/store.py#Store.__init__`).
 
@@ -736,7 +743,8 @@ version, needs no copy.
   example), or the retry takes no copy of what that image wrote since.
 * **Kept.** The copies of the newest three upgrades; an older one is removed only when a newer upgrade's copy
   has been written. `config.backup.keep` and the six-hourly rotation do not apply to them. Each takes about as
-  much space as the database and counts against `persistence.size`.
+  much space as the database and counts against `persistence.size`. A cluster administrator may delete an older
+  one from the KPI page's **Database copies** card (#542); the newest is always kept there.
 
 The startup log names the copy before the first migration line, for example
 `pre-upgrade copy written before migrating schema 19 -> 20: /data/pre-upgrade/pre-upgrade-….db (9973760 bytes, 0.12 s)`

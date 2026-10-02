@@ -28,6 +28,7 @@ from prometheus_client import CollectorRegistry
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from . import __version__, state as st
+from .housekeeping import KINDS as HOUSEKEEPING_KINDS
 from .storage import StorageBackend, backup_copies, backup_owner
 
 log = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class RuntimeSignals:
         self._tier_checks: dict[tuple[str, str], int] = {}
         self._decisions: dict[tuple[str, str], int] = {}
         self._admin_refusals = 0
+        self._housekeeping: dict[str, int] = {}
         self._retention: dict[str, int] = {}
         self._backup_failures = 0
         self._poll_seconds: dict[str, float] = {}
@@ -217,6 +219,13 @@ class RuntimeSignals:
         with self._lock:
             self._backup_failures += 1
 
+    def note_housekeeping_deleted(self, kind: str, count: int) -> None:
+        """Items a person deleted from the page (#542), by kind — never who, never which."""
+        if count <= 0:
+            return
+        with self._lock:
+            self._housekeeping[kind] = self._housekeeping.get(kind, 0) + count
+
     def note_binding_changes(self, cluster: str, change: str, subject_kind: str, count: int) -> None:
         """Binding rows that appeared or disappeared in a refresh, by cluster, change and subject
         kind — the count the store returned from its diff, never a name (#167)."""
@@ -253,6 +262,7 @@ class RuntimeSignals:
                 "admin_refusals": self._admin_refusals,
                 "retention": dict(self._retention),
                 "backup_failures": self._backup_failures,
+                "housekeeping": dict(self._housekeeping),
                 "poll_seconds": dict(self._poll_seconds),
                 "audit_unmatched": dict(self._audit_unmatched),
                 "report_pulls": dict(self._report_pulls),
@@ -716,6 +726,13 @@ class DashboardCollector:
             "breaking, the timestamp says how stale the last good copy already is.",
             labels=[],
         )
+        housekeeping_deleted = CounterMetricFamily(
+            "gsd_housekeeping_deleted_total",
+            "Items deleted from the page by a cluster administrator (#542): report runs, and database copies by "
+            "directory (backup, pre-upgrade, pre-restore). Who and which are in the audit log line, never here. "
+            "Retention's own deletions are not counted. Pre-seeded to 0 per kind. Per replica: sum().",
+            labels=["kind"],
+        )
         binding_changes = CounterMetricFamily(
             "gsd_binding_changes_total",
             "RoleBinding/ClusterRoleBinding subject rows that appeared (added) or disappeared "
@@ -756,6 +773,8 @@ class DashboardCollector:
             for table in RETENTION_TABLES:
                 retention.add_metric([table], snap["retention"].get(table, 0))
             backup_failures.add_metric([], snap["backup_failures"])
+            for kind in HOUSEKEEPING_KINDS:
+                housekeeping_deleted.add_metric([kind], snap["housekeeping"].get(kind, 0))
             for (cluster, outcome), count in sorted(snap["audit_unmatched"].items()):
                 if cluster in enabled_ids:
                     audit_unmatched.add_metric([cluster, outcome], count)
@@ -769,7 +788,7 @@ class DashboardCollector:
                 if cluster in enabled_ids:
                     poll_duration.add_metric([cluster], seconds)
 
-        yield from (checks, decisions, refusals, retention, backup_failures, audit_unmatched,
+        yield from (checks, decisions, refusals, retention, backup_failures, housekeeping_deleted, audit_unmatched,
                     binding_changes, poll_duration)
 
         report_pulls = CounterMetricFamily(

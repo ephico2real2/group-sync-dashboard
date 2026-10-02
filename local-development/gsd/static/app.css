@@ -1715,3 +1715,10 @@ h2 .cc-chips { display: inline-flex; vertical-align: middle; }
 .drawer .acts { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-6); }
 .btn-acc { background: var(--accent); color: var(--surface-1); border-color: var(--accent); font-weight: 600; }
 .note-found { padding: var(--space-6) 0; color: var(--text-secondary); }
+/* #542 (SPEC_H1): the Library's "Clean up" card and the KPI page's "Database copies" card */
+.hk-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-8); margin-top: var(--space-6); font-size: var(--text-sm); }
+.hk-form input[type="number"] { width: 6em; }
+.hk-note, .hk-kept { font-size: var(--text-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.hk-preview { margin-top: var(--space-6); font-size: var(--text-sm); }
+.hk-list { list-style: none; margin: var(--space-4) 0; padding: 0; max-height: 320px; overflow: auto; overflow-wrap: anywhere; }
+.hk-preview .acts { display: flex; flex-wrap: wrap; gap: var(--space-4); }

@@ -236,6 +236,12 @@ or off, and does not start without that copy. The copies of the newest three upg
 the size of the database, so they count against `persistence.size`; `config.backup.keep` does not apply to
 them ([runbook §6](../../docs/RUNBOOK_backup_restore.md#6-pre-upgrade-copies)).
 
+### Deleting reports and database copies — `housekeeping`
+
+| Key | Default | Notes |
+|---|---|---|
+| `housekeeping.enabled` | `true` | a cluster administrator (`visibility.clusterAdminSar`, #322) deletes a finished report run from the Library tab's run drawer or a database copy from the KPI page's **Database copies** card, or cleans either up once with a tighter bound picked on the page (report runs: older than N days, keep the newest K of each schedule and cluster, one schedule or the manual runs or all; copies: older than N days, one directory or all three): a preview of exactly what goes, then a confirm that deletes that set or, if it changed, nothing (`docs/specs/SPEC_H1_gui_cleanup.md`). **Nothing is saved**: `reporting.retention` and `config.backup` stay the standing policy. The copies are those in `config.backup.dir` and in `pre-upgrade/` and `pre-restore/` beside the database; the newest of each directory is always kept, so a restore keeps a copy and a way back. A queued or running run is never deleted; `/data/report`, the live database and anything else on the volume are never listed. One audit line per item (`report-run-deleted …` / `db-copy-deleted … by=<person>`) and `gsd_housekeeping_deleted_total{kind}`, no names. **On by default**: no RBAC, credential or second image (the deletion is file work in the pods' own volumes; the run is deleted by the report service at the dashboard's request with the token both pods mount); it needs a proxy-verified identity, so with `oauthProxy.enabled` or `visibility.enabled` false every deletion is refused. Off, the page shows no control and neither pod registers a delete route |
+
 ### Off-volume backup — `backup.offsite`
 
 **On wherever it can work.** `backup.offsite.enabled` is read as a word: empty (the default) renders

@@ -554,6 +554,7 @@ let data = { clusters: [], alerts: [], groupsyncs: null, groups: null, events: n
              reportCatalog: null, reportRuns: null, reportTicket: null,
              library: null,   // #229: every run the service holds, for the Library tab
              libraryRun: null,   // #229: the positioned run by id — a history past the listing's page still opens (Codex)
+             hkCopies: null,   // #542: the database copies on the answering pod's data volume, for the KPI page
              group: null, user: null, logins: null, access: null,
              /* The /users envelope whole — rows, scope, viewer, truncated, limit — because the
                 Users tab states the truncation and renders the banner from the wire's fields. */
@@ -1920,6 +1921,7 @@ function kpiPage() {
     </div>
   </section>
   ${kpiBackups(k)}
+  ${kpiCopiesCard()}
   <section class="card kpi-page">
     <h2>Access posture <span class="asof">as of last poll · ${clusters.length} cluster${clusters.length === 1 ? "" : "s"} · ${esc(clusters.join(" + "))}</span></h2>
     <div class="kband">
@@ -2002,6 +2004,7 @@ function wireKpi() {
     tr.onclick = open;
     tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } };
   });
+  wireHousekeeping();
   if (kpiAgoTimer == null) {
     kpiAgoTimer = setInterval(() => {
       const span = document.querySelector("[data-kpi-ago]");
@@ -3556,8 +3559,10 @@ function libraryDrawer(allRuns) {
       <div class="acts">
         ${run.status === "done" && bytes.html ? `<button type="button" class="btn btn-acc" data-open-html="${esc(run.id)}" id="drawer-open-html">Open .html in a new tab</button>` : ""}
         <button type="button" class="btn" id="drawer-copy-link">Copy link</button>
+        ${libraryDeleteControl(run)}
         <button type="button" class="btn" id="drawer-close-2">Close</button>
       </div>
+      ${libraryDeleteNote(run)}
       <p class="filterbar-note mt-3">Open .html fetches with the ticket and opens it here — the artefact URL is not a pasteable link; this run's position is.</p>`;
   }
   return `<div class="overlay" id="library-overlay"><aside class="drawer r-${esc(kcat)}" id="library-drawer" role="dialog" aria-labelledby="drawer-title">${inner}</aside></div>`;
@@ -3591,6 +3596,7 @@ function libraryPage() {
       <nav class="jumps" aria-label="Reports in this library">${jumps}</nav>
     </section>
     ${sections.length ? sections.map((sec) => librarySectionHtml(sec, allRuns)).join("") : `<section class="card"><div class="empty-note">No report is enabled on this deployment.</div></section>`}
+    ${libraryCleanupCard(allRuns)}
     ${view.run ? libraryDrawer(allRuns) : ""}`;
 }
 
@@ -3646,8 +3652,174 @@ function wireLibrary() {
   };
   const openHtml = $("drawer-open-html");
   if (openHtml) openHtml.onclick = () => { openArtifactInNewTab(openHtml.dataset.openHtml).catch((err) => { openHtml.textContent = `Could not open: ${err.message}`; }); };
+  wireHousekeeping();
 }
 
+
+/* ─── #542 SPEC_H1: deleting report runs and database copies — docs/specs/SPEC_H1_gui_cleanup.md ─────────────────
+   For the cluster-admin tier only (#322), and only where the deployment switched it on (`housekeeping.enabled`):
+   the API refuses everyone else with the tier's own sentence, and the page draws no control for them. A one-off
+   cleanup, nothing saved: `reporting.retention` and `config.backup` stay the standing policy. A cleanup is a preview
+   of exactly what goes, then a confirm that carries the preview's digest; a set that changed in between is refused
+   (409) and its new preview shown. A single delete is the Cluster Configurations tab's two steps: Delete, then
+   Confirm delete. */
+function housekeepingOn() {
+  const v = data.version;
+  return !!(v && v.features && v.features.housekeeping === true) && clusterAdmin();
+}
+// What the reader typed and what the last answer said, kept across the poll's repaints; never in the URL.
+const hk = { runs: { scope: "all", days: 30, keep: 2, preview: null, note: "" },
+             copies: { kind: "", days: 30, preview: null, note: "" },
+             armed: null, notes: Object.create(null) };
+
+function hkPreviewHtml(which, p, noun) {
+  if (!p) return "";
+  if (!p.count) return `<p class="hk-note" id="hk-${which}-none">Nothing matches: no ${noun} would be deleted.</p>`;
+  const rows = p.items.map((i) => `<li class="mono">${esc(which === "runs"
+    ? `${i.id} · ${i.report} · ${i.cluster} · ${i.schedule || "manual"}` : `${i.kind}/${i.name}`)} · ${esc(fmtBytes(i.bytes))}</li>`).join("");
+  return `<div class="hk-preview" id="hk-${which}-preview">
+    <p>${p.count} ${noun}${p.count === 1 ? "" : "s"}, ${esc(fmtBytes(p.bytes))}, would be deleted:</p>
+    <ul class="hk-list">${rows}</ul>
+    <div class="acts"><button type="button" class="btn btn-acc" id="hk-${which}-confirm">Delete ${p.count === 1 ? `this ${noun}` : `these ${p.count} ${noun}s`}</button>
+      <button type="button" class="btn" id="hk-${which}-cancel">Cancel</button></div></div>`;
+}
+
+// The Library's "Clean up" card: every schedule the service knows and every schedule a run still names, so the
+// runs of a retired schedule (kept by keepPerSchedule forever) can be chosen too.
+function libraryCleanupCard(allRuns) {
+  if (!housekeepingOn()) return "";
+  const f = hk.runs;
+  const names = [...new Set([...((data.reportStatus && data.reportStatus.schedules) || []).map((s) => s.name),
+                             ...allRuns.map((r) => r.schedule).filter(Boolean)])].sort();
+  const opt = (v, label) => `<option value="${esc(v)}"${f.scope === v ? " selected" : ""}>${esc(label)}</option>`;
+  return `<section class="card" id="lib-cleanup">
+    <h2>Clean up</h2>
+    <div class="filterbar-note">A one-off cleanup for cluster administrators: nothing is saved, and <code>reporting.retention</code> stays the
+      standing policy. A queued or running run is never deleted. Preview first: the delete removes exactly the runs the preview lists.</div>
+    <div class="hk-form">
+      <label>Runs <select id="hk-runs-scope">${opt("all", "every run")}${opt("manual", "manual runs")}${names.map((n) => opt(`schedule:${n}`, `schedule ${n}`)).join("")}</select></label>
+      <label>Older than <input type="number" id="hk-runs-days" min="0" max="3650" value="${esc(String(f.days))}"> days</label>
+      <label>Keep the newest <input type="number" id="hk-runs-keep" min="0" max="1000" value="${esc(String(f.keep))}"> of each schedule and cluster</label>
+      <button type="button" class="btn" id="hk-runs-preview">Preview</button>
+    </div>
+    ${f.note ? `<p class="hk-note" id="hk-runs-note" role="status">${esc(f.note)}</p>` : ""}
+    ${hkPreviewHtml("runs", f.preview, "run")}
+  </section>`;
+}
+
+// The run drawer's delete: absent below the tier, and for a run still queued or running (the worker's).
+function libraryDeleteControl(run) {
+  if (!housekeepingOn() || (run.status !== "done" && run.status !== "failed")) return "";
+  const key = `run:${run.id}`;
+  return `<button type="button" class="btn" id="drawer-delete" data-hk-run="${esc(run.id)}">${hk.armed === key ? "Confirm delete" : "Delete this run"}</button>`;
+}
+function libraryDeleteNote(run) {
+  const key = `run:${run.id}`;
+  const text = hk.armed === key ? "Deletes the run and its files. This cannot be undone." : hk.notes[key];
+  return housekeepingOn() && text ? `<p class="hk-note" id="drawer-delete-msg" role="status">${esc(text)}</p>` : "";
+}
+
+// The KPI page's "Database copies" card, under Backups: the copies on the answering pod's data volume.
+function kpiCopiesCard() {
+  if (!housekeepingOn()) return "";
+  const d = data.hkCopies;
+  if (!d || d.forbidden) return `<section class="card kpi-page" id="hk-copies"><h2>Database copies</h2><div class="empty-note">${d ? "Not available to this reader." : "Loading…"}</div></section>`;
+  const f = hk.copies;
+  const rows = d.copies.map((c) => {
+    const key = `${c.kind}/${c.name}`;
+    const act = c.guarded
+      ? `<span class="hk-kept">kept: ${esc(c.guarded)}</span>`
+      : `<button type="button" class="btn" data-hk-copy="${esc(key)}" id="hk-del-${esc(key)}">${hk.armed === `copy:${key}` ? "Confirm delete" : "Delete"}</button>${hk.notes[`copy:${key}`] ? ` <span class="hk-note">${esc(hk.notes[`copy:${key}`])}</span>` : ""}`;
+    return `<tr data-hk-row="${esc(key)}"><td>${esc(c.kind)}</td><td class="mono cname">${esc(c.name)}${c.type === "directory" ? "/" : ""}</td>
+      <td>${fmtTime(c.at)}</td><td class="num">${esc(fmtBytes(c.bytes))}</td><td>${act}</td></tr>`;
+  }).join("");
+  const opt = (v, label) => `<option value="${esc(v)}"${f.kind === v ? " selected" : ""}>${esc(label)}</option>`;
+  const dirs = Object.entries(d.directories).filter(([, v]) => v).map(([k, v]) => `${esc(k)} <span class="mono">${esc(v)}</span>`).join(" · ");
+  return `<section class="card kpi-page" id="hk-copies">
+    <h2>Database copies${d.pod ? ` <span class="asof">on ${esc(d.pod)}</span>` : ""}</h2>
+    <div class="hk-note">${dirs}</div>
+    <div class="filterbar-note">For cluster administrators: delete a copy, or clean up a directory once. Nothing is saved, and
+      <code>config.backup</code> stays the standing policy. The newest copy in each directory is always kept: the newest backup (a restore needs
+      one), the newest pre-upgrade copy (the way back across the last upgrade) and the newest pre-restore set (the way back from the last restore).</div>
+    ${d.copies.length ? `<div class="scroll-x"><table><thead><tr><th>Directory</th><th>Copy</th><th>Taken</th><th class="num">Size</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>` : `<div class="empty-note">No copies in these directories.</div>`}
+    <div class="hk-form">
+      <label>Directory <select id="hk-copies-kind">${opt("", "all three")}${opt("backup", "backup")}${opt("pre-upgrade", "pre-upgrade")}${opt("pre-restore", "pre-restore")}</select></label>
+      <label>Older than <input type="number" id="hk-copies-days" min="0" max="3650" value="${esc(String(f.days))}"> days</label>
+      <button type="button" class="btn" id="hk-copies-preview">Preview</button>
+    </div>
+    ${f.note ? `<p class="hk-note" id="hk-copies-note" role="status">${esc(f.note)}</p>` : ""}
+    ${hkPreviewHtml("copies", f.preview, "copy")}
+  </section>`;
+}
+
+// A number field as the API takes it: a whole number within the field's bounds.
+function hkWhole(value, max) { const n = Math.floor(Number(value)); return Number.isFinite(n) ? Math.min(Math.max(n, 0), max) : 0; }
+
+function wireHousekeeping() {
+  if (!housekeepingOn()) return;
+  const drawerDelete = $("drawer-delete");
+  if (drawerDelete) drawerDelete.onclick = async () => {
+    const id = drawerDelete.dataset.hkRun, key = `run:${id}`;
+    if (hk.armed !== key) { hk.armed = key; render(); return; }
+    hk.armed = null;
+    try {
+      await apiSend(`/api/housekeeping/reports/${encodeURIComponent(id)}`, "DELETE");
+      hk.runs.note = `Run ${id} deleted.`;
+      navigate({ run: null });
+    } catch (e) { hk.notes[key] = e.message; }
+    render(); refresh();
+  };
+  document.querySelectorAll("[data-hk-copy]").forEach((el) => {
+    el.onclick = async () => {
+      const name = el.dataset.hkCopy, key = `copy:${name}`, slash = name.indexOf("/");
+      if (hk.armed !== key) { hk.armed = key; render(); return; }
+      hk.armed = null;
+      try {
+        await apiSend(`/api/housekeeping/copies/${encodeURIComponent(name.slice(0, slash))}/${encodeURIComponent(name.slice(slash + 1))}`, "DELETE");
+        hk.copies.note = `${name} deleted.`;
+      } catch (e) { hk.notes[key] = e.message; }
+      render(); refresh();
+    };
+  });
+  const forms = {
+    runs: { path: "/api/housekeeping/reports/cleanup", noun: "run",
+            body: () => ({ scope: hk.runs.scope, older_than_days: hkWhole(hk.runs.days, 3650), keep_newest: hkWhole(hk.runs.keep, 1000) }),
+            fields: { scope: "hk-runs-scope", days: "hk-runs-days", keep: "hk-runs-keep" } },
+    copies: { path: "/api/housekeeping/copies/cleanup", noun: "copy",
+              body: () => ({ kinds: hk.copies.kind ? [hk.copies.kind] : ["backup", "pre-upgrade", "pre-restore"], older_than_days: hkWhole(hk.copies.days, 3650) }),
+              fields: { kind: "hk-copies-kind", days: "hk-copies-days" } },
+  };
+  Object.entries(forms).forEach(([which, form]) => {
+    const state = hk[which];
+    // A changed bound is a different set: the preview on screen no longer describes it.
+    Object.entries(form.fields).forEach(([field, id]) => {
+      const el = $(id);
+      if (el) el.onchange = () => { state[field] = el.value; if (state.preview) { state.preview = null; render(); } };
+    });
+    const send = async (confirm) => {
+      try {
+        const r = await apiSend(form.path, "POST", confirm ? { ...form.body(), confirm } : form.body());
+        if (confirm) {
+          state.preview = null;
+          state.note = `Deleted ${r.count} ${form.noun}${r.count === 1 ? "" : "s"}, ${fmtBytes(r.bytes)}.`
+            + (r.failed && r.failed.length ? ` ${r.failed.length} could not be deleted: ${r.failed.map((x) => `${x.kind}/${x.name} (${x.error})`).join(", ")}.` : "");
+          refresh();
+        } else { state.preview = r; state.note = ""; }
+      } catch (e) {
+        if (e.status === 409 && e.detail && e.detail.preview) {
+          state.preview = e.detail.preview;
+          state.note = `${e.detail.message}. This is the set now; delete it, or cancel.`;
+        } else { state.note = e.message; }
+      }
+      render();
+    };
+    const preview = $(`hk-${which}-preview`), confirmBtn = $(`hk-${which}-confirm`), cancel = $(`hk-${which}-cancel`);
+    if (preview) preview.onclick = () => send(null);
+    if (confirmBtn) confirmBtn.onclick = () => send(state.preview.digest);
+    if (cancel) cancel.onclick = () => { state.preview = null; state.note = ""; render(); };
+  });
+}
 
 // A <select multiple> serialises its `value` as the FIRST option only; a report param that takes a list
 // (mnemonics) needs every selected value, so read the element by kind (B3, §3.7).
@@ -7829,6 +8001,7 @@ function fingerprintSlots() {
     library: data.library,   // #229: a run that finished, or aged out, must repaint the library (the #157/#167/#228 omission)
     libraryRun: data.libraryRun,
     kpi: data.kpi,   // #157 (review, Codex): left out, a poll whose only change was a KPI never repainted the page
+    hkCopies: data.hkCopies,   // #542: a copy the rotation added or removed must repaint the copies card
     kyverno: data.kyverno,   // #170 (review, Codex): the same omission would have left a Kyverno-only change unpainted
     clusterconfigs: data.clusterconfigs,   // #230 S2: a discovery that lands a new cluster must repaint the tab
     // #167: the namespace list and page ride the same wire (review, Codex — left out, a poll whose
@@ -8007,6 +8180,8 @@ async function refresh(opts = {}) {
     // the refusal card, so the fetch is skipped for a reader already known to fail it.
     if (view.page === "kpi" && clusterAdmin()) {
       want.kpi = guard403(get("/api/kpi"));
+      // #542: the copies card, only where the deployment switched the deletes on; same tier as the page
+      if (housekeepingOn()) want.hkCopies = guard403(get("/api/housekeeping/copies"));
     }
     // The Cluster Configurations page (#230 S2): one payload, and only for a reader the
     // cluster-admin tier admits (#322) — a reader without it makes NO request, so the surface
@@ -8146,6 +8321,7 @@ async function refresh(opts = {}) {
     if ("reportStatus" in got) data.reportStatus = got.reportStatus;
     if ("reportHistory" in got && got.reportHistory && historyQuery() === (got.reportHistory.asked || historyQuery())) data.reportHistory = got.reportHistory;
     if ("library" in got) data.library = got.library;
+    if ("hkCopies" in got) data.hkCopies = got.hkCopies;
     if ("libraryRun" in got) data.libraryRun = got.libraryRun;
     // The report requests above were chosen on the PREVIOUS cycle's host tier, before this
     // cycle's whoami arrived — the same race the Access granted tab reconciles below. A reader

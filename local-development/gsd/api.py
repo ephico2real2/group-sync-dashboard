@@ -30,6 +30,8 @@ from fastapi.staticfiles import StaticFiles
 from . import TITLE, __version__
 from . import state as st
 from .activity import EMAIL_HEADER, INTERACTION_HEADER, USER_HEADER, ActivityRecorder
+from .clusterconfig.events import event
+from . import housekeeping
 from .home import HOME_CHANGES_DAYS, HOME_EVENTS_LIMIT, derive_answer, group_changes
 from .config import (
     CREDENTIAL_SELF_LOGIN, IDENTITY_NONE, IDENTITY_SAME_AS_HOST, VISIBILITY_HIDDEN, VISIBILITY_INHERIT,
@@ -1428,6 +1430,154 @@ def build_app(
                 rejoining.release()
             if answer["outcome"] == rejoin.REJOINED:
                 _request_discovery()
+            return answer
+
+    # ── SPEC_H1 (#542): deleting report runs and database copies from the page ───────────────────────
+    # A one-off cleanup, nothing persisted: reporting.retention and config.backup stay the standing policy. Five
+    # routes, registered only with `housekeeping.enabled`, each behind a proxy-verified identity and the
+    # cluster-admin tier (#322), as the cluster-configuration writes are; one audit line per deleted item and
+    # gsd_housekeeping_deleted_total{kind}, never a name. A copy is file work on this pod's data volume; a report
+    # run is deleted by the report service at this process's request, with the service token, because the tier is
+    # decided here (the report service holds no cluster credential).
+
+    def _housekeeping_gate(request: Request) -> str:
+        """The viewer a deletion is recorded against: a proxy-verified identity and the cluster-admin tier, or
+        the refusal. With restrictions off or no proxy there is no identity to record, so it refuses, as
+        `_writes_gate` does."""
+        viewer = trusted_viewer(request)
+        if not viewer or not restrict:
+            signals.note_admin_refusal()
+            raise HTTPException(status_code=403,
+                                detail="Deleting reports and database copies is reserved to cluster administrators, "
+                                       "and needs an authenticated identity to record the deletion against.")
+        require_cluster_admin(request, "Deleting reports and database copies is reserved to cluster administrators.")
+        return viewer
+
+    def _housekeeping_write(request: Request) -> str:
+        """The gate, then the custom header the page sends with every write (OWASP's custom-request-header
+        defence): a browser preflights a cross-site request carrying it, and this app answers no preflight."""
+        viewer = _housekeeping_gate(request)
+        if not request.headers.get(INTERACTION_HEADER):
+            raise HTTPException(status_code=403, detail="a deletion is sent by the dashboard's page, with the "
+                                                        "X-GSD-Interaction header; this request has none")
+        return viewer
+
+    def _report_call(method: str, path: str, body: dict | None = None) -> dict:
+        """One call to the report service as the dashboard, with the service token. Its 404, 409 and 422 are passed
+        through with their detail; anything else it answers, or no answer, is a 502 that names the report service."""
+        import httpx
+        if not settings.reporting_url or report_secret is None:
+            raise HTTPException(status_code=404, detail="reporting is not enabled on this deployment")
+        client = getattr(app.state, "report_client", None)
+        if client is None:
+            client = httpx.Client(base_url=settings.reporting_url, verify=settings.reporting_ca_file or True,
+                                  timeout=settings.request_timeout_seconds)
+            app.state.report_client = client
+        try:
+            r = client.request(method, f"{REPORT_PREFIX}{path}", json=body,
+                               headers={"Authorization": f"Bearer {report_secret.decode('utf-8')}"})
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"the report service could not be reached: "
+                                                        f"{type(exc).__name__}") from exc
+        if r.status_code in (404, 409, 422):
+            try:
+                detail = r.json().get("detail")
+            except ValueError:
+                detail = r.text[:200]
+            raise HTTPException(status_code=r.status_code, detail=detail)
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"the report service answered {r.status_code}")
+        return r.json()
+
+    def _record_run(run: dict, viewer: str) -> None:
+        event(log, logging.INFO, "report-run-deleted", run=run.get("id"), report=run.get("report"),
+              cluster=run.get("cluster"), schedule=run.get("schedule"),
+              bytes=run["bytes"] if isinstance(run.get("bytes"), int) else sum((run.get("bytes") or {}).values()),
+              by=viewer)
+        signals.note_housekeeping_deleted("report-run", 1)
+
+    def _record_copy(copy: housekeeping.Copy, viewer: str) -> None:
+        event(log, logging.INFO, "db-copy-deleted", kind=copy.kind, copy=copy.name, directory=str(copy.path.parent),
+              bytes=copy.bytes, by=viewer)
+        signals.note_housekeeping_deleted(copy.kind, 1)
+
+    if settings.housekeeping_enabled:
+        @app.get("/api/housekeeping/copies")
+        def housekeeping_copies(request: Request) -> dict:
+            """SPEC_H1 (#542): the database copies on this pod's data volume, newest first, the guarded ones with why."""
+            _housekeeping_gate(request)
+            dirs = housekeeping.copy_dirs(settings.db_path, settings.backup_dir)
+            copies = housekeeping.list_copies(settings.db_path, settings.backup_dir)
+            return {"pod": os.environ.get("POD_NAME") or None,
+                    "directories": {kind: str(d) if d else None for kind, d in dirs.items()},
+                    "copies": [c.public() for c in copies]}
+
+        @app.delete("/api/housekeeping/copies/{kind}/{name}")
+        def delete_housekeeping_copy(request: Request, kind: str, name: str) -> dict:
+            """SPEC_H1 (#542): delete one database copy this pod lists; the newest of each directory is refused (409)."""
+            viewer = _housekeeping_write(request)
+            if kind not in housekeeping.COPY_KINDS:
+                raise HTTPException(status_code=404, detail=f"unknown kind {kind!r}; one of {', '.join(housekeeping.COPY_KINDS)}")
+            try:
+                copy = housekeeping.delete_copy(settings.db_path, settings.backup_dir, kind, name)
+            except housekeeping.CopyNotFound as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except housekeeping.CopyGuarded as exc:
+                raise HTTPException(status_code=409, detail=exc.copy.guarded) from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"{kind}/{name} could not be deleted: {type(exc).__name__}: "
+                                                            f"{exc}") from exc
+            _record_copy(copy, viewer)
+            return {"deleted": copy.public()}
+
+        @app.post("/api/housekeeping/copies/cleanup")
+        def cleanup_housekeeping_copies(request: Request, body: housekeeping.CopyCleanupRequest) -> dict:
+            """SPEC_H1 (#542): preview a one-off cleanup of database copies, or delete exactly the previewed set.
+
+            Without `confirm` nothing is deleted. With the preview's digest, the set is computed again and deleted
+            only if it is the same set; otherwise 409 with the set as it is now. The guarded copies are never in it."""
+            viewer = _housekeeping_write(request)
+
+            def view(plan: list[housekeeping.Copy]) -> dict:
+                return {"items": [c.public() for c in plan], "count": len(plan), "bytes": sum(c.bytes for c in plan),
+                        "digest": housekeeping.set_digest(c.key for c in plan)}
+
+            try:
+                plan, kept, failed = housekeeping.cleanup_copies(
+                    settings.db_path, settings.backup_dir, kinds=list(body.kinds),
+                    older_than_days=body.older_than_days, now=datetime.now(UTC), confirm=body.confirm)
+            except housekeeping.CleanupChanged as exc:
+                raise HTTPException(status_code=409, detail={
+                    "message": "the copies this cleanup would delete changed since the preview; nothing was deleted",
+                    "preview": view(exc.plan)}) from exc
+            out = {"preview": body.confirm is None, **view(plan), "kept": [c.public() for c in kept]}
+            if body.confirm is not None:
+                broken = {c.key for c, _ in failed}
+                for copy in plan:
+                    if copy.key not in broken:
+                        _record_copy(copy, viewer)
+                out["failed"] = [{"kind": c.kind, "name": c.name, "error": why} for c, why in failed]
+            return out
+
+        @app.delete("/api/housekeeping/reports/{run_id}")
+        def delete_housekeeping_report(request: Request, run_id: str) -> dict:
+            """SPEC_H1 (#542): delete one finished report run and its files; a queued or running run is refused (409)."""
+            viewer = _housekeeping_write(request)
+            run = _report_call("DELETE", f"/api/runs/{quote(run_id, safe='')}")
+            _record_run(run, viewer)
+            return {"deleted": run}
+
+        @app.post("/api/housekeeping/reports/cleanup")
+        def cleanup_housekeeping_reports(request: Request, body: housekeeping.RunCleanupRequest) -> dict:
+            """SPEC_H1 (#542): preview a one-off cleanup of report runs, or delete exactly the previewed set.
+
+            The report service computes the set under its store's lock, the lock its retention prunes under, and
+            refuses a confirm whose digest is not the set's now (409, with the set as it is now)."""
+            viewer = _housekeeping_write(request)
+            answer = _report_call("POST", "/api/runs/cleanup", body.model_dump())
+            if body.confirm is not None:
+                for run in answer.get("items", []):
+                    _record_run(run, viewer)
             return answer
 
     @app.get("/api/clusters")
@@ -3090,7 +3240,8 @@ def build_app(
         because they only exist when there is a session.
         """
         return {"export": settings.ui_export_enabled,
-                "reporting": bool(settings.reporting_url), "reporting_prefix": REPORT_PREFIX}
+                "reporting": bool(settings.reporting_url), "reporting_prefix": REPORT_PREFIX,
+                "housekeeping": settings.housekeeping_enabled}
 
     @app.get("/api/report/ticket")
     def report_ticket(request: Request) -> dict:
