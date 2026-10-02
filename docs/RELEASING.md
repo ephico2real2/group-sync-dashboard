@@ -109,6 +109,25 @@ Every merge goes through one gate, then fans out to two independent workflows:
        yes
         |
         v
+   is each image the chart resolves through appVersion that application?
+   (org.opencontainers.image.version on every Linux image of the dashboard
+   and the report image; a pinned tag is the operator's and is not checked)
+        |
+        +-- no --> RED RUN, nothing copied (#410). The tag names another build:
+        |          an alias publish.yml has not moved yet, or a chart-version
+        |          label on an old image. Wait for publish.yml, then re-run.
+        |
+       yes
+        |
+        v
+   is :0.5.0 already another application's own alias?
+   (it exists, at another digest, labelled 0.5.0)
+        |
+        +-- yes --> RED RUN, nothing copied (#410). Bump the chart version.
+        |
+        no
+        |
+        v
    skopeo copy  ->  :0.5.0        label the image this chart version deploys.
         |                          RETAG, never rebuild.
         v
@@ -297,6 +316,8 @@ uses it.
 | symptom | cause | fix |
 |---|---|---|
 | chart release run is red at "Label the image this chart version deploys" | the image the chart resolves was never published, so there is nothing to retag | run `./build-and-push-external.sh --release-tags` and `./build-and-push-report.sh --release-tags` from a clean checkout, then re-run the release |
+| chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
+| chart release run is red at "Label the image this chart version deploys" with `<image>:<chartVersion> is application <chartVersion>'s own alias` | the chart's version equals an application version that already has its alias, and the copy would overwrite it. Nothing was copied | bump `version` in `charts/group-sync-dashboard/Chart.yaml`, in a pull request, to a version no application release has used |
 | `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check exists to stop this reaching main |
 | a new pod runs different bits than its neighbour | somebody republished an alias between the two container creations | pin `image.tag` to the sha form |
 | `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion — for the dashboard image, or (report pod only) for the report image | the app release was never published, or half of it was. Check `publish.yml`, then use `--release-tags` on both scripts |

@@ -130,6 +130,18 @@ jobs:
       # manual command. That is deliberate: #37 was a cross-workflow timing assumption, and its
       # failure mode was reporting `success` while publishing nothing. A missing image must be a red
       # run, not a silent skip.
+      #
+      # AN IMAGE THAT EXISTS IS NOT YET THE RIGHT ONE (#410, SPEC_E8). `:<appVersion>` is a tag, and a tag can
+      # name another build: `:0.39.0` was a chart-version label on application 0.24.0 before application 0.39.0
+      # existed, and the existence check above passed on it. So before anything is copied, both images the chart
+      # resolves through appVersion must carry it as their org.opencontainers.image.version label, on every Linux
+      # image behind the tag: the reading and the comparison release-crc.sh makes before it hands a branch to
+      # Argo CD (#414), made here with skopeo, because the runner carries skopeo and not oc. A pinned tag is the
+      # operator's choice for that image and is not checked, as there. And because chart versions and application
+      # versions share this repository's tags, the copy never lands on a tag that is another application's own
+      # alias: chart 1.0.0 would otherwise overwrite application 1.0.0's `:1.0.0`. Both refusals are red runs
+      # that copy nothing, so chart-releaser and the attestation, which run only after a green step, publish
+      # nothing either.
       - name: Label the image this chart version deploys
         shell: bash
         env:
@@ -154,6 +166,48 @@ jobs:
           APP_VERSION=$(sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' "$CHART" | head -1)
           PINNED=$(sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' "$VALUES" | head -1)
           REPO="${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard"
+          # reporting.image.tag, walked with release-crc.sh's own code (tests/test_supply_chain.py holds the two
+          # equal): four spaces deep with a trailing comment, where a 4-space sed would meet secretsMint's tag first.
+          REPORT_PINNED=$(python3 -c '
+          import sys
+          in_reporting = in_image = False
+          for raw in sys.stdin.read().splitlines():
+              line = raw.split("#", 1)[0].rstrip()
+              if line == "reporting:":
+                  in_reporting, in_image = True, False
+                  continue
+              if in_reporting and line and not line.startswith(" "):
+                  in_reporting = in_image = False
+              if in_reporting and line == "  image:":
+                  in_image = True
+                  continue
+              if in_image and line.startswith("    tag:"):
+                  print(line.split(":", 1)[1].strip().strip("\"'\''"))
+                  break
+              if in_image and line.startswith("  ") and not line.startswith("    "):
+                  in_image = False
+          ' < "$VALUES")
+
+          # The org.opencontainers.image.version label of every Linux image behind <repository><:tag or @digest>,
+          # sorted and joined: what release-crc.sh reads with `oc image info --filter-by-os='linux/.*'`.
+          # `skopeo inspect --config` on a list answers for the runner's platform alone, so a list is walked child
+          # by child, by digest. A list with no Linux image prints "", which no appVersion equals.
+          image_versions() {
+            python3 - "$1" "$2" <<'PY'
+          import json, subprocess, sys
+          repo, reference = sys.argv[1], sys.argv[2]
+          def raw(*args):
+              done = subprocess.run(["skopeo", "inspect", "--raw", *args], capture_output=True, text=True)
+              if done.returncode != 0:
+                  sys.exit(done.stderr.strip() or "skopeo inspect --raw " + " ".join(args) + " failed")
+              return json.loads(done.stdout)
+          top = raw(f"docker://{repo}{reference}")
+          refs = ([f"docker://{repo}@{m['digest']}" for m in top["manifests"] if (m.get("platform") or {}).get("os") == "linux"]
+                  if "manifests" in top else [f"docker://{repo}{reference}"])
+          images = [{"config": raw("--config", ref)} for ref in refs]
+          print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or {}).get("org.opencontainers.image.version", "") for i in images})))
+          PY
+          }
 
           if [ -z "${REGISTRY_USERNAME}" ] || [ -z "${REGISTRY_PASSWORD}" ]; then
             echo "::warning::registry credentials are not set, so chart ${CHART_VERSION} will be"
@@ -176,6 +230,71 @@ jobs:
             echo "::error::publish workflow, then from a clean checkout run:"
             echo "::error::  cd local-development && ./build-and-push-external.sh --release-tags"
             echo "::error::  cd local-development && ./build-and-push-report.sh --release-tags"
+            exit 1
+          fi
+
+          # Both images, each against its own pin. The dashboard's label is read at the digest just read, which
+          # is the digest the copy below must reproduce, so the image checked is the image aliased even if the
+          # tag moves between the two reads.
+          for spec in "${REPO}|${PINNED}" "${REPO}-report|${REPORT_PINNED}"; do
+            name="${spec%%|*}" this_pin="${spec#*|}"
+            if [ -n "${this_pin}" ]; then
+              echo "image   : ${name}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+              continue
+            fi
+            reference=":${APP_VERSION}"
+            if [ "${name}" = "${REPO}" ]; then
+              reference="@${SOURCE_DIGEST}"
+            fi
+            if ! version=$(image_versions "${name}" "${reference}"); then
+              echo "::error::${name}:${APP_VERSION} is not in the registry, or cannot be read, so chart"
+              echo "::error::${CHART_VERSION} is NOT published. publish.yml pushes the :${APP_VERSION} aliases of both"
+              echo "::error::images on the merge that moved pyproject's version: wait for that run, then re-run this"
+              echo "::error::workflow. If that run is red, from a clean checkout of the release commit run:"
+              echo "::error::  cd local-development && ./build-and-push-external.sh --release-tags"
+              echo "::error::  cd local-development && ./build-and-push-report.sh --release-tags"
+              exit 1
+            fi
+            if [ "${version}" != "${APP_VERSION}" ]; then
+              echo "::error::${name}:${APP_VERSION} is application ${version:-unknown}, not ${APP_VERSION} (#410), so"
+              echo "::error::chart ${CHART_VERSION} is NOT published and nothing was copied. The tag exists but names"
+              echo "::error::another build: an alias publish.yml has not moved yet, or a chart-version label on an"
+              echo "::error::old image. Wait for publish.yml on the release merge, then re-run this workflow. Never"
+              echo "::error::retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it."
+              exit 1
+            fi
+            echo "image   : ${name}:${APP_VERSION} is application ${version}"
+          done
+
+          # Never over another application's alias. A tag that does not exist yet is created; one at the source's
+          # digest is copied again unchanged (publish.yml's --release-tags writes :<chartVersion> too); one that
+          # names some other build is relabelled, as before. Only a tag that IS application <chartVersion> is
+          # refused. Unreachable is not absent: only the registry's "manifest unknown" lets the copy create it.
+          probe_err=$(mktemp)
+          trap 'rm -f "${probe_err}"' EXIT
+          if TARGET_DIGEST=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${REPO}:${CHART_VERSION}" 2>"${probe_err}"); then
+            if [ "${TARGET_DIGEST}" != "${SOURCE_DIGEST}" ]; then
+              if ! target_version=$(image_versions "${REPO}" "@${TARGET_DIGEST}"); then
+                echo "::error::${REPO}:${CHART_VERSION} exists at ${TARGET_DIGEST} and its label cannot be read, so"
+                echo "::error::this run cannot tell whether it is application ${CHART_VERSION}'s own alias. Nothing"
+                echo "::error::was copied. Re-run this workflow once the registry answers."
+                exit 1
+              fi
+              case ", ${target_version}, " in
+                *", ${CHART_VERSION}, "*)
+                  echo "::error::${REPO}:${CHART_VERSION} is application ${CHART_VERSION}'s own alias (labelled"
+                  echo "::error::${target_version}), and chart ${CHART_VERSION} would copy ${SOURCE} over it (#410):"
+                  echo "::error::chart and application versions share this repository's tags. Nothing was copied"
+                  echo "::error::and the chart is NOT published. Give the chart a version no application release"
+                  echo "::error::has used (the version field of charts/group-sync-dashboard/Chart.yaml, in a pull"
+                  echo "::error::request). Never retag or delete the existing tag: something may pin it."
+                  exit 1 ;;
+              esac
+            fi
+          elif ! grep -qi 'manifest unknown' "${probe_err}"; then
+            echo "::error::cannot tell whether ${REPO}:${CHART_VERSION} exists, so nothing was copied:"
+            echo "::error::$(head -c 400 "${probe_err}")"
+            echo "::error::Re-run this workflow once the registry answers."
             exit 1
           fi
 
