@@ -231,8 +231,8 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     after the rename).
 
 21. **The implementing pull request's versions (2026-10-01, on origin/main `64d52877`, SPEC_E2 merged at chart
-    0.60.0, application 2.0.0).** The 13 blocks checked out unchanged (`13 blocks check out across 9 files`), so none
-    was corrected. The Version note's derivation is taken as written: `prepare-release.py --app 2.1.0 --no-commit`
+    0.60.0, application 2.0.0).** The 13 blocks checked out (`13 blocks check out across 9 files`) and applied; only
+    block 10 was corrected afterwards, below. The Version note's derivation is taken as written: `prepare-release.py --app 2.1.0 --no-commit`
     moves the chart a PATCH, 0.60.0 to 0.60.1, so the header and the index row read chart 0.60.1, not the 0.60.5
     PR #518 assigned when it moved this spec's 0.59.26 (taking 0.60.5 with `--chart` would have put SPEC_G3's
     0.60.1, SPEC_E4's 0.60.2 and SPEC_G4's 0.60.3 at or below `Chart.yaml`). Under SPEC_E5's rule the same pull
@@ -243,7 +243,11 @@ issue, what this spec takes from SPEC_E2, and the decisions on the reviews of 20
     promotion (the precedent of `f842627c`, app 1.21.0): on a clean tree it turned `## Unreleased` into `## Application
     2.1.0 — chart 0.60.1 — 2026-10-01` and moved SPEC_E2 and this spec to `released`, while Epic E's release is 3.0.0
     (this header's Release row) and seven `specified` specs (G2, E4, G3, E6, E7, E8, E9) anchor their CHANGELOG block
-    on `## Unreleased`, which would then no longer check out. The heading is cut by Epic E's release.
+    on `## Unreleased`, which would then no longer check out. The heading is cut by Epic E's release. With
+    `## Unreleased` kept, `local-development/tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+    requires an Unreleased entry to name the chart the tree carries (measured on the applied tree: `AssertionError:
+    Chart.yaml is 0.60.1 (last released 0.59.24) and no Unreleased entry names it`), as SPEC_E2's entry names chart
+    0.60.0. So block 10's entry names `app 2.1.0, chart 0.60.1` after the spec's path, the one block corrected.
 
 **Open questions for the operator.** None.
 
@@ -1055,11 +1059,11 @@ captures as PNG, and pinned to the merge sha on the issue.
 | `local-development/gsd/store.py` | 4 | 0 |
 | `docs/RUNBOOK_backup_restore.md` | 57 | 19 |
 | `local-development/README.md` | 1 | 0 |
-| `docs/CHANGELOG.md` | 18 | 0 |
+| `docs/CHANGELOG.md` | 19 | 0 |
 | `local-development/tests/test_restore_db.py` (new) | 799 | 0 |
 | `local-development/tests/test_restore_db_wrapper.py` (new) | 166 | 0 |
 | `local-development/tests/test_restore_db_safety.py` (new) | 172 | 0 |
-| total | 2113 | 19 |
+| total | 2114 | 19 |
 
 The version fields `prepare-release.py` moves (Orchestrator's notes, 10) are not counted.
 
@@ -2241,7 +2245,8 @@ New text:
 ## Unreleased
 
 - **`restore-db.sh`: list the database copies the recovery pod can restore, and restore one (#302, Epic E #385,
-  `docs/specs/SPEC_E3_restore_db.md`).** `local-development/restore-db.sh --list` runs from the laptop with `oc` and
+  `docs/specs/SPEC_E3_restore_db.md`; app 2.1.0, chart 0.60.1).** `local-development/restore-db.sh --list` runs
+  from the laptop with `oc` and
   prints one row per copy (a scheduled backup, a pre-upgrade copy, a copy on the offsite claim): its ID
   (`<user_version>-<the copy's own stamp>`), schema, stamp, size, source, sidecar verdict and whether the pod's
   image understands it. `--from-version <ID>` refuses a copy newer than the image, a sidecar that does not match and

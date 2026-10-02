@@ -11,7 +11,8 @@ which `local-development/prepare-release.py` does when the release is cut.
 ## Unreleased
 
 - **`restore-db.sh`: list the database copies the recovery pod can restore, and restore one (#302, Epic E #385,
-  `docs/specs/SPEC_E3_restore_db.md`).** `local-development/restore-db.sh --list` runs from the laptop with `oc` and
+  `docs/specs/SPEC_E3_restore_db.md`; app 2.1.0, chart 0.60.1).** `local-development/restore-db.sh --list` runs
+  from the laptop with `oc` and
   prints one row per copy (a scheduled backup, a pre-upgrade copy, a copy on the offsite claim): its ID
   (`<user_version>-<the copy's own stamp>`), schema, stamp, size, source, sidecar verdict and whether the pod's
   image understands it. `--from-version <ID>` refuses a copy newer than the image, a sidecar that does not match and
