@@ -90,8 +90,10 @@ reporting:
   # report was not needed). A manual trigger outside the window would 409 -> the Job records a skip, not
   # a failure.
   # #149: the first is cluster-agnostic (no `cluster:` — the service fans it out to every enabled
-  # cluster in its snapshot), the second is paused (its CronJob stays, suspended) — the two shapes the
-  # status page has to show and the live checks exercise.
+  # cluster in its snapshot), the third is paused (its CronJob stays, suspended) — the two shapes the
+  # status page has to show and the live checks exercise. Every fire time sits INSIDE the window: it is
+  # half-open [22:00, 06:00), so a 06:00 fire is outside and 409-skips silently; the two day-of-month
+  # schedules fire at 05:00 (tests/test_crc_schedules_in_window.py holds this).
   schedules:
     - name: weekly-namespace-access
       schedule: "0 22 * * 0"
@@ -100,11 +102,11 @@ reporting:
         selectors:
           company.net/mnemonic: [demo, beta]
     - name: quarterly-compliance
-      schedule: "0 6 1 1,4,7,10 *"
+      schedule: "0 5 1 1,4,7,10 *"
       report: compliance-snapshot
       retention: {keepPerSchedule: 12, days: 2555}
     - name: biweekly-groups
-      schedule: "0 6 1,16 * *"
+      schedule: "0 5 1,16 * *"
       report: groups
       enabled: false
 
