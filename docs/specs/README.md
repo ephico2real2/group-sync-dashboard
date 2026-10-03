@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Fifty-one specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Fifty-two specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -68,7 +68,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The fifty-one specifications
+## The fifty-two specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -122,6 +122,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | W1 | [`SPEC_W1_rollout_blue_green.md`](SPEC_W1_rollout_blue_green.md) — blue-green with Argo Rollouts, off by default: a Rollout takes the Deployment's pod template (`workloadRef`, `scaleDown: onsuccess`), so with no controller the Deployment keeps serving; each version opens its own database seeded from the running version's newest copy, so green migrates its own copy before the switch; promotion, abort and undo are values in the release's values file; specified and reviewed, not scheduled (the operator's "last north star") | W — workload strategy | — | chart 0.67.0 (chart only) | [#426](https://github.com/ephico2real2/group-sync-dashboard/issues/426) | specified |
 | E10 | [`SPEC_E10_runbook_corrections.md`](SPEC_E10_runbook_corrections.md) — the backup runbook corrected from the #300 walk and given a break glass under Argo CD: §4a's `oc debug --one-container`, §4c's counts up to the copy's highest id (§1 prints it), §0's `/metrics` read, SPEC_E7 §5 step 6; §4 opens with the risks under Argo CD (self-heal during a hand edit, the endless retry) and §4d pauses automated sync, puts the pod into recovery mode by hand, restores with `restore-db.sh` and gives the release back to Git; #532's delay stated as a known limitation; `prepare-release.py` reads a two-digit spec id | E — restore tools and release safety | — | no version change (docs, a repository tool and tests) | [#533](https://github.com/ephico2real2/group-sync-dashboard/issues/533) | released |
 | E11 | [`SPEC_E11_recovery_workload.md`](SPEC_E11_recovery_workload.md) — recovery mode as its own workload: a second Deployment, `<fullname>-recovery`, rendered on every release at 0 replicas from the app's pod spec, with its own labels (no Service, PodDisruptionBudget or ServiceMonitor selects it) and no readiness probe; `recovery.enabled` swaps only the two Deployments' `replicas`, so both are Healthy to Argo CD, nothing is retried and turning it off takes one sync whatever `prune` says; a required pod anti-affinity (`kubernetes.io/os`) keeps the two pods off the database at once; `restore-db.sh` lists both workloads and its two misleading messages are corrected; §4d's hand edit becomes two `oc scale` commands; no RBAC change | none: the follow-up to Epic E (#385), the operator's direction of 2026-10-02 on #532 | — | chart 0.65.0 (chart only) | [#532](https://github.com/ephico2real2/group-sync-dashboard/issues/532) | released |
+| A4 | [`SPEC_A4_argocd_wait_empty_fields.md`](SPEC_A4_argocd_wait_empty_fields.md) — `argocd-wait.sh` compares the Application's source the way Argo CD stores it: an empty field (`helm.parameters: []`) is absent from `status.sync.comparedTo`, so `release-crc.sh --argocd` no longer times out when nothing needs syncing | A — release | — | no version change (a repository tool and its test) | [#534](https://github.com/ephico2real2/group-sync-dashboard/issues/534) | merged |
 | H1 | [`SPEC_H1_gui_cleanup.md`](SPEC_H1_gui_cleanup.md) — delete report runs and database copies from the page: one item, or a one-off cleanup previewed and then confirmed against the preview's digest (409 when the set changed), for the cluster-admin tier behind a proxy-verified identity; nothing persisted, `reporting.retention` and `config.backup` stay the policy; the newest backup, pre-upgrade copy and pre-restore set always kept, a run in flight never deleted; one audit line per item and a counter with no names; `housekeeping.enabled`, on by default, no RBAC change | H — housekeeping | — | app 3.1.0, chart 0.62.0 | [#542](https://github.com/ephico2real2/group-sync-dashboard/issues/542) | released |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
