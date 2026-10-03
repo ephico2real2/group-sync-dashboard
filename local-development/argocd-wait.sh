@@ -24,7 +24,17 @@ while :; do
 import json, sys
 expected = sys.argv[1]
 a = json.load(sys.stdin); st = a.get("status", {}); sy = st.get("sync", {}); op = st.get("operationState", {})
-same = json.dumps(a["spec"]["source"], sort_keys=True) == json.dumps(sy.get("comparedTo", {}).get("source"), sort_keys=True)
+def present(v):
+    # Argo CD writes status.sync.comparedTo from Go structs whose fields are `omitempty` (argo-cd v3.4.7
+    # types.go L540 valueFiles, L542 parameters), so an empty list, map or string, null, false or 0 in the
+    # spec is absent there. Both sides drop those first; any other difference is still the previous spec (#534).
+    if isinstance(v, dict):
+        kept = {k: present(x) for k, x in v.items()}
+        return {k: x for k, x in kept.items() if x not in ([], {}, None, "", False)}
+    if isinstance(v, list):
+        return [present(x) for x in v]
+    return v
+same = present(a["spec"]["source"]) == present(sy.get("comparedTo", {}).get("source") or {})
 rev = sy.get("revision", "")
 rev_ok = not expected or (bool(rev) and (expected.startswith(rev) or rev.startswith(expected)))
 print("current" if same else "stale", "rev-ok" if rev_ok else "rev-old", sy.get("status", "?"), st.get("health", {}).get("status", "?"),

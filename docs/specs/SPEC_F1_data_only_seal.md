@@ -60,6 +60,9 @@ output only; prose cites `path#anchor`.
    carry A4: the index there says "Fifty-one", so this spec's row makes it fifty-two, and
    `local-development/tests/test_specs_index.py` moves from 51 to 52. Whichever of the two merges second takes
    fifty-three and the other's row in the test's message.
+   **Update (orchestrator, 2026-10-03):** PR #567 (A4) merged while this spec was written. Merging main into this
+   branch made the index fifty-three, with the test's count at 53 naming both A4 and F1. All 13 blocks still check
+   out against the merged main.
 5. **The issue-order test.** #270 is below the numbers of the rows above it (#542 is the last), so F1 is excluded
    from the rising-number assert by its id and pinned to #270, the way G2 (#255) and E7 (#300) were.
 6. **Dates.** Blocks 10 and 11 date the chart and application history lines 2026-10-03, the day this was
