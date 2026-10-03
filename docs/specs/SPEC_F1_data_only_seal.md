@@ -75,6 +75,13 @@ Open questions only the operator can answer:
    included, hashes the same over one snapshot at any clock? Cost measured in note 1: the sections of five reports
    change once, and the test seed's fixed `NOW` would no longer be the instant the windows end.
 
+**Correction at implementation (orchestrator, 2026-10-03): the CHANGELOG block joins the existing `## Unreleased`.**
+It was written against `94f5ebbb`, which had no Unreleased section, so it created one above the 4.0.0 heading. PR
+#567 (A4) created that section first. Applied to today's main, the block left two `## Unreleased` headings, and
+`tests/test_kyverno.py::test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
+read the first, A4's, which does not name chart 0.66.5. The block now adds this spec's bullet at the top of the one
+`## Unreleased` section.
+
 ## 1. The mandate, and what is out of scope
 
 The mandate (#270, "The change"): settle which provenance rows are data (sealed) and which are run facts
@@ -714,7 +721,8 @@ appVersion: "4.1.0"
 
 <!-- block: docs/CHANGELOG.md | edit -->
 ```markdown
-## Application 4.0.0 — chart 0.66.4 — 2026-10-03
+## Unreleased
+
 ```
 
 ```markdown
@@ -734,5 +742,4 @@ appVersion: "4.1.0"
   rewritten and each still matches its own `.json`. Login activity's window ends at the generation instant, so two
   of its runs agree only at one clock (SPEC_F1, Orchestrator's notes 1). No permission, value or migration.
 
-## Application 4.0.0 — chart 0.66.4 — 2026-10-03
 ```
