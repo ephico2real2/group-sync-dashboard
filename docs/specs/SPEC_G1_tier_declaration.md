@@ -111,7 +111,31 @@ every declared tier is proved per persona; SPEC_T1 becomes `in progress` with a 
     (`charts/group-sync-dashboard/values.yaml#skipAuthRegex`). Correcting it changes the image (a MINOR), which this
     tests-and-docs change does not take; §3 and §4 cite the chart's regex, the source of truth.
 
-**The review of `de42286a`** (OB3 in Grok's seat, Codex gpt-5.6-sol at xhigh, 2026-10-01), as the orchestrator
+16. **Correction at implementation (2026-10-03): #542's five routes, written into the blocks before any were applied.**
+    SPEC_H1 (#547, application 3.1.0) merged after this spec, and it registers five routes with `housekeeping.enabled`:
+    `GET /api/housekeeping/copies`, `DELETE /api/housekeeping/copies/{kind}/{name}`,
+    `POST /api/housekeeping/copies/cleanup`, `DELETE /api/housekeeping/reports/{run_id}` and
+    `POST /api/housekeeping/reports/cleanup`. It also added their row to the table block 8 replaces, so block 8's Old
+    text failed to match (`apply-spec-blocks.py`: "Old text occurs 0 times"). Corrected here:
+    - **Block 8.** The Old text carries #547's row. The New text declares the five routes, registered
+      `housekeeping on`:
+      - the listing is gated by `_housekeeping_gate`, and answers 200 to the cluster-admin and 403 to every other
+        persona;
+      - the four writes are gated by `_housekeeping_write`, and are `admitted` for the cluster-admin;
+      - the posture paragraph names the switch.
+    - **Block 1:**
+      - `GATES` gains `_housekeeping_gate` and `_housekeeping_write`;
+      - `_app` turns `housekeeping` on as well;
+      - `registered` accepts `housekeeping on`;
+      - a test mirrors T239-7 for that switch;
+      - `PATH_VALUES` gains `kind`, `copies` and `run_id`;
+      - `_url` fills a `{name}` that follows another placeholder from the segment before that one (`copies`).
+    - **The page's header.** A write carries the page's `X-GSD-Interaction` header, because the page sends it with
+      every write and `_housekeeping_write` refuses a write without it (OWASP's custom-request-header defence,
+      SPEC_H1 §2.3). So the declaration describes the page's requests. The header changes nothing for
+      `_writes_gate`'s routes.
+
+ (OB3 in Grok's seat, Codex gpt-5.6-sol at xhigh, 2026-10-01), as the orchestrator
 accepted it; each hunk was traced before it was applied, and none was rejected:
 
 - **F1, a route declared for `HEAD` alone escaped the declaration (OB3, required).** `_route_keys` dropped `HEAD`
@@ -749,12 +773,14 @@ ROUTE_PERSONAS: dict[str, tuple[dict, dict, dict] | None] = {
 ROUTE_WORDS = frozenset({"all", "self", "200", "403", "308", "admitted"})
 PAGE_PERSONAS = ("self", "auditor", "usage", "cluster-admin")
 PAGE_WORDS = frozenset({"all", "self", "refused", "absent"})
-GATES = ("viewer_scope", "usage_scope", "require_admin_tier", "require_cluster_admin", "_writes_gate")
+GATES = ("viewer_scope", "usage_scope", "require_admin_tier", "require_cluster_admin", "_writes_gate",
+         "_housekeeping_gate", "_housekeeping_write")
 
 #: The value each path parameter takes. `{name}` is keyed by the segment before it; a new parameter fails `_url` by
 #: name until it is given one here.
 PATH_VALUES = {"cluster_id": "c1", "groups": "g-adm", "users": VIEWER, "namespaces": "ns1",
-               "groupsyncs": "ldap-sync", "clusterconfigs": "c1", "path": "app.css"}
+               "groupsyncs": "ldap-sync", "clusterconfigs": "c1", "path": "app.css",
+               "kind": "backup", "copies": "gsd-20260101T000000.000000Z.db", "run_id": "20260101T000000.000000Z-r1"}
 
 
 def _section(number: int) -> str:
@@ -813,7 +839,10 @@ def _url(path: str) -> str:
     out = []
     for i, part in enumerate(parts):
         if part.startswith("{"):
-            key = parts[i - 1] if part == "{name}" else part[1:-1]
+            # A {name} is named by the segment before it, or the one before that when that is a placeholder too
+            # (/api/housekeeping/copies/{kind}/{name}).
+            before = parts[i - 1] if not parts[i - 1].startswith("{") else parts[i - 2]
+            key = before if part == "{name}" else part[1:-1]
             assert key in PATH_VALUES, f"{path}: no value for {part}; add {key!r} to PATH_VALUES"
             out.append(PATH_VALUES[key])
         else:
@@ -846,13 +875,14 @@ def _gates_called(route) -> set[str]:
     return {gate for gate in GATES if re.search(rf"\b{gate}\(", source)}
 
 
-def _app(root: pathlib.Path, *, writes: bool = True):
-    """The seeded app in the posture §4 declares: proxy on, restrictions on, reporting on, and the writes switch."""
+def _app(root: pathlib.Path, *, writes: bool = True, housekeeping: bool = True):
+    """The seeded app in the posture §4 declares: proxy on, restrictions on, reporting on, and the writes and
+    housekeeping switches."""
     db = str(root / "gsd.db")
     _seed(db)
     token = root / "report-token"
     token.write_bytes(b"t" * 48 + b"\n")
-    return build_app(_settings(db, cluster_secrets_writes_enabled=writes,
+    return build_app(_settings(db, cluster_secrets_writes_enabled=writes, housekeeping_enabled=housekeeping,
                                reporting_url="https://gsd-report.ns.svc:8443", reporting_token_file=str(token)),
                      run_poller=False)
 
@@ -871,7 +901,7 @@ def client(app):
 def test_every_route_the_app_registers_has_a_row(app):
     """T239-1: a route added without a §4 row fails here by name, with the row to fill in."""
     missing = sorted(_keys(app) - {_key(row) for row in ROUTES})
-    rows = "\n".join(f"| {method} | `{path}` | <always or writes on> | <gate or none> | <no identity> | <self> "
+    rows = "\n".join(f"| {method} | `{path}` | <always, writes on or housekeeping on> | <gate or none> | <no identity> | <self> "
                      f"| <auditor> | <usage> | <cluster-admin> | <notes> |" for method, path in missing)
     assert not missing, f"routes with no row in docs/ACCESS_CONTROL.md §4; add one each (§4 names the words):\n{rows}"
 
@@ -895,7 +925,7 @@ def test_another_services_rows_name_no_route_of_this_app(app):
 def test_every_cell_is_a_declared_word():
     for row in ROUTES:
         assert row["method"] in {"GET", "POST", "PUT", "DELETE"}, row
-        assert row["registered"] in {"always", "writes on"}, row
+        assert row["registered"] in {"always", "writes on", "housekeeping on"}, row
         assert row["gate"] in {*GATES, "none"}, row
         assert {row[p] for p in ROUTE_PERSONAS} <= ROUTE_WORDS, row
     for row in PAGES:
@@ -907,6 +937,13 @@ def test_the_rows_marked_writes_on_are_the_routes_the_switch_registers(app, tmp_
     off = _keys(_app(tmp_path, writes=False))
     assert off <= _keys(app)
     assert _keys(app) - off == {_key(row) for row in ROUTES if row["registered"] == "writes on"}
+
+
+def test_the_rows_marked_housekeeping_on_are_the_routes_the_switch_registers(app, tmp_path):
+    """SPEC_G1 note 16, as T239-7: built with housekeeping off, exactly the rows marked `housekeeping on` are gone."""
+    off = _keys(_app(tmp_path, housekeeping=False))
+    assert off <= _keys(app)
+    assert _keys(app) - off == {_key(row) for row in ROUTES if row["registered"] == "housekeeping on"}
 
 
 @pytest.mark.parametrize("row", ROUTES, ids=[f"{r['method']} {r['path']}" for r in ROUTES])
@@ -933,7 +970,9 @@ def test_each_route_answers_each_persona_as_its_row_declares(app, client, monkey
     app.state.tier_resolver = _MapResolver(wide)
     app.state.usage_tier_resolver = _MapResolver(usage)
     app.state.cluster_admin_resolver = _MapResolver(cluster_admin)
-    response = client.request(row["method"], _url(row["path"]), headers=H(VIEWER) if stubs else {},
+    # A write carries the header the page sends with every write: _housekeeping_write refuses one without it.
+    page = {"X-GSD-Interaction": "declaration"} if row["method"] != "GET" else {}
+    response = client.request(row["method"], _url(row["path"]), headers={**H(VIEWER), **page} if stubs else {},
                               **({"json": {}} if row["method"] in ("POST", "PUT") else {}))
     declared = row[persona]
     if declared == "admitted":
@@ -1283,6 +1322,7 @@ Old text:
 | `/api/clusters/{c}/operator-configs` | **403** | all |
 | `/api/kpi` | **403** | **403** unless the reader passes the cluster-admin tier (#322) |
 | `/api/clusterconfigs` and its four write routes | **403** | **403** unless the reader passes the cluster-admin tier (#322); the writes also need `clusterConfig.secrets.writes.enabled` |
+| `/api/housekeeping/**`: the copies listing and the four delete routes (#542) | **403** | **403** unless the reader passes the cluster-admin tier (#322) with a proxy-verified identity; exist only with `housekeeping.enabled` |
 | `/api/clusters` | reachable; cluster-wide `operator_configs` withheld | full card |
 | `/api/clusters/{c}/groupsyncs` | full CR health **minus `ldap_filter` and `error_message`** | full row |
 | `/api/clusters/{c}/groupsyncs/{name}/events` | unchanged at both tiers | same |
@@ -1300,8 +1340,9 @@ any persona is answered differently from its row. A route that ships without a g
 CI. The table records the gates; it does not configure them (§10 does).
 
 **The posture the rows describe:** the oauth-proxy on, `visibility.enabled: true`, the host cluster deciding
-(`inherit`, §11) for every cluster the dashboard reads, reporting on, and, for the six rows registered `writes on`,
-`clusterConfig.secrets.writes.enabled: true`. §8 says what changes with the proxy or the restrictions off, and §11
+(`inherit`, §11) for every cluster the dashboard reads, reporting on, for the six rows registered `writes on`,
+`clusterConfig.secrets.writes.enabled: true`, and, for the five rows registered `housekeeping on`, `housekeeping.enabled: true`
+(the chart's default) with each write carrying the page's `X-GSD-Interaction` header. §8 says what changes with the proxy or the restrictions off, and §11
 what a remote cluster's own policy changes; of these rows only `/api/alerts` reads every cluster, and its `scope` is
 the narrowest across them, so a `remote-sar` or `self-only` cluster that does not widen the reader makes it `self`.
 
@@ -1364,6 +1405,11 @@ to guess.
 | POST | `/api/clusterconfigs/test` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
 | POST | `/api/clusterconfigs/{name}/refresh` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
 | POST | `/api/clusterconfigs/{name}/rejoin` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
+| GET | `/api/housekeeping/copies` | housekeeping on | _housekeeping_gate | 403 | 403 | 403 | 403 | 200 | the database copies on this pod's volume (#542); an identity and the cluster-admin tier |
+| DELETE | `/api/housekeeping/copies/{kind}/{name}` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | an identity, the cluster-admin tier, then the page's header; the newest copy of each directory is refused (409) |
+| POST | `/api/housekeeping/copies/cleanup` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | as above; a preview without `confirm`, a delete of exactly that set with it (409 when it changed) |
+| DELETE | `/api/housekeeping/reports/{run_id}` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | as above; the report service deletes it at the dashboard's request with the service token |
+| POST | `/api/housekeeping/reports/cleanup` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | as above |
 | GET | `/metrics` | always | none | 200 | 200 | 200 | 200 | 200 | public by ruling, so it carries no name |
 | GET | `/healthz` | always | none | 200 | 200 | 200 | 200 | 200 | the liveness probe |
 | GET | `/readyz` | always | none | 200 | 200 | 200 | 200 | 200 | the readiness probe |
