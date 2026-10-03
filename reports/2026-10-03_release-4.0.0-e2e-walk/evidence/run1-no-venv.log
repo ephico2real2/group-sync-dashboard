@@ -1,0 +1,63 @@
+# 4.0.0 e2e walk; written by scripts/run.sh
+# started 2026-10-03T20:06:22Z; kube context crc-admin; host group-sync-dashboard.apps-crc.testing
+
+## 1. Facts and the precheck (no grant)  (2026-10-03T20:06:22Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o jsonpath='{.status.sync.revision} {.status.sync.status} {.status.health.status}{"\n"}'
+94f5ebbb7460fc3a917ffd7bc8c572945547f7de Synced Healthy
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit, features}'
+{"version":"4.0.0","commit":"15613ccb95","features":{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true}}
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer
+Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+no
+(exit 1)
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' http://127.0.0.1:8080/api/whoami | jq -c '{scope: .visibility.scope, cluster_admin: .visibility.cluster_admin}'
+{"scope":"self","cluster_admin":false}
+
+## 2. The grant  (2026-10-03T20:06:23Z)
+$ oc create -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/reports/2026-10-03_release-4.0.0-e2e-walk/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-400e2e-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-400e2e-crb-update-developer created
+grant created at 20:06:23Z; tier cache waited until 2026-10-03T20:07:33Z
+
+## 3. run_walk.sh (every tab, every report, integrity, env, the document)  (2026-10-03T20:07:33Z)
+$ GSD_UI_PASSWORD=<from crc> run_walk.sh --base https://group-sync-dashboard.apps-crc.testing --login-user developer --provider developer --out /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/reports/2026-10-03_release-4.0.0-e2e-walk
+run_walk.sh exit 2
+
+## 4. The 4.0.0 surfaces, view only  (2026-10-03T20:07:34Z)
+{"ok": false, "steps": [["#542 the Library's Clean up card", true], ["#542 a run drawer offers Delete this run (not pressed)", false], ["#542 the KPI page's Database copies card", true], ["#503 the acknowledged grants, opened (2 rows)", true], ["#255 the platform identities note", true]], "page_errors": []}
+
+## 5. The grant's delete, then the facts and the 4.0.0 objects  (2026-10-03T20:07:50Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/reports/2026-10-03_release-4.0.0-e2e-walk/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io "gsd-walk-400e2e-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-400e2e-crb-update-developer" deleted
+grant held 88 s
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o jsonpath='{.status.sync.revision} {.status.sync.status} {.status.health.status}{"\n"}'
+94f5ebbb7460fc3a917ffd7bc8c572945547f7de Synced Healthy
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit, features}'
+{"version":"4.0.0","commit":"15613ccb95","features":{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true}}
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas
+NAME                            WANT   READY
+group-sync-dashboard            1      1
+group-sync-dashboard-recovery   0      <none>
+$ oc get roles.rbac.authorization.k8s.io group-sync-dashboard-leases -n group-sync-dashboard -o jsonpath='{.rules}'; echo; oc get clusterroles.rbac.authorization.k8s.io group-sync-dashboard-reader -o json | jq '[.rules[] | select((.resources // []) | index("leases"))] | length'
+[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get","create","update"]}]
+0
+
+## 6. OCR: secret-shaped text in every PNG (positive control: the word Overview)  (2026-10-03T20:07:51Z)
+pngs 5; ocr lines 299; sha256~ 0; password 0; control Overview 0
+walk exit=1 at 2026-10-03T20:07:52Z
+
+## exit trap  (2026-10-03T20:07:52Z)
+No resources found
+can-i after the trap: no

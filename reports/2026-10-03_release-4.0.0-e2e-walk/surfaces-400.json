@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "step": "#542 the Library's Clean up card",
+      "ok": true,
+      "screenshot": "screenshots/s400-01-library-cleanup-card.png",
+      "at": "2026-10-03T20:11:56Z"
+    },
+    {
+      "step": "#542 a run drawer offers Delete this run (not pressed)",
+      "ok": true,
+      "screenshot": "screenshots/s400-02-library-run-drawer.png",
+      "at": "2026-10-03T20:11:57Z"
+    },
+    {
+      "step": "#542 the KPI page's Database copies card",
+      "ok": true,
+      "screenshot": "screenshots/s400-03-kpi-database-copies.png",
+      "at": "2026-10-03T20:12:00Z"
+    },
+    {
+      "step": "#503 the acknowledged grants, opened (2 rows)",
+      "ok": true,
+      "screenshot": "screenshots/s400-04-nsaudit-acknowledged-open.png",
+      "at": "2026-10-03T20:12:03Z"
+    },
+    {
+      "step": "#255 the platform identities note",
+      "ok": true,
+      "screenshot": "screenshots/s400-05-nsaudit-platform-note.png",
+      "at": "2026-10-03T20:12:03Z"
+    }
+  ],
+  "page_errors": [],
+  "ack_rows": 2
+}
