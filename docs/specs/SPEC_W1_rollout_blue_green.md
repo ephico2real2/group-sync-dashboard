@@ -5,7 +5,7 @@
 | Programme | Epic E (#385), restore tools and release safety: build step 9, optional. Specified and reviewed, not scheduled: the operator's "last north star" (2026-10-01) |
 | Batch | W — workload strategy |
 | Release | — (post-programme; not scheduled for implementation) |
-| Version on release | chart 0.63.0 (chart only) |
+| Version on release | chart 0.66.0 (chart only) |
 | Version note | No application version: the change is a chart script, templates, values and docs, all outside `publish.yml`'s image paths (`.github/workflows/publish.yml#NOTE charts/** is deliberately ABSENT`), so `appVersion` and `pyproject.toml` do not move. The chart takes a MINOR because values are added (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). The rung follows SPEC_E5's version rule (`docs/specs/SPEC_E5_offsite_on_by_default.md`, its Version note): a spec still `specified` names a chart version above `Chart.yaml` and above every other `specified` spec's claim. On origin/main `41b30524` `Chart.yaml` is 0.59.25; the index claims chart 0.59.26 (SPEC_E4, SPEC_E3, SPEC_E6), 0.60.0 (SPEC_E2, SPEC_G2, SPEC_E5), 0.60.1 (SPEC_G3), 0.60.3 and 0.60.4 (SPEC_G4), and SPEC_E5's blocks 36 to 39 and SPEC_G4's blocks 8g to 8p move other specs up to 0.60.8 and 0.61.0. The first MINOR no spec names is 0.62.0. **This spec is not scheduled for implementation** (§1): when it is, its implementing pull request re-derives this number against the index and `Chart.yaml` of that day, with blocks 11 and 16, and records the reason under these notes (`docs/specs/README.md`, "Implementation blocks") |
 | Issue | [#426](https://github.com/ephico2real2/group-sync-dashboard/issues/426) |
 | Status | specified |
