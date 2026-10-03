@@ -8,7 +8,7 @@
 | Version on release | app 4.1.0, chart 0.66.5 |
 | Version note | The change is image content (the report service's model and one catalogue line), so it takes the next application MINOR, 4.1.0, and the chart PATCH that moves `appVersion`, 0.66.5 (SPEC_E5's rule, `local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`). Read on `94f5ebbb` (application 4.0.0, chart 0.66.4); the one other `specified` row, W1, holds chart 0.67.0, a MINOR, which stays above 0.66.5. The version blocks (§7, blocks 8 to 11) are written against that tree: a release that lands first makes them fail their check, and the implementing pull request then corrects them here before applying (`docs/specs/README.md`, "Implementation blocks") |
 | Issue | [#270](https://github.com/ephico2real2/group-sync-dashboard/issues/270) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-03, written before any code from the issue (its body of 2026-09-26, settled), the epic (#386) and SPEC_C3's definition of the seal. Measured on main `94f5ebbb` on this machine with the repository's venv (Python 3.14): the probe in §2.3 built all eleven reports twice over one seeded snapshot. No lab read was needed; §5 states the walk. §7's blocks were proved against a clean checkout of `94f5ebbb` (§4.3) |
 
 ## How to read this spec
@@ -81,6 +81,16 @@ It was written against `94f5ebbb`, which had no Unreleased section, so it create
 `tests/test_kyverno.py::test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release`
 read the first, A4's, which does not name chart 0.66.5. The block now adds this spec's bullet at the top of the one
 `## Unreleased` section.
+
+**Correction at implementation (orchestrator, 2026-10-03): the e2e walk's integrity check recomputes the seal, so it
+moves with it (Block 13, T270-7).** `local-development/e2e-walk/integrity_check.py` rebuilds each downloaded report's
+sha256 from its `.json` with its own copy of the canonical keys (`CANONICAL`: name, cluster, params, coverage,
+totals, truncated, include_members, sections). §2 does not name that script, so its copy was not moved: after
+blocks 1 to 12 it seals neither `api_url` nor `sealed_provenance` and keeps page one, and the next walk would report
+`recomputed_matches: false` for every report. Block 13 gives the script a `recompute()` with T270-5's recipe, and
+T270-7 runs that function over every report, so the walk's copy cannot drift from `Report.canonical()` unnoticed. A
+`.json` written before 4.1.0 does not verify under the new recipe; the walk checks only the files it downloaded in
+the same run.
 
 ## 1. The mandate, and what is out of scope
 
@@ -260,6 +270,7 @@ All in `local-development/tests/test_report_seal.py` (block 5), over the report 
 | T270-4 | `test_t270_4_the_data_changes_the_hash_and_the_run_does_not` (snapshot, parameters, coverage) | Changing the snapshot's data, the parameters or the coverage changes the sha256 |
 | T270-5 | `test_t270_5_the_json_alone_reproduces_the_hash` | The `.json` keeps its keys and page one, and reproduces the hash |
 | T270-6 | `test_t270_6_a_new_snapshot_of_the_same_data_is_new_evidence` | The ruling of §3.2 on the stamp |
+| T270-7 | `test_t270_7_the_walks_integrity_check_recomputes_the_seal` (every report) | The e2e walk's integrity check recomputes the same hash from the `.json` (Orchestrator's notes, the correction at implementation) |
 
 ### 4.2 Each test fails without the change, and why
 
@@ -271,6 +282,8 @@ All in `local-development/tests/test_report_seal.py` (block 5), over the report 
   seal against leaving out too much, and passes on both trees.
 - T270-5: `canonical()` has no `sealed_provenance` and the sections no `sealed` key (KeyError).
 - T270-6: the canonical document has no `sealed_provenance` (KeyError); the hashes differing passes on both.
+- T270-7: without Block 13 the script has no `recompute` (AttributeError); with only its old key list, every
+  report's recomputed hash differs from its seal.
 
 ### 4.3 The proof
 
@@ -455,6 +468,7 @@ coverage are sealed; page one still shows the run; the .json alone reproduces th
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -622,6 +636,19 @@ def test_t270_6_a_new_snapshot_of_the_same_data_is_new_evidence(tmp_path):
     a, b = one.canonical(), two.canonical()
     assert a["sealed_provenance"].pop("snapshot_stamp") != b["sealed_provenance"].pop("snapshot_stamp")
     assert a == b, "the stamp is the only difference"
+
+
+def test_t270_7_the_walks_integrity_check_recomputes_the_seal(snap):
+    """The e2e walk recomputes each downloaded report's hash from its .json (local-development/e2e-walk/
+    integrity_check.py), so its recipe must be the model's. Without Block 13 it has no `recompute`, and its
+    old key list seals page one and neither `api_url` nor `sealed_provenance`."""
+    path = Path(__file__).resolve().parents[1] / "e2e-walk" / "integrity_check.py"
+    module_spec = importlib.util.spec_from_file_location("integrity_check", path)
+    integrity = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(integrity)
+    for name in REGISTRY:
+        report = _run(snap, name)
+        assert integrity.recompute(json.loads(report.to_json())) == report.sha256, name
 ```
 
 ### Block 6 — `docs/DESIGN_reporting_service.md`: the provenance block says what the hash covers
@@ -742,4 +769,57 @@ appVersion: "4.1.0"
   rewritten and each still matches its own `.json`. Login activity's window ends at the generation instant, so two
   of its runs agree only at one clock (SPEC_F1, Orchestrator's notes 1). No permission, value or migration.
 
+```
+
+### Block 13 — `local-development/e2e-walk/integrity_check.py`: the walk recomputes the seal as the model does
+
+<!-- block: local-development/e2e-walk/integrity_check.py | edit -->
+```python
+For every <run>/reports/*.json: recompute the sha256 of the canonical data the same way the
+service seals it (gsd/reporting/model.py, Report.seal: name, cluster, params, coverage, totals,
+truncated, include_members, sections; sorted keys, compact separators, default=str) and compare
+```
+
+```python
+For every <run>/reports/*.json: recompute the sha256 of the canonical data the same way the
+service seals it (gsd/reporting/model.py, Report.seal: name, cluster, api_url, params, coverage,
+totals, truncated, include_members, sealed_provenance, and the sections whose `sealed` is true;
+sorted keys, compact separators, default=str; SPEC_F1, #270) and compare
+```
+
+<!-- block: local-development/e2e-walk/integrity_check.py | edit -->
+```python
+CANONICAL = ("name", "cluster", "params", "coverage", "totals", "truncated", "include_members", "sections")
+
+
+def main() -> int:
+```
+
+```python
+#: The keys Report.canonical() seals. `sections` is added by recompute(), narrowed to the sealed ones: the
+#: .json carries page one too, which states the run and is left out of the hash (SPEC_F1, #270).
+CANONICAL = ("name", "cluster", "api_url", "params", "coverage", "totals", "truncated", "include_members",
+             "sealed_provenance")
+
+
+def recompute(d: dict) -> str:
+    """The sha256 the service sealed, from the .json alone. A .json written before 4.1.0 does not verify."""
+    canon = {k: d[k] for k in CANONICAL}
+    canon["sections"] = [s for s in d["sections"] if s["sealed"]]
+    return hashlib.sha256(
+        json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def main() -> int:
+```
+
+<!-- block: local-development/e2e-walk/integrity_check.py | edit -->
+```python
+        canon = {k: d[k] for k in CANONICAL}
+        recomputed = hashlib.sha256(
+            json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+```
+
+```python
+        recomputed = recompute(d)
 ```
