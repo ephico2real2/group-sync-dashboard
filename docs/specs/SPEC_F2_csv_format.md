@@ -8,7 +8,7 @@
 | Version on release | app 4.2.0, chart 0.66.6 |
 | Version note | The change is image content (a renderer, the service's allow-sets, the trigger, the page), so it takes the next application MINOR, 4.2.0 (`docs/specs/README.md`, the version ladder; SPEC_E5's rule). The chart takes the PATCH that moves `appVersion`, 0.66.6: no value key, default, template logic or RBAC rule changes, only comments and the README row that name `csv` as an allowed word (§3.9, with the measurement). Read on `fba80ff3` (application 4.1.0, chart 0.66.5); the one other `specified` row, W1, holds chart 0.67.0, which stays above 0.66.6, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 19 to 22) fail their check, and the implementing pull request corrects them here before applying |
 | Issue | [#106](https://github.com/ephico2real2/group-sync-dashboard/issues/106) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §2 re-measured against main, and SPEC_C1's browser export. Measured on main `fba80ff3` with the repository's venv (Python 3.14.7) and node 26.9.0: §2.3's probe built all eleven reports over the seeded snapshot. No lab read; §5 states the walk. §7's blocks were proved against a clean checkout of `fba80ff3` (§4.3) |
 
 ## How to read this spec

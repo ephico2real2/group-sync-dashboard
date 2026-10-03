@@ -24,7 +24,7 @@ from ..housekeeping import CleanupChanged, set_digest
 
 log = logging.getLogger(__name__)
 
-FORMATS = ("json", "html", "pdf")
+FORMATS = ("json", "html", "pdf", "csv")
 STATUSES = ("queued", "running", "done", "failed")
 
 

@@ -80,16 +80,16 @@ def retention_overrides(settings: "ReportSettings") -> dict[str, tuple[int, int]
 
 
 def _formats_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    """A comma list of html/pdf (json is always written, so a listed `json` is accepted and dropped);
+    """A comma list of html/pdf/csv (json is always written, so a listed `json` is accepted and dropped);
     unset or empty keeps the default. Anything else is a startup error — a typo must not silently
     turn every scheduled run into HTML-only or PDF-less."""
     raw = os.environ.get(name, "")
     if not raw.strip():
         return default
     parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
-    unknown = sorted(set(parts) - {"html", "pdf", "json"})
+    unknown = sorted(set(parts) - {"html", "pdf", "csv", "json"})
     if unknown:
-        raise SystemExit(f"{name}={raw!r}: unknown format(s) {unknown}; allowed html, pdf (json is always written)")
+        raise SystemExit(f"{name}={raw!r}: unknown format(s) {unknown}; allowed html, pdf, csv (json is always written)")
     return tuple(dict.fromkeys(p for p in parts if p != "json"))
 
 

@@ -11688,6 +11688,29 @@ class TestReportClusterControl:
         finally:
             ctx.close()
 
+    def test_csv_is_a_box_off_by_default_and_a_ticked_one_downloads_a_csv(self, browser, reporting_server):
+        # #106 (SPEC_F2, T106-9): CSV is offered beside HTML and PDF, unticked; ticked, the run stores it and its
+        # status offers it like the other formats, through the one artefact fetch.
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-want-csv")
+            assert not page.is_checked("#report-want-csv"), "CSV is off unless the reader ticks it"
+            page.check("#report-want-csv")
+            page.uncheck("#report-want-pdf")
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            assert _json.loads(info.value.post_data)["formats"] == ["html", "csv"]
+            page.wait_for_selector("#report-status [data-artifact][data-format='csv']", timeout=30_000)
+            with page.expect_download() as download:
+                page.click("#report-status [data-format='csv']")
+            assert download.value.suggested_filename.endswith(".csv"), download.value.suggested_filename
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_dismissing_the_note_on_one_form_keeps_what_another_form_is_owed(self, browser, reporting_server):
         # The note is rendered per form (`cleared[spec.name]`); dismissing it used to null it for every form, so a
         # second form's cleared lookup was never said to the reader who opens it (OB1 on #269).

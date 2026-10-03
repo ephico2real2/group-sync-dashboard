@@ -10,6 +10,17 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **CSV as a fourth report format, off by default (#106, Epic F #386, `docs/specs/SPEC_F2_csv_format.md`;
+  application 4.2.0, chart 0.66.6).** A run asked for `csv` stores one `report.csv` beside its `.json`: the
+  report's title and the sha256 the run sealed, then every section in order, page one included and marked
+  `not sealed: states the run`, each table, key-value list and note under a labelled record. Every cell is written
+  as the dashboard's table export writes it (`csvField`: RFC 4180 quoting, `true`/`false`, a list joined with
+  `; `, an apostrophe before a cell a spreadsheet would evaluate), with the UTF-8 BOM and CRLF records. The report
+  form gains an unticked CSV box; `GET /report/api/runs/{id}/artifact?format=csv` answers `text/csv; charset=utf-8;
+  header=absent`; `reporting.formats.scheduled` and `.manual`, a schedule's `formats` and the trigger's
+  `--format` accept `csv`. The default format sets, the other formats' bytes, the page's table export and the
+  store's layout are unchanged. No permission, value key or migration.
+
 - **A report's sha256 covers its data only (#270, Epic F #386, `docs/specs/SPEC_F1_data_only_seal.md`; application
   4.1.0, chart 0.66.5).** Page one (Provenance and coverage) is no longer inside the hash: it states the run. When
   the report was generated, by whom, its run id, the report service's version and commit, the snapshot's age, the

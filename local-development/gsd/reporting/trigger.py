@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--params-json", default="",
                     help="the params as a JSON object; required for structured params like `selectors` "
                          "that a k=v string cannot express (the chart renders schedules[].params this way)")
-    ap.add_argument("--format", action="append", default=[], choices=["html", "pdf"])
+    ap.add_argument("--format", action="append", default=[], choices=["html", "pdf", "csv"])
     ap.add_argument("--schedule", required=True, help="the schedule's name, recorded as generated_by=schedule:<name>")
     ap.add_argument("--token-file", default=os.environ.get("GSD_REPORT_TOKEN_FILE", "/etc/gsd/report/token"))
     ap.add_argument("--ca-file", default=os.environ.get("GSD_REPORT_CA_FILE", ""), help="PEM bundle for the Service certificate; empty = system trust")

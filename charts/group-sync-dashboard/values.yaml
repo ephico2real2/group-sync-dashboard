@@ -1414,6 +1414,8 @@ reporting:
   # Which formats a run stores when the request names none — by ORIGIN (#149 R3). A schedule fires
   # unattended and its document is printed from the HTML on demand, so no PDF; a person's manual run
   # gets the PDF. json is always written. A defaulted pdf is dropped where pdf.enabled is false.
+  # csv (#106) is allowed in either list and off by default: one file per run with the report's tables,
+  # its sha256 and page one, each cell written as the dashboard's table export writes it.
   formats:
     scheduled: [html, json]
     manual: [html, json, pdf]

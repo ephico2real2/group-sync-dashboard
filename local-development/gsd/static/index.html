@@ -2945,6 +2945,7 @@ function reportFormCard(spec, cat) {
       <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !targets.length ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
       ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
+      <label class="filterbar-note"><input type="checkbox" id="report-want-csv"> CSV</label>
       <span class="filterbar-note">json is always written · ${targets.length > 1 ? `${targets.length} clusters, one run each` : `cluster <span class="mono">${esc(view.cluster || "")}</span>`}</span>
       <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name && view.reportTotals.cluster === view.cluster ? view.reportTotals.text : "")}</span>
     </div>
@@ -4177,6 +4178,7 @@ async function generateReport(refocus = false) {
   const formats = [];
   if ($("report-want-html") && $("report-want-html").checked) formats.push("html");
   if ($("report-want-pdf") && $("report-want-pdf").checked) formats.push("pdf");
+  if ($("report-want-csv") && $("report-want-csv").checked) formats.push("csv");
   view.reportSubmitting = true; view.reportRun = null; view.reportBatch = null; render();
   const pending = (r) => r.status === "queued" || r.status === "running";
   const tick = () => new Promise((r) => setTimeout(r, 1500));
