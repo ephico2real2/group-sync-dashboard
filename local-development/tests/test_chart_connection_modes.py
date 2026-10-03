@@ -225,3 +225,11 @@ class TestTheLeaseGrantIsNamespaced:
                                      "clusterConfig": {"fleetAccount": {"username": "svc-gsd"}}}, None)
         rbac = [(d["kind"], d["metadata"]["name"]) for d in docs if d["kind"] in ("ClusterRole", "Role", "RoleBinding")]
         assert not [n for n in rbac if n[1].endswith(("-reader", "-leases"))], rbac
+
+    @pytest.mark.parametrize("values,values_file,renders", LEASE_RENDERS)
+    def test_no_clusterrole_carries_a_lease_rule(self, tmp_path, values, values_file, renders):
+        """T420-1: a Lease rule in any ClusterRole reaches every namespace; the grant is the Role above, or nothing."""
+        docs = self._docs(tmp_path, values, values_file)
+        held = [(d["metadata"]["name"], r) for d in docs if d["kind"] == "ClusterRole"
+                for r in d.get("rules") or [] if "leases" in (r.get("resources") or [])]
+        assert held == [], held

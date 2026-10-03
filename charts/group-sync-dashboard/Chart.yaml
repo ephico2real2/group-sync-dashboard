@@ -339,7 +339,10 @@ type: application
 # CHART 0.66.2 (2026-10-03), PATCH: the dashboard's Leases are also granted by a Role and RoleBinding,
 # `<fullname>-leases`, in the release namespace, beside the ClusterRole's rule (#420 step 1, SPEC_G4).
 # RBAC REMOVED 0, ADDED 4 atoms; no value or appVersion change.
-version: 0.66.2
+# CHART 0.66.3 (2026-10-01), PATCH: the reader ClusterRole's leases rule is removed; the `<fullname>-leases`
+# Role is the Lease grant (#420 step 2, SPEC_G4, the operator's agreement on #420). RBAC REMOVED 3 atoms
+# (leases get, create, update on the reader ClusterRole), ADDED 0; no value or appVersion change.
+version: 0.66.3
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

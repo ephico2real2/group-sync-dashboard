@@ -1,8 +1,9 @@
 {{- if .Values.rbac.create }}
 # Read-only on everything it reports on: no watch, and no verb that can change a Group, a
-# GroupSync CR or a binding. The ONE exception is the dashboard's own leader-election Lease
-# below, which is its coordination and not an object it observes. Cluster-scoped because
-# Groups are cluster-scoped and GroupSync CRs may live in any namespace.
+# GroupSync CR or a binding — no write verb in this role at all. The dashboard's own Leases, its
+# coordination and not objects it observes, are granted by the `-leases` Role below, in the
+# release namespace only (#420). Cluster-scoped because Groups are cluster-scoped and GroupSync
+# CRs may live in any namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -72,24 +73,12 @@ rules:
     resourceNames: ["cluster"]
     verbs: ["get"]
   {{- end }}
-  {{- if or .Values.leaderElection.enabled (eq (include "gsd.fleetAccountInUse" .) "true") }}
-  # Leader election, and the fleet-account claim (SPEC_S4c §3.3): a second Lease under the same rule,
-  # still the one resource this application writes. It renders when a fleet account is in use even with
-  # election off, because above one replica election MUST be off and that is where a claim the API
-  # server arbitrates matters most. The same three verbs, in the release namespace only, are the
-  # `-leases` Role below (#420): this rule stays beside it until a later chart release removes it, once
-  # the operator agrees, so no upgrade takes the old grant away before the new one exists (SPEC_G4
-  # §3.4). `create` cannot be narrowed by resourceNames, so none is set.
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "create", "update"]
-  {{- end }}
   # NO WRITE VERB ON ANYTHING THE DASHBOARD REPORTS ON, at any value, and it stays that
-  # way. The `create`/`update` on leases directly above is the sole write in this role, and it is
-  # not scoped to one object: with no resourceNames it reaches every Lease in every namespace, which
-  # is why #420 grants it again in the `-leases` Role below — say "reports on", not "anywhere",
-  # because an absolute claim sitting three lines below its own counter-example teaches a reader to
-  # stop trusting the comments.
+  # way. Since #420 this role holds no write verb at all: the `create`/`update` on leases that
+  # sat here reached every namespace, so it moved to the `-leases` Role below, in the release
+  # namespace. Still "reports on", not "anywhere": the dashboard writes its own Leases, and the
+  # opt-in `-cluster-secrets` writes, and an absolute claim beside its own counter-example
+  # teaches a reader to stop trusting the comments.
   #
   # A conditional `patch` on rolebindings/clusterrolebindings used to render here when
   # config.unmanagedAudit.mode was "annotate", so the dashboard could label its own findings
@@ -162,9 +151,11 @@ subjects:
 # ClusterRole reaches every namespace: kube-node-lease, whose Leases are the nodes' heartbeats, and
 # the control plane's own election Leases included. No resourceNames: Kubernetes cannot narrow
 # `create` by name, and a fleet Lease's name comes from an account a ConfigMap may declare after
-# this render. Rendered under the condition of the ClusterRole's Lease rule above, which a later
-# chart release removes once the operator agrees (#420): this Role ships first, so an upgrade that
-# passes through a release carrying both never loses the grant (SPEC_G4 §3.4).
+# this render. Rendered when election is on or a fleet account is in use — the condition the
+# ClusterRole's Lease rule had — because above one replica election MUST be off, and that is where a
+# claim the API server arbitrates matters most. The rule left the ClusterRole in a later chart release
+# than this Role, so an upgrade that passes through a release carrying both never loses the grant
+# (SPEC_G4 §3.4).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
