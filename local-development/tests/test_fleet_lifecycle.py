@@ -1008,3 +1008,27 @@ def test_a_refusal_held_by_the_process_alone_stamps_no_ping_attempt(tmp_path, mo
     q = process(tmp_path, monkeypatch, host, stanza("l1"), discovered=[retrieved("r1")], name="q")
     q._retrieve_pending(); q._ping_accounts()
     assert host.leases.annotations()[PREFIX + "ping-last-outcome"] == "ok"
+
+
+# ── #420 (SPEC_G4): the grant is a Role in the release namespace ─────────────────────────────────────
+
+def test_t420_6_every_fleet_lease_call_is_under_the_namespace_it_was_given():
+    """The poller gives `FleetLease` the pod's own namespace (`Poller._host_client`, from the ServiceAccount mount);
+    every read, create and update stays under it, so a Role there is the whole grant the fleet Lease needs."""
+    calls = []
+
+    class Recording(LeaseHost):
+        def _get(self, client, path, params):
+            calls.append(("GET", path))
+            return super()._get(client, path, params)
+
+        def _send(self, client, method, path, *, json=None, secrets=()):
+            calls.append((method, path))
+            return super()._send(client, method, path, json=json, secrets=secrets)
+
+    lease = FleetLease(Recording(), "ns", USER, claim_seconds=195, identity="pod-a")
+    lease.read()
+    lease.claim()
+    lease.release()
+    assert {m for m, _ in calls} == {"GET", "POST", "PUT"}, calls
+    assert all(p.startswith(LEASES) for _, p in calls), calls

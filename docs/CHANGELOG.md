@@ -10,6 +10,20 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The dashboard's Leases are also granted in its own namespace (#420 step 1, Epic G #387,
+  `docs/specs/SPEC_G4_namespaced_lease_grant.md`; chart 0.66.2, no application change).** A Role and a RoleBinding,
+  `<fullname>-leases`, in the release namespace grant the dashboard's ServiceAccount `get`, `create` and `update` on
+  `coordination.k8s.io/leases`, under the condition the ClusterRole's Lease rule has (`leaderElection.enabled`, or a
+  fleet account in use) and only with `rbac.create`. The ClusterRole keeps its rule in this release; a later release
+  removes it once the operator agrees on #420, so the namespaced grant exists before the cluster-wide one goes and no
+  upgrade through this release refuses the running pod a Lease call. Rendered RBAC: REMOVED 0; ADDED 4 atoms wherever
+  the rule renders (the Role's three verbs and the RoleBinding's subject). With `rbac.create: false`, apply the two
+  objects yourself (chart README, `rbac.create`). Corrected because they were false: the template comment that called
+  the ClusterRole's Lease rule "scoped to one object the dashboard owns" (it has no `resourceNames` and reaches every
+  namespace), the reference architecture's condition for it (election alone), the chart README's count of three
+  conditional rules, and the values file's "its own leader-election Lease" as the only object it writes (the fleet
+  account's Lease is one too).
+
 - **A direct user grant the operator acknowledged leaves the worklist and the alert, and is counted (#503, Epic G
   #387, `docs/specs/SPEC_G3_acknowledged_direct_grants.md`; application 3.3.0, chart 0.66.1).** A grant that names
   a user directly, on a binding carrying the `rbac.ocp.io/config-source` label (any value) or the

@@ -160,3 +160,68 @@ class TestTheCredentialLifecycleInTheChart:
         assert bool(leases) is renders and all(sorted(r["verbs"]) == ["create", "get", "update"] for r in leases)
         writes = {"patch", "update", "create", "delete", "deletecollection", "*"}
         assert all(set(r.get("resources") or []) == {"leases"} for r in rules if set(r.get("verbs") or []) & writes)
+
+
+#: #420 (SPEC_G4): the renders the Lease grant is measured on — the four cases of the credential-lifecycle test above,
+#: and the chart's three values files as written and with election off — and whether the grant renders in each.
+_SL = {"name": "shared-rnd", "apiUrl": "https://api.crc.testing:6443", "userSelfLogin": True}
+_OFF = {"leaderElection": {"enabled": False}}
+LEASE_RENDERS = [
+    pytest.param({"clusters": [HOME, _SL], **_OFF}, None, True, id="mode-in-use-election-off"),
+    pytest.param({"clusters": [HOME], **_OFF, "clusterConfig": {"fleetAccount": {"username": "svc-gsd"}}}, None, True,
+                 id="username-election-off"),
+    pytest.param({"clusters": [HOME], **_OFF}, None, False, id="no-account-election-off"),
+    pytest.param({"clusters": [HOME]}, None, True, id="election-on"),
+    pytest.param({}, "environments/crc.yaml", True, id="crc"),
+    pytest.param(_OFF, "environments/crc.yaml", True, id="crc-election-off"),
+    pytest.param({}, "environments/example-production.yaml", True, id="env-production"),
+    pytest.param(_OFF, "environments/example-production.yaml", False, id="env-production-election-off"),
+    pytest.param({}, "charts/group-sync-dashboard/example-production.yaml", True, id="chart-production"),
+    pytest.param(_OFF, "charts/group-sync-dashboard/example-production.yaml", True, id="chart-production-election-off"),
+]
+
+
+class TestTheLeaseGrantIsNamespaced:
+    """#420 (SPEC_G4): the dashboard's Leases are granted by a Role and RoleBinding in the release namespace,
+    `<fullname>-leases`, rendered exactly where the Lease grant always rendered — election on, or a fleet account in
+    use — and only with rbac.create. The code reads and writes Leases in its own namespace only (T420-6, in
+    tests/test_leader.py and tests/test_fleet_lifecycle.py), so this Role is the whole grant it needs."""
+
+    NS = "gsd-leases"
+
+    @classmethod
+    def _docs(cls, tmp_path, values: dict, values_file: str | None) -> list[dict]:
+        mine = tmp_path / "values.yaml"
+        mine.write_text(yaml.safe_dump(values, sort_keys=False))
+        files = ["-f", str(CHART.parents[1] / values_file)] if values_file else []
+        done = subprocess.run(["helm", "template", "t", str(CHART), "-n", cls.NS, *files, "-f", str(mine)],
+                              capture_output=True, text=True)
+        assert done.returncode == 0, done.stderr[-600:]
+        return [d for d in yaml.safe_load_all(done.stdout) if d]
+
+    @pytest.mark.parametrize("values,values_file,renders", LEASE_RENDERS)
+    def test_the_lease_role_renders_where_the_grant_did_and_nowhere_else(self, tmp_path, values, values_file, renders):
+        """T420-2: one Role with exactly get, create, update on leases and no resourceNames, and its RoleBinding to the
+        dashboard's ServiceAccount, both in the release namespace — or neither, where no Lease is written."""
+        docs = self._docs(tmp_path, values, values_file)
+        reader = next(d for d in docs if d["kind"] == "ClusterRoleBinding" and d["metadata"]["name"].endswith("-reader"))
+        name = reader["metadata"]["name"].removesuffix("-reader") + "-leases"
+        roles = [d for d in docs if d["kind"] == "Role" and any("leases" in (r.get("resources") or []) for r in d.get("rules") or [])]
+        bindings = [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"] == name]
+        if not renders:
+            assert roles == [] and bindings == [], "a Lease grant where nothing writes a Lease"
+            return
+        assert [(r["metadata"]["name"], r["metadata"]["namespace"]) for r in roles] == [(name, self.NS)]
+        assert roles[0]["rules"] == [{"apiGroups": ["coordination.k8s.io"], "resources": ["leases"],
+                                      "verbs": ["get", "create", "update"]}]
+        assert len(bindings) == 1 and bindings[0]["metadata"]["namespace"] == self.NS
+        assert bindings[0]["roleRef"] == {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": name}
+        assert bindings[0]["subjects"] == reader["subjects"] == [
+            {"kind": "ServiceAccount", "name": reader["subjects"][0]["name"], "namespace": self.NS}]
+
+    def test_rbac_create_false_renders_no_lease_grant(self, tmp_path):
+        """T420-3: with rbac.create false the estate applies its own RBAC, the Lease Role included (chart README)."""
+        docs = self._docs(tmp_path, {"clusters": [HOME], "rbac": {"create": False},
+                                     "clusterConfig": {"fleetAccount": {"username": "svc-gsd"}}}, None)
+        rbac = [(d["kind"], d["metadata"]["name"]) for d in docs if d["kind"] in ("ClusterRole", "Role", "RoleBinding")]
+        assert not [n for n in rbac if n[1].endswith(("-reader", "-leases"))], rbac

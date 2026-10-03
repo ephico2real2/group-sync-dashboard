@@ -502,7 +502,7 @@ defaults). The TTL is the bound. The procedure is the runbook's
 | Key | Default | Notes |
 |---|---|---|
 | `serviceAccount.create` / `.name` / `.annotations` | `true` / derived / `{}` | with the proxy on, the SA also carries the annotation that makes it an OAuth client — no `OAuthClient` object to register. `oauth-redirectreference` (the chart's Route, by name, resolved at login time) with the default Route; `oauth-redirecturi` (a literal callback URL) otherwise |
-| `rbac.create` | `true` | ClusterRole + binding, read-only, no `watch` |
+| `rbac.create` | `true` | ClusterRole + binding, no `watch`, and no write verb on anything the dashboard reports on; and, when `leaderElection.enabled` or a fleet account is in use, the `<fullname>-leases` Role + RoleBinding in the release namespace: `get`, `create`, `update` on `coordination.k8s.io/leases` (#420). `false` renders none of them, and the dashboard then needs that Role and RoleBinding applied beside the ClusterRole |
 | `rbac.bindings` | `true` | adds `get`/`list` on rolebindings/clusterrolebindings, powering the Access-granted, RBAC-policy and Namespace-audit views. Disable and the dashboard degrades to group data only |
 | `loginCapture.enabled` | `true` | lets the dashboard read the oauth-server's log so the Logins tab has a source. Which log is `source` |
 | `loginCapture.source` | `audit-log` | Only supported source: oauth-server audit files through the node proxy, no Debug or OAuth rollout. Cluster-wide `get nodes/proxy`, plus `list nodes` unless `auditLog.nodeNames` pins them. No LDAP cause for new failures; stored pod-log rows remain readable. Removed values fail with migration guidance; see OAuth Debug migration below. |
@@ -601,14 +601,18 @@ New audit events cannot report LDAP result codes or AD sub-codes, including a lo
 cause. Existing pod-log rows, their causes and their API/UI fields remain readable; configured
 retention still applies. See `docs/AUDIT_LOG_CAPTURE.md` and `docs/LOGIN_CAPTURE_QUICKCHECK.md`.
 
-Three rules in the ClusterRole are conditional. `coordination.k8s.io/leases`
+In the ClusterRole, `coordination.k8s.io/leases`
 (`get`, `create`, `update`) renders when `leaderElection.enabled` or a fleet account is in use
 (`clusterConfig.fleetAccount.username`, or a stanza declaring a mode) — the election Lease and the
 fleet account's claim (#285) —
 `rolebindings`/`clusterrolebindings` (`get`, `list`) only when `rbac.bindings`, and
 `users` (`get`, `list`) only when `rbac.users`. Everything
 else in it is `get`/`list`, and that pair of Leases — the dashboard's own, which grant nobody
-access to anything — are the only objects it writes on any cluster.
+access to anything — are the only objects it writes on any cluster unless
+`clusterConfig.secrets.writes.enabled` is on. The Lease rule has no `resourceNames`, so it reaches
+every namespace; under the same condition the `<fullname>-leases` Role and RoleBinding grant the
+same three verbs in the release namespace only (#420), and a later chart release removes the rule
+from the ClusterRole once the operator agrees.
 
 A `patch` on rolebindings/clusterrolebindings used to render here when
 `config.unmanagedAudit.mode` was `annotate`. The mode and the grant are both gone; see
