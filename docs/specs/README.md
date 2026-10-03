@@ -1,6 +1,6 @@
 # Feature programme 2026-09 — the specifications
 
-Fifty-three specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
+Fifty-four specifications are indexed below. The original programme has thirteen modules, each specified with its complete code **before** any of them is implemented,
 each tracked by one GitHub issue inside one GitHub milestone, and each implemented, released,
 validated and audited **strictly one at a time**. This directory is the only source the
 implementation is applied from: nothing is implemented from memory, and a specification is
@@ -68,7 +68,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
   one `local-development/prepare-release.py` cuts — is what a spec's `released` status names
   (below).
 
-## The fifty-three specifications
+## The fifty-four specifications
 
 | Id | Specification | Batch | Milestone | Version on release | Issue | Status |
 |---|---|---|---|---|---|---|
@@ -125,6 +125,7 @@ orchestrator's notes, in the same pull request, before it is applied again.
 | A4 | [`SPEC_A4_argocd_wait_empty_fields.md`](SPEC_A4_argocd_wait_empty_fields.md) — `argocd-wait.sh` compares the Application's source the way Argo CD stores it: an empty field (`helm.parameters: []`) is absent from `status.sync.comparedTo`, so `release-crc.sh --argocd` no longer times out when nothing needs syncing | A — release | — | no version change (a repository tool and its test) | [#534](https://github.com/ephico2real2/group-sync-dashboard/issues/534) | merged |
 | H1 | [`SPEC_H1_gui_cleanup.md`](SPEC_H1_gui_cleanup.md) — delete report runs and database copies from the page: one item, or a one-off cleanup previewed and then confirmed against the preview's digest (409 when the set changed), for the cluster-admin tier behind a proxy-verified identity; nothing persisted, `reporting.retention` and `config.backup` stay the policy; the newest backup, pre-upgrade copy and pre-restore set always kept, a run in flight never deleted; one audit line per item and a counter with no names; `housekeeping.enabled`, on by default, no RBAC change | H — housekeeping | — | app 3.1.0, chart 0.62.0 | [#542](https://github.com/ephico2real2/group-sync-dashboard/issues/542) | released |
 | F1 | [`SPEC_F1_data_only_seal.md`](SPEC_F1_data_only_seal.md) — the report seal covers the data only: page one (Provenance and coverage) becomes a section with `sealed=False`, rendered with the same rows and words and left out of `canonical()`; its data facts are sealed through their own fields (`api_url`, and `sealed_provenance`: the snapshot's stamp and schema and the last poll), beside the coverage, the parameters and the rosters switch; the run facts (generated at and by, run id, the snapshot's age, the release, the marking, the binding interval, the PDF variant) leave the hash, so two runs over one snapshot with the same parameters hash the same while the values a report computes against the generation clock coincide; every artefact's hash changes once, stored runs are not rewritten | F — reports (Epic F #386, step 1 of 6) | — | app 4.1.0, chart 0.66.5 | [#270](https://github.com/ephico2real2/group-sync-dashboard/issues/270) | merged |
+| F2 | [`SPEC_F2_csv_format.md`](SPEC_F2_csv_format.md) — CSV as a fourth report format, off by default: one `report.csv` per run beside its `.json`, the title and the sealed sha256 first, then every section in order (page one marked not sealed) with each table, key-value list and note under a labelled record; every cell written by a port of the page's `csvField` (RFC 4180 quoting, the formula guard, the BOM, CRLF), pinned to its JavaScript; `csv` in `FORMATS`, `create_run`, the artefact endpoint (`text/csv; charset=utf-8; header=absent`), the trigger, `reporting.formats.*` and an unticked box on the form; the default sets, the other formats' bytes, the page's export and the store's layout unchanged | F — reports (Epic F #386, step 2 of 6) | — | app 4.2.0, chart 0.66.6 | [#106](https://github.com/ephico2real2/group-sync-dashboard/issues/106) | specified |
 
 The rows are in **implementation order**, which is also the version ladder. Status moves
 `specified → in progress → merged → released`: `in progress` while some of the spec is on
