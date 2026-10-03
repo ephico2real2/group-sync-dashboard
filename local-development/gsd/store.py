@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS rbac_group_binding (
     -- omits it, which is how the authorizer reads it (kube.py _binding_views). '' otherwise.
     subject_namespace   TEXT NOT NULL DEFAULT '',
     -- The platform's own identity, never a finding (the operator's rule, #353): a ServiceAccount whose
-    -- effective namespace the estate's platformNamespaces name, or a User is_platform_user names.
+    -- effective namespace the estate's platformNamespaces name, or a User its platformUsers name.
     -- Computed at poll time from the settings (poller._binding_is_platform), so a values change
     -- reclassifies on the next refresh; a platform row is `built_in`, like a system: group.
     -- PLATFORM-CLASSIFICATION (#255, #353): the stored flag the finding reads
@@ -2842,7 +2842,7 @@ class Store:
                         -- The platform's own identities are never a finding — the operator's
                         -- long-standing rule (#353): a ServiceAccount whose effective namespace
                         -- the estate's platformNamespaces name (the code's defaults plus the
-                        -- values file's additional* lists), or a User is_platform_user names.
+                        -- values file's additional* lists), or a User the estate's platformUsers name.
                         -- Computed at poll time and stored as is_platform; such a row joins the
                         -- built_in tier beside the system: groups — real access by design,
                         -- nothing of the operator's to resolve, nothing to review.
@@ -3994,6 +3994,13 @@ class Store:
             (cluster_id,),
         )
         return int(rows[0]["n"]) if rows else 0
+
+    def user_binding_names(self, cluster_id: str) -> list[str]:
+        """Every User subject named on this cluster's bindings, platform ones included, sorted: what a
+        stale `platformUsers.additional*` entry is judged against (#255), since users have no index of
+        their own."""
+        return [r["user_name"] for r in self._rows(
+            "SELECT DISTINCT user_name FROM user_binding WHERE cluster_id=? ORDER BY user_name", (cluster_id,))]
 
     # -- namespace-configuration-operator health -----------------------------------------
 

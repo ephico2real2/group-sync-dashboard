@@ -19,11 +19,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
-from .config import (CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN, ClusterConfig, ConfigError, PlatformNamespaces, Settings,
-                     remote_policy)
+from .config import (CREDENTIAL_LOOKUP, CREDENTIAL_SELF_LOGIN, ClusterConfig, ConfigError, PlatformNamespaces,
+                     PlatformUsers, Settings, remote_policy)
 from .home import PLATFORM_CONTROLLER_BINDINGS
 from .kube import (AUTH_FAILED, OK, SERVICE_ACCOUNT_KIND, SUBJECT_KINDS, UNREACHABLE, USER_KIND, ClusterClient,
-                   ClusterError, GroupSyncView, GroupView, dn_equal, is_platform_user)
+                   ClusterError, GroupSyncView, GroupView, dn_equal)
 from .leader import LeaderElector, own_namespace
 from .logincapture import capture_once
 from .audit import AuditLogProgress, plan_audit_stamps
@@ -611,15 +611,16 @@ def kyverno_metrics_url_for(settings: Settings, cluster: ClusterConfig) -> str:
     return settings.kyverno_metrics_url if host is not None and cluster.name == host.name else ""
 
 
-def _binding_is_platform(b, platform: PlatformNamespaces) -> int:
+def _binding_is_platform(b, platform: PlatformNamespaces, users: PlatformUsers) -> int:
     """The platform's own identity, never a finding — the operator's long-standing rule (#353).
 
     A ServiceAccount is the platform's when its effective namespace — its own, or the RoleBinding's
     when it omits one, the account the authorizer matches — is one the estate's `platformNamespaces`
     name: the code's defaults (openshift-*, kube-*, default, …) plus the values file's `additional*`
     lists, the one classifier Home and the namespace index already use (#255). A User is the
-    platform's when `is_platform_user` names it (system:*, kubeadmin, the node identities), as the
-    direct-user view has always decided. And OpenShift's own per-project controller bindings —
+    platform's when the estate's `platformUsers` names it (system:*, kubeadmin, the node identities by
+    default), the classifier the direct-user rows are stored with. And OpenShift's own per-project
+    controller bindings —
     `system:image-builders` → ClusterRole `system:image-builder` → SA `builder`, `system:deployers` →
     `system:deployer` → SA `deployer`, the subject in the binding's own namespace — are the platform's in
     EVERY namespace, matched on all three parts and nothing broader (the controller defaults in home.py).
@@ -637,7 +638,7 @@ def _binding_is_platform(b, platform: PlatformNamespaces) -> int:
         return 1 if own_namespace and (b.binding_name, b.role_name, b.group_name) in PLATFORM_CONTROLLER_BINDINGS else 0
     if b.subject_kind == USER_KIND:
         # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's rule, applied to a User subject on the finding path
-        return 1 if is_platform_user(b.group_name) else 0
+        return 1 if users.matches(b.group_name) else 0
     return 0
 
 
@@ -654,6 +655,7 @@ def refresh_bindings(
     kyverno_metrics_url: str = "",
     audit_progress: AuditLogProgress | None = None,
     platform_namespaces: PlatformNamespaces | None = None,
+    platform_users: PlatformUsers | None = None,
 ) -> str:
     """Re-read RoleBindings/ClusterRoleBindings for one cluster.
 
@@ -675,6 +677,8 @@ def refresh_bindings(
     # PLATFORM-CLASSIFICATION (#255, #353): the shipped rule when a caller passes none (a direct call, a test); the Poller passes
     # the settings', which carry the values file's additional* lists.
     platform = platform_namespaces if platform_namespaces is not None else PlatformNamespaces()
+    # PLATFORM-CLASSIFICATION (#255, #353): the same for Users — the Poller passes the settings' platformUsers
+    user_rule = platform_users if platform_users is not None else PlatformUsers()
     group_changes = store.replace_bindings(
         cluster.name,
         [
@@ -686,7 +690,7 @@ def refresh_bindings(
                 "role_name": b.role_name,
                 "subject_kind": b.subject_kind,
                 "subject_namespace": b.subject_namespace,
-                "is_platform": _binding_is_platform(b, platform),   # PLATFORM-CLASSIFICATION (#255, #353)
+                "is_platform": _binding_is_platform(b, platform, user_rule),   # PLATFORM-CLASSIFICATION (#255, #353)
                 "group_name": b.group_name,
                 "managed_source": b.managed_source,
                 "exception": b.exception,
@@ -716,13 +720,13 @@ def refresh_bindings(
             [{"binding_kind": u.binding_kind, "binding_namespace": u.binding_namespace,
               "binding_name": u.binding_name, "role_kind": u.role_kind,
               "role_name": u.role_name, "user_name": u.user_name,
-              # PLATFORM-CLASSIFICATION (#255, #353): the direct-user flag, from is_platform_user in the reader
-              "is_platform": 1 if u.is_platform else 0} for u in user_rows],
+              # PLATFORM-CLASSIFICATION (#255, #353): the direct-user flag, from the settings' platformUsers
+              "is_platform": 1 if user_rule.matches(u.user_name) else 0} for u in user_rows],
             now_iso(),
         )
         _note_binding_changes(signals, cluster.name, "User", user_changes)
         # PLATFORM-CLASSIFICATION (#255, #353): the refresh line counts people by the direct-user flag
-        people = sum(1 for u in user_rows if not u.is_platform)
+        people = sum(1 for u in user_rows if not user_rule.matches(u.user_name))
         log.info("%s: %d direct-user binding(s), %d naming a person",
                  cluster.name, len(user_rows), people)
 
@@ -1365,6 +1369,8 @@ class Poller:
                         audit_progress=audit_progress,
                         # PLATFORM-CLASSIFICATION (#255, #353): the settings' classifier, the values file's additional* lists included, handed to every refresh
                         platform_namespaces=self.settings.platform_namespaces,
+                        # PLATFORM-CLASSIFICATION (#255, #353): and its platformUsers, the values file's or the ConfigMap's
+                        platform_users=self.settings.platform_users,
                         namespaces_read=self.settings.namespaces_read_enabled,
                         namespace_metadata_labels=self.settings.namespace_metadata_labels,
                         signals=self.signals,

@@ -48,7 +48,7 @@ These are never reported; they appear under **Built-in** instead.
 | ServiceAccount | its namespace is a platform namespace (the ServiceAccount's own namespace, or the RoleBinding's when the subject names none) | the shipped defaults, prefixes `openshift-` and `kube-` and the names `default`, `openshift`, `kube-system`, `kube-public`, `kube-node-lease`; plus your `platformNamespaces.additionalPrefixes`, `additionalSuffixes` and `additionalNames` in `values.yaml` |
 | ServiceAccount | the binding is one of OpenShift's per-project controller bindings, all three parts matching, in the binding's own namespace: `system:image-builders` → `system:image-builder` → `builder`; `system:deployers` → `system:deployer` → `deployer` | shipped defaults, in every namespace |
 | Group | the group's name starts with `system:`. That covers `system:image-pullers` → Group `system:serviceaccounts:<namespace>`, the third controller binding | the Group rule |
-| User | the name starts with `system:`, or is `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy` or `kubeadmin` | the same rule the direct-user view uses |
+| User | the user is a platform user: by default the name starts with `system:`, or is `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin` or `kube:admin` | the shipped defaults, plus your `platformUsers.additionalPrefixes` and `additionalNames` in `values.yaml` (or a ConfigMap, `platformUsers.existingConfigMap`); the same list the direct-user view uses |
 
 To silence the ServiceAccounts of a whole namespace (an operator's namespace, say), add it to `platformNamespaces` in
 `values.yaml` instead of labelling each binding:
@@ -58,6 +58,11 @@ platformNamespaces:
   additionalSuffixes: ["-operator", "-manager", "-provisioner"]
   additionalNames: ["kyverno", "group-sync-dashboard"]
 ```
+
+To silence a user who is the estate's own (a bind account, a break-glass login), add the name to
+`platformUsers.additionalNames` in the release's values file and roll it out through the release's deployment
+pipeline. OpenShift's break-glass login is shipped under both of its names: `kubeadmin`, and `kube:admin`, the
+user it signs in as outside CRC.
 
 Nothing else silences a grant. A Helm, OLM or Argo CD label, the binding's name, or a ServiceAccount's name
 (`default` included) does not. A hand-made `admin` grant to the `default` ServiceAccount in a project namespace is
@@ -75,7 +80,9 @@ reported.
 
 At the next binding refresh: `bindingIntervalSeconds`, 3600 seconds (one hour) by default. A labelled or annotated binding then
 moves out of **Unmanaged**. On the Access granted page it is counted as granted. A platform identity is counted as
-**Built-in**.
+**Built-in**. A change to `platformNamespaces` or `platformUsers` in the values file restarts the pod, whose first
+refresh applies it; a list kept in a ConfigMap is read at start, so after editing it change its
+`existingConfigMap.revision` in the values file and roll the release out.
 
 ## Where the rule is written
 

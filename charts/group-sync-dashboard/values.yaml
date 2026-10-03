@@ -392,7 +392,8 @@ config:
   # nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
   # ServiceAccount or a user — somebody granted access by hand, outside the governance system,
   # and nothing on the cluster reports it. The platform's own identities are never a finding: a
-  # ServiceAccount in a namespace `platformNamespaces` (below) names, a `system:` user, kubeadmin.
+  # ServiceAccount in a namespace `platformNamespaces` (below) names, a user `platformUsers` (below)
+  # names — by default a `system:` user, the kube components, kubeadmin and kube:admin.
   # Nothing else about how a grant was applied (a Helm or OLM label, a binding's name) excludes
   # it: a legitimate one is silenced by labelling its binding `rbac.ocp.io/config-source=<who
   # decided>`, as this chart labels its own RBAC (#312, #353).
@@ -1549,6 +1550,19 @@ kyverno:
 # The classification is never silent: the page says "67 platform namespaces hidden" with a control to
 # show them, a hidden row stays counted, exportable and drillable, and where a hidden namespace holds
 # a direct grant the page says that too.
+#
+# `existingConfigMap` keeps the same six keys in a ConfigMap you own instead (#255), for an estate that
+# maintains its platform list outside this chart: a ConfigMap in the release namespace, delivered by your
+# own pipeline, whose key (`platform-namespaces.yaml` by default) holds the stanza as YAML, for example
+#   additionalSuffixes: ["-operator", "-manager"]
+#   additionalNames: ["kyverno"]
+# It is mounted as a file (no new permission; the pod does not start while the ConfigMap is missing)
+# and read ONCE, at start. The chart cannot see inside it, so editing it changes nothing until the pod
+# restarts: after an edit, change `existingConfigMap.revision` to any new text in this release's values
+# file and roll the release out through its deployment pipeline — the revision is rendered into the
+# settings file, whose checksum rolls the pod. A typo inside the ConfigMap is refused when the pod
+# starts, by the ConfigMap's name and key, because a render has no cluster to read it from. Setting it
+# beside any list here is refused at render: one source per list.
 # PLATFORM-CLASSIFICATION (#255, #353): the estate's own additions to "which namespaces are the platform's" (#255). What
 # this decides: the namespace index and Home hide these namespaces by default, and since #353 a ServiceAccount
 # in one of them is the platform's own — silent under the built-in tier, never an unmanaged finding.
@@ -1562,6 +1576,58 @@ platformNamespaces:
   additionalPrefixes: []
   additionalSuffixes: []    # e.g. ["-operator", "-manager", "-provisioner"]
   additionalNames: []       # e.g. ["kyverno", "group-sync-dashboard"]
+
+  # OR all of the above from a ConfigMap you own (see the comment above). Off: it needs a name.
+  existingConfigMap:
+    enabled: false
+    name: ""
+    key: platform-namespaces.yaml
+    revision: ""      # change after editing the ConfigMap and roll the release out: the pod re-reads it
+
+# ---------------------------------------------------------------------------
+# Which USERS are the platform's rather than a person's  (#255)
+# ---------------------------------------------------------------------------
+# A platform user's direct grants are never a finding: the Namespace audit counts them as excluded
+# ("24 platform identities excluded") instead of listing them in the worklist and the direct-user
+# alert, and the unmanaged finding counts them as built-in. Which users those are differs by estate —
+# a break-glass account, a bind account, a fleet login — so the list is yours, built like
+# `platformNamespaces` above.
+#
+# The shipped defaults are the rule of 2.0.0 plus `kube:admin`: the prefix `system:` (Kubernetes reserves it
+# "for Kubernetes system use") and the names below. `prefixes` and `names` REPLACE them; the `additional*`
+# two APPEND, which is what an estate usually wants. Plain prefix and exact name only — no suffix, glob
+# or regular expression, and every value is a list: a user name may contain a comma
+# (`cn=jdoe,ou=People`), so a string is never split. A key that is not one of the four is refused by
+# name at render and at start.
+#
+# `kubeadmin` and `kube:admin` are one trusted admin identity, both shipped: outside CRC the break-glass
+# login `kubeadmin` signs in as the user `kube:admin` (openshift/library-go, bootstrapauthenticator), on CRC
+# an HTPasswd `kubeadmin` signs in under its own name (the operator's ruling of 2026-10-01, #255).
+#
+# Never silent: the page states how many grants it excluded, names where this list comes from, and
+# reports an `additional*` entry no User subject on a binding in that cluster currently matches — a
+# pre-staged entry may be intentional, and the page asks the reader to check unexpected ones. A listed
+# person's own grants also leave their self view of the Namespace audit, exactly as kubeadmin's do; Home
+# still lists them.
+# PLATFORM-CLASSIFICATION (#255, #353): the estate's own platform users. What this decides: the direct-user rows, their
+# alert and their excluded count, and the unmanaged finding's built-in tier for a User subject.
+platformUsers:
+  # Uncomment to replace the shipped defaults outright (rarely what you want):
+  # prefixes: ["system:"]
+  # names: ["kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy", "kubeadmin", "kube:admin"]
+
+  # What THIS estate adds for itself.
+  additionalPrefixes: []
+  additionalNames: []       # e.g. ["breakglass-admin"]
+
+  # OR all of the above from a ConfigMap you own, as YAML under one key, with the same rules as
+  # platformNamespaces.existingConfigMap: mounted, read at start, `revision` changed and the release rolled
+  # out after an edit, refused beside an inline list. Off: it needs a name.
+  existingConfigMap:
+    enabled: false
+    name: ""
+    key: platform-users.yaml
+    revision: ""
 
 # ---------------------------------------------------------------------------
 # Cluster configuration as labelled Secrets  (#230, docs/specs/SPEC_S1_cluster_secrets.md)

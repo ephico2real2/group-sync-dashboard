@@ -106,7 +106,11 @@ def test_fetch_user_bindings(client):
     assert row.binding_kind == "RoleBinding"
     assert row.binding_namespace == "acme-app"
     assert row.role_name == "viewer"
-    assert row.is_platform is False
+    # #255: the reader carries no platform flag; the poller decides it from the settings' platformUsers, whose
+    # shipped defaults make lateef.o a person.
+    from gsd.config import PlatformUsers
+    assert not hasattr(row, "is_platform")
+    assert not PlatformUsers().matches(row.user_name)
 
 
 # ── (h)+(i) Operator configs ────────────────────────────────────────────────────────────

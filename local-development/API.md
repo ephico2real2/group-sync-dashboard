@@ -479,6 +479,11 @@ zero in both counts is a result an access review wants to confirm, not an absenc
 `cluster_wide_path` is the reach itself: true when any cluster-wide binding names the viewer — unlike the
 two counts, a platform identity's binding included.
 
+Each row's `platform` is the chart's `platformNamespaces` classification; `platform_count` counts those rows,
+`platform_with_findings` the ones holding a direct grant, and `platform_patterns_unmatched` names each
+`additional*` pattern matching no namespace here. `platform_namespaces_source` says where the list comes from, in
+the shape of `/user-bindings`' `platform_users_source`.
+
 Self tier: only the namespaces the viewer's own memberships or own bindings reach, counted over those
 paths; `cluster_wide_*` count the viewer's **own** cluster-wide paths, and when `cluster_wide_path` is true
 every namespace is listed — a cluster-wide grant reaches every one, which is also what the detail answers.
@@ -971,6 +976,8 @@ nothing here, and it is invisible to every group-based review including the rest
      "users": ["asmith", "bwilliams", "jdoe"]}
   ],
   "excluded_platform": 36,
+  "platform_users_unmatched": {"additionalNames": ["breakglass-2024"]},
+  "platform_users_source": {"configMap": null, "replaced": [], "additional": ["additionalNames"]},
   "namespace": null, "total": 6, "limit": 200, "offset": 0, "truncated": false,
   "bindings": []
 }
@@ -1007,9 +1014,18 @@ forgotten `cluster-admin` matters more than twenty `view` grants.
 set by splitting on `,` — which breaks the moment an IdP maps LDAP DNs to usernames, since
 `cn=jdoe,ou=People,dc=example,dc=com` becomes four people.
 
-`excluded_platform` counts what was left out: `system:*` identities and `kubeadmin` are
-break-glass with nowhere to migrate to, and on the reference cluster they were 34 of 36 rows.
-`include_platform=true` shows them.
+`excluded_platform` counts what was left out: the platform's identities, the users the chart's
+`platformUsers` names (by default `system:*`, the kube components, `kubeadmin` and `kube:admin`), with nowhere to migrate
+to; on the reference cluster they were 34 of 36 rows. `include_platform=true` shows them. The flag is stored
+with each row at the binding refresh, from the list the pod started with.
+
+`platform_users_source` says where that list comes from: the shipped axes the estate replaced (`replaced`),
+the `additional*` axes it set (`additional`), and the ConfigMap it was read from (`configMap`, `{name, key}`,
+or `null` for the values file) — key names only, never the values. `platform_users_unmatched` names every
+`additional*` entry that matches none of the User subjects on this cluster's bindings, platform ones included,
+by axis (`{}` when none, and while the cluster's bindings have not been read). An entry can be unmatched because
+it is planned, misspelled, or no longer bound; the response reports that observation, not a deletion. Both are
+`null` at the self tier, with `excluded_platform`.
 
 ### `GET /api/clusters/{cluster_id}/operator-configs`
 

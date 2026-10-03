@@ -11910,6 +11910,91 @@ class TestAPartialExportFitsAPhone:
         assert overflow <= 0, f"the page scrolls {overflow}px sideways at 375px"
 
 
+class TestPlatformNotesNameTheirSource:
+    """#255 (T255-15): the two platform notes on the Namespace audit tab named a fixed list — "system components
+    and kubeadmin" under the direct-user worklist, "openshift-*, kube-*, and five named ones" on the namespace
+    index, already wrong on the lab, whose values add three suffixes and two names. Each now names where its list
+    comes from, from the payload's summary, and the direct-user note reports a stale `additional*` entry in the
+    namespace index's idiom. The served rig carries the shipped defaults; the estate's states are injected into
+    the payload on the 60 s repaint's own path, so a repaint keeps them."""
+
+    STALE = {"additionalNames": ["breakglass-2024"]}
+    SOURCE = {"configMap": {"name": "estate-platform", "key": "platform-users.yaml"}, "replaced": [],
+              "additional": ["additionalNames"]}
+
+    def _open(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("#du-platform-note")
+
+    def _note(self, dash, selector="#du-platform-note"):
+        return " ".join(dash.locator(selector).inner_text().split())
+
+    def test_the_defaults_are_named_as_the_shipped_defaults(self, dash):
+        self._open(dash)
+        assert self._note(dash) == ("1 platform identity excluded — the cluster's own and break-glass identities, with "
+                                    "nowhere to migrate to. · system:* and seven named ones, the shipped defaults.")
+        line = self._note(dash, "#ns-show-platform >> xpath=..")
+        assert "openshift-*, kube-* and five named ones, the shipped defaults — the rule the Home page uses." in line, line
+        assert "and five named ones —" not in line
+
+    def test_the_estates_list_and_a_stale_entry_survive_the_repaint(self, dash):
+        import json as _json
+        self._open(dash)
+
+        def estate(route):
+            body = route.fetch().json()
+            body["platform_users_source"] = self.SOURCE
+            body["platform_users_unmatched"] = self.STALE
+            route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+        def estate_ns(route):
+            body = route.fetch().json()
+            body["platform_namespaces_source"] = {"configMap": None, "replaced": [],
+                                                  "additional": ["additionalSuffixes", "additionalNames"]}
+            route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+        dash.route("**/api/clusters/*/user-bindings*", estate)
+        dash.route("**/api/clusters/*/namespaces", estate_ns)
+        for _ in range(2):   # the first poll brings the estate's payload; the second is a repaint of the same
+            dash.evaluate("() => refresh({auto: true})")
+            dash.wait_for_function("() => document.querySelector('#du-platform-note') && "
+                                   "document.querySelector('#du-platform-note').innerText.includes('breakglass-2024')")
+        note = self._note(dash)
+        assert ("system:* and seven named ones, the shipped defaults, plus this estate's platformUsers.additionalNames, "
+                "read from the ConfigMap estate-platform (key platform-users.yaml).") in note, note
+        assert ("⚠ additionalNames: breakglass-2024 is not currently matched by any User subject on a binding in "
+                "this cluster; keep planned entries, and check unexpected ones.") in note, note
+        line = self._note(dash, "#ns-show-platform >> xpath=..")
+        assert ("the shipped defaults, plus this estate's platformNamespaces.additionalSuffixes and "
+                "platformNamespaces.additionalNames — the rule the Home page uses.") in line, line
+
+    def test_a_replaced_axis_is_named_as_replaced(self, dash):
+        self._open(dash)
+        dash.evaluate("""() => { data.userBindings.platform_users_source = {configMap: null, replaced: ['names'], additional: []};
+            render(); }""")
+        assert self._note(dash).endswith("· the shipped defaults with platformUsers.names replaced."), self._note(dash)
+
+    def test_the_self_tier_shows_no_note(self, dash):
+        self._open(dash)
+        dash.evaluate("""() => { Object.assign(data.userBindings, {excluded_platform: null, platform_users_unmatched: null,
+            platform_users_source: null}); render(); }""")
+        assert dash.locator("#du-platform-note").count() == 0
+
+    @pytest.mark.parametrize("width", [375, 768, 1280])
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_no_horizontal_overflow(self, dash, width, theme):
+        dash.set_viewport_size({"width": width, "height": 900})
+        self._open(dash)
+        dash.evaluate("""([theme, src, stale]) => { document.documentElement.setAttribute('data-theme', theme);
+            Object.assign(data.userBindings, {platform_users_source: src, platform_users_unmatched: stale});
+            data.namespaces.platform_namespaces_source = {configMap: {name: 'estate-platform-namespaces-list', key: 'platform-namespaces.yaml'},
+              replaced: ['prefixes', 'names'], additional: ['additionalSuffixes', 'additionalNames']};
+            render(); }""", [theme, self.SOURCE, {"additionalPrefixes": ["svc-retired-"], "additionalNames": ["breakglass-2024", "kube:admin"]}])
+        assert "are not currently matched by any User subject" in self._note(dash)
+        overflow = dash.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
+        assert overflow <= 0, f"the page scrolls {overflow}px sideways at {width}px ({theme})"
+
+
 @pytest.fixture(scope="module")
 def housekeeping_server(tmp_path_factory):
     """#542 (SPEC_H1): the reporting rig with `housekeeping.enabled`, a data volume holding copies, and the

@@ -452,3 +452,69 @@ class TestDirectUserAlert:
             "crc", [], [], datetime.now(UTC), td(minutes=2),
             user_bindings=[{"binding_namespace": "", "role_name": "x", "is_platform": 1}],
         ) == []
+
+
+class TestPlatformUsersReachEveryReader:
+    """#255: a user the estate names in `platformUsers` is the platform's everywhere the stored flag reaches —
+    the direct-user rows, their total, the excluded count and the alert — because the poller classifies the
+    User rows from the settings at each binding refresh (the reader has none)."""
+
+    BIND = "ocp-oauth-bind-serviceid"
+
+    def _refresh(self, store, monkeypatch, users=None):
+        from gsd import poller
+        from gsd.config import ClusterConfig
+        from gsd.kube import UserBindingView
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self): return []
+            def fetch_user_bindings(self):
+                return [UserBindingView("ClusterRoleBinding", "", "poller", "ClusterRole", "poller", TestPlatformUsersReachEveryReader.BIND),
+                        UserBindingView("RoleBinding", "group-sync-operator", "token-reader", "Role", "reader",
+                                        TestPlatformUsersReachEveryReader.BIND),
+                        UserBindingView("RoleBinding", "legacy", "jdoe-edit", "ClusterRole", "edit", "jdoe"),
+                        UserBindingView("ClusterRoleBinding", "", "ka", "ClusterRole", "cluster-admin", "kubeadmin")]
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        poller.refresh_bindings(store, ClusterConfig("crc", "https://x", token_env="T"), timeout=5, platform_users=users)
+
+    @staticmethod
+    def _alert_subjects(store):
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        return [a.subject for a in st.compute_alerts("crc", [], [], datetime.now(UTC), td(minutes=2),
+                                                     user_bindings=store.direct_user_bindings("crc"))]
+
+    def test_t255_2_a_named_user_leaves_the_rows_and_the_alert_and_is_counted(self, store, monkeypatch):
+        from gsd.config import PlatformUsers
+        self._refresh(store, monkeypatch)
+        assert sorted(r["user_name"] for r in store.direct_user_bindings("crc")) == ["jdoe", self.BIND, self.BIND]
+        assert store.platform_user_binding_count("crc") == 1
+        assert self._alert_subjects(store) == ["3 direct user grants"]
+
+        self._refresh(store, monkeypatch, PlatformUsers(additional_names=frozenset({self.BIND})))
+        assert [r["user_name"] for r in store.direct_user_bindings("crc")] == ["jdoe"]
+        assert store.count_direct_user_bindings("crc") == 1
+        assert [r["namespace"] for r in store.user_bindings_by_namespace("crc")] == ["legacy"]
+        assert store.platform_user_binding_count("crc") == 3, "excluded_platform rises by exactly the two rows"
+        assert self._alert_subjects(store) == ["1 direct user grant"]
+
+        self._refresh(store, monkeypatch)
+        assert store.platform_user_binding_count("crc") == 1, "removed from the list, the rows come back"
+
+    def test_t255_3_names_replaced_makes_kubeadmin_a_person(self, store, monkeypatch):
+        from gsd.config import PlatformUsers
+        self._refresh(store, monkeypatch, PlatformUsers(names=frozenset()))
+        assert "kubeadmin" in {r["user_name"] for r in store.direct_user_bindings("crc")}
+        assert store.platform_user_binding_count("crc") == 0
+
+    def test_a_reclassification_records_no_binding_event(self, store, monkeypatch):
+        """Moving a user between "a person" and "the platform" changes what is counted, not what is granted:
+        the event stream compares the role only (store.py _append_binding_events), so it stays silent."""
+        from gsd.config import PlatformUsers
+        self._refresh(store, monkeypatch)
+        before = store.binding_events("crc")
+        self._refresh(store, monkeypatch, PlatformUsers(additional_names=frozenset({self.BIND})))
+        assert store.binding_events("crc") == before

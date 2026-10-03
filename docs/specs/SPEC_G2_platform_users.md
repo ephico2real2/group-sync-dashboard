@@ -5,9 +5,9 @@
 | Programme | Epic G (#387), access declared, platform identities configured — build step 2 of 4. #239 (SPEC_G1) comes before it; #503 comes after it and changes the same direct-user view and alert |
 | Batch | G — access declared |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 3.3.0, chart 0.67.0 |
+| Version on release | app 3.2.0, chart 0.66.0 |
 | Issue | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from #255 (body refined 2026-09-30, "Decisions and corrections (2026-10-01)"), its epic #387 and main `afa01bb8` (application 2.0.0, chart 0.59.25). Measured on this machine (Python 3.14.7, helm v4.3.0) and read-only on the CRC lab (2026-10-01, 13:06–13:07Z). §7 was cut from an implemented copy of `afa01bb8` and proved against a clean tree (§4.3). Revised the same day after the review of `4c75c65b` by OB3 (in Grok's seat) and Codex, on the orchestrator's decisions (Orchestrator's notes, 4), on a branch that merged main `21132a25` (SPEC G1, #506); the corrected blocks were proved again on that main (§4.2, §4.3) |
 
 ## How to read this spec
@@ -73,7 +73,7 @@ orchestrator's notes, before it is applied again.
      string is still split there): its keys and semantics must not change.
    - **The ConfigMap's key holds the stanza itself, as YAML** (the same keys as inline). An empty key is refused: a
      list the estate pointed at must say something.
-   - **Version.** App 2.1.0 and chart 0.60.0 are the next free MINORs after `afa01bb8` (MINOR for the chart: values
+   - **Version.** App 3.2.0 and chart 0.66.0 are the next free MINORs after `254f1515` (note 5) (MINOR for the chart: values
      are added). If another release lands first, the release-field blocks (§7, blocks 70–74) fail their check, because
      their Old text is the version they replace, and the implementing pull request re-derives them here first.
    - **The index row conflicts with SPEC_G1's (#239, in review on `docs/spec-g1-239`).** Both raise the count from
@@ -110,6 +110,19 @@ orchestrator's notes, before it is applied again.
    - **Not taken:** Codex's suggestion (C8) to leave the defaults at 2.0.0's and open a separate issue, superseded by
      the operator's ruling; OB3's two "no change proposed" items (a loose `existingConfigMap.name` pattern the API
      server refuses at apply; a ConfigMap-sourced `platformNamespaces` string still split, #259's semantics).
+
+5. **Corrections at implementation (2026-10-03), written into the blocks before any were applied.**
+   - **Block 41's anchor.** SPEC_E11 (#551, chart 0.65.0) renders the recovery workload from the same template, and
+     put the recovery pod's own mounts between the trusted-CA mount and the liveness probe. So block 41's Old text,
+     the line before the liveness probe, no longer matched (`apply-spec-blocks.py`: "Old text occurs 0 times").
+     The platform-list mounts now go after the trusted-CA mount and before `{{- if $recovery }}`, so both workloads
+     mount them, as they mount every other app volume. Block 42's volumes sit in the shared section, so they are
+     unchanged. SPEC_E11's T532-1 holds: the recovery pod's volumes are the app's plus its own.
+   - **The versions.** The blocks named application 2.1.0 and chart 0.60.0, the next free MINORs on 2026-10-01 at
+     application 2.0.0, chart 0.59.25. The tree is now application 3.1.0, chart 0.65.1, so under SPEC_E5's version
+     rule this release takes the next free MINORs: application 3.2.0 (the only number `check-app-version-bump.py`
+     accepts) and chart 0.66.0. Every mention in the blocks and the prose moves with it, and the version blocks' Old
+     text names the tree's numbers. The implementing PR moves the specified specs above it: G3, G4 and W1.
 
 ## 1. The mandate, and what is out of scope
 
@@ -501,7 +514,7 @@ and the list's source on the same line, and the values file is the reviewed reco
 
 ### 3.10 Versions
 
-Application 2.1.0 (`pyproject.toml`, `gsd/__init__.py`, `appVersion`) and chart 0.60.0, MINOR because values are added,
+Application 3.2.0 (`pyproject.toml`, `gsd/__init__.py`, `appVersion`) and chart 0.66.0, MINOR because values are added,
 each with its history line, set by hand as the last releases were (`prepare-release.py` refuses a dirty tree and would
 cut the `## Unreleased` heading). The CHANGELOG bullet goes first under `## Unreleased` and names the chart version, as
 `tests/test_kyverno.py#test_f3_unreleased_cites_the_current_chart_version_when_it_moved_since_the_last_release` requires.
@@ -1899,7 +1912,8 @@ Old text:
 
 ```yaml
             {{- end }}
-          {{- if .Values.probes.liveness.enabled }}
+            {{- if $recovery }}
+            - name: recovery-script
 ```
 
 New text:
@@ -1916,7 +1930,8 @@ New text:
               readOnly: true
             {{- end }}
             {{- end }}
-          {{- if .Values.probes.liveness.enabled }}
+            {{- if $recovery }}
+            - name: recovery-script
 ```
 
 ### Block 42 — charts/group-sync-dashboard/templates/deployment.yaml
@@ -3262,7 +3277,7 @@ New text:
 ## Unreleased
 
 - **An estate names its own platform users, and either platform list can live in a ConfigMap (#255, Epic G #387,
-  `docs/specs/SPEC_G2_platform_users.md`; application 2.1.0, chart 0.60.0).** `platformUsers` in the values file
+  `docs/specs/SPEC_G2_platform_users.md`; application 3.2.0, chart 0.66.0).** `platformUsers` in the values file
   works like `platformNamespaces`: `prefixes` and `names` replace the shipped defaults (`system:`, and
   `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin` as in 2.0.0,
   plus `kube:admin`), `additionalPrefixes` and `additionalNames` append to them. **`kube:admin` is new in the
@@ -3287,43 +3302,43 @@ New text:
 
 ### Block 71 — charts/group-sync-dashboard/Chart.yaml
 
-Chart 0.60.0 and its history line (§3.10).
+Chart 0.66.0 and its history line (§3.10).
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
 ```yaml
-version: 0.59.25
+version: 0.65.1
 ```
 
 New text:
 
 ```yaml
-# CHART 0.60.0 (2026-10-01), MINOR: `platformUsers` (prefixes, names, additionalPrefixes, additionalNames) and
+# CHART 0.66.0 (2026-10-03), MINOR: `platformUsers` (prefixes, names, additionalPrefixes, additionalNames) and
 #   `existingConfigMap` {enabled, name, key, revision} for platformNamespaces and platformUsers, mounted as a
 #   file, refused at render beside an inline list; an empty replacing list now renders; appVersion moves to
-#   application 2.1.0 (below); #255.
-version: 0.60.0
+#   application 3.2.0 (below); #255.
+version: 0.66.0
 ```
 
 ### Block 72 — charts/group-sync-dashboard/Chart.yaml
 
-`appVersion` 2.1.0 and its history line.
+`appVersion` 3.2.0 and its history line.
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
 ```yaml
-appVersion: "2.0.0"
+appVersion: "3.1.0"
 ```
 
 New text:
 
 ```yaml
-# 2.1.0 (2026-10-01). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
-appVersion: "2.1.0"
+# 3.2.0 (2026-10-03). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
+appVersion: "3.2.0"
 ```
 
 ### Block 73 — local-development/pyproject.toml
@@ -3335,13 +3350,13 @@ The application version.
 Old text:
 
 ```toml
-version = "2.0.0"
+version = "3.1.0"
 ```
 
 New text:
 
 ```toml
-version = "2.1.0"
+version = "3.2.0"
 ```
 
 ### Block 74 — local-development/gsd/__init__.py
@@ -3353,13 +3368,13 @@ version = "2.1.0"
 Old text:
 
 ```python
-__version__ = "2.0.0"
+__version__ = "3.1.0"
 ```
 
 New text:
 
 ```python
-__version__ = "2.1.0"
+__version__ = "3.2.0"
 ```
 
 ### Block 75 — local-development/mock-app/tests/test_request_surface.py

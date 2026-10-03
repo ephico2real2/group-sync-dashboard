@@ -15,18 +15,22 @@ GSD = ROOT / "local-development" / "gsd"
 SITE = re.compile(
     # A call, or the bound method passed as an argument (Home passes `settings.platform_namespaces.matches`);
     # prose in a docstring ends the name with a backtick or a period, which neither form matches (Grok, #361).
-    r"platform_namespaces\.(matches|unmatched)\s*[(,)]|\bplatform\.matches\s*\(|PlatformNamespaces\(\)\.matches\s*\("
+    r"platform_(namespaces|users)\.(matches|unmatched)\s*[(,)]|\b(platform|users|user_rule)\.matches\s*\("
+    r"|Platform(Namespaces|Users)\(\)\.matches\s*\("
     r"|\bis_platform_user\s*\(|\bis_platform_namespace\s*\("
-    r"|PLATFORM_CONTROLLER_BINDINGS\b|^PLATFORM_(NAMESPACE_PREFIXES|NAMESPACES|USER_PREFIXES) ="
-    r"|^def _platform_namespaces_setting\(|_platform_namespaces_setting\(raw\)|^\s+platform_namespaces: PlatformNamespaces = "
+    r"|PLATFORM_CONTROLLER_BINDINGS\b|^PLATFORM_(NAMESPACE_PREFIXES|NAMESPACES|USER_PREFIXES|USER_NAMES) ="
+    r"|^def _platform_(namespaces|users)_setting\(|_platform_(namespaces|users)_setting\(raw\)"
+    r"|^\s+platform_namespaces: PlatformNamespaces = |^\s+platform_users: PlatformUsers = "
     # ... and the stored flag's SQL comparisons and Python assignments (OB1-lite, review of #361); a Python read
     # or a dict-literal write of the flag is marked by hand and not held here (OB2, second pass)
     r'|\bis_platform\s*=\s*[01]\b|\["is_platform"\]\s*=')
-CHART_SITES = {
-    ROOT / "charts/group-sync-dashboard/values.yaml": "platformNamespaces:",
-    ROOT / "charts/group-sync-dashboard/templates/configmap.yaml": ".Values.platformNamespaces",
-    ROOT / "charts/group-sync-dashboard/templates/_helpers.tpl": 'define "gsd.validatePlatformNamespaces"',
-}
+# Each needle is a line the chart's path starts from; the marker sits on it or within the three lines above.
+CHART_SITES = (
+    (ROOT / "charts/group-sync-dashboard/values.yaml", "platformNamespaces:"),
+    (ROOT / "charts/group-sync-dashboard/values.yaml", "platformUsers:"),
+    (ROOT / "charts/group-sync-dashboard/templates/configmap.yaml", 'include "gsd.validatePlatformLists"'),
+    (ROOT / "charts/group-sync-dashboard/templates/_helpers.tpl", 'define "gsd.validatePlatformLists"'),
+)
 
 
 def _sites(path: Path) -> list[tuple[int, str]]:
@@ -48,15 +52,16 @@ def test_every_python_site_that_decides_or_consumes_platform_is_marked() -> None
 
 def test_the_marked_python_path_is_complete() -> None:
     """The marker names every hop the spec lists: the classifiers, their settings, the direct-user path,
-    and the finding path. A hop that loses its marker, or a file that drops out, fails here."""
+    and the finding path. A hop that loses its marker, or a file that drops out, fails here. gsd/kube.py is
+    not a hop since #255: the reader classifies nothing, the poller decides a User from the settings."""
     marked = {str(p.relative_to(ROOT)) for p in GSD.rglob("*.py") if MARKER in p.read_text(encoding="utf-8")}
-    assert {"local-development/gsd/home.py", "local-development/gsd/config.py", "local-development/gsd/kube.py",
+    assert {"local-development/gsd/home.py", "local-development/gsd/config.py",
             "local-development/gsd/api.py", "local-development/gsd/poller.py", "local-development/gsd/store.py",
             "local-development/gsd/state.py", "local-development/gsd/reporting/snapshot.py"} <= marked, marked
 
 
 def test_the_chart_path_is_marked() -> None:
-    for path, needle in CHART_SITES.items():
+    for path, needle in CHART_SITES:
         lines = path.read_text(encoding="utf-8").splitlines()
         hit = next(i for i, line in enumerate(lines) if needle in line)
         window = "\n".join(lines[max(0, hit - 3):hit + 1])
@@ -68,6 +73,11 @@ def test_the_chart_path_is_marked() -> None:
     ("        if platform.matches(b.subject_namespace):", True),
     ("    return PlatformNamespaces().matches(name)", True),
     ('    ok = is_platform_user ("kubeadmin")', True),
+    ("        return 1 if users.matches(b.group_name) else 0", True),
+    ('              "is_platform": 1 if user_rule.matches(u.user_name) else 0} for u in user_rows],', True),
+    ("                settings.platform_users.unmatched(store.user_binding_names(cluster_id)) if scope", True),
+    ("PLATFORM_USER_NAMES = frozenset({", True),
+    ("    platform_users: PlatformUsers = PlatformUsers()", True),
     ("                    WHERE cluster_id=? AND is_platform=0", True),
     ('                    r["is_platform"] = 1 if r["group_name"].startswith(SYSTEM_GROUP_PREFIX) else 0', True),
     ("    is_platform         INTEGER NOT NULL DEFAULT 0,", False),

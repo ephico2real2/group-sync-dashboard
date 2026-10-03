@@ -5326,8 +5326,8 @@ function bindingsPage() {
       `Kubernetes virtual groups such as <code>system:authenticated</code> and
        <code>system:serviceaccounts:*</code>, which authorise real access with no Group object by
        design — and the platform's own identities: a ServiceAccount in a namespace the chart's
-       <code>platformNamespaces</code> names, a <code>system:</code> user, <code>kubeadmin</code>.
-       None of these is a finding.`,
+       <code>platformNamespaces</code> names, a user the chart's <code>platformUsers</code> names
+       (by default a <code>system:</code> user, <code>kubeadmin</code> and <code>kube:admin</code>). None of these is a finding.`,
       f.built_in);
   }
   if (view.bindingFilter === "all") {
@@ -5665,7 +5665,8 @@ function namespacesCard() {
         ? ` — <strong>${withFindings}</strong> of them ${withFindings === 1 ? "has" : "have"} a direct grant`
         : ""}.${neverFindings} <button type="button" class="linkish" id="ns-show-platform">Show them</button>`
     : `Platform namespaces shown. <button type="button" class="linkish" id="ns-show-platform">Hide the ${platformCount}</button>`}
-    <span class="muted"> · <code>openshift-*</code>, <code>kube-*</code>, and five named ones — the rule the Home page uses.</span>${stalePatterns}</div>`;
+    <span class="muted"> · ${platformListSource(d.platform_namespaces_source, "platformNamespaces",
+      "<code>openshift-*</code>, <code>kube-*</code> and five named ones")} — the rule the Home page uses.</span>${stalePatterns}</div>`;
   // THE PAGER. Every button is a real button with its own id-scoped attribute: the mock's render check
   // caught `[data-page]` also matching `<body data-page="nsaudit">`, so every click on the page ran the
   // pager's handler and emptied the list. `aria-current="page"` carries the position to a screen reader,
@@ -5806,7 +5807,7 @@ function nsDetail() {
   const keys = d.label_keys || [];
   const labels = d.labels || {};
   const via = d.via_groups || [], wide = d.cluster_wide_groups || [], direct = d.direct_grants || [];
-  // PLATFORM-CLASSIFICATION (#255, #353): Home reads the stored flags — a Group's system: rule, a User's is_platform_user — and never decides
+  // PLATFORM-CLASSIFICATION (#255, #353): Home reads the stored flags — a Group's system: rule, a User's platformUsers — and never decides
   const people = direct.filter((x) => !x.is_platform);
   // Virtual `system:` groups authorise access but hold no person: badged in the table, folded on the
   // cluster-wide line (the deployed demo-prod page listed 54 bindings, 41 of them these — the CRC walk).
@@ -7278,6 +7279,36 @@ function sortableTh(label, key, activeKey, dir, group, extraClass) {
   </th>`;
 }
 
+/* Where a platform list comes from (#255): the shipped defaults, the keys this estate set beside or in place
+   of them, and the ConfigMap it was read from — all from the server's summary (`platform_*_source`), so the
+   sentence is the configuration's and never a fixed list that is wrong on an estate that added to it. */
+// PLATFORM-CLASSIFICATION (#255, #353): the platform notes name their source
+function platformListSource(src, stanza, defaults) {
+  const keys = (list) => list.map((k) => `<code>${esc(stanza)}.${esc(k)}</code>`).join(" and ");
+  const s = src || {};
+  const replaced = s.replaced || [], additional = s.additional || [];
+  return (replaced.length ? `the shipped defaults with ${keys(replaced)} replaced` : `${defaults}, the shipped defaults`)
+    + (additional.length ? `, plus this estate's ${keys(additional)}` : "")
+    + (s.configMap ? `, read from the ConfigMap <code>${esc(s.configMap.name)}</code> (key <code>${esc(s.configMap.key)}</code>)` : "");
+}
+
+/* The direct-user section's platform note (#255): how many grants the platform's identities hold, where that
+   list comes from, and any `additional*` entry no User subject on this cluster matches — the namespace index's
+   idiom for a stale pattern. Wide tier only: at self both fields are null, with the count. */
+function platformUsersNote(ub) {
+  const stale = ub.platform_users_unmatched || {};
+  const axes = Object.keys(stale).filter((k) => (stale[k] || []).length);
+  if (!ub.excluded_platform && !axes.length) return "";
+  const n = ub.excluded_platform || 0;
+  const staleLine = !axes.length ? "" : `<div class="mt-2">⚠ ${axes
+    .map((axis) => `<code>${esc(axis)}</code>: ${stale[axis].map((v) => `<code>${esc(v)}</code>`).join(", ")}`)
+    .join("; ")} ${axes.length === 1 && stale[axes[0]].length === 1 ? "is" : "are"} not currently matched by any
+    User subject on a binding in this cluster; keep planned entries, and check unexpected ones.</div>`;
+  return `${n} platform identit${n === 1 ? "y" : "ies"} excluded — the cluster's own and break-glass identities,
+    with nowhere to migrate to. <span class="muted">· ${platformListSource(ub.platform_users_source, "platformUsers",
+      "<code>system:*</code> and seven named ones")}.</span>${staleLine}`;
+}
+
 /* Roles granted directly to a person, ranked by risk. */
 function directUserGrants(ub) {
   if (!ub) return "";
@@ -7345,6 +7376,7 @@ function directUserGrants(ub) {
   };
   const sorted = sortBy(rows.filter((r) => r !== wide), NS_SORT[view.nsSort] || NS_SORT.risk, view.nsDir);
   const sortedGrants = grantsSorted(ub);
+  const platformNote = platformUsersNote(ub);
 
   if (!rows.length) {
     return `<section class="card">
@@ -7355,9 +7387,7 @@ function directUserGrants(ub) {
         Every role on this cluster is granted to a group. That is what makes offboarding
         a single action: removing someone from an LDAP group revokes their access
         everywhere at once.
-        ${ub.excluded_platform ? `<br><span class="muted">${ub.excluded_platform} platform
-          identit${ub.excluded_platform === 1 ? "y" : "ies"} excluded — system components
-          and <code>kubeadmin</code> are break-glass, with nowhere to migrate to.</span>` : ""}
+        ${platformNote ? `<div class="mt-4" id="du-platform-note">${platformNote}</div>` : ""}
       </div>
     </section>`;
   }
@@ -7463,10 +7493,7 @@ function directUserGrants(ub) {
       // told where the finding went rather than shown a header over nothing.
       : `<div class="empty-note">No namespace holds a direct grant on this cluster. Every finding here is at
           the cluster scope, in the card above.</div>`}
-    ${ub.excluded_platform ? `<div class="filterbar-note mt-4">
-      ${ub.excluded_platform} platform identit${ub.excluded_platform === 1 ? "y" : "ies"}
-      excluded — system components and <code>kubeadmin</code> are break-glass and
-      cluster-internal, with nowhere to migrate to.</div>` : ""}
+    ${platformNote ? `<div class="filterbar-note mt-4" id="du-platform-note">${platformNote}</div>` : ""}
   </section>
 
   <section class="card">

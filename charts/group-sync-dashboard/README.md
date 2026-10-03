@@ -722,6 +722,32 @@ chart lands.
 | `argocd.preservePVC` | `true` | three sync-options on both PVCs (the data claim and, since 0.36.1, the report artefacts claim) — see [Deploying with ArgoCD](#deploying-with-argocd) |
 | `argocd.serverSideApplyInjectedCA` | `true` | lets the CA operator keep ownership of the `data` it writes. **Not sufficient alone** — the Application also needs an `ignoreDifferences` entry |
 
+### Platform identities — `platformNamespaces` and `platformUsers`
+
+Which namespaces and which users are the cluster's own rather than a workload's or a person's (#255). A
+platform namespace is hidden by default on the Namespace audit index and on Home (counted, one control away);
+a ServiceAccount in one, and a platform user, are never an unmanaged finding; a platform user's direct grants
+are counted as excluded instead of joining the direct-user worklist and its alert. Every key is set in this
+release's values file and takes effect when the release is rolled out through its deployment pipeline.
+
+| Key | Default | Notes |
+|---|---|---|
+| `platformNamespaces.prefixes`, `.suffixes`, `.names` | unset: `openshift-`, `kube-`; none; `default`, `openshift`, `kube-system`, `kube-public`, `kube-node-lease` | set, each REPLACES its shipped default (an empty list means none) |
+| `platformNamespaces.additionalPrefixes`, `.additionalSuffixes`, `.additionalNames` | `[]` | APPEND to the defaults: what an estate usually wants |
+| `platformUsers.prefixes`, `.names` | unset: `system:`; `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin`, `kube:admin` | set, each REPLACES its shipped default (an empty list means none). `kubeadmin` and `kube:admin` are one identity: OpenShift's break-glass login signs in as `kube:admin` outside CRC |
+| `platformUsers.additionalPrefixes`, `.additionalNames` | `[]` | APPEND; for example a bind or break-glass account |
+| `platformNamespaces.existingConfigMap.enabled`, `platformUsers.existingConfigMap.enabled` | `false` | read that stanza's keys from a ConfigMap you own instead, as YAML under one key; refused at render beside any list of the same stanza |
+| `….existingConfigMap.name` | `""` | the ConfigMap, in the release namespace; required when enabled, and the pod does not start while it is missing |
+| `….existingConfigMap.key` | `platform-namespaces.yaml`, `platform-users.yaml` | the key holding the YAML; a missing key or a typo inside it stops the start with a message naming the ConfigMap and the key |
+| `….existingConfigMap.revision` | `""` | free text: change it after editing the ConfigMap and roll the release out, and the pod restarts and reads the new list. The ConfigMap is read once, at start, and the chart cannot see inside it |
+
+Matching is plain prefix, suffix (namespaces only) and exact name: no globs, no regular expressions, and a
+value with `*`, `?`, `[` or `]` is refused. Each list is a YAML list; a user name may contain a comma, so a
+`platformUsers` string is refused rather than split. An `additional*` entry that matches nothing on a cluster
+is reported on that cluster's Namespace audit tab — for namespaces against its namespaces, for users against
+the User subjects on its bindings. A ConfigMap is mounted as a volume (whole, no `subPath`), so it needs no
+permission beyond what the chart already renders.
+
 ### Unmanaged-grant discovery
 
 Read-only, in every mode. This feature finds hand-made access grants and reports them, and
@@ -735,8 +761,8 @@ and nothing on the cluster reports it. Nothing else about how a grant was applie
 a Helm, OLM or Argo CD label, not a binding's name; a legitimate one is silenced by labelling its
 binding `rbac.ocp.io/config-source=<who decided>`, as this chart labels its own
 RBAC. The platform's own identities are never a finding — the operator's long-standing rule: a
-ServiceAccount in a namespace `platformNamespaces` names (the defaults below, plus the estate's
-`additionalPrefixes`/`additionalSuffixes`/`additionalNames`), a `system:` user or `kubeadmin` join the
+ServiceAccount in a namespace `platformNamespaces` names and a user `platformUsers` names (the
+defaults and the estate's additions, in the section above; a `system:` user, `kubeadmin` and `kube:admin` by default) join the
 built-in tier. For a Group subject the classification also requires at least one *managed* Group
 binding to exist on that cluster, labelled by something other than this chart, so a cluster that has
 never used config-source labels reports no Group finding rather than flagging every binding on it
