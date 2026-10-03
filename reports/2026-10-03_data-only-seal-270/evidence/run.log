@@ -1,0 +1,18 @@
+== 2026-10-03T22:04:47Z before
+group-sync-dashboard-backup-offsite 7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts 08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+grafana-openshift-grafana-deployment docker.io/grafana/grafana@sha256:0f86bada30d65ef9d0183b90c1e2682ac92d53d95da8bed322b984ea78a4a73a 1/1
+grafana-operator-controller-manager-v5 ghcr.io/grafana/grafana-operator@sha256:e72d11ac579a000fe0ddcc0c3341a5103a1c93a28fbc394dc7c7009ed071d1a7 1/1
+group-sync-dashboard quay.io/ephico2real/group-sync-dashboard:4.1.0 1/1
+group-sync-dashboard-recovery quay.io/ephico2real/group-sync-dashboard:4.1.0 /0
+group-sync-dashboard-report quay.io/ephico2real/group-sync-dashboard-report:4.1.0 1/1
+mock-openshift image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test 1/1
+mock-privateca image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test 1/1
+mock-selfsigned image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test 1/1
+mock-trusted image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test 1/1
+== 2026-10-03T22:04:52Z runs: report=groups cluster=dashboard viewer=dana.lee via deploy/group-sync-dashboard-report
+== 2026-10-03T22:05:14Z after
+group-sync-dashboard-backup-offsite 7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts 08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
