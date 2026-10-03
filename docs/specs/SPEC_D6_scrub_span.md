@@ -538,10 +538,13 @@ the existing outcome and failure sentence are still reported.
   they are a bounded measurement of its fifteen paths, not proof of safety for other remote texts. The added tests
   exercise both the failure and review renderers. The original spec body remains unchanged.
 
-- **#244's implementation (SPEC_D5) adds one call site** in `gsd/poller.py`, the CA warning's `event` in the
-  discovery cycle: with it applied, `event` and `failure` have 46 call sites in 6 consuming modules. The counts in
-  the notes below are as each change left them; the live count is this one, and
+- **#542's implementation (SPEC_H1) adds two call sites** in `gsd/api.py`, the audit lines of the page's deletes
+  (`report-run-deleted`, `db-copy-deleted`): with it applied, `event` and `failure` have
+  48 call sites in 7 consuming modules. The counts in the notes below are as each change left them; the live count is this one, and
   `tests/test_scrub_span_spec.py#test_emit_callsite_measurement` holds it.
+
+- **#244's implementation (SPEC_D5) adds one call site** in `gsd/poller.py`, the CA warning's `event` in the
+  discovery cycle: with it applied, `event` and `failure` have 46 call sites in 6 consuming modules.
 
 - **Phase 1's notes, as #479 merged them, follow.** Where they describe the refusal, `known_text`, `WORDS` or `SAYS`, the
   notes above supersede them.

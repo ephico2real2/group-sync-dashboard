@@ -4,7 +4,8 @@ Its own contract, held by tests/test_reporting_server.py the way tests/test_api_
 the dashboard's: every route documented with a first-line sentence, every Query described, exactly
 two non-GETs — POST /report/api/runs, the one write (the trigger that must not live on the dashboard),
 and POST /report/api/preview, read-only (a build for the totals; #143) — and the three unauthenticated
-paths listed by name. Auth is a dependency (`principal`), so a route
+paths listed by name. With `housekeeping_enabled` (#542) two more, for the dashboard's service token only:
+DELETE /report/api/runs/{run_id} and POST /report/api/runs/cleanup. Auth is a dependency (`principal`), so a route
 cannot be added without saying who may call it.
 """
 
@@ -28,7 +29,8 @@ from pydantic import BaseModel, Field, StringConstraints
 from .. import TITLE, __version__
 from ..activity import USER_HEADER
 from . import REPORT_PREFIX, TICKET_HEADER
-from .artifacts import FORMATS, ArtifactStore, Run, new_run_id
+from ..housekeeping import CleanupChanged, RunCleanupRequest, set_digest
+from .artifacts import FORMATS, ArtifactStore, Run, RunInFlight, new_run_id
 from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
 from .catalogue.common import validate_selector_map
 from .config import ReportSettings, load_report_settings, retention_overrides
@@ -158,6 +160,13 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
     def service_only(p: Principal = Depends(principal)) -> Principal:
         if p.kind != "service":
             raise HTTPException(status_code=403, detail="the usage feed is read by the dashboard, not by viewers")
+        return p
+
+    def dashboard_only(p: Principal = Depends(principal)) -> Principal:
+        # #542: the tier a deletion needs (cluster-admin) is decided in the dashboard, which holds the cluster
+        # credential this service does not; a viewer's ticket carries only the wide tier, so it never deletes.
+        if p.kind != "service":
+            raise HTTPException(status_code=403, detail="report runs are deleted through the dashboard, not by viewers")
         return p
 
     # -- probes and metrics (unauthenticated; reachable only on the report Service) -------------
@@ -607,6 +616,49 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         if download:
             headers["Content-Disposition"] = f'attachment; filename="{name}"'
         return Response(data, media_type=media, headers=headers)
+
+    # -- the page's deletes (#542, docs/specs/SPEC_H1_gui_cleanup.md) --------------------------------
+
+    def _plan_view(plan: list[Run]) -> dict:
+        items = [{"id": r.id, "report": r.report, "cluster": r.cluster, "schedule": r.schedule, "status": r.status,
+                  "finished_at": r.finished_at, "bytes": sum((r.bytes or {}).values())} for r in plan]
+        return {"items": items, "count": len(items), "bytes": sum(i["bytes"] for i in items),
+                "digest": set_digest(r.id for r in plan)}
+
+    if settings.housekeeping_enabled:
+        @app.delete(f"{REPORT_PREFIX}/api/runs/{{run_id}}")
+        def delete_run(run_id: str, p: Principal = Depends(dashboard_only)) -> dict:
+            """Delete one finished run and its files, at the dashboard's request; the service token only.
+
+            The dashboard has decided the cluster-admin tier and records who asked. A queued or running run is
+            the worker's: 409, as retention never deletes one either. 404 when there is no such run."""
+            try:
+                run = store.delete(run_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="no such run") from exc
+            except RunInFlight as exc:
+                raise HTTPException(status_code=409, detail=f"run {run_id} is {exc.run.status}: a queued or running "
+                                                            "run is the worker's and is not deleted") from exc
+            log.info("deleted report run %s at the dashboard's request", run_id)
+            return run.public()
+
+        @app.post(f"{REPORT_PREFIX}/api/runs/cleanup")
+        def cleanup_runs(body: RunCleanupRequest, p: Principal = Depends(dashboard_only)) -> dict:
+            """Preview a one-off cleanup of finished runs, or delete exactly the previewed set; the service token only.
+
+            Without `confirm` nothing is deleted and the answer is the set with its digest. With the digest, the
+            set is computed again under the store's lock and deleted only if it is the same set; otherwise 409
+            with the set as it is now, and nothing deleted."""
+            try:
+                plan = store.cleanup(scope=body.scope, older_than_days=body.older_than_days,
+                                     keep_newest=body.keep_newest, now=now(), confirm=body.confirm)
+            except CleanupChanged as exc:
+                raise HTTPException(status_code=409, detail={
+                    "message": "the runs this cleanup would delete changed since the preview; nothing was deleted",
+                    "preview": _plan_view(exc.plan)}) from exc
+            if body.confirm is not None:
+                log.info("deleted %d report run(s) in a cleanup at the dashboard's request", len(plan))
+            return {"preview": body.confirm is None, **_plan_view(plan)}
 
     # -- the dashboard's pull -------------------------------------------------------------------
 

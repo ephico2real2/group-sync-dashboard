@@ -1291,6 +1291,29 @@ reporting is off; 403 without the proxy.
 
 Query: `limit` (1–5000, default 200), `offset`.
 
+### Deleting report runs and database copies (#542, `housekeeping.enabled`)
+
+Five routes, registered only when the chart's `housekeeping.enabled` is on (its default; off, they do not
+exist and `features.housekeeping` on `/api/version` is `false`). Each needs a proxy-verified identity and the
+**cluster-admin tier** (#322): below it, `403` with the tier's sentence, `For cluster administrators only. …`;
+with no identity to record, or with `visibility.enabled` false, `403` for everyone. The four writes also need the
+`X-GSD-Interaction` header the page sends (`403` without it), and a `POST` body must be `application/json`.
+A one-off cleanup: nothing is saved, and `reporting.retention` and `config.backup` stay the standing policy.
+Every deleted item is one log line, `report-run-deleted run=… report=… cluster=… schedule=… bytes=… by=<viewer>`
+or `db-copy-deleted kind=… copy=… directory=… bytes=… by=<viewer>`, and one count in
+`gsd_housekeeping_deleted_total{kind}` (`report-run`, `backup`, `pre-upgrade`, `pre-restore`; no names).
+
+| Method and path | What |
+|---|---|
+| `GET /api/housekeeping/copies` | the copies on the answering pod's data volume, newest first: `{"pod", "directories": {"backup", "pre-upgrade", "pre-restore"}, "copies": [{"kind", "name", "directory", "type", "bytes", "at", "guarded"}]}`. The directories are `config.backup.dir` (`null` when backups are off) and `pre-upgrade/` and `pre-restore/` beside the database. A copy is a `gsd-*.db` backup, a `pre-upgrade-*.db` copy, or in `pre-restore/` a restore's kept set (a `<stamp>/` directory) or a copy moved aside there (`*.db`); a `.sha256` goes with its copy, and a `.tmp` (a writer's unfinished file), a hidden entry and a symlink are never listed. `guarded` is the reason the newest copy of each directory is kept, else `null` |
+| `DELETE /api/housekeeping/copies/{kind}/{name}` | delete one listed copy (a file with its `.sha256`, or a kept set whole): `200` `{"deleted": {…}}`; `409` with the reason for the guarded one; `404` for a name that is not listed, so `..`, a slash or a symlink never reaches a file |
+| `POST /api/housekeeping/copies/cleanup` | `{"kinds": ["backup", "pre-upgrade", "pre-restore"], "older_than_days": 0, "confirm": null}`: without `confirm`, the preview `{"preview": true, "items", "count", "bytes", "digest", "kept"}` (`kept`: the guarded copies in scope); with `confirm` set to that digest, the same set is computed again and deleted, `{"preview": false, …, "failed": []}`, or `409` `{"detail": {"message", "preview"}}` with the set as it is now and nothing deleted |
+| `DELETE /api/housekeeping/reports/{run_id}` | delete one finished report run and its files through the report service: `200` `{"deleted": {…}}`; `409` for a queued or running run; `404` for none; `502` when the report service cannot be reached; `404` when reporting is off |
+| `POST /api/housekeeping/reports/cleanup` | `{"scope": "all" \| "manual" \| "schedule:<name>", "older_than_days": 0, "keep_newest": 0, "confirm": null}`: finished runs completed more than `older_than_days` ago and beyond the newest `keep_newest` of their (schedule, cluster), manual runs being one group per cluster; the preview and the confirm as for copies, computed by the report service under the lock its retention prunes under. A schedule no longer configured can still be named, so a retired schedule's runs can be cleaned up |
+
+The `digest` is the sha256 of the set's ids sorted, one per line (`<kind>/<name>` for a copy, the run id for a
+run): a confirm deletes exactly the previewed set or nothing.
+
 ## The report service's API
 
 Everything under `/report` is served by the **report service**, a second pod behind the same
@@ -1307,6 +1330,7 @@ the three probe paths, which are reachable only on the report Service. One line 
 | `GET /report/api/runs`, `GET /report/api/runs/{id}` | ticket or token | runs newest first; one run's status, timings, sha256, artefact sizes and its standing under retention (`expires_at`, `retained_by`, below) |
 | `GET /report/api/runs/{id}/artifact?format=json\|html\|pdf` | ticket or token | the artefact, `Cache-Control: no-store`, `X-GSD-Report-SHA256`, as an attachment |
 | `GET /report/api/usage?since_id=&limit=` | **token only** | finished runs for the dashboard's pull; viewers read them from the dashboard at the usage tier |
+| `DELETE /report/api/runs/{id}`, `POST /report/api/runs/cleanup` | **token only**, with `housekeeping.enabled` | the dashboard's deletes (#542, above): one finished run, or a cleanup's preview and confirm. A viewer's ticket is refused (`403`): the cluster-admin tier is decided by the dashboard, which holds the cluster credential this service does not |
 
 **A run's standing under retention** (#229, the Library tab): every run carries `expires_at` — the
 **earliest** instant it can be deleted, `finished_at` (whole second) + 1 s + the age bound, `null` when no

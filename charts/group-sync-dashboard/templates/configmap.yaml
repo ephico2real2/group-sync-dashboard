@@ -89,6 +89,8 @@ data:
     # Clusters as labelled Secrets (#230, SPEC_S1): the discovery switch; the Role is cluster-secrets-rbac.yaml.
     clusterSecretsEnabled: {{ .Values.clusterConfig.secrets.enabled }}
     clusterSecretsWritesEnabled: {{ .Values.clusterConfig.secrets.writes.enabled }}
+    # The page's deletes of report runs and database copies (#542, SPEC_H1), for the cluster-admin tier.
+    housekeepingEnabled: {{ .Values.housekeeping.enabled }}
     # The fleet account (SPEC_S3 §3.1) and what saTokenLookup reads (SPEC_S4b): the username and the
     # password Secret's ADDRESS — the password itself is read at connect time through the grant
     # fleet-account-rbac.yaml renders, and never rendered anywhere.

@@ -666,6 +666,10 @@ class Settings:
     # (test_r6_the_api_is_read_only, the chart's only-write-is-the-lease guard): off, no write route is
     # registered and the chart renders no write verb; on, the four routes and the three verbs exist.
     cluster_secrets_writes_enabled: bool = False
+    # SPEC_H1 (#542): the page's deletes of report runs and database copies, for the cluster-admin tier. OFF here so
+    # the code's default API stays GET-only (test_r6_the_api_is_read_only); the chart's `housekeeping.enabled`
+    # renders it ON (no RBAC, credential or second image: the deletion is file work in the pods' own volumes).
+    housekeeping_enabled: bool = False
     # SPEC_S3 §3.1 / SPEC_S4b: the fleet account and the ADDRESS of its password (never the value —
     # read at connect time through the chart's one-Secret grant), and what saTokenLookup reads on
     # every target. `fleet_password_secret_namespace` empty means the pod's own namespace;
@@ -1796,6 +1800,7 @@ def load_settings(path: str | Path) -> Settings:
         kyverno_enabled=_bool_setting(raw, "GSD_KYVERNO_ENABLED", "kyvernoEnabled", True),
         cluster_secrets_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_ENABLED", "clusterSecretsEnabled", True),
         cluster_secrets_writes_enabled=_bool_setting(raw, "GSD_CLUSTER_SECRETS_WRITES_ENABLED", "clusterSecretsWritesEnabled", False),
+        housekeeping_enabled=_bool_setting(raw, "GSD_HOUSEKEEPING_ENABLED", "housekeepingEnabled", False),
         fleet_account_username=_str_setting(raw, "GSD_FLEET_ACCOUNT_USERNAME", "fleetAccountUsername", ""),
         fleet_password_secret_namespace=_str_setting(raw, "GSD_FLEET_PASSWORD_SECRET_NAMESPACE", "fleetPasswordSecretNamespace", ""),
         fleet_password_secret_name=_str_setting(raw, "GSD_FLEET_PASSWORD_SECRET_NAME", "fleetPasswordSecretName", "gsd-fleet-account"),
