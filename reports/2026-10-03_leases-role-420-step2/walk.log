@@ -1,0 +1,77 @@
+# SPEC_G4 §5 step 2 walk (#420), CRC lab; written by scripts/run.sh
+# started 2026-10-03T16:40:53Z; kube context crc-admin; main before the merge 71204b98d97ed856f61a11cbaef6f78802ce4bbb
+
+## Before  (2026-10-03T16:40:53Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get roles.rbac.authorization.k8s.io group-sync-dashboard-leases -n group-sync-dashboard -o name
+role.rbac.authorization.k8s.io/group-sync-dashboard-leases
+$ oc get clusterroles.rbac.authorization.k8s.io group-sync-dashboard-reader -o json | jq -c '[.rules[] | select((.resources // []) | index("leases"))]'
+[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get","create","update"]}]
+the running pod: group-sync-dashboard-7dc7f74c5c-sj4xx
+
+## The T420-8 recorders  (2026-10-03T16:40:54Z)
+recorders armed at 2026-10-03T16:40:54Z
+
+## Waiting for the merge to sync (the rule gone from the ClusterRole)  (2026-10-03T16:40:54Z)
+synced ec51f50b6b8176cffa7cfdc7d672ecd7870b6ce8 Synced Healthy with no Lease rule in the ClusterRole, 739 s after arming, at 2026-10-03T16:53:13Z
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+deployment "group-sync-dashboard" successfully rolled out
+recorded 60 s more, until 2026-10-03T16:54:13Z
+
+## T420-8: the trace and the logs  (2026-10-03T16:54:13Z)
+$ awk '{print $2, $4}' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk420b/reports/2026-10-03_leases-role-420-step2/renew-trace.log' | uniq -c | tail -12
+ 353 group-sync-dashboard-7dc7f74c5c-sj4xx 13
+  24 group-sync-dashboard-c8575bf57-cvb5v 14
+$ awk '{print $2}' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk420b/reports/2026-10-03_leases-role-420-step2/renew-trace.log' | sort -u
+group-sync-dashboard-7dc7f74c5c-sj4xx
+group-sync-dashboard-c8575bf57-cvb5v
+the new pod: group-sync-dashboard-c8575bf57-cvb5v (the old: group-sync-dashboard-7dc7f74c5c-sj4xx)
+$ grep -cE 'forbidden reading lease|could not renew lease|lost leadership|fleet-state-unavailable' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk420b/reports/2026-10-03_leases-role-420-step2/old-pod-follow.log' || true
+0
+$ oc logs -n group-sync-dashboard group-sync-dashboard-c8575bf57-cvb5v -c dashboard | grep -cE 'forbidden reading lease|could not renew lease|lost leadership|fleet-state-unavailable' || true
+0
+$ oc logs -n group-sync-dashboard group-sync-dashboard-c8575bf57-cvb5v -c dashboard | grep -iE 'lease|leader' | head -5
+2026-10-03 12:53:02,916-0400 DEBUG   gsd.leader leader election: group-sync-dashboard-7dc7f74c5c-sj4xx holds lease group-sync-dashboard/group-sync-dashboard, renewed 10s of 30s ago — standing by, not polling
+2026-10-03 12:53:04,014-0400 DEBUG   gsd.poller dashboard: not leader, skipping poll
+2026-10-03 12:53:04,015-0400 DEBUG   gsd.poller mock-privateca: not leader, skipping poll
+2026-10-03 12:53:04,016-0400 DEBUG   gsd.poller mock-selfsigned: not leader, skipping poll
+2026-10-03 12:53:04,017-0400 DEBUG   gsd.poller mock-trusted: not leader, skipping poll
+
+## T420-7: the narrowing  (2026-10-03T16:54:13Z)
+$ oc get clusterroles.rbac.authorization.k8s.io group-sync-dashboard-reader -o jsonpath='{.rules[*].resources}'; echo
+["groupsyncs"] ["namespaceconfigs","groupconfigs"] ["groups"] ["users"] ["oauths"] ["rolebindings","clusterrolebindings"] ["namespaces"] ["policyreports","clusterpolicyreports"] ["reports","clusterreports"] ["validatingpolicies","mutatingpolicies","generatingpolicies","deletingpolicies","imagevalidatingpolicies","namespacedvalidatingpolicies","namespacedmutatingpolicies","namespacedgeneratingpolicies","namespaceddeletingpolicies","namespacedimagevalidatingpolicies"]
+group-sync-dashboard get in default: no
+group-sync-dashboard create in default: no
+group-sync-dashboard update in default: no
+group-sync-dashboard get in kube-system: no
+group-sync-dashboard create in kube-system: no
+group-sync-dashboard update in kube-system: no
+group-sync-dashboard get in kube-node-lease: no
+group-sync-dashboard create in kube-node-lease: no
+group-sync-dashboard update in kube-node-lease: no
+group-sync-dashboard get in openshift-kube-controller-manager: no
+group-sync-dashboard create in openshift-kube-controller-manager: no
+group-sync-dashboard update in openshift-kube-controller-manager: no
+group-sync-dashboard get in openshift-kube-scheduler: no
+group-sync-dashboard create in openshift-kube-scheduler: no
+group-sync-dashboard update in openshift-kube-scheduler: no
+group-sync-dashboard get in group-sync-dashboard: yes
+group-sync-dashboard create in group-sync-dashboard: yes
+group-sync-dashboard update in group-sync-dashboard: yes
+
+## After  (2026-10-03T16:54:15Z)
+$ oc get leases.coordination.k8s.io -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,HOLDER:.spec.holderIdentity,RENEW:.spec.renewTime
+NAME                                                                                HOLDER                                                                                         RENEW
+grafana-operator-a3ff8cb167045bd296db1493d0f15dc4ab61f57a6c217969fef5964ac9e3daae   grafana-operator-controller-manager-v5-58748cb7d4-wlpf9_9e8d0b2c-0716-4537-b04a-5352ae8ab3de   2026-10-03T16:54:13.939947Z
+group-sync-dashboard                                                                group-sync-dashboard-c8575bf57-cvb5v                                                           2026-10-03T16:54:13.211213Z
+gsd-fleet-666f1ba7f2fdead0                                                                                                                                                         2026-10-03T03:07:56.584236Z
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+walk done at 2026-10-03T16:54:15Z
