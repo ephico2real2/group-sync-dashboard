@@ -104,59 +104,157 @@ diverge, so Usage gets the higher bar.
 
 ## 3. What each reader sees
 
-| tab | ordinary reader | `cluster-reader` (auditor) | `cluster-admin` |
-|---|---|---|---|
-| Groups | their own groups | all | all |
-| Namespace audit | grants affecting them | all | all |
-| Logins | their own attempts | all | all |
-| Usage | their own activity | **their own activity** | all |
-| Reports | *For administrators only* | all | all |
-| Overview | *For administrators only* | all | all |
-| Access granted | their own grants, via their groups | all | all |
-| RBAC policy | *For administrators only* | all | all |
-| KPIs | *For cluster administrators only* | **absent** | all |
-| Cluster Configurations | *For cluster administrators only* | **absent** | all |
+One row for every page the dashboard draws: its fourteen tabs, in the order of the tab strip, then the two pages
+that have no tab of their own (the Reporting status page, opened from Reports, and the search page, opened from the
+search box). The reader columns are §4's personas. A reader with no identity never sees the page: the proxy admits
+nobody to `/` without a session, and `charts/group-sync-dashboard/values.yaml#skipAuthRegex` lists the only paths it
+lets through. Reports, Library and Reporting status exist only with reporting on (`reporting.enabled`, on by
+default); with it off, no reader is drawn those two tabs. Each reader cell is one word:
+
+| word | what the reader gets |
+|---|---|
+| all | the page, with the whole cluster's rows |
+| self | the page, narrowed to the reader's own rows and saying so |
+| refused | the tab is drawn, and the page is a named refusal card |
+| absent | no tab is drawn; reached by URL, the page is the refusal card |
+
+The page decides none of this (§7): it draws what `/api/whoami` and each response's `scope` declare, and every
+refusal is the server's 403 first. `local-development/tests/test_access_declaration.py` holds this table to the tabs and
+pages `local-development/gsd/static/index.html` can draw, and `local-development/tests/test_ui.py#TestTheDeclaredTabs`
+loads every page as every persona and holds the tab strip and each refusal card to it.
+
+| page | tab | self | auditor | usage | cluster-admin | what a narrowed or refused reader sees |
+|---|---|---|---|---|---|---|
+| home | Home | self | self | self | self | their own access, at every tier by design (#158): an administrator's Home is theirs, never everyone's |
+| overview | Overview | refused | all | refused | all | the refusal card: the Overview is the cluster's own health |
+| kpi | KPIs | absent | absent | absent | all | no tab; by URL, the refusal card |
+| groups | Groups | self | all | self | all | the groups they belong to |
+| users | Users | self | all | self | all | their own row |
+| bindings | Access granted | self | all | self | all | their own grants, through their groups, with the group named |
+| policy | RBAC policy | refused | all | refused | all | the refusal card: the whole binding surface has no per-reader subset |
+| kyverno | Kyverno | refused | all | refused | all | the refusal card: a policy finding is about the cluster, not the reader |
+| nsaudit | Namespace audit | self | all | self | all | the namespaces and grants that reach them |
+| logins | Logins | self | all | self | all | their own attempts |
+| usage | Usage | self | self | all | all | their own activity; the auditor too, because Usage is the usage tier's (§2) |
+| reports | Reports | refused | all | refused | all | the refusal card: reports are documents about the cluster |
+| library | Library | refused | all | refused | all | the refusal card, as Reports |
+| clusters | Cluster Configurations | absent | absent | absent | all | no tab; by URL, the refusal card |
+| reporting | — | refused | all | refused | all | the refusal card, as Reports |
+| lookup | — | self | all | self | all | the search over their own groups, users and namespaces |
 
 Access granted is narrowed, not refused: a reader's own path — the bindings that reach them through
 their groups, with the group named — is what `require_admin_tier` deliberately never withheld, and
 since 0.10.0 the tab shows it (from their own `/users/{name}`), while the cluster-wide list behind
 `bindings/findings` stays the administrator tier and still answers a plain reader with the refusal.
 
-Two tabs are **refused** rather than narrowed, because their content is about the cluster rather
-than about any reader: the Overview is the cluster's own health, and RBAC policy is the whole
-binding surface against the policy operator — the cluster-wide list, which has no honest per-reader
-subset. (Access granted has one: a reader's own path, above.)
+The refused pages are refused rather than narrowed because their content is about the cluster rather
+than about any reader: the Overview is the cluster's own health, RBAC policy is the whole binding
+surface against the policy operator, Kyverno's findings are cluster-wide, and a report is a document
+over the whole cluster. None has an honest per-reader subset. (Access granted has one: a reader's own
+path, above.) KPIs and Cluster Configurations are left out of the strip rather than refused (#322):
+the tab is not drawn for a reader the cluster-admin tier refuses.
 
 ---
 
 ## 4. Endpoint by endpoint
 
-`scope` and `viewer` ride on every collection response so a client never has to guess.
+This section is the declaration: one row for every route the application registers, keyed by method and
+path, because `GET /api/clusterconfigs` and `POST /api/clusterconfigs` share a path and not a gate.
+`local-development/tests/test_access_declaration.py` builds the app with every switch that registers a route turned
+on, walks `app.routes`, and fails when a route has no row, when a row names a route the app does not serve, or when
+any persona is answered differently from its row. A route that ships without a gate, or with a lower one, fails
+CI. The table records the gates; it does not configure them (§10 does).
 
-| endpoint | at the self tier | at the wide tier |
+**The posture the rows describe:** the oauth-proxy on, `visibility.enabled: true`, the host cluster deciding
+(`inherit`, §11) for every cluster the dashboard reads, reporting on, for the six rows registered `writes on`,
+`clusterConfig.secrets.writes.enabled: true`, and, for the five rows registered `housekeeping on`, `housekeeping.enabled: true`
+(the chart's default) with each write carrying the page's `X-GSD-Interaction` header. §8 says what changes with the proxy or the restrictions off, and §11
+what a remote cluster's own policy changes; of these rows only `/api/alerts` reads every cluster, and its `scope` is
+the narrowest across them, so a `remote-sar` or `self-only` cluster that does not widen the reader makes it `self`.
+
+**The personas.** Each is one reader, so a path naming the reader's own group, user or namespace resolves:
+
+| persona | what it passes |
+|---|---|
+| no identity | nothing: the proxy is on and sent no `X-Forwarded-User`. In a deployment the proxy lets a request through without a session only on the paths `skipAuthRegex` lists; this column is the app's own answer behind it |
+| self | none of the three questions (§2) |
+| auditor | `visibility.adminSar` only: a `cluster-reader` |
+| usage | `visibility.usageAdminSar` only |
+| cluster-admin | `visibility.clusterAdminSar` only. It grants the wide view and Usage (#322), so a `cluster-admin`, who passes all three, is answered the same |
+
+**The words in the persona columns:**
+
+| word | the answer |
+|---|---|
+| all | 200, and the body's `scope` is `all` (`visibility.scope` on `/api/whoami`) |
+| self | 200, and the body's `scope` is `self` |
+| 200 | 200, with no `scope` in the body |
+| 403 | refused |
+| 308 | a redirect to `/api` |
+| admitted | past the gate: the write reaches its own checks, which its own tests hold |
+
+**gate** names the function in `local-development/gsd/api.py` the handler calls, or `none`, and the test checks that
+the handler calls it. **registered** is `always`, or `writes on` for the six routes that exist only with
+`clusterConfig.secrets.writes.enabled`. `scope` and `viewer` ride on every collection response, so a client never has
+to guess.
+
+| method | path | registered | gate | no identity | self | auditor | usage | cluster-admin | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| GET | `/api/clusters` | always | viewer_scope | 200 | 200 | 200 | 200 | 200 | reachable for everyone, because the cluster selector needs it on every tab; each row carries `visibility.scope` for this reader, and `operator_configs` is `null` below the wide tier |
+| GET | `/api/clusters/{cluster_id}/groupsyncs` | always | viewer_scope | 200 | 200 | 200 | 200 | 200 | full CR health at every tier, minus `ldap_filter` and `error_message` below the wide tier (below) |
+| GET | `/api/clusters/{cluster_id}/groupsyncs/{name}/events` | always | none | all | all | all | all | all | the same at every tier, by ruling |
+| GET | `/api/clusters/{cluster_id}/groups` | always | viewer_scope | 403 | self | all | self | all | at self, the groups they belong to |
+| GET | `/api/clusters/{cluster_id}/groups/{name}` | always | viewer_scope | 403 | self | all | self | all | at self, 403 unless a member; a member's 200 names the group's bindings (below) |
+| GET | `/api/clusters/{cluster_id}/users` | always | viewer_scope | 403 | self | all | self | all | at self, their own row (with `first_login_source`) |
+| GET | `/api/clusters/{cluster_id}/users/{name}` | always | viewer_scope | 403 | self | all | self | all | at self, 403 unless it is them; their own 200 names the bindings reaching them (below) |
+| GET | `/api/clusters/{cluster_id}/user-bindings` | always | viewer_scope | 403 | self | all | self | all | at self, their own grants |
+| GET | `/api/clusters/{cluster_id}/membership-changes` | always | viewer_scope | 403 | self | all | self | all | at self, changes affecting them |
+| GET | `/api/clusters/{cluster_id}/binding-changes` | always | viewer_scope | 403 | self | all | self | all | at self, rows naming them or a group they belong to |
+| GET | `/api/clusters/{cluster_id}/logins` | always | viewer_scope | 403 | self | all | self | all | at self, their own attempts |
+| GET | `/api/clusters/{cluster_id}/cluster-access` | always | viewer_scope | 403 | self | all | self | all | at self, their own gate status |
+| GET | `/api/clusters/{cluster_id}/namespaces` | always | viewer_scope | 403 | self | all | self | all | at self, the namespaces their memberships or grants reach |
+| GET | `/api/clusters/{cluster_id}/namespaces/{name}` | always | viewer_scope | 403 | self | all | self | all | at self, 403 before any lookup unless it reaches them; then their own paths only |
+| GET | `/api/clusters/{cluster_id}/home` | always | viewer_scope | 403 | self | all | self | all | the reader's own access at every tier; `scope` names the tier that decided |
+| GET | `/api/alerts` | always | viewer_scope | self | self | all | self | all | at self, the kinds in `SELF_ALERT_KINDS`, with the `reconcile_error` detail replaced by a generic sentence |
+| GET | `/api/whoami` | always | viewer_scope | 200 | self | all | self | all | their identity and declared tier; with no identity, no `visibility` claim |
+| GET | `/api/clusters/{cluster_id}/bindings/findings` | always | require_admin_tier | 403 | 403 | all | 403 | all | the cluster's whole binding surface |
+| GET | `/api/clusters/{cluster_id}/operator-configs` | always | require_admin_tier | 403 | 403 | all | 403 | all | the operator's configuration |
+| GET | `/api/clusters/{cluster_id}/kyverno` | always | require_admin_tier | 403 | 403 | all | 403 | all | Kyverno's policy findings, cluster-wide |
+| GET | `/api/report/ticket` | always | require_admin_tier | 403 | 403 | 200 | 403 | 200 | a signed ticket for the report service, bound to the viewer; 404 with reporting off |
+| GET | `/api/dashboard/activity` | always | usage_scope | 403 | self | self | all | all | at self, their own rows; `userActivity.visibility: all` widens it for everyone (§10) |
+| GET | `/api/dashboard/reports` | always | usage_scope | 403 | self | self | all | all | at self, their own report runs |
+| GET | `/api/kpi` | always | require_cluster_admin | 403 | 403 | 403 | 403 | all | the cluster-admin tier, whatever `visibility.enabled` says (§8) |
+| GET | `/api/clusterconfigs` | always | require_cluster_admin | 403 | 403 | 403 | 403 | all | the cluster-admin tier, whatever `visibility.enabled` says (§8) |
+| POST | `/api/clusterconfigs` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | an identity and the cluster-admin tier first, then the switch |
+| PUT | `/api/clusterconfigs/{name}/credential` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
+| DELETE | `/api/clusterconfigs/{name}` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
+| POST | `/api/clusterconfigs/test` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
+| POST | `/api/clusterconfigs/{name}/refresh` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
+| POST | `/api/clusterconfigs/{name}/rejoin` | writes on | _writes_gate | 403 | 403 | 403 | 403 | admitted | as above |
+| GET | `/api/housekeeping/copies` | housekeeping on | _housekeeping_gate | 403 | 403 | 403 | 403 | 200 | the database copies on this pod's volume (#542); an identity and the cluster-admin tier |
+| DELETE | `/api/housekeeping/copies/{kind}/{name}` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | an identity, the cluster-admin tier, then the page's header; the newest copy of each directory is refused (409) |
+| POST | `/api/housekeeping/copies/cleanup` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | as above; a preview without `confirm`, a delete of exactly that set with it (409 when it changed) |
+| DELETE | `/api/housekeeping/reports/{run_id}` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | as above; the report service deletes it at the dashboard's request with the service token |
+| POST | `/api/housekeeping/reports/cleanup` | housekeeping on | _housekeeping_write | 403 | 403 | 403 | 403 | admitted | as above |
+| GET | `/metrics` | always | none | 200 | 200 | 200 | 200 | 200 | public by ruling, so it carries no name |
+| GET | `/healthz` | always | none | 200 | 200 | 200 | 200 | 200 | the liveness probe |
+| GET | `/readyz` | always | none | 200 | 200 | 200 | 200 | 200 | the readiness probe |
+| GET | `/api/version` | always | none | 200 | 200 | 200 | 200 | 200 | the running build |
+| GET | `/api/openapi.json` | always | none | 200 | 200 | 200 | 200 | 200 | FastAPI's own schema route, behind the proxy like the data it describes |
+| GET | `/api` | always | none | 200 | 200 | 200 | 200 | 200 | the schema browser |
+| GET | `/api/redoc` | always | none | 200 | 200 | 200 | 200 | 200 | the reference rendering |
+| GET | `/api/docs` | always | none | 308 | 308 | 308 | 308 | 308 | the conventional path, redirected to `/api` |
+| GET | `/` | always | none | 200 | 200 | 200 | 200 | 200 | the page; it draws what `/api/whoami` declares (§3) |
+| GET | `/signed-out` | always | none | 200 | 200 | 200 | 200 | 200 | the proxy's sign-out target; it reads no identity header |
+| GET | `/static/index.html` | always | none | 200 | 200 | 200 | 200 | 200 | the page again, rendered, shadowing the raw file |
+| GET | `/static/signed-out.html` | always | none | 200 | 200 | 200 | 200 | 200 | the sign-out page again, rendered, shadowing the raw file |
+| GET | `/static/{path}` | always | none | 200 | 200 | 200 | 200 | 200 | the stylesheet, icon and vendored scripts (a mount; it refuses the page sources) |
+
+**Served by another service**, behind the same proxy, and not a route of this application:
+
+| path | served by | who is admitted |
 |---|---|---|
-| `/api/clusters/{c}/groups` | groups they belong to | all |
-| `/api/clusters/{c}/groups/{name}` | 403 unless a member — **and a member's 200 names the group's bindings**, see below | all |
-| `/api/clusters/{c}/users` | their own row (with `first_login_source`) | all |
-| `/api/clusters/{c}/users/{name}` | 403 unless it is them — **their own 200 names the bindings reaching them**, see below | all |
-| `/api/clusters/{c}/user-bindings` | their own grants | all |
-| `/api/clusters/{c}/membership-changes` | changes affecting them | all |
-| `/api/clusters/{c}/logins` | their own attempts | all |
-| `/api/clusters/{c}/cluster-access` | their own gate status | all |
-| `/api/alerts` | filtered to `SELF_ALERT_KINDS`; the `reconcile_error` detail is replaced with a generic sentence | all kinds, full detail |
-| `/api/dashboard/activity` | their own rows | all — **usage tier only** |
-| `/api/report/ticket` | **403** | a signed ticket for the report service, bound to this viewer |
-| `/api/dashboard/reports` | their own runs | all — **usage tier only**, like activity |
-| `/report/**` | the report service's API behind the same proxy, admitted only by a ticket (viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 | — |
-| `/api/clusters/{c}/bindings/findings` | **403** | all |
-| `/api/clusters/{c}/operator-configs` | **403** | all |
-| `/api/kpi` | **403** | **403** unless the reader passes the cluster-admin tier (#322) |
-| `/api/clusterconfigs` and its four write routes | **403** | **403** unless the reader passes the cluster-admin tier (#322); the writes also need `clusterConfig.secrets.writes.enabled` |
-| `/api/housekeeping/**`: the copies listing and the four delete routes (#542) | **403** | **403** unless the reader passes the cluster-admin tier (#322) with a proxy-verified identity; exist only with `housekeeping.enabled` |
-| `/api/clusters` | reachable; cluster-wide `operator_configs` withheld | full card |
-| `/api/clusters/{c}/groupsyncs` | full CR health **minus `ldap_filter` and `error_message`** | full row |
-| `/api/clusters/{c}/groupsyncs/{name}/events` | unchanged at both tiers | same |
-| `/api/whoami` | own identity + declared tier | same |
+| `/report/**` | the report service | a ticket from `/api/report/ticket` (a viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 |
 
 **Two deliberate asymmetries, both measured:**
 
@@ -228,7 +326,7 @@ narrower tier, because a tier that hides the reader's own access path has nothin
     │     resolver answers exactly "all"?       ──────────►  "all"
     │
     ├─ gsd/api.py#require_admin_tier  (request, cluster_id)   403 unless scope == "all"
-    │     used by: bindings/findings, operator-configs, mint ticket (/api/report/ticket)
+    │     used by: bindings/findings, operator-configs, kyverno, mint ticket (/api/report/ticket)
     │
     ├─ gsd/api.py#usage_scope                          the SECOND, independent tier
     │     userActivity.visibility == all?       ──────────►  "all"   (blunt override, wins)

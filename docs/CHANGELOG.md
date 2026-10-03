@@ -10,6 +10,16 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Every route and page declares its tier, and CI holds the code to it (#239, SPEC_G1).** `docs/ACCESS_CONTROL.md`
+  §4 has one row for each route the application registers (44 with the cluster-configuration writes on), keyed by
+  method and path, naming what each of five readers gets: no identity, self, auditor, usage and cluster-admin. §3 has
+  one row for each page: the fourteen tabs, the Reporting status page and the search page. A new test builds the app,
+  walks `app.routes` and requests every row as every reader, so a route with no row, a row for a route that is gone,
+  or a route answering a reader differently from its row fails the suite; a browser test holds each reader's tab
+  strip and refusal cards to §3, and the hidden-cluster sweep now covers every cluster route, `kyverno` included.
+  `SPEC_T1`'s status is `in progress`, with what #322 and #239 delivered. Nobody gains or loses a route, a row or a
+  tab: tests and docs only, no application or chart change.
+
 - **Turning recovery off brings the app back without a scheduler wait (#532, SPEC_E11 note 8, chart 0.65.1).** The
   app pod now carries the mirror of the recovery pod's required anti-affinity, so the scheduler re-queues it as soon
   as the recovery pod is deleted. On chart 0.65.0 the app pod waited for the scheduler's 5-minute unschedulable flush

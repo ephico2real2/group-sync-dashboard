@@ -2,12 +2,13 @@
 
 | | |
 |---|---|
-| Programme | Named dashboard tiers (#239), steps T1 / T2 / T3 — after the 2026-09 programme's ladder; T2 closes #114, T3 folds in #230's pair |
+| Programme | Named dashboard tiers (#239), steps T1 / T2 / T3 — after the 2026-09 programme's ladder. As first written, T2 closed #114 and T3 folded in #230's pair; both are superseded (the Delivered row) |
 | Batch | T — tiers |
 | Release | — (post-programme; each step its own PR and its own three-seat review) |
 | Version on release | app and chart minor bumps per step, assigned at each step's PR |
 | Issue | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) |
-| Status | specified |
+| Status | in progress |
+| Delivered | Step T3 by #322, in another shape: one `visibility.clusterAdminSar` question gates KPIs and the whole Cluster Configurations tab and grants the lower host tiers (SPEC_T2, released in app 0.35.0). The declaration T1 asked of `TIER_BY_SURFACE` — every route and tab with its tier, and a test failing on one left out — by #239 as SPEC_G1, in `docs/ACCESS_CONTROL.md` §3 and §4 rather than in code. Not built, and open for the operator on #239: the `TIER_BY_SURFACE` registry, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` and `usageAdminSar` → `adminSar` renames. #114 was closed as not planned on 2026-09-27. Re-derive any block below from main before building from it |
 | Source | this document is the orchestrator's own design, measured on CRC on 2026-09-20 with the commands quoted below; there is no separate design-agent output |
 
 ## How to read this spec
@@ -23,6 +24,10 @@ three pull requests. A deviation found necessary during implementation is writte
 same pull request, under "Orchestrator's notes", with the reason.
 
 ## Orchestrator's notes
+
+**2026-10-01 (#239, SPEC_G1): the status is `in progress`, not `specified`.** #322 delivered step T3 in another
+shape and SPEC_G1 delivers the declaration; the header's Delivered row says what, and what is not built. The body
+below is the design of 2026-09-20 and is kept as written.
 
 The operator's rulings this spec rests on, one line each, verbatim where quoted:
 
