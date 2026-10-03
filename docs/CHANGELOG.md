@@ -8,7 +8,9 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 4.0.0 — chart 0.66.4 — 2026-10-03
+
+- **Epic G: access declared, platform identities configured (#387).**
 
 - **The Lease grant leaves the ClusterRole (#420 step 2, Epic G #387, `docs/specs/SPEC_G4_namespaced_lease_grant.md`;
   chart 0.66.3, no application change; the narrowing the operator agreed to on #420).** The reader ClusterRole no
