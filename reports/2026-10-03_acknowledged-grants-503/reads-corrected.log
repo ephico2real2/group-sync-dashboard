@@ -1,0 +1,11 @@
+# Reads after walk.log, 2026-10-03 (the lab still on 3.3.0, aecc1c0564). walk.log's jq named fields the answer does not
+# have (name, namespace, user), and its metric pattern missed the alert series' severity label; these are the same
+# answers read with the right names. The self-tier read waited for developer's 70 s tier cache to expire after the
+# screenshot grant's delete.
+
+$ curl -H "X-Forwarded-User: dana.lee" /api/clusters/dashboard/user-bindings | jq -c .acknowledged_bindings
+[{"binding_kind":"ClusterRoleBinding","binding_namespace":"","binding_name":"group-sync-dashboard-cluster-poller","role_kind":"ClusterRole","role_name":"group-sync-dashboard-cluster-poller","user_name":"ocp-oauth-bind-serviceid","managed_source":"group-sync-operator-helm","exception":null},{"binding_kind":"RoleBinding","binding_namespace":"group-sync-operator","binding_name":"group-sync-dashboard-cluster-poller-token-reader","role_kind":"Role","role_name":"group-sync-dashboard-cluster-poller-token-reader","user_name":"ocp-oauth-bind-serviceid","managed_source":"group-sync-operator-helm","exception":null}]
+$ curl -sk https://<route>/metrics | grep direct_user_binding (dashboard)
+gsd_alerts_total{cluster="dashboard",kind="direct_user_binding",severity="warning"} 1.0
+$ (14:08:54Z) curl -H "X-Forwarded-User: developer" /api/clusters/dashboard/user-bindings, the self tier
+{"scope":"self","total":1,"acknowledged":null,"acknowledged_bindings":null,"acknowledged_truncated":null,"own":[{"binding_name":"user-settings-d46d9fe1-4afd-4a55-a736-0e40940110e5-rolebinding","binding_namespace":"openshift-console-user-settings","user_name":"developer"}]}

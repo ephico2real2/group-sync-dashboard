@@ -1,0 +1,118 @@
+# SPEC_G3 §5 walk (#503), CRC lab; written by scripts/run.sh
+# started 2026-10-03T14:04:16Z; kube context crc-admin; merge aecc1c05648944979b342b121b9ba75cedd03005; before 983df2ff848dea80e683b005b3966740b734f1da
+
+## Step 1: the facts (the Application already on the merge)  (2026-10-03T14:04:16Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount}'
+{"rev":"main","sync":"Synced","health":"Healthy","synced":"aecc1c05648944979b342b121b9ba75cedd03005","op":"Succeeded","retries":null}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"3.3.0","commit":"aecc1c0564"}
+
+## Step 2: before, the Application on lab/g3-before-walk = 983df2ff848dea80e683b005b3966740b734f1da (application 3.2.0)  (2026-10-03T14:04:17Z)
+$ git -C '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk503' push -q origin 983df2ff848dea80e683b005b3966740b734f1da:refs/heads/lab/g3-before-walk && echo pushed lab/g3-before-walk at 983df2ff848dea80e683b005b3966740b734f1da
+remote: 
+remote: Create a pull request for 'lab/g3-before-walk' on GitHub by visiting:        
+remote:      https://github.com/ephico2real2/group-sync-dashboard/pull/new/lab/g3-before-walk        
+remote: 
+pushed lab/g3-before-walk at 983df2ff848dea80e683b005b3966740b734f1da
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk503' && local-development/release-crc.sh --argocd lab/g3-before-walk --values environments/crc.yaml 2>&1 | tail -6
+14:04:21Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision aecc1c05648944979b342b121b9ba75cedd03005, want 983df2ff84) successfully synced (all tasks run)
+14:04:36Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+14:04:52Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard and 1 more resources
+14:05:07Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard-report
+14:05:22Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+met after 0 s at 2026-10-03T14:05:22Z: the Application synced the before revision
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+deployment "group-sync-dashboard" successfully rolled out
+met after 0 s at 2026-10-03T14:05:22Z: the pod runs 3.2.0
+met after 1 s at 2026-10-03T14:05:23Z: a refresh line for dashboard after the before revision
+
+## reads: before  (2026-10-03T14:05:23Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=10m | grep -E 'dashboard: [0-9]+ direct-user binding' | tail -1
+2026-10-03 10:05:16,813-0400 INFO    gsd.poller dashboard: 35 direct-user binding(s), 11 naming a person
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, acknowledged, acknowledged_bindings: [(.acknowledged_bindings // [])[] | {name, namespace, user, managed_source}]}'
+{"scope":"all","total":11,"excluded_platform":24,"acknowledged":null,"acknowledged_bindings":[]}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/alerts' | jq -c '[(.alerts // .)[] | select(.kind == "direct_user_binding" and .cluster == "dashboard") | .subject]'
+["11 direct user grants"]
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/clusters/dashboard/namespaces' | jq -c '{cluster_wide_grants: (.cluster_wide_grants | if type == "array" then length else . end), platform_with_findings: (.platform_with_findings | if type == "array" then [.[] | (.name // .)] else . end), gso_direct_grants: [.namespaces[] | select(.name == "group-sync-operator") | .direct_grants]}'
+{"cluster_wide_grants":3,"platform_with_findings":2,"gso_direct_grants":[1]}
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_alerts_total\{cluster="dashboard",kind="direct_user_binding"\}|^gsd_bindings_total\{cluster="(dashboard|shared-rnd|shared-qa)",finding="unmanaged"\}'
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 57.0
+gsd_bindings_total{cluster="shared-qa",finding="unmanaged"} 57.0
+gsd_bindings_total{cluster="shared-rnd",finding="unmanaged"} 57.0
+
+## Step 3: after, the Application back on main = aecc1c05648944979b342b121b9ba75cedd03005 (application 3.3.0)  (2026-10-03T14:05:26Z)
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk503' && local-development/release-crc.sh --argocd main --values environments/crc.yaml 2>&1 | tail -6
+14:05:28Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 983df2ff848dea80e683b005b3966740b734f1da, want aecc1c0564) successfully synced (all tasks run)
+14:05:43Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+14:05:59Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard and 1 more resources
+14:06:14Z  OutOfSync  Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard-report
+14:06:29Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+met after 1 s at 2026-10-03T14:06:30Z: the Application synced the merge
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+deployment "group-sync-dashboard" successfully rolled out
+met after 0 s at 2026-10-03T14:06:30Z: the pod runs 3.3.0
+met after 0 s at 2026-10-03T14:06:30Z: a refresh line for dashboard after the merge
+
+## reads: after  (2026-10-03T14:06:30Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=10m | grep -E 'dashboard: [0-9]+ direct-user binding' | tail -1
+2026-10-03 10:06:23,812-0400 INFO    gsd.poller dashboard: 35 direct-user binding(s), 11 naming a person
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, acknowledged, acknowledged_bindings: [(.acknowledged_bindings // [])[] | {name, namespace, user, managed_source}]}'
+{"scope":"all","total":9,"excluded_platform":24,"acknowledged":2,"acknowledged_bindings":[{"name":null,"namespace":null,"user":null,"managed_source":"group-sync-operator-helm"},{"name":null,"namespace":null,"user":null,"managed_source":"group-sync-operator-helm"}]}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/alerts' | jq -c '[(.alerts // .)[] | select(.kind == "direct_user_binding" and .cluster == "dashboard") | .subject]'
+["9 direct user grants"]
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/clusters/dashboard/namespaces' | jq -c '{cluster_wide_grants: (.cluster_wide_grants | if type == "array" then length else . end), platform_with_findings: (.platform_with_findings | if type == "array" then [.[] | (.name // .)] else . end), gso_direct_grants: [.namespaces[] | select(.name == "group-sync-operator") | .direct_grants]}'
+{"cluster_wide_grants":2,"platform_with_findings":1,"gso_direct_grants":[0]}
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_alerts_total\{cluster="dashboard",kind="direct_user_binding"\}|^gsd_bindings_total\{cluster="(dashboard|shared-rnd|shared-qa)",finding="unmanaged"\}'
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 57.0
+gsd_bindings_total{cluster="shared-qa",finding="unmanaged"} 57.0
+gsd_bindings_total{cluster="shared-rnd",finding="unmanaged"} 57.0
+
+## Step 3: the self tier, as developer (no grant)  (2026-10-03T14:06:33Z)
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, acknowledged, acknowledged_bindings, acknowledged_truncated, own: [.bindings[] | {name, namespace}]}'
+{"scope":"self","total":1,"acknowledged":null,"acknowledged_bindings":null,"acknowledged_truncated":null,"own":[{"name":null,"namespace":null}]}
+
+## Step 4: the screenshots, under a grant created after every read  (2026-10-03T14:06:33Z)
+$ oc create -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk503/reports/2026-10-03_acknowledged-grants-503/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-503-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-503-crb-update-developer created
+waited 70 s for the tier's cache until 2026-10-03T14:07:43Z
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/shots.py
+2026-10-03T14:07:52Z nsaudit-acknowledged-closed-375-light.png   : {"aria-expanded": "false", "rows": 0, "overflow px": 0}
+2026-10-03T14:07:52Z nsaudit-acknowledged-open-375-light.png     : {"aria-expanded": "true", "rows": 2, "overflow px": 0}
+2026-10-03T14:07:53Z nsaudit-acknowledged-closed-768-light.png   : {"aria-expanded": "false", "rows": 0, "overflow px": 0}
+2026-10-03T14:07:53Z nsaudit-acknowledged-open-768-light.png     : {"aria-expanded": "true", "rows": 2, "overflow px": 0}
+2026-10-03T14:07:54Z nsaudit-acknowledged-closed-1280-light.png  : {"aria-expanded": "false", "rows": 0, "overflow px": 0}
+2026-10-03T14:07:54Z nsaudit-acknowledged-open-1280-light.png    : {"aria-expanded": "true", "rows": 2, "overflow px": 0}
+2026-10-03T14:08:01Z nsaudit-acknowledged-closed-375-dark.png    : {"aria-expanded": "false", "rows": 0, "overflow px": 0}
+2026-10-03T14:08:01Z nsaudit-acknowledged-open-375-dark.png      : {"aria-expanded": "true", "rows": 2, "overflow px": 0}
+2026-10-03T14:08:02Z nsaudit-acknowledged-closed-768-dark.png    : {"aria-expanded": "false", "rows": 0, "overflow px": 0}
+2026-10-03T14:08:02Z nsaudit-acknowledged-open-768-dark.png      : {"aria-expanded": "true", "rows": 2, "overflow px": 0}
+2026-10-03T14:08:03Z nsaudit-acknowledged-closed-1280-dark.png   : {"aria-expanded": "false", "rows": 0, "overflow px": 0}
+2026-10-03T14:08:03Z nsaudit-acknowledged-open-1280-dark.png     : {"aria-expanded": "true", "rows": 2, "overflow px": 0}
+2026-10-03T14:08:03Z result                                      : {"failures": [], "page errors": []}
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk503/reports/2026-10-03_acknowledged-grants-503/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io "gsd-walk-503-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-503-crb-update-developer" deleted
+
+## Step 5: after  (2026-10-03T14:08:03Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount}'
+{"rev":"main","sync":"Synced","health":"Healthy","synced":"aecc1c05648944979b342b121b9ba75cedd03005","op":"Succeeded","retries":null}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"3.3.0","commit":"aecc1c0564"}
+walk exit=0 at 2026-10-03T14:08:04Z
+
+## exit trap  (2026-10-03T14:08:04Z)
+No resources found
+targetRevision: main
