@@ -7,8 +7,9 @@
 | Release | — (post-programme; each step its own PR and its own three-seat review) |
 | Version on release | app and chart minor bumps per step, assigned at each step's PR |
 | Issue | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) |
-| Status | in progress |
+| Status | released |
 | Delivered | Step T3 by #322, in another shape: one `visibility.clusterAdminSar` question gates KPIs and the whole Cluster Configurations tab and grants the lower host tiers (SPEC_T2, released in app 0.35.0). The declaration T1 asked of `TIER_BY_SURFACE` — every route and tab with its tier, and a test failing on one left out — by #239 as SPEC_G1, in `docs/ACCESS_CONTROL.md` §3 and §4 rather than in code. Not built, and open for the operator on #239: the `TIER_BY_SURFACE` registry, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` and `usageAdminSar` → `adminSar` renames. #114 was closed as not planned on 2026-09-27. Re-derive any block below from main before building from it |
+| Withdrawn | The remaining parts, by the operator's decision of 2026-10-03 on #239 ("Withdraw them"): the `TIER_BY_SURFACE` registry in code, `visibility.tiers` on `/api/whoami`, and the `adminSar` → `auditorSar` / `usageAdminSar` → `adminSar` renames with their alias. None changes who sees what. SPEC_G1's test already fails CI on a route without a declared tier, and the renames would cost every estate a values migration. With what was delivered released (SPEC_T2 in app 0.35.0, SPEC_G1 in 4.0.0) and the rest withdrawn, the spec is `released`.
 | Source | this document is the orchestrator's own design, measured on CRC on 2026-09-20 with the commands quoted below; there is no separate design-agent output |
 
 ## How to read this spec
