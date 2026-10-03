@@ -1,0 +1,15 @@
+# The walk's grant, measured out (2026-10-03). After walk.log's step 5 deleted the grant, the orchestrator restarted the
+# dashboard pod at about 06:23Z (`oc rollout restart deployments.apps/group-sync-dashboard`) so its startup binding refresh ran
+# without it. The reads below were taken at 2026-10-03T06:24:31Z.
+
+$ oc get clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=platform-users-255-2026-10-03 -o name | wc -l
+0
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=30m | grep -E "dashboard: [0-9]+ direct-user binding" | tail -1
+2026-10-03 02:23:57,389-0400 INFO    gsd.poller dashboard: 35 direct-user binding(s), 11 naming a person
+$ curl -sk https://<route>/metrics | grep finding="unmanaged" for dashboard
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 57.0
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3

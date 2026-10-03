@@ -1,0 +1,136 @@
+# SPEC_G2 §5 walk (#255), CRC lab; written by scripts/run.sh
+# started 2026-10-03T05:55:19Z; kube context crc-admin; merge 8fd1180c5a0f963b21b71004c99f9c7f7bf93817
+
+## Step 1: before  (2026-10-03T05:55:19Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount}'
+{"rev":"main","sync":"Synced","health":"Healthy","synced":"254f1515b82bfd98b8cda7d327c43125efe52e50","op":"Succeeded","retries":null}
+$ oc get pods -n group-sync-dashboard -l app=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image
+NAME                                    START                  IMAGE
+group-sync-dashboard-756b79887f-mzfd4   2026-10-03T04:50:25Z   quay.io/ephico2real/group-sync-dashboard:3.1.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"3.1.0","commit":"4e44fd02eb"}
+met after 129 s at 2026-10-03T05:57:29Z: the Application synced the merge
+$ oc create -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk255/reports/2026-10-03_platform-users-255/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-255-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-255-crb-update-developer created
+$ oc auth can-i list clusterrolebindings.rbac.authorization.k8s.io --as=developer
+Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+yes
+waited 70 s for the tier's cache until 2026-10-03T05:58:39Z
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' http://127.0.0.1:8080/api/whoami | jq -c '{scope: .visibility.scope, cluster_admin: .visibility.cluster_admin}'
+{"scope":"all","cluster_admin":true}
+
+## numbers: before  (2026-10-03T05:58:39Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=10m | grep -E 'dashboard: [0-9]+ direct-user binding' | tail -1
+2026-10-03 01:57:27,294-0400 INFO    gsd.poller dashboard: 35 direct-user binding(s), 11 naming a person
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, platform_users_unmatched, note}'
+{"scope":"all","total":11,"excluded_platform":24,"platform_users_unmatched":{},"note":"direct user grants; migrate these to LDAP-managed groups"}
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_bindings_total\{cluster="dashboard",finding="unmanaged"\}'
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 57.0
+
+## Step 2: add tmp-contractor-9931 through the values file on lab/g2-platform-users-walk  (2026-10-03T05:58:41Z)
+$ git -C '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.QfxPatPPuC/walk-branch' push -q -u origin lab/g2-platform-users-walk && echo pushed 3491a40a2ea977084b0a8996f8fa76f156ac623d at $(date -u +%H:%M:%SZ)
+remote: 
+remote: Create a pull request for 'lab/g2-platform-users-walk' on GitHub by visiting:        
+remote:      https://github.com/ephico2real2/group-sync-dashboard/pull/new/lab/g2-platform-users-walk        
+remote: 
+pushed 3491a40a2ea977084b0a8996f8fa76f156ac623d at 05:58:44Z
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk255' && local-development/release-crc.sh --argocd lab/g2-platform-users-walk --values environments/crc.yaml 2>&1 | tail -6
+values  : environments/crc.yaml (the Application's valueFiles)
+05:58:47Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 8fd1180c5a0f963b21b71004c99f9c7f7bf93817, want 3491a40a2e) successfully synced (all tasks run)
+05:59:02Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+05:59:18Z  Synced     Progressing  Running    waiting for healthy state of apps/Deployment/group-sync-dashboard
+05:59:33Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+met after 0 s at 2026-10-03T05:59:33Z: the Application synced the add
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+deployment "group-sync-dashboard" successfully rolled out
+met after 10 s at 2026-10-03T05:59:43Z: a refresh line for dashboard after the add
+
+## numbers: add  (2026-10-03T05:59:43Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=10m | grep -E 'dashboard: [0-9]+ direct-user binding' | tail -1
+2026-10-03 01:59:41,484-0400 INFO    gsd.poller dashboard: 36 direct-user binding(s), 11 naming a person
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, platform_users_unmatched, note}'
+{"scope":"all","total":11,"excluded_platform":25,"platform_users_unmatched":{},"note":"direct user grants; migrate these to LDAP-managed groups"}
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_bindings_total\{cluster="dashboard",finding="unmanaged"\}'
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 57.0
+
+## Step 3: stale ghost-9931 beside it  (2026-10-03T05:59:45Z)
+$ git -C '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.QfxPatPPuC/walk-branch' push -q origin lab/g2-platform-users-walk && echo pushed 27933c441030425f0208c76d0d78febfd4d917db at $(date -u +%H:%M:%SZ)
+pushed 27933c441030425f0208c76d0d78febfd4d917db at 05:59:46Z
+met after 201 s at 2026-10-03T06:03:07Z: the Application synced the stale name
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+deployment "group-sync-dashboard" successfully rolled out
+met after 15 s at 2026-10-03T06:03:22Z: a refresh line for dashboard after the stale name
+
+## numbers: stale  (2026-10-03T06:03:22Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=10m | grep -E 'dashboard: [0-9]+ direct-user binding' | tail -1
+2026-10-03 02:03:19,522-0400 INFO    gsd.poller dashboard: 36 direct-user binding(s), 11 naming a person
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, platform_users_unmatched, note}'
+{"scope":"all","total":11,"excluded_platform":25,"platform_users_unmatched":{"additionalNames":["ghost-9931"]},"note":"direct user grants; migrate these to LDAP-managed groups"}
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_bindings_total\{cluster="dashboard",finding="unmanaged"\}'
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 57.0
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/shots.py
+2026-10-03T06:03:32Z nsaudit-platform-users-375-light.png        : {"note": 1, "stale line": 1, "overflow px": 0}
+2026-10-03T06:03:33Z nsaudit-platform-users-768-light.png        : {"note": 1, "stale line": 1, "overflow px": 0}
+2026-10-03T06:03:33Z nsaudit-platform-users-1280-light.png       : {"note": 1, "stale line": 1, "overflow px": 0}
+2026-10-03T06:03:40Z nsaudit-platform-users-375-dark.png         : {"note": 1, "stale line": 1, "overflow px": 0}
+2026-10-03T06:03:41Z nsaudit-platform-users-768-dark.png         : {"note": 1, "stale line": 1, "overflow px": 0}
+2026-10-03T06:03:41Z nsaudit-platform-users-1280-dark.png        : {"note": 1, "stale line": 1, "overflow px": 0}
+2026-10-03T06:03:41Z result                                      : {"failures": [], "page errors": []}
+
+## Step 4: remove, environments/crc.yaml back to the merge's content  (2026-10-03T06:03:41Z)
+$ git -C '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.QfxPatPPuC/walk-branch' diff --stat 8fd1180c5a0f963b21b71004c99f9c7f7bf93817 9aa41da0038f61b13b9bda2607fc1fc483993a54 -- environments/crc.yaml; echo '(no diff = identical to the merge)'
+(no diff = identical to the merge)
+$ git -C '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.QfxPatPPuC/walk-branch' push -q origin lab/g2-platform-users-walk && echo pushed 9aa41da0038f61b13b9bda2607fc1fc483993a54 at $(date -u +%H:%M:%SZ)
+pushed 9aa41da0038f61b13b9bda2607fc1fc483993a54 at 06:03:43Z
+met after 206 s at 2026-10-03T06:07:09Z: the Application synced the removal
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+deployment "group-sync-dashboard" successfully rolled out
+met after 15 s at 2026-10-03T06:07:24Z: a refresh line for dashboard after the removal
+
+## numbers: removed  (2026-10-03T06:07:24Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=10m | grep -E 'dashboard: [0-9]+ direct-user binding' | tail -1
+2026-10-03 02:07:22,893-0400 INFO    gsd.poller dashboard: 36 direct-user binding(s), 12 naming a person
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, platform_users_unmatched, note}'
+{"scope":"all","total":12,"excluded_platform":24,"platform_users_unmatched":{},"note":"direct user grants; migrate these to LDAP-managed groups"}
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_bindings_total\{cluster="dashboard",finding="unmanaged"\}'
+gsd_bindings_total{cluster="dashboard",finding="unmanaged"} 58.0
+
+## Step 5: after, the Application back on main  (2026-10-03T06:07:26Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk255/reports/2026-10-03_platform-users-255/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io "gsd-walk-255-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-255-crb-update-developer" deleted
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk255' && local-development/release-crc.sh --argocd main --values environments/crc.yaml 2>&1 | tail -6
+06:21:30Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:21:46Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:22:01Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:22:16Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+06:22:31Z  Synced     Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+ERROR: group-sync-dashboard did not reach Synced/Healthy in 900s
+met after 0 s at 2026-10-03T06:22:32Z: the Application back on main and synced
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount}'
+{"rev":"main","sync":"Synced","health":"Healthy","synced":"8fd1180c5a0f963b21b71004c99f9c7f7bf93817","op":"Succeeded","retries":null}
+$ oc get pods -n group-sync-dashboard -l app=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image
+NAME                                    START                  IMAGE
+group-sync-dashboard-5cbf5758f5-vnxnr   2026-10-03T06:06:47Z   quay.io/ephico2real/group-sync-dashboard:3.2.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"3.2.0","commit":"8fd1180c5a"}
+walk exit=0 at 2026-10-03T06:22:32Z
+
+## exit trap  (2026-10-03T06:22:32Z)
+No resources found
+can-i list crb after the trap: no
+targetRevision: main
+Deleted branch lab/g2-platform-users-walk (was 9aa41da0).
