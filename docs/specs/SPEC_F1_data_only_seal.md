@@ -92,6 +92,33 @@ T270-7 runs that function over every report, so the walk's copy cannot drift fro
 `.json` written before 4.1.0 does not verify under the new recipe; the walk checks only the files it downloaded in
 the same run.
 
+**Review of the implementation (PR #571, 2026-10-03): Codex (gpt-5.6-sol, xhigh) and OB3 (in Grok's seat).** Both
+confirmed the seal itself: no page-one row is data while sealed nowhere (a mutation of every row), the renderers'
+HTML and PDF are byte-identical apart from the hash, every stored run keeps its own hash, and the chart change is
+the version lines. The decisions:
+- **Accepted: the docs promised more than the code does (Codex F1, OB3 F2).** "Two runs over one snapshot with the
+  same parameters hash the same" held without exception in the model's docstrings, the design doc, the CHANGELOG,
+  the index row, the chart's history line and the test's docstring. Five builders read the generation clock
+  (`login-activity`, `groups`, `dormant-access`, `groupsync-health`, `compliance-snapshot`), and OB3 measured
+  `dormant-access` with `dormant_days=1` changing its hash two minutes apart on a seed whose last login sits on the
+  cutoff. Note 1 already said this; the published contract now says it too, naming the five and why each moves.
+  The coverage can also reflect two report-service settings (`common.py`'s `coverage`: `login_capture_enabled`,
+  and `namespaces_read_enabled` before the first Namespace read), which Codex measured; one sentence says so.
+  Pinned by T270-10, which scans each builder's module for `ctx.now`, so a sixth clock-reading report fails it
+  until the docs name it. Codex's own test, which greps seven terms in five documents, was **rejected**: it pins
+  wording, where T270-10 pins the set.
+- **Accepted: an old `.json` crashed the walk and took its document with it (OB3 F1).** On a `.json` written
+  before 4.1.0, `recompute()` raised KeyError before `integrity.jsonl` was written; `run_walk.sh` guards that stage
+  (`|| rc=1`) but not `build_doc.py`, which reads `integrity.jsonl` at import, so the walk ended with no document,
+  against its own header ("The document is built either way"). `recompute()` now returns None, a FAIL row. T270-8.
+- **Accepted: only page one may ride outside the seal (OB3 F3).** A section appended to a `.json` with
+  `"sealed": false` left the recomputed hash unchanged, so the walk's check against the run record passed. The model
+  leaves exactly page one out; `recompute()` refuses any other shape. T270-9.
+- **Accepted: the walk document printed the old recipe (OB3 F4).** Block 14. T270-11.
+- **Accepted: SPEC_C3's amendment said "two settings"** for the marking, the binding interval and the PDF variant
+  and font; it now names them.
+- **No change:** `render_pdf.py` and `runs.py` call the whole `.json` "canonical". Both predate this spec.
+
 ## 1. The mandate, and what is out of scope
 
 The mandate (#270, "The change"): settle which provenance rows are data (sealed) and which are run facts
@@ -271,6 +298,10 @@ All in `local-development/tests/test_report_seal.py` (block 5), over the report 
 | T270-5 | `test_t270_5_the_json_alone_reproduces_the_hash` | The `.json` keeps its keys and page one, and reproduces the hash |
 | T270-6 | `test_t270_6_a_new_snapshot_of_the_same_data_is_new_evidence` | The ruling of §3.2 on the stamp |
 | T270-7 | `test_t270_7_the_walks_integrity_check_recomputes_the_seal` (every report) | The e2e walk's integrity check recomputes the same hash from the `.json` (Orchestrator's notes, the correction at implementation) |
+| T270-8 | `test_t270_8_a_json_written_before_4_1_is_a_fail_row_not_a_crash` | An old `.json` is a FAIL row; the walk keeps its document (the review) |
+| T270-9 | `test_t270_9_only_page_one_rides_outside_the_seal` | Only page one, the first section, may be unsealed (the review) |
+| T270-10 | `test_t270_10_the_docs_name_every_report_whose_data_reads_the_clock` | The five clock-reading reports, found in the source, are named where the contract is stated (the review) |
+| T270-11 | `test_t270_11_the_walk_document_states_the_recipe_the_check_runs` | The walk document prints the recipe the check runs (the review) |
 
 ### 4.2 Each test fails without the change, and why
 
@@ -284,6 +315,10 @@ All in `local-development/tests/test_report_seal.py` (block 5), over the report 
 - T270-6: the canonical document has no `sealed_provenance` (KeyError); the hashes differing passes on both.
 - T270-7: without Block 13 the script has no `recompute` (AttributeError); with only its old key list, every
   report's recomputed hash differs from its seal.
+- T270-8: on the head before the review, KeyError: 'sealed_provenance' and no `integrity.jsonl` (OB3's measurement).
+- T270-9: the appended unsealed section left the recomputed hash equal to the seal.
+- T270-10: the CHANGELOG bullet named login-activity only.
+- T270-11: `build_doc.py`'s sentence named neither `api_url` nor `sealed_provenance`.
 
 ### 4.3 The proof
 
@@ -361,12 +396,16 @@ A report is SECTIONS of BLOCKS — tables, key/value lists, notes — plus the p
 facts every report carries. HTML and PDF are two renderings of this structure, and the sha256 is
 computed over the canonical JSON of the DATA: the sealed sections, the parameters, the coverage, the
 totals, the cluster, and the snapshot the data was read from (its stamp, its schema, how the
-cluster's last poll before it ended). It never covers a rendering or a fact of the run — when, by
-whom, under which run id or release, how old the snapshot was, the chart's marking or binding
-interval — so two runs over one snapshot with the same parameters hash the same whoever runs them,
-and a PDF can be tied back to its .json by the number printed on page one. Page one states the run
-and is not sealed; what it shows that is data is sealed through its own field. A new snapshot is
-new evidence even when no row changed: its stamp and its coverage are sealed, so the hash answers
+cluster's last poll before it ended). Page one's facts of the run — when, by whom, under which run
+id or release, how old the snapshot was, the chart's marking or binding interval — are outside it,
+so two runs over one snapshot with the same parameters hash the same whoever runs them, except where
+a report's own data is computed against the generation clock (a window, a cutoff, an overdue state:
+SPEC_F1, Orchestrator's notes 1): those agree only while the clock-derived values coincide. The
+coverage can also reflect two report-service settings (`login_capture_enabled`,
+`namespaces_read_enabled`), so a run under other settings is other evidence. A PDF can be tied back
+to its .json by the number printed on page one. Page one states the run and is not sealed; what it
+shows that is data is sealed through its own field. A new snapshot is new evidence even when no row
+changed: its stamp and its coverage are sealed, so the hash answers
 "is this the same evidence?", not "did access change?" (docs/specs/SPEC_F1_data_only_seal.md).
 """
 ```
@@ -415,8 +454,9 @@ class Report:
 ```python
     def canonical(self) -> dict:
         """The DATA, and only the data: what two runs over one snapshot with the same parameters agree
-        on. A section marked `sealed=False` (page one, the run's facts) is left out; what page one shows
-        that is data is here through its own key: the cluster and its API URL, the snapshot facts, the
+        on while the values a report computes against the generation clock coincide (the module
+        docstring). A section marked `sealed=False` (page one, the run's facts) is left out; what page
+        one shows that is data is here through its own key: the cluster and its API URL, the snapshot facts, the
         coverage, the parameters and the rosters switch. Every key is in the .json, so the hash can be
         recomputed from the .json alone by keeping the sections whose `sealed` is true."""
         return {
@@ -463,13 +503,16 @@ class Report:
 <!-- block: local-development/tests/test_report_seal.py | create -->
 ```python
 """The seal covers the data only (docs/specs/SPEC_F1_data_only_seal.md, #270): two runs over one snapshot
-with the same parameters hash the same whoever runs them and whenever; the snapshot, the parameters and the
-coverage are sealed; page one still shows the run; the .json alone reproduces the hash."""
+with the same parameters hash the same whoever runs them, while the values a report computes against the
+generation clock coincide; the snapshot, the parameters and the coverage are sealed; page one still shows the
+run; the .json alone reproduces the hash."""
 from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -478,10 +521,14 @@ import pytest
 from gsd.reporting.catalogue import REGISTRY, RunContext, validate_params
 from gsd.reporting.catalogue import common
 from gsd.reporting.catalogue.common import assemble
+from gsd.reporting import model
 from gsd.reporting.config import ReportSettings
 from gsd.reporting.model import Report
 from gsd.reporting.snapshot import Snapshot
 from reporting_seed import CLUSTER, NOW, seed_store, write_snapshot
+
+LOCAL = Path(__file__).resolve().parents[1]
+DOCS = LOCAL.parent / "docs"
 
 #: What a report needs before it builds (the catalogue suite's defaults).
 PARAMS = {
@@ -491,6 +538,9 @@ PARAMS = {
 #: login-activity's Window prints the generation clock as its `To`: data anchored to the run (SPEC_F1,
 #: Orchestrator's notes 1), so two of its runs agree only at one clock.
 CLOCK_ANCHORED = {"login-activity"}
+#: Every report whose builder reads the generation clock (`ctx.now`) into sealed data: a window, a cutoff, an
+#: overdue state. Two of its runs over one snapshot agree only while those values coincide (SPEC_F1, note 1).
+CLOCK_DERIVED = {"login-activity", "groups", "dormant-access", "groupsync-health", "compliance-snapshot"}
 #: The .json keys before SPEC_F1; none is removed or renamed.
 JSON_KEYS = {"name", "cluster", "params", "coverage", "totals", "truncated", "include_members", "sections", "title",
              "api_url", "generated_at", "generated_by", "generated_by_note", "run_id", "provenance", "sha256"}
@@ -638,17 +688,88 @@ def test_t270_6_a_new_snapshot_of_the_same_data_is_new_evidence(tmp_path):
     assert a == b, "the stamp is the only difference"
 
 
+def _integrity_check():
+    """The e2e walk's integrity script, loaded from its file (it is not a package module)."""
+    module_spec = importlib.util.spec_from_file_location("integrity_check", LOCAL / "e2e-walk" / "integrity_check.py")
+    integrity = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(integrity)
+    return integrity
+
+
 def test_t270_7_the_walks_integrity_check_recomputes_the_seal(snap):
     """The e2e walk recomputes each downloaded report's hash from its .json (local-development/e2e-walk/
     integrity_check.py), so its recipe must be the model's. Without Block 13 it has no `recompute`, and its
     old key list seals page one and neither `api_url` nor `sealed_provenance`."""
-    path = Path(__file__).resolve().parents[1] / "e2e-walk" / "integrity_check.py"
-    module_spec = importlib.util.spec_from_file_location("integrity_check", path)
-    integrity = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(integrity)
+    integrity = _integrity_check()
     for name in REGISTRY:
         report = _run(snap, name)
         assert integrity.recompute(json.loads(report.to_json())) == report.sha256, name
+
+
+def _walk_dir(tmp_path: Path, docs: dict[str, dict]) -> Path:
+    """A walk's run directory holding these .json artefacts and the run records the page polled for them."""
+    run = tmp_path / "walk"
+    (run / "reports").mkdir(parents=True)
+    steps = []
+    for stem, doc in docs.items():
+        (run / "reports" / f"{stem}.json").write_text(json.dumps(doc))
+        steps.append({"run": {"id": doc["run_id"], "sha256": doc["sha256"]}})
+    (run / "results.json").write_text(json.dumps({"steps": steps}))
+    return run
+
+
+def test_t270_8_a_json_written_before_4_1_is_a_fail_row_not_a_crash(snap, tmp_path, monkeypatch):
+    """A .json written before 4.1.0 has no `sealed_provenance` and no `sealed` flags. The integrity stage writes
+    it as a FAIL row and carries on; a KeyError there wrote no integrity.jsonl, and the walk's document stage
+    (build_doc.py) then died reading it."""
+    old = json.loads(_run(snap, "groups", run_id="r-old").to_json())
+    del old["sealed_provenance"]
+    for section in old["sections"]:
+        del section["sealed"]
+    new = json.loads(_run(snap, "groups", run_id="r-new").to_json())
+    run = _walk_dir(tmp_path, {"a-old": old, "b-new": new})
+    monkeypatch.setattr(sys, "argv", ["integrity_check.py", str(run)])
+    assert _integrity_check().main() == 1
+    rows = [json.loads(line) for line in (run / "integrity.jsonl").read_text().splitlines()]
+    assert [row["recomputed_matches"] for row in rows] == [False, True]
+
+
+def test_t270_9_only_page_one_rides_outside_the_seal(snap):
+    """The model leaves exactly one section out of the hash: page one, the first. A .json carrying any other
+    unsealed section, or page one marked sealed, does not verify: otherwise a section added to a .json with
+    `"sealed": false` would pass the walk's check against the run record's hash."""
+    integrity = _integrity_check()
+    doc = json.loads(_run(snap, "groups").to_json())
+    assert integrity.recompute(doc) == doc["sha256"]
+    added = {**doc, "sections": [*doc["sections"], {"title": "Attestation", "page_break": False, "sealed": False,
+                                                    "blocks": [{"kind": "note", "text": "approved", "tone": "note"}]}]}
+    assert integrity.recompute(added) is None
+    page_one_sealed = {**doc, "sections": [{**doc["sections"][0], "sealed": True}, *doc["sections"][1:]]}
+    assert integrity.recompute(page_one_sealed) is None
+
+
+def test_t270_10_the_docs_name_every_report_whose_data_reads_the_clock():
+    """Two runs over one snapshot hash the same whoever runs them; the docs that say so name the reports whose
+    sealed data reads the generation clock (T270-2 measures one; a dormant cutoff or a change window moves too)."""
+    reads = {name for name, (_, build) in REGISTRY.items() if "ctx.now" in inspect.getsource(inspect.getmodule(build))}
+    assert reads == CLOCK_DERIVED, reads ^ CLOCK_DERIVED
+    changelog = (DOCS / "CHANGELOG.md").read_text()
+    bullet = changelog[changelog.index("- **A report's sha256 covers its data only (#270"):]
+    design = (DOCS / "DESIGN_reporting_service.md").read_text()
+    paragraph = design[design.index("**What the sha256 covers (SPEC_F1, #270).**"):]
+    for where, text in (("CHANGELOG.md", bullet[:bullet.index("\n\n")]),
+                        ("DESIGN", paragraph[:paragraph.index("\n\n")])):
+        assert not [n for n in sorted(CLOCK_DERIVED) if f"`{n}`" not in text], where
+    assert "generation clock" in model.__doc__ and "generation clock" in model.Report.canonical.__doc__
+
+
+def test_t270_11_the_walk_document_states_the_recipe_the_check_runs():
+    """build_doc.py prints the seal's recipe in the walk document's integrity section: it names every key the
+    integrity check seals and says page one is left out."""
+    source = (LOCAL / "e2e-walk" / "build_doc.py").read_text()
+    sentence = source[source.index("Every report is sealed with"):source.index("sorted keys, compact separators")]
+    assert not [k for k in _integrity_check().CANONICAL if k not in sentence], sentence
+    assert "page one" in sentence and "sealed" in sentence.replace("sealed_provenance", "")
 ```
 
 ### Block 6 — `docs/DESIGN_reporting_service.md`: the provenance block says what the hash covers
@@ -664,9 +785,15 @@ through their own fields: the cluster and its API URL, the snapshot's stamp and 
 status and message (`sealed_provenance`), the coverage, the parameters and the rosters switch. Generated at,
 generated by, the run id, the snapshot's age, the report service's version and commit, the marking, the binding
 interval and the PDF variant and font are run facts, outside the hash. So two runs over one snapshot with the same
-parameters hash the same, whoever runs them; a new snapshot is new evidence and hashes differently. The `.json`
-carries every section, page one with `"sealed": false`, and its hash is the sha256 of the canonical keys with the
-sections narrowed to the sealed ones.
+parameters hash the same, whoever runs them, while the values a report computes against the generation clock
+coincide: `login-activity`'s window ends at the generation instant, so two of its runs agree only at one clock;
+`groupsync-health` and `compliance-snapshot` compute the overdue state against it, `groups`, `groupsync-health` and
+`compliance-snapshot` count changes in a window that ends at it, and `dormant-access` sets its cutoff from it
+(SPEC_F1, Orchestrator's notes 1). The coverage can also reflect two report-service settings
+(`login_capture_enabled`, `namespaces_read_enabled`), so a run under other settings is other evidence. A new
+snapshot is new evidence and hashes differently. The `.json` carries every section, page one with `"sealed": false`,
+and its hash is the sha256 of the canonical keys with the sections narrowed to the sealed ones; page one, the first
+section, is the only one left out.
 
 ### 7.5 Never in a report
 ```
@@ -683,7 +810,8 @@ sections narrowed to the sealed ones.
 ```markdown
 - **Amended by SPEC_F1 (#270), application 4.1.0.** The body's seal ("the sha256 of the canonical data") covered
   page one, a section inside `canonical()`, and with it the generation instant, the viewer, the run id, the
-  snapshot's age, the release and two settings; two runs over one snapshot never shared a hash. Page one is now
+  snapshot's age, the release and the chart's settings on it (the marking, the binding interval, the PDF variant
+  and font); two runs over one snapshot never shared a hash. Page one is now
   a section with `sealed=False`, left out of the hash and still rendered with the same rows and words; the data
   facts on it are sealed through `api_url` and `sealed_provenance` (the snapshot's stamp, schema and last poll)
   beside the coverage, the parameters and the rosters switch (`docs/specs/SPEC_F1_data_only_seal.md` §3).
@@ -740,7 +868,7 @@ appVersion: "4.0.0"
 
 ```yaml
 # 4.0.0 (2026-10-03). Epic G: access declared, platform identities configured (#387). MAJOR.
-# 4.1.0 (2026-10-03). A report's sha256 covers its data only: page one's run facts (when, by whom, the run id, the release, the snapshot's age, the marking and the binding interval) leave the hash; two runs over one snapshot with the same parameters hash the same; every artefact's hash changes once (#270). MINOR.
+# 4.1.0 (2026-10-03). A report's sha256 covers its data only: page one's run facts (when, by whom, the run id, the release, the snapshot's age, the marking and the binding interval) leave the hash; two runs over one snapshot with the same parameters hash the same while the values a report computes against the generation clock coincide; every artefact's hash changes once (#270). MINOR.
 appVersion: "4.1.0"
 ```
 
@@ -766,8 +894,13 @@ appVersion: "4.1.0"
   `sealed_provenance` and a `sealed` flag per section; its hash is the sha256 of the canonical keys with the
   sections narrowed to the sealed ones. **Every artefact generated after this release hashes differently from one
   generated before it over the same data**, once, because what the hash covers changed; stored runs are not
-  rewritten and each still matches its own `.json`. Login activity's window ends at the generation instant, so two
-  of its runs agree only at one clock (SPEC_F1, Orchestrator's notes 1). No permission, value or migration.
+  rewritten and each still matches its own `.json`. Five reports compute part of their data against the generation
+  clock, so two of their runs agree only while those values coincide: `login-activity`'s window ends at the
+  generation instant (two of its runs agree only at one clock), `groupsync-health` and `compliance-snapshot`
+  compute the overdue state against it, `groups`, `groupsync-health` and `compliance-snapshot` count changes in a
+  window that ends at it, and `dormant-access` sets its cutoff from it (SPEC_F1, Orchestrator's notes 1). The
+  coverage can also reflect two report-service settings (`login_capture_enabled`, `namespaces_read_enabled`), so a
+  run under other settings is other evidence. No permission, value or migration.
 
 ```
 
@@ -802,10 +935,16 @@ CANONICAL = ("name", "cluster", "api_url", "params", "coverage", "totals", "trun
              "sealed_provenance")
 
 
-def recompute(d: dict) -> str:
-    """The sha256 the service sealed, from the .json alone. A .json written before 4.1.0 does not verify."""
+def recompute(d: dict) -> str | None:
+    """The sha256 the service sealed, from the .json alone; None for a .json this recipe does not verify, which
+    main() writes as a FAIL row: one written before 4.1.0 (no `sealed_provenance`, no `sealed` flags), or one
+    whose unsealed sections are not exactly page one, the first (the model leaves only page one out of the hash,
+    so any other unsealed section would ride beside the seal unchecked)."""
+    flags = [s.get("sealed") for s in d["sections"]]
+    if "sealed_provenance" not in d or flags[:1] != [False] or not all(flags[1:]):
+        return None
     canon = {k: d[k] for k in CANONICAL}
-    canon["sections"] = [s for s in d["sections"] if s["sealed"]]
+    canon["sections"] = d["sections"][1:]
     return hashlib.sha256(
         json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
@@ -822,4 +961,16 @@ def main() -> int:
 
 ```python
         recomputed = recompute(d)
+```
+
+### Block 14 — `local-development/e2e-walk/build_doc.py`: the walk document states the recipe the check runs
+
+<!-- block: local-development/e2e-walk/build_doc.py | edit -->
+```python
+  P("<p>Every report is sealed with the sha256 of its canonical data (name, cluster, params, coverage, totals, truncated, include_members, sections; "
+```
+
+```python
+  P("<p>Every report is sealed with the sha256 of its canonical data (name, cluster, api_url, params, coverage, totals, truncated, include_members, "
+    "sealed_provenance, and the sections whose <span class='mono'>sealed</span> is true: page one states the run and is left out; "
 ```
