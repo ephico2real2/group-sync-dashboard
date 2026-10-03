@@ -8,7 +8,7 @@
 | Version on release | chart 0.65.0 (chart only) |
 | Version note | The blocks touch `charts/`, `docs/`, `local-development/restore-db.sh`, `local-development/restore-db.py` and `local-development/tests/`. `restore-db.sh` and `restore-db.py` run on the operator's laptop and stream into the pod (`local-development/restore-db.sh#in_pod`); neither is a `COPY` source, and neither is in `publish.yml`'s `on.push.paths`, so no image is built and there is no app bump. Next free chart MINOR under SPEC_E5's version rule: G4 claims 0.62.1 and 0.62.2, G3 0.62.3, W1 0.63.0, G2 0.64.0 |
 | Issue | [#532](https://github.com/ephico2real2/group-sync-dashboard/issues/532) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-02, written before any code from #532's body and its three comments (the second is the operator's settled direction). Measured on main `a3394ba5` (application 3.1.0, chart 0.62.0) with helm v4 and Python 3.14; upstream source read raw at Argo CD `v3.4.7` (the lab's) and Kubernetes `v1.35.0` (the lab runs v1.35.6); the CRC lab (OpenShift 4.22.7) read with `oc get` only. §7's blocks were proved on a throwaway tree of `a3394ba5` (§4.3) |
 
 ## How to read this spec

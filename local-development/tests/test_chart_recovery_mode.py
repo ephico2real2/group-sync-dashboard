@@ -1,6 +1,7 @@
-"""Recovery mode in the chart (#303): `recovery.enabled` swaps the dashboard's command for the
-chart's recovery script on the same pod and volume, drops the liveness probe, keeps the pod out of
-the Service, and refuses what cannot be safe. Everything else renders as it did.
+"""Recovery mode in the chart (#303), its own workload since #532: a second Deployment renders the app's pod
+spec with the chart's recovery script on the same volume, no liveness or readiness probe and labels no Service
+selects, at 0 replicas; `recovery.enabled` scales the app's Deployment to 0 and it to 1, and refuses what cannot
+be safe. Everything else renders as it did.
 
 These shell out to `helm template` because the switch and its guards ARE Helm templating. The
 script itself is tested in tests/test_recovery_mode.py.
@@ -9,6 +10,7 @@ script itself is tested in tests/test_recovery_mode.py.
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import re
 import shutil
@@ -21,6 +23,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 CHART = REPO / "charts" / "group-sync-dashboard"
 SCRIPT = CHART / "scripts" / "recovery_mode.py"
 ON = {"recovery__enabled": "true"}
+APP, REC = "t-group-sync-dashboard", "t-group-sync-dashboard-recovery"
 OFFSITE = {"backup__offsite__enabled": "true"}
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
@@ -41,12 +44,12 @@ def _docs(**values) -> list[dict]:
     return [d for d in yaml.safe_load_all(out) if d]
 
 
-def _deployment(docs: list[dict]) -> dict:
-    return next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "t-group-sync-dashboard")
+def _deployment(docs: list[dict], name: str = APP) -> dict:
+    return next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == name)
 
 
-def _container(docs: list[dict], name: str = "dashboard") -> dict:
-    return next(c for c in _deployment(docs)["spec"]["template"]["spec"]["containers"] if c["name"] == name)
+def _container(docs: list[dict], name: str = "dashboard", workload: str = APP) -> dict:
+    return next(c for c in _deployment(docs, workload)["spec"]["template"]["spec"]["containers"] if c["name"] == name)
 
 
 def _env(container: dict) -> dict:
@@ -59,38 +62,38 @@ def _key(doc: dict) -> tuple[str, str]:
 
 def test_t303_1_recovery_runs_the_chart_script_on_the_same_volume_with_the_env():
     docs = _docs(**ON)
-    dashboard = _container(docs)
+    dashboard = _container(docs, workload=REC)
     assert dashboard["command"] == ["python3.14", "/scripts/recovery_mode.py", "--release", "t"]
     assert "gsd.api:create_app" not in " ".join(dashboard["command"])
     env = _env(dashboard)
     assert env["GSD_RECOVERY_MODE"] == "true" and env["GSD_RECOVERY_MODE_TTL"] == "2h"
     assert env["GSD_DB_PATH"] == "/data/gsd.db"
-    assert _deployment(docs)["spec"]["replicas"] == 1
+    assert _deployment(docs, REC)["spec"]["replicas"] == 1
     data = [m for m in dashboard["volumeMounts"] if m["name"] == "data"]
     assert data == [m for m in _container(_docs())["volumeMounts"] if m["name"] == "data"] == [{"name": "data", "mountPath": "/data"}]
     assert {"name": "recovery-script", "mountPath": "/scripts", "readOnly": True} in dashboard["volumeMounts"]
-    assert _env(_container(_docs(recovery__ttl="90m", **ON)))["GSD_RECOVERY_MODE_TTL"] == "90m"
+    assert _env(_container(_docs(recovery__ttl="90m", **ON), workload=REC))["GSD_RECOVERY_MODE_TTL"] == "90m"
 
 
 def test_t303_2_recovery_overrides_the_image_cmd_with_the_proxy_off_too():
     docs = _docs(oauthProxy__enabled="false", visibility__enabled="false", reporting__enabled="false", **ON)
-    assert _container(docs)["command"][:2] == ["python3.14", "/scripts/recovery_mode.py"]
+    assert _container(docs, workload=REC)["command"][:2] == ["python3.14", "/scripts/recovery_mode.py"]
     off = _container(_docs(oauthProxy__enabled="false", visibility__enabled="false", reporting__enabled="false"))
     assert "command" not in off, "with the proxy off the default render leaves the image's CMD, uvicorn"
 
 
 def test_t303_3_no_liveness_probe_in_recovery_mode():
-    assert "livenessProbe" not in _container(_docs(**ON))
+    assert "livenessProbe" not in _container(_docs(**ON), workload=REC)
     assert "livenessProbe" in _container(_docs())
 
 
 @pytest.mark.parametrize("readiness", ["true", "false"])
-def test_t303_4_a_readiness_probe_that_cannot_pass_keeps_the_pod_out_of_the_service(readiness):
-    dashboard = _container(_docs(probes__readiness__enabled=readiness, **ON))
-    assert dashboard["readinessProbe"] == {"tcpSocket": {"port": "http"}, "periodSeconds": 30, "timeoutSeconds": 5,
-                                           "failureThreshold": 1}
-    # `http` names the dashboard container's own 8080, where nothing listens while the app is stopped.
-    assert {"name": "http", "containerPort": 8080} in dashboard["ports"]
+def test_t532_6_the_recovery_pod_has_no_readiness_probe_and_no_selector_picks_it(readiness):
+    """#532 replaced T303-4's readiness probe that could not pass: the recovery pod is kept out of the Service by
+    its labels, so it is ready once it runs and its Deployment reports available."""
+    docs = _docs(probes__readiness__enabled=readiness, **ON)
+    assert "readinessProbe" not in _container(docs, workload=REC)
+    assert ("readinessProbe" in _container(docs)) == (readiness == "true"), "the app's probe is as before"
 
 
 def test_t303_5_more_than_one_replica_is_refused():
@@ -132,28 +135,102 @@ def test_t303_14_off_renders_exactly_the_default_and_the_dashboard_as_today():
     assert "gsd.api:create_app" in dashboard["command"]
     assert "livenessProbe" in dashboard and dashboard["readinessProbe"]["httpGet"]["path"] == "/readyz"
     assert not [k for k in _env(dashboard) if k.startswith("GSD_RECOVERY")]
-    assert not [d for d in _docs() if d["metadata"]["name"].endswith("-recovery")]
+    # #532: the recovery workload and its script are rendered on every release, the workload at 0 replicas
+    assert sorted(_key(d) for d in _docs() if d["metadata"]["name"].endswith("-recovery")) == \
+        [("ConfigMap", REC), ("Deployment", REC)]
+    assert _deployment(_docs(), REC)["spec"]["replicas"] == 0
 
 
 @pytest.mark.parametrize("extra", [{}, OFFSITE], ids=["default", "offsite"])
-def test_t303_15_nothing_but_the_dashboard_container_and_its_volumes_changes(extra):
+def test_t532_1_the_switch_changes_only_the_two_deployments_replicas(extra):
+    """On and off render the same objects and differ in two fields: the app's replicas (1 -> 0) and the recovery
+    workload's (0 -> 1). So both report available, and turning it off needs no pruning (#532)."""
     off = {_key(d): d for d in _docs(**extra)}
     on = {_key(d): d for d in _docs(**extra, **ON)}
-    assert set(on) - set(off) == {("ConfigMap", "t-group-sync-dashboard-recovery")}
-    assert set(off) <= set(on)
-    changed = [k for k in off if off[k] != on[k]]
-    assert changed == [("Deployment", "t-group-sync-dashboard")], changed
-    before, after = off[changed[0]], on[changed[0]]
-    assert before["metadata"] == after["metadata"]
-    spec_before, spec_after = before["spec"]["template"]["spec"], after["spec"]["template"]["spec"]
-    assert before["spec"]["template"]["metadata"] == after["spec"]["template"]["metadata"]
-    assert [c for c in spec_before["containers"] if c["name"] != "dashboard"] == \
-           [c for c in spec_after["containers"] if c["name"] != "dashboard"], "the oauth-proxy sidecar changed"
-    assert [v for v in spec_after["volumes"] if v not in spec_before["volumes"]] == \
-           [v for v in spec_after["volumes"] if v["name"] in ("recovery-script", "offsite")]
-    assert all(v in spec_after["volumes"] for v in spec_before["volumes"])
-    for key in ("replicas", "strategy", "selector"):
-        assert before["spec"][key] == after["spec"][key]
+    assert set(on) == set(off)
+    changed = sorted(k for k in off if off[k] != on[k])
+    assert changed == [("Deployment", APP), ("Deployment", REC)], changed
+    assert (off[("Deployment", APP)]["spec"]["replicas"], on[("Deployment", APP)]["spec"]["replicas"]) == (1, 0)
+    assert (off[("Deployment", REC)]["spec"]["replicas"], on[("Deployment", REC)]["spec"]["replicas"]) == (0, 1)
+    for key in changed:
+        before, after = off[key], on[key]
+        before["spec"].pop("replicas"), after["spec"].pop("replicas")
+        assert before == after, key
+
+
+def test_t532_1_the_recovery_pod_is_the_app_pod_with_the_recovery_branches():
+    """The recovery workload's pod spec is the app's except for the dashboard container's command, env, mounts and
+    probes, the recovery volumes and the anti-affinity: the oauth-proxy sidecar and everything else are the same."""
+    docs = _docs(**OFFSITE)
+    app, rec = (_deployment(docs, n)["spec"]["template"]["spec"] for n in (APP, REC))
+    assert [c for c in app["containers"] if c["name"] != "dashboard"] == \
+           [c for c in rec["containers"] if c["name"] != "dashboard"], "the oauth-proxy sidecar differs"
+    assert [v for v in rec["volumes"] if v not in app["volumes"]] == \
+           [v for v in rec["volumes"] if v["name"] in ("recovery-script", "offsite")]
+    assert all(v in rec["volumes"] for v in app["volumes"])
+    rest = lambda pod: {k: v for k, v in pod.items() if k not in ("containers", "volumes", "affinity")}
+    assert rest(app) == rest(rec)
+    assert _deployment(docs, REC)["spec"]["strategy"] == _deployment(docs)["spec"]["strategy"] == {"type": "Recreate"}
+
+
+def test_t532_2_no_selector_of_the_app_picks_the_recovery_pod_and_back():
+    """The Service, the PodDisruptionBudget, the ServiceMonitor's Service and the app's Deployment select the app's
+    pod only; the recovery Deployment selects its own pod only; the report service's NetworkPolicy admits the
+    app's pod only (#532)."""
+    docs = _docs(**ON)
+    pod_labels = {n: _deployment(docs, n)["spec"]["template"]["metadata"]["labels"] for n in (APP, REC)}
+    picks = lambda selector, labels: all(labels.get(k) == v for k, v in selector.items())
+    service = next(d for d in docs if _key(d) == ("Service", APP))["spec"]["selector"]
+    pdb = next(d for d in docs if d["kind"] == "PodDisruptionBudget" and d["metadata"]["name"] == APP)
+    selectors = {"Service": service, "PodDisruptionBudget": pdb["spec"]["selector"]["matchLabels"],
+                 "app Deployment": _deployment(docs)["spec"]["selector"]["matchLabels"]}
+    netpol = next(d for d in docs if d["kind"] == "NetworkPolicy")
+    selectors["report NetworkPolicy"] = next(p["podSelector"]["matchLabels"] for rule in netpol["spec"]["ingress"]
+                                            for p in rule.get("from", []) if "podSelector" in p
+                                            and p["podSelector"].get("matchLabels", {}).get("app") == APP)
+    for name, selector in selectors.items():
+        assert picks(selector, pod_labels[APP]) and not picks(selector, pod_labels[REC]), name
+    recovery = _deployment(docs, REC)["spec"]["selector"]["matchLabels"]
+    assert picks(recovery, pod_labels[REC]) and not picks(recovery, pod_labels[APP])
+    assert pod_labels[REC]["app"] == REC, "restore-db.sh finds the recovery pod by app=<release>-recovery"
+
+
+def test_t532_3_the_recovery_pod_waits_for_the_app_pod_and_holds_it_back_cluster_wide():
+    """One required anti-affinity term on the recovery pod: no app pod anywhere on a node of the same OS (every
+    node this image runs on), appended to the values' affinity; the app pod's affinity is the values' alone."""
+    term = {"labelSelector": {"matchLabels": {"app": APP, "app.kubernetes.io/instance": "t",
+                                              "app.kubernetes.io/name": "group-sync-dashboard"}},
+            "topologyKey": "kubernetes.io/os"}
+    docs = _docs(**ON)
+    assert _deployment(docs, REC)["spec"]["template"]["spec"]["affinity"] == \
+        {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [term]}}
+    assert "affinity" not in _deployment(docs)["spec"]["template"]["spec"]
+    zone = {"key": "topology.kubernetes.io/zone", "operator": "In", "values": ["a"]}
+    mine = {"labelSelector": {"matchLabels": {"x": "y"}}, "topologyKey": "kubernetes.io/hostname"}
+    ok, out = render("--set-json", 'affinity={"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":'
+                     '{"nodeSelectorTerms":[{"matchExpressions":[' + json.dumps(zone) + ']}]}},'
+                     '"podAntiAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":[' + json.dumps(mine) + ']}}',
+                     **ON)
+    assert ok, out
+    docs = [d for d in yaml.safe_load_all(out) if d]
+    app, rec = (_deployment(docs, n)["spec"]["template"]["spec"]["affinity"] for n in (APP, REC))
+    assert app["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"] == [mine]
+    assert rec["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"] == [mine, term]
+    assert rec["nodeAffinity"] == app["nodeAffinity"]
+
+
+def test_t532_4_same_serviceaccount_and_security_context_and_no_uid_of_its_own():
+    """The operator's decision on #532: the same namespace, ServiceAccount and SCC, and no runAsUser, so OpenShift
+    assigns the recovery pod the UID it assigns the app's (restricted-v2's range)."""
+    docs = _docs(**ON)
+    app, rec = (_deployment(docs, n) for n in (APP, REC))
+    assert rec["metadata"]["namespace"] == app["metadata"]["namespace"]
+    pa, pr = app["spec"]["template"]["spec"], rec["spec"]["template"]["spec"]
+    assert pr["serviceAccountName"] == pa["serviceAccountName"] == APP
+    assert pr["securityContext"] == pa["securityContext"] and "runAsUser" not in pr["securityContext"]
+    for container in pr["containers"]:
+        assert "runAsUser" not in (container.get("securityContext") or {}), container["name"]
+    assert _container(docs, workload=REC)["securityContext"] == _container(docs)["securityContext"]
 
 
 def test_t303_16_no_rbac_rule_is_added_or_removed():
@@ -168,19 +245,39 @@ def test_the_configmap_carries_the_script_verbatim():
     cm = next(d for d in _docs(**ON) if _key(d) == ("ConfigMap", "t-group-sync-dashboard-recovery"))
     assert cm["data"]["recovery_mode.py"].strip() == SCRIPT.read_text().strip()
     assert cm["metadata"]["labels"]["app.kubernetes.io/component"] == "recovery"
-    volume = next(v for v in _deployment(_docs(**ON))["spec"]["template"]["spec"]["volumes"] if v["name"] == "recovery-script")
+    volume = next(v for v in _deployment(_docs(**ON), REC)["spec"]["template"]["spec"]["volumes"] if v["name"] == "recovery-script")
     assert volume == {"name": "recovery-script", "configMap": {"name": "t-group-sync-dashboard-recovery", "defaultMode": 0o444}}
 
 
 @pytest.mark.parametrize("claim,expected", [("", "t-group-sync-dashboard-backup-offsite"), ("my-offsite", "my-offsite")])
 def test_the_offsite_claim_is_mounted_read_only_as_the_cronjob_names_it(claim, expected):
     docs = _docs(backup__offsite__destination__pvc__existingClaim=claim, **OFFSITE, **ON)
-    pod = _deployment(docs)["spec"]["template"]["spec"]
+    pod = _deployment(docs, REC)["spec"]["template"]["spec"]
     assert {"name": "offsite", "persistentVolumeClaim": {"claimName": expected, "readOnly": True}} in pod["volumes"]
-    assert {"name": "offsite", "mountPath": "/offsite", "readOnly": True} in _container(docs)["volumeMounts"]
+    assert {"name": "offsite", "mountPath": "/offsite", "readOnly": True} in _container(docs, workload=REC)["volumeMounts"]
     cronjob = next(d for d in docs if d["kind"] == "CronJob")
     shipped = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]
     assert {"name": "offsite", "persistentVolumeClaim": {"claimName": expected}} in shipped
+
+
+def test_t532_5_on_a_single_node_claim_the_offsite_copy_runs_beside_either_workloads_pod():
+    """On ReadWriteOnce the offsite Job must run on the node that holds the data claim: beside the app's pod, or in
+    recovery mode the recovery pod's, as it did when the recovery pod carried the app's labels (#532)."""
+    docs = _docs(persistence__accessMode="ReadWriteOnce", reporting__enabled="false", **OFFSITE, **ON)
+    cronjob = next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"].endswith("-backup-offsite"))
+    (term,) = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]["affinity"]["podAffinity"][
+        "requiredDuringSchedulingIgnoredDuringExecution"]
+    assert term["topologyKey"] == "kubernetes.io/hostname"
+    selector = term["labelSelector"]
+
+    def picks(labels: dict) -> bool:
+        return (all(labels.get(k) == v for k, v in selector["matchLabels"].items())
+                and all(labels.get(e["key"]) in e["values"] for e in selector["matchExpressions"]))
+
+    for name in (APP, REC):
+        assert picks(_deployment(docs, name)["spec"]["template"]["metadata"]["labels"]), name
+    job_labels = cronjob["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
+    assert not picks(job_labels)
 
 
 S3 = {"backup__offsite__destination__type": "s3", "backup__offsite__destination__s3__existingSecret": "creds",
@@ -195,7 +292,7 @@ def test_the_offsite_claim_is_mounted_exactly_when_the_cronjob_writes_one(extra)
     them, the recovery pod mounts the claim the CronJob writes, and nothing when it writes none. A default
     that turns offsite on (#304) must turn the mount on with it, or this test fails."""
     docs = _docs(**extra, **ON)
-    mounted = [v["persistentVolumeClaim"]["claimName"] for v in _deployment(docs)["spec"]["template"]["spec"]["volumes"]
+    mounted = [v["persistentVolumeClaim"]["claimName"] for v in _deployment(docs, REC)["spec"]["template"]["spec"]["volumes"]
                if v["name"] == "offsite"]
     written = [v["persistentVolumeClaim"]["claimName"] for d in docs if d["kind"] == "CronJob"
                for v in d["spec"]["jobTemplate"]["spec"]["template"]["spec"]["volumes"]
@@ -233,7 +330,7 @@ def test_t303_19_the_docs_name_the_switch_and_say_what_alerts():
     assert "GroupSyncDashboardNotPolling does not fire" in comment
     assert "GroupSyncDashboardReportSnapshotStale" in comment and "The TTL is the bound" in comment
     # what the TTL ends (measured: an exec'd process is killed when PID 1 exits) and what restarts it
-    assert "every process in the container stops" in comment and "evicted" in comment and "0/1" in comment
+    assert "every process in the container stops" in comment and "evicted" in comment and "1/1" in comment
     runbook = (REPO / "docs" / "RUNBOOK_backup_restore.md").read_text()
     assert "Check the time left first" in runbook and "every process in the container stops" in runbook
     for doc in (CHART / "README.md", REPO / "docs" / "RUNBOOK_backup_restore.md", CHART / "values.yaml"):

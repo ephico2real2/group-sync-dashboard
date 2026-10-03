@@ -95,6 +95,14 @@ def test_t302_4_outside_recovery_mode_it_refuses_names_the_value_and_never_execs
     assert [c for c in calls(lab) if c.startswith("exec")] == []
 
 
+def test_t532_7_the_pods_are_listed_from_both_workloads(lab) -> None:
+    """The recovery pod is app=<release>-recovery from chart 0.65.0 and app=<release> before it; both are listed,
+    so an app pod still terminating beside the recovery pod makes two and is refused (#532)."""
+    lab("--list", pod_list=pods(RECOVERY))
+    (listed,) = [c for c in calls(lab) if c.startswith("get pods")]
+    assert "-l app in (group-sync-dashboard,group-sync-dashboard-recovery)" in listed, listed
+
+
 @pytest.mark.parametrize("n", [0, 2])
 def test_t302_5_none_or_two_pods_are_refused_before_any_exec(lab, n: int) -> None:
     result = lab("--from-version", f"{KNOWN}-{STAMPS[0]}", "--yes", pod_list=pods(RECOVERY, n=n))

@@ -46,6 +46,18 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app: {{ include "gsd.fullname" . }}
 {{- end -}}
 
+{{/*
+The recovery workload's pod labels and selector (#532). The `app` value differs from
+gsd.selectorLabels', so the Service, the PodDisruptionBudget, the ServiceMonitor and the app's
+Deployment never select the recovery pod, and its Deployment never selects an app pod.
+*/}}
+{{- define "gsd.recoverySelectorLabels" -}}
+app.kubernetes.io/name: {{ include "gsd.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app: {{ include "gsd.fullname" . }}-recovery
+app.kubernetes.io/component: recovery
+{{- end -}}
+
 {{- define "gsd.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "gsd.fullname" .) .Values.serviceAccount.name -}}

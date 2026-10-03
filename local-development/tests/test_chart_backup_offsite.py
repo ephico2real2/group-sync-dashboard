@@ -365,7 +365,11 @@ class TestAccessModes:
         (term,) = pod["spec"]["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
         assert term["topologyKey"] == "kubernetes.io/hostname"
         selector = [d for d in docs if d.get("kind") == "Service"][0]["spec"]["selector"]
-        assert term["labelSelector"]["matchLabels"] == selector
+        # #532: the term picks the app's pod (the Service's selector) or, in recovery mode, the recovery workload's
+        labels = term["labelSelector"]
+        assert labels["matchLabels"] == {k: v for k, v in selector.items() if k != "app"}
+        assert labels["matchExpressions"] == [{"key": "app", "operator": "In",
+                                               "values": [selector["app"], selector["app"] + "-recovery"]}]
 
     def test_rwop_is_refused(self):
         ok, out = render(**ON, persistence__accessMode="ReadWriteOncePod", reporting__enabled="false")   # reporting refuses RWOP first (C3)

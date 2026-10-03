@@ -322,7 +322,11 @@ type: application
 # CHART 0.62.0 (2026-10-02), MINOR: appVersion moves to application 3.1.0 (below); Delete report
 # runs and database copies from the page, previewed and confirmed, for the cluster-admin tier
 # (#542).
-version: 0.62.0
+# CHART 0.65.0, MINOR: recovery mode is its own workload (#532). A second Deployment,
+# <fullname>-recovery, is rendered on every release at 0 replicas; recovery.enabled scales the
+# app's to 0 and it to 1, so both report available and turning it off takes one rollout. A required
+# pod anti-affinity orders the two pods on the data claim. No RBAC change.
+version: 0.65.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
