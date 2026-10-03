@@ -139,14 +139,25 @@ class TestSelfOnlyNeverWidens:
         assert all("ldap_filter" not in cr for cr in crs.json())
 
 
-CLUSTER_ENDPOINTS = ("groupsyncs", "groupsyncs/x/events", "groups", "groups/x", "users", "users/x", "logins",
-                     "cluster-access", "bindings/findings", "user-bindings", "operator-configs", "membership-changes",
-                     "binding-changes",
-                     # #167's two. The sweep is what proves a handler answers `hidden` exactly as `unknown`,
-                     # and a mutation shows it earns its place: delete `require_cluster` from
-                     # `namespace_detail` and only the second of these fails (OB3, integration review, C8).
-                     "namespaces", "namespaces/prod-ns",
-                     "home")
+#: The `{name}` each cluster route is swept with, keyed by the segment before it; `x` where none is named. `prod-ns`
+#: is #167's: a mutation shows the sweep earns its place there — delete `require_cluster` from `namespace_detail`
+#: and only that route fails (OB3, integration review, C8).
+SWEEP_NAMES = {"namespaces": "prod-ns"}
+
+
+def _cluster_suffixes(app) -> list[str]:
+    """Every `/api/clusters/{cluster_id}/…` route the app registers, as the suffix the sweep requests. Derived from
+    `app.routes`, so a new cluster handler is swept the day it is added: the hand list it replaces had 16 of 17 and
+    missed `kyverno` (#239, SPEC_G1)."""
+    prefix = "/api/clusters/{cluster_id}/"
+    suffixes = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if path.startswith(prefix):
+            parts = path[len(prefix):].split("/")
+            suffixes.append("/".join(SWEEP_NAMES.get(parts[i - 1], "x") if part == "{name}" else part
+                                     for i, part in enumerate(parts)))
+    return sorted(suffixes)
 
 
 class TestHiddenIsNotAnOracle:
@@ -157,16 +168,18 @@ class TestHiddenIsNotAnOracle:
             assert a.status_code == b.status_code == 404
             assert a.json()["detail"].replace("dark", "X") == b.json()["detail"].replace("no-such", "X")
 
-    @pytest.mark.parametrize("suffix", CLUSTER_ENDPOINTS)
-    def test_every_cluster_handler_answers_hidden_like_unknown(self, client, suffix):
-        """Codex, review D2: the twelve `/api/clusters/{id}/…` handlers, each measured — the same
+    def test_every_cluster_handler_answers_hidden_like_unknown(self, client):
+        """Codex, review D2: every `/api/clusters/{id}/…` handler the app registers, each measured — the same
         status and the same sentence, differing only by the id the caller sent (which is the
         caller's own input, not information about the server)."""
-        for headers in (ROOT, ALICE):
-            a = client.get(f"/api/clusters/dark/{suffix}", headers=headers)
-            b = client.get(f"/api/clusters/no-such/{suffix}", headers=headers)
-            assert a.status_code == b.status_code == 404, suffix
-            assert a.json()["detail"].replace("dark", "X") == b.json()["detail"].replace("no-such", "X"), suffix
+        suffixes = _cluster_suffixes(client.app)
+        assert len(suffixes) >= 17, f"the sweep found only {suffixes}: the derivation from app.routes stopped matching"
+        for suffix in suffixes:
+            for headers in (ROOT, ALICE):
+                a = client.get(f"/api/clusters/dark/{suffix}", headers=headers)
+                b = client.get(f"/api/clusters/no-such/{suffix}", headers=headers)
+                assert a.status_code == b.status_code == 404, suffix
+                assert a.json()["detail"].replace("dark", "X") == b.json()["detail"].replace("no-such", "X"), suffix
 
     def test_hidden_is_absent_from_the_lists(self, client):
         ids = {c["id"] for c in client.get("/api/clusters", headers=ROOT).json()}

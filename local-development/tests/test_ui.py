@@ -4896,6 +4896,69 @@ def _open_as(page, base, user):
     return page
 
 
+# ── #239: the declared tabs (docs/ACCESS_CONTROL.md §3, SPEC_G1) ────────────────────────────────────
+# §3 says, per persona, which tabs the strip draws and which pages are a refusal card. This loads every page as
+# every persona and holds the page to it; tests/test_access_declaration.py holds §3 to the pages index.html can draw.
+
+#: The reader each §3 persona is here, and what the stubs below let each one pass: exactly its own question.
+DECLARED_READERS = {"self": "alice", "auditor": "auditor", "usage": "usage", "cluster-admin": "root"}
+#: A page has painted its verdict: a card is drawn and nothing on it is still loading.
+PAGE_SETTLED = """() => { const m = document.querySelector('#main');
+  return !!m && !!m.querySelector('.card') && !m.innerText.includes('Loading…'); }"""
+
+
+@pytest.fixture(scope="module")
+def declared_server(tmp_path_factory):
+    """The posture §3 declares: the proxy on, restrictions on, reporting on (Reports and Library are drawn only then)
+    and the writes on, one stub per tier so each persona passes its own question and no other."""
+    root = tmp_path_factory.mktemp("gsd-declared")
+    db = str(root / "ui.db")
+    _seed(db)
+    token = root / "report-token"
+    token.write_bytes(b"t" * 48 + b"\n")
+    settings = Settings(
+        clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
+        db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True, cluster_secrets_writes_enabled=True,
+        reporting_url="https://gsd-report.ns.svc:8443", reporting_token_file=str(token),
+    )
+    app = build_app(settings, run_poller=False)
+    app.state.tier_resolver = _TierByName("auditor")
+    app.state.usage_tier_resolver = _TierByName("usage")
+    app.state.cluster_admin_resolver = _TierByName("root")
+    port = _free_port()
+    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=srv.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{base}/healthz", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("declared dashboard server did not start")
+    yield base
+    srv.should_exit = True
+    thread.join(timeout=5)
+
+
+class TestTheDeclaredTabs:
+    """T239-5: the tab strip each persona is drawn, and the refusal card on each page, are §3's."""
+
+    @pytest.mark.parametrize("persona", list(DECLARED_READERS))
+    def test_the_tab_strip_and_every_refusal_are_the_declared_ones(self, page, declared_server, persona):
+        from test_access_declaration import PAGES
+        _open_as(page, declared_server, DECLARED_READERS[persona])
+        drawn = page.eval_on_selector_all("nav.tabs .tab", "els => els.map(e => e.dataset.nav)")
+        assert drawn == [row["page"] for row in PAGES if row["tab"] != "—" and row[persona] != "absent"], persona
+        for row in PAGES:
+            page.goto(f"{declared_server}/#page={row['page']}")
+            page.reload()
+            page.wait_for_function(PAGE_SETTLED, timeout=10_000)
+            refused = page.locator("#main .scope-refusal").count() > 0
+            assert refused == (row[persona] in ("refused", "absent")), (persona, row["page"], row[persona])
+
 
 def _home(page, base, user="alice"):
     """Home as `user`, waited on its own paint — the pill and the tab strip arrive before the payload."""

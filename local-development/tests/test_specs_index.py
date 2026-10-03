@@ -221,3 +221,15 @@ def test_a_released_spec_with_application_code_names_its_app_version() -> None:
         if row["status"] == "released" and "application code" in row["version"]:
             assert re.search(r"\bapp \d+\.\d+\.\d+", row["version"]), (fid, row["version"])
 
+
+def test_t1_says_what_was_delivered_and_what_was_not() -> None:
+    """#239 (SPEC_G1, T239-8): SPEC_T1 predates #322, which delivered its step T3 in another shape, and #239 delivers
+    its declaration as SPEC_G1. A header still at `specified` invites someone to build from blocks main has outgrown,
+    so the header names what was delivered and by which spec, and what is not built."""
+    head = (SPECS / "SPEC_T1_tier_model.md").read_text().split("## How to read this spec", 1)[0]
+    assert ROWS["T1"]["status"] != "specified", ROWS["T1"]["status"]
+    delivered = re.search(r"^\| Delivered \| (?P<value>.+) \|$", head, re.M)
+    assert delivered, "SPEC_T1's header has no Delivered row"
+    for name in ("#322", "SPEC_T2", "SPEC_G1", "TIER_BY_SURFACE"):
+        assert name in delivered["value"], f"the Delivered row does not name {name}"
+
