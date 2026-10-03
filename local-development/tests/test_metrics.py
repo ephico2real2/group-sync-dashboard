@@ -841,3 +841,41 @@ class TestGroupCountCliffMetric:
         assert 'kind="group_count_cliff_silenced"' not in on, "a silenced cliff must never page"
         off = rules("config.alerts.groupCountCliff.enabled=false")
         assert "GroupSyncGroupCountCliff" not in off
+
+
+class TestPlatformUsersMoveCountsNeverNames:
+    """#255: naming a user in `platformUsers` moves `gsd_bindings_total` between findings by count; /metrics is
+    unauthenticated by decision, so no user name may appear in it either way."""
+
+    def test_t255_13_the_exposition_moves_by_counts_and_names_nobody(self, monkeypatch):
+        from gsd import poller
+        from gsd.config import ClusterConfig, PlatformUsers
+        from gsd.kube import BindingView, UserBindingView
+
+        bind = "ocp-oauth-bind-serviceid"
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self):
+                return [BindingView("ClusterRoleBinding", "", "poller", "ClusterRole", "poller", bind, subject_kind="User"),
+                        BindingView("RoleBinding", "legacy", "jdoe-edit", "ClusterRole", "edit", "jdoe", subject_kind="User")]
+            def fetch_user_bindings(self):
+                return [UserBindingView("ClusterRoleBinding", "", "poller", "ClusterRole", "poller", bind),
+                        UserBindingView("RoleBinding", "legacy", "jdoe-edit", "ClusterRole", "edit", "jdoe")]
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        store = Store(":memory:")
+        store.upsert_cluster("crc", "https://x", True)
+        store.record_poll("crc", "ok", None)
+        cluster = ClusterConfig("crc", "https://x", token_env="T")
+        poller.refresh_bindings(store, cluster, timeout=5)
+        before = series(generate_latest(build_registry(store, GRACE)).decode(), "gsd_bindings_total")
+        poller.refresh_bindings(store, cluster, timeout=5, platform_users=PlatformUsers(additional_names=frozenset({bind})))
+        text = generate_latest(build_registry(store, GRACE)).decode()
+        after = series(text, "gsd_bindings_total")
+        store.close()
+        key = 'gsd_bindings_total{cluster="crc",finding="%s"}'
+        assert (before[key % "unmanaged"], after[key % "unmanaged"]) == (2, 1)
+        assert (before[key % "built_in"], after[key % "built_in"]) == (0, 1)
+        assert bind not in text and "jdoe" not in text

@@ -171,6 +171,9 @@ class PlatformNamespaces:
     additional_prefixes: tuple[str, ...] = ()
     additional_suffixes: tuple[str, ...] = ()
     additional_names: frozenset[str] = frozenset()
+    # The ConfigMap (name, key) the lists were read from, or None for the settings file (#255). Not part of
+    # equality: a list read from a ConfigMap classifies exactly as the same list written inline.
+    origin: tuple[str, str] | None = field(default=None, compare=False)
 
     # THE namespace classifier — names, prefixes, suffixes, each with its values.yaml
     # `platformNamespaces.additional*` axis appended; every consumer of "is this namespace the platform's" calls it.
@@ -209,6 +212,113 @@ class PlatformNamespaces:
         if missing_names:
             stale["additionalNames"] = missing_names
         return stale
+
+    def summary(self) -> dict:
+        """Where the list comes from, for the page's note (#255); see `_list_summary`."""
+        return _list_summary(
+            self.origin,
+            [key for key, value, default in (("prefixes", self.prefixes, PLATFORM_NAMESPACE_PREFIXES),
+                                             ("suffixes", self.suffixes, ()),
+                                             ("names", self.names, PLATFORM_NAMESPACES)) if value != default],
+            [key for key, value in (("additionalPrefixes", self.additional_prefixes),
+                                    ("additionalSuffixes", self.additional_suffixes),
+                                    ("additionalNames", self.additional_names)) if value])
+
+
+# The shipped User defaults, moved here from gsd/kube.py by #255 so the settings can default to them (gsd.kube
+# imports gsd.config, not the reverse): 2.0.0's lists plus `kube:admin`, by the operator's ruling of 2026-10-01
+# (#255); values.yaml `platformUsers.prefixes`/`names` replace them and
+# `additionalPrefixes`/`additionalNames` widen them. Kubernetes reserves `system:` "for Kubernetes system use"
+# (RBAC, "Referring to subjects"). Measured on the reference cluster: 36 direct-user bindings, of which 22 are
+# these — kube-apiserver, kube-scheduler, kube-controller-manager, the node identities, and SA-shaped users like
+# `system:serviceaccount:...`. Flagging them would bury the real findings under platform noise, which is the
+# same mistake the `system:` GROUP tiering exists to avoid.
+# PLATFORM-CLASSIFICATION (#255, #353): the User prefixes
+PLATFORM_USER_PREFIXES = ("system:",)
+# PLATFORM-CLASSIFICATION (#255, #353): the User names
+PLATFORM_USER_NAMES = frozenset({
+    "kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy",
+    # kubeadmin is OpenShift's break-glass cluster identity, not a person with an LDAP
+    # account. Flagging it as a migration violation is noise: there is nowhere to migrate
+    # it TO, and on the reference cluster it accounted for 12 of the 14 non-system rows —
+    # so leaving it in would have made the finding look like a kubeadmin report.
+    "kubeadmin",
+    # The same identity, by the name OpenShift's bootstrap authenticator gives it outside CRC: openshift/library-go
+    # `BootstrapUser = "kube:admin"` (`kubeadmin` is only its login), and every project it requests binds
+    # `kube:admin` as admin. The operator's ruling of 2026-10-01 (#255): "kubeadmin or kube:admin is a trusted user
+    # in crc that we use as admin" — one trusted admin identity, both names shipped.
+    "kube:admin",
+})
+
+
+@dataclass(frozen=True)
+class PlatformUsers:
+    """Which User subjects are the platform's rather than a person's (#255).
+
+    The direct-user view's question and the unmanaged finding's, answered once: a platform user's grants
+    are counted (`excluded_platform`, `built_in`) and never raised. Two axes, plain prefix and exact name,
+    as `PlatformNamespaces` has them; no suffix axis (#255: a user is named, not a family with a common
+    ending). `prefixes` and `names` replace the shipped defaults, `additional_*` append to them — the
+    common case is an estate naming its own break-glass or bind account.
+    """
+
+    prefixes: tuple[str, ...] = PLATFORM_USER_PREFIXES
+    names: frozenset[str] = PLATFORM_USER_NAMES
+    additional_prefixes: tuple[str, ...] = ()
+    additional_names: frozenset[str] = frozenset()
+    # As on PlatformNamespaces: the ConfigMap (name, key) the lists were read from, outside equality.
+    origin: tuple[str, str] | None = field(default=None, compare=False)
+
+    # THE User classifier — the direct-user rows and their alert, the binding classification and the
+    # unmanaged finding all read the flag the poller stores from it.
+    # PLATFORM-CLASSIFICATION (#255, #353)
+    def matches(self, name: str) -> bool:
+        """Whether this User subject is the platform's. Byte-exact, as the self tier matches a viewer."""
+        if name in self.names or name in self.additional_names:
+            return True
+        if self.prefixes and name.startswith(self.prefixes):
+            return True
+        return bool(self.additional_prefixes) and name.startswith(self.additional_prefixes)
+
+    def unmatched(self, users: list[str]) -> dict[str, list[str]]:
+        """Every `additional*` entry that matches none of `users`, by axis.
+
+        `users` is every User subject on the cluster's bindings, platform ones included: users have no
+        index of their own. An unmatched entry can be planned, misspelled, or no longer bound; this method
+        reports the observation, not a deletion. An empty `users` judges nothing: a cluster's bindings always name its own
+        `system:` components as Users, so none at all means they have not been read there (the namespace
+        index shows its stale patterns only beside platform rows, likewise). The shipped defaults are not
+        reported, as for namespaces."""
+        if not users:
+            return {}
+        stale: dict[str, list[str]] = {}
+        missing = [p for p in self.additional_prefixes if not any(u.startswith(p) for u in users)]
+        if missing:
+            stale["additionalPrefixes"] = missing
+        present = set(users)
+        missing_names = sorted(n for n in self.additional_names if n not in present)
+        if missing_names:
+            stale["additionalNames"] = missing_names
+        return stale
+
+    def summary(self) -> dict:
+        """Where the list comes from, for the page's note (#255); see `_list_summary`."""
+        return _list_summary(
+            self.origin,
+            [key for key, value, default in (("prefixes", self.prefixes, PLATFORM_USER_PREFIXES),
+                                             ("names", self.names, PLATFORM_USER_NAMES)) if value != default],
+            [key for key, value in (("additionalPrefixes", self.additional_prefixes),
+                                    ("additionalNames", self.additional_names)) if value])
+
+
+def _list_summary(origin: tuple[str, str] | None, replaced: list[str], additional: list[str]) -> dict:
+    """The page's "where this list comes from" (#255): the shipped axes the estate replaced, the `additional*`
+    axes it set, and the ConfigMap it was read from. Key names only — the note says where to look, and the
+    values are the configuration's, not the payload's."""
+    return {"configMap": None if origin is None else {"name": origin[0], "key": origin[1]},
+            "replaced": replaced, "additional": additional}
+
+
 # ── Connection modes (SPEC_S3 §3/§4 — S3a ships the keys, S3b connects) ─────────────────────────
 # A values stanza, or a Secret's `config`, may declare HOW the dashboard obtains a remote cluster's
 # credential instead of carrying one. Both readers learn the same three keys (§2's equivalence), and
@@ -851,6 +961,9 @@ class Settings:
     # Which namespaces are the platform's (#255). Defaults to the rule gsd/home.py ships.
     # PLATFORM-CLASSIFICATION (#255, #353): the settings every consumer reads it from (values.yaml platformNamespaces → clusters.yaml)
     platform_namespaces: PlatformNamespaces = PlatformNamespaces()
+    # Which User subjects are the platform's (#255). Defaults to the rule gsd/kube.py shipped in 2.0.0.
+    # PLATFORM-CLASSIFICATION (#255, #353): the settings every consumer reads it from (values.yaml platformUsers → clusters.yaml)
+    platform_users: PlatformUsers = PlatformUsers()
 
     def effective_clusters(self) -> list[ClusterConfig]:
         """The values list with the Secret-sourced clusters merged (SPEC_S1 C2: a Secret shadows a
@@ -967,15 +1080,16 @@ def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
     the case an estate actually wants: adding the operators it installs without restating a Red Hat
     list that changes between releases.
     """
-    source = raw.get("platformNamespaces")
+    source, origin = _platform_stanza(raw, "platformNamespaces")
     if source is None:
         return PlatformNamespaces()
+    at = _origin_text(origin)
     if not isinstance(source, dict):
-        raise ConfigError(f"platformNamespaces: expected a mapping, got {source!r}")
+        raise ConfigError(f"platformNamespaces{at}: expected a mapping, got {source!r}")
     known = {"prefixes", "suffixes", "names", "additionalPrefixes", "additionalSuffixes", "additionalNames"}
     unknown = set(source) - known
     if unknown:
-        raise ConfigError(f"platformNamespaces: unknown key(s) {sorted(unknown)}; "
+        raise ConfigError(f"platformNamespaces{at}: unknown key(s) {sorted(unknown)}; "
                           f"expected any of {', '.join(sorted(known))}")
 
     def axis(key: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -986,7 +1100,13 @@ def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
         # It also strips and drops empties, which is why the padded/empty check an earlier version of
         # this function carried was DEAD CODE — it ran after the stripping and could never fire
         # (review of #259, Codex C3). What is worth refusing is the thing the stripping cannot fix:
-        values = _string_list_setting(source, key, default)
+        try:
+            values = _string_list_setting(source, key, default)
+        except ConfigError as exc:
+            if origin is None:
+                raise
+            # From a ConfigMap the message names it: the reader fixes that object, not the values file.
+            raise ConfigError(f"platformNamespaces.{key}{at}: {exc}") from exc
         for value in values:
             # MATCHING IS LITERAL. Someone writing `team-*` or `oud-?` means a glob, and silence
             # would leave them with a pattern that matches one absurd namespace and no error. The
@@ -994,7 +1114,7 @@ def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
             bad = {c for c in "*?[]" if c in value}
             if bad:
                 raise ConfigError(
-                    f"platformNamespaces.{key}: {value!r} contains {''.join(sorted(bad))} — matching is "
+                    f"platformNamespaces.{key}{at}: {value!r} contains {''.join(sorted(bad))} — matching is "
                     f"literal, not a glob. A prefix, a suffix or a full name; `team-*` is a prefix "
                     f"`team-` on additionalPrefixes.")
         # A repeated pattern is harmless to matching and noise in a diff; collapse it rather than
@@ -1008,6 +1128,101 @@ def _platform_namespaces_setting(raw: dict) -> PlatformNamespaces:
         additional_prefixes=axis("additionalPrefixes", ()),
         additional_suffixes=axis("additionalSuffixes", ()),
         additional_names=frozenset(axis("additionalNames", ())),
+        origin=origin,
+    )
+
+
+def _origin_text(origin: tuple[str, str] | None) -> str:
+    """How a refusal names a list read from a ConfigMap; nothing for the settings file's own stanza."""
+    return "" if origin is None else f" (ConfigMap {origin[0]!r}, key {origin[1]!r})"
+
+
+def _platform_stanza(raw: dict, stanza: str) -> tuple[object, tuple[str, str] | None]:
+    """The mapping a platform list is parsed from, and the ConfigMap (name, key) it came from (#255).
+
+    Inline, `<stanza>` in the settings file; or `<stanza>ConfigMap: {name, key, path, revision}`, which the
+    chart renders for `<stanza>.existingConfigMap` and mounts at `path`, holding the same mapping as YAML.
+    Both at once is refused, as the chart refuses it at render: two sources for one answer is the defect,
+    not a convenience. The file is read here, once, at start — the kubelet refreshes a mounted file, but
+    nothing re-reads it, so the classification never changes under a running poll; `revision` is not read,
+    it is in the settings file so that changing it in the values file rolls the pod (checksum/config)."""
+    ref_key = f"{stanza}ConfigMap"
+    inline, ref = raw.get(stanza), raw.get(ref_key)
+    if ref is None:
+        return inline, None
+    if inline is not None:
+        raise ConfigError(f"{stanza} and {ref_key} are both set; the lists come from one of them — "
+                          f"inline in the values file or the ConfigMap, never both")
+    if not isinstance(ref, dict) or not {"name", "key", "path"} <= set(ref) <= {"name", "key", "path", "revision"} \
+            or not all(isinstance(ref[k], str) and ref[k] for k in ("name", "key", "path")):
+        raise ConfigError(f"{ref_key}: expected {{name, key, path}}, each a non-empty string, and an optional "
+                          f"revision, got {ref!r}")
+    origin = (ref["name"], ref["key"])
+    where = f"{stanza}{_origin_text(origin)}"
+    try:
+        text = Path(ref["path"]).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"{where}: cannot read {ref['path']}: {exc.strerror or exc}; the ConfigMap must "
+                          f"hold the key {origin[1]!r}") from exc
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{where}: invalid YAML in {ref['path']}: {exc}") from exc
+    if data is None:
+        raise ConfigError(f"{where}: {ref['path']} is empty; it must hold the {stanza} mapping itself, "
+                          f"for example `additionalNames: [...]`")
+    return data, origin
+
+
+# PLATFORM-CLASSIFICATION (#255, #353): values.yaml `platformUsers` → the chart's configmap → clusters.yaml → this parse
+def _platform_users_setting(raw: dict) -> PlatformUsers:
+    """`platformUsers` from the settings file (#255), or the 2.0.0 rule when absent.
+
+    Built as `platformNamespaces` is, with two differences. No suffix axis: a user is named, not a family
+    with a common ending. And every axis must be a LIST: Kubernetes puts no format on a user name ("the
+    RBAC authorization system does not require any format for usernames"), so `cn=jdoe,ou=People` is one
+    name and a comma-separated string can never be split safely. An unknown key, a non-list, a non-string
+    entry and a glob character are refused by name, as the chart refuses them at render.
+    """
+    source, origin = _platform_stanza(raw, "platformUsers")
+    if source is None:
+        return PlatformUsers()
+    at = _origin_text(origin)
+    if not isinstance(source, dict):
+        raise ConfigError(f"platformUsers{at}: expected a mapping, got {source!r}")
+    known = {"prefixes", "names", "additionalPrefixes", "additionalNames"}
+    unknown = set(source) - known
+    if unknown:
+        raise ConfigError(f"platformUsers{at}: unknown key(s) {sorted(unknown)}; expected any of "
+                          f"{', '.join(sorted(known))} — a user is matched by a plain prefix or an exact name")
+
+    def axis(key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        value = source.get(key)
+        if value is None:
+            return default
+        if not isinstance(value, list):
+            raise ConfigError(f"platformUsers.{key}{at}: expected a list of strings, got {value!r}; a user "
+                              f"name may contain a comma, so a string is never split")
+        out: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ConfigError(f"platformUsers.{key}{at}: every entry must be a string, got {item!r}")
+            bad = {c for c in "*?[]" if c in item}
+            if bad:
+                raise ConfigError(
+                    f"platformUsers.{key}{at}: {item!r} contains {''.join(sorted(bad))} — matching is literal, "
+                    f"not a glob. A prefix or a full name; `svc-*` is a prefix `svc-` on additionalPrefixes.")
+            if item.strip():
+                out.append(item.strip())
+        # A repeated entry is harmless to matching and noise in a diff, as for namespaces.
+        return tuple(dict.fromkeys(out))
+
+    return PlatformUsers(
+        prefixes=axis("prefixes", PLATFORM_USER_PREFIXES),
+        names=frozenset(axis("names", tuple(sorted(PLATFORM_USER_NAMES)))),
+        additional_prefixes=axis("additionalPrefixes", ()),
+        additional_names=frozenset(axis("additionalNames", ())),
+        origin=origin,
     )
 
 
@@ -1784,6 +1999,7 @@ def load_settings(path: str | Path) -> Settings:
         namespaces_read_enabled=_bool_setting(raw, "GSD_NAMESPACES_READ_ENABLED", "namespacesReadEnabled", False),
         namespace_metadata_labels=_string_list_setting(raw, "namespaceMetadataLabels", ()),
         platform_namespaces=_platform_namespaces_setting(raw),   # PLATFORM-CLASSIFICATION (#255, #353)
+        platform_users=_platform_users_setting(raw),   # PLATFORM-CLASSIFICATION (#255, #353)
         user_activity_visibility=_visibility_setting(raw),
         user_activity_flush_seconds=_num_setting(
             raw, "GSD_USER_ACTIVITY_FLUSH_SECONDS", "userActivityFlushSeconds", 60, int

@@ -2473,6 +2473,8 @@ def build_app(
             # sentence, and the page must be able to say it without the reader toggling to find out.
             "platform_with_findings": len([r for r in platform if r.get("direct_grants")]),
             "platform_patterns_unmatched": stale_patterns,
+            # Where the namespace list comes from (#255): the page's note names it instead of a fixed sentence.
+            "platform_namespaces_source": settings.platform_namespaces.summary(),
             "cluster_wide_groups": cluster_wide_groups,
             "cluster_wide_grants": cluster_wide_grants,
             "cluster_wide_path": cluster_wide_path,
@@ -2596,9 +2598,10 @@ def build_app(
         cluster_id: str,
         include_platform: bool = Query(
             default=False,
-            description="Include cluster-internal identities (`system:*`, `kubeadmin`). "
-                        "Excluded by default: there is nowhere to migrate them to, and on "
-                        "the reference cluster they were 34 of 36 rows."),
+            description="Include the platform's identities: the users `platformUsers` names "
+                        "(by default `system:*`, the kube components, `kubeadmin` and `kube:admin`). "
+                        "Excluded by default: there is nowhere to migrate them to, and on the "
+                        "reference cluster they were 34 of 36 rows."),
         namespace: str | None = Query(
             default=None,
             description="restrict to one namespace; '(cluster-scoped)' for cluster-wide"),
@@ -2616,9 +2619,9 @@ def build_app(
         group revokes their access everywhere, while a direct binding keeps granting to a
         name nobody reviews — and no group-based audit can see it.
 
-        Cluster-internal identities (system:*, the kube components) and OpenShift's
-        break-glass `kubeadmin` are excluded by default: there is nowhere to migrate them
-        to, and on the reference cluster they were 34 of 36 rows, so including them would
+        The platform's identities — the users `platformUsers` names, by default system:*, the
+        kube components and OpenShift's break-glass `kubeadmin` / `kube:admin` — are excluded by default:
+        there is nowhere to migrate them to, and on the reference cluster they were 34 of 36 rows, so including them would
         make the finding unreadable. `include_platform=true` shows them, and the count is
         always reported so the page can say what it left out.
 
@@ -2659,9 +2662,16 @@ def build_app(
             "note": "direct user grants; migrate these to LDAP-managed groups",
             "by_namespace":
                 store.user_bindings_by_namespace(cluster_id) if scope == "all" else None,
-            # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's excluded count (is_platform_user, stored at poll time)
+            # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's excluded count (platformUsers, stored at poll time)
             "excluded_platform":
                 store.platform_user_binding_count(cluster_id) if scope == "all" else None,
+            # Where that list comes from, and every `additional*` entry no User subject here matches (#255) —
+            # judged against all of this cluster's User subjects, platform ones included. Withheld at self with
+            # the count: both describe other people's grants.
+            "platform_users_unmatched": (
+                # PLATFORM-CLASSIFICATION (#255, #353): a stale platformUsers entry, reported where the count is
+                settings.platform_users.unmatched(store.user_binding_names(cluster_id)) if scope == "all" else None),
+            "platform_users_source": settings.platform_users.summary() if scope == "all" else None,
             "namespace": namespace,
             "total": total,
             "limit": limit,

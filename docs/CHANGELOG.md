@@ -10,6 +10,28 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **An estate names its own platform users, and either platform list can live in a ConfigMap (#255, Epic G #387,
+  `docs/specs/SPEC_G2_platform_users.md`; application 3.2.0, chart 0.66.0).** `platformUsers` in the values file
+  works like `platformNamespaces`: `prefixes` and `names` replace the shipped defaults (`system:`, and
+  `kube-apiserver`, `kubelet`, `kube-controller-manager`, `kube-scheduler`, `kube-proxy`, `kubeadmin` as in 2.0.0,
+  plus `kube:admin`), `additionalPrefixes` and `additionalNames` append to them. **`kube:admin` is new in the
+  defaults** (the operator's ruling of 2026-10-01 on #255): it is OpenShift's bootstrap break-glass user, the same
+  identity as `kubeadmin`, so a grant naming it — every project it requests binds it as admin — is now counted as the
+  platform's instead of raised as a person's direct grant; no binding on the CRC lab names it. A listed user's grants leave the direct-user
+  worklist and its alert, are counted in `excluded_platform`, and are `built_in` in the unmanaged finding; the
+  poller classifies Users from the settings at each binding refresh, so one list feeds all four. An unknown key, a
+  non-list, a non-string entry or a glob character is refused by name at render and at start; an `additional*`
+  entry matching no User subject on a cluster is reported on its Namespace audit tab. `existingConfigMap`
+  (`enabled`, `name`, `key`, `revision`) reads either stanza from a ConfigMap you own, mounted as a file, read at
+  start, refused at render beside an inline list; after editing the ConfigMap, change `revision` in the values
+  file and roll the release out. No new permission. The two platform notes on the Namespace audit tab now say
+  where their list comes from. **Two `platformNamespaces` inputs render differently on upgrade:** an empty
+  replacing list (`prefixes: []`, `suffixes: []`, `names: []`) now reaches the application instead of being dropped
+  at render, so it replaces the shipped defaults as the values comment always said (`names: []` makes `default` and
+  `openshift` ordinary namespaces; `prefixes: []` does the same to every `openshift-*` and `kube-*` one); and a
+  `platformNamespaces` that is not a mapping (`false`, `""`, `[]`), which rendered as if unset, is refused at render
+  by name.
+
 - **Every route and page declares its tier, and CI holds the code to it (#239, SPEC_G1).** `docs/ACCESS_CONTROL.md`
   §4 has one row for each route the application registers (44 with the cluster-configuration writes on), keyed by
   method and path, naming what each of five readers gets: no identity, self, auditor, usage and cluster-admin. §3 has

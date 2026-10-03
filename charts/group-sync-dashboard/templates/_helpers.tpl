@@ -957,36 +957,80 @@ false
 # render so a typo'd policy fails `helm template` rather than the pod's startup. Nil-safe on
 # every hop for the usual reason. Called from configmap.yaml, which always renders.
 {{- /*
-Which namespaces are the platform's (#255). REFUSED AT RENDER because the loader refuses the same
-things at startup, and a green `helm upgrade` that CrashLoops the pod is the failure class this chart
-has already shipped three of (#251). Measured in the review of #259, Codex C6: before this, a typo'd
-`additionalSufixes` and a numeric entry both rendered happily into the ConfigMap and the pod refused
-them on the next start.
+Which namespaces and which users are the platform's (#255). REFUSED AT RENDER because the loader refuses
+the same things at startup, and a green `helm upgrade` that CrashLoops the pod is the failure class this
+chart has already shipped three of (#251). Measured in the review of #259, Codex C6: before this, a
+typo'd `additionalSufixes` and a numeric entry both rendered happily into the ConfigMap and the pod
+refused them on the next start. One definition for both stanzas, so the two refusals cannot drift.
+
+`existingConfigMap` is the one key that is not a list: `{enabled, name, key}`, the shape of
+`trustedCA.existingConfigMap`, plus `revision`, free text rendered into the settings file so that changing
+it rolls the pod (the chart cannot see the ConfigMap's content, so it cannot roll on an edit by itself).
+Enabled, it is refused beside any list of the same stanza (an `additional*` list with entries, or a
+replacing key set at all), as rbac-auditors.yaml refuses `createClusterRole` beside `existingClusterRole`:
+two sources for one answer is the defect. Its content cannot be checked here — a render has no cluster to
+look it up in — so the loader refuses a typo inside it at start, naming the ConfigMap and the key.
 */ -}}
+{{/* Where a platform list's existingConfigMap is mounted (#255): one directory per stanza, the whole ConfigMap, no subPath. */}}
+{{- define "gsd.platformListDir" -}}
+/etc/gsd/{{ . | kebabcase }}
+{{- end -}}
+
 {{/* PLATFORM-CLASSIFICATION (#255, #353): refuses an unknown key or a non-list axis at render, so a typo never silently widens or narrows it */}}
-{{- define "gsd.validatePlatformNamespaces" -}}
-{{- with .Values.platformNamespaces -}}
-{{- if not (kindIs "map" .) -}}
-{{- fail (printf "platformNamespaces must be a mapping, got %s." (kindOf .)) -}}
+{{- define "gsd.validatePlatformLists" -}}
+{{- $stanzas := list
+      (dict "name" "platformNamespaces" "replace" (list "prefixes" "suffixes" "names") "add" (list "additionalPrefixes" "additionalSuffixes" "additionalNames") "hint" "A prefix, a suffix or a full name; `team-*` is a prefix `team-` on additionalPrefixes.")
+      (dict "name" "platformUsers" "replace" (list "prefixes" "names") "add" (list "additionalPrefixes" "additionalNames") "hint" "A prefix or a full name; `svc-*` is a prefix `svc-` on additionalPrefixes.") -}}
+{{- range $s := $stanzas -}}
+{{- $stanza := index $.Values $s.name -}}
+{{- if not (kindIs "invalid" $stanza) -}}
+{{- if not (kindIs "map" $stanza) -}}
+{{- fail (printf "%s must be a mapping, got %s." $s.name (kindOf $stanza)) -}}
 {{- end -}}
-{{- $known := list "prefixes" "suffixes" "names" "additionalPrefixes" "additionalSuffixes" "additionalNames" -}}
-{{- range $key, $value := . -}}
-{{- if not (has $key $known) -}}
-{{- fail (printf "platformNamespaces.%s is not a key this chart defines; expected any of %s. A typo here is a pattern that never takes effect." $key (join ", " $known)) -}}
+{{- $known := concat $s.replace $s.add -}}
+{{- $inline := list -}}
+{{- range $key, $value := $stanza -}}
+{{- if eq $key "existingConfigMap" -}}
+{{- if not (kindIs "map" $value) -}}
+{{- fail (printf "%s.existingConfigMap must be a mapping {enabled, name, key, revision}, got %s." $s.name (kindOf $value)) -}}
 {{- end -}}
-{{- if not (kindIs "invalid" $value) -}}
+{{- range $k, $_ := $value -}}
+{{- if not (has $k (list "enabled" "name" "key" "revision")) -}}
+{{- fail (printf "%s.existingConfigMap.%s is not a key this chart defines; expected enabled, name, key, revision." $s.name $k) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (hasKey $value "enabled") (not (kindIs "bool" $value.enabled)) -}}
+{{- fail (printf "%s.existingConfigMap.enabled must be true or false, got %s: a quoted \"false\" is a string, and a string turns it on." $s.name (kindOf $value.enabled)) -}}
+{{- end -}}
+{{- else if not (has $key $known) -}}
+{{- fail (printf "%s.%s is not a key this chart defines; expected any of %s. A typo here is a pattern that never takes effect." $s.name $key (join ", " (append $known "existingConfigMap"))) -}}
+{{- else if not (kindIs "invalid" $value) -}}
 {{- if not (kindIs "slice" $value) -}}
-{{- fail (printf "platformNamespaces.%s must be a list, got %s." $key (kindOf $value)) -}}
+{{- fail (printf "%s.%s must be a list, got %s." $s.name $key (kindOf $value)) -}}
 {{- end -}}
+{{- if or $value (has $key $s.replace) -}}{{- $inline = append $inline $key -}}{{- end -}}
 {{- range $entry := $value -}}
 {{- if not (kindIs "string" $entry) -}}
-{{- fail (printf "platformNamespaces.%s: every entry must be a string; %v is %s." $key $entry (kindOf $entry)) -}}
+{{- fail (printf "%s.%s: every entry must be a string; %v is %s." $s.name $key $entry (kindOf $entry)) -}}
 {{- end -}}
 {{- $bad := "" -}}
 {{- range $c := list "*" "?" "[" "]" -}}{{- if contains $c $entry -}}{{- $bad = printf "%s%s" $bad $c -}}{{- end -}}{{- end -}}
 {{- if $bad -}}
-{{- fail (printf "platformNamespaces.%s: %q contains %s — matching is literal, not a glob. A prefix, a suffix or a full name; `team-*` is a prefix `team-` on additionalPrefixes." $key $entry $bad) -}}
+{{- fail (printf "%s.%s: %q contains %s — matching is literal, not a glob. %s" $s.name $key $entry $bad $s.hint) -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $cm := $stanza.existingConfigMap | default dict -}}
+{{- if $cm.enabled -}}
+{{- if $inline -}}
+{{- fail (printf "%s.existingConfigMap and %s.%s are both set: the list comes from one of them. Move the entries into the ConfigMap, or turn existingConfigMap off." $s.name $s.name (first $inline)) -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" (toString $cm.name)) -}}
+{{- fail (printf "%s.existingConfigMap.name must name a ConfigMap in the release namespace (a DNS subdomain), got %q." $s.name (toString $cm.name)) -}}
+{{- end -}}
+{{- if not (regexMatch "^[-._a-zA-Z0-9]+$" (toString $cm.key)) -}}
+{{- fail (printf "%s.existingConfigMap.key must be a ConfigMap key ([-._a-zA-Z0-9]+), got %q." $s.name (toString $cm.key)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -17,6 +17,8 @@ VALUES = REPO / "charts" / "group-sync-dashboard" / "values.yaml"
 KEPT_OFF = {
     "securityContext.allowPrivilegeEscalation": "a hardening posture, not a feature switch",
     "trustedCA.existingConfigMap.enabled": "needs the name of a ConfigMap the operator supplies",
+    "platformNamespaces.existingConfigMap.enabled": "#255: needs the name of a ConfigMap the operator supplies, as trustedCA's",
+    "platformUsers.existingConfigMap.enabled": "#255: needs the name of a ConfigMap the operator supplies, as trustedCA's",
     "ingress.enabled": "exclusive with the Route, which the chart renders by default",
     "oauthProxy.skipProviderButton": "operator decision 2026-09-05: people log in from the OpenShift screen",
     "oauthProxy.requestLogging": "review finding: oauth-proxy logs the full request URI, the OAuth callback code included",

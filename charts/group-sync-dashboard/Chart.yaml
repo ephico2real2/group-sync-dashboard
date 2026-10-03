@@ -329,7 +329,11 @@ type: application
 # CHART 0.65.1, PATCH: the app pod also carries a required anti-affinity against the recovery pod
 # (#532, SPEC_E11 note 8), so the scheduler re-queues it the moment the recovery pod is deleted
 # instead of after its 5-minute unschedulable flush. No RBAC change.
-version: 0.65.1
+# CHART 0.66.0 (2026-10-03), MINOR: `platformUsers` (prefixes, names, additionalPrefixes, additionalNames) and
+#   `existingConfigMap` {enabled, name, key, revision} for platformNamespaces and platformUsers, mounted as a
+#   file, refused at render beside an inline list; an empty replacing list now renders; appVersion moves to
+#   application 3.2.0 (below); #255.
+version: 0.66.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -463,7 +467,8 @@ version: 0.65.1
 # gate (#410), :latest (#425), the runbook's break glass under Argo CD (#533). MAJOR.
 # 3.1.0 (2026-10-02). Delete report runs and database copies from the page, previewed and confirmed,
 # for the cluster-admin tier (#542). MINOR.
-appVersion: "3.1.0"
+# 3.2.0 (2026-10-03). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
+appVersion: "3.2.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

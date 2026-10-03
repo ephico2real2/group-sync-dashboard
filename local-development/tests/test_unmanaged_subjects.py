@@ -895,18 +895,19 @@ class TestControllerBindingsAndTheDefaultAccount:
 
     def test_the_direct_user_view_is_unchanged(self, store, monkeypatch):
         """The same account spelt as a User subject keeps the direct-user view's own rule and count; the
-        finding path's flag never reaches user_binding."""
+        finding path's flag never reaches user_binding. Since #255 the reader carries no flag: the poller
+        classifies the User rows from the settings' platformUsers, the 2.0.0 rule by default."""
         from gsd import poller
         from gsd.config import ClusterConfig
-        from gsd.kube import UserBindingView, is_platform_user
+        from gsd.kube import UserBindingView
 
         class FakeClient:
             def __init__(self, *a, **kw): pass
             def fetch_bindings(self): return [TestPlatformRule._sa("apps-sa", "apps")]
             def fetch_user_bindings(self):
                 return [UserBindingView("RoleBinding", "apps", "sa-as-user", "ClusterRole", "edit",
-                                        "system:serviceaccount:apps:deployer", is_platform_user("system:serviceaccount:apps:deployer")),
-                        UserBindingView("RoleBinding", "apps", "person", "ClusterRole", "edit", "jdoe", is_platform_user("jdoe"))]
+                                        "system:serviceaccount:apps:deployer"),
+                        UserBindingView("RoleBinding", "apps", "person", "ClusterRole", "edit", "jdoe")]
             def fetch_operator_configs(self): return None
 
         monkeypatch.setattr(poller, "ClusterClient", FakeClient)
@@ -914,3 +915,68 @@ class TestControllerBindingsAndTheDefaultAccount:
         assert store.platform_user_binding_count("crc") == 1
         assert [r["user_name"] for r in store.direct_user_bindings("crc")] == ["jdoe"]
         assert {r["binding_name"]: r["finding"] for r in store.all_bindings("crc")} == {"apps-sa": "unmanaged"}
+
+
+class TestPlatformUsersSilenceTheFinding:
+    """#255: the unmanaged finding's User arm reads the same classifier as the direct-user view — the estate's
+    `platformUsers`, handed to every refresh by the Poller."""
+
+    @staticmethod
+    def _user(name, person):
+        return BindingView("ClusterRoleBinding", "", name, "ClusterRole", "edit", person, subject_kind="User")
+
+    def test_t255_10_a_listed_user_is_built_in_not_unmanaged(self, store, monkeypatch):
+        from gsd import poller
+        from gsd.config import ClusterConfig, PlatformUsers
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self): return [TestPlatformUsersSilenceTheFinding._user("jdoe-edit", "jdoe")]
+            def fetch_user_bindings(self): return []
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        cluster = ClusterConfig("crc", "https://x", token_env="T")
+        poller.refresh_bindings(store, cluster, timeout=5)
+        assert findings(store) == {"jdoe-edit": "unmanaged"}
+        poller.refresh_bindings(store, cluster, timeout=5, platform_users=PlatformUsers(additional_names=frozenset({"jdoe"})))
+        assert findings(store) == {"jdoe-edit": "built_in"}
+        assert store.count_bindings_by_finding("crc") == {"built_in": 1}
+
+    def test_the_poller_hands_the_settings_platform_users_to_every_refresh(self, monkeypatch):
+        """As for platformNamespaces (OB1-lite, review of #361): every other test hands the classifier to
+        refresh_bindings itself, so none would see the Poller drop it."""
+        from gsd import poller
+        from gsd.config import PlatformUsers
+        from gsd.kube import UserBindingView
+        cluster = ClusterConfig("crc", "https://x", token_env="T")
+        store = Store(":memory:")
+        store.upsert_cluster("crc", "https://x", True)
+        settings = Settings(clusters=[cluster], binding_interval_seconds=0, kyverno_enabled=False,
+                            platform_users=PlatformUsers(additional_names=frozenset({"jdoe"})))
+        runner = poller.Poller(store, settings)
+        monkeypatch.setattr(poller, "poll_once", lambda *a, **kw: "ok")
+        monkeypatch.setattr(poller, "capture_once", lambda *a, **kw: None)
+        monkeypatch.setattr(runner, "_after_poll", lambda *a: None)
+        tick = iter(range(10000))
+        monkeypatch.setattr(poller.time, "monotonic", lambda: next(tick) * 1000.0)
+
+        class Client:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self):
+                runner._stop.set()
+                return [TestPlatformUsersSilenceTheFinding._user("jdoe-edit", "jdoe"),
+                        TestPlatformUsersSilenceTheFinding._user("ann-edit", "ann")]
+            def fetch_user_bindings(self):
+                return [UserBindingView("ClusterRoleBinding", "", "jdoe-edit", "ClusterRole", "edit", "jdoe"),
+                        UserBindingView("ClusterRoleBinding", "", "ann-edit", "ClusterRole", "edit", "ann")]
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", Client)
+        runner._run_cluster(cluster)
+        got = {r["binding_name"]: (r["finding"], r["is_platform"]) for r in store.all_bindings("crc")}
+        people = [r["user_name"] for r in store.direct_user_bindings("crc")]
+        excluded = store.platform_user_binding_count("crc")
+        store.close()
+        assert got == {"jdoe-edit": ("built_in", 1), "ann-edit": ("unmanaged", 0)}, got
+        assert people == ["ann"] and excluded == 1

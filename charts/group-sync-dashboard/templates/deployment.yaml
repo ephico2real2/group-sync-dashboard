@@ -369,6 +369,16 @@ spec:
               subPath: {{ $.Values.trustedCA.existingConfigMap.key }}
               readOnly: true
             {{- end }}
+            {{- range $name := list "platformNamespaces" "platformUsers" }}
+            {{- $cm := (index $.Values $name | default dict).existingConfigMap | default dict }}
+            {{- if $cm.enabled }}
+            # A platform list kept in a ConfigMap you own (#255): the whole ConfigMap as a directory, never a
+            # subPath, so the file is the kubelet's current copy. The dashboard reads it once, at start.
+            - name: {{ $name | kebabcase }}
+              mountPath: {{ include "gsd.platformListDir" $name }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
             {{- if $recovery }}
             - name: recovery-script
               mountPath: /scripts
@@ -599,6 +609,16 @@ spec:
             # NOT optional: you named this explicitly, so its absence is a mistake worth
             # failing on rather than silently starting without the CA you asked for.
             name: {{ .Values.trustedCA.existingConfigMap.name }}
+        {{- end }}
+        {{- range $name := list "platformNamespaces" "platformUsers" }}
+        {{- $cm := (index $.Values $name | default dict).existingConfigMap | default dict }}
+        {{- if $cm.enabled }}
+        - name: {{ $name | kebabcase }}
+          configMap:
+            # NOT optional, as trustedCA's: a list you named that is missing stops the pod rather than
+            # starting it with the shipped defaults. A missing KEY reaches the loader, which names it.
+            name: {{ $cm.name }}
+        {{- end }}
         {{- end }}
         {{- if .Values.oauthProxy.enabled }}
         {{- if eq (include "gsd.reportingEnabled" .) "true" }}

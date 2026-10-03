@@ -402,6 +402,19 @@ class TestTheConfiguredRuleReachesTheIndex:
         assert {n["name"] for n in body["namespaces"] if not n["platform"]} == {"demo-prod"}, \
             "a workload must stay a workload"
 
+    def test_t255_15_the_envelope_says_where_the_list_comes_from(self, tmp_path):
+        """The page's note named a fixed list ("openshift-*, kube-*, and five named ones"), wrong on an estate
+        that adds to it — the lab adds three suffixes and two names (#255). The envelope now carries the keys
+        the estate set, so the note can name its source."""
+        estate = PlatformNamespaces(additional_suffixes=("-operator",), additional_names=frozenset({"kyverno"}))
+        with self._client(tmp_path, estate) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_namespaces_source"] == {
+            "configMap": None, "replaced": [], "additional": ["additionalSuffixes", "additionalNames"]}
+        with self._client(tmp_path, PlatformNamespaces()) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+        assert body["platform_namespaces_source"] == {"configMap": None, "replaced": [], "additional": []}
+
 
 class TestAStalePatternIsReportedWhereItCanBeActedOn:
     """#255: "a configured pattern that matches nothing is reportable" is a claim the release notes

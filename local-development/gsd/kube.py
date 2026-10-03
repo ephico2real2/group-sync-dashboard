@@ -194,30 +194,9 @@ from the Group API" as broken would bury the 9 genuinely broken ones in 110 fals
 positives. Reserved-by-convention rather than guaranteed, so these are classified and
 labelled, never silently dropped."""
 
-# Platform identities that appear as `kind: User` on bindings the cluster ships with, and
-# which must never be reported as a governance violation. Measured on the reference
-# cluster: 36 direct-user bindings, of which 22 are these — kube-apiserver, kube-scheduler,
-# kube-controller-manager, the node identities, and SA-shaped users like
-# `system:serviceaccount:...`. Flagging them would bury the real findings under platform
-# noise, which is the same mistake the `system:` GROUP tiering exists to avoid.
-# The User classifier — a `system:` name or one of the identities below is the platform's; no values key
-# widens it (the operator's rule keys Users on the name, ServiceAccounts on the namespace).
-# PLATFORM-CLASSIFICATION (#255, #353): the User prefixes and names
-PLATFORM_USER_PREFIXES = ("system:",)
-PLATFORM_USER_NAMES = frozenset({
-    "kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler", "kube-proxy",
-    # kubeadmin is OpenShift's break-glass cluster identity, not a person with an LDAP
-    # account. Flagging it as a migration violation is noise: there is nowhere to migrate
-    # it TO, and on the reference cluster it accounted for 12 of the 14 non-system rows —
-    # so leaving it in would have made the finding look like a kubeadmin report.
-    "kubeadmin",
-})
-
-
-# PLATFORM-CLASSIFICATION (#255, #353): the User classifier
-def is_platform_user(name: str) -> bool:
-    """Whether a User subject is a cluster-internal identity rather than a person."""
-    return name.startswith(PLATFORM_USER_PREFIXES) or name in PLATFORM_USER_NAMES
+# Which User subject is the platform's is not decided here (#255): the reader has no settings, so the poller
+# classifies each User row from `Settings.platform_users` (gsd/config.py PlatformUsers), as it classifies
+# ServiceAccounts from `platform_namespaces`.
 
 
 _ACCESS_GROUP_CLAUSE = re.compile(r"\(\s*(?:is)?memberof\s*=\s*([^)]+?)\s*\)", re.I)
@@ -477,10 +456,8 @@ class UserBindingView:
     role_kind: str
     role_name: str
     user_name: str
-    is_platform: bool
-    """Cluster-internal identity (system:*, kube-apiserver, …) rather than a person.
-    Carried rather than filtered out, so the UI can report the whole picture and the count
-    of what it excluded — silently dropping rows is how a tool loses trust."""
+    # No platform flag (#255): the poller decides it from the settings and stores it beside the row, which
+    # is carried rather than filtered out, so the page can report the count of what it excluded.
 
 
 
@@ -1831,8 +1808,6 @@ def _user_binding_views(obj: dict, binding_kind: str) -> list[UserBindingView]:
                 role_kind=role_ref.get("kind", ""),
                 role_name=role_ref.get("name", ""),
                 user_name=subject["name"],
-                # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's rule, unchanged by #353
-                is_platform=is_platform_user(subject["name"]),
             )
         )
     return rows

@@ -152,3 +152,45 @@ def test_limit_is_bounded(client):
                       params={"limit": 99999}).status_code == 422
     assert client.get("/api/clusters/c1/user-bindings",
                       params={"limit": 0}).status_code == 422
+
+
+# ── #255: the platform list the excluded count comes from, and its stale entries ───────────────────
+
+def _platform_users_app(tmp_path, *, proxy: bool):
+    """kubeadmin and ocp-oauth-bind-serviceid stored as the poller classifies them under
+    `platformUsers.additionalNames: [ocp-oauth-bind-serviceid, ghost]`; nothing names `ghost`."""
+    from gsd.config import PlatformUsers
+    db = str(tmp_path / "pu.db")
+    store = Store(db)
+    store.upsert_cluster("c1", "https://x", True)
+    store.replace_user_bindings("c1", [
+        {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "poller",
+         "role_kind": "ClusterRole", "role_name": "poller", "user_name": "ocp-oauth-bind-serviceid", "is_platform": 1},
+        {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "ka",
+         "role_kind": "ClusterRole", "role_name": "cluster-admin", "user_name": "kubeadmin", "is_platform": 1},
+        {"binding_kind": "RoleBinding", "binding_namespace": "legacy", "binding_name": "jdoe-edit",
+         "role_kind": "ClusterRole", "role_name": "edit", "user_name": "jdoe", "is_platform": 0},
+    ], now_iso())
+    store.close()
+    settings = Settings(db_path=db, clusters=[ClusterConfig("c1", "https://x", token_env="T")],
+                        oauth_proxy_enabled=proxy,
+                        platform_users=PlatformUsers(additional_names=frozenset({"ocp-oauth-bind-serviceid", "ghost"})))
+    return TestClient(build_app(settings, run_poller=False))
+
+
+def test_t255_7_a_stale_additional_name_is_named_at_the_wide_tier(tmp_path):
+    """`ghost` matches no User subject on this cluster; the bind account matches its own (platform) rows, so it is
+    not stale — the judgement is against every User subject, platform ones included."""
+    body = _platform_users_app(tmp_path, proxy=False).get("/api/clusters/c1/user-bindings").json()
+    assert body["scope"] == "all"
+    assert body["platform_users_unmatched"] == {"additionalNames": ["ghost"]}
+    assert body["platform_users_source"] == {"configMap": None, "replaced": [], "additional": ["additionalNames"]}
+    assert body["excluded_platform"] == 2 and body["total"] == 1
+
+
+def test_t255_7_the_stale_entries_and_the_source_are_withheld_at_self(tmp_path):
+    body = _platform_users_app(tmp_path, proxy=True).get(
+        "/api/clusters/c1/user-bindings", headers={"X-Forwarded-User": "jdoe"}).json()
+    assert body["scope"] == "self"
+    assert body["platform_users_unmatched"] is None and body["platform_users_source"] is None
+    assert body["excluded_platform"] is None

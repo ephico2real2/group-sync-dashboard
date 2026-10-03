@@ -157,15 +157,27 @@ data:
     namespacesReadEnabled: {{ .Values.rbac.namespaces }}
     # The bounded Namespace label keys the poll captures (reporting.namespaceMetadata.labels).
     namespaceMetadataLabels: {{ include "gsd.namespaceMetadataLabels" . }}
-    # Which namespaces are the platform's (#255). Rendered only when set: an absent key is the
-    # shipped rule, and an empty mapping here would read as "replace the defaults with nothing".
+    # Which namespaces and which users are the platform's (#255). Rendered only when set: an absent key
+    # is the shipped rule. An `additional*` list renders only with entries; a replacing key (`prefixes`,
+    # `suffixes`, `names`) renders whenever it is set, even empty, because `names: []` means "none of the
+    # shipped names" and dropping it would keep them silently. With existingConfigMap on, the key names the
+    # ConfigMap and where deployment.yaml mounts it, and the loader reads the lists from that file; its
+    # `revision` is here only so that changing it changes checksum/config and rolls the pod.
     # PLATFORM-CLASSIFICATION (#255, #353): values.yaml platformNamespaces → this file → config.py _platform_namespaces_setting
-    {{- $_ := include "gsd.validatePlatformNamespaces" . }}
-    {{- with .Values.platformNamespaces }}
+    # PLATFORM-CLASSIFICATION (#255, #353): values.yaml platformUsers → this file → config.py _platform_users_setting
+    {{- $_ := include "gsd.validatePlatformLists" . }}
+    {{- range $name := list "platformNamespaces" "platformUsers" }}
+    {{- with index $.Values $name }}
+    {{- $cm := .existingConfigMap | default dict }}
+    {{- if $cm.enabled }}
+    {{ $name }}ConfigMap: {{ toJson (dict "name" $cm.name "key" $cm.key "path" (printf "%s/%s" (include "gsd.platformListDir" $name) $cm.key) "revision" (ternary "" (toString $cm.revision) (kindIs "invalid" $cm.revision))) }}
+    {{- else }}
     {{- $set := dict }}
-    {{- range $k, $v := . }}{{- if $v }}{{- $_ := set $set $k $v }}{{- end }}{{- end }}
+    {{- range $k, $v := . }}{{- if and (ne $k "existingConfigMap") (kindIs "slice" $v) (or $v (has $k (list "prefixes" "suffixes" "names"))) }}{{- $_ := set $set $k $v }}{{- end }}{{- end }}
     {{- if $set }}
-    platformNamespaces: {{ toJson $set }}
+    {{ $name }}: {{ toJson $set }}
+    {{- end }}
+    {{- end }}
     {{- end }}
     {{- end }}
     # The module and its read grant share the values switch. The helper refuses removed keys.

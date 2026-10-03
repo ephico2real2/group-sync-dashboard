@@ -12,7 +12,7 @@ import pytest
 
 import re
 
-from gsd.config import ClusterConfig, ConfigError, PlatformNamespaces, load_settings
+from gsd.config import ClusterConfig, ConfigError, PlatformNamespaces, PlatformUsers, load_settings
 
 BASE = """
 clusters:
@@ -883,3 +883,138 @@ class TestTrustedCABundleRotation:
         assert "after" in self._names(second) and "before" not in self._names(second), \
             "the replaced bundle is what a restart would read"
         assert cfg._trusted_ca_context() is second, "and it is cached again until it next changes"
+
+
+# ── #255: platformUsers, and existingConfigMap for both platform lists ─────────────────────────────
+
+def _settings(tmp_path, body: str):
+    """A settings file with one cluster plus `body`, loaded."""
+    path = tmp_path / f"pu-{abs(hash(body)) % 10**8}.yaml"
+    path.write_text("clusters:\n  - name: a\n    apiUrl: https://x\n    tokenEnv: T\n" + body)
+    return load_settings(path)
+
+
+def _from_configmap(tmp_path, stanza: str, content: str, name: str = "estate-platform", key: str = "lists.yaml"):
+    """What the chart renders for `<stanza>.existingConfigMap`, with the mounted file written where it points."""
+    mounted = tmp_path / f"{stanza}-{key}"
+    mounted.write_text(content)
+    ref = f'{{"name": "{name}", "key": "{key}", "path": "{mounted}"}}'
+    return _settings(tmp_path, f"{stanza}ConfigMap: {ref}\n")
+
+
+class TestPlatformUsersAreConfigurable:
+    """#255: which User subjects are the platform's was compiled into the image (gsd/kube.py, 2.0.0), so an
+    estate could not name its own break-glass or bind account without a release."""
+
+    #: The 2.0.0 lists, written out rather than imported: the defaults test must fail if the code's
+    #: defaults move, not move with them (the issue's Definition of Done) — and `kube:admin`, which the
+    #: operator's ruling of 2026-10-01 on #255 adds: OpenShift's bootstrap user, one identity with `kubeadmin`.
+    PREFIXES_200 = ("system:",)
+    NAMES_200 = frozenset({"kube-apiserver", "kubelet", "kube-controller-manager", "kube-scheduler",
+                           "kube-proxy", "kubeadmin"})
+    NAMES_RULED_2026_10_01 = frozenset({"kube:admin"})
+
+    def test_t255_1_with_nothing_set_the_lists_are_those_of_2_0_0_plus_kube_admin(self, tmp_path):
+        for body in ("", "platformUsers: {}\n", "platformUsers:\n  additionalPrefixes: []\n  additionalNames: []\n"):
+            users = _settings(tmp_path, body).platform_users
+            assert users.prefixes == self.PREFIXES_200, body
+            assert users.names == self.NAMES_200 | self.NAMES_RULED_2026_10_01, body
+            assert users.additional_prefixes == () and users.additional_names == frozenset(), body
+            assert users == PlatformUsers(), body
+        default = PlatformUsers()
+        for name in ("system:admin", "system:serviceaccount:apps:deployer", "kube:admin", *sorted(self.NAMES_200)):
+            assert default.matches(name), name
+        for name in ("ocp-oauth-bind-serviceid", "jdoe", "kubeadmin2", "kube:admin2", "Kube:Admin", "System:admin"):
+            assert not default.matches(name), name
+
+    def test_t255_2_an_additional_name_appends_and_a_prefix_appends(self, tmp_path):
+        users = _settings(tmp_path, 'platformUsers:\n  additionalNames: ["ocp-oauth-bind-serviceid"]\n'
+                                    '  additionalPrefixes: ["svc-"]\n').platform_users
+        for name in ("ocp-oauth-bind-serviceid", "svc-backup", "kubeadmin", "system:admin"):
+            assert users.matches(name), name
+        assert not users.matches("jdoe")
+
+    def test_t255_3_names_replaces_the_defaults_and_prefixes_still_applies(self, tmp_path):
+        users = _settings(tmp_path, "platformUsers:\n  names: []\n").platform_users
+        assert not users.matches("kubeadmin"), "names: [] replaces the shipped names with none"
+        assert users.matches("system:kube-scheduler"), "the prefix axis is untouched"
+        users = _settings(tmp_path, 'platformUsers:\n  prefixes: ["corp-"]\n').platform_users
+        assert users.matches("corp-ops") and users.matches("kubeadmin") and not users.matches("system:admin")
+
+    @pytest.mark.parametrize("body, wanted", [
+        ('platformUsers:\n  additionalName: ["x"]\n', "platformUsers: unknown key(s) ['additionalName']"),
+        ('platformUsers:\n  suffixes: ["-bot"]\n', "unknown key(s) ['suffixes']"),
+        ('platformUsers:\n  additionalNames: ["svc-*"]\n', "platformUsers.additionalNames: 'svc-*' contains * — matching is literal"),
+        ('platformUsers:\n  additionalNames: "a,b"\n', "platformUsers.additionalNames: expected a list of strings"),
+        ('platformUsers:\n  additionalNames: [3]\n', "platformUsers.additionalNames: every entry must be a string"),
+        ('platformUsers: "nope"\n', "platformUsers: expected a mapping"),
+    ])
+    def test_t255_4_a_typo_is_refused_by_name(self, tmp_path, body, wanted):
+        with pytest.raises(ConfigError, match=re.escape(wanted)):
+            _settings(tmp_path, body)
+
+    def test_a_user_name_with_a_comma_is_one_name(self, tmp_path):
+        users = _settings(tmp_path, 'platformUsers:\n  additionalNames: ["cn=svc,ou=Apps,dc=example,dc=com"]\n').platform_users
+        assert users.additional_names == frozenset({"cn=svc,ou=Apps,dc=example,dc=com"})
+
+    def test_t255_7_a_stale_additional_entry_is_reportable_and_the_defaults_are_not(self):
+        users = PlatformUsers(additional_prefixes=("svc-", "gone-"), additional_names=frozenset({"ghost", "jdoe"}))
+        assert users.unmatched(["jdoe", "svc-backup", "system:admin"]) == {
+            "additionalPrefixes": ["gone-"], "additionalNames": ["ghost"]}
+        assert PlatformUsers().unmatched([]) == {}, "the shipped defaults are never reported"
+        assert users.unmatched([]) == {}, "no User subject at all is bindings not yet read, not every entry gone"
+
+    def test_the_summary_names_keys_and_never_values(self, tmp_path):
+        users = _settings(tmp_path, 'platformUsers:\n  names: ["root"]\n  additionalNames: ["ghost"]\n').platform_users
+        assert users.summary() == {"configMap": None, "replaced": ["names"], "additional": ["additionalNames"]}
+        assert PlatformUsers().summary() == {"configMap": None, "replaced": [], "additional": []}
+        assert PlatformNamespaces(additional_suffixes=("-operator",)).summary() == {
+            "configMap": None, "replaced": [], "additional": ["additionalSuffixes"]}
+
+
+class TestPlatformListsFromAConfigMap:
+    """#255: either list may live in a ConfigMap the estate owns. The chart mounts it and names it in the settings
+    file (`<stanza>ConfigMap: {name, key, path}`); the loader reads the file at start and parses it exactly as the
+    inline stanza, so the same list classifies the same either way (T255-9)."""
+
+    USERS = 'additionalNames: ["ocp-oauth-bind-serviceid"]\nadditionalPrefixes: ["svc-"]\n'
+    NAMESPACES = 'additionalSuffixes: ["-operator", "-manager"]\nadditionalNames: ["kyverno"]\n'
+
+    def test_t255_9_a_configmap_list_equals_the_same_list_inline(self, tmp_path):
+        inline = _settings(tmp_path, "platformUsers:\n" + "".join("  " + line + "\n" for line in self.USERS.splitlines()))
+        mounted = _from_configmap(tmp_path, "platformUsers", self.USERS)
+        assert mounted.platform_users == inline.platform_users
+        assert mounted.platform_users.origin == ("estate-platform", "lists.yaml")
+        assert mounted.platform_users.summary()["configMap"] == {"name": "estate-platform", "key": "lists.yaml"}
+        inline = _settings(tmp_path, "platformNamespaces:\n" + "".join("  " + line + "\n" for line in self.NAMESPACES.splitlines()))
+        mounted = _from_configmap(tmp_path, "platformNamespaces", self.NAMESPACES)
+        assert mounted.platform_namespaces == inline.platform_namespaces
+        assert mounted.platform_namespaces.matches("cert-manager-operator")
+
+    @pytest.mark.parametrize("stanza", ["platformUsers", "platformNamespaces"])
+    def test_t255_9_a_missing_or_malformed_file_refuses_the_start_naming_the_configmap_and_key(self, tmp_path, stanza):
+        named = f"{stanza} (ConfigMap 'estate-platform', key 'lists.yaml')"
+        ref = f'{stanza}ConfigMap: {{"name": "estate-platform", "key": "lists.yaml", "path": "{tmp_path}/absent.yaml"}}\n'
+        with pytest.raises(ConfigError, match=re.escape(f"{named}: cannot read")):
+            _settings(tmp_path, ref)
+        with pytest.raises(ConfigError, match=re.escape(f"{named}: invalid YAML")):
+            _from_configmap(tmp_path, stanza, "additionalNames: [unclosed\n")
+        with pytest.raises(ConfigError, match=re.escape(f"{named}: ") + ".*is empty"):
+            _from_configmap(tmp_path, stanza, "")
+        with pytest.raises(ConfigError, match=re.escape(f"{named}: unknown key(s) ['additionalName']")):
+            _from_configmap(tmp_path, stanza, 'additionalName: ["x"]\n')
+        with pytest.raises(ConfigError, match=re.escape(f"{stanza}.additionalNames (ConfigMap 'estate-platform', key 'lists.yaml')")):
+            _from_configmap(tmp_path, stanza, 'additionalNames: ["x-*"]\n')
+
+    @pytest.mark.parametrize("stanza", ["platformUsers", "platformNamespaces"])
+    def test_t255_8_the_inline_stanza_beside_its_configmap_is_refused_at_start(self, tmp_path, stanza):
+        mounted = tmp_path / "lists.yaml"
+        mounted.write_text('additionalNames: ["x"]\n')
+        body = (f'{stanza}:\n  additionalNames: ["y"]\n'
+                f'{stanza}ConfigMap: {{"name": "e", "key": "lists.yaml", "path": "{mounted}"}}\n')
+        with pytest.raises(ConfigError, match=re.escape(f"{stanza} and {stanza}ConfigMap are both set")):
+            _settings(tmp_path, body)
+
+    def test_a_malformed_reference_is_refused(self, tmp_path):
+        with pytest.raises(ConfigError, match=re.escape("platformUsersConfigMap: expected {name, key, path}")):
+            _settings(tmp_path, 'platformUsersConfigMap: {"name": "e", "key": ""}\n')
