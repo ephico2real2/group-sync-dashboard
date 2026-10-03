@@ -1,0 +1,206 @@
+# SPEC_E11 §5 walk (#532), CRC lab; written by scripts/run.sh
+# started 2026-10-03T01:47:07Z; kube context crc-admin; merge 1c9c929dea94b02f925b24f90ac13bda7832df54
+
+## Step 1: before (the Application on main at the merge)  (2026-10-03T01:47:07Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount, started: .status.operationState.startedAt, finished: .status.operationState.finishedAt, automated: .spec.syncPolicy.automated}'
+{"rev":"main","sync":"Synced","health":"Healthy","synced":"728e08ba46d76a0e5fd3682931e1d550095a5ae9","op":"Succeeded","retries":null,"started":"2026-10-03T00:09:51Z","finished":"2026-10-03T00:10:45Z","automated":{"prune":true,"selfHeal":true}}
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
+NAME                   WANT   READY   AVAILABLE
+group-sync-dashboard   1      1       1
+Error from server (NotFound): deployments.apps "group-sync-dashboard-recovery" not found
+(exit 1)
+$ oc get pods -n group-sync-dashboard -l 'app in (group-sync-dashboard,group-sync-dashboard-recovery)' -o custom-columns=NAME:.metadata.name,APP:.metadata.labels.app,PHASE:.status.phase,START:.status.startTime,DELETING:.metadata.deletionTimestamp
+NAME                                    APP                    PHASE     START                  DELETING
+group-sync-dashboard-56d4b64b69-zhrd7   group-sync-dashboard   Running   2026-10-03T00:10:09Z   <none>
+met after 72 s at 2026-10-03T01:48:19Z: the Application synced the merge
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
+NAME                            WANT   READY    AVAILABLE
+group-sync-dashboard            1      1        1
+group-sync-dashboard-recovery   0      <none>   <none>
+
+## Step 2: recovery on, through the values file on lab/e11-recovery-walk  (2026-10-03T01:48:20Z)
+$ git -C '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.5FvWOCknkz/walk-branch' push -q -u origin lab/e11-recovery-walk && echo pushed b27274fdd48b7bc0935c00931c1bc3bf23eb9aa9 at $(date -u +%H:%M:%SZ)
+remote: 
+remote: Create a pull request for 'lab/e11-recovery-walk' on GitHub by visiting:        
+remote:      https://github.com/ephico2real2/group-sync-dashboard/pull/new/lab/e11-recovery-walk        
+remote: 
+pushed b27274fdd48b7bc0935c00931c1bc3bf23eb9aa9 at 01:48:23Z
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk532' && local-development/release-crc.sh --argocd lab/e11-recovery-walk --values environments/crc.yaml 2>&1 | tail -15
+argocd  : group-sync-dashboard -> revision lab/e11-recovery-walk (b27274fdd4), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:3.1.0 is application 3.1.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:3.1.0 is application 3.1.0
+values  : environments/crc.yaml (the Application's valueFiles)
+01:48:26Z  Synced     Healthy      Succeeded  (status is for the previous spec) (revision 1c9c929dea94b02f925b24f90ac13bda7832df54, want b27274fdd4) successfully synced (all tasks run)
+01:48:41Z  OutOfSync  Healthy      Running    waiting for completion of hook batch/Job/group-sync-dashboard-secrets-mint
+01:48:56Z  Synced     Healthy      Succeeded  successfully synced (all tasks run)
+argocd  : group-sync-dashboard Synced/Healthy
+met after 0 s at 2026-10-03T01:48:56Z: the Application synced recovery-on
+met after 1 s at 2026-10-03T01:48:57Z: recovery 1/1 and the app 0
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount, started: .status.operationState.startedAt, finished: .status.operationState.finishedAt, automated: .spec.syncPolicy.automated}'
+{"rev":"lab/e11-recovery-walk","sync":"Synced","health":"Healthy","synced":"b27274fdd48b7bc0935c00931c1bc3bf23eb9aa9","op":"Succeeded","retries":null,"started":"2026-10-03T01:48:26Z","finished":"2026-10-03T01:48:48Z","automated":{"prune":true,"selfHeal":true}}
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
+NAME                            WANT   READY    AVAILABLE
+group-sync-dashboard            0      <none>   <none>
+group-sync-dashboard-recovery   1      1        1
+$ oc get pods -n group-sync-dashboard -l 'app in (group-sync-dashboard,group-sync-dashboard-recovery)' -o custom-columns=NAME:.metadata.name,APP:.metadata.labels.app,PHASE:.status.phase,START:.status.startTime,DELETING:.metadata.deletionTimestamp
+NAME                                           APP                             PHASE     START                  DELETING
+group-sync-dashboard-recovery-cdb59ccd-mrshv   group-sync-dashboard-recovery   Running   2026-10-03T01:48:44Z   <none>
+$ oc get events -n group-sync-dashboard --field-selector involvedObject.kind=Pod -o custom-columns=TIME:.lastTimestamp,OBJECT:.involvedObject.name,REASON:.reason,MESSAGE:.message --sort-by=.lastTimestamp | grep -E 'group-sync-dashboard-recovery' | tail -12
+2026-10-03T01:48:43Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              FailedScheduling   0/1 nodes are available: 1 node(s) didn't match pod anti-affinity rules. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+2026-10-03T01:48:44Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Scheduled          Successfully assigned group-sync-dashboard/group-sync-dashboard-recovery-cdb59ccd-mrshv to crc
+2026-10-03T01:48:44Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              AddedInterface     Add eth0 [10.217.0.130/23] from ovn-kubernetes
+2026-10-03T01:48:44Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Pulling            Pulling image "quay.io/ephico2real/group-sync-dashboard:3.1.0"
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Started            Container started
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Pulled             Successfully pulled image "quay.io/ephico2real/group-sync-dashboard:3.1.0" in 654ms (654ms including waiting). Image size: 191589158 bytes.
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Created            Container created
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Started            Container started
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Pulled             Container image "registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15" already present on machine and can be accessed by the pod
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Created            Container created
+
+## Step 3: restore-db.sh --list against the recovery pod  (2026-10-03T01:48:57Z)
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk532' && local-development/restore-db.sh --list --namespace group-sync-dashboard --release group-sync-dashboard 2>&1 | head -40
+pod      group-sync-dashboard-recovery-cdb59ccd-mrshv · recovery mode, at least 1h59m46s of its TTL left
+image    quay.io/ephico2real/group-sync-dashboard:3.1.0
+image    understands schema 20 and older
+live     /data/gsd.db · user_version 20
+ID                          SCHEMA  STAMP (UTC)                  SIZE  SOURCE              SIDECAR   THIS IMAGE
+20-20261003T014831.250083Z  20      2026-10-03T01:48:31Z    13.77 MiB  backup              none      yes
+20-20261003T001042.559760Z  20      2026-10-03T00:10:42Z    13.75 MiB  backup+offsite      ok        yes
+20-20261002T223505.753650Z  20      2026-10-02T22:35:05Z    13.73 MiB  backup              none      yes
+20-20261002T214627.363078Z  20      2026-10-02T21:46:27Z    13.72 MiB  backup              none      yes
+20-20261002T161938.593494Z  20      2026-10-02T16:19:38Z    13.69 MiB  offsite             ok        yes
+20-20261002T070321.086663Z  20      2026-10-02T07:03:21Z    13.66 MiB  offsite             ok        yes
+20-20261002T060318.880033Z  20      2026-10-02T06:03:18Z    13.64 MiB  offsite             ok        yes
+20-20261002T042438.581853Z  20      2026-10-02T04:24:38Z    13.63 MiB  offsite             ok        yes
+20-20261002T034300.088262Z  20      2026-10-02T03:43:00Z    13.63 MiB  offsite             ok        yes
+20-20261002T023914.880113Z  20      2026-10-02T02:39:14Z    13.63 MiB  offsite             ok        yes
+# 10 candidates. none: no .sha256 beside it (scheduled backups write none), so integrity_check is its only check. mismatch: --from-version refuses it.
+
+## Step 4: recovery off, through the values file  (2026-10-03T01:49:01Z)
+$ git -C '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.5FvWOCknkz/walk-branch' push -q origin lab/e11-recovery-walk && echo pushed 383ead2403c1ae2c7031b1c340af3bc90382a762 at $(date -u +%H:%M:%SZ)
+pushed 383ead2403c1ae2c7031b1c340af3bc90382a762 at 01:49:02Z
+met after 505 s at 2026-10-03T01:57:27Z: the Application synced recovery-off
+met after 1 s at 2026-10-03T01:57:28Z: the app 1/1 and recovery 0
+recovery off: 507 s from the push to the app Ready, polling included
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount, started: .status.operationState.startedAt, finished: .status.operationState.finishedAt, automated: .spec.syncPolicy.automated}'
+{"rev":"lab/e11-recovery-walk","sync":"Synced","health":"Healthy","synced":"383ead2403c1ae2c7031b1c340af3bc90382a762","op":"Succeeded","retries":null,"started":"2026-10-03T01:51:48Z","finished":"2026-10-03T01:57:27Z","automated":{"prune":true,"selfHeal":true}}
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
+NAME                            WANT   READY    AVAILABLE
+group-sync-dashboard            1      1        1
+group-sync-dashboard-recovery   0      <none>   <none>
+$ oc get pods -n group-sync-dashboard -l 'app in (group-sync-dashboard,group-sync-dashboard-recovery)' -o custom-columns=NAME:.metadata.name,APP:.metadata.labels.app,PHASE:.status.phase,START:.status.startTime,DELETING:.metadata.deletionTimestamp
+NAME                                    APP                    PHASE     START                  DELETING
+group-sync-dashboard-547cc57fcc-m8p55   group-sync-dashboard   Running   2026-10-03T01:57:07Z   <none>
+$ oc get events -n group-sync-dashboard --field-selector involvedObject.kind=Pod -o custom-columns=TIME:.lastTimestamp,OBJECT:.involvedObject.name,REASON:.reason,MESSAGE:.message --sort-by=.lastTimestamp | grep -E 'group-sync-dashboard-(recovery-)?[a-z0-9]+-[a-z0-9]+ ' | tail -14
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Created            Container created
+2026-10-03T01:48:45Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Pulled             Successfully pulled image "quay.io/ephico2real/group-sync-dashboard:3.1.0" in 654ms (654ms including waiting). Image size: 191589158 bytes.
+2026-10-03T01:52:04Z   group-sync-dashboard-547cc57fcc-m8p55                     FailedScheduling   0/1 nodes are available: 1 node(s) didn't satisfy existing pods anti-affinity rules. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+2026-10-03T01:52:04Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Killing            Stopping container oauth-proxy
+2026-10-03T01:52:04Z   group-sync-dashboard-recovery-cdb59ccd-mrshv              Killing            Stopping container dashboard
+2026-10-03T01:57:07Z   group-sync-dashboard-547cc57fcc-m8p55                     Pulling            Pulling image "quay.io/ephico2real/group-sync-dashboard:3.1.0"
+2026-10-03T01:57:07Z   group-sync-dashboard-547cc57fcc-m8p55                     Scheduled          Successfully assigned group-sync-dashboard/group-sync-dashboard-547cc57fcc-m8p55 to crc
+2026-10-03T01:57:07Z   group-sync-dashboard-547cc57fcc-m8p55                     AddedInterface     Add eth0 [10.217.0.137/23] from ovn-kubernetes
+2026-10-03T01:57:08Z   group-sync-dashboard-547cc57fcc-m8p55                     Pulled             Successfully pulled image "quay.io/ephico2real/group-sync-dashboard:3.1.0" in 817ms (817ms including waiting). Image size: 191589158 bytes.
+2026-10-03T01:57:08Z   group-sync-dashboard-547cc57fcc-m8p55                     Created            Container created
+2026-10-03T01:57:08Z   group-sync-dashboard-547cc57fcc-m8p55                     Started            Container started
+2026-10-03T01:57:08Z   group-sync-dashboard-547cc57fcc-m8p55                     Pulled             Container image "registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:v4.15" already present on machine and can be accessed by the pod
+2026-10-03T01:57:08Z   group-sync-dashboard-547cc57fcc-m8p55                     Created            Container created
+2026-10-03T01:57:08Z   group-sync-dashboard-547cc57fcc-m8p55                     Started            Container started
+
+## Step 5: runbook §4d once (its own commands, APP=group-sync-dashboard)  (2026-10-03T01:57:28Z)
+$ oc get deploy -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.metadata.annotations.argocd\.argoproj\.io/tracking-id}{"\n"}'
+group-sync-dashboard:apps/Deployment:group-sync-dashboard/group-sync-dashboard
+$ oc patch application.argoproj.io/group-sync-dashboard -n openshift-gitops --type merge -p '{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}'
+application.argoproj.io/group-sync-dashboard patched
+$ oc get application.argoproj.io/group-sync-dashboard -n openshift-gitops -o jsonpath='{.spec.syncPolicy.automated.enabled} {.status.operationState.phase}{"\n"}'
+false Succeeded
+$ oc scale -n group-sync-dashboard deploy/group-sync-dashboard --replicas=0
+deployment.apps/group-sync-dashboard scaled
+$ oc scale -n group-sync-dashboard deploy/group-sync-dashboard-recovery --replicas=1
+deployment.apps/group-sync-dashboard-recovery scaled
+met after 6 s at 2026-10-03T01:57:34Z: §4d: recovery 1/1 and the app 0
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk532' && local-development/restore-db.sh --list --namespace group-sync-dashboard --release group-sync-dashboard 2>&1 | head -12
+pod      group-sync-dashboard-recovery-66d5fb5546-g4fg7 · recovery mode, at least 1h59m55s of its TTL left
+image    quay.io/ephico2real/group-sync-dashboard:3.1.0
+image    understands schema 20 and older
+live     /data/gsd.db · user_version 20
+ID                          SCHEMA  STAMP (UTC)                  SIZE  SOURCE              SIDECAR   THIS IMAGE
+20-20261003T015717.992003Z  20      2026-10-03T01:57:17Z    13.77 MiB  backup              none      yes
+20-20261003T014831.250083Z  20      2026-10-03T01:48:31Z    13.77 MiB  backup              none      yes
+20-20261003T001042.559760Z  20      2026-10-03T00:10:42Z    13.75 MiB  backup+offsite      ok        yes
+20-20261002T223505.753650Z  20      2026-10-02T22:35:05Z    13.73 MiB  backup              none      yes
+20-20261002T161938.593494Z  20      2026-10-02T16:19:38Z    13.69 MiB  offsite             ok        yes
+20-20261002T070321.086663Z  20      2026-10-02T07:03:21Z    13.66 MiB  offsite             ok        yes
+20-20261002T060318.880033Z  20      2026-10-02T06:03:18Z    13.64 MiB  offsite             ok        yes
+$ oc patch application.argoproj.io/group-sync-dashboard -n openshift-gitops --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated/enabled"}]'
+application.argoproj.io/group-sync-dashboard patched
+$ oc wait application.argoproj.io/group-sync-dashboard -n openshift-gitops --for=jsonpath='{.status.sync.status}'=Synced --timeout=5m
+application.argoproj.io/group-sync-dashboard condition met
+$ oc rollout status -n group-sync-dashboard deploy/group-sync-dashboard --timeout=10m
+Waiting for deployment "group-sync-dashboard" rollout to finish: 0 of 1 updated replicas are available...
+error: timed out waiting for the condition
+(exit 1)
+NOT MET within 600 s: §4d given back: the app 1/1 and recovery 0
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
+error: Missing or incomplete configuration info.  Please point to an existing, complete config file:
+
+
+  1. Via the command-line flag --kubeconfig
+  2. Via the KUBECONFIG environment variable
+  3. In your home directory as ~/.kube/config
+
+To view or setup config directly use the 'config' command.
+(exit 1)
+
+## Step 6: the Application back on main, the walk branch deleted, after  (2026-10-03T02:17:56Z)
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk532' && local-development/release-crc.sh --argocd main --values environments/crc.yaml 2>&1 | tail -8
+error: Missing or incomplete configuration info.  Please point to an existing, complete config file:
+
+
+  1. Via the command-line flag --kubeconfig
+  2. Via the KUBECONFIG environment variable
+  3. In your home directory as ~/.kube/config
+
+To view or setup config directly use the 'config' command.
+NOT MET within 900 s: the Application back on main and synced
+$ git -C '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk532' push -q origin --delete lab/e11-recovery-walk && echo deleted lab/e11-recovery-walk
+deleted lab/e11-recovery-walk
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount, started: .status.operationState.startedAt, finished: .status.operationState.finishedAt, automated: .spec.syncPolicy.automated}'
+{"rev":"lab/e11-recovery-walk","sync":"Synced","health":"Healthy","synced":"383ead2403c1ae2c7031b1c340af3bc90382a762","op":"Succeeded","retries":null,"started":"2026-10-03T01:57:37Z","finished":"2026-10-03T01:57:37Z","automated":{"prune":true,"selfHeal":true}}
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
+NAME                            WANT   READY    AVAILABLE
+group-sync-dashboard            1      1        1
+group-sync-dashboard-recovery   0      <none>   <none>
+$ oc get pods -n group-sync-dashboard -l 'app in (group-sync-dashboard,group-sync-dashboard-recovery)' -o custom-columns=NAME:.metadata.name,APP:.metadata.labels.app,PHASE:.status.phase,START:.status.startTime,DELETING:.metadata.deletionTimestamp
+NAME                                    APP                    PHASE     START                  DELETING
+group-sync-dashboard-547cc57fcc-wbz9k   group-sync-dashboard   Running   2026-10-03T01:59:27Z   <none>
+walk exit=1 at 2026-10-03T02:33:00Z
+
+## exit trap  (2026-10-03T02:33:00Z)
+The request is invalid: the server rejected our request due to an error in our request
+targetRevision: lab/e11-recovery-walk
+02:48:11Z  Unknown    Healthy      Succeeded  (status is for the previous spec) successfully synced (all tasks run)
+ERROR: group-sync-dashboard did not reach Synced/Healthy in 900s
+  ClusterRole/group-sync-dashboard-login-capture-audit health=Missing: 
+  ClusterRoleBinding/group-sync-dashboard-login-capture-audit health=Missing: 
+targetRevision now: main
