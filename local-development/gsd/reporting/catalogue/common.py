@@ -374,7 +374,10 @@ def provenance_section(ctx: RunContext, cov: dict, params: dict, include_members
     blocks.append(Note(cov["users_note"], "note"))
     blocks.append(Note(cov["login_capture_note"], "note"))
     blocks.append(Note("Scope: " + DIRECT_BINDINGS_CAVEAT + ".", "caveat"))
-    return Section("Provenance and coverage", blocks)
+    # Page one states the RUN (when, by whom, run id, release, the snapshot's age, the chart's marking and
+    # interval), so it is not sealed; every row on it that is data is sealed through its own field of the
+    # Report (SPEC_F1, #270: model.py's SEALED_PROVENANCE, coverage, params, include_members, api_url).
+    return Section("Provenance and coverage", blocks, sealed=False)
 
 
 def assemble(spec: ReportSpec, snap: Snapshot, ctx: RunContext, params: dict, built: Built) -> Report:

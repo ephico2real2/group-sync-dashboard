@@ -233,7 +233,8 @@ if not reports_refused:
 
 if not reports_refused:
   P("<h2>7. Integrity of the artefacts</h2>")
-  P("<p>Every report is sealed with the sha256 of its canonical data (name, cluster, params, coverage, totals, truncated, include_members, sections; "
+  P("<p>Every report is sealed with the sha256 of its canonical data (name, cluster, api_url, params, coverage, totals, truncated, include_members, "
+    "sealed_provenance, and the sections whose <span class='mono'>sealed</span> is true: page one states the run and is left out; "
     "sorted keys, compact separators). Four independent checks per report: the hash recomputed from the downloaded JSON equals the JSON's own "
     "<span class='mono'>sha256</span> field; the run record the page polled reports the same hash; the PDF's metadata carries "
     "<span class='mono'>sha256 &lt;hash&gt;</span>; the HTML carries the hash prefix. The PDF/A marker (<span class='mono'>pdfaid:part</span>) is also checked.</p>")
