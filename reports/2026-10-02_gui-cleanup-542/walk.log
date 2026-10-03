@@ -1,0 +1,133 @@
+# SPEC_H1 §5 walk (#542), CRC lab; written by scripts/run.sh
+# started 2026-10-03T00:12:08Z; kube context crc-admin; merge 4e44fd02eb930a1117f2deb962adeaa30cc57d73
+
+## Before  (2026-10-03T00:12:09Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"4e44fd02eb930a1117f2deb962adeaa30cc57d73"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,RESTARTS:.status.containerStatuses[*].restartCount,IMAGE:.spec.containers[0].image
+NAME                                                 START                  RESTARTS   IMAGE
+group-sync-dashboard-56d4b64b69-zhrd7                2026-10-03T00:10:09Z   0,0        quay.io/ephico2real/group-sync-dashboard:3.1.0
+group-sync-dashboard-backup-offsite-29848695-s298q   2026-10-02T06:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:2.3.0
+group-sync-dashboard-backup-offsite-29849055-l8c5q   2026-10-02T12:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:2.4.0
+group-sync-dashboard-backup-offsite-29849415-rzrfg   2026-10-02T18:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:3.0.0
+group-sync-dashboard-report-7b966856d6-bzhtj         2026-10-03T00:10:09Z   0          quay.io/ephico2real/group-sync-dashboard-report:3.1.0
+verify-1790912616-km2gt                              2026-10-02T03:43:37Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/api/version").read().decode())'
+{"leader":true,"version":"3.1.0","commit":"4e44fd02eb","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/metrics").read().decode())' | grep -E '^gsd_(build_info|housekeeping_deleted_total)'
+gsd_build_info{branch="main",commit="4e44fd02eb",version="3.1.0"} 1.0
+gsd_housekeeping_deleted_total{kind="report-run"} 0.0
+gsd_housekeeping_deleted_total{kind="backup"} 0.0
+gsd_housekeeping_deleted_total{kind="pre-upgrade"} 0.0
+gsd_housekeeping_deleted_total{kind="pre-restore"} 0.0
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=gui-cleanup-542-2026-10-02 -o name
+$ oc get configmap -n group-sync-dashboard group-sync-dashboard-config -o jsonpath='{.data.clusters\.yaml}' | grep -n -E '^(housekeepingEnabled|backupDir):'
+9:backupDir: "/data/backup"
+75:housekeepingEnabled: true
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-report -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="GSD_REPORT_HOUSEKEEPING_ENABLED")]}'
+{"name":"GSD_REPORT_HOUSEKEEPING_ENABLED","value":"true"}
+## The rendered RBAC rules, main before #547 against 4e44fd02, -f environments/crc.yaml  (2026-10-03T00:12:12Z)
+$ helm template group-sync-dashboard '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/before/charts/group-sync-dashboard' -n group-sync-dashboard -f '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/before/environments/crc.yaml' > '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/before.yaml' && grep -c '^kind: ' '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/before.yaml'
+44
+$ helm template group-sync-dashboard '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/after/charts/group-sync-dashboard' -n group-sync-dashboard -f '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/after/environments/crc.yaml' > '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/after.yaml' && grep -c '^kind: ' '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/after.yaml'
+44
+$ '/Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python' '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk542/reports/2026-09-27_epic-c-walk/scripts/rbac_rules.py' '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/before.yaml' '/var/folders/zk/r9544cfx1v702xnfz9wg0j9c0000gn/T/tmp.T21g7zQdc9/after.yaml'
+rules: before 65, after 65
+REMOVED 0
+ADDED 0
+
+## The grant  (2026-10-03T00:12:13Z)
+$ oc create -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk542/reports/2026-10-02_gui-cleanup-542/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-542-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-542-crb-update-developer created
+grant created at 2026-10-03T00:12:13Z
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+yes
+waited for the tier's cache until 2026-10-03T00:13:23Z
+
+## Steps 1-4: walk.py admin (the cluster-admin tier)  (2026-10-03T00:13:23Z)
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py admin
+2026-10-03T00:13:28Z PASS the grant gives the cluster-admin tier               : {"user": "developer", "cluster_admin": true}
+2026-10-03T00:13:29Z report runs before                                        : {"total": 81, "retired": 70, "manual finished": 11, "in flight": 0}
+2026-10-03T00:13:31Z screenshot                                                : library-drawer-confirm-1280.png
+2026-10-03T00:13:32Z PASS one manual run deleted from the drawer               : {"run": "20260930T094935.837962Z-90e1", "note": "Run 20260930T094935.837962Z-90e1 deleted.", "gone from /artifacts": true}
+2026-10-03T00:13:33Z PASS the preview deletes nothing                          : {"listed": 70, "retired runs still": 70}
+2026-10-03T00:13:33Z screenshot                                                : library-cleanup-preview-1280.png
+2026-10-03T00:13:34Z PASS the confirmed cleanup removed the retired schedule's runs: {"note": "Deleted 70 runs, 1.8 MB.", "retired runs left": 0}
+2026-10-03T00:13:34Z screenshot                                                : library-cleanup-done-1280.png
+2026-10-03T00:13:34Z copies before                                             : [{"kind": "backup", "name": "gsd-20261003T001042.559760Z.db", "bytes": 14422016, "at": "2026-10-03T00:10:42Z", "guarded": "the newest scheduled backup is kept, so a restore always has a copy to restore (docs/RUNBOOK_backup_restore.md \u00a74)"}, {"kind": "backup", "name": "gsd-20261002T223505.753650Z.db", "bytes": 14401536, "at": "2026-10-02T22:35:05Z", "guarded": null}, {"kind": "backup", "name": "gsd-20261002T214627.363078Z.db", "bytes": 14389248, "at": "2026-10-02T21:46:27Z", "guarded": null}, {"kind": "backup", "name": "gsd-20261002T212702.721227Z.db", "bytes": 14368768, "at": "2026-10-02T21:27:02Z", "guarded": null}, {"kind": "pre-restore", "name": "20261002T151622.016368Z", "bytes": 14536704, "at": "2026-10-02T15:16:22Z", "guarded": "the newest pre-restore set is kept: it is the way back from the last restore (docs/RUNBOOK_backup_restore.md \u00a74, \"Undo a restore\")"}, {"kind": "pre-restore", "name": "20261002T150951Z", "bytes": 14548992, "at": "2026-10-02T15:09:51Z", "guarded": null}, {"kind": "pre-restore", "name": "20261002T145415.792307Z", "bytes": 14622720, "at": "2026-10-02T14:54:15Z", "guarded": null}, {"kind": "pre-restore", "name": "20261002T055647Z", "bytes": 14577664, "at": "2026-10-02T05:56:47Z", "guarded": null}, {"kind": "pre-restore", "name": "20261002T053826.893557Z", "bytes": 14635008, "at": "2026-10-02T05:38:26Z", "guarded": null}, {"kind": "pre-restore", "name": "20261002T013241.786235Z", "bytes": 15884288, "at": "2026-10-02T01:32:41Z", "guarded": null}, {"kind": "pre-restore", "name": "pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db", "bytes": 14270623, "at": "2026-10-02T01:29:59Z", "guarded": null}]
+2026-10-03T00:13:37Z screenshot                                                : kpi-database-copies-1280.png
+2026-10-03T00:13:40Z PASS the oldest unguarded pre-restore copy deleted from the card: {"deleted": "pre-restore/pre-upgrade-20261002T012959.076526Z-schema-20-to-21-group-sync-dashboard-779c754858-tlp2t.db", "bytes": 14270623}
+2026-10-03T00:13:40Z PASS the newest backup is kept: no button, and the API answers 409: {"copy": "backup/gsd-20261003T001042.559760Z.db", "buttons": 0, "api": {"http": 409, "body": {"detail": "the newest scheduled backup is kept, so a restore always has a copy to restore (docs/RUNBOOK_backup_restore.md \u00a74)"}}}
+2026-10-03T00:13:40Z KPI page at 375 px: scrollWidth - clientWidth             : 0
+2026-10-03T00:13:40Z screenshot                                                : kpi-database-copies-375.png
+2026-10-03T00:13:40Z PASS no page error and no 'Dashboard API error'           : {"page errors": [], "api error banners": 0}
+2026-10-03T00:13:40Z result                                                    : {"mode": "admin", "failures": []}
+
+## The grant's delete  (2026-10-03T00:13:40Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk542/reports/2026-10-02_gui-cleanup-542/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io "gsd-walk-542-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-542-crb-update-developer" deleted
+grant deleted at 2026-10-03T00:13:40Z; held 87 s
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+waited 70 s for the tier's cache until 2026-10-03T00:14:50Z
+
+## Step 5: walk.py refused (no grant)  (2026-10-03T00:14:50Z)
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py refused
+2026-10-03T00:14:55Z PASS without the grant the tier is off                    : {"user": "developer", "cluster_admin": false}
+2026-10-03T00:14:55Z PASS GET /api/housekeeping/copies answers 403             : {"http": 403, "body": {"detail": "For cluster administrators only. Deleting reports and database copies is reserved to cluster administrators."}}
+2026-10-03T00:14:55Z PASS a cleanup preview answers 403                        : {"http": 403, "body": {"detail": "For cluster administrators only. Deleting reports and database copies is reserved to cluster administrators."}}
+2026-10-03T00:15:00Z the Library at the lower tier                             : {"drawer-delete buttons": 0, "cleanup cards": 0}
+2026-10-03T00:15:00Z PASS the Library offers no delete and no cleanup          : 20260930T094942.160051Z-bf21
+2026-10-03T00:15:00Z screenshot                                                : library-refused-developer-1280.png
+2026-10-03T00:15:00Z PASS no page error and no 'Dashboard API error'           : {"page errors": [], "api error banners": 0}
+2026-10-03T00:15:00Z result                                                    : {"mode": "refused", "failures": []}
+
+## Step 6: the record, one audit line per deleted item (the dashboard's log since the grant)  (2026-10-03T00:15:00Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=15m | grep -E 'report-run-deleted|db-copy-deleted' | sed -E 's/^(.{0,400}).*/\1/' | tail -n 100
+sed: 1: "s/^(.{0,400}).*/\1/
+": RE error: maximum repetition exceeds 255
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard --since=15m | grep -c -E 'report-run-deleted|db-copy-deleted'
+72
+
+## After  (2026-10-03T00:15:00Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"4e44fd02eb930a1117f2deb962adeaa30cc57d73"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,RESTARTS:.status.containerStatuses[*].restartCount,IMAGE:.spec.containers[0].image
+NAME                                                 START                  RESTARTS   IMAGE
+group-sync-dashboard-56d4b64b69-zhrd7                2026-10-03T00:10:09Z   0,0        quay.io/ephico2real/group-sync-dashboard:3.1.0
+group-sync-dashboard-backup-offsite-29848695-s298q   2026-10-02T06:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:2.3.0
+group-sync-dashboard-backup-offsite-29849055-l8c5q   2026-10-02T12:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:2.4.0
+group-sync-dashboard-backup-offsite-29849415-rzrfg   2026-10-02T18:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:3.0.0
+group-sync-dashboard-backup-offsite-29849775-7nk6h   2026-10-03T00:15:00Z   0          quay.io/ephico2real/group-sync-dashboard:3.1.0
+group-sync-dashboard-report-7b966856d6-bzhtj         2026-10-03T00:10:09Z   0          quay.io/ephico2real/group-sync-dashboard-report:3.1.0
+verify-1790912616-km2gt                              2026-10-02T03:43:37Z   0          quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/api/version").read().decode())'
+{"leader":true,"version":"3.1.0","commit":"4e44fd02eb","branch":"main","dirty":false,"features":{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true},"timezone":{"name":"America/New_York","abbrev":"EDT","utc_offset":"-0400"}}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8080/metrics").read().decode())' | grep -E '^gsd_(build_info|housekeeping_deleted_total)'
+gsd_build_info{branch="main",commit="4e44fd02eb",version="3.1.0"} 1.0
+gsd_housekeeping_deleted_total{kind="report-run"} 71.0
+gsd_housekeeping_deleted_total{kind="backup"} 0.0
+gsd_housekeeping_deleted_total{kind="pre-upgrade"} 0.0
+gsd_housekeeping_deleted_total{kind="pre-restore"} 1.0
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=gui-cleanup-542-2026-10-02 -o name
+walk exit=0 at 2026-10-03T00:15:03Z
+
+## exit trap  (2026-10-03T00:15:03Z)
+No resources found
+can-i after the trap: no
