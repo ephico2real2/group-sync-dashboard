@@ -21,8 +21,13 @@ which `local-development/prepare-release.py` does when the release is cut.
   `sealed_provenance` and a `sealed` flag per section; its hash is the sha256 of the canonical keys with the
   sections narrowed to the sealed ones. **Every artefact generated after this release hashes differently from one
   generated before it over the same data**, once, because what the hash covers changed; stored runs are not
-  rewritten and each still matches its own `.json`. Login activity's window ends at the generation instant, so two
-  of its runs agree only at one clock (SPEC_F1, Orchestrator's notes 1). No permission, value or migration.
+  rewritten and each still matches its own `.json`. Five reports compute part of their data against the generation
+  clock, so two of their runs agree only while those values coincide: `login-activity`'s window ends at the
+  generation instant (two of its runs agree only at one clock), `groupsync-health` and `compliance-snapshot`
+  compute the overdue state against it, `groups`, `groupsync-health` and `compliance-snapshot` count changes in a
+  window that ends at it, and `dormant-access` sets its cutoff from it (SPEC_F1, Orchestrator's notes 1). The
+  coverage can also reflect two report-service settings (`login_capture_enabled`, `namespaces_read_enabled`), so a
+  run under other settings is other evidence. No permission, value or migration.
 
 - **`release-crc.sh --argocd` no longer times out when nothing needs syncing (#534, `docs/specs/SPEC_A4_argocd_wait_empty_fields.md`;
   lab tooling, no version change).** `argocd-wait.sh` compared the Application's `spec.source` with Argo CD's

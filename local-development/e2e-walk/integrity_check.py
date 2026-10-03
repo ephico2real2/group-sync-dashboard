@@ -25,10 +25,16 @@ CANONICAL = ("name", "cluster", "api_url", "params", "coverage", "totals", "trun
              "sealed_provenance")
 
 
-def recompute(d: dict) -> str:
-    """The sha256 the service sealed, from the .json alone. A .json written before 4.1.0 does not verify."""
+def recompute(d: dict) -> str | None:
+    """The sha256 the service sealed, from the .json alone; None for a .json this recipe does not verify, which
+    main() writes as a FAIL row: one written before 4.1.0 (no `sealed_provenance`, no `sealed` flags), or one
+    whose unsealed sections are not exactly page one, the first (the model leaves only page one out of the hash,
+    so any other unsealed section would ride beside the seal unchecked)."""
+    flags = [s.get("sealed") for s in d["sections"]]
+    if "sealed_provenance" not in d or flags[:1] != [False] or not all(flags[1:]):
+        return None
     canon = {k: d[k] for k in CANONICAL}
-    canon["sections"] = [s for s in d["sections"] if s["sealed"]]
+    canon["sections"] = d["sections"][1:]
     return hashlib.sha256(
         json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 

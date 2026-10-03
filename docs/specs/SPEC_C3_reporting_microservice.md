@@ -86,7 +86,8 @@ Everything under "Design" is the design agent's text and complete code. It super
 
 - **Amended by SPEC_F1 (#270), application 4.1.0.** The body's seal ("the sha256 of the canonical data") covered
   page one, a section inside `canonical()`, and with it the generation instant, the viewer, the run id, the
-  snapshot's age, the release and two settings; two runs over one snapshot never shared a hash. Page one is now
+  snapshot's age, the release and the chart's settings on it (the marking, the binding interval, the PDF variant
+  and font); two runs over one snapshot never shared a hash. Page one is now
   a section with `sealed=False`, left out of the hash and still rendered with the same rows and words; the data
   facts on it are sealed through `api_url` and `sealed_provenance` (the snapshot's stamp, schema and last poll)
   beside the coverage, the parameters and the rosters switch (`docs/specs/SPEC_F1_data_only_seal.md` §3).
