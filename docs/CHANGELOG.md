@@ -8,6 +8,15 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **`release-crc.sh --argocd` no longer times out when nothing needs syncing (#534, `docs/specs/SPEC_A4_argocd_wait_empty_fields.md`;
+  lab tooling, no version change).** `argocd-wait.sh` compared the Application's `spec.source` with Argo CD's
+  `status.sync.comparedTo.source` as JSON text. Argo CD writes the latter from `omitempty` Go structs, so the
+  `helm.parameters: []` the branch path writes was never there, and the wait ran out its 900 s although the
+  Application was Synced and Healthy. Both sides now drop empty values first. Any other difference is still "the
+  previous spec".
+
 ## Application 4.0.0 — chart 0.66.4 — 2026-10-03
 
 - **Epic G: access declared, platform identities configured (#387).** Its children: G1 #239, every route and

@@ -462,6 +462,22 @@ def test_waiter_rejects_a_status_computed_for_the_previous_spec(lab):
     assert r.returncode == 1 and "status is for the previous spec" in r.stdout
 
 
+def test_waiter_reads_an_empty_field_as_argo_cd_does(lab):
+    """#534: the branch path writes `helm.parameters: []`, and Argo CD writes status.sync.comparedTo from Go structs whose
+    fields are `omitempty` (argo-cd v3.4.7 types.go L542), so the empty list is absent there. The same source with and
+    without the empty key is the current comparison; another values file is still the previous spec."""
+    synced_status(lab, "abc")
+    d = json.loads((lab["tmp"] / "app-status.json").read_text())
+    d["spec"]["source"]["helm"] = {"parameters": [], "valueFiles": ["../../environments/crc.yaml"]}
+    d["status"]["sync"]["comparedTo"]["source"]["helm"] = {"valueFiles": ["../../environments/crc.yaml"]}
+    (lab["tmp"] / "app-status.json").write_text(json.dumps(d))
+    assert wait(lab, "2", "abc").returncode == 0
+    d["status"]["sync"]["comparedTo"]["source"]["helm"]["valueFiles"] = ["../../environments/other.yaml"]
+    (lab["tmp"] / "app-status.json").write_text(json.dumps(d))
+    r = wait(lab, "2", "abc")
+    assert r.returncode == 1 and "status is for the previous spec" in r.stdout
+
+
 def test_waiter_matches_the_expected_commit_by_prefix_either_way(lab):
     synced_status(lab, "0123456789abcdef" * 2 + "01234567")
     assert wait(lab, "2", "0123456789").returncode == 0                       # short expected, full status
