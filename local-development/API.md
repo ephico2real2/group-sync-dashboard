@@ -979,14 +979,22 @@ nothing here, and it is invisible to every group-based review including the rest
   "platform_users_unmatched": {"additionalNames": ["breakglass-2024"]},
   "platform_users_source": {"configMap": null, "replaced": [], "additional": ["additionalNames"]},
   "namespace": null, "total": 6, "limit": 200, "offset": 0, "truncated": false,
-  "bindings": []
+  "bindings": [],
+  "acknowledged": 2,
+  "acknowledged_bindings": [
+    {"binding_kind": "ClusterRoleBinding", "binding_namespace": "",
+     "binding_name": "group-sync-dashboard-cluster-poller", "role_kind": "ClusterRole",
+     "role_name": "group-sync-dashboard-cluster-poller", "user_name": "ocp-oauth-bind-serviceid",
+     "managed_source": "group-sync-operator-helm", "exception": null}
+  ],
+  "acknowledged_truncated": true
 }
 ```
 
 | Parameter | Default | |
 |---|---|---|
 | `namespace` | none | restrict to one namespace. **See the sentinel below** |
-| `limit` | `200` (max 5000) | applies to `bindings` only |
+| `limit` | `200` (max 5000) | applies to `bindings` and `acknowledged_bindings` |
 | `offset` | `0` | |
 | `include_platform` | `false` | see below |
 
@@ -1026,6 +1034,18 @@ or `null` for the values file) — key names only, never the values. `platform_u
 by axis (`{}` when none, and while the cluster's bindings have not been read). An entry can be unmatched because
 it is planned, misspelled, or no longer bound; the response reports that observation, not a deletion. Both are
 `null` at the self tier, with `excluded_platform`.
+
+**A grant the operator acknowledged is counted, not listed as one to migrate (#503).** Its binding carries the
+`rbac.ocp.io/config-source` label (any value) or the `rbac.ocp.io/unmanaged-exception` annotation, the rule the
+unmanaged finding already keeps. It leaves `bindings`, `total`, `by_namespace` and the direct-user alert, and
+`acknowledged` counts it beside `excluded_platform`. `acknowledged_bindings` lists each one, worst first, with
+`managed_source` (the label's value) or `exception` (the annotation's text), or both. It is paged by the same
+`limit` and `offset` as `bindings`, with `acknowledged_truncated` set the same way. It is never narrowed by
+`namespace`: like `by_namespace`, it is the whole cluster's. A platform identity's grant stays in
+`excluded_platform`, whatever its binding carries. At the self tier the three are `null`, and `bindings` keeps
+the viewer's own grants, acknowledged or not: an acknowledged grant is still access the viewer holds. Each row of
+`bindings` carries `acknowledged` (`0` or `1`); at the wide tier it is always `0`. The provenance is the one the
+binding refresh stores for the unmanaged finding, so it takes effect at the next refresh.
 
 ### `GET /api/clusters/{cluster_id}/operator-configs`
 

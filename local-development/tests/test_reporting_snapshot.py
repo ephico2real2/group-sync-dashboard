@@ -140,3 +140,21 @@ class TestTheClassificationIsTheStores:
             crs = snap.groupsyncs(CLUSTER)
             assert crs and crs[0]["has_error_message"] == 1
             assert RAW_ERROR not in repr(crs) and "error_message" not in crs[0]
+
+
+class TestAcknowledgedDirectGrants:
+    def test_t503_11_the_snapshot_counts_by_the_review_rule_and_keeps_every_grant_as_access(self, tmp_path):
+        """#503: the reports' copy uses the dashboard's one review rule. The direct-user figure leaves out
+        the grants the operator acknowledged and a count of its own carries them; the rows stay access a
+        person holds, each saying whether it is acknowledged and with what, for the access reports."""
+        from reporting_seed import seed_acknowledged
+        store = seed_acknowledged(str(tmp_path / "w.db"))
+        d = tmp_path / "s"; d.mkdir(); path = write_snapshot(store, d)
+        store.close()
+        with Snapshot(path) as snap:
+            counts = snap.counts(CLUSTER)
+            rows = {r["user_name"]: (r["acknowledged"], r["managed_source"], r["exception"]) for r in snap.user_bindings(CLUSTER)}
+        assert (counts["user_bindings"], counts["acknowledged_user_bindings"], counts["platform_user_bindings"]) == (1, 2, 1)
+        assert rows == {"frank": (0, None, None),
+                        "ocp-oauth-bind-serviceid": (1, "group-sync-operator-helm", None),
+                        "vendor-support": (1, None, "vendor read-only access, TICKET-7")}

@@ -98,3 +98,27 @@ def seeded_dirs(tmp_path: Path, **seed_kwargs) -> tuple[Path, Path]:
     finally:
         store.close()
     return snapshots, artifacts
+
+
+def seed_acknowledged(db_path: str) -> Store:
+    """The direct user grants of #503, written through the Store as a binding refresh writes them — each User
+    row twice, in user_binding and with its binding's provenance in rbac_group_binding: one to review (frank),
+    two the operator acknowledged (the bind account by the operator chart's label, vendor-support by the
+    exception annotation) and a platform account whose binding is labelled too (the platform wins)."""
+    now = _iso(NOW)
+    store = Store(db_path)
+    store.upsert_cluster(CLUSTER, "https://api.crc.testing:6443", True)
+    store.record_poll(CLUSTER, "ok", None)
+    grants = [("ClusterRoleBinding", "", "frank-admin", "cluster-admin", "frank", 0, None, None),
+              ("ClusterRoleBinding", "", "poller", "view", "ocp-oauth-bind-serviceid", 0, "group-sync-operator-helm", None),
+              ("RoleBinding", "pay", "vendor-view", "view", "vendor-support", 0, None, "vendor read-only access, TICKET-7"),
+              ("ClusterRoleBinding", "", "sa-admin", "cluster-admin", "system:serviceaccount:openshift-x:y", 1, "team-x", None)]
+    store.replace_user_bindings(CLUSTER, [
+        {"binding_kind": k, "binding_namespace": ns, "binding_name": name, "role_kind": "ClusterRole", "role_name": role,
+         "user_name": user, "is_platform": platform} for k, ns, name, role, user, platform, _, _ in grants], now)
+    store.replace_bindings(CLUSTER, [
+        {"binding_kind": k, "binding_namespace": ns, "binding_name": name, "role_kind": "ClusterRole", "role_name": role,
+         "group_name": user, "subject_kind": "User", "is_platform": platform, "managed_source": label, "exception": exception}
+        for k, ns, name, role, user, platform, label, exception in grants], now)
+    store.replace_operator_configs(CLUSTER, None, now)
+    return store

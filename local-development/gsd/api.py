@@ -2434,7 +2434,11 @@ def build_app(
         wide = store.namespace_detail(cluster_id, "", user_name=me, groups=groups)
         # PLATFORM-CLASSIFICATION (#255, #353): Home's cluster-wide counts leave the platform's identities out (a system: group, a platform user)
         cluster_wide_groups = len({g["group_name"] for g in wide["via_groups"] if not g["is_platform"]})
-        cluster_wide_grants = len([d for d in wide["cluster_wide_grants"] if not d["is_platform"]])
+        # ... and the grants the operator acknowledged (#503) at the wide tier, the worklist's rule; the self
+        # tier counts its own, acknowledged or not, as the store's namespace counts do.
+        # PLATFORM-CLASSIFICATION (#255, #353): the cluster-wide grants to review (#503)
+        cluster_wide_grants = len([d for d in wide["cluster_wide_grants"]
+                                   if not d["is_platform"] and not (d["acknowledged"] and me is None)])
         # The switch that lists every namespace is REACH — every cluster-wide binding naming the
         # viewer, a platform identity's included — the same rule namespace_reach applies to the
         # detail. The two counts stay the review's counts, platform identities left out; the page
@@ -2548,7 +2552,9 @@ def build_app(
         me = require_viewer(viewer, cluster_id)
         groups = store.user_groups(cluster_id, me)
         via = store.user_bindings(cluster_id, me)
-        direct = store.direct_user_bindings(cluster_id, include_platform=True, user_name=me)
+        # The viewer's own direct grants, acknowledged ones included (#503): access they hold.
+        direct = store.direct_user_bindings(cluster_id, include_platform=True, user_name=me,
+                                            include_acknowledged=True)
         record = store.user_record(cluster_id, me)
         since = (datetime.now(UTC) - timedelta(days=HOME_CHANGES_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
         # Each cluster's history is capped, so a card that showed the count as complete would be
@@ -2625,6 +2631,17 @@ def build_app(
         make the finding unreadable. `include_platform=true` shows them, and the count is
         always reported so the page can say what it left out.
 
+        A grant the operator acknowledged on its binding — the `rbac.ocp.io/config-source`
+        label, any value, or the `rbac.ocp.io/unmanaged-exception` annotation, the rule the
+        unmanaged finding keeps (#353) — leaves `bindings`, `total` and `by_namespace` the same
+        way (#503) and is counted in `acknowledged`, beside `excluded_platform`.
+        `acknowledged_bindings` lists each one with its `managed_source` (the label's value) or
+        `exception` (the annotation's text), worst first and paged by the same `limit` and
+        `offset` as `bindings`, never narrowed by `namespace`: like `by_namespace` it is the
+        cluster's. A platform identity's grant is never acknowledged: it stays in
+        `excluded_platform`. At the self tier all three are null, and the viewer's own grants
+        are listed acknowledged or not: they are access the viewer holds.
+
         `bindings` IS PAGED; `by_namespace` IS NOT, and the asymmetry is deliberate. The
         rollup is one row per namespace, so it is bounded by a number the cluster already
         keeps small, and it is the view that actually answers "where is my exposure" — it
@@ -2649,12 +2666,16 @@ def build_app(
         # migration effort as the viewer's) and never fabricated zeros.
         viewer, scope = viewer_scope(request, cluster_id)
         me = None if scope == "all" else require_viewer(viewer, cluster_id)
+        # The review rule at the wide tier; the viewer's own grants at self, acknowledged or not (#503).
         total = store.count_direct_user_bindings(
             cluster_id, include_platform=include_platform, namespace=namespace,
-            user_name=me)
+            user_name=me, include_acknowledged=me is not None)
         rows = store.direct_user_bindings(
             cluster_id, include_platform=include_platform, namespace=namespace,
-            limit=limit, offset=offset, user_name=me)
+            limit=limit, offset=offset, user_name=me, include_acknowledged=me is not None)
+        acknowledged = store.acknowledged_user_binding_count(cluster_id) if scope == "all" else None
+        acknowledged_rows = (store.acknowledged_user_bindings(cluster_id, limit=limit, offset=offset)
+                             if scope == "all" else None)
         return {
             "cluster": cluster_id,
             "scope": scope,
@@ -2665,6 +2686,12 @@ def build_app(
             # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's excluded count (platformUsers, stored at poll time)
             "excluded_platform":
                 store.platform_user_binding_count(cluster_id) if scope == "all" else None,
+            # #503: the grants the operator acknowledged on the binding — counted beside the platform's,
+            # and each one reachable with what acknowledged it. Withheld at self, as the platform count is.
+            "acknowledged": acknowledged,
+            "acknowledged_bindings": acknowledged_rows,
+            "acknowledged_truncated":
+                None if acknowledged is None else offset + len(acknowledged_rows) < acknowledged,
             # Where that list comes from, and every `additional*` entry no User subject here matches (#255) —
             # judged against all of this cluster's User subjects, platform ones included. Withheld at self with
             # the count: both describe other people's grants.

@@ -11,6 +11,9 @@ from pathlib import Path
 MARKER = "PLATFORM-CLASSIFICATION (#255, #353)"
 ROOT = Path(__file__).resolve().parents[2]
 GSD = ROOT / "local-development" / "gsd"
+# #503's review rule, by its two names (gsd/store.py Store._USER_ACKNOWLEDGED, Store._USER_TO_REVIEW): every
+# query that reads one reads the stored platform flag too, so it carries the marker like the flag's own sites.
+REVIEW_SITE = re.compile(r"\b_USER_(ACKNOWLEDGED|TO_REVIEW)\b")
 # A decision or a consumption: the classifiers' definitions and defaults, and every call of them.
 SITE = re.compile(
     # A call, or the bound method passed as an argument (Home passes `settings.platform_namespaces.matches`);
@@ -37,7 +40,7 @@ def _sites(path: Path) -> list[tuple[int, str]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     out = []
     for i, line in enumerate(lines):
-        if line.lstrip().startswith(("import ", "from ")) or not SITE.search(line):
+        if line.lstrip().startswith(("import ", "from ")) or not (SITE.search(line) or REVIEW_SITE.search(line)):
             continue
         above = lines[i - 1] if i else ""
         if MARKER not in line and MARKER not in above:
@@ -86,3 +89,15 @@ def test_the_chart_path_is_marked() -> None:
 ])
 def test_the_site_pattern_sees_a_call_and_a_bound_method_pass_but_not_prose(line: str, is_site: bool) -> None:
     assert bool(SITE.search(line)) is is_site, line
+
+
+@pytest.mark.parametrize("line, is_site", [
+    ('                    WHERE cluster_id=? AND """ + self._USER_TO_REVIEW + """', True),
+    ('            sql += " AND NOT " + self._USER_ACKNOWLEDGED', True),
+    ('                        CASE WHEN """ + Store._USER_ACKNOWLEDGED + """ THEN 1 ELSE 0 END AS acknowledged', True),
+    ('    _USER_PROVENANCE = """', False),
+    ("    # A DIRECT USER GRANT THE OPERATOR ACKNOWLEDGED (#503). The operator's rule (#353) is the unmanaged", False),
+])
+def test_the_review_rule_pattern_sees_its_two_names_but_not_prose(line: str, is_site: bool) -> None:
+    """#503 (T503-13): a new read of the review rule without the marker fails the site test above."""
+    assert bool(REVIEW_SITE.search(line)) is is_site, line

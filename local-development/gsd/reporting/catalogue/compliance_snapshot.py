@@ -44,6 +44,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
                                ("Bindings (every subject kind)", sum(findings.values())),
                                ("Unmanaged (every subject kind)", findings.get("unmanaged", 0)),
                                ("Direct user grants", c["user_bindings"]), ("Platform identity grants (excluded from the direct-user figures)", c["platform_user_bindings"]),
+                               ("Acknowledged direct grants (excluded from Direct user grants)", c["acknowledged_user_bindings"]),
                                ("Privileged group grants", len(priv_g)), ("Privileged direct grants", len(priv_u))]),
             KeyValues("Access hygiene", [("Members who never logged in", len(never)),
                                          ("Access outside the login gate", len(awl) if gate and gate["group_name"] else "no gate known"),

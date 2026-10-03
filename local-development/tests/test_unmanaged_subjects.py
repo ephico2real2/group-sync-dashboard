@@ -25,6 +25,9 @@ from gsd.store import Store, _MIGRATIONS
 
 T = "2026-09-24T20:00:00Z"
 SYNCED = "app-ocp-rbac-team-ns-admin"
+# The group-sync-operator chart's fixed config-source (its rbacLabels helper, chart 0.14.1), written out so this
+# file still collects on a tree without gsd.kube's constant for it (#503).
+OPERATOR_CHART = "group-sync-operator-helm"
 
 
 @pytest.fixture()
@@ -157,6 +160,36 @@ class TestClassification:
         store.replace_bindings("crc", [sa("decided", managed_source="platform-team"),
                                        sa("hand-made-sa"), group("hand-made")], T)
         assert findings(store) == {"decided": "ok", "hand-made-sa": "unmanaged", "hand-made": "ok"}
+
+    def test_t503_4_the_operator_charts_label_on_a_group_does_not_open_the_gate(self, store):
+        """#503: the group-sync-operator chart labels every RBAC object it renders with its own name
+        (`group-sync-operator-helm`, fixed, no values key), so a Group added through its extraSubjects carries
+        it. That is the chart's provenance, like this chart's own value, never evidence that a policy operator
+        is in use: a hand-made grant to a synced Group stays `ok` while it is the only Group label."""
+        _synced(store, SYNCED)
+        store.replace_bindings("crc", [group("reader", managed_source=OPERATOR_CHART), group("hand-made")], T)
+        assert findings(store) == {"reader": "ok", "hand-made": "ok"}
+        assert store.count_bindings_by_finding("crc") == {"ok": 2}
+
+    def test_t503_5_this_charts_own_label_on_a_group_keeps_the_gate_closed(self, store):
+        """Regression guard (#312, #354): the chart's own value on a Group binding is provenance, as before."""
+        _synced(store, SYNCED)
+        store.replace_bindings("crc", [group("auditor", managed_source=CHART_CONFIG_SOURCE), group("hand-made")], T)
+        assert findings(store) == {"auditor": "ok", "hand-made": "ok"}
+
+    def test_t503_6_any_other_value_still_opens_it_and_the_lab_shape_counts_the_same(self, store):
+        """Regression guard: a policy operator's value still opens the gate, and on the lab's shape — the
+        operator chart's value on ServiceAccount and User rows only, other values on Group rows (measured
+        2026-10-01) — every count is what it was before #503."""
+        _synced(store, SYNCED)
+        rows = [group("baseline", managed_source="baseline-nonprod-rbac"), group("hand-made"),
+                sa("poller-sa", managed_source=OPERATOR_CHART),
+                user("poller-user", person="ocp-oauth-bind-serviceid", managed_source=OPERATOR_CHART),
+                user("person"), sa("hand-made-sa")]
+        store.replace_bindings("crc", rows, T)
+        assert findings(store) == {"baseline": "ok", "hand-made": "unmanaged", "poller-sa": "ok", "poller-user": "ok",
+                                   "person": "unmanaged", "hand-made-sa": "unmanaged"}
+        assert store.count_bindings_by_finding("crc") == {"ok": 3, "unmanaged": 3}
 
     def test_an_account_named_like_a_synced_group_borrows_nothing_from_it(self, store):
         """The joins to the Group object, its sync record and its members are Group-only: the

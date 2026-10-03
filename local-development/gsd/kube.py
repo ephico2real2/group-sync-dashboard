@@ -312,6 +312,15 @@ UNMANAGED_EXCEPTION_ANNOTATION = "rbac.ocp.io/unmanaged-exception"
 # the chart's objects, not evidence that a policy operator governs the cluster, so the store's
 # unmanaged gate ignores it; `tests/test_chart_rbac_provenance.py` holds the rendered value to it.
 CHART_CONFIG_SOURCE = "group-sync-dashboard"
+# The config-source the group-sync-operator chart writes on every RBAC object it renders: its chart name, fixed,
+# with no values key (`group-sync-operator-helm.rbacLabels`, chart 0.14.1, group-sync-operator-helm-chart#76).
+# Provenance for that chart's own objects, like ours, so the gate ignores it too (#503): otherwise a Group added
+# through that chart's extraSubjects or token.readers would read as a policy operator in use.
+OPERATOR_CHART_CONFIG_SOURCE = "group-sync-operator-helm"
+# The config-source values that never show a policy operator is in use: the two charts' own provenance. A
+# constant, not a values key: each chart renders its own name and has no key for it. An umbrella chart that
+# aliases one renders the alias (Helm's .Chart.Name), which opens the gate as a policy value would: noisy, never silent.
+PROVENANCE_ONLY_CONFIG_SOURCES = (CHART_CONFIG_SOURCE, OPERATOR_CHART_CONFIG_SOURCE)
 
 # The three subject kinds RBAC defines (k8s.io/api rbac/v1 types.go: GroupKind, ServiceAccountKind,
 # UserKind); the API server refuses any other at admission (pkg/apis/rbac/validation,

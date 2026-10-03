@@ -428,6 +428,212 @@ class TestDirectUserGrants:
             "cluster-admin", "view"]
 
 
+class TestAcknowledgedDirectGrants:
+    """#503: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label (any
+    value) or the `rbac.ocp.io/unmanaged-exception` annotation is acknowledged. It leaves the worklist, its
+    total, its rollup and the alert — the unmanaged finding's own rule (#353) — and is counted and listed
+    instead, never dropped. The rows go through the real reader and a real binding refresh, so the provenance
+    the view reads is the one the refresh stored."""
+
+    @staticmethod
+    def _crb(name, user, role="edit", labels=None, annotations=None):
+        return {"metadata": {"name": name, "labels": labels or {}, "annotations": annotations or {}},
+                "roleRef": {"kind": "ClusterRole", "name": role}, "subjects": [{"kind": "User", "name": user}]}
+
+    def _refresh(self, store, monkeypatch, objects, user_list_only=()):
+        """One binding refresh over ClusterRoleBindings. `user_list_only` are seen by the direct-user list
+        call and not by the binding list call — the two calls of one refresh disagreeing."""
+        from gsd import poller
+        from gsd.config import ClusterConfig
+        from gsd.kube import _user_binding_views
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            def fetch_bindings(self):
+                return [v for o in objects for v in _binding_views(o, "ClusterRoleBinding")]
+            def fetch_user_bindings(self):
+                return [v for o in [*objects, *user_list_only] for v in _user_binding_views(o, "ClusterRoleBinding")]
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        poller.refresh_bindings(store, ClusterConfig("crc", "https://x", token_env="T"), timeout=5)
+
+    @staticmethod
+    def _alert_subjects(store, include_acknowledged=False):
+        from datetime import UTC, datetime, timedelta as td
+        import gsd.state as st
+        rows = (store.direct_user_bindings("crc", include_acknowledged=True) if include_acknowledged
+                else store.direct_user_bindings("crc"))
+        return [a.subject for a in st.compute_alerts("crc", [], [], datetime.now(UTC), td(minutes=2), user_bindings=rows)]
+
+    def _worklist(self, store):
+        return ([r["user_name"] for r in store.direct_user_bindings("crc")],
+                store.count_direct_user_bindings("crc"),
+                [(r["namespace"], r["users"]) for r in store.user_bindings_by_namespace("crc")])
+
+    def test_t503_1_a_labelled_grant_leaves_the_worklist_and_the_alert_and_is_counted(self, store, monkeypatch):
+        self._refresh(store, monkeypatch, [
+            self._crb("jdoe-edit", "jdoe", labels={"rbac.ocp.io/config-source": "team-x"}),
+            self._crb("asmith-edit", "asmith")])
+        assert self._worklist(store) == (["asmith"], 1, [("(cluster-scoped)", ["asmith"])])
+        assert self._alert_subjects(store) == ["1 direct user grant"]
+        assert self._alert_subjects(store, include_acknowledged=True) == ["1 direct user grant"], (
+            "the alert drops a row that says it is acknowledged, whoever hands it the rows")
+        assert store.acknowledged_user_binding_count("crc") == 1
+        assert [(r["user_name"], r["binding_name"], r["managed_source"], r["exception"])
+                for r in store.acknowledged_user_bindings("crc")] == [("jdoe", "jdoe-edit", "team-x", None)]
+        assert store.platform_user_binding_count("crc") == 0
+
+    def test_t503_2_the_exception_annotation_alone_acknowledges_it(self, store, monkeypatch):
+        self._refresh(store, monkeypatch, [
+            self._crb("jdoe-edit", "jdoe", annotations={"rbac.ocp.io/unmanaged-exception": "vendor access, TICKET-1"}),
+            self._crb("asmith-edit", "asmith")])
+        assert self._worklist(store) == (["asmith"], 1, [("(cluster-scoped)", ["asmith"])])
+        assert self._alert_subjects(store) == ["1 direct user grant"]
+        assert [(r["user_name"], r["managed_source"], r["exception"]) for r in store.acknowledged_user_bindings("crc")] == [
+            ("jdoe", None, "vendor access, TICKET-1")]
+
+    def test_t503_3_an_unlabelled_unannotated_grant_still_alerts(self, store, monkeypatch):
+        """Regression guard against over-suppression: a Helm or OLM label, or a name, acknowledges nothing."""
+        self._refresh(store, monkeypatch, [
+            self._crb("jdoe-edit", "jdoe", labels={"app.kubernetes.io/managed-by": "Helm",
+                                                  "olm.owner": "x"}),
+            self._crb("asmith-edit", "asmith")])
+        assert self._worklist(store) == (["asmith", "jdoe"], 2, [("(cluster-scoped)", ["asmith", "jdoe"])])
+        assert self._alert_subjects(store) == ["2 direct user grants"]
+
+    def test_t503_7_a_platform_identity_stays_platform_when_its_binding_is_labelled(self, store, monkeypatch):
+        """Platform wins, as in the finding, where built_in is decided before provenance: excluded_platform
+        keeps its meaning and its count."""
+        self._refresh(store, monkeypatch, [
+            self._crb("ka", "kubeadmin", role="cluster-admin", labels={"rbac.ocp.io/config-source": "team-x"})])
+        assert store.platform_user_binding_count("crc") == 1
+        assert store.acknowledged_user_binding_count("crc") == 0 and store.acknowledged_user_bindings("crc") == []
+        assert [(r["user_name"], r["is_platform"], r["acknowledged"])
+                for r in store.direct_user_bindings("crc", include_platform=True)] == [("kubeadmin", 1, 0)]
+
+    def test_a_binding_seen_by_one_list_call_and_not_the_other_keeps_alerting(self, store, monkeypatch):
+        """The two tables come from two list calls of one refresh (poller.refresh_bindings). A labelled binding
+        the direct-user list saw and the binding list did not has no stored provenance, so it stays a grant to
+        review: the alerting direction, until the next refresh reads both."""
+        labelled = self._crb("jdoe-edit", "jdoe", labels={"rbac.ocp.io/config-source": "team-x"})
+        self._refresh(store, monkeypatch, [], user_list_only=[labelled])
+        assert self._worklist(store) == (["jdoe"], 1, [("(cluster-scoped)", ["jdoe"])])
+        assert self._alert_subjects(store) == ["1 direct user grant"]
+        assert store.acknowledged_user_binding_count("crc") == 0
+        self._refresh(store, monkeypatch, [labelled])
+        assert self._worklist(store) == ([], 0, []) and self._alert_subjects(store) == []
+        assert store.acknowledged_user_binding_count("crc") == 1
+
+    def test_the_view_and_the_finding_read_one_rule(self, store, monkeypatch):
+        """For every person's row, acknowledged here exactly when the unmanaged finding says `ok` — an empty
+        label value included, which Kubernetes allows and the finding already honours (IS NOT NULL)."""
+        self._refresh(store, monkeypatch, [
+            self._crb("a", "ann", labels={"rbac.ocp.io/config-source": ""}),
+            self._crb("b", "bob", labels={"rbac.ocp.io/config-source": "group-sync-operator-helm"}),
+            self._crb("c", "cat", annotations={"rbac.ocp.io/unmanaged-exception": "break-glass"}),
+            self._crb("d", "dan")])
+        finding = {r["group_name"]: r["finding"] for r in store.all_bindings("crc") if r["subject_kind"] == "User"}
+        acknowledged = {r["user_name"] for r in store.acknowledged_user_bindings("crc")}
+        assert finding == {"ann": "ok", "bob": "ok", "cat": "ok", "dan": "unmanaged"}
+        assert acknowledged == {u for u, f in finding.items() if f == "ok"}
+        assert [r["user_name"] for r in store.direct_user_bindings("crc")] == ["dan"]
+
+    def test_a_persons_own_grants_keep_the_acknowledged_ones(self, store, monkeypatch):
+        """The self tier and Home ask with include_acknowledged: an acknowledged grant is still access held."""
+        self._refresh(store, monkeypatch, [self._crb("jdoe-edit", "jdoe", labels={"rbac.ocp.io/config-source": "team-x"})])
+        assert store.direct_user_bindings("crc", user_name="jdoe") == []
+        own = store.direct_user_bindings("crc", user_name="jdoe", include_acknowledged=True)
+        assert [(r["user_name"], r["acknowledged"]) for r in own] == [("jdoe", 1)]
+        assert store.count_direct_user_bindings("crc", user_name="jdoe", include_acknowledged=True) == 1
+
+    def test_the_join_matches_each_grant_to_its_own_binding_row(self, store, monkeypatch):
+        """The provenance join matches the whole primary key: the cluster, the binding (kind, namespace, name)
+        and the User subject. Each pair below differs from its neighbour in one of those only, so a join that
+        dropped one would lend a label to the wrong grant or count one grant twice."""
+        from gsd import poller
+        from gsd.config import ClusterConfig
+        from gsd.kube import _user_binding_views
+
+        def rb(ns, name, subjects, labelled):
+            labels = {"rbac.ocp.io/config-source": "team-x"} if labelled else {}
+            return {"kind": "RoleBinding", "metadata": {"name": name, "namespace": ns, "labels": labels},
+                    "roleRef": {"kind": "ClusterRole", "name": "edit"}, "subjects": subjects}
+
+        def user(name):
+            return {"kind": "User", "name": name}
+
+        objects = {"crc": [rb("ns-a", "edit", [user("jdoe")], True), rb("ns-b", "edit", [user("jdoe")], False),
+                           rb("ns-c", "bob-a", [user("bob")], True), rb("ns-c", "bob-b", [user("bob")], False),
+                           rb("ns-d", "pair", [user("ann"), user("cat")], True),
+                           rb("ns-e", "dev", [{"kind": "Group", "name": "dev"}, user("dev")], True),
+                           rb("ns-f", "builder", [{"kind": "ServiceAccount", "name": "builder", "namespace": "ci"},
+                                                  user("builder")], True),
+                           rb("ns-g", "shared", [user("eve")], True)],
+                   "other": [rb("ns-g", "shared", [user("eve")], False)]}
+
+        class FakeClient:
+            def __init__(self, cluster, timeout):
+                self.objects = objects[cluster.name]
+            def fetch_bindings(self):
+                return [v for o in self.objects for v in _binding_views(o, o["kind"])]
+            def fetch_user_bindings(self):
+                return [v for o in self.objects for v in _user_binding_views(o, o["kind"])]
+            def fetch_operator_configs(self): return None
+
+        monkeypatch.setattr(poller, "ClusterClient", FakeClient)
+        store.upsert_cluster("other", "https://y", True)
+        for name in ("crc", "other"):
+            poller.refresh_bindings(store, ClusterConfig(name, "https://x", token_env="T"), timeout=5)
+        key = lambda rows: sorted((r["binding_namespace"], r["binding_name"], r["user_name"]) for r in rows)  # noqa: E731
+        acknowledged = [("ns-a", "edit", "jdoe"), ("ns-c", "bob-a", "bob"), ("ns-d", "pair", "ann"), ("ns-d", "pair", "cat"),
+                        ("ns-e", "dev", "dev"), ("ns-f", "builder", "builder"), ("ns-g", "shared", "eve")]
+        to_review = [("ns-b", "edit", "jdoe"), ("ns-c", "bob-b", "bob")]
+        assert key(store.acknowledged_user_bindings("crc")) == acknowledged
+        assert store.acknowledged_user_binding_count("crc") == 7
+        assert key(store.direct_user_bindings("crc")) == to_review and store.count_direct_user_bindings("crc") == 2
+        assert key(store.direct_user_bindings("crc", include_acknowledged=True)) == sorted(acknowledged + to_review)
+        assert key(store.direct_user_bindings("other")) == [("ns-g", "shared", "eve")]
+        assert store.acknowledged_user_binding_count("other") == 0
+
+    def test_every_provenance_query_searches_rbac_group_binding_by_its_primary_key(self, store, monkeypatch):
+        """Each query that reads _USER_PROVENANCE must look up a grant's own row by rbac_group_binding's
+        whole primary key, never read the subquery by materializing it: that is a SCAN of every subject
+        row on the cluster, ServiceAccounts and Groups included, plus an automatic index. SQLite never
+        flattens a subquery on the right of a LEFT JOIN into a DISTINCT query (optoverview.html,
+        flattening constraint 3), and a join that loses a key column loses the full SEARCH too."""
+        import sqlite3
+        if sqlite3.sqlite_version_info < (3, 40, 0):
+            pytest.skip("SQLite flattens a LEFT JOIN's subquery under an aggregate from 3.40.0 (select.c, rule 3c)")
+        self._refresh(store, monkeypatch, [
+            self._crb("jdoe-edit", "jdoe", labels={"rbac.ocp.io/config-source": "team-x"}),
+            self._crb("asmith-edit", "asmith")])
+        real, seen = Store._rows, []
+
+        def recording(self_, sql, params=()):
+            seen.append((sql, tuple(params)))
+            return real(self_, sql, params)
+
+        monkeypatch.setattr(Store, "_rows", recording)
+        store.direct_user_bindings("crc", limit=10)
+        store.count_direct_user_bindings("crc")
+        store.user_bindings_by_namespace("crc")
+        store.acknowledged_user_bindings("crc", limit=10)
+        store.acknowledged_user_binding_count("crc")
+        store.namespaces("crc")
+        store.namespace_detail("crc", "")
+        joined = [(sql, params) for sql, params in seen if "ack_cluster" in sql]
+        assert len(joined) == 9, len(joined)
+        search = ("SEARCH rbac_group_binding USING INDEX sqlite_autoindex_rbac_group_binding_1 (cluster_id=? AND "
+                  "binding_kind=? AND binding_namespace=? AND binding_name=? AND subject_kind=? AND "
+                  "subject_namespace=? AND group_name=?)")
+        for sql, params in joined:
+            plan = [r["detail"] for r in real(store, "EXPLAIN QUERY PLAN " + sql, params)]
+            assert any(line.startswith(search) for line in plan), (plan, sql)
+            assert not any(line.startswith(("SCAN rbac_group_binding", "MATERIALIZE")) or "AUTOMATIC" in line
+                           for line in plan), (plan, sql)
+
+
 class TestDirectUserAlert:
     def test_one_alert_summarises_all_of_them(self, store):
         """One alert, not one per binding: 36 separate alerts would drown every other

@@ -269,7 +269,10 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                    it narrows what a page shows, it is not a place, and an entry per change
                    would bury the positions Back exists to reach. */
                 loginOutcome: "all",
-                nsGrantsOpen: false };
+                nsGrantsOpen: false,
+                /* The acknowledged grants' list (#503) starts closed too, like Every grant: the
+                   count beside it is the finding, the rows are the detail. */
+                nsAckOpen: false };
 /* Id of the search box with a live IME composition, or null. Module-level rather than on the element,
    because the element this bar renders is replaced wholesale — state on the node would vanish with it,
    which is the exact failure this slot exists to prevent. An ID rather than a boolean: at most one box
@@ -5807,8 +5810,12 @@ function nsDetail() {
   const keys = d.label_keys || [];
   const labels = d.labels || {};
   const via = d.via_groups || [], wide = d.cluster_wide_groups || [], direct = d.direct_grants || [];
+  const self = d.scope === "self";
+  // #503: at the wide tier a grant the operator acknowledged is listed and badged, and left out of the counts
+  // the way a platform row is; at self the rows are the viewer's own, and every one counts.
+  const acknowledged = (x) => !self && !!x.acknowledged;
   // PLATFORM-CLASSIFICATION (#255, #353): Home reads the stored flags — a Group's system: rule, a User's platformUsers — and never decides
-  const people = direct.filter((x) => !x.is_platform);
+  const people = direct.filter((x) => !x.is_platform && !acknowledged(x));
   // Virtual `system:` groups authorise access but hold no person: badged in the table, folded on the
   // cluster-wide line (the deployed demo-prod page listed 54 bindings, 41 of them these — the CRC walk).
   // Counted nowhere: `system:image-pullers` is in every OpenShift namespace, so a Via groups count that
@@ -5825,9 +5832,8 @@ function nsDetail() {
   // Cluster-wide grants naming a person, platform identities left out: kubeadmin reaches every
   // namespace by definition and would be one more line on every page (review of #167, Grok F4).
   // PLATFORM-CLASSIFICATION (#255, #353): cluster-wide grants naming a person, by the stored flag
-  const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform);
+  const wideGrants = (d.cluster_wide_grants || []).filter((x) => !x.is_platform && !acknowledged(x));
   const wideBindings = wide.length + wideGrants.length;
-  const self = d.scope === "self";
   // THE REACH IS A NUMBER, A SPLIT AND A LIST — NOT ONE SENTENCE (#261 §3). Measured on the lab: 975
   // characters, 66 words and 16 links naming 53 bindings, the largest block of text on the page. The count
   // is a tile beside the others (the wide tier's, like People who reach it: at the self tier the sentence
@@ -5898,13 +5904,13 @@ function nsDetail() {
         ].join("")}</tbody></table></div>` : ""}` : ""}
   </section>
   ${direct.length ? `<section class="card">
-    <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.length > people.length ? ` · ${direct.length - people.length} platform` : ""}</span></h2>
+    <h2>Direct grants <span class="muted fw-normal">· ${people.length}${direct.some((x) => x.is_platform) ? ` · ${direct.filter((x) => x.is_platform).length} platform` : ""}${direct.some(acknowledged) ? ` · ${direct.filter(acknowledged).length} acknowledged` : ""}</span></h2>
     <div class="filterbar-note mb-4">A person named by a binding rather than reached through a group — the rows a directory change cannot
       offboard. The operational goal for this card is zero.</div>
     <div class="scroll-x"><table>
       <thead><tr><th>Person</th><th>Role</th><th>Binding</th></tr></thead>
       <tbody>${direct.map((x) => `<tr class="rowlink" data-user="${esc(x.user_name)}">
-        <td><button type="button" class="drill">${esc(x.user_name)}</button>${/* PLATFORM-CLASSIFICATION (#255, #353): the platform badge */ ""}${x.is_platform ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>platform</span>' : ""}</td>
+        <td><button type="button" class="drill">${esc(x.user_name)}</button>${/* PLATFORM-CLASSIFICATION (#255, #353): the platform badge */ ""}${x.is_platform ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>platform</span>' : ""}${acknowledged(x) ? ' <span class="badge unknown"><span class="glyph" aria-hidden="true"></span>acknowledged</span>' : ""}</td>
         <td><span class="badge ${/admin|edit/.test(x.role_name) ? "critical" : "warning"}"><span class="glyph" aria-hidden="true"></span>${esc(x.role_name)}</span></td>
         <td class="muted">${esc(x.binding_kind)} <code>${esc(x.binding_name)}</code></td></tr>`).join("")}</tbody></table></div>
   </section>` : ""}
@@ -7389,6 +7395,7 @@ function directUserGrants(ub) {
         everywhere at once.
         ${platformNote ? `<div class="mt-4" id="du-platform-note">${platformNote}</div>` : ""}
       </div>
+      ${acknowledgedGrants(ub)}
     </section>`;
   }
 
@@ -7494,6 +7501,7 @@ function directUserGrants(ub) {
       : `<div class="empty-note">No namespace holds a direct grant on this cluster. Every finding here is at
           the cluster scope, in the card above.</div>`}
     ${platformNote ? `<div class="filterbar-note mt-4" id="du-platform-note">${platformNote}</div>` : ""}
+    ${acknowledgedGrants(ub)}
   </section>
 
   <section class="card">
@@ -7579,6 +7587,44 @@ function directUserGrants(ub) {
       </div>` : ""}
     </div>
   </section>`;
+}
+
+/* The direct user grants the operator acknowledged on their binding (#503): the
+   `rbac.ocp.io/config-source` label, any value, or the `rbac.ocp.io/unmanaged-exception` annotation —
+   the rule the unmanaged finding keeps. They leave the worklist, its tiles and the alert, and are
+   counted and listed here, each with what acknowledged it: suppressed means counted, never dropped.
+   Wide tier only; at self the server sends null and nothing renders. */
+function acknowledgedGrants(ub) {
+  const n = ub.acknowledged || 0;
+  if (!n) return "";
+  const rows = ub.acknowledged_bindings || [];
+  const open = !!view.nsAckOpen;
+  const by = (b) => [
+    b.managed_source != null ? `<span class="rp-chip k-identity">label</span> <code>config-source: ${esc(b.managed_source)}</code>` : "",
+    b.exception != null ? `<span class="rp-chip k-rbac">exception</span> “${esc(b.exception)}”` : "",
+  ].filter(Boolean).join("<br>");
+  return `<div class="ack mt-6" id="du-acknowledged">
+    <div class="section-head">
+      <span class="filterbar-note"><strong>${n} grant${n === 1 ? "" : "s"} acknowledged by the operator</strong> — counted
+        here and not in the worklist above or the alert, because each binding carries <code>rbac.ocp.io/config-source</code>
+        or the <code>rbac.ocp.io/unmanaged-exception</code> annotation, the rule the unmanaged finding already keeps.</span>
+      <button type="button" class="disclose" data-ns-ack aria-expanded="${open}" aria-controls="ack-rows">
+        <span class="disclose-arrow" aria-hidden="true">${open ? "▾" : "▸"}</span>
+        ${open ? "Hide" : "Show"} the ${n}</button>
+    </div>
+    <div id="ack-rows" class="scroll-x mt-4"${open ? "" : " hidden"}><table class="audit-table">
+      <thead><tr><th>Person</th><th>Grants</th><th>Scope</th><th>Binding</th><th>Acknowledged by</th></tr></thead>
+      <tbody>${rows.map((b) => `<tr>
+        <td><strong>${esc(b.user_name)}</strong></td>
+        <td><code class="priv">${esc(b.role_name)}</code> <span class="muted">${esc(b.role_kind)}</span></td>
+        <td>${b.binding_namespace ? esc(b.binding_namespace) : "cluster-wide"}</td>
+        <td class="muted">${esc(b.binding_name)}</td>
+        <td>${by(b)}</td>
+      </tr>`).join("")}</tbody>
+    </table>
+    ${ub.acknowledged_truncated ? `<div class="filterbar-note truncation-note">Showing the
+      <strong>${rows.length}</strong> highest-privilege of <strong>${n}</strong> acknowledged grants.</div>` : ""}</div>
+  </div>`;
 }
 
 /* The policy operator's CR health. Rendered only when the CRDs exist on the cluster —
@@ -7902,6 +7948,8 @@ function wireNsAudit() {
 
   const disclose = document.querySelector("[data-ns-grants]");
   if (disclose) disclose.onclick = () => { view.nsGrantsOpen = !view.nsGrantsOpen; render(); };
+  const ack = document.querySelector("[data-ns-ack]");
+  if (ack) ack.onclick = () => { view.nsAckOpen = !view.nsAckOpen; render(); };
 }
 
 function wireDrilldown() {

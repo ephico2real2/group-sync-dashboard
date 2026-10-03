@@ -241,6 +241,36 @@ def test_self_user_bindings_show_only_grants_naming_the_viewer(tmp_path):
     assert body["excluded_platform"] is None
 
 
+def test_t503_8_a_self_readers_own_acknowledged_grant_stays_listed_and_the_count_is_withheld(tmp_path):
+    """#503: the acknowledged filter is the wide tier's review rule. A reader's own grant whose binding the
+    operator labelled is still access they hold, so the self view and Home keep it; the acknowledged count
+    and list aggregate other people's grants, so self gets null for both, as for excluded_platform."""
+    c = _client(tmp_path)
+    wide_client = _client(tmp_path, tier_resolver=_admin)
+    store = Store(str(tmp_path / "t.db"))
+    store.replace_bindings("c1", [
+        {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "crb-gone",
+         "role_kind": "ClusterRole", "role_name": "view", "group_name": "gone-group"},
+        {"binding_kind": "RoleBinding", "binding_namespace": "dev", "binding_name": "rb1", "role_kind": "ClusterRole",
+         "role_name": "edit", "group_name": VIEWER, "subject_kind": "User", "managed_source": "team-x"},
+    ], now_iso())
+    store.close()
+
+    body = c.get("/api/clusters/c1/user-bindings", headers=AS_VIEWER).json()
+    assert body["scope"] == "self"
+    assert [b["user_name"] for b in body["bindings"]] == [VIEWER] and body["total"] == 1
+    assert body["acknowledged"] is None and body["acknowledged_bindings"] is None
+    assert body["acknowledged_truncated"] is None
+    home = c.get("/api/clusters/c1/home", headers=AS_VIEWER).json()
+    assert home["answer"]["direct_count"] == 1, "Home still counts the viewer's own acknowledged grant"
+
+    wide = wide_client.get("/api/clusters/c1/user-bindings", headers=AS_VIEWER).json()
+    assert wide["scope"] == "all"
+    assert [b["user_name"] for b in wide["bindings"]] == ["jdoe"], "the worklist leaves it out"
+    assert wide["acknowledged"] == 1
+    assert [(b["user_name"], b["managed_source"]) for b in wide["acknowledged_bindings"]] == [(VIEWER, "team-x")]
+
+
 def test_self_membership_changes_are_the_viewers_only(tmp_path):
     c = _client(tmp_path)
     body = c.get("/api/clusters/c1/membership-changes", headers=AS_VIEWER).json()

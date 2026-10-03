@@ -150,6 +150,34 @@ class TestCardinalityAndLeakage:
         store.close()
 
 
+class TestAcknowledgedGrantsMoveCountsNeverNames:
+    """#503: /metrics is unauthenticated by decision, so the acknowledged grants reach it only as a count:
+    `gsd_alerts_total{kind="direct_user_binding"}` counts ALERTS — one per cluster with any grant still to
+    review, whatever its total — and no user or binding name appears, acknowledged or not."""
+
+    def test_t503_12_the_alert_series_counts_alerts_and_names_nobody(self):
+        store = Store(":memory:")
+        names = {"c1": [("jdoe-edit", "jdoe", None), ("bind-acct-crb", "ocp-oauth-bind-serviceid", "group-sync-operator-helm")],
+                 "c2": [("vendor-view", "vendor-support", "team-x")]}
+        for cluster, grants in names.items():
+            store.upsert_cluster(cluster, "https://x", True)
+            store.record_poll(cluster, "ok", None)
+            store.replace_user_bindings(cluster, [
+                {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": b, "role_kind": "ClusterRole",
+                 "role_name": "edit", "user_name": u, "is_platform": 0} for b, u, _ in grants], _iso(datetime.now(UTC)))
+            store.replace_bindings(cluster, [
+                {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": b, "role_kind": "ClusterRole",
+                 "role_name": "edit", "group_name": u, "subject_kind": "User", "managed_source": label}
+                for b, u, label in grants], _iso(datetime.now(UTC)))
+        text = generate_latest(build_registry(store, GRACE)).decode()
+        store.close()
+        alerts = {k: v for k, v in series(text, "gsd_alerts_total").items() if 'kind="direct_user_binding"' in k}
+        assert alerts == {'gsd_alerts_total{cluster="c1",kind="direct_user_binding",severity="warning"}': 1.0}, alerts
+        for needle in ("jdoe", "ocp-oauth-bind-serviceid", "vendor-support", "jdoe-edit", "bind-acct-crb", "vendor-view",
+                       "group-sync-operator-helm", "team-x"):
+            assert needle not in text, needle
+
+
 class TestResilience:
     def test_a_broken_cluster_does_not_fail_the_whole_scrape(self, scrape):
         """A scrape that 500s is indistinguishable from the target being down, so a

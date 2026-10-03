@@ -46,14 +46,25 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         "Bindings carrying rbac.ocp.io/unmanaged-exception", ["subject", "scope", "role", "binding", "exception"],
         [[subject_label(r), ns_label(r["binding_namespace"]), r["role_name"], r["binding_name"], r["exception"]] for r in exceptions],
         note="An exception suppresses the unmanaged finding; it is listed so a reviewer can re-judge it.", empty_text="none")]))
-    users = snap.user_bindings(cid)
-    users, t = cut(users)
+    # The dashboard's one review rule (#503): a grant the operator acknowledged on its binding leaves the
+    # direct-user finding as it leaves the worklist and the alert, and is listed in its own table.
+    every = snap.user_bindings(cid)
+    acknowledged = [u for u in every if u["acknowledged"]]
+    users, t = cut([u for u in every if not u["acknowledged"]])
+    truncated = truncated or t
+    acknowledged_shown, t = cut(acknowledged)
     truncated = truncated or t
     sections.append(Section("Direct user grants", [
         Table("Bindings naming a person", ["user", "scope", "role", "binding", "kind"],
               [[u["user_name"], ns_label(u["binding_namespace"]), f"{u['role_kind']}/{u['role_name']}", u["binding_name"], u["binding_kind"]] for u in users],
               empty_text="none"),
         Note(f"{snap.platform_user_binding_count(cid)} platform identity binding(s) (system:*, kube-apiserver, node identities) are excluded from this table and counted here, so the exclusion is visible.", "note"),
+        Table("Acknowledged by the operator", ["user", "scope", "role", "binding", "config-source", "exception"],
+              [[u["user_name"], ns_label(u["binding_namespace"]), f"{u['role_kind']}/{u['role_name']}", u["binding_name"],
+                "" if u["managed_source"] is None else u["managed_source"], u["exception"] or ""] for u in acknowledged_shown],
+              note=f"{len(acknowledged)} direct grant(s) whose binding carries rbac.ocp.io/config-source or the rbac.ocp.io/unmanaged-exception annotation: excluded from the table above, as from the dashboard's worklist and alert, and listed here so a reviewer can re-judge each one.",
+              empty_text="none"),
     ], page_break=True))
-    totals = {**{k: counts.get(k, 0) for k, _ in _DEFINITIONS}, "direct_user": len(users), "platform_user": snap.platform_user_binding_count(cid)}
+    totals = {**{k: counts.get(k, 0) for k, _ in _DEFINITIONS}, "direct_user": len(users), "platform_user": snap.platform_user_binding_count(cid),
+              "acknowledged_user": len(acknowledged)}
     return Built(sections, totals, truncated, False)

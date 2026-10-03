@@ -238,6 +238,63 @@ class TestClusterWideCounts:
         assert body["cluster_wide_groups"] == 1, "the envelope counts the group once, as every row's via_groups would"
 
 
+class TestAcknowledgedGrantsCountLikeTheWorklist:
+    """#503: the Namespaces card counted the same rows the worklist drops — "3 cluster-wide direct grants",
+    "2 of them have a direct grant", group-sync-operator's "Direct grants 1" on the lab while the worklist
+    above them, with the label honoured, says 2 and leaves that namespace out. One review rule everywhere:
+    the index, the envelope and the detail leave the acknowledged grants out of their counts at the wide
+    tier; the detail still lists each one, marked; the self tier counts the viewer's own, acknowledged or not."""
+
+    BIND = "ocp-oauth-bind-serviceid"
+
+    def _client(self, tmp_path) -> TestClient:
+        db = str(tmp_path / "ack.db")
+        s = Store(db)
+        now = now_iso()
+        s.upsert_cluster("crc", "https://api.crc.testing:6443", True)
+        s.record_poll("crc", "ok", None)
+        s.replace_namespaces("crc", [{"name": n, "created_at": now, "phase": "Active", "metadata": {}}
+                                     for n in ("group-sync-operator", "legacy-payments")], now)
+        grants = [("ClusterRoleBinding", "", "group-sync-dashboard-cluster-poller", self.BIND, "group-sync-operator-helm"),
+                  ("RoleBinding", "group-sync-operator", "group-sync-dashboard-cluster-poller-token-reader", self.BIND,
+                   "group-sync-operator-helm"),
+                  ("ClusterRoleBinding", "", "jdoe-edit", "jdoe", None),
+                  ("ClusterRoleBinding", "", "cluster-reader", "dana.lee", None),
+                  ("RoleBinding", "legacy-payments", "asmith-admin", "asmith", None)]
+        s.replace_user_bindings("crc", [
+            {"binding_kind": k, "binding_namespace": ns, "binding_name": name, "role_kind": "ClusterRole",
+             "role_name": "view", "user_name": user, "is_platform": 0} for k, ns, name, user, _ in grants], now)
+        s.replace_bindings("crc", [
+            {"binding_kind": k, "binding_namespace": ns, "binding_name": name, "role_kind": "ClusterRole",
+             "role_name": "view", "group_name": user, "subject_kind": "User", "managed_source": label}
+            for k, ns, name, user, label in grants], now)
+        s.close()
+        settings = Settings(clusters=[ClusterConfig("crc", "https://api.crc.testing:6443", token_env="X")],
+                            db_path=db, oauth_proxy_enabled=True, namespace_metadata_labels=KEYS,
+                            platform_namespaces=PlatformNamespaces(additional_suffixes=("-operator",)))
+        app = build_app(settings, run_poller=False)
+        app.state.tier_resolver = _Map({"root": "all"})
+        return TestClient(app)
+
+    def test_t503_1_the_index_and_the_envelope_count_by_the_review_rule(self, tmp_path):
+        with self._client(tmp_path) as c:
+            body = c.get("/api/clusters/crc/namespaces", headers=ROOT).json()
+            mine = c.get("/api/clusters/crc/namespaces", headers={"X-Forwarded-User": self.BIND}).json()
+        direct = {n["name"]: n["direct_grants"] for n in body["namespaces"]}
+        assert direct == {"group-sync-operator": 0, "legacy-payments": 1}
+        assert (body["cluster_wide_grants"], body["platform_with_findings"]) == (2, 0)
+        assert mine["scope"] == "self", "the bind account's own view counts its own grants, acknowledged or not"
+        assert ({n["name"]: n["direct_grants"] for n in mine["namespaces"]}["group-sync-operator"],
+                mine["cluster_wide_grants"]) == (1, 1)
+
+    def test_t503_1_the_detail_lists_an_acknowledged_grant_marked_as_it_lists_a_platform_one(self, tmp_path):
+        with self._client(tmp_path) as c:
+            d = c.get("/api/clusters/crc/namespaces/group-sync-operator", headers=ROOT).json()
+        assert [(x["user_name"], x["is_platform"], x["acknowledged"]) for x in d["direct_grants"]] == [(self.BIND, 0, 1)]
+        assert sorted((x["user_name"], x["acknowledged"]) for x in d["cluster_wide_grants"]) == [
+            ("dana.lee", 0), ("jdoe", 0), (self.BIND, 1)]
+
+
 class TestTheDetail:
     def test_who_reaches_it_and_through_which_group(self, client):
         d = client.get("/api/clusters/crc/namespaces/demo-prod", headers=ROOT).json()

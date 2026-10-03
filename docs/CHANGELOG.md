@@ -10,6 +10,21 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A direct user grant the operator acknowledged leaves the worklist and the alert, and is counted (#503, Epic G
+  #387, `docs/specs/SPEC_G3_acknowledged_direct_grants.md`; application 3.3.0, chart 0.66.1).** A grant that names
+  a user directly, on a binding carrying the `rbac.ocp.io/config-source` label (any value) or the
+  `rbac.ocp.io/unmanaged-exception` annotation, is acknowledged: the rule the unmanaged finding already keeps. It
+  leaves the Namespace audit worklist and its tiles, the namespace index's counts, the namespace page's count and
+  the direct-user alert's total, the RBAC findings report's direct-user table and the compliance snapshot's
+  "Direct user grants".
+  `/user-bindings` counts it in `acknowledged`, beside `excluded_platform`, and lists it in `acknowledged_bindings`
+  with its label value or its exception text; the tab shows the count and a disclosure listing each one. A platform
+  user stays a platform user. A reader's own acknowledged grants stay on their self view and Home, and the access
+  reports still list every grant. The provenance is read from what the binding refresh already stores, so there is
+  no migration. `group-sync-operator-helm`, the group-sync-operator chart's fixed value, is now a chart's provenance
+  in the Group arm's gate, as `group-sync-dashboard` is. `gsd_alerts_total{kind="direct_user_binding"}` still counts
+  alerts, not grants. No new permission.
+
 - **An estate names its own platform users, and either platform list can live in a ConfigMap (#255, Epic G #387,
   `docs/specs/SPEC_G2_platform_users.md`; application 3.2.0, chart 0.66.0).** `platformUsers` in the values file
   works like `platformNamespaces`: `prefixes` and `names` replace the shipped defaults (`system:`, and

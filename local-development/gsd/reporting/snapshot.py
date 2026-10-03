@@ -431,8 +431,14 @@ class Snapshot:
 
     def user_bindings(self, cluster_id: str, namespaces: list[str] | None = None,
                       include_platform: bool = False) -> list[dict]:
-        sql = """SELECT binding_kind, binding_namespace, binding_name, role_kind, role_name, user_name, is_platform
-                   FROM user_binding WHERE cluster_id=?"""
+        """Every direct user grant: the access a person holds by name, which the access reports list in full.
+        Each row says whether the operator acknowledged it (#503, the Store's rule), with what: the
+        direct-user finding and its count leave those rows out and say how many."""
+        sql = """SELECT binding_kind, binding_namespace, binding_name, role_kind, role_name, user_name, is_platform,
+                        managed_source, exception,
+                        -- PLATFORM-CLASSIFICATION (#255, #353): the row's acknowledged state (#503)
+                        CASE WHEN """ + Store._USER_ACKNOWLEDGED + """ THEN 1 ELSE 0 END AS acknowledged
+                   FROM user_binding""" + Store._USER_PROVENANCE + """ WHERE cluster_id=?"""
         params: list = [cluster_id]
         if not include_platform:
             # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view hides the platform's identities by default
@@ -657,8 +663,11 @@ class Snapshot:
             "users_logged_in": one("SELECT COUNT(*) AS n FROM ocp_user WHERE cluster_id=? AND has_identity=1"),
             "group_bindings": one("SELECT COUNT(*) AS n FROM rbac_group_binding b WHERE b.cluster_id=?"
                                   + _GROUP_SUBJECTS_ONLY + _OMIT_SYSTEM_GROUP_SUBJECTS),
-            # PLATFORM-CLASSIFICATION (#255, #353): the compliance snapshot's user-binding scalars split on the direct-user view's flag
-            "user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=0"),
+            # PLATFORM-CLASSIFICATION (#255, #353): the compliance snapshot's user-binding scalars split on the direct-user view's review rule (#503)
+            "user_bindings": one("SELECT COUNT(*) AS n FROM user_binding" + Store._USER_PROVENANCE
+                                 + " WHERE cluster_id=? AND " + Store._USER_TO_REVIEW),   # PLATFORM-CLASSIFICATION (#255, #353)
+            "acknowledged_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding" + Store._USER_PROVENANCE
+                                              + " WHERE cluster_id=? AND " + Store._USER_ACKNOWLEDGED),   # PLATFORM-CLASSIFICATION (#255, #353)
             "platform_user_bindings": one("SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1"),   # PLATFORM-CLASSIFICATION (#255, #353)
             "namespaces_with_bindings": one(
                 "SELECT COUNT(DISTINCT binding_namespace) AS n FROM ("
