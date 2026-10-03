@@ -5,7 +5,7 @@
 | Programme | Epic G (#387), access declared, platform identities configured — build step 3 of 4. #255 (SPEC_G2, in review) comes before it and changes the same direct-user view, alert and page notes; #420 comes after |
 | Batch | G — access declared |
 | Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 3.3.0, chart 0.66.3 |
+| Version on release | app 3.3.0, chart 0.66.1 |
 | Version note | The blocks are written against main `dd51b91f` (application 2.0.0, chart 0.59.25), so blocks 66 to 69 and the CHANGELOG bullet (block 65) carry application 2.1.0 and chart 0.59.26. SPEC_G2 merges first and takes application 2.1.0 and chart 0.60.0, so at this spec's turn those five are re-derived to application 2.2.0 and chart 0.60.1 (a PATCH: no value is added, `appVersion` moves). Orchestrator's note 1 lists every block G2 touches |
 | Issue | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) |
 | Status | specified |
@@ -159,6 +159,19 @@ orchestrator's notes, before it is applied again.
      are (§4.2, M15).
    - **Rejected: none.** The §2.4 cost table was re-measured whole for this revision, rather than mixing OB3's
      re-measured rollup row with the first version's numbers.
+
+6. **Corrections at implementation (2026-10-03), written into the blocks before any were applied.** SPEC_G2 (#556)
+   merged first, as note 1 planned, and the tree also moved past SPEC_H1, E11 and G1. The re-derivation note 1 names:
+   - **The release fields, blocks 65 to 69.** On today's tree (application 3.2.0, chart 0.66.0) they take the next
+     free numbers under SPEC_E5's version rule: application 3.3.0 (`check-app-version-bump.py`'s next MINOR) and
+     chart 0.66.1, a PATCH as before. Each block's Old text names the tree's numbers, and the history lines carry
+     today's date. G4's planned versions move to 0.66.2 / 0.66.3.
+   - **Block 57.** SPEC_G1 (#554) replaced the old three-column access table with the per-route declaration
+     (`docs/ACCESS_CONTROL.md` §4), so the row it edits is now that declaration's `user-bindings` row
+     (`apply-spec-blocks.py` said "Old text occurs 0 times"). The persona columns do not change: G3 changes what the
+     answer holds, not who gets one. Its wording goes into the row's notes cell. G1's test reads the persona words,
+     so it holds the row unchanged.
+   - The prose's version numbers (§2, §4.3) are measurements from their own day, and stay as they were.
 
 ## 1. The mandate, and what is out of scope
 
@@ -2697,13 +2710,13 @@ class TestUsagePage:
 Old text:
 
 ```text
-| `/api/clusters/{c}/user-bindings` | their own grants | all |
+| GET | `/api/clusters/{cluster_id}/user-bindings` | always | viewer_scope | 403 | self | all | self | all | at self, their own grants |
 ```
 
 New text:
 
 ```text
-| `/api/clusters/{c}/user-bindings` | their own grants, acknowledged or not; the acknowledged count and list are `null` (#503) | all, with the grants the operator acknowledged counted and listed apart (#503) |
+| GET | `/api/clusters/{cluster_id}/user-bindings` | always | viewer_scope | 403 | self | all | self | all | at self, their own grants, acknowledged or not, with the acknowledged count and list `null`; at the wide tier, the grants the operator acknowledged are counted and listed apart (#503) |
 ```
 
 ### Block 58 — local-development/API.md: the example payload
@@ -2873,7 +2886,7 @@ New text:
 ## Unreleased
 
 - **A direct user grant the operator acknowledged leaves the worklist and the alert, and is counted (#503, Epic G
-  #387, `docs/specs/SPEC_G3_acknowledged_direct_grants.md`; application 2.1.0, chart 0.59.26).** A grant that names
+  #387, `docs/specs/SPEC_G3_acknowledged_direct_grants.md`; application 3.3.0, chart 0.66.1).** A grant that names
   a user directly, on a binding carrying the `rbac.ocp.io/config-source` label (any value) or the
   `rbac.ocp.io/unmanaged-exception` annotation, is acknowledged: the rule the unmanaged finding already keeps. It
   leaves the Namespace audit worklist and its tiles, the namespace index's counts, the namespace page's count and
@@ -2896,16 +2909,16 @@ New text:
 Old text:
 
 ```yaml
-version: 0.59.25
+version: 0.66.0
 ```
 
 New text:
 
 ```yaml
-# CHART 0.59.26 (2026-10-01), PATCH: docs/UNMANAGED_GRANT_EXCLUSIONS.md names group-sync-operator-helm
+# CHART 0.66.1 (2026-10-03), PATCH: docs/UNMANAGED_GRANT_EXCLUSIONS.md names group-sync-operator-helm
 # beside group-sync-dashboard and says the direct-user view follows the label; appVersion moves to
-# application 2.1.0 (below); #503.
-version: 0.59.26
+# application 3.3.0 (below); #503.
+version: 0.66.1
 ```
 
 ### Block 67 — charts/group-sync-dashboard/Chart.yaml: `appVersion` and its history line (re-derived after SPEC_G2)
@@ -2915,14 +2928,14 @@ version: 0.59.26
 Old text:
 
 ```yaml
-appVersion: "2.0.0"
+appVersion: "3.2.0"
 ```
 
 New text:
 
 ```yaml
-# 2.1.0 (2026-10-01). A direct user grant whose binding carries the operator's config-source label or exception annotation leaves the Namespace audit worklist, its counts and the direct-user alert, and is counted and listed as acknowledged; group-sync-operator-helm is a chart's provenance in the Group gate (#503). MINOR.
-appVersion: "2.1.0"
+# 3.3.0 (2026-10-03). A direct user grant whose binding carries the operator's config-source label or exception annotation leaves the Namespace audit worklist, its counts and the direct-user alert, and is counted and listed as acknowledged; group-sync-operator-helm is a chart's provenance in the Group gate (#503). MINOR.
+appVersion: "3.3.0"
 ```
 
 ### Block 68 — local-development/pyproject.toml: the application MINOR (re-derived after SPEC_G2)
@@ -2932,13 +2945,13 @@ appVersion: "2.1.0"
 Old text:
 
 ```toml
-version = "2.0.0"
+version = "3.2.0"
 ```
 
 New text:
 
 ```toml
-version = "2.1.0"
+version = "3.3.0"
 ```
 
 ### Block 69 — local-development/gsd/__init__.py: the application MINOR (re-derived after SPEC_G2)
@@ -2948,11 +2961,11 @@ version = "2.1.0"
 Old text:
 
 ```python
-__version__ = "2.0.0"
+__version__ = "3.2.0"
 ```
 
 New text:
 
 ```python
-__version__ = "2.1.0"
+__version__ = "3.3.0"
 ```
