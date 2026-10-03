@@ -1,0 +1,76 @@
+# SPEC_G4 §5 step 1 walk (#420), CRC lab; written by scripts/run.sh
+# started 2026-10-03T14:36:48Z; kube context crc-admin; merge 878bbaed80eca119a329d7db7ce79dd4aa9c849e
+
+## Before  (2026-10-03T14:36:48Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+Argo CD Synced/Healthy on 878bbaed80eca119a329d7db7ce79dd4aa9c849e after 163 s at 2026-10-03T14:39:31Z
+$ helm get metadata group-sync-dashboard -n group-sync-dashboard 2>/dev/null | grep -E '^(VERSION|APP_VERSION)' || oc get deployments.apps -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.metadata.labels.helm\.sh/chart}{"\n"}'
+group-sync-dashboard-0.66.2
+
+## Step 1.2: the Role and RoleBinding  (2026-10-03T14:39:32Z)
+$ oc get roles.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -n group-sync-dashboard group-sync-dashboard-leases -o name
+role.rbac.authorization.k8s.io/group-sync-dashboard-leases
+rolebinding.rbac.authorization.k8s.io/group-sync-dashboard-leases
+$ oc get roles.rbac.authorization.k8s.io -n group-sync-dashboard group-sync-dashboard-leases -o jsonpath='{.rules}'; echo
+[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get","create","update"]}]
+$ oc get rolebindings.rbac.authorization.k8s.io -n group-sync-dashboard group-sync-dashboard-leases -o jsonpath='{.roleRef} {.subjects}'; echo
+{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"group-sync-dashboard-leases"} [{"kind":"ServiceAccount","name":"group-sync-dashboard","namespace":"group-sync-dashboard"}]
+
+## Step 1.3: nothing narrowed (the ClusterRole still grants it outside the namespace)  (2026-10-03T14:39:32Z)
+$ oc get clusterroles.rbac.authorization.k8s.io group-sync-dashboard-reader -o json | jq -c '[.rules[] | select((.resources // []) | index("leases"))]'
+[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get","create","update"]}]
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard get in default: yes
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard create in default: yes
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard update in default: yes
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard get in group-sync-dashboard: yes
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard create in group-sync-dashboard: yes
+system:serviceaccount:group-sync-dashboard:group-sync-dashboard update in group-sync-dashboard: yes
+
+## Step 1.4: the Leases renew, and no Lease error is logged  (2026-10-03T14:39:33Z)
+$ oc get leases.coordination.k8s.io -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,HOLDER:.spec.holderIdentity,RENEW:.spec.renewTime,TYPE:.metadata.labels.groupsync-dashboard\.io/lease-type
+NAME                                                                                HOLDER                                                                                         RENEW                         TYPE
+grafana-operator-a3ff8cb167045bd296db1493d0f15dc4ab61f57a6c217969fef5964ac9e3daae   grafana-operator-controller-manager-v5-58748cb7d4-wlpf9_9e8d0b2c-0716-4537-b04a-5352ae8ab3de   2026-10-03T14:39:32.243321Z   <none>
+group-sync-dashboard                                                                group-sync-dashboard-7dc7f74c5c-sj4xx                                                          2026-10-03T14:39:32.960895Z   <none>
+gsd-fleet-666f1ba7f2fdead0                                                                                                                                                         2026-10-03T03:07:56.584236Z   <none>
+$ oc get leases.coordination.k8s.io -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,HOLDER:.spec.holderIdentity,RENEW:.spec.renewTime,TYPE:.metadata.labels.groupsync-dashboard\.io/lease-type
+NAME                                                                                HOLDER                                                                                         RENEW                         TYPE
+grafana-operator-a3ff8cb167045bd296db1493d0f15dc4ab61f57a6c217969fef5964ac9e3daae   grafana-operator-controller-manager-v5-58748cb7d4-wlpf9_9e8d0b2c-0716-4537-b04a-5352ae8ab3de   2026-10-03T14:39:52.275882Z   <none>
+group-sync-dashboard                                                                group-sync-dashboard-7dc7f74c5c-sj4xx                                                          2026-10-03T14:39:53.218853Z   <none>
+gsd-fleet-666f1ba7f2fdead0                                                                                                                                                         2026-10-03T03:07:56.584236Z   <none>
+$ oc get pods -n group-sync-dashboard -l app=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime
+NAME                                    START
+group-sync-dashboard-7dc7f74c5c-sj4xx   2026-10-03T14:39:05Z
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard | grep -cE 'forbidden reading lease|could not renew lease|lost leadership|fleet-state-unavailable' || true
+0
+
+## For the operator's condition: the Role alone grants the three verbs in the namespace, and nothing outside it  (2026-10-03T14:39:53Z)
+$ oc create serviceaccount g4-role-probe -n group-sync-dashboard && oc label serviceaccount g4-role-probe -n group-sync-dashboard walk.gsd.lab/run=leases-role-420-2026-10-03 --overwrite
+serviceaccount/g4-role-probe created
+serviceaccount/g4-role-probe labeled
+$ oc create rolebinding g4-role-probe -n group-sync-dashboard --role=group-sync-dashboard-leases --serviceaccount=group-sync-dashboard:g4-role-probe && oc label rolebinding g4-role-probe -n group-sync-dashboard walk.gsd.lab/run=leases-role-420-2026-10-03 --overwrite
+rolebinding.rbac.authorization.k8s.io/g4-role-probe created
+rolebinding.rbac.authorization.k8s.io/g4-role-probe labeled
+system:serviceaccount:group-sync-dashboard:g4-role-probe get in group-sync-dashboard: yes
+system:serviceaccount:group-sync-dashboard:g4-role-probe create in group-sync-dashboard: yes
+system:serviceaccount:group-sync-dashboard:g4-role-probe update in group-sync-dashboard: yes
+system:serviceaccount:group-sync-dashboard:g4-role-probe get in default: no
+system:serviceaccount:group-sync-dashboard:g4-role-probe create in default: no
+system:serviceaccount:group-sync-dashboard:g4-role-probe update in default: no
+$ oc delete rolebindings.rbac.authorization.k8s.io,serviceaccounts -n group-sync-dashboard -l walk.gsd.lab/run=leases-role-420-2026-10-03
+rolebinding.rbac.authorization.k8s.io "g4-role-probe" deleted from group-sync-dashboard namespace
+serviceaccount "g4-role-probe" deleted from group-sync-dashboard namespace
+
+## After  (2026-10-03T14:39:57Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+walk done at 2026-10-03T14:39:57Z
+
+## exit trap  (2026-10-03T14:39:57Z)
+No resources found
