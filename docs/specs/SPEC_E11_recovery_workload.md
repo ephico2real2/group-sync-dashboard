@@ -69,6 +69,37 @@ implementing pull request runs. §6 is what an operator sees. §7 is the whole c
 7. **A long release name:** the recovery pod's `app` label is `<fullname>-recovery`. A `fullname` longer than 54
    characters makes it longer than a label value may be (63), and the API server refuses the Deployment by name.
    The chart's `-recovery` ConfigMap already appends the same suffix; no guard is added.
+8. **Correction from the §5 walk (2026-10-03): each pod names the other in its OWN anti-affinity (chart 0.65.1).**
+   §2.4's claim that "a waiting pod is retried when the blocking pod is deleted" holds only when the deleted pod
+   matches the waiting pod's own anti-affinity; I retract it as stated.
+   - **The source.** kube-scheduler v1.35.0, `pkg/scheduler/framework/plugins/interpodaffinity/plugin.go` L223–231
+     (`isSchedulableAfterPodChange`): on a delete it returns `Queue` only if the deleted pod matches the waiting pod's
+     `antiTerms`, which come from the waiting pod's own `Affinity`. `filtering.go` L188–190 (`podMatchesAllAffinityTerms`)
+     returns false for no terms. So an app pod with no anti-affinity of its own is skipped, and waits for the
+     unschedulable flush, `DefaultPodMaxInUnschedulablePodsDuration = 5 * time.Minute`
+     (`pkg/scheduler/backend/queue/scheduling_queue.go` L66).
+   - **Measured on the lab, chart 0.65.0.** Recovery off was one sync with `retryCount` absent, Argo CD's operation
+     01:51:48Z → 01:57:27Z. The recovery pod was killed at 01:52:04Z, and the app pod was refused at 01:52:04Z
+     ("didn't satisfy existing pods anti-affinity rules"). The app pod was not scheduled until 01:57:07Z, **303 s**
+     later. In the other direction, the recovery pod carries its own term: it was refused at 01:57:28Z and scheduled
+     at 01:57:30Z, 2 s later.
+   - **The fix, the operator's decision of 2026-10-03.** The app pod carries the mirror term: a required
+     anti-affinity against `gsd.recoverySelectorLabels`, on `kubernetes.io/os`. The recovery pod's delete then matches
+     the app pod's own term, and the app pod is re-queued at once.
+   - **The trade-off, accepted.** The app pod itself now depends on `LimitPodHardAntiAffinityTopology` being off.
+     The operator, 2026-10-03, knows of no production cluster that enables it (note 3's open question, answered).
+   - **The change.** The template's one block becomes symmetric:
+
+     ```yaml
+     {{- $affinity := deepCopy (.Values.affinity | default dict) }}
+     {{- $other := ternary (include "gsd.selectorLabels" .) (include "gsd.recoverySelectorLabels" .) $recovery }}
+     {{- $anti := $affinity.podAntiAffinity | default dict }}
+     {{- $term := dict "labelSelector" (dict "matchLabels" ($other | fromYaml)) "topologyKey" "kubernetes.io/os" }}
+     {{- $_ := set $anti "requiredDuringSchedulingIgnoredDuringExecution" (append ($anti.requiredDuringSchedulingIgnoredDuringExecution | default list) $term) }}
+     {{- $_ := set $affinity "podAntiAffinity" $anti }}
+     ```
+
+     T532-3 now pins both terms. The app's pod template changes once, so the upgrade to 0.65.1 rolls the app pod once.
 
 ## 1. The mandate, and what is out of scope
 

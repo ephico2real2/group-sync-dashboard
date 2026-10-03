@@ -195,16 +195,22 @@ def test_t532_2_no_selector_of_the_app_picks_the_recovery_pod_and_back():
     assert pod_labels[REC]["app"] == REC, "restore-db.sh finds the recovery pod by app=<release>-recovery"
 
 
-def test_t532_3_the_recovery_pod_waits_for_the_app_pod_and_holds_it_back_cluster_wide():
-    """One required anti-affinity term on the recovery pod: no app pod anywhere on a node of the same OS (every
-    node this image runs on), appended to the values' affinity; the app pod's affinity is the values' alone."""
-    term = {"labelSelector": {"matchLabels": {"app": APP, "app.kubernetes.io/instance": "t",
-                                              "app.kubernetes.io/name": "group-sync-dashboard"}},
-            "topologyKey": "kubernetes.io/os"}
-    docs = _docs(**ON)
-    assert _deployment(docs, REC)["spec"]["template"]["spec"]["affinity"] == \
-        {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [term]}}
-    assert "affinity" not in _deployment(docs)["spec"]["template"]["spec"]
+def test_t532_3_each_pod_names_the_other_in_its_own_required_anti_affinity_cluster_wide():
+    """Each workload's pod carries one required anti-affinity term against the other's pods, on any node of the
+    same OS (every node this image runs on), appended to the values' affinity, in both switch states. Each names
+    the other in its OWN terms because the scheduler re-queues a waiting pod on a delete only when the deleted pod
+    matches the waiting pod's own anti-affinity (SPEC_E11 note 8): with the term on the recovery pod alone, the app
+    pod waited for the 5-minute unschedulable flush (303 s on the lab)."""
+    labels = {"app.kubernetes.io/instance": "t", "app.kubernetes.io/name": "group-sync-dashboard"}
+    term = {"labelSelector": {"matchLabels": {"app": APP, **labels}}, "topologyKey": "kubernetes.io/os"}
+    mirror = {"labelSelector": {"matchLabels": {"app": REC, "app.kubernetes.io/component": "recovery", **labels}},
+              "topologyKey": "kubernetes.io/os"}
+    for values in ({}, ON):
+        docs = _docs(**values)
+        assert _deployment(docs, REC)["spec"]["template"]["spec"]["affinity"] == \
+            {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [term]}}
+        assert _deployment(docs)["spec"]["template"]["spec"]["affinity"] == \
+            {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [mirror]}}
     zone = {"key": "topology.kubernetes.io/zone", "operator": "In", "values": ["a"]}
     mine = {"labelSelector": {"matchLabels": {"x": "y"}}, "topologyKey": "kubernetes.io/hostname"}
     ok, out = render("--set-json", 'affinity={"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":'
@@ -214,7 +220,7 @@ def test_t532_3_the_recovery_pod_waits_for_the_app_pod_and_holds_it_back_cluster
     assert ok, out
     docs = [d for d in yaml.safe_load_all(out) if d]
     app, rec = (_deployment(docs, n)["spec"]["template"]["spec"]["affinity"] for n in (APP, REC))
-    assert app["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"] == [mine]
+    assert app["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"] == [mine, mirror]
     assert rec["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"] == [mine, term]
     assert rec["nodeAffinity"] == app["nodeAffinity"]
 

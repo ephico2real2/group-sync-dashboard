@@ -10,6 +10,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Turning recovery off brings the app back without a scheduler wait (#532, SPEC_E11 note 8, chart 0.65.1).** The
+  app pod now carries the mirror of the recovery pod's required anti-affinity, so the scheduler re-queues it as soon
+  as the recovery pod is deleted. On chart 0.65.0 the app pod waited for the scheduler's 5-minute unschedulable flush
+  (303 s measured on the lab). The upgrade rolls the app pod once. The app pod's admission now also depends on the
+  `LimitPodHardAntiAffinityTopology` admission plugin being off; it is off by default, and was off on the lab.
+
 - **Recovery mode is its own workload (#532, `docs/specs/SPEC_E11_recovery_workload.md`, chart 0.65.0).** The chart
   renders a second Deployment, `<fullname>-recovery`, on every release at 0 replicas: the app's pod spec with the
   recovery script, its own labels (no Service, PodDisruptionBudget or ServiceMonitor selects it) and no readiness
