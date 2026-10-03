@@ -32,7 +32,7 @@ from typing import Iterator
 
 from .storage import SqliteHealth, StorageHealth, backup_copies  # noqa: F401
 from .kpi.predicates import GROUP_EMPTY, GROUP_UNATTRIBUTED, qualified
-from .kube import CHART_CONFIG_SOURCE, GROUP_KIND, SYSTEM_GROUP_PREFIX
+from .kube import GROUP_KIND, PROVENANCE_ONLY_CONFIG_SOURCES, SYSTEM_GROUP_PREFIX
 from .timeutil import now_iso
 
 log = logging.getLogger(__name__)
@@ -1876,11 +1876,14 @@ class Store:
                      GROUP BY binding_namespace""",
                 (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id, group_list) if own
                 else (len(SYSTEM_GROUP_PREFIX), SYSTEM_GROUP_PREFIX, cluster_id))}
+            # The wide tier counts the grants to review (#503: the worklist's rule, so this column, the
+            # envelope's counts and the Namespace audit agree); the self tier counts the viewer's own,
+            # acknowledged or not — access they hold, as their own rows stay listed.
             direct = {r["ns"]: r["n"] for r in self._rows(
                 f"""SELECT binding_namespace AS ns, COUNT(*) AS n
-                      -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
-                      FROM user_binding WHERE cluster_id=? AND binding_namespace != '' AND is_platform = 0
-                      {"AND user_name = ?" if own else ""}
+                      FROM user_binding{self._USER_PROVENANCE}
+                      -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag, and at the wide tier the review rule (#503)
+                     WHERE cluster_id=? AND binding_namespace != '' AND {"is_platform = 0 AND user_name = ?" if own else self._USER_TO_REVIEW}
                      GROUP BY binding_namespace""",
                 (cluster_id, user_name) if own else (cluster_id,))}
             # The self tier's rows follow the REACH, as its cluster-wide switch does since pass 2: a
@@ -1956,11 +1959,16 @@ class Store:
                 return out
             via_groups = classify(bound(name))
             cluster_wide = classify(bound(""))
+            # Each grant naming a person carries whether the operator acknowledged it (#503), so the page
+            # shows it the way it shows a platform row: listed, badged, and out of the count it reviews.
             def named(namespace: str) -> list[dict]:
                 return self._rows(
-                    f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform
-                          FROM user_binding WHERE cluster_id=? AND binding_namespace=?{" AND user_name=?" if own else ""}
-                         ORDER BY is_platform, role_name, user_name""",
+                    f"""SELECT user_name, binding_kind, binding_name, role_kind, role_name, is_platform,
+                               -- PLATFORM-CLASSIFICATION (#255, #353): the row's acknowledged state (#503)
+                               CASE WHEN {self._USER_ACKNOWLEDGED} THEN 1 ELSE 0 END AS acknowledged
+                          FROM user_binding{self._USER_PROVENANCE}
+                         WHERE cluster_id=? AND binding_namespace=?{" AND user_name=?" if own else ""}
+                         ORDER BY is_platform, acknowledged, role_name, user_name""",
                     (cluster_id, namespace, user_name) if own else (cluster_id, namespace))
             direct = named(name)
             # A ClusterRoleBinding naming a person reaches this namespace as surely as one naming a
@@ -2856,7 +2864,8 @@ class Store:
                         -- label, read over Group rows only so this arm is exactly #354's — or
                         -- every binding on a cluster that has never heard of config-source
                         -- labels would flag; this chart's own label is not that evidence, its
-                        -- auditor binding being on every host by default (#312). A
+                        -- auditor binding being on every host by default (#312), and neither is
+                        -- the group-sync-operator chart's (#503): each is a chart's provenance. A
                         -- ServiceAccount or User row that reaches this arm is not the
                         -- platform's — those are already `built_in` above — so it is said
                         -- whenever the binding carries no label and no exception, on every
@@ -2873,7 +2882,8 @@ class Store:
                                        WHERE m.cluster_id = b.cluster_id
                                          AND m.subject_kind = 'Group'
                                          AND m.managed_source IS NOT NULL
-                                         AND m.managed_source <> '""" + CHART_CONFIG_SOURCE + """'))
+                                         AND m.managed_source NOT IN (""" + ", ".join(
+                                             f"'{v}'" for v in PROVENANCE_ONLY_CONFIG_SOURCES) + """)))
                                                            THEN 'unmanaged'
                         ELSE 'ok'
                       END"""
@@ -3841,6 +3851,33 @@ class Store:
             "last_at": max((r["last_at"] for r in per_outcome), default=None),
         }
 
+    # A DIRECT USER GRANT THE OPERATOR ACKNOWLEDGED (#503). The operator's rule (#353) is the unmanaged
+    # finding's: a grant that is not a platform identity's is silenced only by the rbac.ocp.io/config-source
+    # label (any value) or the rbac.ocp.io/unmanaged-exception annotation on its binding. The binding refresh
+    # already stores both for every subject kind, a User's included, on rbac_group_binding, so a direct-user
+    # row reads them from its own (binding, User) row there: no column, no migration. The join matches that
+    # table's whole primary key, so it finds at most one row, and its columns are renamed so that no column
+    # of user_binding becomes ambiguous in a query that joins it. The two tables are written from two list
+    # calls of one refresh: a row seen by one and not the other has no provenance here, and stays a grant to
+    # review — the alerting direction. Platform wins: a platform row is never acknowledged, so
+    # excluded_platform keeps its meaning and its count.
+    _USER_PROVENANCE = """
+          LEFT JOIN (SELECT cluster_id AS ack_cluster, binding_kind AS ack_kind, binding_namespace AS ack_namespace,
+                            binding_name AS ack_name, group_name AS ack_user, managed_source, exception
+                       FROM rbac_group_binding WHERE subject_kind = 'User' AND subject_namespace = '')
+                 ON ack_cluster = user_binding.cluster_id AND ack_kind = user_binding.binding_kind
+                AND ack_namespace = user_binding.binding_namespace AND ack_name = user_binding.binding_name
+                AND ack_user = user_binding.user_name"""
+    # PLATFORM-CLASSIFICATION (#255, #353): acknowledged (#503) — not the platform's, and the operator's label or exception on the binding
+    _USER_ACKNOWLEDGED = "(is_platform = 0 AND (managed_source IS NOT NULL OR exception IS NOT NULL))"
+    # PLATFORM-CLASSIFICATION (#255, #353): the one review rule (#503) — neither the platform's nor acknowledged
+    _USER_TO_REVIEW = "(is_platform = 0 AND managed_source IS NULL AND exception IS NULL)"
+    # cluster-admin first, then cluster-scoped, then namespaced: the order somebody migrating would work in.
+    # Ordering is applied BEFORE any limit, so a truncated page is the worst N rather than an arbitrary N.
+    _DIRECT_USER_ORDER = """ ORDER BY CASE WHEN role_name='cluster-admin' THEN 0 ELSE 1 END,
+                            CASE WHEN binding_namespace='' THEN 0 ELSE 1 END,
+                            binding_namespace, user_name"""
+
     def user_bindings_by_namespace(self, cluster_id: str) -> list[dict]:
         """Direct-user grants rolled up per namespace — the migration worklist.
 
@@ -3850,7 +3887,9 @@ class Store:
 
         Platform identities are excluded from the rollup (they are not migratable and would
         swamp it) but counted separately by `platform_user_binding_count`, so the page can
-        say what it left out rather than quietly shrinking the number.
+        say what it left out rather than quietly shrinking the number. Grants the operator
+        acknowledged on their binding leave it the same way and are counted by
+        `acknowledged_user_binding_count` (#503).
 
         `distinct_users` matters as much as the binding count: one person with five
         bindings in a namespace is one offboarding risk, five people is five.
@@ -3876,9 +3915,9 @@ class Store:
                                              WHEN 'edit' THEN 2 ELSE 1 END) AS worst_privilege,
                           MAX(CASE WHEN binding_namespace = '' THEN 1 ELSE 0 END)
                               AS cluster_scoped
-                     FROM user_binding
-                    -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
-                    WHERE cluster_id=? AND is_platform=0
+                     FROM user_binding""" + self._USER_PROVENANCE + """
+                    -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's review rule (#503)
+                    WHERE cluster_id=? AND """ + self._USER_TO_REVIEW + """
                     GROUP BY namespace
                     ORDER BY worst_privilege DESC, cluster_scoped DESC,
                              bindings DESC, namespace""",
@@ -3886,13 +3925,17 @@ class Store:
             )
             people: dict[str, list[str]] = {}
             for row in self._rows(
-                """SELECT DISTINCT
-                          CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
+                # GROUP BY, not DISTINCT (#503): SQLite never flattens a subquery on the right of a LEFT
+                # JOIN into a DISTINCT query (optoverview.html, flattening constraint 3), so DISTINCT read
+                # _USER_PROVENANCE by materializing it — a SCAN of all of rbac_group_binding and an
+                # automatic index — where GROUP BY keeps the primary-key SEARCH. The same pairs.
+                """SELECT CASE WHEN binding_namespace = '' THEN '(cluster-scoped)'
                                ELSE binding_namespace END AS namespace,
                           user_name
-                     FROM user_binding
-                    -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's flag
-                    WHERE cluster_id=? AND is_platform=0
+                     FROM user_binding""" + self._USER_PROVENANCE + """
+                    -- PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's review rule (#503)
+                    WHERE cluster_id=? AND """ + self._USER_TO_REVIEW + """
+                    GROUP BY namespace, user_name
                     ORDER BY user_name""",
                 (cluster_id,),
             ):
@@ -3908,7 +3951,7 @@ class Store:
 
     def _direct_user_binding_where(
         self, cluster_id: str, include_platform: bool, namespace: str | None,
-        user_name: str | None = None,
+        user_name: str | None = None, include_acknowledged: bool = False,
     ) -> tuple[str, list]:
         """The WHERE shared by the row query and its COUNT, built once.
 
@@ -3923,11 +3966,19 @@ class Store:
         cannot prove those are the same person. Bounded scan of the cluster's slice via
         user_binding_by_namespace (45 rows at reference scale, plan measured); no
         dedicated index until a real cluster shows it needed.
+
+        `include_acknowledged` keeps the grants the operator acknowledged on their binding
+        (#503). Off, they leave as the platform's identities do: the review worklist and the
+        alert. On, for a person's own grants (the self tier, Home), which stay access they
+        hold. It never brings back a platform row: platform wins.
         """
         sql, params = " WHERE cluster_id=?", [cluster_id]
         if not include_platform:
             # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view hides the platform's identities by default
             sql += " AND is_platform=0"
+        if not include_acknowledged:
+            # PLATFORM-CLASSIFICATION (#255, #353): and the grants the operator acknowledged (#503); a platform row stays the platform's
+            sql += " AND NOT " + self._USER_ACKNOWLEDGED
         if namespace is not None:
             sql += " AND binding_namespace=?"
             params.append("" if namespace == self.CLUSTER_SCOPE else namespace)
@@ -3944,6 +3995,7 @@ class Store:
         limit: int | None = None,
         offset: int = 0,
         user_name: str | None = None,
+        include_acknowledged: bool = False,
     ) -> list[dict]:
         """Every binding naming a User subject, worst-first by privilege then namespace.
 
@@ -3959,18 +4011,18 @@ class Store:
         nobody asked for, to show a list nobody can read. Pair with
         `count_direct_user_bindings` so the caller can say what it left out — a silently
         truncated audit list is worse than a slow one.
+
+        Each row says whether the operator acknowledged it (`acknowledged`, #503), which is 0
+        unless `include_acknowledged` let one in, and never carries the label's value or the
+        exception's text: those are `acknowledged_user_bindings`', for the wide tier.
         """
         where, params = self._direct_user_binding_where(
-            cluster_id, include_platform, namespace, user_name)
+            cluster_id, include_platform, namespace, user_name, include_acknowledged)
         sql = ("""SELECT binding_kind, binding_namespace, binding_name, role_kind,
-                         role_name, user_name, is_platform
-                    FROM user_binding""" + where +
-               # cluster-admin first, then cluster-scoped, then namespaced: the order
-               # somebody migrating would work in. Ordering is applied BEFORE the limit, so
-               # a truncated page is the worst N rather than an arbitrary N.
-               """ ORDER BY CASE WHEN role_name='cluster-admin' THEN 0 ELSE 1 END,
-                            CASE WHEN binding_namespace='' THEN 0 ELSE 1 END,
-                            binding_namespace, user_name""")
+                         role_name, user_name, is_platform,
+                         -- PLATFORM-CLASSIFICATION (#255, #353): the row's acknowledged state (#503)
+                         CASE WHEN """ + self._USER_ACKNOWLEDGED + """ THEN 1 ELSE 0 END AS acknowledged
+                    FROM user_binding""" + self._USER_PROVENANCE + where + self._DIRECT_USER_ORDER)
         if limit is not None:
             sql += " LIMIT ? OFFSET ?"
             params += [limit, offset]
@@ -3979,18 +4031,49 @@ class Store:
     def count_direct_user_bindings(
         self, cluster_id: str, include_platform: bool = False,
         namespace: str | None = None, user_name: str | None = None,
+        include_acknowledged: bool = False,
     ) -> int:
         """How many rows `direct_user_bindings` would return before its limit."""
         where, params = self._direct_user_binding_where(
-            cluster_id, include_platform, namespace, user_name)
+            cluster_id, include_platform, namespace, user_name, include_acknowledged)
         rows = self._rows(
-            "SELECT COUNT(*) AS n FROM user_binding" + where, tuple(params))
+            "SELECT COUNT(*) AS n FROM user_binding" + self._USER_PROVENANCE + where, tuple(params))
         return rows[0]["n"] if rows else 0
 
     def platform_user_binding_count(self, cluster_id: str) -> int:
         rows = self._rows(
             # PLATFORM-CLASSIFICATION (#255, #353): the direct-user view's excluded count
             "SELECT COUNT(*) AS n FROM user_binding WHERE cluster_id=? AND is_platform=1",
+            (cluster_id,),
+        )
+        return int(rows[0]["n"]) if rows else 0
+
+    def acknowledged_user_bindings(
+        self, cluster_id: str, limit: int | None = None, offset: int = 0,
+    ) -> list[dict]:
+        """The direct user grants the operator acknowledged (#503), worst first, each with what
+        acknowledged it: `managed_source` (the rbac.ocp.io/config-source label's value) and
+        `exception` (the rbac.ocp.io/unmanaged-exception annotation's text), either or both.
+        Counted and listed, never dropped: the worklist and the alert leave them out, and this is
+        where a reader reaches each one. Never a platform row: platform wins."""
+        sql = ("""SELECT binding_kind, binding_namespace, binding_name, role_kind, role_name,
+                         user_name, managed_source, exception
+                    FROM user_binding""" + self._USER_PROVENANCE + """
+                    -- PLATFORM-CLASSIFICATION (#255, #353): the acknowledged rows (#503)
+                   WHERE cluster_id=? AND """ + self._USER_ACKNOWLEDGED + self._DIRECT_USER_ORDER)
+        params: list = [cluster_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params += [limit, offset]
+        return self._rows(sql, tuple(params))
+
+    def acknowledged_user_binding_count(self, cluster_id: str) -> int:
+        """How many direct user grants the operator acknowledged (#503): the count beside
+        `platform_user_binding_count`, before any limit."""
+        rows = self._rows(
+            "SELECT COUNT(*) AS n FROM user_binding" + self._USER_PROVENANCE
+            # PLATFORM-CLASSIFICATION (#255, #353): the acknowledged count (#503)
+            + " WHERE cluster_id=? AND " + self._USER_ACKNOWLEDGED,
             (cluster_id,),
         )
         return int(rows[0]["n"]) if rows else 0

@@ -493,9 +493,12 @@ def compute_alerts(
 
     # Direct-user grants. ONE alert with the total, not one per binding: 36 separate
     # alerts would drown every other finding on the page, and the actionable unit is the
-    # migration effort, not each row. The detail lives on the RBAC policy page.
+    # migration effort, not each row. The detail lives on the Namespace audit tab. A grant the
+    # operator acknowledged on its binding (#503) is left out as a platform identity is: the store's
+    # worklist rows never carry one, and a row that says so is dropped here too, so the count and
+    # the worklist cannot disagree.
     # PLATFORM-CLASSIFICATION (#255, #353): the direct-user alert leaves the platform's identities out, by the flag the poller stored from platformUsers
-    people = [u for u in (user_bindings or []) if not u.get("is_platform")]
+    people = [u for u in (user_bindings or []) if not u.get("is_platform") and not u.get("acknowledged")]
     if people:
         namespaces = {u.get("binding_namespace") or "(cluster-scoped)" for u in people}
         elevated = [u for u in people if u.get("role_name") in ("cluster-admin", "admin")]

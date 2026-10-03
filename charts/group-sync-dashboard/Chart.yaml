@@ -333,7 +333,10 @@ type: application
 #   `existingConfigMap` {enabled, name, key, revision} for platformNamespaces and platformUsers, mounted as a
 #   file, refused at render beside an inline list; an empty replacing list now renders; appVersion moves to
 #   application 3.2.0 (below); #255.
-version: 0.66.0
+# CHART 0.66.1 (2026-10-03), PATCH: docs/UNMANAGED_GRANT_EXCLUSIONS.md names group-sync-operator-helm
+# beside group-sync-dashboard and says the direct-user view follows the label; appVersion moves to
+# application 3.3.0 (below); #503.
+version: 0.66.1
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -468,7 +471,8 @@ version: 0.66.0
 # 3.1.0 (2026-10-02). Delete report runs and database copies from the page, previewed and confirmed,
 # for the cluster-admin tier (#542). MINOR.
 # 3.2.0 (2026-10-03). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
-appVersion: "3.2.0"
+# 3.3.0 (2026-10-03). A direct user grant whose binding carries the operator's config-source label or exception annotation leaves the Namespace audit worklist, its counts and the direct-user alert, and is counted and listed as acknowledged; group-sync-operator-helm is a chart's provenance in the Group gate (#503). MINOR.
+appVersion: "3.3.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

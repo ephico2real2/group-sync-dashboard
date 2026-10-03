@@ -3879,6 +3879,94 @@ class TestNamespaceAuditPage:
         assert roles() == ["constructor", "edit", "admin", "cluster-admin"], roles()
 
 
+class TestAcknowledgedGrantsDisclosure:
+    """#503 (T503-10): the grants the operator acknowledged on their binding are counted under the worklist and
+    reachable behind a disclosure, each with its label value or its exception text. The served rig has none,
+    so they are injected into the payload on the 60 s poll's own path; the second poll changes the payload, so
+    the page really repaints, and the open state must survive it."""
+
+    ROWS = [{"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "group-sync-dashboard-cluster-poller",
+             "role_kind": "ClusterRole", "role_name": "group-sync-dashboard-cluster-poller", "user_name": "ocp-oauth-bind-serviceid",
+             "managed_source": "group-sync-operator-helm", "exception": None},
+            {"binding_kind": "RoleBinding", "binding_namespace": "payments-sandbox", "binding_name": "vendor-support-view",
+             "role_kind": "ClusterRole", "role_name": "view", "user_name": "vendor-support", "managed_source": None,
+             "exception": "vendor read-only access for the payments integration, reviewed quarterly"}]
+
+    def _open(self, dash, rows):
+        import json as _json
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespace audit')")
+        current = {"rows": rows}
+
+        def inject(route):
+            body = route.fetch().json()
+            body.update(acknowledged=len(current["rows"]), acknowledged_bindings=current["rows"], acknowledged_truncated=False)
+            route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+        dash.route("**/api/clusters/*/user-bindings*", inject)
+        dash.evaluate("() => refresh({auto: true})")
+        dash.wait_for_selector("#du-acknowledged")
+        return current
+
+    def _text(self, dash, selector):
+        return " ".join(dash.locator(selector).inner_text().split())
+
+    def test_the_count_renders_closed_and_opens_to_each_grant_with_what_acknowledged_it(self, dash):
+        self._open(dash, self.ROWS)
+        head = self._text(dash, "#du-acknowledged .section-head")
+        assert head.startswith("2 grants acknowledged by the operator — counted here and not in the worklist above or the alert")
+        assert head.endswith("Show the 2"), head
+        assert dash.locator("#ack-rows").is_hidden()
+        dash.click("[data-ns-ack]")
+        assert dash.locator("[data-ns-ack]").get_attribute("aria-expanded") == "true"
+        rows = [" ".join(t.split()) for t in dash.locator("#ack-rows tbody tr").all_inner_texts()]
+        assert rows == [
+            "ocp-oauth-bind-serviceid group-sync-dashboard-cluster-poller ClusterRole cluster-wide "
+            "group-sync-dashboard-cluster-poller label config-source: group-sync-operator-helm",
+            "vendor-support view ClusterRole payments-sandbox vendor-support-view exception "
+            "“vendor read-only access for the payments integration, reviewed quarterly”"], rows
+
+    def test_the_open_state_survives_the_repaint(self, dash):
+        current = self._open(dash, self.ROWS[:1])
+        dash.click("[data-ns-ack]")
+        current["rows"] = self.ROWS            # the next poll brings a second row: a real repaint
+        dash.evaluate("() => refresh({auto: true})")
+        dash.wait_for_function("() => document.querySelectorAll('#ack-rows tbody tr').length === 2")
+        assert dash.locator("[data-ns-ack]").get_attribute("aria-expanded") == "true"
+        assert dash.locator("#ack-rows").is_visible()
+
+    def test_nothing_renders_without_an_acknowledged_grant_or_at_the_self_tier(self, dash):
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.wait_for_selector("h2:text-is('Namespace audit')")
+        assert dash.locator("#du-acknowledged").count() == 0, "the seeded rig has none"
+        dash.evaluate("""() => { Object.assign(data.userBindings, {acknowledged: null, acknowledged_bindings: null,
+            acknowledged_truncated: null}); render(); }""")
+        assert dash.locator("#du-acknowledged").count() == 0
+
+    def test_the_namespace_page_lists_an_acknowledged_grant_marked_and_leaves_it_out_of_its_count(self, dash):
+        """The namespace detail shows an acknowledged grant the way it shows a platform row: listed, badged, and
+        out of the Direct grants count — the index's column, the envelope and the worklist count the same."""
+        dash.click('button.tab:text-is("Namespace audit")')
+        dash.locator("tr[data-ns='prod-ns'] button.drill").click()
+        dash.wait_for_selector("#back")
+        dash.evaluate("() => { data.ns.direct_grants.forEach((x) => { x.acknowledged = 1; }); render(); }")
+        head = " ".join(dash.locator("h2", has_text="Direct grants").inner_text().split())
+        assert head == "Direct grants · 0 · 1 acknowledged", head
+        assert dash.locator(".kpi", has_text="Direct grants").locator(".value").inner_text().strip() == "0"
+        assert dash.locator("tr[data-user] .badge", has_text="acknowledged").count() == 1
+
+    @pytest.mark.parametrize("width", [375, 768, 1280])
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_no_horizontal_overflow_open_or_closed(self, dash, width, theme):
+        dash.set_viewport_size({"width": width, "height": 900})
+        self._open(dash, self.ROWS)
+        dash.evaluate("(theme) => document.documentElement.setAttribute('data-theme', theme)", theme)
+        for _ in range(2):
+            overflow = dash.evaluate("() => document.documentElement.scrollWidth - document.documentElement.clientWidth")
+            assert overflow <= 0, f"the page scrolls {overflow}px sideways at {width}px ({theme})"
+            dash.click("[data-ns-ack]")
+
+
 class TestUsagePage:
     """The Usage tab had no browser test either, and was broken in the default config.
 

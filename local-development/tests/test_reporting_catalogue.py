@@ -543,3 +543,51 @@ class TestSubjectScopeAndLookups:
         assert counts(one)["Members who have never logged in"] == one.totals["never_logged_in"]
         grp = self._built(snapshot, "groups", groups="team-b")
         assert grp.totals["groups"] == 1 and grp.totals["changes"] <= self._built(snapshot, "groups").totals["changes"]
+
+
+class TestAcknowledgedDirectGrants:
+    def test_t503_11_the_findings_report_lists_them_apart_and_the_snapshot_counts_them(self, tmp_path):
+        """#503: the RBAC findings report's direct-user table is the worklist's — the acknowledged grants
+        leave it and are listed in a table of their own with what acknowledged them — and the compliance
+        snapshot's direct-user figure is the alert's, with the acknowledged count beside the platform's.
+        The access reports still list every grant: it is access a person holds."""
+        from reporting_seed import seed_acknowledged
+        store = seed_acknowledged(str(tmp_path / "w.db"))
+        d = tmp_path / "s"; d.mkdir(); path = write_snapshot(store, d)
+        store.close()
+        with Snapshot(path) as snap:
+            bf, cs, am = (_build(snap, n) for n in ("binding-findings", "compliance-snapshot", "access-matrix"))
+        tables = {b.title: b for s in bf.sections for b in s.blocks if getattr(b, "kind", "") == "table"}
+        assert [r[0] for r in tables["Bindings naming a person"].rows] == ["frank"]
+        assert [(r[0], r[4], r[5]) for r in tables["Acknowledged by the operator"].rows] == [
+            ("ocp-oauth-bind-serviceid", "group-sync-operator-helm", ""), ("vendor-support", "", "vendor read-only access, TICKET-7")]
+        assert (bf.totals["direct_user"], bf.totals["acknowledged_user"], bf.totals["platform_user"]) == (1, 2, 1)
+        figures = {k: v for s in cs.sections for b in s.blocks if getattr(b, "items", None) for k, v in b.items}
+        assert figures["Direct user grants"] == 1
+        assert figures["Acknowledged direct grants (excluded from Direct user grants)"] == 2
+        matrix = next(b for s in am.sections for b in s.blocks if getattr(b, "title", "") == "Matrix")
+        assert sorted(r[1] for r in matrix.rows) == ["frank", "ocp-oauth-bind-serviceid", "vendor-support"]
+
+    def test_t503_11_an_acknowledged_privileged_grant_is_still_privileged_access(self, tmp_path):
+        """An acknowledged grant leaves the review figure only. A break-glass cluster-admin that carries the
+        exception is still privileged access, so "Privileged direct grants" (the privileged-access review's
+        figure) and its table keep it, and the acknowledged figure names the one figure it is left out of."""
+        from gsd.store import Store
+        from reporting_seed import _iso
+        store = Store(str(tmp_path / "w.db"))
+        now = _iso(NOW)
+        store.upsert_cluster(CLUSTER, "https://api.crc.testing:6443", True)
+        store.record_poll(CLUSTER, "ok", None)
+        grant = {"binding_kind": "ClusterRoleBinding", "binding_namespace": "", "binding_name": "breakglass-admin",
+                 "role_kind": "ClusterRole", "role_name": "cluster-admin"}
+        store.replace_user_bindings(CLUSTER, [{**grant, "user_name": "breakglass", "is_platform": 0}], now)
+        store.replace_bindings(CLUSTER, [{**grant, "group_name": "breakglass", "subject_kind": "User",
+                                          "exception": "break-glass account, INC-1"}], now)
+        store.replace_operator_configs(CLUSTER, None, now)
+        d = tmp_path / "s"; d.mkdir(); path = write_snapshot(store, d)
+        store.close()
+        with Snapshot(path) as snap:
+            cs = _build(snap, "compliance-snapshot")
+        figures = {k: v for s in cs.sections for b in s.blocks if getattr(b, "items", None) for k, v in b.items}
+        assert (figures["Direct user grants"], figures["Privileged direct grants"]) == (0, 1)
+        assert figures["Acknowledged direct grants (excluded from Direct user grants)"] == 1

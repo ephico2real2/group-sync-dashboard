@@ -207,7 +207,7 @@ to guess.
 | GET | `/api/clusters/{cluster_id}/groups/{name}` | always | viewer_scope | 403 | self | all | self | all | at self, 403 unless a member; a member's 200 names the group's bindings (below) |
 | GET | `/api/clusters/{cluster_id}/users` | always | viewer_scope | 403 | self | all | self | all | at self, their own row (with `first_login_source`) |
 | GET | `/api/clusters/{cluster_id}/users/{name}` | always | viewer_scope | 403 | self | all | self | all | at self, 403 unless it is them; their own 200 names the bindings reaching them (below) |
-| GET | `/api/clusters/{cluster_id}/user-bindings` | always | viewer_scope | 403 | self | all | self | all | at self, their own grants |
+| GET | `/api/clusters/{cluster_id}/user-bindings` | always | viewer_scope | 403 | self | all | self | all | at self, their own grants, acknowledged or not, with the acknowledged count and list `null`; at the wide tier, the grants the operator acknowledged are counted and listed apart (#503) |
 | GET | `/api/clusters/{cluster_id}/membership-changes` | always | viewer_scope | 403 | self | all | self | all | at self, changes affecting them |
 | GET | `/api/clusters/{cluster_id}/binding-changes` | always | viewer_scope | 403 | self | all | self | all | at self, rows naming them or a group they belong to |
 | GET | `/api/clusters/{cluster_id}/logins` | always | viewer_scope | 403 | self | all | self | all | at self, their own attempts |

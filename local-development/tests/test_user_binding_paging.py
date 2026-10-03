@@ -146,6 +146,58 @@ def test_platform_identities_stay_excluded_under_paging(client):
     assert get(client, include_platform=True)["total"] == 27
 
 
+# ── #503: the grants the operator acknowledged — counted beside the platform's, each one reachable ──
+
+def _acknowledged_app(tmp_path):
+    """Three acknowledged grants (two by the label, one by the exception annotation), one to review, and a
+    platform identity whose binding is labelled too: the platform wins."""
+    db = str(tmp_path / "ack.db")
+    store = Store(db)
+    store.upsert_cluster("c1", "https://x", True)
+    grants = [("ClusterRoleBinding", "", "poller", "cluster-admin", "ocp-oauth-bind-serviceid", 0, "group-sync-operator-helm", None),
+              ("RoleBinding", "ops", "reader", "view", "ocp-oauth-bind-serviceid", 0, "group-sync-operator-helm", None),
+              ("RoleBinding", "pay", "vendor-view", "view", "vendor-support", 0, None, "vendor read-only access, TICKET-7"),
+              ("RoleBinding", "pay", "jdoe-edit", "edit", "jdoe", 0, None, None),
+              ("ClusterRoleBinding", "", "ka", "cluster-admin", "kubeadmin", 1, "team-x", None)]
+    store.replace_user_bindings("c1", [
+        {"binding_kind": k, "binding_namespace": ns, "binding_name": name, "role_kind": "ClusterRole",
+         "role_name": role, "user_name": user, "is_platform": platform}
+        for k, ns, name, role, user, platform, _, _ in grants], now_iso())
+    store.replace_bindings("c1", [
+        {"binding_kind": k, "binding_namespace": ns, "binding_name": name, "role_kind": "ClusterRole",
+         "role_name": role, "group_name": user, "subject_kind": "User", "is_platform": platform,
+         "managed_source": label, "exception": exception}
+        for k, ns, name, role, user, platform, label, exception in grants], now_iso())
+    store.close()
+    settings = Settings(db_path=db, clusters=[ClusterConfig("c1", "https://x", token_env="T")])
+    return TestClient(build_app(settings, run_poller=False))
+
+
+def test_t503_9_the_acknowledged_grants_are_counted_and_listed_with_what_acknowledged_them(tmp_path):
+    body = _acknowledged_app(tmp_path).get("/api/clusters/c1/user-bindings").json()
+    assert [b["user_name"] for b in body["bindings"]] == ["jdoe"] and body["total"] == 1
+    assert [r["namespace"] for r in body["by_namespace"]] == ["pay"]
+    assert body["excluded_platform"] == 1, "a labelled platform identity stays the platform's"
+    assert body["acknowledged"] == 3 and body["acknowledged_truncated"] is False
+    assert [(b["user_name"], b["binding_namespace"], b["binding_name"], b["role_name"], b["managed_source"], b["exception"])
+            for b in body["acknowledged_bindings"]] == [
+        ("ocp-oauth-bind-serviceid", "", "poller", "cluster-admin", "group-sync-operator-helm", None),
+        ("ocp-oauth-bind-serviceid", "ops", "reader", "view", "group-sync-operator-helm", None),
+        ("vendor-support", "pay", "vendor-view", "view", None, "vendor read-only access, TICKET-7")]
+
+
+def test_t503_9_the_acknowledged_list_pages_like_bindings_and_ignores_the_namespace_filter(tmp_path):
+    client = _acknowledged_app(tmp_path)
+    get_ = lambda **p: client.get("/api/clusters/c1/user-bindings", params=p).json()   # noqa: E731
+    first, second = get_(limit=2), get_(limit=2, offset=2)
+    assert [b["binding_name"] for b in first["acknowledged_bindings"]] == ["poller", "reader"]
+    assert first["acknowledged_truncated"] is True and first["acknowledged"] == 3
+    assert [b["binding_name"] for b in second["acknowledged_bindings"]] == ["vendor-view"]
+    assert second["acknowledged_truncated"] is False
+    narrowed = get_(namespace="pay")
+    assert narrowed["total"] == 1 and narrowed["acknowledged"] == 3 and len(narrowed["acknowledged_bindings"]) == 3
+
+
 def test_limit_is_bounded(client):
     """An unbounded limit is the same defect wearing a query parameter."""
     assert client.get("/api/clusters/c1/user-bindings",

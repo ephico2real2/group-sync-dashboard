@@ -8,7 +8,7 @@
 | Version on release | app 3.3.0, chart 0.66.1 |
 | Version note | The blocks are written against main `dd51b91f` (application 2.0.0, chart 0.59.25), so blocks 66 to 69 and the CHANGELOG bullet (block 65) carry application 2.1.0 and chart 0.59.26. SPEC_G2 merges first and takes application 2.1.0 and chart 0.60.0, so at this spec's turn those five are re-derived to application 2.2.0 and chart 0.60.1 (a PATCH: no value is added, `appVersion` moves). Orchestrator's note 1 lists every block G2 touches |
 | Issue | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from #503 (body refined 2026-10-01, "Decisions and corrections (2026-10-01)", and the comment of 2026-10-01 on the Namespaces card), its epic #387, the mock `docs/design/direct-user-grants-mock.html` and SPEC_G2 at `4c75c65b`. Measured on main `dd51b91f` on this machine (Python 3.14.7, SQLite 3.53.4) and read-only on the CRC lab (2026-10-01, 14:04Z). §7 was cut from an implemented copy of `dd51b91f` and proved against a clean tree and against a tree with SPEC_G2 applied first (§4.3). Revised the same day after the review of `aefde964` by OB3 and OB2 (orchestrator's note 5), on main `3b3d0010` (the same code as `dd51b91f`; SPEC_G1, SPEC_E2, SPEC_G2 and SPEC_E4 merged as specifications) |
 
 ## How to read this spec
