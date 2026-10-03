@@ -16,7 +16,9 @@ the seal.
 from __future__ import annotations
 
 import json
+import math
 import re
+from decimal import Decimal
 
 from .model import Report
 
@@ -34,14 +36,37 @@ _LABEL = {"table": "Table", "kv": "List"}
 
 
 def _js_string(value) -> str:
-    """JavaScript's String(value) for the JSON scalars a report cell holds."""
+    """JavaScript's String(value) for the JSON scalars a report cell holds. An int is written whole: past
+    2**53 the page's JSON.parse has already rounded it, and the CSV keeps the value the .json holds."""
     if value is None:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))      # JavaScript has one number type: String(2.0) is "2"
+    if isinstance(value, float):
+        return _js_number(value)
     return str(value)
+
+
+def _js_number(value: float) -> str:
+    """ECMAScript's Number::toString of a float. repr() picks the same shortest round-trip digits; only the
+    layout differs: JavaScript writes 2 for 2.0, 0.00001 for 1e-05, 1e-7 for 1e-07, and 1e+21 where
+    str(int(1e21)) wrote all 22 digits (ECMA-262 Number::toString: exponent form below 1e-6 and from 1e21)."""
+    if not math.isfinite(value):
+        return "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")
+    if value == 0:
+        return "0"
+    sign, digits, exponent = Decimal(repr(value)).normalize().as_tuple()
+    s, k = "".join(map(str, digits)), len(digits)
+    n = exponent + k                                   # value = 0.<s> x 10**n, ECMA-262's n and k
+    if k <= n <= 21:
+        body = s + "0" * (n - k)
+    elif 0 < n <= 21:
+        body = s[:n] + "." + s[n:]
+    elif -6 < n <= 0:
+        body = "0." + "0" * -n + s
+    else:
+        body = s[0] + ("." + s[1:] if k > 1 else "") + ("e+" if n > 0 else "e-") + str(abs(n - 1))
+    return ("-" if sign else "") + body
 
 
 def csv_field(value) -> str:

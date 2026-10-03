@@ -11711,6 +11711,27 @@ class TestReportClusterControl:
         finally:
             ctx.close()
 
+    def test_a_ticked_csv_box_survives_a_repaint_of_the_form(self, browser, reporting_server):
+        # Review of #106 (OB3): a switch, a segment or a lookup pick repaints the form, and the format boxes were
+        # rendered from fixed defaults, so a ticked CSV (and an unticked PDF) was undone before Generate read it.
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-want-csv")
+            page.check("#report-want-csv")
+            page.uncheck("#report-want-pdf")
+            page.click('[data-switch="include_members"]')
+            page.wait_for_selector('[data-switch="include_members"][aria-checked="true"]')
+            assert page.is_checked("#report-want-csv") and not page.is_checked("#report-want-pdf"), "the repaint undid the reader's boxes"
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            assert _json.loads(info.value.post_data)["formats"] == ["html", "csv"]
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_dismissing_the_note_on_one_form_keeps_what_another_form_is_owed(self, browser, reporting_server):
         # The note is rendered per form (`cleared[spec.name]`); dismissing it used to null it for every form, so a
         # second form's cleared lookup was never said to the reader who opens it (OB1 on #269).

@@ -47,6 +47,10 @@ CELLS = [
     (" lead", " lead"), ("a,b", '"a,b"'), ('say "hi"', '"say ""hi"""'), ("", ""), (None, ""), (-1, "-1"),
     (0, "0"), (True, "true"), (False, "false"), (2.0, "2"), (0.5, "0.5"), (["a", "=b"], "a; =b"),
     (["=a", None, 3, True], "'=a; ; 3; true"), ([], ""),
+    # JavaScript's number layout, not Python's (review of #106, OB3): measured against node 26.9.0
+    (1e21, "1e+21"), (-1e21, "-1e+21"), (1e-5, "0.00001"), (1.5e-5, "0.000015"), (1e-6, "0.000001"), (1e-7, "1e-7"),
+    (1.5e-7, "1.5e-7"), (1e300, "1e+300"), (2.0 ** 60, "1152921504606847000"), (123.456, "123.456"), (-0.0, "0"),
+    ([1e21, 1e-7], "1e+21; 1e-7"),
 ]
 PARAMS = {
     "namespace-access": {"namespaces": "prod-ns,dev-ns"},
