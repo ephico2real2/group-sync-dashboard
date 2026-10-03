@@ -1,0 +1,142 @@
+no venv interpreter at /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/local-development/.venv/bin/python
+== 1/5 main walk (login, every tab, every report)
+  [ok ] open the route: https://group-sync-dashboard.apps-crc.testing → https://group-sync-dashboard.apps-crc.testing/  → 01-oauth-proxy-interstitial.png
+  [ok ] identity-provider chooser: offered: developer, ldap-local; picked developer  → 02-openshift-idp-chooser.png
+  [ok ] OpenShift login form: username filled: developer  → 03-openshift-login-form.png
+  [ok ] login: dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard
+  [ok ] GET /api/whoami: HTTP 200
+  [ok ] GET /api/version: HTTP 200
+  [ok ] GET /api/clusters: HTTP 200
+  [ok ] GET /report/healthz: HTTP 200
+  [ok ] GET /report/readyz: HTTP 200
+  [ok ] tab strip: 14 tabs: Home, Overview, KPIs, Groups, Users, Access granted, RBAC policy, Kyverno, Namespace audit, Logins, Usage, Reports, Library, Cluster Configurations
+  [ok ] tab Home: heading: What changed last 30 days  → 04-tab-home.png
+  [ok ] tab Overview: heading: dashboard  → 05-tab-overview.png
+  [ok ] tab KPIs: heading: KPIs  → 06-tab-kpis.png
+  [ok ] tab Groups: heading: Groups · 66 shown  → 07-tab-groups.png
+  [ok ] tab Users: heading: Users · 61 shown  → 08-tab-users.png
+  [ok ] tab Access granted: heading: dangling Dangling · 0  → 09-tab-access-granted.png
+  [ok ] tab RBAC policy: heading: RBAC policy  → 10-tab-rbac-policy.png
+  [ok ] tab Kyverno: heading: Kyverno · the CEL policy family  → 11-tab-kyverno.png
+  [ok ] tab Namespace audit: heading: Namespace audit  → 12-tab-namespace-audit.png
+  [ok ] tab Logins: heading: Login attempts  → 13-tab-logins.png
+  [ok ] tab Usage: heading: Dashboard usage  → 14-tab-usage.png
+  [ok ] tab Library: heading: Library 0 runs · 3 schedules · 1 paused  → 15-tab-library.png
+  [ok ] tab Cluster Configurations: heading: Cluster Configurations  → 16-tab-cluster-configurations.png
+  [ok ] lookup demo: Groups · 6 of 66 / Namespaces · 8 of 121  → 17-lookup-demo.png
+  [ok ] lookup -> namespace page: demo-prod  → 18-lookup-namespace.png
+  [ok ] also-line on Groups: also matching demo: 8 namespaces — see all matches  → 19-lookup-also-line.png
+  [ok ] lookup at 375 px: scrollWidth fits=True  → 20-lookup-375.png
+  [ok ] Reports tab: 11 reports in the catalogue, 11 enabled; PDF on, variant pdf/a-2b  → 21-reports-catalogue.png
+  [ok ] report namespace-access: form: Namespace access report — params selectors, mnemonics, namespaces, include_members, group_by  → 22-report-namespace-access-form.png
+  [ok ] report namespace-access: generate: run 20261003T201010.361155Z-75c0 done in 4.7s; formats ['html', 'pdf']; sha256 0e53d84f2860dcad…; snapshot 2026-10-03T20:06:41.430401Z  → 23-report-namespace-access-status.png
+  [ok ] report namespace-access: download .html: gsd_dashboard_namespace-access_20261003T201014Z.html (7778 bytes)
+  [ok ] report namespace-access: download .pdf: gsd_dashboard_namespace-access_20261003T201014Z.pdf (31763 bytes); starts with b'%PDF-'
+  [ok ] report namespace-access: download .json: gsd_dashboard_namespace-access_20261003T201014Z.json (8179 bytes); sha256 of the file 5fd8cc6747970738…
+  [ok ] report access-matrix: form: Access matrix — params users, groups, namespace_prefix  → 24-report-access-matrix-form.png
+  [ok ] report access-matrix: generate: run 20261003T201016.596482Z-c325 done in 6.7s; formats ['html', 'pdf']; sha256 7a5ef93fb5ee2be8…; snapshot 2026-10-03T20:06:41.430401Z  → 25-report-access-matrix-status.png
+  [ok ] report access-matrix: download .html: gsd_dashboard_access-matrix_20261003T201021Z.html (20723 bytes)
+  [ok ] report access-matrix: download .pdf: gsd_dashboard_access-matrix_20261003T201021Z.pdf (43928 bytes); starts with b'%PDF-'
+  [ok ] report access-matrix: download .json: gsd_dashboard_access-matrix_20261003T201021Z.json (27145 bytes); sha256 of the file 9c60b4a54d3541c2…
+  [ok ] report privileged-access: form: Privileged access review — params include_members, roles  → 26-report-privileged-access-form.png
+  [ok ] report privileged-access: generate: run 20261003T201024.743587Z-ca7e done in 4.9s; formats ['html', 'pdf']; sha256 550f5143d344e3d6…; snapshot 2026-10-03T20:06:41.430401Z  → 27-report-privileged-access-status.png
+  [ok ] report privileged-access: download .html: gsd_dashboard_privileged-access_20261003T201028Z.html (12637 bytes)
+  [ok ] report privileged-access: download .pdf: gsd_dashboard_privileged-access_20261003T201028Z.pdf (34757 bytes); starts with b'%PDF-'
+  [ok ] report privileged-access: download .json: gsd_dashboard_privileged-access_20261003T201028Z.json (15129 bytes); sha256 of the file ee6c83f6da8c9978…
+  [ok ] report binding-findings: form: RBAC binding findings — params (none)  → 28-report-binding-findings-form.png
+  [ok ] report binding-findings: generate: run 20261003T201031.111377Z-8bec done in 6.6s; formats ['html', 'pdf']; sha256 877ee09aa3d65b12…; snapshot 2026-10-03T20:06:41.430401Z  → 29-report-binding-findings-status.png
+  [ok ] report binding-findings: download .html: gsd_dashboard_binding-findings_20261003T201037Z.html (25482 bytes)
+  [ok ] report binding-findings: download .pdf: gsd_dashboard_binding-findings_20261003T201037Z.pdf (54108 bytes); starts with b'%PDF-'
+  [ok ] report binding-findings: download .json: gsd_dashboard_binding-findings_20261003T201037Z.json (32076 bytes); sha256 of the file 3edf99d8d533fbe2…
+  [ok ] report groups: form: Groups and membership changes — params groups, window_days, include_members  → 30-report-groups-form.png
+  [ok ] report groups: generate: run 20261003T201039.177470Z-43b8 done in 8.6s; formats ['html', 'pdf']; sha256 1cfdc5c2efdff051…; snapshot 2026-10-03T20:06:41.430401Z  → 31-report-groups-status.png
+  [ok ] report groups: download .html: gsd_dashboard_groups_20261003T201047Z.html (30551 bytes)
+  [ok ] report groups: download .pdf: gsd_dashboard_groups_20261003T201047Z.pdf (49764 bytes); starts with b'%PDF-'
+  [ok ] report groups: download .json: gsd_dashboard_groups_20261003T201047Z.json (41075 bytes); sha256 of the file 3a9b8e2cabfd5432…
+  [ok ] report users: form: Users — params users, providers  → 32-report-users-form.png
+  [ok ] report users: generate: run 20261003T201049.276243Z-b46c done in 4.9s; formats ['html', 'pdf']; sha256 57a3de0160893db8…; snapshot 2026-10-03T20:06:41.430401Z  → 33-report-users-status.png
+  [ok ] report users: download .html: gsd_dashboard_users_20261003T201052Z.html (15058 bytes)
+  [ok ] report users: download .pdf: gsd_dashboard_users_20261003T201052Z.pdf (39337 bytes); starts with b'%PDF-'
+  [ok ] report users: download .json: gsd_dashboard_users_20261003T201052Z.json (19688 bytes); sha256 of the file 2f0f6c9ae79b4a8a…
+  [ok ] report login-activity: form: Login activity — params window_days, users, groups  → 34-report-login-activity-form.png
+  [ok ] report login-activity: generate: run 20261003T201055.660012Z-a7fd done in 3.2s; formats ['html', 'pdf']; sha256 aad9c02e852cf0f3…; snapshot 2026-10-03T20:06:41.430401Z  → 35-report-login-activity-status.png
+  [ok ] report login-activity: download .html: gsd_dashboard_login-activity_20261003T201058Z.html (9219 bytes)
+  [ok ] report login-activity: download .pdf: gsd_dashboard_login-activity_20261003T201058Z.pdf (34820 bytes); starts with b'%PDF-'
+  [ok ] report login-activity: download .json: gsd_dashboard_login-activity_20261003T201058Z.json (9958 bytes); sha256 of the file 7494e9563a15750c…
+  [ok ] report dormant-access: form: Dormant and unusable access — params users, groups, dormant_days  → 36-report-dormant-access-form.png
+  [ok ] report dormant-access: generate: run 20261003T201100.344219Z-b4ca done in 3.2s; formats ['html', 'pdf']; sha256 b84abd31ce1ed90f…; snapshot 2026-10-03T20:06:41.430401Z  → 37-report-dormant-access-status.png
+  [ok ] report dormant-access: download .html: gsd_dashboard_dormant-access_20261003T201102Z.html (9737 bytes)
+  [ok ] report dormant-access: download .pdf: gsd_dashboard_dormant-access_20261003T201102Z.pdf (35267 bytes); starts with b'%PDF-'
+  [ok ] report dormant-access: download .json: gsd_dashboard_dormant-access_20261003T201102Z.json (9967 bytes); sha256 of the file 70393e5606e8902c…
+  [ok ] report groupsync-health: form: GroupSync and policy-operator health — params window_days  → 38-report-groupsync-health-form.png
+  [ok ] report groupsync-health: generate: run 20261003T201105.009788Z-eec9 done in 3.3s; formats ['html', 'pdf']; sha256 cbf3a34597f78937…; snapshot 2026-10-03T20:06:41.430401Z  → 39-report-groupsync-health-status.png
+  [ok ] report groupsync-health: download .html: gsd_dashboard_groupsync-health_20261003T201107Z.html (8802 bytes)
+  [ok ] report groupsync-health: download .pdf: gsd_dashboard_groupsync-health_20261003T201107Z.pdf (33633 bytes); starts with b'%PDF-'
+  [ok ] report groupsync-health: download .json: gsd_dashboard_groupsync-health_20261003T201107Z.json (9042 bytes); sha256 of the file 19280359fbc1cd27…
+  [ok ] report compliance-snapshot: form: Compliance snapshot — params (none)  → 40-report-compliance-snapshot-form.png
+  [ok ] report compliance-snapshot: generate: run 20261003T201109.887113Z-b779 done in 3.3s; formats ['html', 'pdf']; sha256 9722bb4fe31af9ea…; snapshot 2026-10-03T20:06:41.430401Z  → 41-report-compliance-snapshot-status.png
+  [ok ] report compliance-snapshot: download .html: gsd_dashboard_compliance-snapshot_20261003T201112Z.html (10696 bytes)
+  [ok ] report compliance-snapshot: download .pdf: gsd_dashboard_compliance-snapshot_20261003T201112Z.pdf (36766 bytes); starts with b'%PDF-'
+  [ok ] report compliance-snapshot: download .json: gsd_dashboard_compliance-snapshot_20261003T201112Z.json (12252 bytes); sha256 of the file 8a0941b5a3359617…
+  [ok ] report access-certification: form: Access certification pack — params campaign, due, reviewer, users, groups, group_mnemonic, include_members  → 42-report-access-certification-form.png
+  [ok ] report access-certification: generate: run 20261003T201114.578042Z-50c4 done in 8.3s; formats ['html', 'pdf']; sha256 f0024d52bf5230db…; snapshot 2026-10-03T20:06:41.430401Z  → 43-report-access-certification-status.png
+  [ok ] report access-certification: download .html: gsd_dashboard_access-certification_20261003T201122Z.html (39015 bytes)
+  [ok ] report access-certification: download .pdf: gsd_dashboard_access-certification_20261003T201122Z.pdf (86480 bytes); starts with b'%PDF-'
+  [ok ] report access-certification: download .json: gsd_dashboard_access-certification_20261003T201122Z.json (59669 bytes); sha256 of the file 2351c80e8de9f120…
+  [ok ] Recent runs table: 1 runs listed of 11  → 44-reports-recent-runs.png
+
+84 steps passed, 0 failed → /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/reports/2026-10-03_release-4.0.0-e2e-walk
+== 2/5 second pass (second cluster, light theme, HTML reports opened, PDF page 1)
+  [ok ] open the route: https://group-sync-dashboard.apps-crc.testing → https://group-sync-dashboard.apps-crc.testing/  → 01-oauth-proxy-interstitial.png
+  [ok ] identity-provider chooser: offered: developer, ldap-local; picked developer  → 02-openshift-idp-chooser.png
+  [ok ] OpenShift login form: username filled: developer  → 03-openshift-login-form.png
+  [ok ] login: dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard
+  [ok ] cluster selector options: all clusters, dashboard, mock-privateca, mock-selfsigned, mock-trusted, shared-qa — your view, shared-rnd — your view
+  [ok ] switch cluster to mock-privateca: heading: mock-privateca; url https://group-sync-dashboard.apps-crc.testing/#page=overview&cluster=mock-privateca  → 04-overview-cluster-mock-privateca.png
+  [ok ] Reports tab on mock-privateca: no report form; the card says: Skip to main content OCP Access Tracking Dashboard - mock-privateca Full view — you are seeing everything v4.0.0 · 15613ccb95 updated 16:11:34 EDT Appearance Auto Light Dark Colours Default Deuteranopia-safe Protanopia-safe Tritanopia-safe High contrast Refresh Sign out Cluster dashboard mock-privat  → 05-reports-cluster-mock-privateca.png
+  [ok ] scope pill: Full view — you are seeing everything
+  [ok ] open the route: https://group-sync-dashboard.apps-crc.testing → https://group-sync-dashboard.apps-crc.testing/  → 06-oauth-proxy-interstitial.png
+  [ok ] identity-provider chooser: offered: developer, ldap-local; picked developer  → 07-openshift-idp-chooser.png
+  [ok ] OpenShift login form: username filled: developer  → 08-openshift-login-form.png
+  [ok ] login: dashboard rendered at https://group-sync-dashboard.apps-crc.testing/#page=home&cluster=dashboard
+  [ok ] light theme Overview: prefers-color-scheme: light  → 09-overview-light-theme.png
+  [ok ] HTML report access-certification opens: title: Access certification pack — dashboard — OCP Access Tracking Dashboard; 39015 bytes  → 10-html-report-access-certification.png
+  [ok ] HTML report access-matrix opens: title: Access matrix — dashboard — OCP Access Tracking Dashboard; 20723 bytes  → 11-html-report-access-matrix.png
+  [ok ] HTML report binding-findings opens: title: RBAC binding findings — dashboard — OCP Access Tracking Dashboard; 25482 bytes  → 12-html-report-binding-findings.png
+  [ok ] HTML report compliance-snapshot opens: title: Compliance snapshot — dashboard — OCP Access Tracking Dashboard; 10696 bytes  → 13-html-report-compliance-snapshot.png
+  [ok ] HTML report dormant-access opens: title: Dormant and unusable access — dashboard — OCP Access Tracking Dashboard; 9737 bytes  → 14-html-report-dormant-access.png
+  [ok ] HTML report groups opens: title: Groups and membership changes — dashboard — OCP Access Tracking Dashboard; 30551 bytes  → 15-html-report-groups.png
+  [ok ] HTML report groupsync-health opens: title: GroupSync and policy-operator health — dashboard — OCP Access Tracking Dashboard; 8802 bytes  → 16-html-report-groupsync-health.png
+  [ok ] HTML report login-activity opens: title: Login activity — dashboard — OCP Access Tracking Dashboard; 9219 bytes  → 17-html-report-login-activity.png
+  [ok ] HTML report namespace-access opens: title: Namespace access report — dashboard — OCP Access Tracking Dashboard; 7778 bytes  → 18-html-report-namespace-access.png
+  [ok ] HTML report privileged-access opens: title: Privileged access review — dashboard — OCP Access Tracking Dashboard; 12637 bytes  → 19-html-report-privileged-access.png
+  [ok ] HTML report users opens: title: Users — dashboard — OCP Access Tracking Dashboard; 15058 bytes  → 20-html-report-users.png
+  [ok ] pdf page 1 → pdf-page1-access-certification.png
+  [ok ] pdf page 1 → pdf-page1-access-matrix.png
+  [ok ] pdf page 1 → pdf-page1-binding-findings.png
+  [ok ] pdf page 1 → pdf-page1-compliance-snapshot.png
+  [ok ] pdf page 1 → pdf-page1-dormant-access.png
+  [ok ] pdf page 1 → pdf-page1-groups.png
+  [ok ] pdf page 1 → pdf-page1-groupsync-health.png
+  [ok ] pdf page 1 → pdf-page1-login-activity.png
+  [ok ] pdf page 1 → pdf-page1-namespace-access.png
+  [ok ] pdf page 1 → pdf-page1-privileged-access.png
+  [ok ] pdf page 1 → pdf-page1-users.png
+24 / 24 extra steps ok; 11 / 11 PDFs rendered
+== 3/5 integrity of the artefacts
+  [ok ] access-certification     f0024d52bf52  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] access-matrix            7a5ef93fb5ee  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] binding-findings         877ee09aa3d6  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] compliance-snapshot      9722bb4fe31a  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] dormant-access           b84abd31ce1e  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] groups                   1cfdc5c2efdf  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] groupsync-health         cbf3a34597f7  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] login-activity           aad9c02e852c  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] namespace-access         0e53d84f2860  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] privileged-access        550f5143d344  recomputed=True run=True pdf=True html=True pdf/a=True
+  [ok ] users                    57a3de016089  recomputed=True run=True pdf=True html=True pdf/a=True
+11 / 11 reports pass → /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/reports/2026-10-03_release-4.0.0-e2e-walk/integrity.jsonl
+== 4/5 environment facts (oc/helm through KUBECONFIG=/Users/olasumbo/.kube/config)
+== 5/5 the document
+html 7,311,741 bytes; pdf 5,733,728 bytes
+walk finished with rc=0: /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-e2e400/reports/2026-10-03_release-4.0.0-e2e-walk/doc/e2e_walk.pdf
