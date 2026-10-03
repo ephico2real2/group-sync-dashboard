@@ -8,6 +8,7 @@ symptom was data that quietly stopped updating.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 
@@ -147,3 +148,76 @@ class TestStandbyRecheck:
         # in tests or local dev still governs.
         assert min(900, STANDBY_RECHECK_SECONDS) == STANDBY_RECHECK_SECONDS
         assert min(1, STANDBY_RECHECK_SECONDS) == 1
+
+
+class TestTheLeaseStaysInItsNamespace:
+    """#420 (SPEC_G4): the grant is a Role in the release namespace, which is enough only because the elector never
+    leaves the namespace it runs in. T420-6 pins that premise; the last test pins what an upgrade that skips step 1
+    can cost the running pod (§3.4)."""
+
+    def test_every_lease_call_is_under_the_namespace_it_was_given(self):
+        e = LeaderElector(name="gsd", namespace="ns-a", identity="pod-a", lease_seconds=30)
+        calls, stored = [], {}
+
+        def handler(request):
+            calls.append((request.method, request.url.path))
+            if request.method == "GET":
+                return httpx.Response(200, json=stored["lease"]) if stored else httpx.Response(404)
+            body = json.loads(request.read())
+            body["metadata"]["resourceVersion"] = str(len(calls))
+            stored["lease"] = body
+            return httpx.Response(201 if request.method == "POST" else 200, json=body)
+
+        with _client(handler) as c:
+            assert e._try_acquire(c) is True      # absent: created
+            assert e._try_acquire(c) is True      # held by this pod: renewed
+        assert {m for m, _ in calls} == {"GET", "POST", "PUT"}
+        assert all(p.startswith("/apis/coordination.k8s.io/v1/namespaces/ns-a/leases") for _, p in calls), calls
+
+    def test_without_a_namespace_it_reads_the_service_account_mount(self, tmp_path, monkeypatch):
+        mount = tmp_path / "namespace"
+        mount.write_text("ns-from-the-mount\n")
+        monkeypatch.setattr("gsd.leader.SA_NAMESPACE", str(mount))
+        assert LeaderElector(name="gsd", identity="pod-a").namespace == "ns-from-the-mount"
+
+    @pytest.mark.parametrize("refused", ["GET", "PUT"])
+    def test_one_refused_round_costs_that_round_and_no_takeover(self, caplog, refused):
+        """A 403 in one round — an RBAC update landing between two grants, on the read or on the renewal — stands the
+        pod down for that round only: one renew interval later the next round finds its own unexpired Lease and renews
+        it, with leaseTransitions unchanged."""
+        e = LeaderElector(name="gsd", namespace="ns-a", identity="pod-a", lease_seconds=30, renew_seconds=0.01)
+        now = e._now()
+        lease = {"metadata": {"name": "gsd", "namespace": "ns-a", "resourceVersion": "1"},
+                 "spec": {"holderIdentity": "pod-a", "leaseDurationSeconds": 30, "acquireTime": now,
+                          "renewTime": now, "leaseTransitions": 0}}
+        leading_before_each_get, waits = [], []
+        wait = e._stop.wait
+        e._stop.wait = lambda timeout=None: waits.append(timeout) or wait(timeout)   # what each round waits
+
+        def handler(request):
+            if request.method == "GET":
+                leading_before_each_get.append(e.is_leader)
+                if len(leading_before_each_get) == 4:
+                    e._stop.set()                  # the fourth round is the last
+                if refused == "GET" and len(leading_before_each_get) == 2:
+                    return httpx.Response(403, text="leases.coordination.k8s.io is forbidden")
+                return httpx.Response(200, json=lease)
+            if refused == "PUT" and len(leading_before_each_get) == 2:
+                return httpx.Response(403, text="leases.coordination.k8s.io is forbidden")
+            body = json.loads(request.read())
+            body["metadata"]["resourceVersion"] = str(int(lease["metadata"]["resourceVersion"]) + 1)
+            lease.clear()
+            lease.update(body)
+            return httpx.Response(200, json=lease)
+
+        e._client = lambda: _client(handler)
+        with caplog.at_level("INFO", logger="gsd.leader"):
+            e._run()
+        assert leading_before_each_get == [False, True, False, True]
+        assert lease["spec"]["holderIdentity"] == "pod-a" and lease["spec"]["leaseTransitions"] == 0
+        refusal = {"GET": "leader election: forbidden reading lease ns-a/gsd",
+                   "PUT": "leader election: could not renew lease ns-a/gsd"}[refused]
+        assert len([m for m in caplog.messages if m.startswith(refusal)]) == 1
+        assert len([m for m in caplog.messages if m.startswith("lost leadership")]) == 1
+        assert len([m for m in caplog.messages if m.startswith("became leader")]) == 2
+        assert waits == [e.renew_seconds] * 4, waits      # the refused round waits one renew interval, no longer

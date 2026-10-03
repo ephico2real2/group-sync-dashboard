@@ -336,7 +336,10 @@ type: application
 # CHART 0.66.1 (2026-10-03), PATCH: docs/UNMANAGED_GRANT_EXCLUSIONS.md names group-sync-operator-helm
 # beside group-sync-dashboard and says the direct-user view follows the label; appVersion moves to
 # application 3.3.0 (below); #503.
-version: 0.66.1
+# CHART 0.66.2 (2026-10-03), PATCH: the dashboard's Leases are also granted by a Role and RoleBinding,
+# `<fullname>-leases`, in the release namespace, beside the ClusterRole's rule (#420 step 1, SPEC_G4).
+# RBAC REMOVED 0, ADDED 4 atoms; no value or appVersion change.
+version: 0.66.2
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,

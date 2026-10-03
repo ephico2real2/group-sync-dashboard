@@ -24,6 +24,14 @@ import sys
 
 MARK = re.compile(r"^<!-- block: (?P<path>[^|]+?) \| (?P<kind>edit|create|after: .+?) -->$", re.M)
 FENCE = re.compile(r"^```[\w-]*\n(?P<body>.*?)^```$", re.M | re.S)
+# A change that ships in two pull requests (SPEC_G4, #420) stages the later one's blocks as `deferred-block`
+# (their Old text cannot exist yet) and, once the earlier one is on main, retires its markers to `applied-block`.
+# Neither is applied, but both are counted and said aloud, so "8 blocks check out" cannot hide sixteen more. Every
+# column-0 HTML comment whose first word ends in a colon is taken for a marker, and one that is not exactly one of
+# the three forms (a misspelt word, a capital, a stray or missing space) is a typo, refused rather than skipped.
+MARKER = re.compile(r"^<!--[ \t]*(?P<word>[^\s:]*):.*$", re.M)
+EXACT = re.compile(r"<!-- (?:block|deferred-block|applied-block): [^|]+? \| (?:edit|create|after: .+?) -->")
+LEFT_ALONE = ("deferred-block", "applied-block")
 
 
 def blocks(spec: str) -> list[dict]:
@@ -51,8 +59,15 @@ def main() -> int:
         if dirty.strip():
             raise SystemExit(f"refusing to apply into {tree}: it has uncommitted changes, so the result would not be "
                              "the specification's blocks alone")
+    source = spec.read_text()
+    words = [m.group("word") for m in MARKER.finditer(source)]
+    unknown = [m.group(0) for m in MARKER.finditer(source) if not EXACT.fullmatch(m.group(0))]
+    if unknown:
+        raise SystemExit(f"unknown block marker(s) {unknown}: this tool reads `block` and leaves `deferred-block` and "
+                         "`applied-block` alone, each exactly `<!-- <word>: <path> | edit|create|after: <line> -->` "
+                         "(docs/specs/README.md, \"Implementation blocks\")")
     files: dict[str, str] = {}
-    for b in blocks(spec.read_text()):
+    for b in blocks(source):
         target = tree / b["path"]
         if b["kind"] == "create":
             if b["path"] in files or target.exists():
@@ -79,7 +94,8 @@ def main() -> int:
             lines[hits[0] + 1:hits[0] + 1] = b["fences"][0].rstrip("\n").split("\n")
             text = "\n".join(lines)
         files[b["path"]] = text
-    print(f"{len(blocks(spec.read_text()))} blocks check out across {len(files)} files")
+    left = ", ".join(f"{words.count(w)} {w}" for w in LEFT_ALONE if words.count(w))
+    print(f"{len(blocks(source))} blocks check out across {len(files)} files" + (f"; left alone: {left}" if left else ""))
     if apply:
         for path, text in files.items():
             (tree / path).parent.mkdir(parents=True, exist_ok=True)

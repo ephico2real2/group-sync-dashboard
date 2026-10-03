@@ -788,8 +788,8 @@ retained since …" so a timeline that begins at the edge is read as cut there, 
 
 ### 7.1 The ServiceAccount is read-only
 
-`templates/rbac.yaml` grants `get` and `list` and nothing else, except on the Lease it needs to
-elect a leader:
+The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and nothing else, except on the
+Leases the dashboard writes — the elector's and one per fleet account:
 
 | API group | Resources | Verbs |
 |---|---|---|
@@ -800,7 +800,7 @@ elect a leader:
 | `user.openshift.io` | `identities` | get, list — only when `rbac.identities` (the first-login time from Identity objects) |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | core (`""`) | `namespaces` | get, list — only when `rbac.namespaces` (the namespace report attests absence with it) |
-| `coordination.k8s.io` | `leases` | get, create, update — only when `leaderElection.enabled` |
+| `coordination.k8s.io` | `leases` | get, create, update — when `leaderElection.enabled` or a fleet account is in use; the same grant in the release namespace only is the `<fullname>-leases` Role (#420), and a later chart release removes this rule |
 
 The login-capture ClusterRole grants `get nodes/proxy`, optionally pinned by `resourceNames`,
 and `list nodes` only when names are not pinned. It is enabled by `loginCapture.enabled` (true

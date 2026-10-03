@@ -385,8 +385,9 @@ config:
     syncEventsDays: 730
 
   # Unmanaged-grant DISCOVERY. This feature writes nothing — and to be exact about the
-  # dashboard as a whole, the only object it writes on any cluster is its own
-  # leader-election Lease, which is its coordination and not anything it reports on.
+  # dashboard as a whole, the only objects it writes on any cluster by default are its own
+  # Leases, the elector's and one per fleet account, which are its coordination and not
+  # anything it reports on.
   #
   # A binding is `unmanaged` when it carries neither the policy system's config-source label
   # nor an `rbac.ocp.io/unmanaged-exception` annotation and names an operator-synced group, a
@@ -1460,7 +1461,10 @@ serviceAccount:
 rbac:
   # Creates a ClusterRole + binding granting get/list on groupsyncs, groups, users,
   # rolebindings and clusterrolebindings. No watch, and no write verb on any of them. The
-  # role's only write is get/create/update on the dashboard's own leader-election Lease.
+  # role's only write is get/create/update on the dashboard's own Leases (the elector's and one
+  # per fleet account), when leaderElection.enabled or a fleet account is in use; under the same
+  # condition it also creates the `<fullname>-leases` Role and RoleBinding, the same grant in the
+  # release namespace only (#420). A later chart release removes the ClusterRole's copy.
   create: true
 
   # RoleBindings/ClusterRoleBindings power the "Access granted" view and dangling-binding
