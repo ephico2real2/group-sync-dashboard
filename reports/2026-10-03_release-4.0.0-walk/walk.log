@@ -1,0 +1,69 @@
+# Release 4.0.0 walk (Epic G #387), CRC lab; written by scripts/run.sh
+# started 2026-10-03T18:16:38Z; kube context crc-admin; merge 15613ccb95ed2f86f740f2ed6702648479d39ced
+
+## Before  (2026-10-03T18:16:39Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{rev: .spec.source.targetRevision, sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, cond: [.status.conditions[]?.type]}'
+{"rev":"main","sync":"Synced","health":"Healthy","synced":"15613ccb95ed2f86f740f2ed6702648479d39ced","cond":[]}
+
+## Deploy: release-crc.sh --argocd main (the published release)  (2026-10-03T18:16:39Z)
+$ cd '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk400' && timeout 1200 local-development/release-crc.sh --argocd main --values environments/crc.yaml 2>&1 | grep -vE 'status is for the previous spec' | tail -12
+argocd  : group-sync-dashboard -> revision main (15613ccb95), the chart's default image
+image   : quay.io/ephico2real/group-sync-dashboard:4.0.0 is application 4.0.0
+image   : quay.io/ephico2real/group-sync-dashboard-report:4.0.0 is application 4.0.0
+values  : environments/crc.yaml (the Application's valueFiles)
+ERROR: group-sync-dashboard did not reach Synced/Healthy in 900s
+4.0.0 Synced/Healthy on 15613ccb95ed2f86f740f2ed6702648479d39ced at 2026-10-03T18:31:44Z
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, synced: .status.sync.revision, op: .status.operationState.phase, retries: .status.operationState.retryCount}'
+{"sync":"Synced","health":"Healthy","synced":"15613ccb95ed2f86f740f2ed6702648479d39ced","op":"Succeeded","retries":null}
+$ oc get deployments.apps -n group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,WANT:.spec.replicas,READY:.status.readyReplicas,IMAGE:.spec.template.spec.containers[0].image' | grep -E 'NAME|group-sync-dashboard'
+NAME                                     WANT   READY    IMAGE
+group-sync-dashboard                     1      1        quay.io/ephico2real/group-sync-dashboard:4.0.0
+group-sync-dashboard-recovery            0      <none>   quay.io/ephico2real/group-sync-dashboard:4.0.0
+group-sync-dashboard-report              1      1        quay.io/ephico2real/group-sync-dashboard-report:4.0.0
+mock-openshift                           1      1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+mock-privateca                           1      1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+mock-selfsigned                          1      1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+mock-trusted                             1      1        image-registry.openshift-image-registry.svc:5000/group-sync-dashboard/mock-openshift:test
+
+## Health, version, schema  (2026-10-03T18:31:44Z)
+$ for p in /healthz /readyz; do printf '%s ' $p; curl -sk -w ' %{http_code}\n' https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')$p; done
+/healthz {"status":"ok"} 200
+/readyz {"status":"ready","clusters":6} 200
+$ curl -sk https://$(oc get routes.route.openshift.io -n group-sync-dashboard group-sync-dashboard -o jsonpath='{.status.ingress[0].host}')/metrics | grep -E '^gsd_build_info'
+gsd_build_info{branch="main",commit="15613ccb95",version="4.0.0"} 1.0
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c "import sqlite3; print('user_version', sqlite3.connect('file:/data/gsd.db?mode=ro', uri=True).execute('PRAGMA user_version').fetchone()[0])"
+user_version 20
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import gsd.store as s; print("image migrations", len(s._MIGRATIONS))'
+image migrations 20
+
+## One live check per feature  (2026-10-03T18:31:48Z)
+$ echo 'G1 (#239): a route the declaration gates at the cluster-admin tier refuses the self tier'; oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: developer' 'http://127.0.0.1:8080/api/housekeeping/copies' | jq -c '{detail}'
+G1 (#239): a route the declaration gates at the cluster-admin tier refuses the self tier
+{"detail":"For cluster administrators only. Deleting reports and database copies is reserved to cluster administrators."}
+$ echo 'G2 (#255) and G3 (#503), as dana.lee'; oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s -H 'X-Forwarded-User: dana.lee' 'http://127.0.0.1:8080/api/clusters/dashboard/user-bindings' | jq -c '{scope, total, excluded_platform, platform_users_unmatched, acknowledged, acknowledged_sources: [(.acknowledged_bindings // [])[] | .managed_source] | unique}'
+G2 (#255) and G3 (#503), as dana.lee
+{"scope":"all","total":9,"excluded_platform":24,"platform_users_unmatched":{},"acknowledged":2,"acknowledged_sources":["group-sync-operator-helm"]}
+$ echo 'G4 (#420)'; oc get clusterroles.rbac.authorization.k8s.io group-sync-dashboard-reader -o json | jq -c '[.rules[] | select((.resources // []) | index("leases"))] | length'; oc get roles.rbac.authorization.k8s.io group-sync-dashboard-leases -n group-sync-dashboard -o jsonpath='{.rules}'; echo; oc get leases.coordination.k8s.io group-sync-dashboard -n group-sync-dashboard -o jsonpath='{.spec.holderIdentity} {.spec.renewTime} {.spec.leaseTransitions}'; echo
+G4 (#420)
+0
+[{"apiGroups":["coordination.k8s.io"],"resources":["leases"],"verbs":["get","create","update"]}]
+group-sync-dashboard-57c6fbcc59-q5hf6 2026-10-03T18:31:45.388789Z 15
+$ echo '#542'; oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '.features'
+#542
+{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true}
+$ echo '#532'; oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-recovery -o jsonpath='{.spec.replicas}/{.status.readyReplicas}'; echo
+#532
+0/
+
+## After  (2026-10-03T18:31:49Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+walk done at 2026-10-03T18:31:49Z
