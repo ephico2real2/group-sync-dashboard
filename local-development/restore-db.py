@@ -138,7 +138,8 @@ def preflight(doc: dict, release: str, namespace: str, now: float, margin: float
     pods = doc.get("items") or []
     names = [p["metadata"]["name"] for p in pods]
     if len(pods) != 1:
-        raise Refused(EXIT_POD, f"{len(pods)} pods match app={release} in {namespace} ({', '.join(names) or 'none'}); "
+        raise Refused(EXIT_POD, f"{len(pods)} pods match app={release} or app={release}-recovery in {namespace} "
+                                f"({', '.join(names) or 'none'}); "
                                 "a restore needs exactly one, the release's recovery pod. Wait until one is left "
                                 "(a terminating pod still counts), then run this again")
     pod, name = pods[0], names[0]
@@ -431,8 +432,9 @@ def cmd_list(lay: Layout, known: int) -> int:
     if lay.backup is None:
         say("# backup: config.backup is off (no backupDir), so there are no scheduled backups to list")
     if not lay.offsite.is_dir():
-        say(f"# offsite: {lay.offsite} is not mounted (recovery mode mounts the offsite claim only when backup.offsite "
-            "uses its pvc destination)")
+        say(f"# offsite: {lay.offsite} is not mounted in this pod. The chart's recovery pod mounts the offsite claim, "
+            "read-only, when backup.offsite uses its pvc destination; restore a copy that is only on that claim with "
+            "docs/RUNBOOK_backup_restore.md section 4b")
     for line in notes + aside_notes(lay, known):
         say(line)
     return 0
@@ -731,8 +733,10 @@ def cmd_restore(lay: Layout, rid: str, known: int, group: int, confirmed: tuple 
         "-wal into it)")
     say(f"written      {lay.db} <- {row.path} · sha256 {digest} · chgrp {group} · chmod g=u")
     say(f"user_version {'absent' if before is None else before} -> {after}")
-    say("restored. Set recovery.enabled: false in this release's values file and roll it out through the release's "
-        "deployment pipeline: the app starts on the restored file.")
+    say("restored. Turn recovery mode off the way it was turned on: set recovery.enabled: false in this release's "
+        "values file and roll it out through the release's deployment pipeline, or, under the break glass "
+        "(docs/RUNBOOK_backup_restore.md section 4d), give the release back to Git (its step 5). The app starts on "
+        "the restored file once the recovery pod is gone.")
     if kept:
         say(f"way back     {kept}/ is the database as it was; docs/RUNBOOK_backup_restore.md section 4, \"Undo a "
             "restore\", puts it back (fold it first: its rows may be only in its -wal)")

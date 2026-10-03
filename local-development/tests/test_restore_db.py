@@ -172,6 +172,23 @@ def test_t302_1_list_shows_every_copy_with_its_id_schema_source_sidecar_and_verd
     assert f"image    understands schema {KNOWN} and older" in result.stdout
 
 
+def test_t532_8_the_two_messages_say_what_is_true_under_the_break_glass_too(pod: Pod) -> None:
+    """SPEC_E10's walk, O1 (#532): an unmounted /offsite is the pod's mount, not the backup destination, and the
+    line after a restore names both ways recovery mode was turned on, the values file and §4d's give-back."""
+    shutil.rmtree(pod.offsite)
+    listed = pod.run("list")
+    assert listed.returncode == 0, listed.stderr
+    note = " ".join(line for line in listed.stdout.splitlines() if line.startswith("# offsite:"))
+    assert "is not mounted in this pod" in note and "when backup.offsite uses its pvc destination" in note
+    assert "section 4b" in note and "only when" not in note
+    restored = pod.run("restore", f"{KNOWN}-{STAMPS[0]}")
+    assert restored.returncode == 0, restored.stderr
+    closing = " ".join(restored.stdout.split())
+    assert "set recovery.enabled: false in this release's values file" in closing
+    assert "section 4d), give the release back to Git (its step 5)" in closing
+    assert "once the recovery pod is gone" in closing
+
+
 def test_t302_2_a_byte_identical_offsite_twin_is_one_row_and_a_differing_one_is_refused(pod: Pod) -> None:
     twin = pod.offsite / f"gsd-{STAMPS[0]}.db"
     shutil.copy2(pod.backup / twin.name, twin)

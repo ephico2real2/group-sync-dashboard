@@ -30,15 +30,23 @@ It refused those renders with a message about a volume that did not exist.
 {{- end }}
 {{- include "gsd.reportingGuards" . }}
 {{- /*
-Recovery mode (#303): the same pod and the same data volume with the app stopped, for a restore.
-Refused where it cannot be safe: a second recovery pod would be a second shell on the same file
-(or a Pending pod), and an emptyDir has nothing to restore onto and is wiped when the pod goes.
-The TTL is the bound on a forgotten recovery pod, so a value that is not a positive duration is
-refused here rather than by the script after the pod has started.
+Recovery mode (#303) is its own workload (#532): this file renders two Deployments from one pod
+spec, the app's and `<fullname>-recovery`, on every release. recovery.enabled sets only their
+replicas (the app's to 0, the recovery one's to 1), so both report Healthy and the switch is
+undone by the next rollout whatever the deployment tool prunes. Refused where it cannot be safe:
+a second recovery pod would be a second shell on the same file (or a Pending pod), and an emptyDir
+has nothing to restore onto and is wiped when the pod goes. The TTL is the bound on a forgotten
+recovery pod, so a value that is not a positive duration is refused here rather than by the
+script after the pod has started.
 */}}
-{{- $recovery := eq (include "gsd.recoveryEnabled" .) "true" }}
+{{- $recoveryOn := eq (include "gsd.recoveryEnabled" .) "true" }}
+{{- /* The offsite claim, read-only, so #302's restore can list the offsite copies: the same switch
+and the same claim the CronJob renders with (backup-offsite.yaml). */}}
 {{- $offsiteClaim := "" }}
-{{- if $recovery }}
+{{- if and (eq (include "gsd.offsiteOn" .) "true") (eq .Values.backup.offsite.destination.type "pvc") }}
+{{- $offsiteClaim = .Values.backup.offsite.destination.pvc.existingClaim | default (printf "%s-backup-offsite" (include "gsd.fullname" .)) }}
+{{- end }}
+{{- if $recoveryOn }}
 {{- /* Compared as text, not through `int`: `int true` is 1, and `replicaCount: true` rendered `replicas: true`
 (review of the spec, Codex F3). A YAML 1 reaches here as an int or a float64, and both print "1". */}}
 {{- if ne (toString .Values.replicaCount) "1" }}
@@ -54,11 +62,6 @@ refused here rather than by the script after the pod has started.
 {{- end }}
 {{- if eq $ttlSeconds "0" }}
 {{- fail (printf "recovery.ttl %q is zero: the recovery pod would exit at once and crash-loop. Use a positive Go duration such as 2h (the default)." $ttl) }}
-{{- end }}
-{{- /* The offsite claim, read-only, so #302's restore can list the offsite copies: the same switch
-and the same claim the CronJob renders with (backup-offsite.yaml). */}}
-{{- if and (eq (include "gsd.offsiteOn" .) "true") (eq .Values.backup.offsite.destination.type "pvc") }}
-{{- $offsiteClaim = .Values.backup.offsite.destination.pvc.existingClaim | default (printf "%s-backup-offsite" (include "gsd.fullname" .)) }}
 {{- end }}
 {{- end }}
 {{- if .Values.oauthProxy.enabled }}
@@ -94,14 +97,25 @@ about the character 㡀 and told the operator nothing about what they typed.
 {{- fail (printf "oauthProxy.skipAuthRegex (%s) no longer covers /signed-out while oauthProxy.logoutUrl is empty, so the logout landing page sits BEHIND the proxy it is supposed to land outside of: the redirect from sign_out starts a fresh OAuth flow and the reader who clicked Sign out arrives back signed in. Either keep signed-out in the regex, or point oauthProxy.logoutUrl somewhere outside the proxy." .Values.oauthProxy.skipAuthRegex) }}
 {{- end }}
 {{- end }}
+{{- range $workload := list "app" "recovery" }}
+{{- /* $recovery: this Deployment is the recovery workload; the pod spec below branches on it. */}}
+{{- $recovery := eq $workload "recovery" }}
+{{- with $ }}
+{{- $selector := ternary (include "gsd.recoverySelectorLabels" .) (include "gsd.selectorLabels" .) $recovery }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "gsd.fullname" . }}
+  name: {{ include "gsd.fullname" . }}{{ if $recovery }}-recovery{{ end }}
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "gsd.labels" . | nindent 4 }}
+  labels:
+    {{- include "gsd.labels" . | nindent 4 }}
+    {{- if $recovery }}
+    app.kubernetes.io/component: recovery
+    {{- end }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  {{- /* The app's Deployment at 0 is Healthy to Argo CD and to `oc rollout status` alike. */}}
+  replicas: {{ if $recovery }}{{ ternary 1 0 $recoveryOn }}{{ else if $recoveryOn }}0{{ else }}{{ .Values.replicaCount }}{{ end }}
   strategy:
     {{- /*
     Recreate exists for the single-replica case, where the outgoing and incoming pods would
@@ -111,7 +125,7 @@ spec:
     */}}
     type: {{ .Values.strategy | default (ternary "RollingUpdate" "Recreate" (gt (int .Values.replicaCount) 1)) }}
   selector:
-    matchLabels: {{- include "gsd.selectorLabels" . | nindent 6 }}
+    matchLabels: {{- $selector | nindent 6 }}
   template:
     metadata:
       labels:
@@ -121,11 +135,11 @@ spec:
                by name rather than reorder the includes, which would discard the operator's label
                silently (review of chart 0.14.0, second pass). */}}
         {{- range $k, $_ := .Values.podLabels }}
-        {{- if hasKey (include "gsd.selectorLabels" $ | fromYaml) $k }}
+        {{- if hasKey ($selector | fromYaml) $k }}
         {{- fail (printf "podLabels must not set %q: it is one of the selector labels the Service, the PodDisruptionBudget and the Deployment select the pod by" $k) }}
         {{- end }}
         {{- end }}
-        {{- include "gsd.selectorLabels" . | nindent 8 }}
+        {{- $selector | nindent 8 }}
         {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
       annotations:
         # Restart the pod when the config changes. Without this a `helm upgrade` that only
@@ -145,7 +159,19 @@ spec:
       {{- with .Values.tolerations }}
       tolerations: {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- $affinity := deepCopy (.Values.affinity | default dict) }}
+      {{- if $recovery }}
+      {{- /* THE ORDERING ON THE DATA CLAIM (#532). The scheduler places no recovery pod while a pod
+      with the app's selector labels exists, terminating ones included, and no app pod while a
+      recovery pod exists (it applies an existing pod's required anti-affinity to the incoming
+      pod), so the two never hold gsd.db at once. kubernetes.io/os has one value on every node that
+      can run this image, which makes the domain the whole cluster rather than one node. */}}
+      {{- $anti := $affinity.podAntiAffinity | default dict }}
+      {{- $term := dict "labelSelector" (dict "matchLabels" (include "gsd.selectorLabels" . | fromYaml)) "topologyKey" "kubernetes.io/os" }}
+      {{- $_ := set $anti "requiredDuringSchedulingIgnoredDuringExecution" (append ($anti.requiredDuringSchedulingIgnoredDuringExecution | default list) $term) }}
+      {{- $_ := set $affinity "podAntiAffinity" $anti }}
+      {{- end }}
+      {{- with $affinity }}
       affinity: {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.priorityClassName }}
@@ -377,18 +403,9 @@ spec:
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           {{- end }}
-          {{- if $recovery }}
-          # RECOVERY MODE: a readiness probe that cannot pass, whatever probes.readiness says, so the
-          # pod never joins the Service. A container with no readiness probe counts as ready, and
-          # the Service would send readers to a proxy whose upstream has no listener. Nothing listens
-          # on 8080 while the app is stopped; a TCP probe needs no exec and touches no proxy.
-          readinessProbe:
-            tcpSocket:
-              port: http
-            periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 1
-          {{- else if .Values.probes.readiness.enabled }}
+          {{- /* No readiness probe in the recovery workload (#532): no Service selects its pod, so it
+          counts as ready once it runs and its Deployment reports available. */}}
+          {{- if and .Values.probes.readiness.enabled (not $recovery) }}
           readinessProbe:
             httpGet:
               path: {{ .Values.probes.readiness.path }}
@@ -605,3 +622,5 @@ spec:
             secretName: {{ include "gsd.fullname" . }}-oauth-session
             defaultMode: 420
         {{- end }}
+{{- end }}
+{{- end }}

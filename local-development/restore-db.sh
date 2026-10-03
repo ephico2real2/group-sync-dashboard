@@ -4,7 +4,8 @@
 #   local-development/restore-db.sh --list
 #   local-development/restore-db.sh --from-version <ID> [--yes]
 #   options: --namespace <ns> (default group-sync-dashboard)
-#            --release <name> (default group-sync-dashboard: the pods are found by app=<name>, as in the runbook)
+#            --release <name> (default group-sync-dashboard: the pods are found by app=<name>-recovery, or
+#                              app=<name> on a chart before 0.65.0, as in the runbook)
 #
 # Runs on your laptop with oc, as you: nothing is added to any ServiceAccount; you need get on pods and
 # create on pods/exec in the namespace. It refuses unless the release's one pod is in recovery mode (#303:
@@ -55,9 +56,11 @@ if [ -z "${MODE}" ]; then usage >&2; exit 64; fi
 
 # The release's one pod, in recovery mode, with enough of its TTL left: read from the pod spec, no exec.
 # Prints "<pod>\t<image>\t<time left>", or refuses (exit 2) with the reason and what to set.
+# Both workloads' pods are listed (#532): an app pod still terminating beside the recovery pod makes two,
+# and two are refused.
 preflight() {
   local pods
-  pods=$(oc get pods -n "${NS}" -l "app=${REL}" -o json) || return
+  pods=$(oc get pods -n "${NS}" -l "app in (${REL},${REL}-recovery)" -o json) || return
   printf '%s' "${pods}" | python3 "${HELPER}" preflight --release "${REL}" --namespace "${NS}"
 }
 

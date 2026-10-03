@@ -232,13 +232,22 @@ spec:
           {{- end }}
           {{- if ne $mode "ReadWriteMany" }}
           # ReadWriteOnce binds the data claim to one NODE. Pods on that node may share it, so
-          # the copy runs beside the dashboard; on any other node it could never mount.
+          # the copy runs beside the pod that holds it: the app's, or in recovery mode the
+          # recovery workload's (#532); on any other node it could never mount.
           affinity:
             podAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
                 - topologyKey: kubernetes.io/hostname
                   labelSelector:
-                    matchLabels: {{- include "gsd.selectorLabels" . | nindent 22 }}
+                    matchLabels:
+                      app.kubernetes.io/name: {{ include "gsd.name" . }}
+                      app.kubernetes.io/instance: {{ .Release.Name }}
+                    matchExpressions:
+                      - key: app
+                        operator: In
+                        values:
+                          - {{ include "gsd.fullname" . }}
+                          - {{ include "gsd.fullname" . }}-recovery
           {{- end }}
           {{- if eq $type "s3" }}
           initContainers:

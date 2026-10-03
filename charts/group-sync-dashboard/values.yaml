@@ -212,14 +212,19 @@ probes:
     failureThreshold: 3
 
 # ---------------------------------------------------------------------------
-# Recovery mode (#303) — the pod with the data volume mounted and the app stopped
+# Recovery mode (#303) — the app stopped and a recovery pod holding the data volume
 # ---------------------------------------------------------------------------
-# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). recovery.enabled=true
-# runs the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
-# dashboard container instead of uvicorn, on the same pod spec and the same /data volume: no process opens
-# gsd.db, so you can replace it from `oc exec`, and a dropped session does not end the pod. The
-# script ships with the chart, not the image, so it runs under the older image a rollback targets.
-# At one replica the strategy is Recreate, so the writer stops before the recovery pod starts.
+# For a restore or a rollback (docs/RUNBOOK_backup_restore.md section 4). The chart renders a second
+# Deployment, <fullname>-recovery, on every release (#532): the app's pod spec and the same /data
+# volume, with the chart's recovery script (scripts/recovery_mode.py, shipped in a ConfigMap) in the
+# dashboard container instead of uvicorn, at 0 replicas. recovery.enabled=true scales the app's
+# Deployment to 0 and the recovery Deployment to 1, and false the other way round: nothing else
+# changes, so both Deployments report available and the next rollout turns it off whatever the
+# deployment tool prunes. No process opens gsd.db in the recovery pod, so you can replace it from
+# `oc exec`, and a dropped session does not end the pod. The script ships with the chart, not the
+# image, so it runs under the older image a rollback targets. The scheduler starts the recovery pod
+# only once the app's pod is gone, and the app's only once the recovery pod is gone (a required pod
+# anti-affinity on the recovery pod), so the two never hold the database at once.
 #
 # SET IT IN THIS RELEASE'S VALUES FILE and roll it out through the release's deployment pipeline,
 # like any other value; for a rollback, set the older image.tag in the same change. Never with
@@ -227,14 +232,13 @@ probes:
 # edit, and an environment variable alone would leave the liveness probe to kill the pod in the
 # middle of a restore.
 #
-# While it is on the pod has no liveness probe, and a readiness probe that cannot pass keeps it
-# out of the Service: READY reads 1/2 (the oauth-proxy sidecar is ready, the dashboard is not; 0/1
-# with the proxy off), the route has no ready endpoint, and the Deployment never reports available,
-# so a pipeline step that waits for the rollout reports it failed. A pipeline that rolls a failed
-# rollout back on its own (Helm's --rollback-on-failure flag, --atomic in Helm 3, or an equivalent
-# remediation) must not carry this change: the rollback turns recovery mode off by itself and starts
-# the app on a file that may be half restored. When backup.offsite uses the pvc destination, its
-# claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
+# The recovery pod has no liveness probe and no readiness probe, and no Service selects it: READY
+# reads 2/2 (1/1 with the proxy off), the route has no endpoint, and both Deployments report
+# available. A pipeline that rolls a failed rollout back on its own (Helm's --rollback-on-failure
+# flag, --atomic in Helm 3, or an equivalent remediation) must still not carry this change: a
+# rollout that fails for another reason is rolled back, which turns recovery mode off by itself and
+# starts the app on a file that may be half restored. When backup.offsite uses the pvc destination,
+# its claim is mounted read-only at /offsite, so the offsite copies can be listed and read.
 #
 # NOTHING IS RECORDED WHILE IT IS ON, and no rule says recovery mode. GroupSyncDashboardNotPolling
 # does not fire: its gauge comes from the stopped process, and a missing series returns nothing.

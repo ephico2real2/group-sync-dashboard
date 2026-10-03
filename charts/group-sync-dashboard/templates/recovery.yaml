@@ -1,6 +1,6 @@
-{{- if eq (include "gsd.recoveryEnabled" .) "true" }}
 # Recovery mode's script (#303), verbatim from scripts/recovery_mode.py; a test holds the two
-# identical. Rendered only while recovery.enabled is true, so the default render has no extra object.
+# identical. Rendered on every release, like the recovery Deployment that mounts it (#532), so
+# turning recovery mode on or off changes only the two Deployments' replicas.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,4 +12,3 @@ metadata:
 data:
   recovery_mode.py: |
 {{ .Files.Get "scripts/recovery_mode.py" | indent 4 }}
-{{- end }}

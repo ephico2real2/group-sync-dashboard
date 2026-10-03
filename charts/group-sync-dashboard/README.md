@@ -454,22 +454,23 @@ once, never rendered — the same for every renderer (Helm, Flux, Argo CD, Kusto
 
 | Key | Default | Notes |
 |---|---|---|
-| `recovery.enabled` | `false` | **stops the dashboard.** The dashboard container runs the chart's recovery script instead of uvicorn, on the same pod spec and the same `/data` volume, so no process holds `gsd.db` while you restore it. No liveness probe; a readiness probe that cannot pass keeps the pod out of the Service. Refused with `replicaCount` other than 1 and with `persistence.enabled=false` |
+| `recovery.enabled` | `false` | **stops the dashboard.** Scales the app's Deployment to 0 and `<fullname>-recovery` to 1 (#532): the app's pod spec and the same `/data` volume, with the chart's recovery script instead of uvicorn, so no process holds `gsd.db` while you restore it. The scheduler starts each workload's pod only once the other's is gone. No liveness or readiness probe; no Service selects the recovery pod. Refused with `replicaCount` other than 1 and with `persistence.enabled=false` |
 | `recovery.ttl` | `2h` | a Go duration (`2h`, `90m`, `1h30m`), counted from the pod's first start and kept in its `/tmp` across container restarts; a new pod (a new value, a deleted or evicted pod) starts a new TTL. At the TTL every process in the container stops, an `oc exec` restore still running included, the pod goes to `CrashLoopBackOff` and its log says how to extend or leave recovery mode. Refused when it is not a duration or is zero |
 
 Set both in the release's values file and roll them out through the release's deployment pipeline, like any
 other value; for a rollback, set the older `image.tag` in the same change. Never with `oc set env`: a GitOps
 tool such as Argo CD (selfHeal) reverts a hand edit of the Deployment, and the variable alone would leave the
 liveness probe to kill the pod in the middle of a restore. The script
-(`charts/group-sync-dashboard/scripts/recovery_mode.py`) ships in a ConfigMap rendered only while recovery
-is on, not in the image, so it runs under the older image a rollback targets; it imports only the standard
-library and opens nothing under `/data`. With `backup.offsite` on its `pvc` destination, the offsite claim
-is mounted read-only at `/offsite`. The pod reads `1/2` ready with the oauth-proxy sidecar (the sidecar is
-ready, the dashboard is not) and `0/1` with the proxy off; the Deployment never reports available, so a
-pipeline step that waits for the rollout reports it failed. A pipeline that rolls a failed rollout back on its
-own (Helm's `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry
-this change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
-restored.
+(`charts/group-sync-dashboard/scripts/recovery_mode.py`) ships in a ConfigMap, not in the image, so it runs
+under the older image a rollback targets; it imports only the standard library and opens nothing under
+`/data`. The recovery Deployment and its ConfigMap are rendered on every release at 0 replicas, so the switch
+changes only the two Deployments' `replicas` and the next rollout undoes it whatever the deployment tool
+prunes. With `backup.offsite` on its `pvc` destination, the offsite claim is mounted read-only at `/offsite`.
+The recovery pod reads `2/2` ready with the oauth-proxy sidecar and `1/1` with the proxy off, and both
+Deployments report available. A pipeline that rolls a failed rollout back on its own (Helm's
+`--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must still not carry this
+change: a rollout that fails for another reason is rolled back, which turns recovery mode off by itself and
+starts the app on a file that may be half restored.
 
 **Nothing is recorded while it is on.** No rule says recovery mode: `GroupSyncDashboardNotPolling` does not
 fire, because its gauge comes from the stopped process and a missing series returns nothing. With

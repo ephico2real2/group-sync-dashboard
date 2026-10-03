@@ -301,13 +301,14 @@ into recovery mode by hand, restores with the same script and gives the release 
 >   Application reading Synced). A hand recovery edit is both: self-heal would restore the app's command and liveness
 >   probe and start the app, perhaps on a half-restored database, while the pod still carries the recovery variables.
 >   Pause automated sync first and confirm the pause held (§4d steps 1 and 2).
-> * **The endless retry.** Recovery mode never reports healthy, so a sync that turns it on through the values file
->   fails at the Deployment's progress deadline and is retried under the Application's `syncPolicy.retry`, and every
->   later change, `recovery.enabled: false` included, waits until the last retry has failed: 12 min 49 s on the lab
->   with `limit: 3` and a 30 s backoff doubling up to 5 min (#532). A `limit` less than 0 retries without end, and an
->   automated sync with no `retry` block retries 5 times. Meanwhile the Application reads OutOfSync with its
->   operation Running (`Retrying attempt #N`), the new revision is not applied, and the recovery pod stays `1/2`.
->   The way out is §4d step 7: pause, then end the running operation.
+> * **The endless retry, on a chart before 0.65.0.** There, recovery mode never reports healthy, so a sync that turns
+>   it on through the values file fails at the Deployment's progress deadline and is retried under the Application's
+>   `syncPolicy.retry`, and every later change, `recovery.enabled: false` included, waits until the last retry has
+>   failed: 12 min 49 s on the lab with `limit: 3` and a 30 s backoff doubling up to 5 min (#532). A `limit` less
+>   than 0 retries without end, and an automated sync with no `retry` block retries 5 times. Meanwhile the
+>   Application reads OutOfSync with its operation Running (`Retrying attempt #N`), the new revision is not applied,
+>   and the recovery pod stays `1/2`. The way out is §4d step 7: pause, then end the running operation. From chart
+>   0.65.0 recovery mode is its own Deployment and both Deployments report Healthy, so there is nothing to retry.
 
 **The script, in recovery mode (#302).** With the release's pod in recovery mode (#303: `recovery.enabled: true`
 in the release's values file), run `local-development/restore-db.sh --list` from your laptop, then
@@ -352,19 +353,20 @@ in this release's values file and roll it out through the release's deployment p
    `recovery.enabled: true` and `recovery.ttl` (for example `2h`, longer than the restore needs), and roll it
    out. For a rollback, set the older `image.tag` in the same change, so the restore runs under the image
    that will open the file.
-2. **Wait for the recovery pod.** `oc get pods -n $NS -l app=$REL` shows `1/2` ready (`0/1` with the proxy
-   off) and `Running`: the dashboard container is not ready, so the Service sends it nothing.
-   `oc logs -n $NS deploy/$REL -c dashboard` starts with `RECOVERY MODE`, `the app is NOT running and no data
-   is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the offsite claim is at
-   `/offsite`, read-only. The Deployment never reports available, so a pipeline step that waits for the
-   rollout reports it failed; that is expected. A pipeline that rolls a failed rollout back on its own (Helm's
-   `--rollback-on-failure` flag, `--atomic` in Helm 3, or an equivalent remediation) must not carry this
-   change: the rollback turns recovery mode off by itself and starts the app on a file that may be half
-   restored.
+2. **Wait for the recovery pod.** The app's Deployment goes to 0 and `$REL-recovery` to 1 (chart 0.65.0 and
+   later, #532); the scheduler holds the recovery pod `Pending` until the app's pod is gone.
+   `oc get pods -n $NS -l app=$REL-recovery` then shows `2/2` ready (`1/1` with the proxy off) and `Running`; no
+   Service selects it. `oc logs -n $NS deploy/$REL-recovery -c dashboard` starts with `RECOVERY MODE`, `the app is
+   NOT running and no data is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the
+   offsite claim is at `/offsite`, read-only. Both Deployments report available, so a pipeline step that waits for
+   the rollout succeeds. A pipeline that rolls a failed rollout back on its own (Helm's `--rollback-on-failure`
+   flag, `--atomic` in Helm 3, or an equivalent remediation) must still not carry this change: a rollout that
+   fails for another reason is rolled back, which turns recovery mode off by itself and starts the app on a file
+   that may be half restored.
 3. **Restore** with `local-development/restore-db.sh --list`, then `--from-version <ID>` (**The script, in recovery
    mode**, above), each with `--namespace $NS --release $REL` unless both are the script's defaults
    (`group-sync-dashboard`); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use
-   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL -c dashboard -- sh -c '…'` instead of `oc debug`
+   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL-recovery -c dashboard -- sh -c '…'` instead of `oc debug`
    or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
    at the TTL the script exits and every process in the container stops with it, a restore still running
    included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
@@ -375,10 +377,11 @@ in this release's values file and roll it out through the release's deployment p
    monotonic clock, so setting the wall clock back does not lengthen it; if the node restarts under the pod,
    the TTL counts as reached.
 5. **Turn it off**, and verify with §4c: set `recovery.enabled: false` in the values file (keep a rollback's
-   older `image.tag`) and roll it out. When the change is applied the recovery pod stops and the app starts on the
-   restored file. Where the release's GitOps controller retries a failed sync (a `syncPolicy.retry` policy), the
-   change waits until the retries of the sync that turned recovery on have run out, 12 min 49 s on the lab, and the
-   recovery pod keeps running until then (#532, a known limitation of this release, and the risks box above).
+   older `image.tag`) and roll it out. The rollout scales the recovery Deployment to 0 and the app's back to 1; the
+   scheduler holds the app's pod until the recovery pod is gone, and the app starts on the restored file within
+   the one rollout (#532). On a chart before 0.65.0, where the release's GitOps controller retries a failed sync (a
+   `syncPolicy.retry` policy), the change waits until the retries of the sync that turned recovery on have run
+   out, 12 min 49 s on the lab, and the recovery pod keeps running until then (the risks box above).
 
 Nothing is recorded while recovery mode is on, and no rule says so: `GroupSyncDashboardNotPolling` reads a
 gauge the stopped process no longer emits, so it returns nothing. With reporting on,
@@ -583,8 +586,9 @@ old copy to *read* its history is a reason to set both windows to `0` first.
 
 For an incident on a release Argo CD syncs (#533; the operator's decision of 2026-10-02). It replaces steps 1, 2 and
 5 of the values-file path; the restore is the same script. Every step was walked on the CRC lab (Argo CD v3.4.7, chart
-0.61.2), the restore and step 7 included (SPEC_E10's §5 walk, 2026-10-02); the ApplicationSet case follows Argo CD's
-documentation. You need the right to patch the release's Application in Argo CD's namespace, `helm`, and a release at one replica (recovery
+0.61.2), the restore and step 7 included (SPEC_E10's §5 walk, 2026-10-02); steps 3, 5 and 6 as chart 0.65.0 changes
+them (#532) are walked by SPEC_E11's §5; the ApplicationSet case follows Argo CD's
+documentation. You need the right to patch the release's Application in Argo CD's namespace, to scale the release's Deployments, and a release at one replica (recovery
 mode and `restore-db.sh` need exactly one pod).
 
 1. **Find the Application, and whether an ApplicationSet owns it.** The Deployment's tracking annotation reads
@@ -610,31 +614,24 @@ mode and `restore-db.sh` need exactly one pod).
    It must print `false` and a phase that is not `Running`, and the same a minute later. With `enabled: false` Argo CD
    runs neither automated sync nor self-heal for this Application ("controller will skip automated sync even if
    `prune`, `self-heal` and `allowEmpty` are set"), and `prune` and `selfHeal` stay as they were for step 5. A sync
-   already running is not stopped by the pause: it goes on waiting for the Deployment to be healthy, which the hand
-   edit of step 3 never is, fails at the progress deadline and is retried, and each retry applies what Git renders
+   already running is not stopped by the pause: if it fails it is retried, and each retry applies what Git renders
    over the hand edit, so the app would start on a file a restore may still be writing. With `Running`, terminate the
    operation first (step 7's command) and confirm again.
-3. **Put the pod into recovery mode by hand.** Setting `GSD_RECOVERY_MODE` alone is not enough: the app keeps running
-   with the variable set, and `restore-db.sh --list` refuses with `uvicorn is running here (pid 1)` (measured). The
-   edit is what `recovery.enabled: true` renders for the dashboard container
-   (`charts/group-sync-dashboard/templates/deployment.yaml#RECOVERY MODE (#303)`): the chart's recovery script, from
-   the chart version the release runs, in the ConfigMap the chart would create, as the container's command, with the
-   two variables and without the liveness probe (nothing serves `/healthz`, and a kill would end a restore). The
-   readiness probe stays and fails, so the Service sends the pod nothing. `TTL` is how long the pod waits for you (§4
-   step 1), counted from its start:
+3. **Put the release into recovery mode by hand.** The chart renders the recovery Deployment, `$REL-recovery`, on
+   every release at 0 replicas (chart 0.65.0 and later, #532), so the hand edit is the two `replicas` that
+   `recovery.enabled: true` renders, and nothing else: the pod is the chart's own recovery pod, with the release's
+   `recovery.ttl` and, on the `pvc` destination, the offsite claim at `/offsite`. The scheduler starts the recovery
+   pod only once the app's pod is gone (its required pod anti-affinity), whichever command runs first:
 
    ````sh
-   oc get deploy -n $NS $REL -o jsonpath='{.metadata.labels.helm\.sh/chart}{"\n"}'
-   helm pull group-sync-dashboard --repo https://ephico2real2.github.io/group-sync-dashboard --version <the version after group-sync-dashboard-> --untar --untardir ./break-glass
-   oc create configmap -n $NS $REL-recovery --from-file=recovery_mode.py=./break-glass/group-sync-dashboard/scripts/recovery_mode.py
-   TTL=2h
-   oc patch -n $NS deploy/$REL --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard","command":["python3.14","/scripts/recovery_mode.py","--release","'$REL'"],"livenessProbe":null,"env":[{"name":"GSD_RECOVERY_MODE","value":"true"},{"name":"GSD_RECOVERY_MODE_TTL","value":"'$TTL'"}],"volumeMounts":[{"name":"recovery-script","mountPath":"/scripts","readOnly":true}]}],"volumes":[{"name":"recovery-script","configMap":{"name":"'$REL'-recovery","defaultMode":292}}]}}}}'
+   oc scale -n $NS deploy/$REL --replicas=0
+   oc scale -n $NS deploy/$REL-recovery --replicas=1
    ````
 
-   The app stops before the recovery pod starts (the chart's `Recreate` strategy at one replica). Wait until
-   `oc get pods -n $NS -l app=$REL` shows one pod `1/2` `Running` whose log starts with `RECOVERY MODE` (§4 step 2);
-   on the lab it took 4 s. The offsite claim is not mounted by this edit: restore a copy that is only on `/offsite`
-   with §4b. For more time, run the patch again with a longer `TTL`; the new pod counts it from its start.
+   Wait until `oc get pods -n $NS -l app=$REL-recovery` shows one pod `2/2` `Running` whose log starts with
+   `RECOVERY MODE` (§4 step 2). For more time, `oc rollout restart -n $NS deploy/$REL-recovery`: the new pod counts
+   the TTL from its start, and the restart ends any `oc exec` in the old one.
+
 4. **Restore** with the script, as **The script, in recovery mode** says. It accepted this pod on the lab (`recovery
    mode, at least 1h59m56s of its TTL left`), listed its copies, and restored the newest (a loss window of 5m44s, no
    rows discarded):
@@ -654,30 +651,19 @@ mode and `restore-db.sh` need exactly one pod).
    oc rollout status -n $NS deploy/$REL
    ````
 
-   With `selfHeal: true` Argo CD puts back the command and the liveness probe and the app starts on the restored file
-   (on the lab the command was back 2.6 s after the patch, the rollout done 19.8 s after, the Application
-   Synced/Healthy). The wait comes first because `oc rollout status` run before Argo CD's apply reports the recovery
-   rollout, which never completed: after ten minutes in recovery mode (the Deployment's progress deadline) it fails
-   at once with `exceeded its progress deadline` (measured). With `selfHeal` off and Git unchanged, automated sync
+   With `selfHeal: true` Argo CD puts both `replicas` back, the recovery Deployment's to 0 and the app's to 1, and
+   the app starts on the restored file once the recovery pod is gone. The wait comes first because `oc rollout
+   status` run before Argo CD's apply reports the app's Deployment at 0 of 0, already complete. With `selfHeal` off and Git unchanged, automated sync
    does not sync a revision it has already synced ("a second sync will not be attempted, unless `selfHeal` flag is
    set to true"): sync the Application once from Argo CD, and the wait ends when it has (not measured). The
    operator's alternative for a rollback is Argo CD's history and rollback, while still paused (Argo CD refuses it
    while automated sync is on); commit the same values to Git before you end the pause, or automated sync takes the
    release back to what Git says.
-6. **Remove what the hand edit added.** Argo CD applies only what it renders, so it leaves the two variables, the
-   `/scripts` mount and its volume in place and still reads Synced (measured). Remove them, and the ConfigMap, once
-   the app runs. The pod restarts once more (19 s on the lab); afterwards the pod template equals the one before the
-   incident (on the lab, 0 of 163 fields differed):
+6. **Nothing to remove.** The hand edit of step 3 changed only the two `replicas` fields, which Argo CD renders and
+   step 5 puts back; the release reads Synced with nothing left over. Verify with §4c.
 
-   ````sh
-   oc patch -n $NS deploy/$REL --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"dashboard","env":[{"name":"GSD_RECOVERY_MODE","$patch":"delete"},{"name":"GSD_RECOVERY_MODE_TTL","$patch":"delete"}],"volumeMounts":[{"mountPath":"/scripts","$patch":"delete"}]}],"volumes":[{"name":"recovery-script","$patch":"delete"}]}}}}'
-   oc rollout status -n $NS deploy/$REL
-   oc delete configmap -n $NS $REL-recovery
-   ````
-
-   Then verify with §4c.
-7. **A sync that is already retrying (the endless retry in **Risks under Argo CD**).** When recovery mode was turned
-   on through the values file and the Application's operation reads Running with `Retrying attempt #N`, the pause
+7. **A sync that is already retrying (the endless retry in **Risks under Argo CD**, a chart before 0.65.0).** When
+   recovery mode was turned on through the values file and the Application's operation reads Running with `Retrying attempt #N`, the pause
    stops new automated syncs but not that operation: Argo CD retries a failed operation whatever the sync policy says,
    up to its `limit`. On the lab, after the pause, retry #2 failed and the operation scheduled retry #3 and stayed
    Running. **Incident step:** pause (step 2), then terminate the operation, from the Application's sync status in the

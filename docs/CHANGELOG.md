@@ -10,6 +10,20 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Recovery mode is its own workload (#532, `docs/specs/SPEC_E11_recovery_workload.md`, chart 0.65.0).** The chart
+  renders a second Deployment, `<fullname>-recovery`, on every release at 0 replicas: the app's pod spec with the
+  recovery script, its own labels (no Service, PodDisruptionBudget or ServiceMonitor selects it) and no readiness
+  probe. `recovery.enabled: true` in the release's values file now scales the app's Deployment to 0 and the recovery
+  Deployment to 1, and `false` the other way round, so both report available, a pipeline that waits for the rollout
+  succeeds, and turning recovery mode off takes one rollout, whatever the deployment tool prunes; the 12 min 49 s
+  wait behind a retrying sync, measured on the lab, is gone. A required pod anti-affinity on the recovery pod makes
+  the scheduler start it only once the app's pod is gone, and the app's only once it is gone, so the two never hold
+  the database at once. `restore-db.sh` finds the recovery pod by `app=<release>-recovery` (and `app=<release>` on
+  an older chart); its `--list` note on an unmounted `/offsite` and its closing line after a restore no longer
+  mislead under the break glass. Runbook §4d's hand edit is two `oc scale` commands, with nothing to remove
+  afterwards. Same namespace, ServiceAccount and SCC, no `runAsUser`; no RBAC change (464 rendered lines, none
+  removed and none added).
+
 - **Delete report runs and database copies from the page (#542, `docs/specs/SPEC_H1_gui_cleanup.md`, app 3.1.0,
   chart 0.62.0; `housekeeping.enabled`, on by default).** A cluster administrator (the cluster-admin tier, #322, behind a
   proxy-verified identity) deletes a finished report run from the Library tab's run drawer and a database copy from

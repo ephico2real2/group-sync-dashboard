@@ -89,7 +89,9 @@ def test_t300_10_section_4_is_recovery_mode_and_the_script_with_oc_debug_as_the_
     assert "--namespace $NS --release $REL" in body, "the script defaults to group-sync-dashboard for both; the runbook's NS is not it"
     code = code_lines(body)
     assert any(line.startswith("oc debug -n $NS deploy/$REL") for line in code), "the fallback keeps oc debug"
-    assert not [line for line in code if line.startswith("oc scale")], "no oc scale in §4's commands"
+    # the break glass (§4d) scales the two Deployments by hand since #532; nothing else in §4 does
+    outside = code_lines(body.split("### 4d.", 1)[0])
+    assert not [line for line in outside if line.startswith("oc scale")], "no oc scale in §4's commands outside §4d"
     assert "`replicaCount: 0` in this release's values file" in body
     # the only Helm command line is the one labelled for development and troubleshooting; the break glass (§4d, the
     # last subsection) and the risks box it answers are the one place where Argo CD's controls and hand edits are the
@@ -231,8 +233,10 @@ def test_t533_5_section_4_states_the_risks_under_argo_cd_before_step_1() -> None
         assert words in risks, words
     step5 = flat(body.split("5. **Turn it off**", 1)[1].split("\n\n", 1)[0])
     assert "stops at once" not in step5, "under a retrying sync the recovery pod does not stop at once (#532)"
-    for words in ("#532", "12 min 49 s", "known limitation"):
+    # #532 (SPEC_E11): from chart 0.65.0 the switch takes one rollout; the measured wait is for older charts
+    for words in ("#532", "within the one rollout", "On a chart before 0.65.0", "12 min 49 s"):
         assert words in step5, words
+    assert "nothing to retry" in risks and "endless retry, on a chart before 0.65.0" in risks
 
 
 def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> None:
@@ -248,14 +252,12 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
         "{.metadata.ownerReferences[*].kind}",
         """--type merge -p '{"spec":{"syncPolicy":{"automated":{"enabled":false}}}}'""",
         "{.spec.syncPolicy.automated.enabled} {.status.operationState.phase}",
-        "oc create configmap -n $NS $REL-recovery",
-        '"command":["python3.14","/scripts/recovery_mode.py"',
+        "oc scale -n $NS deploy/$REL --replicas=0",
+        "oc scale -n $NS deploy/$REL-recovery --replicas=1",
         "restore-db.sh --list",
         '[{"op":"remove","path":"/spec/syncPolicy/automated/enabled"}]',
         "--for=jsonpath='{.status.sync.status}'=Synced",
         "oc rollout status -n $NS deploy/$REL",
-        '"$patch":"delete"',
-        "oc delete configmap -n $NS $REL-recovery",
         "argocd app terminate-op $APP",
     ]
     where = []
@@ -264,14 +266,15 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
         assert hits, f"§4d prints no command with {step!r}"
         where.append(hits[0])
     assert where == sorted(where), "§4d's commands are out of order"
-    # the give-back's rollout status comes after the wait for Synced: before Argo CD's apply it reports the recovery
-    # rollout, which never completed, and after the progress deadline it fails at once (measured on the lab)
+    # the give-back's rollout status comes after the wait for Synced: before Argo CD's apply it reports the app's
+    # Deployment at 0 of 0, already complete (#532)
     assert where[steps.index("--for=jsonpath='{.status.sync.status}'=Synced")] < where[steps.index("oc rollout status -n $NS deploy/$REL")]
     prose = flat(glass)
-    for words in ("ignoreApplicationDifferences", "uvicorn is running here", "Incident step", "selfHeal", "0 of 163",
+    for words in ("ignoreApplicationDifferences", "Incident step", "selfHeal", "Nothing to remove",
                   "a phase that is not `Running`", "each retry applies what Git renders over the hand edit",
-                  "exceeded its progress deadline"):
+                  "0 of 0, already complete", "a chart before 0.65.0"):
         assert words in prose, words
+    assert "oc patch -n $NS deploy" not in glass and "helm pull" not in glass, "the hand edit is two oc scale commands"
     # the §5 walk (2026-10-02) ran the restore and step 7; without an Argo CD login the CLI needs its --core form
     assert "Not measured on the lab" not in prose and "except the restore itself" not in prose
     for words in ("argocd --core", 'configmap "argocd-cm" not found', "Operation terminated (retried 3 times)", "5m44s"):
@@ -279,42 +282,23 @@ def test_t533_6_section_4d_pauses_first_and_gives_the_release_back_to_git() -> N
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
-def test_t533_7_the_hand_edit_is_what_recovery_mode_renders_and_the_removal_takes_back_what_it_added() -> None:
-    """§4d's hand edit must be the chart's recovery mode for the dashboard container, or the pod it makes is not the
-    recovery pod `restore-db.sh` and SPEC_E2 promise; and step 6 must remove exactly what it added, because Argo CD
-    leaves every field it does not render (SPEC_E10 §2.10)."""
+def test_t533_7_the_hand_edit_is_what_recovery_mode_renders() -> None:
+    """§4d's hand edit must be the chart's recovery mode, or the pod it makes is not the recovery pod `restore-db.sh`
+    and SPEC_E2 promise. Since #532 (SPEC_E11) it is two `oc scale` commands: applied to the default render they
+    give exactly the render with recovery.enabled: true, so Argo CD's give-back (step 5) leaves nothing behind."""
     glass = section("4").split("### 4d.", 1)[1]
-    prefix = "oc patch -n $NS deploy/$REL --type strategic -p '"
-    patches = [line[len(prefix):].rsplit("'", 1)[0] for line in code_lines(glass) if line.startswith(prefix)]
-    assert len(patches) == 2, patches
-    add, remove = (json.loads(p.replace("'$REL'", "group-sync-dashboard").replace("'$TTL'", "2h")) for p in patches)
+    scale = re.compile(r"^oc scale -n \$NS deploy/\$REL(?P<suffix>-recovery)? --replicas=(?P<n>\d)$")
+    scaled = {"group-sync-dashboard" + (m.group("suffix") or ""): int(m.group("n"))
+              for m in map(scale.match, code_lines(glass)) if m}
+    assert len(scaled) == 2 and len([line for line in code_lines(glass) if line.startswith("oc scale")]) == 2, scaled
 
-    def dashboard(*flags: str) -> tuple[dict, dict]:
+    def deployments(*flags: str) -> dict:
         out = subprocess.run(["helm", "template", "group-sync-dashboard", str(REPO / "charts" / "group-sync-dashboard"),
                               "--set", "ingress.host=t.example.com", *flags],
                              capture_output=True, text=True, check=True).stdout
-        pod = next(d for d in yaml.safe_load_all(out) if d and d["kind"] == "Deployment"
-                   and d["metadata"]["name"] == "group-sync-dashboard")["spec"]["template"]["spec"]
-        return pod, next(c for c in pod["containers"] if c["name"] == "dashboard")
+        return {d["metadata"]["name"]: d for d in yaml.safe_load_all(out) if d and d["kind"] == "Deployment"}
 
-    recovery_pod, recovery = dashboard("--set", "recovery.enabled=true")
-    normal_pod, normal = dashboard()
-    edit_pod = add["spec"]["template"]["spec"]
-    edit = edit_pod["containers"][0]
-    assert edit["name"] == "dashboard" and edit["command"] == recovery["command"]
-    assert edit["livenessProbe"] is None and "livenessProbe" not in recovery and "livenessProbe" in normal
-    rendered = {e["name"]: e.get("value") for e in recovery["env"]}
-    assert {e["name"]: e["value"] for e in edit["env"]} == {n: rendered[n] for n in ("GSD_RECOVERY_MODE", "GSD_RECOVERY_MODE_TTL")}
-    assert edit["volumeMounts"] == [m for m in recovery["volumeMounts"] if m["mountPath"] == "/scripts"]
-    assert edit_pod["volumes"] == [v for v in recovery_pod["volumes"] if v["name"] == "recovery-script"]
-    # what the edit adds is not in the normal render, so Argo CD never takes it away: only step 6 does
-    assert not {e["name"] for e in edit["env"]} & {e["name"] for e in normal["env"]}
-    assert "/scripts" not in {m["mountPath"] for m in normal["volumeMounts"]}
-    assert "recovery-script" not in {v["name"] for v in normal_pod["volumes"]}
-    undo_pod = remove["spec"]["template"]["spec"]
-    undo = undo_pod["containers"][0]
-    assert undo["name"] == "dashboard"
-    assert all(item.get("$patch") == "delete" for item in [*undo["env"], *undo["volumeMounts"], *undo_pod["volumes"]])
-    assert {e["name"] for e in undo["env"]} == {e["name"] for e in edit["env"]}
-    assert {m["mountPath"] for m in undo["volumeMounts"]} == {m["mountPath"] for m in edit["volumeMounts"]}
-    assert {v["name"] for v in undo_pod["volumes"]} == {v["name"] for v in edit_pod["volumes"]}
+    by_hand, rendered = deployments(), deployments("--set", "recovery.enabled=true")
+    for name, replicas in scaled.items():
+        by_hand[name]["spec"]["replicas"] = replicas
+    assert by_hand == rendered
