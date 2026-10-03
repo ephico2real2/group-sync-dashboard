@@ -159,6 +159,17 @@ Decisions made on "easy to manage, best practice", corrections to the issue, and
       (`local-development/gsd/poller.py#reporting tail skipped`). §6's two cells for the checker re-measured (18 / 2,
       50 / 0).
 
+11. **Corrections at implementation of step 1 (2026-10-03), written into the blocks before any were applied.**
+    - **The versions.** The tree reached chart 0.66.1 (SPEC_G3, #558). Under SPEC_E5's version rule, step 1 takes
+      chart 0.66.2 and step 2 0.66.3, the header's own cells. Every 0.60.3 in the blocks becomes 0.66.2 and every
+      0.60.4 becomes 0.66.3, in the deferred blocks too. Block 13's Old text is now the tree's `version: 0.66.1` line,
+      and its history line carries today's date. The prose's numbers are the plan of 2026-10-01, and stay as they were.
+    - **Blocks 8g to 8p are removed.** On 2026-10-01 they moved ten version cells of specs then `specified` (E2, E3,
+      E4, E5, E6, G2 and G3, and their index rows) above this spec's charts. All seven have since merged or been
+      released, and each implementing pull request moved the remaining specified rows itself (#542, #532, #239,
+      #255, #503). So the rows those blocks edit no longer read as they did, and nothing is left for them to do.
+      `tests/test_specs_index.py`'s version-ladder test is what holds the rule now.
+
 ## 1. The mandate, and what is out of scope
 
 The issue (#420, "What must be accomplished"): no ClusterRole the chart renders carries a `leases` rule, under any
@@ -1332,7 +1343,7 @@ New text:
 ```text
 
 - **The dashboard's Leases are also granted in its own namespace (#420 step 1, Epic G #387,
-  `docs/specs/SPEC_G4_namespaced_lease_grant.md`; chart 0.60.3, no application change).** A Role and a RoleBinding,
+  `docs/specs/SPEC_G4_namespaced_lease_grant.md`; chart 0.66.2, no application change).** A Role and a RoleBinding,
   `<fullname>-leases`, in the release namespace grant the dashboard's ServiceAccount `get`, `create` and `update` on
   `coordination.k8s.io/leases`, under the condition the ClusterRole's Lease rule has (`leaderElection.enabled`, or a
   fleet account in use) and only with `rbac.create`. The ClusterRole keeps its rule in this release; a later release
@@ -1353,18 +1364,16 @@ New text:
 Old text:
 
 ```yaml
-# are the last poll's, not Refresh's (Epic D composition review, K5).
-version: 0.59.25
+version: 0.66.1
 ```
 
 New text:
 
 ```yaml
-# are the last poll's, not Refresh's (Epic D composition review, K5).
-# CHART 0.60.3 (2026-10-01), PATCH: the dashboard's Leases are also granted by a Role and RoleBinding,
+# CHART 0.66.2 (2026-10-03), PATCH: the dashboard's Leases are also granted by a Role and RoleBinding,
 # `<fullname>-leases`, in the release namespace, beside the ClusterRole's rule (#420 step 1, SPEC_G4).
 # RBAC REMOVED 0, ADDED 4 atoms; no value or appVersion change.
-version: 0.60.3
+version: 0.66.2
 ```
 
 #### Block 8a — charts/group-sync-dashboard/templates/rbac.yaml: the ClusterRole's Lease comments, true while the rule stays (step 1)
@@ -1542,207 +1551,11 @@ New text:
   # anything it reports on.
 ```
 
-#### Block 8g — docs/specs/README.md: five `specified` specs' version cells move above step 2's chart (the Version note)
+#### Blocks 8g to 8p — removed at implementation (note 11)
 
-SPEC_E5's version rule (the Version note): step 1 takes chart 0.60.3 and step 2 0.60.4, so the five `specified` specs whose chart version is not above 0.60.4 move to the next free rung above it, keeping their MINOR or PATCH and their application version. Blocks 8h to 8l move their headers to match (`tests/test_specs_index.py` holds the two equal).
-
-<!-- block: docs/specs/README.md | edit -->
-
-Old text:
-
-```text
-| E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
-| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.60.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
-| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
-| G3 | [`SPEC_G3_acknowledged_direct_grants.md`](SPEC_G3_acknowledged_direct_grants.md) — acknowledged direct grants: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label or exception annotation leaves the worklist, its counts, the alert and the reports' review figures, counted and listed; `group-sync-operator-helm` is a chart's provenance in the Group gate; no migration | G — access declared | — | app 2.2.0, chart 0.60.1 | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) | specified |
-| E5 | [`SPEC_E5_offsite_on_by_default.md`](SPEC_E5_offsite_on_by_default.md) — the off-volume backup on by default: `backup.offsite.enabled` read as a word (`""` on wherever the copy can work and nothing where it cannot, `true` refusing what cannot work, `false` off), one helper deciding for the CronJob and its two alerts (and for SPEC_E2's recovery mount), and the newest pre-upgrade copy shipped to `/offsite/pre-upgrade` at one replica | E — restore tools and release safety | — | chart 0.60.0 (chart only) | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) | specified |
-```
-
-New text:
-
-```text
-| E2 | [`SPEC_E2_recovery_mode.md`](SPEC_E2_recovery_mode.md) — recovery mode: `recovery.enabled` runs the chart's stdlib recovery script instead of uvicorn on the same pod and `/data` volume, with no liveness probe, a readiness probe that cannot pass and the offsite claim read-only; `recovery.ttl` kept in the pod's `/tmp` across restarts, counted on the node's monotonic clock, then CrashLoopBackOff, the log saying how to extend or leave in the release's values file | E — restore tools and release safety | — | chart 0.61.0 (chart only) | [#303](https://github.com/ephico2real2/group-sync-dashboard/issues/303) | specified |
-| G2 | [`SPEC_G2_platform_users.md`](SPEC_G2_platform_users.md) — platform users in the values file (`platformUsers`), classified in the poller so one list feeds the direct-user view, its alert and the unmanaged finding; either platform list from an existing ConfigMap, mounted as a file, refused beside an inline list | G — access declared | — | app 2.1.0, chart 0.61.0 | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) | specified |
-| E4 | [`SPEC_E4_per_pod_backup_rotation.md`](SPEC_E4_per_pod_backup_rotation.md) — per-pod backup rotation: above one replica each pod names its scheduled backups `gsd-<stamp>-<pod>.db` in the shared `config.backup.dir`, keeps `keep` of its own and deletes no other pod's, and the backup gauge reads its own; one replica unchanged | E — restore tools and release safety | — | app 2.1.0, chart 0.60.6 | [#391](https://github.com/ephico2real2/group-sync-dashboard/issues/391) | specified |
-| G3 | [`SPEC_G3_acknowledged_direct_grants.md`](SPEC_G3_acknowledged_direct_grants.md) — acknowledged direct grants: a direct user grant whose binding carries the operator's `rbac.ocp.io/config-source` label or exception annotation leaves the worklist, its counts, the alert and the reports' review figures, counted and listed; `group-sync-operator-helm` is a chart's provenance in the Group gate; no migration | G — access declared | — | app 2.2.0, chart 0.60.5 | [#503](https://github.com/ephico2real2/group-sync-dashboard/issues/503) | specified |
-| E5 | [`SPEC_E5_offsite_on_by_default.md`](SPEC_E5_offsite_on_by_default.md) — the off-volume backup on by default: `backup.offsite.enabled` read as a word (`""` on wherever the copy can work and nothing where it cannot, `true` refusing what cannot work, `false` off), one helper deciding for the CronJob and its two alerts (and for SPEC_E2's recovery mount), and the newest pre-upgrade copy shipped to `/offsite/pre-upgrade` at one replica | E — restore tools and release safety | — | chart 0.61.0 (chart only) | [#304](https://github.com/ephico2real2/group-sync-dashboard/issues/304) | specified |
-```
-
-#### Block 8h — docs/specs/SPEC_E2_recovery_mode.md: SPEC_E2's version cell, 0.60.0 to 0.61.0 (a MINOR, as before)
-
-<!-- block: docs/specs/SPEC_E2_recovery_mode.md | edit -->
-
-Old text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | chart 0.60.0 (chart only) |
-```
-
-New text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | chart 0.61.0 (chart only) |
-```
-
-#### Block 8i — docs/specs/SPEC_G2_platform_users.md: SPEC_G2's version cell, 0.60.0 to 0.61.0 (a MINOR, as before)
-
-<!-- block: docs/specs/SPEC_G2_platform_users.md | edit -->
-
-Old text:
-
-```text
-| Batch | G — access declared |
-| Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.1.0, chart 0.60.0 |
-```
-
-New text:
-
-```text
-| Batch | G — access declared |
-| Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.1.0, chart 0.61.0 |
-```
-
-#### Block 8j — docs/specs/SPEC_E4_per_pod_backup_rotation.md: SPEC_E4's version cell, 0.59.26 to 0.60.6 (a PATCH, as before)
-
-<!-- block: docs/specs/SPEC_E4_per_pod_backup_rotation.md | edit -->
-
-Old text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.59.26 |
-```
-
-New text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.6 |
-```
-
-#### Block 8k — docs/specs/SPEC_G3_acknowledged_direct_grants.md: SPEC_G3's version cell, 0.60.1 to 0.60.5 (a PATCH, as before)
-
-<!-- block: docs/specs/SPEC_G3_acknowledged_direct_grants.md | edit -->
-
-Old text:
-
-```text
-| Batch | G — access declared |
-| Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.2.0, chart 0.60.1 |
-```
-
-New text:
-
-```text
-| Batch | G — access declared |
-| Release | — (post-programme; its own PR and its own review) |
-| Version on release | app 2.2.0, chart 0.60.5 |
-```
-
-#### Block 8l — docs/specs/SPEC_E5_offsite_on_by_default.md: SPEC_E5's version cell, 0.60.0 to 0.61.0 (a MINOR, as before)
-
-<!-- block: docs/specs/SPEC_E5_offsite_on_by_default.md | edit -->
-
-Old text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | chart 0.60.0 (chart only) |
-```
-
-New text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | chart 0.61.0 (chart only) |
-```
-
-#### Block 8m — docs/specs/README.md: SPEC_E3's version cell moves above step 2's chart (the Version note)
-
-SPEC_E3 (#302) merged after blocks 8g to 8l were written; the same rule moves its chart claim, 0.59.26, to the next free PATCH above 0.60.4, after 8k's 0.60.5 and 8j's 0.60.6: 0.60.7. Its application version stays. Block 8n moves its header.
-
-<!-- block: docs/specs/README.md | edit -->
-
-Old text:
-
-```text
-| E3 | [`SPEC_E3_restore_db.md`](SPEC_E3_restore_db.md) — `restore-db.sh`: from the laptop, list every copy the recovery pod can restore by `<user_version>-<stamp>` ID, and restore one with the checks, the loss window, the live set kept and an atomic swap; the helper is streamed into the pod over `oc exec -i`, so it runs under the image a rollback targets | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) | specified |
-```
-
-New text:
-
-```text
-| E3 | [`SPEC_E3_restore_db.md`](SPEC_E3_restore_db.md) — `restore-db.sh`: from the laptop, list every copy the recovery pod can restore by `<user_version>-<stamp>` ID, and restore one with the checks, the loss window, the live set kept and an atomic swap; the helper is streamed into the pod over `oc exec -i`, so it runs under the image a rollback targets | E — restore tools and release safety | — | app 2.1.0, chart 0.60.7 | [#302](https://github.com/ephico2real2/group-sync-dashboard/issues/302) | specified |
-```
-
-#### Block 8n — docs/specs/SPEC_E3_restore_db.md: SPEC_E3's version cell, 0.59.26 to 0.60.7 (a PATCH, as before)
-
-<!-- block: docs/specs/SPEC_E3_restore_db.md | edit -->
-
-Old text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.59.26 |
-```
-
-New text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.7 |
-```
-
-#### Block 8o — docs/specs/README.md: SPEC_E6's version cell moves above step 2's chart (the Version note)
-
-SPEC_E6 (#306) merged after blocks 8g to 8n were written; the same rule moves its chart claim, 0.59.26, to the next free PATCH above 0.60.4, after 8k's 0.60.5, 8j's 0.60.6 and 8m's 0.60.7: 0.60.8. Its application version stays. Block 8p moves its header. SPEC_E7 and SPEC_E8 claim no version, and SPEC_E9's cell names no chart number, so none of them moves.
-
-<!-- block: docs/specs/README.md | edit -->
-
-Old text:
-
-```text
-| E6 | [`SPEC_E6_kpi_backups_card.md`](SPEC_E6_kpi_backups_card.md) — the KPI page's Backups card: the last copy as an instant and when the next is due, the copies kept against `keep`, the failures since start, the newest copy's schema against the build's and the newest pre-upgrade copy, in one of five states said in words (disabled, never "0 backups"), from what the dashboard process already has; no Prometheus, no new metric, no new permission; composes with SPEC_E4 | E — restore tools and release safety | — | app 2.1.0, chart 0.59.26 | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) | specified |
-```
-
-New text:
-
-```text
-| E6 | [`SPEC_E6_kpi_backups_card.md`](SPEC_E6_kpi_backups_card.md) — the KPI page's Backups card: the last copy as an instant and when the next is due, the copies kept against `keep`, the failures since start, the newest copy's schema against the build's and the newest pre-upgrade copy, in one of five states said in words (disabled, never "0 backups"), from what the dashboard process already has; no Prometheus, no new metric, no new permission; composes with SPEC_E4 | E — restore tools and release safety | — | app 2.1.0, chart 0.60.8 | [#306](https://github.com/ephico2real2/group-sync-dashboard/issues/306) | specified |
-```
-
-#### Block 8p — docs/specs/SPEC_E6_kpi_backups_card.md: SPEC_E6's version cell, 0.59.26 to 0.60.8 (a PATCH, as before)
-
-<!-- block: docs/specs/SPEC_E6_kpi_backups_card.md | edit -->
-
-Old text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.59.26 |
-```
-
-New text:
-
-```text
-| Batch | E — restore tools and release safety |
-| Release | — (post-programme; Epic E's release, milestone 3.0.0) |
-| Version on release | app 2.1.0, chart 0.60.8 |
-```
+Ten blocks that moved other specs' planned versions above this spec's charts, as they stood on 2026-10-01.
+Every spec they edited has since merged or been released, and each implementing pull request moved the
+specified rows itself; note 11 says what replaced them.
 
 ### Step 2 — blocks 9 to 24 (`deferred-block` until step 2's pull request; after the operator's agreement)
 
@@ -2128,14 +1941,14 @@ New text:
 ```text
 
 - **The Lease grant leaves the ClusterRole (#420 step 2, Epic G #387, `docs/specs/SPEC_G4_namespaced_lease_grant.md`;
-  chart 0.60.4, no application change; the narrowing the operator agreed to on #420).** The reader ClusterRole no
+  chart 0.66.3, no application change; the narrowing the operator agreed to on #420).** The reader ClusterRole no
   longer carries `get`, `create`, `update` on `coordination.k8s.io/leases`; step 1's `<fullname>-leases` Role and
   RoleBinding in the release namespace are the grant. The dashboard's ServiceAccount can no longer create or update a
   Lease outside its own namespace; before, it could in every namespace, `kube-node-lease`'s node heartbeats and the
   control plane's election Leases included (measured on the lab, `oc auth can-i`). Rendered RBAC: REMOVED the 3 atoms
   `ClusterRole <fullname>-reader: coordination.k8s.io/leases get, create, update` wherever they rendered; ADDED 0. The
   template comments, the values file, the chart README and `docs/reference-architecture.md` say where the grant lives.
-  Upgrade through a release that carries both grants (chart 0.60.3, or a later one before this) first; an upgrade
+  Upgrade through a release that carries both grants (chart 0.66.2, or a later one before this) first; an upgrade
   that skips them can refuse the outgoing pod one round of Lease calls (chart README, RBAC).
 ```
 
@@ -2147,15 +1960,15 @@ Old text:
 
 ```yaml
 # RBAC REMOVED 0, ADDED 4 atoms; no value or appVersion change.
-version: 0.60.3
+version: 0.66.2
 ```
 
 New text:
 
 ```yaml
 # RBAC REMOVED 0, ADDED 4 atoms; no value or appVersion change.
-# CHART 0.60.4 (2026-10-01), PATCH: the reader ClusterRole's leases rule is removed; the `<fullname>-leases`
+# CHART 0.66.3 (2026-10-01), PATCH: the reader ClusterRole's leases rule is removed; the `<fullname>-leases`
 # Role is the Lease grant (#420 step 2, SPEC_G4, the operator's agreement on #420). RBAC REMOVED 3 atoms
 # (leases get, create, update on the reader ClusterRole), ADDED 0; no value or appVersion change.
-version: 0.60.4
+version: 0.66.3
 ```
