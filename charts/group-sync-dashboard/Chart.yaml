@@ -342,7 +342,9 @@ type: application
 # CHART 0.66.3 (2026-10-01), PATCH: the reader ClusterRole's leases rule is removed; the `<fullname>-leases`
 # Role is the Lease grant (#420 step 2, SPEC_G4, the operator's agreement on #420). RBAC REMOVED 3 atoms
 # (leases get, create, update on the reader ClusterRole), ADDED 0; no value or appVersion change.
-version: 0.66.3
+# CHART 0.66.4 (2026-10-03), PATCH: appVersion moves to application 4.0.0 (below); Epic G: access
+# declared, platform identities configured (#387).
+version: 0.66.4
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -478,7 +480,8 @@ version: 0.66.3
 # for the cluster-admin tier (#542). MINOR.
 # 3.2.0 (2026-10-03). An estate names its own platform users in the values file or a ConfigMap, and either platform list can live in a ConfigMap; the shipped platform users gain `kube:admin` (#255). MINOR.
 # 3.3.0 (2026-10-03). A direct user grant whose binding carries the operator's config-source label or exception annotation leaves the Namespace audit worklist, its counts and the direct-user alert, and is counted and listed as acknowledged; group-sync-operator-helm is a chart's provenance in the Group gate (#503). MINOR.
-appVersion: "3.3.0"
+# 4.0.0 (2026-10-03). Epic G: access declared, platform identities configured (#387). MAJOR.
+appVersion: "4.0.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

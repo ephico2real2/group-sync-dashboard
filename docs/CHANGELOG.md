@@ -8,7 +8,14 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 4.0.0 — chart 0.66.4 — 2026-10-03
+
+- **Epic G: access declared, platform identities configured (#387).** Its children: G1 #239, every route and
+  page declares its tier, proved per persona (PR #554); G2 #255, platform users per estate and the platform lists
+  from a ConfigMap (application 3.2.0, PR #556); G3 #503, acknowledged direct grants counted apart (application
+  3.3.0, PR #558); G4 #420, the Lease grant namespaced in two steps (charts 0.66.2 and 0.66.3, PRs #560 and #562).
+  Also in this release: deleting report runs and database copies from the page (#542, application 3.1.0, PR #547)
+  and recovery mode as its own workload (#532, charts 0.65.0 and 0.65.1, PRs #551 and #552).
 
 - **The Lease grant leaves the ClusterRole (#420 step 2, Epic G #387, `docs/specs/SPEC_G4_namespaced_lease_grant.md`;
   chart 0.66.3, no application change; the narrowing the operator agreed to on #420).** The reader ClusterRole no

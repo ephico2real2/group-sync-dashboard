@@ -7,7 +7,7 @@
 | Release | — (post-programme; its own PR and its own review) |
 | Version on release | no version change (tests and docs only) |
 | Issue | [#239](https://github.com/ephico2real2/group-sync-dashboard/issues/239) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#387) and its decisions of 2026-09-30 and 2026-10-01. Measured on main `5c03a9b1` on this machine (Python 3.14, FastAPI 0.141.1, Starlette 1.6.0, the versions the venv and the image carry), in a browser (Playwright, Chromium), and read-only on the lab. §7's blocks were cut from a copy of `5c03a9b1` with the design implemented and proved against a clean tree (§4.4). Revised the same day after the review of `de42286a` by OB3 (in Grok's seat) and Codex, on the orchestrator's decisions (Orchestrator's notes, "The review of `de42286a`"), and re-proved on main `dd51b91f` (§4.4) |
 
 ## How to read this spec

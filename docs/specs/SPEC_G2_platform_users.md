@@ -7,7 +7,7 @@
 | Release | — (post-programme; its own PR and its own review) |
 | Version on release | app 3.2.0, chart 0.66.0 |
 | Issue | [#255](https://github.com/ephico2real2/group-sync-dashboard/issues/255) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from #255 (body refined 2026-09-30, "Decisions and corrections (2026-10-01)"), its epic #387 and main `afa01bb8` (application 2.0.0, chart 0.59.25). Measured on this machine (Python 3.14.7, helm v4.3.0) and read-only on the CRC lab (2026-10-01, 13:06–13:07Z). §7 was cut from an implemented copy of `afa01bb8` and proved against a clean tree (§4.3). Revised the same day after the review of `4c75c65b` by OB3 (in Grok's seat) and Codex, on the orchestrator's decisions (Orchestrator's notes, 4), on a branch that merged main `21132a25` (SPEC G1, #506); the corrected blocks were proved again on that main (§4.2, §4.3) |
 
 ## How to read this spec
