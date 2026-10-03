@@ -160,17 +160,20 @@ spec:
       tolerations: {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- $affinity := deepCopy (.Values.affinity | default dict) }}
-      {{- if $recovery }}
-      {{- /* THE ORDERING ON THE DATA CLAIM (#532). The scheduler places no recovery pod while a pod
-      with the app's selector labels exists, terminating ones included, and no app pod while a
-      recovery pod exists (it applies an existing pod's required anti-affinity to the incoming
-      pod), so the two never hold gsd.db at once. kubernetes.io/os has one value on every node that
-      can run this image, which makes the domain the whole cluster rather than one node. */}}
+      {{- /* THE ORDERING ON THE DATA CLAIM (#532). Each workload's pod carries a required
+      anti-affinity against the other's: the scheduler places no recovery pod while an app pod exists,
+      terminating ones included, and no app pod while a recovery pod exists, so the two never hold
+      gsd.db at once. Each names the other in its OWN terms because the scheduler re-queues a waiting
+      pod on a delete only when the deleted pod matches the waiting pod's own anti-affinity
+      (kube-scheduler interpodaffinity isSchedulableAfterPodChange): with the term on the recovery
+      pod alone, the app pod waited for the 5-minute unschedulable flush (SPEC_E11 note 8, 303 s).
+      kubernetes.io/os has one value on every node that can run this image, which makes the domain
+      the whole cluster rather than one node. */}}
+      {{- $other := ternary (include "gsd.selectorLabels" .) (include "gsd.recoverySelectorLabels" .) $recovery }}
       {{- $anti := $affinity.podAntiAffinity | default dict }}
-      {{- $term := dict "labelSelector" (dict "matchLabels" (include "gsd.selectorLabels" . | fromYaml)) "topologyKey" "kubernetes.io/os" }}
+      {{- $term := dict "labelSelector" (dict "matchLabels" ($other | fromYaml)) "topologyKey" "kubernetes.io/os" }}
       {{- $_ := set $anti "requiredDuringSchedulingIgnoredDuringExecution" (append ($anti.requiredDuringSchedulingIgnoredDuringExecution | default list) $term) }}
       {{- $_ := set $affinity "podAntiAffinity" $anti }}
-      {{- end }}
       {{- with $affinity }}
       affinity: {{- toYaml . | nindent 8 }}
       {{- end }}
