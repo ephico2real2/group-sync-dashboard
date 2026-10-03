@@ -10,6 +10,20 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **A report's sha256 covers its data only (#270, Epic F #386, `docs/specs/SPEC_F1_data_only_seal.md`; application
+  4.1.0, chart 0.66.5).** Page one (Provenance and coverage) is no longer inside the hash: it states the run. When
+  the report was generated, by whom, its run id, the report service's version and commit, the snapshot's age, the
+  marking, the binding interval and the PDF variant leave the hash; the data facts on page one stay sealed through
+  their own fields: the cluster and its API URL, the snapshot's stamp and schema and the last poll
+  (`sealed_provenance`), the coverage, the parameters and the rosters switch. Two runs of a report over one
+  snapshot with the same parameters now return the same sha256, whoever runs them; a new snapshot hashes
+  differently. Page one keeps every row and word. The `.json` keeps every key and every section and gains
+  `sealed_provenance` and a `sealed` flag per section; its hash is the sha256 of the canonical keys with the
+  sections narrowed to the sealed ones. **Every artefact generated after this release hashes differently from one
+  generated before it over the same data**, once, because what the hash covers changed; stored runs are not
+  rewritten and each still matches its own `.json`. Login activity's window ends at the generation instant, so two
+  of its runs agree only at one clock (SPEC_F1, Orchestrator's notes 1). No permission, value or migration.
+
 - **`release-crc.sh --argocd` no longer times out when nothing needs syncing (#534, `docs/specs/SPEC_A4_argocd_wait_empty_fields.md`;
   lab tooling, no version change).** `argocd-wait.sh` compared the Application's `spec.source` with Argo CD's
   `status.sync.comparedTo.source` as JSON text. Argo CD writes the latter from `omitempty` Go structs, so the

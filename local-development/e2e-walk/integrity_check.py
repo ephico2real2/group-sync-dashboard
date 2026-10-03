@@ -2,8 +2,9 @@
 """Four-way integrity check on the artefacts a walk downloaded.
 
 For every <run>/reports/*.json: recompute the sha256 of the canonical data the same way the
-service seals it (gsd/reporting/model.py, Report.seal: name, cluster, params, coverage, totals,
-truncated, include_members, sections; sorted keys, compact separators, default=str) and compare
+service seals it (gsd/reporting/model.py, Report.seal: name, cluster, api_url, params, coverage,
+totals, truncated, include_members, sealed_provenance, and the sections whose `sealed` is true;
+sorted keys, compact separators, default=str; SPEC_F1, #270) and compare
 it with (1) the JSON's own `sha256` field, (2) the run record the page polled (results.json),
 (3) the PDF's metadata (`sha256 <hex>` in the document subject), (4) the HTML (the 16-char
 prefix in the header and footer). Also checks the PDF/A marker. Writes <run>/integrity.jsonl,
@@ -18,7 +19,18 @@ import json
 import pathlib
 import sys
 
-CANONICAL = ("name", "cluster", "params", "coverage", "totals", "truncated", "include_members", "sections")
+#: The keys Report.canonical() seals. `sections` is added by recompute(), narrowed to the sealed ones: the
+#: .json carries page one too, which states the run and is left out of the hash (SPEC_F1, #270).
+CANONICAL = ("name", "cluster", "api_url", "params", "coverage", "totals", "truncated", "include_members",
+             "sealed_provenance")
+
+
+def recompute(d: dict) -> str:
+    """The sha256 the service sealed, from the .json alone. A .json written before 4.1.0 does not verify."""
+    canon = {k: d[k] for k in CANONICAL}
+    canon["sections"] = [s for s in d["sections"] if s["sealed"]]
+    return hashlib.sha256(
+        json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
 
 
 def main() -> int:
@@ -29,9 +41,7 @@ def main() -> int:
     lines, bad = [], 0
     for jf in sorted((run / "reports").glob("*.json")):
         d = json.loads(jf.read_text())
-        canon = {k: d[k] for k in CANONICAL}
-        recomputed = hashlib.sha256(
-            json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+        recomputed = recompute(d)
         pdf, html = jf.with_suffix(".pdf"), jf.with_suffix(".html")
         pdf_bytes = pdf.read_bytes() if pdf.exists() else b""
         html_text = html.read_text(errors="replace") if html.exists() else ""

@@ -1,10 +1,16 @@
 """The one data model every report is built into and every renderer reads.
 
 A report is SECTIONS of BLOCKS — tables, key/value lists, notes — plus the provenance and coverage
-facts every report carries. HTML and PDF are two renderings of this structure, which is what makes
-the sha256 honest: it is computed over the canonical JSON of the DATA (sections, params, coverage,
-totals), never over a rendering and never over the timestamp, so the same data on two days hashes
-the same and a PDF can be tied back to its .json by the number printed on page one.
+facts every report carries. HTML and PDF are two renderings of this structure, and the sha256 is
+computed over the canonical JSON of the DATA: the sealed sections, the parameters, the coverage, the
+totals, the cluster, and the snapshot the data was read from (its stamp, its schema, how the
+cluster's last poll before it ended). It never covers a rendering or a fact of the run — when, by
+whom, under which run id or release, how old the snapshot was, the chart's marking or binding
+interval — so two runs over one snapshot with the same parameters hash the same whoever runs them,
+and a PDF can be tied back to its .json by the number printed on page one. Page one states the run
+and is not sealed; what it shows that is data is sealed through its own field. A new snapshot is
+new evidence even when no row changed: its stamp and its coverage are sealed, so the hash answers
+"is this the same evidence?", not "did access change?" (docs/specs/SPEC_F1_data_only_seal.md).
 """
 
 from __future__ import annotations
@@ -56,6 +62,15 @@ class Section:
     title: str
     blocks: list[Block] = field(default_factory=list)
     page_break: bool = False
+    #: False for a section that states facts of the RUN (page one): rendered like any other and
+    #: written into the .json, but left out of the sha256 (SPEC_F1, #270).
+    sealed: bool = True
+
+
+#: The provenance facts that describe the DATA rather than the run: which snapshot it was read from,
+#: that snapshot's schema, and how the cluster's last poll before it ended. Every run over one
+#: snapshot reads the same values, so they are sealed; the rest of `provenance` is the run's.
+SEALED_PROVENANCE = ("snapshot_stamp", "snapshot_schema_version", "last_poll", "poll_status", "poll_message")
 
 
 @dataclass
@@ -78,11 +93,17 @@ class Report:
     sha256: str = ""
 
     def canonical(self) -> dict:
-        """The DATA, and only the data: what two runs over the same snapshot must agree on."""
+        """The DATA, and only the data: what two runs over one snapshot with the same parameters agree
+        on. A section marked `sealed=False` (page one, the run's facts) is left out; what page one shows
+        that is data is here through its own key: the cluster and its API URL, the snapshot facts, the
+        coverage, the parameters and the rosters switch. Every key is in the .json, so the hash can be
+        recomputed from the .json alone by keeping the sections whose `sealed` is true."""
         return {
-            "name": self.name, "cluster": self.cluster, "params": self.params, "coverage": self.coverage,
-            "totals": self.totals, "truncated": self.truncated, "include_members": self.include_members,
-            "sections": [asdict(s) for s in self.sections],
+            "name": self.name, "cluster": self.cluster, "api_url": self.api_url, "params": self.params,
+            "coverage": self.coverage, "totals": self.totals, "truncated": self.truncated,
+            "include_members": self.include_members,
+            "sealed_provenance": {key: self.provenance.get(key) for key in SEALED_PROVENANCE},
+            "sections": [asdict(s) for s in self.sections if s.sealed],
         }
 
     def seal(self) -> "Report":
@@ -92,8 +113,11 @@ class Report:
         return self
 
     def to_json(self) -> str:
-        """The .json artefact: the canonical data plus the run facts, and the hash of the former."""
-        doc = {**self.canonical(), "title": self.title, "api_url": self.api_url,
+        """The .json artefact: the canonical data plus the run facts, and the hash of the former.
+        `sections` is every section, page one included, each with its `sealed` flag: the renderers and
+        the PDF/A attachment read the whole report, the hash covers the sealed ones."""
+        doc = {**self.canonical(), "sections": [asdict(s) for s in self.sections],
+               "title": self.title, "api_url": self.api_url,
                "generated_at": self.generated_at, "generated_by": self.generated_by,
                "generated_by_note": self.generated_by_note, "run_id": self.run_id,
                "provenance": self.provenance, "sha256": self.sha256}
