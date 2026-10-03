@@ -788,8 +788,7 @@ retained since …" so a timeline that begins at the edge is read as cut there, 
 
 ### 7.1 The ServiceAccount is read-only
 
-The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and nothing else, except on the
-Leases the dashboard writes — the elector's and one per fleet account:
+The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and nothing else:
 
 | API group | Resources | Verbs |
 |---|---|---|
@@ -800,7 +799,14 @@ Leases the dashboard writes — the elector's and one per fleet account:
 | `user.openshift.io` | `identities` | get, list — only when `rbac.identities` (the first-login time from Identity objects) |
 | `rbac.authorization.k8s.io` | `rolebindings`, `clusterrolebindings` | get, list — only when `rbac.bindings` |
 | core (`""`) | `namespaces` | get, list — only when `rbac.namespaces` (the namespace report attests absence with it) |
-| `coordination.k8s.io` | `leases` | get, create, update — when `leaderElection.enabled` or a fleet account is in use; the same grant in the release namespace only is the `<fullname>-leases` Role (#420), and a later chart release removes this rule |
+
+The dashboard's Leases — the elector's (`leaderElection.leaseName`) and one per fleet account — are granted by a
+Role and RoleBinding, `<fullname>-leases`, in the release namespace: `get`, `create`, `update` on
+`coordination.k8s.io/leases`, rendered when `leaderElection.enabled` or a fleet account is in use, and only with
+`rbac.create` (#420). The code reads and writes Leases in its own namespace only
+(`local-development/gsd/leader.py#LeaderElector._namespace`, `local-development/gsd/leader.py#own_namespace`); the
+ClusterRole rule that held this grant before #420 reached every namespace, the nodes' heartbeat Leases in
+`kube-node-lease` and the control plane's election Leases included.
 
 The login-capture ClusterRole grants `get nodes/proxy`, optionally pinned by `resourceNames`,
 and `list nodes` only when names are not pinned. It is enabled by `loginCapture.enabled` (true
@@ -808,8 +814,9 @@ by default) and reads audit logs at default OAuth verbosity. It grants no pods/l
 The auth-loglevel Jobs, identity and authentication-operator patch grant have been removed.
 See the chart README migration note for the manual Debug-to-Normal step.
 
-No `watch`, and no write verb on anything the dashboard reports on. The Lease is its own
-coordination object; it is the only thing in the cluster the ServiceAccount can change.
+No `watch`, and no write verb on anything the dashboard reports on. The Leases are its own
+coordination objects, in its own namespace; with the default values they are the only thing in the
+cluster the ServiceAccount can change.
 
 This is checkable rather than asserted, and it holds at every setting: `helm template` with
 `config.unmanagedAudit.mode` set to `off`, `log`, `annotate`, an unrecognised word and empty
@@ -1133,7 +1140,7 @@ refuses that combination outright rather than shipping a control that cannot wor
 flowchart TB
   subgraph ns["namespace: group-sync-dashboard"]
     sa["ServiceAccount<br/>+ oauth-redirectreference annotation<br/>(oauth-redirecturi with the Ingress)"]
-    cr["ClusterRole + Binding<br/>read-only + own Lease"]
+    cr["ClusterRole + Binding<br/>read-only"]
     cm["ConfigMap -config<br/>clusters.yaml"]
     tca["ConfigMap -trusted-ca<br/>empty; OpenShift fills it"]
     sec["Secret -oauth-session<br/>minted on the cluster once"]
@@ -1142,7 +1149,7 @@ flowchart TB
     pvc["PVC -data<br/>helm.sh/resource-policy: keep"]
     svc["Service :8080 → oauth-proxy"]
     ing["Route (default, spec.subdomain)<br/>or Ingress → Route"]
-    lease["Lease<br/>coordination.k8s.io"]
+    lease["Leases<br/>granted by Role + Binding -leases"]
     pdb["PodDisruptionBudget<br/>optional"]
     sm["ServiceMonitor + PrometheusRule<br/>optional"]
     rdep["Deployment -report<br/>replicas 1, Recreate (default on)"]

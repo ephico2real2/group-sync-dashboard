@@ -601,18 +601,31 @@ New audit events cannot report LDAP result codes or AD sub-codes, including a lo
 cause. Existing pod-log rows, their causes and their API/UI fields remain readable; configured
 retention still applies. See `docs/AUDIT_LOG_CAPTURE.md` and `docs/LOGIN_CAPTURE_QUICKCHECK.md`.
 
-In the ClusterRole, `coordination.k8s.io/leases`
-(`get`, `create`, `update`) renders when `leaderElection.enabled` or a fleet account is in use
-(`clusterConfig.fleetAccount.username`, or a stanza declaring a mode) — the election Lease and the
-fleet account's claim (#285) —
-`rolebindings`/`clusterrolebindings` (`get`, `list`) only when `rbac.bindings`, and
-`users` (`get`, `list`) only when `rbac.users`. Everything
-else in it is `get`/`list`, and that pair of Leases — the dashboard's own, which grant nobody
-access to anything — are the only objects it writes on any cluster unless
-`clusterConfig.secrets.writes.enabled` is on. The Lease rule has no `resourceNames`, so it reaches
-every namespace; under the same condition the `<fullname>-leases` Role and RoleBinding grant the
-same three verbs in the release namespace only (#420), and a later chart release removes the rule
-from the ClusterRole once the operator agrees.
+Every rule in the ClusterRole is a read (`get`, `list`); `rolebindings`/`clusterrolebindings`
+render only when `rbac.bindings`, and `users` only when `rbac.users`. The dashboard's Leases — the
+election Lease and the fleet account's claim (#285), its own, which grant nobody access to anything —
+are the only objects it writes on any cluster unless `clusterConfig.secrets.writes.enabled` is on,
+and their grant is not in the ClusterRole: it is the `<fullname>-leases` Role and RoleBinding in the
+release namespace (#420). A ClusterRole rule reached every namespace, the nodes' heartbeat Leases in
+`kube-node-lease` and the control plane's election Leases included; the dashboard writes Leases only
+in its own. The Role renders when `leaderElection.enabled` or a fleet account is in use
+(`clusterConfig.fleetAccount.username`, or a stanza declaring a mode), and only with `rbac.create`.
+With `rbac.create: false`, apply these two objects in the release namespace, beside the ClusterRole
+and its binding, and remove the Lease rule from your own ClusterRole only after they exist — the
+order of #420's two releases, so the running pod is never refused a Lease call:
+
+| Kind (`rbac.authorization.k8s.io/v1`) | Name | Content |
+|---|---|---|
+| `Role` | `<fullname>-leases` | one rule: `apiGroups: ["coordination.k8s.io"]`, `resources: ["leases"]`, `verbs: ["get", "create", "update"]`, and no `resourceNames` (Kubernetes cannot narrow `create` by name) |
+| `RoleBinding` | `<fullname>-leases` | `roleRef`: `Role` `<fullname>-leases`; `subjects`: the ServiceAccount the dashboard's Deployment runs as, in the release namespace |
+
+The rule left the ClusterRole in a later chart release than the Role (#420's two steps), so an
+upgrade that passes through a release carrying both never loses the grant. An upgrade from a chart without the Role straight
+to one without the rule can refuse the running pod's Lease calls for the few API calls between the
+ClusterRole's update and the RoleBinding's creation; the same upgrade then replaces that pod. An
+election round that falls there logs `forbidden reading lease` (or `could not renew lease`) and stands
+the poller down until the next round, 10 s later, renews the pod's own Lease; a fleet Lease read there
+is reported as `fleet-state-unavailable` until the next discovery cycle, and nothing binds meanwhile.
 
 A `patch` on rolebindings/clusterrolebindings used to render here when
 `config.unmanagedAudit.mode` was `annotate`. The mode and the grant are both gone; see

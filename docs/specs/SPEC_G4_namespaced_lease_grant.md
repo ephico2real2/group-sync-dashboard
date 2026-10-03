@@ -8,7 +8,7 @@
 | Version on release | chart 0.66.2 (step 1, adds the Role) and 0.66.3 (step 2, removes the ClusterRole rule), chart only |
 | Version note | No application change: `appVersion` and `pyproject.toml` do not move. Each step is a chart PATCH: no value is added. The rungs follow SPEC_E5's version rule (`docs/specs/SPEC_E5_offsite_on_by_default.md`, its Version note): a spec still `specified` names a chart version above `Chart.yaml` and above every other `specified` spec's claim. On origin/main `3124f3e0` the index claims chart 0.59.26 (SPEC_E4), 0.60.0 (SPEC_E2, SPEC_G2, SPEC_E5) and 0.60.1 (SPEC_G3); SPEC_E3 and SPEC_E6 also claim 0.59.26 (SPEC_E7 and SPEC_E8 claim none; SPEC_E9's chart rung is derived at its implementation); SPEC_E5's blocks move SPEC_E4 to 0.60.2 when E5 ships; so step 1 takes 0.60.3 and step 2 0.60.4. Blocks 8 and 24 write those into `Chart.yaml` and blocks 7 and 23 name them in the CHANGELOG. Blocks 8g to 8p move the seven `specified` specs whose chart version is not above 0.60.4 to the next free rung above it, keeping their MINOR or PATCH and their application version (SPEC_E2, SPEC_G2 and SPEC_E5 to 0.61.0, SPEC_G3 to 0.60.5, SPEC_E4 to 0.60.6, blocks 8m and 8n move SPEC_E3 to 0.60.7, and blocks 8o and 8p move SPEC_E6 to 0.60.8), so `tests/test_specs_index.py`'s version-ladder test holds on both steps (§4.3). If another of them is implemented first, its pull request moves this spec's two cells instead, and this spec's implementing pull requests re-derive blocks 7, 8, 8g to 8p, 23 and 24 before applying, with the reason under these notes (`docs/specs/README.md`, "Implementation blocks"). |
 | Issue | [#420](https://github.com/ephico2real2/group-sync-dashboard/issues/420) |
-| Status | in progress |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-01, written before any code from the issue's body of 2026-10-01 and its "Decisions and corrections (2026-10-01)", the epic (#387) and the orchestrator's mandate (the upgrade window T420-8 is to be designed away). Measured on main `21132a25` on this machine (Helm v4.3.0, Python 3.14 with the repository's venv), on the CRC lab read-only (2026-10-01T14:55Z to 15:19Z, `oc` as `kubeadmin`: `get`, `auth can-i`, nothing written), and against upstream source read raw: Helm v4.3.0, Argo CD v3.4.7 (the lab's OpenShift GitOps 1.21.4 runs `argocd: v3.4.7+7b6113c`), client-go v0.34.0, kubernetes/website `980792fa`, helm-www `f32ec4dc`. §7's blocks were applied to a throwaway worktree of `21132a25` and to a copy of its step-1 result, and the suite ran on each. Revised the same day on the reviews of `6e08e561` (OB3 in Grok's seat, OB2 in Codex's), decided by the orchestrator (Orchestrator's notes, 8), rebased onto origin/main `f1423143`, then merged with origin/main `6d532178` (SPEC_E3) and `3124f3e0` (SPEC_E6 to E9), and every block, test and count proved again on that merge in git worktrees (§4.3) |
 
 ## How to read this spec
@@ -868,7 +868,7 @@ aloud and refuses any marker line that is not exactly one of the three forms.
 
 #### Block T1 — local-development/apply-spec-blocks.py: the two markers the checker leaves alone, by name
 
-<!-- block: local-development/apply-spec-blocks.py | edit -->
+<!-- applied-block: local-development/apply-spec-blocks.py | edit -->
 
 Old text:
 
@@ -894,7 +894,7 @@ LEFT_ALONE = ("deferred-block", "applied-block")
 
 #### Block T2 — local-development/apply-spec-blocks.py: count the markers once, refuse an unknown word
 
-<!-- block: local-development/apply-spec-blocks.py | edit -->
+<!-- applied-block: local-development/apply-spec-blocks.py | edit -->
 
 Old text:
 
@@ -919,7 +919,7 @@ New text:
 
 #### Block T3 — local-development/apply-spec-blocks.py: the report line names what was left alone
 
-<!-- block: local-development/apply-spec-blocks.py | edit -->
+<!-- applied-block: local-development/apply-spec-blocks.py | edit -->
 
 Old text:
 
@@ -936,7 +936,7 @@ New text:
 
 #### Block T4 — local-development/tests/test_apply_spec_blocks.py: the two markers are left alone and counted; a misspelt word is refused
 
-<!-- block: local-development/tests/test_apply_spec_blocks.py | edit -->
+<!-- applied-block: local-development/tests/test_apply_spec_blocks.py | edit -->
 
 Old text:
 
@@ -1002,7 +1002,7 @@ def test_a_dirty_git_tree_is_refused(tmp_path):
 
 #### Block T5 — docs/specs/README.md: the two markers, under "Implementation blocks"
 
-<!-- block: docs/specs/README.md | edit -->
+<!-- applied-block: docs/specs/README.md | edit -->
 
 Old text:
 
@@ -1033,7 +1033,7 @@ New text:
 Inside the `rbac.create` block, after the reader ClusterRoleBinding, under the condition the ClusterRole's Lease rule
 has (§3.1, §3.2). The ClusterRole keeps its rule in this step (§3.4).
 
-<!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
+<!-- applied-block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
 
 Old text:
 
@@ -1101,7 +1101,7 @@ subjects:
 The ten renders of §4.1, and the `rbac.create: false` guard. The fullname and the ServiceAccount are read from the
 reader ClusterRoleBinding of the same render, so a values file that renames either is measured, not assumed.
 
-<!-- block: local-development/tests/test_chart_connection_modes.py | after:         assert all(set(r.get("resources") or []) == {"leases"} for r in rules if set(r.get("verbs") or []) & writes) -->
+<!-- applied-block: local-development/tests/test_chart_connection_modes.py | after:         assert all(set(r.get("resources") or []) == {"leases"} for r in rules if set(r.get("verbs") or []) & writes) -->
 
 ```python
 
@@ -1173,7 +1173,7 @@ class TestTheLeaseGrantIsNamespaced:
 
 #### Block 3 — local-development/tests/test_leader.py: `json` for the stub API server
 
-<!-- block: local-development/tests/test_leader.py | edit -->
+<!-- applied-block: local-development/tests/test_leader.py | edit -->
 
 Old text:
 
@@ -1196,7 +1196,7 @@ from datetime import UTC, datetime
 
 #### Block 4 — local-development/tests/test_leader.py: the elector stays in its namespace, and one refused round costs one round (T420-6, §3.4)
 
-<!-- block: local-development/tests/test_leader.py | after:         assert min(1, STANDBY_RECHECK_SECONDS) == 1 -->
+<!-- applied-block: local-development/tests/test_leader.py | after:         assert min(1, STANDBY_RECHECK_SECONDS) == 1 -->
 
 ```python
 
@@ -1276,7 +1276,7 @@ class TestTheLeaseStaysInItsNamespace:
 
 #### Block 5 — local-development/tests/test_fleet_lifecycle.py: the fleet Lease stays in its namespace (T420-6)
 
-<!-- block: local-development/tests/test_fleet_lifecycle.py | edit -->
+<!-- applied-block: local-development/tests/test_fleet_lifecycle.py | edit -->
 
 Old text:
 
@@ -1322,7 +1322,7 @@ def test_t420_6_every_fleet_lease_call_is_under_the_namespace_it_was_given():
 
 #### Block 6 — charts/group-sync-dashboard/README.md: the `rbac.create` row names the Role
 
-<!-- block: charts/group-sync-dashboard/README.md | edit -->
+<!-- applied-block: charts/group-sync-dashboard/README.md | edit -->
 
 Old text:
 
@@ -1338,7 +1338,7 @@ New text:
 
 #### Block 7 — docs/CHANGELOG.md: step 1's entry
 
-<!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
+<!-- applied-block: docs/CHANGELOG.md | after: ## Unreleased -->
 
 ```text
 
@@ -1359,7 +1359,7 @@ New text:
 
 #### Block 8 — charts/group-sync-dashboard/Chart.yaml: step 1's chart PATCH
 
-<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
+<!-- applied-block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 
@@ -1383,7 +1383,7 @@ rule "scoped to one object the dashboard owns", which was false before this chan
 corrected here, where they stop being true, and not with the narrowing: step 2 (block 10) rewrites them again when the
 rule goes.
 
-<!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
+<!-- applied-block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
 
 Old text:
 
@@ -1428,7 +1428,7 @@ New text:
 
 #### Block 8b — charts/group-sync-dashboard/values.yaml: what `rbac.create` renders from step 1 (step 1)
 
-<!-- block: charts/group-sync-dashboard/values.yaml | edit -->
+<!-- applied-block: charts/group-sync-dashboard/values.yaml | edit -->
 
 Old text:
 
@@ -1456,7 +1456,7 @@ New text:
 Orchestrator's notes, 5: `identities`, `oauths`, `namespaces` and the Kyverno reads are conditional too, so the
 count goes; the paragraph names the Role step 1 adds and the opt-in Secrets writes.
 
-<!-- block: charts/group-sync-dashboard/README.md | edit -->
+<!-- applied-block: charts/group-sync-dashboard/README.md | edit -->
 
 Old text:
 
@@ -1493,7 +1493,7 @@ from the ClusterRole once the operator agrees.
 Scoped to the reader ClusterRole, as block 18 scopes it at step 2: `templates/rbac.yaml` also binds
 `system:auth-delegator`, which grants `create` on token and subject access reviews.
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- applied-block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1513,7 +1513,7 @@ Leases the dashboard writes — the elector's and one per fleet account:
 
 The issue's correction 4: the condition was given as `leaderElection.enabled` alone.
 
-<!-- block: docs/reference-architecture.md | edit -->
+<!-- applied-block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1532,7 +1532,7 @@ New text:
 The fleet account's Lease (chart 0.59.0, SPEC_S4c) made "its own leader-election Lease" the wrong count; block 15 adds
 where the grant lives when it moves.
 
-<!-- block: charts/group-sync-dashboard/values.yaml | edit -->
+<!-- applied-block: charts/group-sync-dashboard/values.yaml | edit -->
 
 Old text:
 
@@ -1561,7 +1561,7 @@ specified rows itself; note 11 says what replaced them.
 
 #### Block 9 — charts/group-sync-dashboard/templates/rbac.yaml: the ClusterRole's header says it holds no write (step 2)
 
-<!-- deferred-block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
 
 Old text:
 
@@ -1586,7 +1586,7 @@ New text:
 
 The three atoms REMOVED (§3.3), with the two comments block 8a corrected for step 1 (the issue's correction 3).
 
-<!-- deferred-block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
 
 Old text:
 
@@ -1624,7 +1624,7 @@ New text:
 
 #### Block 11 — charts/group-sync-dashboard/templates/rbac.yaml: the Role's comment, once the rule is gone (step 2)
 
-<!-- deferred-block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/templates/rbac.yaml | edit -->
 
 Old text:
 
@@ -1646,7 +1646,7 @@ New text:
 
 #### Block 12 — charts/group-sync-dashboard/templates/fleet-account-rbac.yaml: what the condition is shared with (step 2)
 
-<!-- deferred-block: charts/group-sync-dashboard/templates/fleet-account-rbac.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/templates/fleet-account-rbac.yaml | edit -->
 
 Old text:
 
@@ -1662,7 +1662,7 @@ New text:
 
 #### Block 13 — local-development/tests/test_chart_connection_modes.py: no ClusterRole carries a Lease rule (T420-1, step 2)
 
-<!-- deferred-block: local-development/tests/test_chart_connection_modes.py | edit -->
+<!-- block: local-development/tests/test_chart_connection_modes.py | edit -->
 
 Old text:
 
@@ -1691,7 +1691,7 @@ New text:
 In the file CI's chart job runs by name. Each stale phrase is one the chart carried on main `21132a25`, or one of
 step 1's sentences (blocks 8a to 8f) that still place the grant in the ClusterRole.
 
-<!-- deferred-block: local-development/tests/test_chart_strategy.py | after:                     assert set(rule.get("resources") or []) == {"leases"}, (name, rule) -->
+<!-- block: local-development/tests/test_chart_strategy.py | after:                     assert set(rule.get("resources") or []) == {"leases"}, (name, rule) -->
 
 ```python
 
@@ -1738,7 +1738,7 @@ class TestTheLeaseGrantIsDescribedWhereItLives:
 
 #### Block 15 — charts/group-sync-dashboard/values.yaml: the dashboard's writes, under the unmanaged-audit comment (step 2)
 
-<!-- deferred-block: charts/group-sync-dashboard/values.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/values.yaml | edit -->
 
 Old text:
 
@@ -1760,7 +1760,7 @@ New text:
 
 #### Block 16 — charts/group-sync-dashboard/values.yaml: what `rbac.create` renders (step 2)
 
-<!-- deferred-block: charts/group-sync-dashboard/values.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/values.yaml | edit -->
 
 Old text:
 
@@ -1788,7 +1788,7 @@ New text:
 
 #### Block 17 — charts/group-sync-dashboard/README.md: the RBAC paragraph, the objects for `rbac.create: false`, and the upgrade (step 2)
 
-<!-- deferred-block: charts/group-sync-dashboard/README.md | edit -->
+<!-- block: charts/group-sync-dashboard/README.md | edit -->
 
 Old text:
 
@@ -1839,7 +1839,7 @@ is reported as `fleet-state-unavailable` until the next discovery cycle, and not
 
 #### Block 18 — docs/reference-architecture.md: §7.1's opening sentence (step 2)
 
-<!-- deferred-block: docs/reference-architecture.md | edit -->
+<!-- block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1858,7 +1858,7 @@ The reader ClusterRole in `templates/rbac.yaml` grants `get` and `list` and noth
 
 The row block 8e corrected for step 1 (the issue's correction 4) leaves the table.
 
-<!-- deferred-block: docs/reference-architecture.md | edit -->
+<!-- block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1885,7 +1885,7 @@ ClusterRole rule that held this grant before #420 reached every namespace, the n
 
 #### Block 20 — docs/reference-architecture.md: what the ServiceAccount can change (step 2)
 
-<!-- deferred-block: docs/reference-architecture.md | edit -->
+<!-- block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1904,7 +1904,7 @@ cluster the ServiceAccount can change.
 
 #### Block 21 — docs/reference-architecture.md: §8's topology, the ClusterRole node (step 2)
 
-<!-- deferred-block: docs/reference-architecture.md | edit -->
+<!-- block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1920,7 +1920,7 @@ New text:
 
 #### Block 22 — docs/reference-architecture.md: §8's topology, the Lease node (step 2)
 
-<!-- deferred-block: docs/reference-architecture.md | edit -->
+<!-- block: docs/reference-architecture.md | edit -->
 
 Old text:
 
@@ -1936,7 +1936,7 @@ New text:
 
 #### Block 23 — docs/CHANGELOG.md: step 2's entry
 
-<!-- deferred-block: docs/CHANGELOG.md | after: ## Unreleased -->
+<!-- block: docs/CHANGELOG.md | after: ## Unreleased -->
 
 ```text
 
@@ -1954,7 +1954,7 @@ New text:
 
 #### Block 24 — charts/group-sync-dashboard/Chart.yaml: step 2's chart PATCH
 
-<!-- deferred-block: charts/group-sync-dashboard/Chart.yaml | edit -->
+<!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 Old text:
 

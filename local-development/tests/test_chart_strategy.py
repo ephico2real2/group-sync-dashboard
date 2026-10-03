@@ -242,6 +242,46 @@ class TestNoPatchVerbAtAnyAuditMode:
                     assert set(rule.get("resources") or []) == {"leases"}, (name, rule)
 
 
+class TestTheLeaseGrantIsDescribedWhereItLives:
+    """#420 (SPEC_G4, T420-9): the Lease grant left the reader ClusterRole for the `<fullname>-leases` Role in the
+    release namespace. No sentence may still put it in the ClusterRole, and each document that tabulates the chart's
+    RBAC names the Role. Wrapped lines and `#` comment markers are folded first, so a sentence split across lines is
+    one string; each stale phrase below is one the chart carried before #420 (main 21132a25) or in #420's step 1."""
+
+    STALE = {
+        "charts/group-sync-dashboard/templates/rbac.yaml": (
+            "scoped to one object the dashboard owns",
+            "Namespaced, so it belongs in a Role rather than the ClusterRole",
+            "this rule stays beside it until a later chart release removes it"),
+        "charts/group-sync-dashboard/README.md": (
+            "Three rules in the ClusterRole are conditional. `coordination.k8s.io/leases`",
+            "In the ClusterRole, `coordination.k8s.io/leases`"),
+        "charts/group-sync-dashboard/values.yaml": (
+            "The role's only write is get/create/update on the dashboard's own",),
+        "docs/reference-architecture.md": (
+            "except on the Lease it needs to elect a leader",
+            "except on the Leases the dashboard writes",
+            "| `coordination.k8s.io` | `leases` | get, create, update —"),
+    }
+    NAMED = ("charts/group-sync-dashboard/README.md", "charts/group-sync-dashboard/values.yaml",
+             "docs/reference-architecture.md")
+
+    @staticmethod
+    def _prose(path: str) -> str:
+        import re
+        return re.sub(r"\s*\n\s*(?:#\s*)?", " ", (CHART.parents[1] / path).read_text())
+
+    @pytest.mark.parametrize("path", sorted(STALE))
+    def test_no_sentence_puts_the_lease_grant_in_the_clusterrole(self, path):
+        text = self._prose(path)
+        kept = [phrase for phrase in self.STALE[path] if phrase in text]
+        assert not kept, f"{path} still says: {kept}"
+
+    @pytest.mark.parametrize("path", NAMED)
+    def test_each_rbac_description_names_the_lease_role(self, path):
+        assert "<fullname>-leases" in self._prose(path), f"{path} does not name the `<fullname>-leases` Role"
+
+
 
 
 

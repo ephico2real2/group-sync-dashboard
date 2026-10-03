@@ -10,6 +10,17 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The Lease grant leaves the ClusterRole (#420 step 2, Epic G #387, `docs/specs/SPEC_G4_namespaced_lease_grant.md`;
+  chart 0.66.3, no application change; the narrowing the operator agreed to on #420).** The reader ClusterRole no
+  longer carries `get`, `create`, `update` on `coordination.k8s.io/leases`; step 1's `<fullname>-leases` Role and
+  RoleBinding in the release namespace are the grant. The dashboard's ServiceAccount can no longer create or update a
+  Lease outside its own namespace; before, it could in every namespace, `kube-node-lease`'s node heartbeats and the
+  control plane's election Leases included (measured on the lab, `oc auth can-i`). Rendered RBAC: REMOVED the 3 atoms
+  `ClusterRole <fullname>-reader: coordination.k8s.io/leases get, create, update` wherever they rendered; ADDED 0. The
+  template comments, the values file, the chart README and `docs/reference-architecture.md` say where the grant lives.
+  Upgrade through a release that carries both grants (chart 0.66.2, or a later one before this) first; an upgrade
+  that skips them can refuse the outgoing pod one round of Lease calls (chart README, RBAC).
+
 - **The dashboard's Leases are also granted in its own namespace (#420 step 1, Epic G #387,
   `docs/specs/SPEC_G4_namespaced_lease_grant.md`; chart 0.66.2, no application change).** A Role and a RoleBinding,
   `<fullname>-leases`, in the release namespace grant the dashboard's ServiceAccount `get`, `create` and `update` on

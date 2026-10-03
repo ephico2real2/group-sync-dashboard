@@ -33,7 +33,7 @@ cross-namespace Role is pruned — same template, same key, no code change.
 {{- $fleet := (.Values.clusterConfig).fleetAccount | default dict }}
 {{- $ps := $fleet.passwordSecret | default dict }}
 {{- $rbac := $ps.rbac | default dict }}
-{{- /* In use: `gsd.fleetAccountInUse`, shared with rbac.yaml's Lease rule (SPEC_S4c §3.8). */ -}}
+{{- /* In use: `gsd.fleetAccountInUse`, shared with rbac.yaml's `-leases` Role (SPEC_S4c §3.8, #420). */ -}}
 {{- $inUse := eq (include "gsd.fleetAccountInUse" .) "true" }}
 {{- /* A WORD, NOT TRUTHINESS. `$rbac.create | default true` returns TRUE for an explicit `false`,
        because Helm's `default` treats false as empty — an opt-out that silently does not opt out.
