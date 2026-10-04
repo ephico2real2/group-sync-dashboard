@@ -1,0 +1,185 @@
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	compliance
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Compliance snapshot
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	compliance-snapshot
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	One page of KPls - groups, users, bindings, findings, privileged grants, dormant access, sync health - and
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	the coverage statement that says what this evidence can attest.
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	compliance
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Access certification pack
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	access-certification
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	columns and a sign-off block for the named reviewer.
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	+ all reports
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	| Groups and membership changes
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window.
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Clusters
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	discovered • 6 configured
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	• dashboard LOOKUPS • TOTALS
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	mock-privateca
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	mock-selfsigned
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	mock-trusted
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	shared-qa
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	shared-rnd
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	1 of 6 clusters all6 lookups and the totals preview are dashboard's
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	groups
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	window_days
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	pick groups...
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	30
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	days
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Membership changes observed in the last N
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	include_members
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	• Off
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Rosters for every group. Recorded in the
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	provenance when on.
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	SYNCED GROUPS • MEMBERS AS OF THE
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	SNAPSHOT • 66 DISCOVERED
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	days.
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	app-ocp-rbac-abcd-ns-
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	superuser
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	1 member
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	app-ocp-rbac-alpha-
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	cluster-admin
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	1 member
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	app-ocp-rbac-alpha-
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	cluster-audit
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	1 member
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	app-ocp-rbac-alpha-
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	cluster-developer
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	2 members
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Only these groups (empty - every synced
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	group).
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Generate HTML • JSON
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	D PDF
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	/HTML • csv json is always written • cluster dashboard
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	Groups and membership changes • groups
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	one run per cluster • the same parameters on each
+screenshots/01-form-opens-html-1280.png	screenshots/01-form-opens-html-1280.png	77 runs so far. Reporting status, schedules and history >
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	compliance
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Compliance snapshot
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	compliance-snapshot
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	One page of KPls - groups, users, bindings, findings, privileged grants, dormant access, sync health - and
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	the coverage statement that says what this evidence can attest.
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	compliance
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Access certification pack
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	access-certification
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Per group (with roster) and per directly-bound user: every binding held, with Approve / Revoke / Comment
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	columns and a sign-off block for the named reviewer.
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	+ all reports
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	| Groups and membership changes
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Every synced group: provider, member count, last sync, bindings, cliff silence; the empty and unattributed lists; joins and leaves in the window.
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Clusters
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	discovered • 6 configured
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	• dashboard LOOKUPS • TOTALS
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	mock-privateca
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	mock-selfsigned
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	mock-trusted
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	shared-qa
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	shared-rnd
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	1 of 6 clusters all6 lookups and the totals preview are dashboard's
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	groups
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	window_days
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	pick groups...
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	30
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	days
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	SYNCED GROUPS • MEMBERS AS OF THE
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	SNAPSHOT • 66 DISCOVERED
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Membership changes observed in the last N
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	days.
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	include_members
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	• Off
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Rosters for every group. Recorded in the
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	provenance when on.
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	app-ocp-rbac-abcd-ns-
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	superuser
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	1 member
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	app-ocp-rbac-alpha-
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	cluster-admin
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	1 member
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	app-ocp-rbac-alpha-
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	cluster-audit
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	1 member
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	app-ocp-rbac-alpha-
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	cluster-developer
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	2 members
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Only these groups (empty - every synced
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	group).
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Generate PDF • HTML • JSON
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	JPDF
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	V HTML O csv json is always written • cluster dashboard 66 groups • 95 changes • 95 added • 0 removed
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	Groups and membership changes • groups
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	one run per cluster • the same parameters on each
+screenshots/02-pdf-ticked-1280.png	screenshots/02-pdf-ticked-1280.png	77 runs so far. Reporting status, schedules and history →
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	mock-selfsigned
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	mock-trusted
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	shared-qa
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	shared-rnd
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	1 of 6 clusters all6
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	lookups and the totals preview are
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	dashboard's
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	groups
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	pick groups...
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	SYNCED GROUPS • MEMBERS AS OF THE SNAPSHOT•
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	66 DISCOVERED
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	app-ocp-rbac-abcd-ns-
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	superuser
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	app-ocp-rbac-alpha-
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	cluster-admin
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	1 member
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	1 member
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	app-ocp-rbac-alpha-
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	1 member
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	cluster-audit
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	app-ocp-rbac-alpha-
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	cluster-developer
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	2 members
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	Only these groups (empty - every synced group).
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	window_days
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	30 days
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	Membership changes observed in the last N days.
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	include_members
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	Off
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	Rosters for every group. Recorded in the
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	provenance when on.
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	Generate HTML • JSON
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	J PDF
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	• HTML
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	• csv json is always written • cluster dashboard
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	77 runs so far.
+screenshots/03-form-opens-html-375.png	screenshots/03-form-opens-html-375.png	Reporting status, schedules and history≥
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	mock-selfsigned
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	mock-trusted
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	shared-qa
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	shared-rnd
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	1 of 6 clusters all6
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	lookups and the totals preview are
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	dashboard's
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	groups
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	pick groups...
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	SYNCED GROUPS • MEMBERS AS OF THE SNAPSHOT•
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	66 DISCOVERED
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	app-ocp-rbac-abcd-ns-
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	superuser
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	app-ocp-rbac-alpha-
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	cluster-admin
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	1 member
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	1 member
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	app-ocp-rbac-alpha-
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	1 member
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	cluster-audit
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	app-ocp-rbac-alpha-
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	cluster-developer
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	2 members
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	Only these groups (empty - every synced group).
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	window_days
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	30
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	days
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	Membership changes observed in the last N days.
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	include_members
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	Off
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	Rosters for every group. Recorded in the
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	provenance when on.
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	Generate PDF • HTML • JSON
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	• PDF
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	J HTML O csv
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	json is always written • cluster dashboard
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	77 runs so far.
+screenshots/04-pdf-ticked-375.png	screenshots/04-pdf-ticked-375.png	Reporting status, schedules and history≥
