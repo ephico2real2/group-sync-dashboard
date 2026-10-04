@@ -62,6 +62,24 @@ Questions settled by the orchestrator (2026-10-03, on "easy to manage, best prac
    the Job matches the rest of the chart. An estate whose egress must use a proxy needs a chart-wide setting, which
    is its own issue.
 
+**Review of the implementation (PR #583, 2026-10-04): Codex (gpt-5.6-sol, xhigh) and OB3 (in Grok's seat).** Both
+confirmed the URL is never printed (OB3: 26 outcomes over real sockets on 127.0.0.1, every part of the URL marked;
+Codex: the same matrix on a mock transport), the CloudEvent, the chart renders (a schedule without `deliver`
+byte-identical; every refusal fires), the CA reuse, the unchanged service, and the versions. The decisions:
+- **Accepted: the deadline held to every attempt (Codex F1, OB3 F3).** The first attempt was not checked, and a sleep
+  that overran could start a retry past the deadline. The rule of §3.3 now applies to every attempt: it starts only
+  if it can finish before the wait's deadline. Codex's form (no attempt at or past the deadline) let an attempt
+  started just before it run past it; OB3's form checked only the first one. Both tests pass under the combined rule.
+- **Accepted: a failed artefact read no longer stops the fan-out (both).** It is named in the event as `omitted`, and
+  every other run is still delivered. **Accepted from Codex:** the 5 MiB cap is also checked on the bytes read, not
+  only the run record's size.
+- **Accepted from OB3:** a `Retry-After` of non-ASCII digits (`²`, which `isdigit()` accepts and `float()` refuses)
+  crashed the Job; it now falls back to the backoff. A URL file that is not UTF-8 is refused by class, not a
+  traceback. A run with no `finished_at` leaves CloudEvents' optional `time` out instead of sending null.
+- **Accepted: the docs promised more retries than the code makes (both).** "5xx" became 408, 429, 500, 502, 503, 504,
+  and "four times" became "up to 4 attempts" (4 attempts are 3 retries), in the chart README, `values.yaml`, the
+  CHANGELOG, `Chart.yaml`'s history line and the index row.
+
 ## 1. The mandate, and what is out of scope
 
 The mandate (#109, "The change", "Must not change" and "Definition of Done"): choose the payload, per-run or
@@ -473,7 +491,7 @@ def _webhook_url(path: str) -> str | None:
     try:
         with open(path, encoding="utf-8") as fh:
             raw = fh.read().strip()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:     # ValueError: UnicodeDecodeError, a file that is not UTF-8
         print(f"--webhook-url-file cannot be read ({type(exc).__name__})", file=sys.stderr)
         return None
     try:
@@ -491,7 +509,7 @@ def _retry_after(r: httpx.Response) -> float | None:
     raw = r.headers.get("Retry-After", "").strip()
     if not raw:
         return None
-    if raw.isdigit():
+    if raw.isascii() and raw.isdigit():
         seconds = float(raw)
     else:
         try:
@@ -508,10 +526,16 @@ def _attachment(service: httpx.Client, run: dict, fmt: str) -> dict:
         return {"format": fmt, "omitted": f"this run stored no {fmt}"}
     if size > ATTACH_MAX_BYTES:
         return {"format": fmt, "omitted": f"{size} bytes is over the {ATTACH_MAX_BYTES}-byte cap"}
-    r = service.get(f"/report/api/runs/{run['id']}/artifact", params={"format": fmt})
+    try:
+        r = service.get(f"/report/api/runs/{run['id']}/artifact", params={"format": fmt})
+    except httpx.HTTPError as exc:
+        return {"format": fmt, "omitted": f"the artefact read failed ({type(exc).__name__})"}
     if r.status_code != 200:
         return {"format": fmt, "omitted": f"the artefact read answered {r.status_code}"}
-    return {"format": fmt, "media_type": r.headers.get("content-type"), "bytes": len(r.content),
+    actual_size = len(r.content)
+    if actual_size > ATTACH_MAX_BYTES:
+        return {"format": fmt, "omitted": f"{actual_size} bytes read is over the {ATTACH_MAX_BYTES}-byte cap"}
+    return {"format": fmt, "media_type": r.headers.get("content-type"), "bytes": actual_size,
             "content_base64": base64.b64encode(r.content).decode("ascii")}
 
 
@@ -522,8 +546,11 @@ def _event(run: dict, schedule: str, source: str, attachment: dict | None) -> di
             "finished_at": run.get("finished_at"), "bytes": run.get("bytes") or {}, "error": run.get("error")}
     if attachment is not None:
         data["attachment"] = attachment
-    return {"specversion": "1.0", "id": run["id"], "source": source, "type": EVENT_TYPE,
-            "time": run.get("finished_at"), "datacontenttype": "application/json", "data": data}
+    event = {"specversion": "1.0", "id": run["id"], "source": source, "type": EVENT_TYPE,
+             "datacontenttype": "application/json", "data": data}
+    if run.get("finished_at"):          # CloudEvents `time` is optional: absent, never null
+        event["time"] = run["finished_at"]
+    return event
 
 
 def _deliver(hook: httpx.Client, url: str, event: dict, deadline: float) -> bool:
@@ -534,6 +561,12 @@ def _deliver(hook: httpx.Client, url: str, event: dict, deadline: float) -> bool
     body = json.dumps(event).encode("utf-8")
     headers = {"Content-Type": "application/cloudevents+json; charset=utf-8"}
     for attempt in range(1, DELIVER_ATTEMPTS + 1):
+        # §3.3: an attempt starts only if it can finish before the wait's deadline, the first one included and
+        # after a sleep that overran (review of #109: OB3 F3, Codex F1).
+        if time.monotonic() + DELIVER_TIMEOUT_SECONDS > deadline:
+            print(f"delivery failed for run {run_id}: no attempt fits before the wait's deadline "
+                  f"(after {attempt - 1} attempt(s))", file=sys.stderr)
+            return False
         try:
             r = hook.post(url, content=body, headers=headers)
         except httpx.HTTPError as exc:
@@ -689,8 +722,11 @@ REPORTING = Path(__file__).resolve().parents[1] / "gsd" / "reporting"
 class _Lab:
     """The report service (a fan-out of two runs) and the receiver, behind one transport."""
 
-    def __init__(self, hook_answers=None, create_status=202, run_status=None):
+    def __init__(self, hook_answers=None, create_status=202, run_status=None, artifact_answers=None):
         self.hook_answers = list(hook_answers or [httpx.Response(200)])
+        self.artifact_answers = list(artifact_answers or [
+            httpx.Response(200, content=b"<html>report</html>",
+                           headers={"content-type": "text/html; charset=utf-8"})])
         self.create_status = create_status
         self.run_status = run_status or {"r-crc": "done", "r-east": "done"}
         self.events: list[dict] = []
@@ -712,7 +748,10 @@ class _Lab:
             return httpx.Response(202, json={"runs": [{"id": "r-crc", "cluster": "crc-local"},
                                                       {"id": "r-east", "cluster": "prod-east"}]})
         if path.endswith("/artifact"):
-            return httpx.Response(200, content=b"<html>report</html>", headers={"content-type": "text/html; charset=utf-8"})
+            answer = self.artifact_answers.pop(0) if len(self.artifact_answers) > 1 else self.artifact_answers[0]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
         run_id = path.rsplit("/", 1)[1]
         status = self.run_status[run_id]
         return httpx.Response(200, json={
@@ -779,6 +818,29 @@ def test_t109_2_attach_sends_the_artefact_base64_and_names_what_it_cannot_send(l
     assert state.events[0]["data"]["attachment"] == {"format": "pdf", "omitted": "this run stored no pdf"}
 
 
+def test_t109_2b_an_attachment_transport_failure_is_omitted_and_the_fan_out_continues(lab):
+    state = lab("--attach", "html", artifact_answers=[
+        httpx.ConnectError("service GET failed"),
+        httpx.Response(200, content=b"<html>report</html>",
+                       headers={"content-type": "text/html; charset=utf-8"}),
+    ])
+    assert state.rc == 0 and [event["id"] for event in state.events] == ["r-crc", "r-east"]
+    assert state.events[0]["data"]["attachment"] == {
+        "format": "html", "omitted": "the artefact read failed (ConnectError)"}
+    assert base64.b64decode(state.events[1]["data"]["attachment"]["content_base64"]) == b"<html>report</html>"
+
+
+def test_t109_2c_the_response_bytes_cannot_bypass_the_attachment_cap(lab):
+    too_large = b"x" * (trigger.ATTACH_MAX_BYTES + 1)
+    state = lab("--attach", "html", artifact_answers=[
+        httpx.Response(200, content=too_large, headers={"content-type": "text/html"})])
+    assert state.rc == 0
+    assert state.events[0]["data"]["attachment"] == {
+        "format": "html",
+        "omitted": f"{len(too_large)} bytes read is over the {trigger.ATTACH_MAX_BYTES}-byte cap",
+    }
+
+
 def test_t109_3_a_failed_post_retries_the_retryable_and_prints_the_status_never_the_url(lab, capsys):
     state = lab(hook_answers=[httpx.Response(503, headers={"Retry-After": "7"}), httpx.Response(200)])
     out = capsys.readouterr()
@@ -786,6 +848,36 @@ def test_t109_3_a_failed_post_retries_the_retryable_and_prints_the_status_never_
     assert state.sleeps.count(7.0) == 1, "the receiver's Retry-After is honoured (the other sleeps are the 2 s polls)"
     assert "HTTP 503" in out.err
     _no_url(out.out + out.err)
+
+
+def test_t109_3b_no_delivery_attempt_starts_at_or_after_the_deadline(monkeypatch):
+    now = [10.0]
+    starts = []
+
+    class Hook:
+        def post(self, *args, **kwargs):
+            starts.append(now[0])
+            return httpx.Response(503)
+
+    monkeypatch.setattr(trigger.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(trigger.random, "uniform", lambda low, high: 0.0)
+    monkeypatch.setattr(trigger.time, "sleep", lambda delay: now.__setitem__(0, 20.0))
+    assert trigger._deliver(Hook(), HOOK, {"id": "r"}, deadline=10.0) is False
+    assert starts == []
+
+    now[0] = 0.0
+    assert trigger._deliver(Hook(), HOOK, {"id": "r"}, deadline=11.0) is False
+    assert starts == [0.0], "an oversleep must not start the promised retry after the deadline"
+
+
+def test_t109_3c_docs_name_the_exact_retryable_statuses():
+    root = Path(__file__).resolve().parents[2]
+    exact = "408, 429, 500, 502, 503, 504"
+    for relative in ("charts/group-sync-dashboard/README.md", "charts/group-sync-dashboard/values.yaml",
+                     "charts/group-sync-dashboard/Chart.yaml", "docs/CHANGELOG.md", "docs/specs/README.md"):
+        text = (root / relative).read_text()
+        assert "408, 429, 5xx" not in text, relative
+        assert exact in text, relative
 
 
 def test_t109_4_an_undelivered_run_fails_the_job_and_a_4xx_is_not_retried(lab, capsys):
@@ -852,6 +944,56 @@ def test_t109_9_the_report_service_makes_no_outbound_call():
                      else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
             for name in names:
                 assert name not in clients and not name.endswith("trigger"), (path.name, name)
+
+
+# ── OB3 review of #109: a hostile Retry-After, the deadline, the URL file, the event's time, the docs ──
+
+
+def test_review_a_non_ascii_digit_retry_after_falls_back_to_backoff(lab, capsys):
+    # '²'.isdigit() is True and float('²') raises: httpx decodes the byte 0xB2 as latin-1 '²'.
+    state = lab(hook_answers=[httpx.Response(503, headers=[(b"Retry-After", b"\xb2")]), httpx.Response(200)])
+    out = capsys.readouterr()
+    assert state.rc == 0 and len(state.events) == 3, "r-crc retried once on jitter, r-east delivered"
+    _no_url(out.out + out.err)
+
+
+def test_review_no_attempt_starts_that_cannot_finish_before_the_deadline(capsys):
+    posts = []
+    with httpx.Client(transport=httpx.MockTransport(lambda r: posts.append(r) or httpx.Response(200))) as hook:
+        assert trigger._deliver(hook, HOOK, {"id": "r-late"}, trigger.time.monotonic() + 1) is False
+    assert posts == [], "the first attempt is held to the deadline like a retry"
+    err = capsys.readouterr().err
+    assert "delivery failed for run r-late" in err
+    _no_url(err)
+
+
+def test_review_a_url_file_that_is_not_utf8_is_refused_by_class(tmp_path, capsys):
+    bad = tmp_path / "url"
+    bad.write_bytes(HOOK.encode() + b"\xff")
+    assert trigger._webhook_url(str(bad)) is None
+    err = capsys.readouterr().err
+    assert "cannot be read (UnicodeDecodeError)" in err
+    _no_url(err)
+
+
+def test_review_a_run_without_finished_at_sends_no_null_time():
+    # artifacts.py: a run the service restarted under is `failed` with finished_at None.
+    event = trigger._event({"id": "r1", "status": "failed", "finished_at": None, "error": "restarted"}, "w", SERVICE, None)
+    assert "time" not in event and event["data"]["finished_at"] is None
+
+
+def test_review_the_docs_name_the_statuses_the_trigger_retries():
+    root = Path(__file__).resolve().parents[2]
+    texts = {
+        "README row": next(line for line in (root / "charts/group-sync-dashboard/README.md").read_text().splitlines()
+                           if line.startswith("| `reporting.schedules[].deliver`")),
+        "values comment": (root / "charts/group-sync-dashboard/values.yaml").read_text().split("# `deliver` (#109")[1][:900],
+        "CHANGELOG bullet": (root / "docs/CHANGELOG.md").read_text().split("**Webhook delivery of scheduled reports")[1][:900],
+    }
+    for where, text in texts.items():
+        assert "5xx" not in text, f"{where}: the trigger retries {sorted(trigger.RETRYABLE_STATUSES)}, not every 5xx"
+        assert all(str(code) in text for code in trigger.RETRYABLE_STATUSES), where
+        assert "four times" not in text and "4 times" not in text, f"{where}: 4 attempts are 3 retries"
 ```
 
 ### Block 9 — `local-development/tests/test_chart_reporting.py`: the chart's tests, T109-10 and T109-11
@@ -1177,8 +1319,8 @@ neither trustedCA source is on. */ -}}
   # report, cluster, run id, status, schedule, sha256, finished_at, sizes) to the URL held in a Secret you
   # create (`oc create secret generic team-hook --from-literal=url=https://...`), mounted read-only into the
   # Job and never printed. attach: none|html|pdf|csv adds that artefact, base64, up to 5 MiB; it must be a
-  # format the schedule stores. Retried 4 times with backoff for 408, 429, 5xx and network errors; a run
-  # not delivered fails the Job like a failed run. The Job's egress to the receiver: chart README.
+  # format the schedule stores. Up to 4 attempts, with backoff, for 408, 429, 500, 502, 503, 504 and network
+  # errors; a run not delivered fails the Job like a failed run. The Job's egress to the receiver: chart README.
   #   - name: weekly-groups
   #     schedule: "0 23 * * 0"
   #     report: groups
@@ -1202,7 +1344,7 @@ neither trustedCA source is on. */ -}}
 
 ```markdown
 | `reporting.schedules` | `[]` | unattended runs: one CronJob per entry (`name`, `schedule`, `report`, optional `params`, `enabled`, `cluster`, `formats`) posting with the service token; nothing is mailed. **Cluster-agnostic**: the service resolves every enabled cluster from its snapshot and runs one per cluster, each tagged `schedule:<name>`; `cluster` pins one. `enabled: false` keeps the CronJob and **suspends** it (`spec.suspend`) — definition, history and audit stay; remove the entry to retire it | `report` must be an enabled catalogue name; `name` a DNS label |
-| `reporting.schedules[].deliver` | absent (`kind: none`) | **#109.** `kind: webhook` POSTs each finished run of the fan-out, as one CloudEvents 1.0 event (`application/cloudevents+json`; `id` is the run id, `data` the run's report, cluster, status, schedule, sha256, `finished_at`, sizes and error), to the URL in `webhookUrlSecret` (`name`, `key` default `url`), mounted read-only in the Job and never printed. `attach: html\|pdf\|csv` adds that artefact base64 up to 5 MiB, else names why it is omitted. 408, 429, 5xx and network errors are retried (4 attempts, full-jitter backoff, `Retry-After` honoured, inside the Job's deadline); a run not delivered fails the Job. The receiver must take generic JSON: a Slack incoming webhook or a Teams Workflows trigger needs its own adapter | `kind` none or webhook; webhook needs `webhookUrlSecret.name`; `attach` only with webhook, and only a format the schedule stores |
+| `reporting.schedules[].deliver` | absent (`kind: none`) | **#109.** `kind: webhook` POSTs each finished run of the fan-out, as one CloudEvents 1.0 event (`application/cloudevents+json`; `id` is the run id, `data` the run's report, cluster, status, schedule, sha256, `finished_at`, sizes and error), to the URL in `webhookUrlSecret` (`name`, `key` default `url`), mounted read-only in the Job and never printed. `attach: html\|pdf\|csv` adds that artefact base64 up to 5 MiB, else names why it is omitted. 408, 429, 500, 502, 503, 504 and network errors are retried (4 attempts, full-jitter backoff, `Retry-After` honoured, inside the Job's deadline); a run not delivered fails the Job. The receiver must take generic JSON: a Slack incoming webhook or a Teams Workflows trigger needs its own adapter | `kind` none or webhook; webhook needs `webhookUrlSecret.name`; `attach` only with webhook, and only a format the schedule stores |
 | `reporting.podDisruptionBudget.enabled` / `.maxUnavailable` / `.minAvailable` | `true` / `1` / `""` | the report Deployment's own budget; same semantics as the dashboard's | selects the report pods only, never the schedule Jobs |
 | `reporting.resources` / `.nodeSelector` / `.tolerations` / `.affinity` | requests `50m`/`128Mi`, limits `500m`/`768Mi` / `{}` / `[]` / `{}` | the report pod's own scheduling; nothing is derived from the data claim's access mode | — |
 
@@ -1258,8 +1400,9 @@ receiver behind an HTTP proxy is not supported by the chart's values (the Job se
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
   POSTs each finished run of its fan-out as one CloudEvents 1.0 event (the run's facts; `id` is the run id) to the
   URL in that Secret, mounted read-only into the Job; `attach: html|pdf|csv` adds the artefact base64 up to 5 MiB.
-  408, 429, 5xx and network errors are retried four times with full-jitter backoff and `Retry-After`; a run not
-  delivered fails the Job. The URL is never printed: a failure names the HTTP status or the exception's class.
+  408, 429, 500, 502, 503, 504 and network errors get up to 4 attempts, with full-jitter backoff and `Retry-After`;
+  a run not delivered fails the Job. The URL is never printed: a failure names the HTTP status or the exception's
+  class.
   A schedule without `deliver` renders the same CronJob; the report service still makes no outbound call; a
   window skip (409) delivers nothing; no RBAC change.
 
@@ -1329,7 +1472,7 @@ appVersion: "4.3.0"
 
 ```yaml
 # 4.3.0 (2026-10-03). What changed between two runs: a report-diff run compares the sealed data of two finished runs of one report on one cluster, rows removed and added per table, stored as a sealed manual run naming both inputs and their sha256s (#108). MINOR.
-# 4.4.0 (2026-10-04). Webhook delivery of scheduled reports: each finished run of a schedule's fan-out is POSTed as one CloudEvent to the URL in a mounted Secret, retried for 408, 429, 5xx and network errors, never printing the URL; a run not delivered fails the Job (#109). MINOR.
+# 4.4.0 (2026-10-04). Webhook delivery of scheduled reports: each finished run of a schedule's fan-out is POSTed as one CloudEvent to the URL in a mounted Secret, retried for 408, 429, 500, 502, 503, 504 and network errors, never printing the URL; a run not delivered fails the Job (#109). MINOR.
 appVersion: "4.4.0"
 
 ```
