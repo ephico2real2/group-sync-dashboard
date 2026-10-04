@@ -206,6 +206,9 @@ const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, group
                 /* #149 R5: the status page's history filters and page. Filters, not positions (the
                    groupFilter reasoning): a shared link opens the page, not a filtered slice of it. */
                 historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
+                /* #108: the history's "Diff vs…" picker — the head run, the earlier runs offered, the chosen base, the
+                   diff run once posted. View state, so the history's poll repaints it as the reader left it. */
+                historyDiff: null,
                 /* #267: the form's cluster control. `reportClusters` is the set to run on — null means the nav's
                    cluster alone; an array always holds it (the primary: its lookups, its totals). View state, not
                    a position: the URL carries the nav's cluster, the extra targets are the form's, like a draft.
@@ -3295,15 +3298,92 @@ function reportingHistoryCard(h, st) {
         <button type="button" id="history-prev"${view.historyPage === 0 ? " disabled" : ""}>‹ Prev</button>
         <button type="button" id="history-next"${view.historyPage + 1 >= pages ? " disabled" : ""}>Next ›</button></span>
     </div>
+    ${historyDiffPicker(artefacts)}
     ${total === 0 ? `<div class="empty-note">${Object.values(f).some(Boolean) ? "No run matches these filters." : "No report has been generated yet."}</div>` : `<div class="scroll-x"><table>
       <thead><tr><th>requested</th><th>report</th><th>cluster</th><th>by</th><th>status</th><th>sha256</th><th>artefacts</th></tr></thead>
       <tbody>${(h.runs || []).map((x) => `<tr>
-        <td class="mono">${esc(x.requested_at)}</td><td class="mono">${esc(x.report)}</td><td>${esc(x.cluster)}</td>
+        <td class="mono">${esc(x.requested_at)}</td><td class="mono">${esc(x.report)}${x.report === "report-diff" && x.params ? ` <span class="muted">(${esc(x.params.report)})</span>` : ""}</td><td>${esc(x.cluster)}</td>
         <td>${x.generated_by.startsWith("schedule:") ? `<span class="mono">${esc(x.generated_by)}</span>` : esc(x.generated_by)}</td>
-        <td>${stateBadge(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td><td>${artefacts(x)}</td>
+        <td>${stateBadge(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td><td>${artefacts(x)}${x.status === "done" && x.report !== "report-diff" ? ` <button type="button" class="linkish" data-diff="${esc(x.id)}">Diff vs…</button>` : ""}</td>
       </tr>`).join("")}</tbody></table></div>
     <div class="filterbar-note mt-3">Page ${view.historyPage + 1} of ${pages} · page size ${HISTORY_PAGE} · scheduled kept ${st.retention.scheduled.days}d / newest ${st.retention.scheduled.keepPerSchedule} per schedule (cap-exempt) · manual expires in ${st.retention.manual.days}d / newest ${st.retention.manual.maxRuns}</div>`}
   </section>`;
+}
+
+/* #108: "Diff vs…" on a history row. The head is the row's run; the bases offered are the earlier finished runs of
+   the same report on the same cluster, asked of the service; the diff run, once posted, shows here with its
+   downloads (the page's one artefact fetch) until the reader closes the picker. */
+function historyDiffPicker(artefacts) {
+  const d = view.historyDiff;
+  if (!d) return "";
+  const head = d.head;
+  let body;
+  if (d.run) {
+    body = `diff <span class="mono">${esc(d.run.id)}</span> ${stateBadge(d.run.status)} ${d.run.status === "done" ? artefacts(d.run) : d.run.error ? esc(d.run.error) : ""}`;
+  } else if (d.runs === null) {
+    body = `<span class="muted">Loading earlier runs…</span>`;
+  } else if (!d.runs.length) {
+    body = `<span class="muted">No earlier finished run of ${esc(head.report)} on ${esc(head.cluster)}.</span>`;
+  } else {
+    body = `<label class="filterbar-note">against <select id="history-diff-base">${d.runs.map((r) =>
+      `<option value="${esc(r.id)}"${r.id === d.base ? " selected" : ""}>${esc(r.requested_at)} · ${esc((r.sha256 || "").slice(0, 12))} · ${esc(r.generated_by)}</option>`).join("")}</select></label>
+      <button type="button" id="history-diff-go"${d.submitting ? " disabled" : ""}>Generate diff</button>`;
+  }
+  return `<div class="ns-controls" id="history-diff"><span class="filterbar-note">What changed in <span class="mono">${esc(head.report)}</span> on ${esc(head.cluster)} up to the run of ${esc(head.requested_at)}:</span>
+    ${body} <button type="button" class="linkish" id="history-diff-close">Close</button>
+    ${d.note ? `<div class="filterbar-note">${esc(d.note)}</div>` : ""}</div>`;
+}
+
+function wireHistoryDiff(refetch) {
+  document.querySelectorAll("[data-diff]").forEach((el) => {
+    el.onclick = async () => {
+      const head = ((data.reportHistory && data.reportHistory.runs) || []).find((r) => r.id === el.dataset.diff);
+      if (!head) return;
+      const d = { head, runs: null, base: "", note: "", submitting: false, run: null };
+      view.historyDiff = d; render();
+      try {
+        // Ids sort chronologically, so "earlier" is a smaller id; the newest earlier run is the default base. The
+        // service lists newest first, so the earlier runs follow every later one: page past those (an hourly
+        // schedule keeps ~2 000 in 90 days) until a hundred earlier runs are found or the list ends.
+        const earlier = [];
+        for (let offset = 0; earlier.length < 100; offset += 1000) {
+          const q = new URLSearchParams({ report: head.report, cluster: head.cluster, status: "done", limit: "1000", offset: String(offset) });
+          const got = await reportGet(`/api/runs?${q}`);
+          earlier.push(...(got.runs || []).filter((r) => r.id < head.id));
+          if (!got.truncated) break;
+        }
+        d.runs = earlier.slice(0, 100);
+        d.base = d.runs.length ? d.runs[0].id : "";
+      } catch (e) { d.runs = []; d.note = `The earlier runs could not be listed: ${e.message}`; }
+      if (view.historyDiff === d) render();
+    };
+  });
+  const d = view.historyDiff;
+  const close = $("history-diff-close");
+  if (close) close.onclick = () => { view.historyDiff = null; render(); };
+  const base = $("history-diff-base");
+  if (base) base.onchange = () => { d.base = base.value; };
+  const go = $("history-diff-go");
+  if (go) go.onclick = async () => {
+    d.submitting = true; d.note = ""; render();
+    try {
+      const res = await reportFetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: "report-diff", cluster: d.head.cluster, params: { base: d.base, head: d.head.id } }) });
+      d.run = await res.json(); render();
+      // Poll the run, as the report form does: a diff renders in seconds and the page's repaint is the wrong clock.
+      while (view.historyDiff === d && (d.run.status === "queued" || d.run.status === "running")) {
+        await new Promise((r) => setTimeout(r, 1500));
+        d.run = await reportGet(`/api/runs/${encodeURIComponent(d.run.id)}`);
+        render();
+      }
+      refetch();
+    } catch (e) {
+      d.note = e.status === 422 ? `The diff was refused: ${e.detail || e.message}` : e.message;
+    } finally {
+      d.submitting = false;
+      if (view.historyDiff === d) render();
+    }
+  };
 }
 
 function wireReporting() {
@@ -3326,6 +3406,7 @@ function wireReporting() {
   const prev = $("history-prev"), next = $("history-next");
   if (prev) prev.onclick = () => { view.historyPage = Math.max(0, view.historyPage - 1); refetch(); };
   if (next) next.onclick = () => { view.historyPage += 1; refetch(); };
+  wireHistoryDiff(refetch);
   document.querySelectorAll("[data-artifact]").forEach((el) => {
     el.onclick = () => downloadArtifact(el.dataset.artifact, el.dataset.format);
   });
@@ -3468,7 +3549,10 @@ function librarySectionHtml(sec, allRuns) {
   const sid = sched ? `sec-${sched.name}` : `sec-${report.name}`;
   const title = sched ? librarySpokenHead(sched, report) : report.title;
   const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
-  const manuals = sec.manuals ? allRuns.filter((r) => r.report === report.name && !r.schedule) : [];
+  // A diff is not a catalogue entry, but it belongs beside the source report it compares; otherwise
+  // the Library's total counts a stored run for which it renders no card.
+  const manuals = sec.manuals ? allRuns.filter((r) => !r.schedule &&
+    (r.report === report.name || (r.report === "report-diff" && r.params && r.params.report === report.name))) : [];
   const paused = !!(sched && !sched.enabled);
   const empty = !scheduled.length && !manuals.length;
   const chips = [`<span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span>`];

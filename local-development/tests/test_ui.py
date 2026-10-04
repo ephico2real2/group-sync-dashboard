@@ -9402,6 +9402,130 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_diff_vs_reaches_earlier_runs_past_the_newest_hundred(self, browser, reporting_server):
+        # #108 review (OB3, C7): the picker asked for one page of 100 runs, newest first, and kept those older than the
+        # head, so a head with 100 later finished runs of its report and cluster read "No earlier finished run" while
+        # one existed (an hourly schedule keeps ~2 000 in reporting.retention.scheduled.days 90). The runs are records
+        # only, and removed at the end: this fixture is shared by the module.
+        from gsd.reporting.artifacts import Run
+        base, _, report_app = reporting_server
+        store = report_app.state.store
+        old = ["20260905T000000.000000Z-cc00", "20260905T000001.000000Z-cc01"]
+        later = [f"20260905T01{i // 60:02d}{i % 60:02d}.000000Z-dd{i:02d}" for i in range(100)]
+        for rid in (*old, *later):
+            run = store.create(Run(id=rid, report="privileged-access", cluster="crc-local", params={}, formats=[], generated_by="root",
+                                   generated_by_note="proxy-verified", schedule=None, requested_at="2026-09-05T00:00:00Z"))
+            # Finished now, so the worker's retention (manual: 3 days, from completion) keeps them through the test.
+            run.status, run.sha256, run.finished_at = "done", "f" * 64, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            store.update(run)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            rows, _ = store.list(report="privileged-access", limit=1000)
+            at = [r.id for r in rows].index(old[1]) // 25
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-report", "privileged-access")
+            for n in range(at):
+                page.wait_for_selector(f"text=Page {n + 1} of")
+                page.click("#history-next")
+            page.click(f'[data-diff="{old[1]}"]')
+            page.wait_for_selector("#history-diff-base", timeout=10_000)
+            assert page.eval_on_selector_all("#history-diff-base option", "els => els.map((e) => e.value)") == [old[0]]
+            assert not errors, errors
+        finally:
+            ctx.close()
+            for rid in (*old, *later):
+                store.delete(rid)
+
+    def test_diff_vs_offers_earlier_runs_keeps_the_choice_and_downloads_the_diff(self, browser, reporting_server):
+        # #108 (SPEC_F3, T108-9): a finished history row offers "Diff vs…"; the picker lists the earlier finished runs
+        # of the same report and cluster, keeps the reader's base across a repaint, posts a report-diff, and the diff
+        # run downloads through the page's one artefact fetch. access-matrix, not groups: the module's Library tests
+        # assert the weekly groups section holds no manual run, and this fixture is shared.
+        from gsd.reporting.artifacts import Run
+        base, _, report_app = reporting_server
+        runs = []
+        for i in range(3):
+            run = report_app.state.runs.submit(Run(id=f"20260906T00000{i}.000000Z-df0{i}", report="access-matrix", cluster="crc-local",
+                                                   params={}, formats=["html"], generated_by="root", generated_by_note="proxy-verified",
+                                                   schedule=None, requested_at=f"2026-09-06T00:00:0{i}Z"))
+            runs.append(run.id)
+        deadline = time.monotonic() + 30
+        while any(report_app.state.store.get(r).status != "done" for r in runs):
+            assert time.monotonic() < deadline, [report_app.state.store.get(r).public() for r in runs]
+            time.sleep(0.1)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-origin", "person")
+            page.wait_for_selector(f'[data-diff="{runs[2]}"]')
+            page.click(f'[data-diff="{runs[2]}"]')
+            page.wait_for_selector("#history-diff-base")
+            offered = page.eval_on_selector_all("#history-diff-base option", "els => els.map((e) => e.value)")
+            assert runs[1] in offered and runs[0] in offered and runs[2] not in offered, offered
+            assert offered == sorted(offered, reverse=True) and page.input_value("#history-diff-base") == runs[1]
+            page.select_option("#history-diff-base", runs[0])
+            page.evaluate("render()")   # the history's poll repaints the page: the reader's base must survive it
+            assert page.input_value("#history-diff-base") == runs[0], "the repaint dropped the reader's base"
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#history-diff-go")
+            assert json.loads(info.value.post_data) == {"report": "report-diff", "cluster": "crc-local",
+                                                          "params": {"base": runs[0], "head": runs[2]}}
+            page.wait_for_selector("#history-diff [data-artifact][data-format='html']", timeout=30_000)
+            with page.expect_download() as download:
+                page.click("#history-diff [data-format='html']")
+            assert download.value.suggested_filename.endswith(".html") and "report-diff" in download.value.suggested_filename
+            assert "No change" in pathlib.Path(download.value.path()).read_text(encoding="utf-8")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_diff_is_reachable_in_the_library_and_reporting_status(self, browser, reporting_server):
+        """A diff counted by the Library has a card under its source report; its deep link and the status row render."""
+        from gsd.reporting.artifacts import Run
+        from gsd.reporting.diff import DIFF_REPORT
+        base, _, report_app = reporting_server
+        runs = []
+        for i in range(2):
+            run = report_app.state.runs.submit(Run(
+                id=f"20260906T00001{i}.000000Z-lb0{i}", report="access-matrix", cluster="crc-local",
+                params={}, formats=["html"], generated_by="root", generated_by_note="proxy-verified",
+                schedule=None, requested_at=f"2026-09-06T00:00:1{i}Z"))
+            runs.append(run.id)
+        deadline = time.monotonic() + 30
+        while any(report_app.state.store.get(r).status != "done" for r in runs):
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        inputs = [report_app.state.store.get(r) for r in runs]
+        diff = report_app.state.runs.submit(Run(
+            id="20260906T000012.000000Z-lb02", report=DIFF_REPORT, cluster="crc-local",
+            params={"report": "access-matrix", "base": runs[0], "head": runs[1],
+                    "base_sha256": inputs[0].sha256, "head_sha256": inputs[1].sha256},
+            formats=["html"], generated_by="root", generated_by_note="proxy-verified", schedule=None,
+            requested_at="2026-09-06T00:00:12Z"))
+        deadline = time.monotonic() + 30
+        while report_app.state.store.get(diff.id).status not in ("done", "failed"):
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        assert report_app.state.store.get(diff.id).status == "done"
+
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector(f'#sec-access-matrix [data-run="{diff.id}"]')
+            page.goto(base + f"#page=library&cluster=crc-local&run={diff.id}")
+            page.wait_for_selector("#library-drawer")
+            assert "report-diff" in page.locator("#library-drawer").inner_text()
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            # The history row shows the requested time, not the run id; the id is on its artefact buttons.
+            row = page.locator(f'#reporting-history tbody tr:has([data-artifact="{diff.id}"])')
+            assert row.count() == 1 and "report-diff" in row.inner_text() and "access-matrix" in row.inner_text()
+            assert not errors, f"diff Library/status page errors: {errors}"
+        finally:
+            ctx.close()
+
     def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
         # #149 R5/R6: the strip (service, window, retention, in flight), the schedules (cadence, retention,
         # enabled, last success, next, status), and the history with server-side filters and paging.

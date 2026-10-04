@@ -75,6 +75,34 @@ class Section:
 #: that snapshot's schema, and how the cluster's last poll before it ended. Every run over one
 #: snapshot reads the same values, so they are sealed; the rest of `provenance` is the run's.
 SEALED_PROVENANCE = ("snapshot_stamp", "snapshot_schema_version", "last_poll", "poll_status", "poll_message")
+#: The top-level fields in the canonical data. Kept here with the hashing recipe so every consumer
+#: verifies a stored .json exactly as Report.seal() wrote it.
+CANONICAL_FIELDS = ("name", "cluster", "api_url", "params", "coverage", "totals", "truncated",
+                    "include_members", "sealed_provenance")
+
+
+def canonical_sha256(canonical: dict) -> str:
+    """Hash canonical report data with the one serialization recipe used by the model."""
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def recompute_sha256(doc: dict) -> str | None:
+    """Recompute a stored .json's seal, or return None when it is not a post-SPEC_F1 document.
+
+    Page one must be the first and only unsealed section; otherwise unchecked data would sit beside
+    the seal. This is shared by the service, report-diff and the e2e integrity walk.
+    """
+    try:
+        flags = [section.get("sealed") for section in doc["sections"]]
+        if "sealed_provenance" not in doc or flags[:1] != [False] or not all(flags[1:]):
+            return None
+        canonical = {key: doc[key] for key in CANONICAL_FIELDS}
+        canonical["sections"] = doc["sections"][1:]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    return canonical_sha256(canonical)
 
 
 @dataclass
@@ -112,9 +140,7 @@ class Report:
         }
 
     def seal(self) -> "Report":
-        self.sha256 = hashlib.sha256(
-            json.dumps(self.canonical(), sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-        ).hexdigest()
+        self.sha256 = canonical_sha256(self.canonical())
         return self
 
     def to_json(self) -> str:

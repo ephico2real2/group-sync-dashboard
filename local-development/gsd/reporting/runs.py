@@ -19,6 +19,7 @@ from .. import TITLE
 from .artifacts import ArtifactStore, Run
 from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
 from .config import ReportSettings, retention_overrides
+from .diff import DIFF_REPORT, build_diff_run
 from .render_csv import render_csv
 from .render_html import render_html
 from .snapshot import Snapshot, SnapshotError, newest_snapshot
@@ -164,23 +165,28 @@ class RunManager:
         self.store.update(run)
         started = time.perf_counter()
         try:
-            spec, build = REGISTRY[run.report]
-            params = validate_params(spec, run.params)
-            path = newest_snapshot(self.settings.snapshot_dir)
-            with Snapshot(path) as snap:
-                info = snap.info()
-                cluster = snap.cluster(run.cluster)
-                if cluster is None:
-                    raise ValidationError(f"unknown cluster {run.cluster!r} in the snapshot")
-                now = self._clock()
-                ctx = RunContext(settings=self.settings, cluster=cluster, now=now, run_id=run.id,
-                                 generated_by=run.generated_by, generated_by_note=run.generated_by_note,
-                                 snapshot_stamp=info.stamp, snapshot_age_seconds=info.age_seconds(now),
-                                 schema_version=info.schema_version,
-                                 namespace_selector_labels=self.settings.namespace_selector_labels)
-                from .catalogue.common import assemble
-                report = assemble(spec, snap, ctx, params, build(snap, ctx, params))
-            run.snapshot_stamp, run.sha256 = info.stamp, report.sha256
+            if run.report == DIFF_REPORT:
+                # Two stored runs, not the snapshot (#108): checked before the catalogue it is not part of.
+                report, stamp = build_diff_run(self.store, run, self.settings, self._clock()), None
+            else:
+                spec, build = REGISTRY[run.report]
+                params = validate_params(spec, run.params)
+                path = newest_snapshot(self.settings.snapshot_dir)
+                with Snapshot(path) as snap:
+                    info = snap.info()
+                    cluster = snap.cluster(run.cluster)
+                    if cluster is None:
+                        raise ValidationError(f"unknown cluster {run.cluster!r} in the snapshot")
+                    now = self._clock()
+                    ctx = RunContext(settings=self.settings, cluster=cluster, now=now, run_id=run.id,
+                                     generated_by=run.generated_by, generated_by_note=run.generated_by_note,
+                                     snapshot_stamp=info.stamp, snapshot_age_seconds=info.age_seconds(now),
+                                     schema_version=info.schema_version,
+                                     namespace_selector_labels=self.settings.namespace_selector_labels)
+                    from .catalogue.common import assemble
+                    report = assemble(spec, snap, ctx, params, build(snap, ctx, params))
+                stamp = info.stamp
+            run.snapshot_stamp, run.sha256 = stamp, report.sha256
             canonical = report.to_json().encode("utf-8")
             run.bytes["json"] = self.store.write(run.id, "json", canonical)
             if "csv" in run.formats:

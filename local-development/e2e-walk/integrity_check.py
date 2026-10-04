@@ -14,15 +14,19 @@ one line per report, and exits 1 if any check fails.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import pathlib
 import sys
 
-#: The keys Report.canonical() seals. `sections` is added by recompute(), narrowed to the sealed ones: the
-#: .json carries page one too, which states the run and is left out of the hash (SPEC_F1, #270).
-CANONICAL = ("name", "cluster", "api_url", "params", "coverage", "totals", "truncated", "include_members",
-             "sealed_provenance")
+# run_walk.sh invokes this file from any cwd without PYTHONPATH; import the model from this checkout,
+# never an editable install belonging to another one.
+LOCAL_DEVELOPMENT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LOCAL_DEVELOPMENT))
+
+from gsd.reporting.model import CANONICAL_FIELDS, recompute_sha256
+
+# Backwards-compatible name used by the walk-document contract test; the recipe itself lives in model.py.
+CANONICAL = CANONICAL_FIELDS
 
 
 def recompute(d: dict) -> str | None:
@@ -30,13 +34,7 @@ def recompute(d: dict) -> str | None:
     main() writes as a FAIL row: one written before 4.1.0 (no `sealed_provenance`, no `sealed` flags), or one
     whose unsealed sections are not exactly page one, the first (the model leaves only page one out of the hash,
     so any other unsealed section would ride beside the seal unchecked)."""
-    flags = [s.get("sealed") for s in d["sections"]]
-    if "sealed_provenance" not in d or flags[:1] != [False] or not all(flags[1:]):
-        return None
-    canon = {k: d[k] for k in CANONICAL}
-    canon["sections"] = d["sections"][1:]
-    return hashlib.sha256(
-        json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+    return recompute_sha256(d)
 
 
 def main() -> int:

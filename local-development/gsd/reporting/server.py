@@ -34,6 +34,7 @@ from .artifacts import FORMATS, ArtifactStore, Run, RunInFlight, new_run_id
 from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
 from .catalogue.common import validate_selector_map
 from .config import ReportSettings, load_report_settings, retention_overrides
+from .diff import DIFF_REPORT, diff_params
 from .metrics import ReportSignals, build_report_registry
 from .runs import QueueFull, RunManager
 from .snapshot import Snapshot, SnapshotError, newest_snapshot
@@ -318,15 +319,25 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         work. The caller is a wide-tier viewer (ticket) or the service token (a schedule Job).
         Parameters are validated now so a bad request is a 422 here rather than a failed run later.
         """
-        if body.report not in REGISTRY:
+        if body.report == DIFF_REPORT:
+            # A diff of two stored runs (#108), checked before the catalogue it is not part of: one named cluster,
+            # never a schedule, and its base and head refused here (422) rather than failed in the worker.
+            if body.schedule or body.clusters is not None or body.cluster is None:
+                raise HTTPException(status_code=422, detail="a report-diff names one cluster and no schedule")
+            try:
+                params = diff_params(store, body.params, body.cluster)
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        elif body.report not in REGISTRY:
             raise HTTPException(status_code=404, detail=f"unknown report {body.report!r}")
-        if body.report not in settings.enabled_reports:
+        elif body.report not in settings.enabled_reports:
             raise HTTPException(status_code=404, detail=f"report {body.report!r} is not enabled on this deployment")
-        spec, _ = REGISTRY[body.report]
-        try:
-            params = validate_params(spec, body.params)
-        except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        else:
+            spec, _ = REGISTRY[body.report]
+            try:
+                params = validate_params(spec, body.params)
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         # A selector label that is not one of this deployment's configured dimensions is a fast 422
         # (not a stored failed run): the subset check needs the settings, which validate_params does
         # not have. build() keeps the same check as the worker's belt (review PR #129, N1).
