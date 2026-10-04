@@ -1,0 +1,96 @@
+# 5.0.0 e2e walk; written by scripts/run.sh
+# started 2026-10-04T13:00:33Z; kube context crc-admin; host group-sync-dashboard.apps-crc.testing
+
+## 1. Facts and the precheck (no grant)  (2026-10-04T13:00:33Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o jsonpath='{.status.sync.revision} {.status.sync.status} {.status.health.status}{"\n"}'
+704943a11c3b211f13ddfd7a23fd478ede6b2307 Synced Healthy
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit, features}'
+{"version":"5.0.0","commit":"704943a11c","features":{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true}}
+$ oc get deployments.apps -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image,WANT:.spec.replicas,READY:.status.readyReplicas
+NAME                            IMAGE                                                   WANT   READY
+group-sync-dashboard            quay.io/ephico2real/group-sync-dashboard:5.0.0          1      1
+group-sync-dashboard-recovery   quay.io/ephico2real/group-sync-dashboard:5.0.0          0      <none>
+group-sync-dashboard-report     quay.io/ephico2real/group-sync-dashboard-report:5.0.0   1      1
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer
+Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+no
+(exit 1)
+
+## 2. The grant  (2026-10-04T13:00:34Z)
+$ oc create -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk-500/reports/2026-10-04_release-5.0.0-e2e-walk/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-500e2e-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-500e2e-crb-update-developer created
+grant created at 13:00:35Z; tier cache waited until 2026-10-04T13:01:45Z
+
+## 3. run_walk.sh (every tab, every report, integrity, env, the document)  (2026-10-04T13:01:45Z)
+$ GSD_UI_PASSWORD=<from crc> run_walk.sh --base https://group-sync-dashboard.apps-crc.testing --login-user developer --provider developer --out /private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk-500/reports/2026-10-04_release-5.0.0-e2e-walk
+run_walk.sh exit 0
+
+## 4. The grant's delete, then the facts  (2026-10-04T13:04:09Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-walk-500/reports/2026-10-04_release-5.0.0-e2e-walk/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io "gsd-walk-500e2e-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-500e2e-crb-update-developer" deleted
+grant held 214 s
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o jsonpath='{.status.sync.revision} {.status.sync.status} {.status.health.status}{"\n"}'
+704943a11c3b211f13ddfd7a23fd478ede6b2307 Synced Healthy
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit, features}'
+{"version":"5.0.0","commit":"704943a11c","features":{"export":true,"reporting":true,"reporting_prefix":"/report","housekeeping":true}}
+$ oc get deployments.apps -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,IMAGE:.spec.template.spec.containers[0].image,WANT:.spec.replicas,READY:.status.readyReplicas
+NAME                            IMAGE                                                   WANT   READY
+group-sync-dashboard            quay.io/ephico2real/group-sync-dashboard:5.0.0          1      1
+group-sync-dashboard-recovery   quay.io/ephico2real/group-sync-dashboard:5.0.0          0      <none>
+group-sync-dashboard-report     quay.io/ephico2real/group-sync-dashboard-report:5.0.0   1      1
+
+## 5. The Epic F surfaces  (2026-10-04T13:04:09Z)
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-report -o json | jq -c '[.spec.template.spec.containers[0].env[] | select(.name | test("FORMATS"))]'
+[{"name":"GSD_REPORT_FORMATS_SCHEDULED","value":"html,json,csv"},{"name":"GSD_REPORT_FORMATS_MANUAL","value":"html,json,pdf"}]
+$ oc get cronjobs.batch -n group-sync-dashboard -o json | jq -c '[.items[] | .spec.jobTemplate.spec.template.spec.containers[0].command as $c | {name: .metadata.name, deliver: [range(0; $c | length) | select($c[.] == "--deliver" or $c[.] == "--attach" or $c[.] == "--format") | $c[.:.+2] | join(" ")], pdf: ([$c[] | select(. == "pdf")] | length)}]'
+[{"name":"group-sync-dashboard-backup-offsite","deliver":[],"pdf":0},{"name":"group-sync-dashboard-report-biweekly-groups","deliver":[],"pdf":0},{"name":"group-sync-dashboard-report-delivery-walk","deliver":["--deliver webhook","--attach html"],"pdf":0},{"name":"group-sync-dashboard-report-quarterly-compliance","deliver":[],"pdf":0},{"name":"group-sync-dashboard-report-weekly-namespace-access","deliver":[],"pdf":0}]
+$ oc get prometheusrules.monitoring.coreos.com -n group-sync-dashboard group-sync-dashboard -o json | jq -c '[.spec.groups[].rules[] | select(.alert == "GroupSyncDashboardReportScheduleLate") | {alert, for, severity: .labels.severity}], ([.spec.groups[].rules[] | select(.alert)] | length)'
+[{"alert":"GroupSyncDashboardReportScheduleLate","for":"15m","severity":"warning"}]
+20
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard-report -c report -- curl -sk https://127.0.0.1:8443/metrics | grep -E '^gsd_report_schedule_status' | sort
+$ oc get deployments.apps -n group-sync-dashboard -o json | jq -c '[.items[] | {name: .metadata.name, ticket_key_volumes: [.spec.template.spec.volumes[]? | select(.secret.secretName == "group-sync-dashboard-report-ticket-key") | .name]}]'
+[{"name":"grafana-openshift-grafana-deployment","ticket_key_volumes":[]},{"name":"grafana-operator-controller-manager-v5","ticket_key_volumes":[]},{"name":"group-sync-dashboard","ticket_key_volumes":["report-ticket-key"]},{"name":"group-sync-dashboard-recovery","ticket_key_volumes":["report-ticket-key"]},{"name":"group-sync-dashboard-report","ticket_key_volumes":["report-ticket-key"]},{"name":"mock-openshift","ticket_key_volumes":[]},{"name":"mock-privateca","ticket_key_volumes":[]},{"name":"mock-selfsigned","ticket_key_volumes":[]},{"name":"mock-trusted","ticket_key_volumes":[]}]
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard-report -c report | grep -m1 'ticket key loaded'
+2026-10-04 08:51:09,097 INFO    gsd.reporting.server ticket key loaded
+
+## 6. OCR: secret-shaped text in every PNG (positive control: the word Overview)  (2026-10-04T13:04:10Z)
+pngs 75; ocr lines 15316; sha256~ 0; password 5; control Overview 44
+walk exit=0 at 2026-10-04T13:04:43Z
+
+## exit trap  (2026-10-04T13:04:43Z)
+No resources found
+can-i after the trap: no
+
+## Addendum: the schedule-status series, read again at the service's path  (2026-10-04T13:05:18Z)
+# Written by hand after the run: step 5 read /metrics, which is not where the report service serves them (it is
+# /report/metrics, as reports/2026-10-04_schedule-stale-alert-140 reads it), so that read printed nothing. run.sh now reads this path.
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard-report -c report -- curl -sk https://127.0.0.1:8443/report/metrics | grep -E '^gsd_report_schedule_status' | sort
+gsd_report_schedule_status{schedule="biweekly-groups",status="disabled"} 1.0
+gsd_report_schedule_status{schedule="biweekly-groups",status="late"} 0.0
+gsd_report_schedule_status{schedule="biweekly-groups",status="never"} 0.0
+gsd_report_schedule_status{schedule="biweekly-groups",status="ok"} 0.0
+gsd_report_schedule_status{schedule="delivery-walk",status="disabled"} 1.0
+gsd_report_schedule_status{schedule="delivery-walk",status="late"} 0.0
+gsd_report_schedule_status{schedule="delivery-walk",status="never"} 0.0
+gsd_report_schedule_status{schedule="delivery-walk",status="ok"} 0.0
+gsd_report_schedule_status{schedule="quarterly-compliance",status="disabled"} 0.0
+gsd_report_schedule_status{schedule="quarterly-compliance",status="late"} 0.0
+gsd_report_schedule_status{schedule="quarterly-compliance",status="never"} 0.0
+gsd_report_schedule_status{schedule="quarterly-compliance",status="ok"} 1.0
+gsd_report_schedule_status{schedule="weekly-namespace-access",status="disabled"} 0.0
+gsd_report_schedule_status{schedule="weekly-namespace-access",status="late"} 0.0
+gsd_report_schedule_status{schedule="weekly-namespace-access",status="never"} 1.0
+gsd_report_schedule_status{schedule="weekly-namespace-access",status="ok"} 0.0
