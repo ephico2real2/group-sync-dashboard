@@ -1,0 +1,61 @@
+# SPEC_F7 §5 lab check (5.1.0); written by scripts/run.sh
+# started 2026-10-04T17:46:12Z; kube context crc-admin
+
+## Before  (2026-10-04T17:46:13Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"930796769fc4ee58c2416558076db3181f4e80e2"}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"5.1.0","commit":"930796769f"}
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=snapshot-clock-592-2026-10-04 -o name
+
+## in_pod.py as dana.lee: step 1 (#592) and step 2 (#607)  (2026-10-04T17:46:13Z)
+$ for each phase: printf '<viewer>\n<fresh ticket>\n<phase>\n<arg>\n' | oc exec -i deploy/group-sync-dashboard-report -c report -- python3.14 -c "$(cat scripts/in_pod.py)"
+{"t": "17:49:24Z", "check": "1 one snapshot, two clocks, one hash", "report": "compliance-snapshot", "runs": ["20261004T174615.694758Z-e176", "20261004T174920.150306Z-ad81"], "stamps": ["2026-10-04T17:45:25.793849Z", "2026-10-04T17:45:25.793849Z"], "sha256": ["0c0eff614d003bf0e15c300b9135626e2f4f90ede76e3fd6ed4869cb8c6e1d2a", "0c0eff614d003bf0e15c300b9135626e2f4f90ede76e3fd6ed4869cb8c6e1d2a"], "same_sha256": true, "generated_at": ["2026-10-04T17:46:15Z", "2026-10-04T17:49:20Z"]}
+{"t": "17:49:24Z", "check": "1 one snapshot, two clocks, one hash", "report": "login-activity", "runs": ["20261004T174617.977486Z-b479", "20261004T174922.374300Z-e347"], "stamps": ["2026-10-04T17:45:25.793849Z", "2026-10-04T17:45:25.793849Z"], "sha256": ["f6bbb02a7e7bdc2b3fc60c68f4dbd0990706a314aa12408a68aba3ee22d89b19", "f6bbb02a7e7bdc2b3fc60c68f4dbd0990706a314aa12408a68aba3ee22d89b19"], "same_sha256": true, "generated_at": ["2026-10-04T17:46:17Z", "2026-10-04T17:49:22Z"], "window_to": ["2026-10-04T17:45:25Z", "2026-10-04T17:45:25Z"], "to_equals_stamp_to_the_second": true}
+{"id": "20261004T174928.474433Z-4c98", "stamp": "2026-10-04T17:45:25.793849Z"}
+{"t": "17:50:46Z", "check": "2 #607 on mock-trusted", "runs": ["20261004T174928.474433Z-4c98", "20261004T175044.516524Z-6c33"], "stamps": ["2026-10-04T17:45:25.793849Z", "2026-10-04T17:50:25.792499Z"], "sha256": ["7a78e746833159acf4e7c36f1d6b5224022e92abe66e9903786e2eee4273be30", "1cdc0697b199ac5179c9e51c175c9af7b8489c5b861a83403f701bec4f1ee74b"], "diff": "20261004T175046.798977Z-6022", "diff_status": "done", "totals": {"blocks_changed": 0, "rows_added": 0, "rows_removed": 0}, "changed_blocks": [], "page_one_last_poll": ["2026-10-04T17:45:24Z \u2014 ok", "2026-10-04T17:50:24Z \u2014 ok"], "page_one_last_read": [true, true]}
+
+## walk.py as developer: step 3 (#593); the grant (labelled walk.gsd.lab/run=snapshot-clock-592-2026-10-04), then 70 s for the tier cache  (2026-10-04T17:50:46Z)
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-f7-lab/reports/2026-10-04_snapshot-clock-592/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-592-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-592-crb-update-developer created
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py
+17:52:02Z version                                             : {"version": "5.1.0", "commit": "930796769f"}
+17:52:05Z PASS 1280 px: only HTML is ticked                   : {"pdf": false, "html": true, "csv": false}
+17:52:05Z PASS 1280 px: the button reads Generate HTML · JSON : HTML · JSON
+17:52:06Z PASS 1280 px: ticking PDF reads PDF · HTML · JSON   : PDF · HTML · JSON
+17:52:06Z PASS 1280 px: no sideways scroll                    : false
+17:52:09Z version                                             : {"version": "5.1.0", "commit": "930796769f"}
+17:52:12Z PASS 375 px: only HTML is ticked                    : {"pdf": false, "html": true, "csv": false}
+17:52:12Z PASS 375 px: the button reads Generate HTML · JSON  : HTML · JSON
+17:52:12Z PASS 375 px: ticking PDF reads PDF · HTML · JSON    : PDF · HTML · JSON
+17:52:12Z PASS 375 px: no sideways scroll                     : false
+17:52:12Z PASS no page errors                                 : []
+17:52:12Z result                                              : {"failures": []}
+
+## The grant removed  (2026-10-04T17:52:12Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-f7-lab/reports/2026-10-04_snapshot-clock-592/scripts/grant.yaml' --ignore-not-found
+clusterrole.rbac.authorization.k8s.io "gsd-walk-592-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-592-crb-update-developer" deleted
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer || true
+Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+no
+
+## After  (2026-10-04T17:52:13Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"930796769fc4ee58c2416558076db3181f4e80e2"}
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"5.1.0","commit":"930796769f"}
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=snapshot-clock-592-2026-10-04 -o name
+run.sh exit 0

@@ -1,0 +1,28 @@
+# The walk's temporary grant (after reports/2026-10-03_csv-format-106/scripts/grant.yaml): `developer` passes the
+# cluster-admin tier (`update clusterrolebindings`), so the page mints the report ticket the Reports form needs.
+# Created by run.sh, removed by its explicit delete and its exit trap, by the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-592-crb-update
+  labels:
+    walk.gsd.lab/run: snapshot-clock-592-2026-10-04
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-592-crb-update-developer
+  labels:
+    walk.gsd.lab/run: snapshot-clock-592-2026-10-04
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-592-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer
