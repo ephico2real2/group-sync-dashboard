@@ -46,9 +46,9 @@ def _index_rows() -> dict[str, dict[str, str]]:
     wrong = {fid: rows[fid]["release"] for fid in programme if not re.fullmatch(r"R\d", rows[fid]["release"])}
     assert not wrong, f"programme rows require an R<number> release: {wrong}"
     assert all(rows[fid]["release"] == "—" for fid in post), "a post-programme row carries `—`"
-    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426, E10 #533, H1 #542, E11 #532, F1 #270, F2 #106, F3 #108, F4 #109, F5 #140)
+    # the count catches an index row dropped silently; it moves by one per new spec (E1 #229, S1 #230, T1 #239, G1 #239, E2 #303, G2 #255, E4 #391, G3 #503, E5 #304, E3 #302, E6 #306, E7 #300, E8 #410, E9 #425, G4 #420, W1 #426, E10 #533, H1 #542, E11 #532, F1 #270, F2 #106, F3 #108, F4 #109, F5 #140, F6 #392)
     # a design's STEP carries the design's id and a letter (S4a, #283): the same slot, not a fifth design
-    assert len(rows) == 57, f"expected fifty-seven index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420), W1 (#426), E10 (#533), H1 (#542), E11 (#532), A4 (#534), F1 (#270), F2 (#106), F3 (#108), F4 (#109) and F5 (#140); matched {sorted(rows)}"
+    assert len(rows) == 58, f"expected fifty-eight index rows, including D3 (#311), S4e (#432), D4 (#316), D5 (#244), D6 (#465), S4f (#481), G1 (#239), E2 (#303), G2 (#255), E4 (#391), G3 (#503), E5 (#304), E3 (#302), E6 (#306), E7 (#300), E8 (#410), E9 (#425), G4 (#420), W1 (#426), E10 (#533), H1 (#542), E11 (#532), A4 (#534), F1 (#270), F2 (#106), F3 (#108), F4 (#109), F5 (#140) and F6 (#392); matched {sorted(rows)}"
     return rows
 
 
@@ -158,7 +158,10 @@ def test_issue_numbers_are_unique_and_follow_the_implementation_order() -> None:
     # F5 (#140, filed 2026-09-16) is Epic F's fifth step, specified on 2026-10-04 after F4: excluded the same way, by
     # its id, and pinned to #140 (SPEC_F5, Orchestrator's notes 6).
     assert ROWS["F5"]["issue"] == "140", ("F5 is #140", ROWS["F5"]["issue"])
-    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1", "E10", "F1", "F2", "F3", "F4", "F5")]
+    # F6 (#392, filed 2026-09-26) is Epic F's sixth step, specified on 2026-10-04 after F5: excluded the same way, by
+    # its id, and pinned to #392 (SPEC_F6, Orchestrator's notes 5).
+    assert ROWS["F6"]["issue"] == "392", ("F6 is #392", ROWS["F6"]["issue"])
+    issues = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if fid not in ("D5", "G1", "E2", "G2", "E4", "G3", "E5", "E3", "E6", "E7", "E8", "E9", "G4", "W1", "E10", "F1", "F2", "F3", "F4", "F5", "F6")]
     assert issues == sorted(issues), issues
     programme = [int(ROWS[fid]["issue"]) for fid in _ordered_ids() if not fid.startswith("S") and fid != "G1"]
     assert len(set(programme)) == len(programme), programme
