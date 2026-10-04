@@ -34,6 +34,8 @@ which `local-development/prepare-release.py` does when the release is cut.
   The KPI Backups heading wraps long directory paths on phones (#546).
   The KPI Database copies card pads its text and cleanup form and stacks copies on phones so Delete buttons and kept reasons stay visible (#548).
 - **Scheduled reports refuse PDF (#594):** a values file naming `pdf` in `reporting.formats.scheduled`, a schedule's `formats` or `deliver.attach` now fails to render; remove `pdf`, use HTML, JSON or CSV for storage and HTML or CSV for attachments, and print the HTML for a paper or PDF copy (manual runs keep PDF).
+- **Recovery mode handles SIGTERM arriving just before its wait (#555).** The chart's recovery script
+  waits on a signal wakeup pipe so it cannot miss a SIGTERM and wait out the reporting interval before stopping.
 
 - **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
