@@ -1,5 +1,8 @@
 {{- if eq (include "gsd.reportingEnabled" .) "true" }}
 {{- range $s := .Values.reporting.schedules }}
+{{- $deliver := $s.deliver | default dict }}
+{{- $delivers := ne (toString ($deliver.kind | default "none")) "none" }}
+{{- $trustedCa := include "gsd.trustedCaFile" $ }}
 ---
 # One CronJob per reporting.schedules[] entry: the report image's trigger module POSTs a run with
 # the service token and waits, so the Job's status IS the run's status. The schedule is
@@ -94,9 +97,26 @@ spec:
                 - --ca-file
                 - /etc/gsd/service-ca/service-ca.crt
                 {{- end }}
+                {{- if $delivers }}
+                # #109: each finished run's facts go to the webhook. The URL is a file from the Secret
+                # below, never an argument, so no pod spec, event or `ps` shows it.
+                - --deliver
+                - {{ $deliver.kind | quote }}
+                - --webhook-url-file
+                - /etc/gsd/deliver/url
+                {{- if ne (toString ($deliver.attach | default "none")) "none" }}
+                - --attach
+                - {{ $deliver.attach | quote }}
+                {{- end }}
+                {{- end }}
               env:
                 - name: GSD_REPORT_TOKEN_FILE
                   value: /etc/gsd/report/token
+                {{- if and $delivers $trustedCa }}
+                # The dashboard's trust for an https receiver: the injected and enterprise bundles.
+                - name: GSD_TRUSTED_CA_FILE
+                  value: {{ $trustedCa | quote }}
+                {{- end }}
               securityContext: {{- toYaml $.Values.securityContext | nindent 16 }}
               volumeMounts:
                 - name: report-token
@@ -108,6 +128,21 @@ spec:
                 - name: service-ca
                   mountPath: /etc/gsd/service-ca
                   readOnly: true
+                {{- end }}
+                {{- if $delivers }}
+                - name: deliver-url
+                  mountPath: /etc/gsd/deliver
+                  readOnly: true
+                {{- if $.Values.trustedCA.injected.enabled }}
+                - name: trusted-ca-injected
+                  mountPath: {{ $.Values.trustedCA.mountPath }}/injected
+                  readOnly: true
+                {{- end }}
+                {{- if $.Values.trustedCA.existingConfigMap.enabled }}
+                - name: trusted-ca-enterprise
+                  mountPath: {{ $.Values.trustedCA.mountPath }}/enterprise
+                  readOnly: true
+                {{- end }}
                 {{- end }}
               resources:
                 requests: {cpu: 10m, memory: 64Mi}
@@ -123,6 +158,28 @@ spec:
             - name: service-ca
               configMap:
                 name: openshift-service-ca.crt
+            {{- end }}
+            {{- if $delivers }}
+            # One key of the operator's Secret, as the file `url`; 0440 like the report token.
+            - name: deliver-url
+              secret:
+                secretName: {{ $deliver.webhookUrlSecret.name | quote }}
+                items:
+                  - key: {{ $deliver.webhookUrlSecret.key | default "url" | quote }}
+                    path: url
+                defaultMode: 288
+            {{- if $.Values.trustedCA.injected.enabled }}
+            - name: trusted-ca-injected
+              configMap:
+                name: {{ include "gsd.fullname" $ }}-trusted-ca
+                # optional, as on the dashboard: OpenShift fills it shortly after creation.
+                optional: true
+            {{- end }}
+            {{- if $.Values.trustedCA.existingConfigMap.enabled }}
+            - name: trusted-ca-enterprise
+              configMap:
+                name: {{ $.Values.trustedCA.existingConfigMap.name }}
+            {{- end }}
             {{- end }}
 {{- end }}
 {{- end }}

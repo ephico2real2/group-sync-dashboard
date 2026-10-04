@@ -808,6 +808,20 @@ decides on — the literal word false suspends it (report-cronjob.yaml) — so a
 {{- toJson $out -}}
 {{- end -}}
 
+{{- /* The CA bundles the chart mounts, colon-separated like SSL_CERT_FILE, for GSD_TRUSTED_CA_FILE: read by the
+dashboard (gsd/config.py _trusted_ca_context) and by a schedule Job that delivers to a webhook (#109). Empty when
+neither trustedCA source is on. */ -}}
+{{- define "gsd.trustedCaFile" -}}
+{{- $ca := list -}}
+{{- if .Values.trustedCA.injected.enabled -}}
+{{- $ca = append $ca (printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath) -}}
+{{- end -}}
+{{- if .Values.trustedCA.existingConfigMap.enabled -}}
+{{- $ca = append $ca (printf "%s/enterprise/%s" .Values.trustedCA.mountPath .Values.trustedCA.existingConfigMap.key) -}}
+{{- end -}}
+{{- join ":" $ca -}}
+{{- end -}}
+
 {{- define "gsd.reportEnabledReports" -}}
 {{- $r := (.Values.reporting | default dict).reports | default dict -}}
 {{- $names := dict "namespaceAccess" "namespace-access" "accessMatrix" "access-matrix" "privilegedAccess" "privileged-access" "bindingFindings" "binding-findings" "groups" "groups" "users" "users" "dormantAccess" "dormant-access" "groupsyncHealth" "groupsync-health" "complianceSnapshot" "compliance-snapshot" "accessCertification" "access-certification" -}}
@@ -947,6 +961,28 @@ false
 {{- end -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$" (toString $s.name)) -}}
 {{- fail (printf "reporting.schedules[].name %q must be a short DNS label (it names a CronJob)" (toString $s.name)) -}}
+{{- end -}}
+{{- /* #109: deliver.kind none|webhook; attach only with a webhook, and only a format the schedule stores. */ -}}
+{{- $deliver := $s.deliver | default dict -}}
+{{- $kind := toString ($deliver.kind | default "none") -}}
+{{- $attach := toString ($deliver.attach | default "none") -}}
+{{- if not (has $kind (list "none" "webhook")) -}}
+{{- fail (printf "reporting.schedules[%s].deliver.kind %q is not one of none, webhook" $s.name $kind) -}}
+{{- end -}}
+{{- if not (has $attach (list "none" "html" "pdf" "csv")) -}}
+{{- fail (printf "reporting.schedules[%s].deliver.attach %q is not one of none, html, pdf, csv" $s.name $attach) -}}
+{{- end -}}
+{{- if and (eq $kind "none") (ne $attach "none") -}}
+{{- fail (printf "reporting.schedules[%s].deliver.attach=%s needs deliver.kind=webhook: there is nothing to attach it to" $s.name $attach) -}}
+{{- end -}}
+{{- if eq $kind "webhook" -}}
+{{- if not (($deliver.webhookUrlSecret | default dict).name) -}}
+{{- fail (printf "reporting.schedules[%s].deliver.kind=webhook needs deliver.webhookUrlSecret.name: the Secret whose key holds the URL" $s.name) -}}
+{{- end -}}
+{{- $stored := $s.formats | default ((($.Values.reporting | default dict).formats | default dict).scheduled) | default list -}}
+{{- if and (ne $attach "none") (not (has $attach $stored)) -}}
+{{- fail (printf "reporting.schedules[%s].deliver.attach=%s, but the schedule stores %s: add %s to its formats" $s.name $attach (join ", " $stored) $attach) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

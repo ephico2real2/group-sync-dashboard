@@ -276,18 +276,11 @@ spec:
             - name: TZ
               value: {{ . | quote }}
             {{- end }}
-            {{- $ca := list }}
-            {{- if .Values.trustedCA.injected.enabled }}
-            {{- $ca = append $ca (printf "%s/injected/ca-bundle.crt" .Values.trustedCA.mountPath) }}
-            {{- end }}
-            {{- if .Values.trustedCA.existingConfigMap.enabled }}
-            {{- $ca = append $ca (printf "%s/enterprise/%s" .Values.trustedCA.mountPath .Values.trustedCA.existingConfigMap.key) }}
-            {{- end }}
-            {{- if $ca }}
+            {{- with include "gsd.trustedCaFile" . }}
             # Colon-separated, like SSL_CERT_FILE. Used for any cluster that does not name
             # its own caBundleFile — the normal case for an external, corporate-signed one.
             - name: GSD_TRUSTED_CA_FILE
-              value: {{ join ":" $ca | quote }}
+              value: {{ . | quote }}
             {{- end }}
             # For curl IN THE POD, which reads none of the above: it trusts the image's own
             # system bundle (/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, measured) and

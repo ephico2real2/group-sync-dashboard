@@ -10,6 +10,16 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
+  application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
+  POSTs each finished run of its fan-out as one CloudEvents 1.0 event (the run's facts; `id` is the run id) to the
+  URL in that Secret, mounted read-only into the Job; `attach: html|pdf|csv` adds the artefact base64 up to 5 MiB.
+  408, 429, 500, 502, 503, 504 and network errors get up to 4 attempts, with full-jitter backoff and `Retry-After`;
+  a run not delivered fails the Job. The URL is never printed: a failure names the HTTP status or the exception's
+  class.
+  A schedule without `deliver` renders the same CronJob; the report service still makes no outbound call; a
+  window skip (409) delivers nothing; no RBAC change.
+
 - **What changed between two runs: `report-diff` (#108, Epic F #386, `docs/specs/SPEC_F3_report_diff.md`;
   application 4.3.0, chart 0.66.7).** `POST /report/api/runs` with `report: "report-diff"` and `params: {base, head}`
   compares two finished runs of one report on one cluster over their sealed data only (SPEC_F1): stable coverage

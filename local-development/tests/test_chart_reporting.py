@@ -466,3 +466,65 @@ def test_a_misspelt_window_enabled_refuses_the_render():
                           capture_output=True, text=True, timeout=120)
     assert done.returncode != 0
     assert "is not a boolean" in done.stderr
+
+
+class TestScheduleDelivery:
+    """#109 (SPEC_F4): `deliver` renders the trigger's delivery args, the URL Secret and the trust bundles only
+    when its kind is not none; the Job's run semantics are untouched."""
+
+    BASE = ("reporting.schedules[0].name=weekly", "reporting.schedules[0].schedule=0 22 * * 0",
+            "reporting.schedules[0].report=groups")
+    NAME = "t-group-sync-dashboard-report-weekly"
+
+    def _pod(self, *sets: str) -> dict:
+        return _exact(_render(*self.BASE, *sets), "CronJob", self.NAME)["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+
+    def _refused(self, *sets: str) -> str:
+        args = ["helm", "template", "t", str(CHART), "-n", "x", "--set", "ingress.host=h"]
+        for s in (*self.BASE, *sets):
+            args += ["--set", s]
+        done = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        assert done.returncode != 0, "the render was not refused"
+        return done.stderr
+
+    def test_t109_10_a_webhook_renders_the_args_the_secret_and_the_trust_and_nothing_else_moves(self):
+        plain = _exact(_render(*self.BASE), "CronJob", self.NAME)
+        none = _exact(_render(*self.BASE, "reporting.schedules[0].deliver.kind=none"), "CronJob", self.NAME)
+        assert none == plain, "deliver.kind=none renders today's CronJob"
+        command = plain["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["command"]
+        assert "--deliver" not in command and "--attach" not in command
+        pod = self._pod("reporting.schedules[0].deliver.kind=webhook",
+                        "reporting.schedules[0].deliver.webhookUrlSecret.name=team-hook",
+                        "reporting.schedules[0].deliver.webhookUrlSecret.key=slack",
+                        "reporting.schedules[0].deliver.attach=html")
+        trigger = pod["containers"][0]
+        joined = " ".join(trigger["command"])
+        assert "--deliver webhook --webhook-url-file /etc/gsd/deliver/url --attach html" in joined, joined
+        assert "team-hook" not in joined and "slack" not in joined, "the Secret is mounted, never an argument"
+        mounts = {m["name"]: m for m in trigger["volumeMounts"]}
+        assert mounts["deliver-url"] == {"name": "deliver-url", "mountPath": "/etc/gsd/deliver", "readOnly": True}
+        assert mounts["trusted-ca-injected"]["readOnly"] is True
+        volumes = {v["name"]: v for v in pod["volumes"]}
+        assert volumes["deliver-url"]["secret"] == {"secretName": "team-hook", "items": [{"key": "slack", "path": "url"}],
+                                                    "defaultMode": 288}
+        assert volumes["trusted-ca-injected"]["configMap"] == {"name": "t-group-sync-dashboard-trusted-ca", "optional": True}
+        assert _env(trigger, "GSD_TRUSTED_CA_FILE") == "/etc/pki/ca-trust/extracted/pem/injected/ca-bundle.crt"
+        cron = _exact(_render(*self.BASE, "reporting.schedules[0].deliver.kind=webhook",
+                              "reporting.schedules[0].deliver.webhookUrlSecret.name=team-hook"), "CronJob", self.NAME)
+        job = cron["spec"]["jobTemplate"]["spec"]
+        assert job["backoffLimit"] == 0 and job["activeDeadlineSeconds"] == 900, "no Kubernetes retry, the same deadline"
+        assert "--attach" not in job["template"]["spec"]["containers"][0]["command"]
+
+    def test_t109_11_a_deliver_block_that_cannot_work_is_refused_at_render(self):
+        assert "needs deliver.webhookUrlSecret.name" in self._refused("reporting.schedules[0].deliver.kind=webhook")
+        assert "is not one of none, webhook" in self._refused("reporting.schedules[0].deliver.kind=smtp")
+        assert "is not one of none, html, pdf, csv" in self._refused(
+            "reporting.schedules[0].deliver.kind=webhook", "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
+            "reporting.schedules[0].deliver.attach=docx")
+        assert "needs deliver.kind=webhook" in self._refused("reporting.schedules[0].deliver.attach=html")
+        # The scheduled default stores html and json: a pdf to attach must be stored first.
+        assert "add pdf to its formats" in self._refused(
+            "reporting.schedules[0].deliver.kind=webhook", "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
+            "reporting.schedules[0].deliver.attach=pdf")
+        self._pod("reporting.schedules[0].deliver.kind=webhook", "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
+                  "reporting.schedules[0].deliver.attach=pdf", "reporting.schedules[0].formats[0]=pdf")

@@ -114,6 +114,17 @@ reporting:
       schedule: "0 5 1,16 * *"
       report: groups
       enabled: false
+    # #109: the delivery walk's schedule. Suspended, so it fires only when the walk runs
+    # `oc create job --from=cronjob/...` inside the window; its Secret and receiver exist only during the walk
+    # (docs/specs/SPEC_F4_webhook_delivery.md §5), so a fire outside the walk could not start its pod.
+    - name: delivery-walk
+      schedule: "0 23 * * 0"
+      report: groups
+      enabled: false
+      deliver:
+        kind: webhook
+        webhookUrlSecret: {name: gsd-delivery-walk, key: url}
+        attach: html
 
 # ---------------------------------------------------------------------------
 # Clusters the dashboard polls
