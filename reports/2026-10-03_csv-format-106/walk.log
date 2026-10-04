@@ -1,0 +1,80 @@
+# SPEC_F2 §5 walk (#106), CRC lab; written by scripts/run.sh
+# started 2026-10-04T00:07:27Z; kube context crc-admin
+
+## Before  (2026-10-04T00:07:27Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"50f89fb4c3b901438ca45b83479297e289e819a0"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image
+NAME                                                 START                  IMAGE
+group-sync-dashboard-6b946f47d-8qtjn                 2026-10-04T00:04:52Z   quay.io/ephico2real/group-sync-dashboard:4.2.0
+group-sync-dashboard-backup-offsite-29850135-wb6xw   2026-10-03T06:15:00Z   quay.io/ephico2real/group-sync-dashboard:3.2.0
+group-sync-dashboard-backup-offsite-29850495-lz7sf   2026-10-03T12:15:00Z   quay.io/ephico2real/group-sync-dashboard:3.3.0
+group-sync-dashboard-backup-offsite-29850855-6sfxd   2026-10-03T18:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.0.0
+group-sync-dashboard-report-8564c494b-hbfgs          2026-10-04T00:04:50Z   quay.io/ephico2real/group-sync-dashboard-report:4.2.0
+verify-1790912616-km2gt                              2026-10-02T03:43:37Z   quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-report -o json | jq -c '[.spec.template.spec.containers[0].env[] | select(.name | test("FORMATS"))]'
+[{"name":"GSD_REPORT_FORMATS_SCHEDULED","value":"html,json"},{"name":"GSD_REPORT_FORMATS_MANUAL","value":"html,json,pdf"}]
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=csv-format-106-2026-10-03 -o name
+
+## The grant (labelled walk.gsd.lab/run=csv-format-106-2026-10-03), then 70 s for the tier cache  (2026-10-04T00:07:27Z)
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-106/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-106-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-106-crb-update-developer created
+
+## walk.py  (2026-10-04T00:08:37Z)
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py
+2026-10-04T00:08:42Z whoami                                                      : {"user": "developer", "visibility": {"scope": "all", "enabled": true, "clusters": {"dashboard": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "mock-privateca": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "mock-selfsigned": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "mock-trusted": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "shared-qa": {"policy": "remote-sar", "identity": "same-as-host", "scope": "self"}, "shared-rnd": {"policy": "remote-sar", "identity": "same-as-host", "scope": "self"}}, "cluster_admin": true}}
+2026-10-04T00:08:45Z PASS the CSV box is there, unticked                         : {"pdf": true, "html": true, "csv": false}
+2026-10-04T00:08:45Z PASS the boxes survive the form's repaint                   : {"pdf": false, "html": true, "csv": true}
+2026-10-04T00:08:46Z PASS Generate posts csv                                     : ["html", "csv"]
+2026-10-04T00:08:48Z run                                                         : 20261004T000846.573126Z-6d8e
+2026-10-04T00:08:48Z downloaded                                                  : {"file": "gsd_dashboard_groups_20261004T000846Z.csv", "bytes": 17136}
+2026-10-04T00:08:49Z run record                                                  : {"id": "20261004T000846.573126Z-6d8e", "status": "done", "formats": ["csv", "html"], "sha256": "2b277b5eba8c02b81b84d88f0865e731b8a64e9d279e1bd30088397f620e620f", "snapshot_stamp": "2026-10-04T00:05:23.897234Z", "bytes": {"csv": 17136, "html": 30551, "json": 41395}}
+2026-10-04T00:08:49Z PASS the file starts with the UTF-8 BOM                     : efbbbf
+2026-10-04T00:08:49Z PASS every record ends CRLF                                 : {"lines": 224}
+2026-10-04T00:08:49Z PASS record 1 is the title                                  : ["Report", "Groups and membership changes"]
+2026-10-04T00:08:49Z PASS record 2 is the sealed sha256, equal to the run record : ["sha256 of the report data", "2b277b5eba8c02b81b84d88f0865e731b8a64e9d279e1bd30088397f620e620f"]
+2026-10-04T00:08:49Z PASS page one is the first section, not sealed              : [["Section", "Provenance and coverage", "not sealed: states the run"]]
+2026-10-04T00:08:49Z PASS every other section is sealed                          : ["Provenance and coverage", "Summary", "Inventory", "Groups needing attention", "Membership changes, last 30 days"]
+2026-10-04T00:08:49Z tables in the file                                          : ["Groups", "Empty groups", "Unattributed groups", "Changes"]
+2026-10-04T00:08:49Z PASS the file holds the report's tables                     : 4
+2026-10-04T00:08:49Z PASS the run stored csv                                     : {"csv": 17136, "html": 30551, "json": 41395}
+2026-10-04T00:08:51Z PASS the Library card offers .csv                           : #lib-20261004T000846.573126Z-6d8e-csv
+2026-10-04T00:08:54Z PASS no sideways scroll at 375 px                           : false
+2026-10-04T00:08:54Z PASS no page errors                                         : []
+2026-10-04T00:08:54Z result                                                      : {"failures": []}
+
+## The grant removed  (2026-10-04T00:08:54Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-106/scripts/grant.yaml' --ignore-not-found
+clusterrole.rbac.authorization.k8s.io "gsd-walk-106-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-106-crb-update-developer" deleted
+
+## After  (2026-10-04T00:08:54Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"50f89fb4c3b901438ca45b83479297e289e819a0"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image
+NAME                                                 START                  IMAGE
+group-sync-dashboard-6b946f47d-8qtjn                 2026-10-04T00:04:52Z   quay.io/ephico2real/group-sync-dashboard:4.2.0
+group-sync-dashboard-backup-offsite-29850135-wb6xw   2026-10-03T06:15:00Z   quay.io/ephico2real/group-sync-dashboard:3.2.0
+group-sync-dashboard-backup-offsite-29850495-lz7sf   2026-10-03T12:15:00Z   quay.io/ephico2real/group-sync-dashboard:3.3.0
+group-sync-dashboard-backup-offsite-29850855-6sfxd   2026-10-03T18:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.0.0
+group-sync-dashboard-report-8564c494b-hbfgs          2026-10-04T00:04:50Z   quay.io/ephico2real/group-sync-dashboard-report:4.2.0
+verify-1790912616-km2gt                              2026-10-02T03:43:37Z   quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-report -o json | jq -c '[.spec.template.spec.containers[0].env[] | select(.name | test("FORMATS"))]'
+[{"name":"GSD_REPORT_FORMATS_SCHEDULED","value":"html,json"},{"name":"GSD_REPORT_FORMATS_MANUAL","value":"html,json,pdf"}]
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=csv-format-106-2026-10-03 -o name
+walk.py exit 0
