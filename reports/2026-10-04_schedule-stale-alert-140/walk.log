@@ -1,0 +1,24 @@
+# SPEC_F5 §5 check (#140), CRC lab; written by scripts/run.sh; started 2026-10-04T07:41:28Z
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image' | grep -vE 'offsite-|verify-'
+NAME                                                 START                  IMAGE
+group-sync-dashboard-fcb6d6cd8-jrt5v                 2026-10-04T07:32:41Z   quay.io/ephico2real/group-sync-dashboard:4.5.0
+group-sync-dashboard-report-6b7dc67d94-l2n9l         2026-10-04T07:32:42Z   quay.io/ephico2real/group-sync-dashboard-report:4.5.0
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"d5ca0f54213e1f375ca76a00b46dc6deff123351"}
+$ oc exec deploy/group-sync-dashboard-report -- python3.14 -c <scripts/in_pod.py>
+series lines: 16
+PASS weekly-namespace-access: page=never series_at_1=['never']
+PASS quarterly-compliance: page=ok series_at_1=['ok']
+PASS biweekly-groups: page=disabled series_at_1=['disabled']
+PASS delivery-walk: page=disabled series_at_1=['disabled']
+result {'schedules': 4, 'mismatches': 0}
+$ oc get prometheusrules.monitoring.coreos.com -n group-sync-dashboard group-sync-dashboard -o json | jq -r '.spec.groups[].rules[] | select(.alert=="GroupSyncDashboardReportScheduleLate") | {alert, expr, for, severity: .labels.severity}'
+{
+  "alert": "GroupSyncDashboardReportScheduleLate",
+  "expr": "max by (schedule) (gsd_report_schedule_status{status=\"late\"}) == 1",
+  "for": "15m",
+  "severity": "warning"
+}
+$ oc get prometheusrules.monitoring.coreos.com -n group-sync-dashboard group-sync-dashboard -o json | jq '[.spec.groups[].rules[] | select(.alert)] | length'
+20
+done 2026-10-04T07:41:30Z
