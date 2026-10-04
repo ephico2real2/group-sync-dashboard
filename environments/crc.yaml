@@ -84,6 +84,11 @@ reporting:
     start: "22:00"
     end: "06:00"
     days: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+  # #106: CSV as a report format. The lab turns on every reporting feature (P4's mandate above), so its schedules
+  # store csv beside html and json; the chart's default leaves csv off. `manual` keeps the chart's default: the
+  # Reports form's CSV box is the person's choice.
+  formats:
+    scheduled: [html, json, csv]
   # One weekly schedule to exercise the window + the CronJob. namespace-access scoped by the mnemonic
   # dimension (P2), so the schedule shows both features working together. Fires Sundays 22:00 New York,
   # inside the window, so Monday has a fresh report (weekly by the operator's decision, 2026-10-02: a daily
