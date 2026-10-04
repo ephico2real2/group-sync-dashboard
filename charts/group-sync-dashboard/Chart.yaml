@@ -369,7 +369,9 @@ type: application
 # missed (#555); appVersion moves to application 4.7.0 (below), the Tech debt sweep. No RBAC change.
 # CHART 0.70.1 (2026-10-04), PATCH: appVersion moves to application 5.0.0 (below); Epic F: reports,
 # honest seals, more formats, diffs and delivery (#386).
-version: 0.70.1
+# CHART 0.70.2 (2026-10-04), PATCH: appVersion moves to application 5.1.0 (below); the reports' clock is the
+# snapshot's (#592, #607, #593; SPEC_F7). No template, default or RBAC change.
+version: 0.70.2
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -514,7 +516,8 @@ version: 0.70.1
 # 4.6.0 (2026-10-04). Tickets are signed with a ticket key of their own, never with the service token the schedule Jobs and the poller hold, so a token holder can no longer sign a ticket naming anybody; a ticket of the earlier format is answered 401 so an open page mints again; a rotation verifies with `previous` until it is closed (#392). MINOR.
 # 4.7.0 (2026-10-04). The Tech debt sweep: the Generate label, the KPI cards on a phone, no PDF on schedules, the recovery script's SIGTERM, the Reports description, report-diff order, access-certification's sealed stamp, two stale names, cron day and month names, the release note's schema line, the walk's interpreter, the README and the cosign version (#577 #546 #548 #594 #555 #587 #588 #589 #590 #585 #543 #591 #545 #535). MINOR.
 # 5.0.0 (2026-10-04). Epic F: reports, honest seals, more formats, diffs and delivery (#386). MAJOR.
-appVersion: "5.0.0"
+# 5.1.0 (2026-10-04). A report's windows, cutoffs and overdue states end at the snapshot's stamp, not the generation time (#592); compliance-snapshot and login-activity keep the last poll's and the last read's instants out of their sealed sections (#607); the Reports form starts with only HTML ticked (#593). MINOR.
+appVersion: "5.1.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

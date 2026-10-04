@@ -49,11 +49,11 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     dormant_count = None
     if ctx.settings.login_capture_enabled:
         last = snap.last_successful_login(cid)
-        cutoff = window_start(ctx.now, params["dormant_days"])
+        cutoff = window_start(ctx.snapshot_at, params["dormant_days"])
         capture = snap.login_capture_status(cid)
         rosters = snap.group_rosters(cid, [g["name"] for g in snap.groups(cid)])
         members = {m["user_name"] for ms in rosters.values() for m in ms if m.get("logged_in") == 1}
-        dormant = sorted((u, last.get(u)) for u in members if inside(u) and (last.get(u) is None or last[u] < cutoff))
+        dormant = sorted((u, last.get(u)) for u in members if inside(u) and (last.get(u) is None or last[u][:19] + "Z" < cutoff))
         rows, t2 = cut([[u, l or "no success recorded since capture began"] for u, l in dormant])
         truncated = truncated or t2
         dormant_count = len(dormant)

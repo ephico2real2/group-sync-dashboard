@@ -1770,33 +1770,36 @@ class Store:
         if self.path == ":memory:":
             return None
         target_dir = Path(directory)
-        # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
-        # "output file already exists" — so two copies inside the same second collide and
-        # the second one fails. now_iso() is deliberately second-resolution because the
-        # store relies on its fixed width for lexicographic ordering; a filename has no
-        # such constraint and needs the extra digits.
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-        target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
-        tmp = target.with_name(target.name + ".tmp")
-        try:
-            # Inside the try: an unwritable or read-only directory must return None like every
-            # other failure here, not raise into the poll thread.
-            target_dir.mkdir(parents=True, exist_ok=True)
-            with self._lock:
+        with self._lock:
+            # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+            # "output file already exists" — so two copies inside the same second collide and
+            # the second one fails. now_iso() is deliberately second-resolution because the
+            # store relies on its fixed width for lexicographic ordering; a filename has no
+            # such constraint and needs the extra digits. Stamped UNDER the lock: a poll that
+            # held it has committed, so no row in the copy is later than the stamp a report's
+            # window ends at (#592). Stamped before the lock, the copy waited for the poll and
+            # carried its rows under an earlier name (measured: a row one second after the stamp).
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+            target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
+            tmp = target.with_name(target.name + ".tmp")
+            try:
+                # Inside the try: an unwritable or read-only directory must return None like every
+                # other failure here, not raise into the poll thread.
+                target_dir.mkdir(parents=True, exist_ok=True)
                 # A bound parameter is not accepted for the VACUUM target, so the path is
                 # interpolated. It is built here from a timestamp and an operator-supplied
                 # directory, never from request input; the quote-doubling is belt to that
                 # brace rather than the only protection. Written to a .tmp name and renamed:
                 # a reader listing gsd-*.db never sees a file VACUUM INTO has not finished.
                 self._conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
-            os.replace(tmp, target)
-        except (sqlite3.Error, OSError):
-            log.exception("%s to %s failed; the history is still only on the PVC", what, target)
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            return None
+                os.replace(tmp, target)
+            except (sqlite3.Error, OSError):
+                log.exception("%s to %s failed; the history is still only on the PVC", what, target)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return None
         existing = backup_copies(target_dir, owner)
         for stale in existing[:-keep] if keep > 0 else []:
             try:

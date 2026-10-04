@@ -2,7 +2,7 @@
 
 A diff reads two stored `.json` artefacts, never the snapshot, and compares their SEALED data only
 (SPEC_F1): page one states the run, so it is left out, and two runs over one snapshot diff to
-"No change" unless the report's own data reads the generation clock. Stable coverage conclusions,
+"No change": a report's data ends at the snapshot's stamp (#592). Stable coverage conclusions,
 every table, key-value list and the notes of each sealed section are compared as a multiset of whole
 rows: a row present in the head and not the base is added, the reverse is removed, and a changed cell
 is one row removed

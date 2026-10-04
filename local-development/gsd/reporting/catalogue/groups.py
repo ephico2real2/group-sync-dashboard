@@ -21,7 +21,7 @@ SPEC = ReportSpec(
 
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
-    since = window_start(ctx.now, params["window_days"])
+    since = window_start(ctx.snapshot_at, params["window_days"])
     groups = snap.groups(cid)
     if params["groups"]:
         picked = set(params["groups"])

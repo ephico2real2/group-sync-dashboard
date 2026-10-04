@@ -6,9 +6,9 @@ computed over the canonical JSON of the DATA: the sealed sections, the parameter
 totals, the cluster, and the snapshot the data was read from (its stamp, its schema, how the
 cluster's last poll before it ended). Page one's facts of the run — when, by whom, under which run
 id or release, how old the snapshot was, the chart's marking or binding interval — are outside it,
-so two runs over one snapshot with the same parameters hash the same whoever runs them, except where
-a report's own data is computed against the generation clock (a window, a cutoff, an overdue state:
-SPEC_F1, Orchestrator's notes 1): those agree only while the clock-derived values coincide. The
+so two runs over one snapshot with the same parameters hash the same whoever runs them and whenever:
+a window, a cutoff or an overdue state ends at the snapshot's stamp, not at the generation time
+(#592, docs/specs/SPEC_F7_snapshot_clock.md), so it is the same at every run over one snapshot. The
 coverage can also reflect two report-service settings (`login_capture_enabled`,
 `namespaces_read_enabled`), so a run under other settings is other evidence. A PDF can be tied back
 to its .json by the number printed on page one. Page one states the run and is not sealed; what it
@@ -126,7 +126,7 @@ class Report:
 
     def canonical(self) -> dict:
         """The DATA, and only the data: what two runs over one snapshot with the same parameters agree
-        on while the values a report computes against the generation clock coincide (the module
+        on at any generation time, because their data ends at the snapshot's stamp (the module
         docstring). A section marked `sealed=False` (page one, the run's facts) is left out; what page
         one shows that is data is here through its own key: the cluster and its API URL, the snapshot facts, the
         coverage, the parameters and the rosters switch. Every key is in the .json, so the hash can be

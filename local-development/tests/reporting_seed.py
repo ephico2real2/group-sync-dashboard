@@ -82,10 +82,15 @@ def seed_store(db_path: str, *, login_events: bool = True, gate: bool = True, re
     return store
 
 
-def write_snapshot(store: Store, directory: Path) -> Path:
+def write_snapshot(store: Store, directory: Path, at: datetime = NOW) -> Path:
+    """A copy of `store`, stamped `at` (the seed's NOW unless a test says otherwise). A report's data ends at the
+    snapshot's stamp (#592), so a copy stamped by the wall clock would slide every window as the calendar moves and
+    drop the seed's rows out of them."""
     path = store.snapshot(str(directory), keep=2)
     assert path, "snapshot was not written"
-    return Path(path)
+    pinned = Path(path).with_name(f"gsd-{at.strftime('%Y%m%dT%H%M%S.%f')}Z.db")
+    assert not pinned.exists(), f"{pinned.name} exists: give the second copy its own instant"
+    return Path(path).rename(pinned)
 
 
 def seeded_dirs(tmp_path: Path, **seed_kwargs) -> tuple[Path, Path]:

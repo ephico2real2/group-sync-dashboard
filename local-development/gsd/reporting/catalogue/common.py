@@ -11,7 +11,7 @@ from typing import Any
 from ... import __version__
 from ..config import ReportSettings
 from ..model import DIRECT_BINDINGS_CAVEAT, KeyValues, Note, Report, Section, Table, iso
-from ..snapshot import CLUSTER_SCOPE, Snapshot
+from ..snapshot import CLUSTER_SCOPE, Snapshot, stamp_instant
 
 MAX_NAMESPACES = 50
 _LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
@@ -97,6 +97,7 @@ class ReportSpec:
 class RunContext:
     settings: ReportSettings
     cluster: dict                   # Snapshot.cluster row
+    #: The generation time: page one's "Generated at" and the snapshot's age. Never a report's data (#592).
     now: datetime
     run_id: str
     generated_by: str
@@ -107,6 +108,12 @@ class RunContext:
     #: The ordered selector DIMENSIONS the namespace-access report offers (P2): company.net/mnemonic AND
     #: company.net/app-environment. Empty = no selector.
     namespace_selector_labels: tuple[str, ...] = ()
+
+    @property
+    def snapshot_at(self) -> datetime:
+        """The instant the data ends: the snapshot's stamp. Windows, cutoffs and overdue states end here, not at
+        the generation time, so every run over one snapshot states the same data (#592)."""
+        return stamp_instant(self.snapshot_stamp)
 
 
 @dataclass

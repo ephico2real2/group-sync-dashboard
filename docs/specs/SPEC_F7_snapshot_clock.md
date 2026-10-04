@@ -8,7 +8,7 @@
 | Version on release | app 5.1.0, chart 0.70.2 |
 | Version note | Image content (`local-development/gsd/reporting/**` and `local-development/gsd/static/index.html`, both under `publish.yml`'s `local-development/gsd/**`), so the next application MINOR after main's 5.0.0, 5.1.0 (`docs/RELEASING.md`: "MINOR per merged issue changing the image"). The chart moves only because `appVersion` moves: no template, default, value or RBAC change, so a PATCH, 0.70.1 to 0.70.2, as 0.70.1 was for 5.0.0 and 0.66.5 to 0.66.7 were for 4.1.0 to 4.3.0 (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). W1 stays `specified` at chart 0.71.0, above both 0.70.1 and 0.70.2, so it does not move. Read on `4e5a708d` (application 5.0.0, chart 0.70.1). A release that lands first makes the version blocks (36 to 40) fail their check; the implementing pull request corrects them here first |
 | Issue | [#592](https://github.com/ephico2real2/group-sync-dashboard/issues/592) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-04 (implementer seat), from the three issues and their decision comments (`gh issue view 592`, `607`, `593` with `--comments`), the code read on `4e5a708d`, and the repository's venv (Python 3.14). No cluster was touched: the operator held the lab. §7's 40 blocks were generated from a working copy and proved against a copy of `4e5a708d` with this spec in it (§4.3) |
 
 ## How to read this spec
@@ -78,6 +78,38 @@ Line citations into the code at `4e5a708d` are file:line in plain text inside ta
    repaint" became the default and proved nothing; it now flips every box from its default (Block 34).
 8. **Dates.** Blocks 36 and 37 date the chart's history lines 2026-10-04; the implementing pull request writes its
    own date.
+10. **The implementation's review (PR #610: OB2, Fable 5.1 high, and Codex, gpt-5.6-sol xhigh).** OB2 confirmed C1
+    to C7, with the stamp's edges measured row by row: inclusive lower edges, dormancy exclusive at the cutoff, and
+    overdue judged at the stamp. **Accepted: OB2 F1.**
+    - **The defect:** `_vacuum_into` took the copy's stamp before waiting for the writer's lock. A poll holding the
+      lock then committed rows into the copy under an earlier name. OB2 measured a membership row at `16:00:00Z` in
+      a copy stamped `15:59:59.637491Z`, counted by a `groups` window "to 15:59:59Z".
+    - **Why it matters here:** §2.2's premise, "nothing in a snapshot is later than its stamp", held only after this
+      fix, and #592's windows rely on it.
+    - **The fix (Block R1):** take the stamp under the lock. The lock is now also held for the `mkdir` and the
+      rename, which take microseconds.
+    - **The test (Block R2):** T592-3. OB2's test, with an Event the poll thread sets once it holds the lock, in
+      place of a 0.3 s sleep that could flake on a busy runner. It failed 3 of 3 runs before the fix and passed 5
+      of 5 after.
+    - **The backup:** `backup()` shares `_vacuum_into`, so its file name moves by the same microseconds. Nothing
+      reads a backup's name as a bound.
+    **Accepted: Codex F1** (Blocks R3 to R11). There are two defects, measured on a real snapshot.
+    - **No upper bound.** The window queries had only `>= since`. Login events carry the audit log's own clock
+      (`logincapture.py`), which can run ahead of the copy's, so a report labelled "To: <stamp>" could count a later
+      row. OB2's lock fix does not cover a row from another clock.
+    - **Mixed precision.** Login times are written with microseconds and the cutoffs are whole seconds, and `.` sorts
+      before `Z`. So a login in the first second after a cutoff read as before it, in both the window queries and
+      dormancy.
+    - **The fix:**
+      - login queries compare times with SQLite's `julianday`, between the window's start and the stamp;
+      - `last_successful_login` is bounded at the stamp;
+      - the membership and sync-event windows gain `<= stamp`. They are redundant once Block R1 is in (those rows
+        use the dashboard's own clock), and kept so the label holds whatever the writer's timing;
+      - dormancy compares at whole seconds.
+    - **The cost:** `julianday(at)` cannot use an index on `at`, at report time only, over one cluster's login rows.
+      Each edit replaces lines rather than adding them.
+    - **The test:** T592-4 (`test_f7_review_edges.py`) failed on the branch with Block R1 and passes with these
+      blocks.
 9. **The spec review (Codex, gpt-5.6-sol, xhigh, 2026-10-04).** C3 to C7 were confirmed, and C1 and C5 were plausible
    (no sockets, no `.git` in its copy). The six unaffected reports' sha256 values were measured byte-identical, and
    none of the other nine reports keeps a snapshot-clock instant in a sealed section. One finding, F1: `snapshot_at`
@@ -136,7 +168,7 @@ snapshot's cadence.
 | `compute_state(last_sync, schedule, now, grace, ...)` | local-development/gsd/state.py:78 |
 | The five builders read `ctx.now` for data | login_activity.py:37, :56; groups.py:24; dormant_access.py:52; groupsync_health.py:24, :32; compliance_snapshot.py:31, :32 (all under local-development/gsd/reporting/catalogue/) |
 | groupsync-health's caveat says "at generation time" | local-development/gsd/reporting/catalogue/groupsync_health.py:51 |
-| Every window query has a lower bound only (`>= since`): nothing in a snapshot is later than its stamp, so a window that ends at the stamp counts everything the snapshot holds | local-development/gsd/reporting/snapshot.py:494, :500, :583, :597, :641 |
+| Every window query has a lower bound only (`>= since`): nothing in a snapshot is later than its stamp (true once the copy is stamped under the writer's lock, Block R1), so a window that ends at the stamp counts everything the snapshot holds | local-development/gsd/reporting/snapshot.py:494, :500, :583, :597, :641 |
 | Page one: "Generated at" from `ctx.now`; "Last poll" with its instant; the login-capture note with "(last read …)" | local-development/gsd/reporting/catalogue/common.py:353, :358, :291, :375 |
 | compliance-snapshot's sealed "Last poll" row and its WHEN answer built from the capture note | local-development/gsd/reporting/catalogue/compliance_snapshot.py:52, :62 |
 | login-activity's sealed Window: From, To (`ctx.now`), Watching since, Last log read, Login gate | local-development/gsd/reporting/catalogue/login_activity.py:56-58 |
@@ -249,7 +281,8 @@ run cannot hit either, because `Snapshot` accepts only the fixed-width file-name
 age, never a report's data.
 
 Why the stamp is the right end: every window query reads `>= since` with no upper bound (§2.2), and a snapshot holds
-nothing later than its stamp. A window that ends at the stamp therefore counts exactly what the snapshot holds, and its
+nothing later than its stamp, because the copy is stamped under the writer's lock (Block R1, Orchestrator's notes
+10). A window that ends at the stamp therefore counts exactly what the snapshot holds, and its
 `To` says so. A window that ends at the generation time claims minutes or hours the snapshot never saw, which is the
 operator's "not accurate".
 
@@ -1548,4 +1581,342 @@ which `local-development/prepare-release.py` does when the release is cut.
   permission, value or migration.
 
 ## Application 5.0.0 — chart 0.70.1 — 2026-10-04
+```
+
+### Block R1 — `local-development/gsd/store.py`: the copy is stamped under the writer's lock (from the review of the implementation, PR #610, OB2 F1)
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+        target_dir = Path(directory)
+        # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+        # "output file already exists" — so two copies inside the same second collide and
+        # the second one fails. now_iso() is deliberately second-resolution because the
+        # store relies on its fixed width for lexicographic ordering; a filename has no
+        # such constraint and needs the extra digits.
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
+        tmp = target.with_name(target.name + ".tmp")
+        try:
+            # Inside the try: an unwritable or read-only directory must return None like every
+            # other failure here, not raise into the poll thread.
+            target_dir.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                # A bound parameter is not accepted for the VACUUM target, so the path is
+                # interpolated. It is built here from a timestamp and an operator-supplied
+                # directory, never from request input; the quote-doubling is belt to that
+                # brace rather than the only protection. Written to a .tmp name and renamed:
+                # a reader listing gsd-*.db never sees a file VACUUM INTO has not finished.
+                self._conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
+            os.replace(tmp, target)
+        except (sqlite3.Error, OSError):
+            log.exception("%s to %s failed; the history is still only on the PVC", what, target)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+```
+
+```python
+        target_dir = Path(directory)
+        with self._lock:
+            # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+            # "output file already exists" — so two copies inside the same second collide and
+            # the second one fails. now_iso() is deliberately second-resolution because the
+            # store relies on its fixed width for lexicographic ordering; a filename has no
+            # such constraint and needs the extra digits. Stamped UNDER the lock: a poll that
+            # held it has committed, so no row in the copy is later than the stamp a report's
+            # window ends at (#592). Stamped before the lock, the copy waited for the poll and
+            # carried its rows under an earlier name (measured: a row one second after the stamp).
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+            target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
+            tmp = target.with_name(target.name + ".tmp")
+            try:
+                # Inside the try: an unwritable or read-only directory must return None like every
+                # other failure here, not raise into the poll thread.
+                target_dir.mkdir(parents=True, exist_ok=True)
+                # A bound parameter is not accepted for the VACUUM target, so the path is
+                # interpolated. It is built here from a timestamp and an operator-supplied
+                # directory, never from request input; the quote-doubling is belt to that
+                # brace rather than the only protection. Written to a .tmp name and renamed:
+                # a reader listing gsd-*.db never sees a file VACUUM INTO has not finished.
+                self._conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
+                os.replace(tmp, target)
+            except (sqlite3.Error, OSError):
+                log.exception("%s to %s failed; the history is still only on the PVC", what, target)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return None
+```
+
+### Block R2 — `local-development/tests/test_snapshot_stamp_bound.py`: T592-3, a copy holds no row later than its stamp (OB2 F1's test, with an Event instead of a fixed sleep)
+
+<!-- block: local-development/tests/test_snapshot_stamp_bound.py | create -->
+```python
+"""#592: a report's window ends at the snapshot's stamp, so a copy must hold nothing later than its stamp."""
+from __future__ import annotations
+
+import threading
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+from gsd.reporting.snapshot import Snapshot, stamp_instant
+from gsd.timeutil import now_iso
+from reporting_seed import CLUSTER, seed_store
+
+
+def test_t592_3_a_snapshot_holds_no_row_later_than_its_stamp(tmp_path):
+    """The stamp is taken under the store's lock, so a poll holding the lock when the copy is asked for commits
+    BEFORE the stamp. Stamped before the lock (the bug), the copy waits for the poll, carries its rows, and is named
+    over a second before them: a window that "ends at the stamp" counts a row after it."""
+    store = seed_store(str(tmp_path / "writer.db"))
+    holding = threading.Event()
+    written: dict[str, str] = {}
+
+    def a_poll_holding_the_lock():
+        with store.poll_snapshot():                 # one transaction, the lock held for the whole cycle
+            holding.set()                           # the copy is asked for only once the poll holds the lock
+            time.sleep(1.5)
+            written["at"] = now_iso()
+            store.sync_members(CLUSTER, {"team-b": ["carol", "zed"]}, {"team-b": written["at"]}, written["at"])
+
+    poll = threading.Thread(target=a_poll_holding_the_lock)
+    poll.start()
+    assert holding.wait(10), "the poll never took the lock"
+    try:
+        path = store.snapshot(str(tmp_path / "snapshots"), keep=2)
+    finally:
+        poll.join()
+        store.close()
+    assert path
+    with Snapshot(Path(path)) as snap:
+        committed = datetime.strptime(written["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        assert any(r["user_name"] == "zed" for r in snap.membership_changes(CLUSTER, written["at"])), \
+            "the copy holds the poll's row"
+        assert stamp_instant(snap.stamp) >= committed, \
+            f"the copy is stamped {snap.stamp}, before its own row at {written['at']}"
+```
+
+### Block R3 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (1) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+            """SELECT group_name, user_name, change, observed_at, group_synced_at FROM membership_event
+                WHERE cluster_id = ? AND observed_at >= ? ORDER BY observed_at, group_name, user_name""",
+            (cluster_id, since_iso))
+
+```
+
+```python
+            """SELECT group_name, user_name, change, observed_at, group_synced_at FROM membership_event
+                WHERE cluster_id = ? AND observed_at >= ? AND observed_at <= ? ORDER BY observed_at, group_name, user_name""",
+            (cluster_id, since_iso, self.stamp[:19] + "Z"))
+
+```
+
+### Block R4 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (2) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+                                SUM(CASE WHEN change='removed' THEN 1 ELSE 0 END) AS removed
+                           FROM membership_event WHERE cluster_id = ? AND observed_at >= ?""", (cluster_id, since_iso))
+        return {"added": int(r["added"] or 0), "removed": int(r["removed"] or 0)} if r else {"added": 0, "removed": 0}
+```
+
+```python
+                                SUM(CASE WHEN change='removed' THEN 1 ELSE 0 END) AS removed
+                           FROM membership_event WHERE cluster_id = ? AND observed_at >= ? AND observed_at <= ?""", (cluster_id, since_iso, self.stamp[:19] + "Z"))
+        return {"added": int(r["added"] or 0), "removed": int(r["removed"] or 0)} if r else {"added": 0, "removed": 0}
+```
+
+### Block R5 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (3) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+        rows = self._rows("""SELECT user_name, MAX(at) AS last_login_at FROM login_event
+                              WHERE cluster_id = ? AND outcome = 'success' GROUP BY user_name""", (cluster_id,))
+        return {r["user_name"]: r["last_login_at"] for r in rows}
+```
+
+```python
+        rows = self._rows("""SELECT user_name, MAX(at) AS last_login_at FROM login_event
+                              WHERE cluster_id = ? AND outcome = 'success' AND julianday(at) <= julianday(?) GROUP BY user_name""", (cluster_id, self.stamp))
+        return {r["user_name"]: r["last_login_at"] for r in rows}
+```
+
+### Block R6 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (4) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+        (an empty scope — named groups with no members — counts nothing), None counts the cluster."""
+        sql = "SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n FROM login_event WHERE cluster_id = ? AND at >= ?"
+        params: list = [cluster_id, since_iso]
+        if user_names is not None:
+```
+
+```python
+        (an empty scope — named groups with no members — counts nothing), None counts the cluster."""
+        sql = "SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n FROM login_event WHERE cluster_id = ? AND julianday(at) BETWEEN julianday(?) AND julianday(?)"
+        params: list = [cluster_id, since_iso, self.stamp]
+        if user_names is not None:
+```
+
+### Block R7 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (5) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+                        MAX(CASE WHEN outcome='success' THEN at END) AS last_success, MAX(at) AS last_attempt
+                   FROM login_event WHERE cluster_id = ? AND at >= ?"""
+        params: list = [cluster_id, since_iso]
+        if user_name:
+```
+
+```python
+                        MAX(CASE WHEN outcome='success' THEN at END) AS last_success, MAX(at) AS last_attempt
+                   FROM login_event WHERE cluster_id = ? AND julianday(at) BETWEEN julianday(?) AND julianday(?)"""
+        params: list = [cluster_id, since_iso, self.stamp]
+        if user_name:
+```
+
+### Block R8 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (6) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+                      EXISTS(SELECT 1 FROM membership_event h WHERE h.cluster_id=e.cluster_id AND h.user_name=e.user_name) AS has_history
+                 FROM login_event e WHERE e.cluster_id = ? AND e.at >= ? AND e.outcome = 'rejected'
+                ORDER BY e.at DESC""", (gate, gate, cluster_id, since_iso))
+
+```
+
+```python
+                      EXISTS(SELECT 1 FROM membership_event h WHERE h.cluster_id=e.cluster_id AND h.user_name=e.user_name) AS has_history
+                 FROM login_event e WHERE e.cluster_id = ? AND julianday(e.at) BETWEEN julianday(?) AND julianday(?) AND e.outcome = 'rejected'
+                ORDER BY e.at DESC""", (gate, gate, cluster_id, since_iso, self.stamp))
+
+```
+
+### Block R9 — `local-development/gsd/reporting/snapshot.py`: window queries end at the stamp (7) (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/snapshot.py | edit -->
+```python
+                      MAX(group_count) AS max_groups, MIN(group_count) AS min_groups
+                 FROM sync_event WHERE cluster_id = ? AND observed_at >= ? GROUP BY groupsync_name ORDER BY groupsync_name""",
+            (cluster_id, since_iso))
+
+```
+
+```python
+                      MAX(group_count) AS max_groups, MIN(group_count) AS min_groups
+                 FROM sync_event WHERE cluster_id = ? AND observed_at >= ? AND observed_at <= ? GROUP BY groupsync_name ORDER BY groupsync_name""",
+            (cluster_id, since_iso, self.stamp[:19] + "Z"))
+
+```
+
+### Block R10 — `local-development/gsd/reporting/catalogue/dormant_access.py`: the cutoff compared at whole seconds (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/gsd/reporting/catalogue/dormant_access.py | edit -->
+```python
+        members = {m["user_name"] for ms in rosters.values() for m in ms if m.get("logged_in") == 1}
+        dormant = sorted((u, last.get(u)) for u in members if inside(u) and (last.get(u) is None or last[u] < cutoff))
+        rows, t2 = cut([[u, l or "no success recorded since capture began"] for u, l in dormant])
+```
+
+```python
+        members = {m["user_name"] for ms in rosters.values() for m in ms if m.get("logged_in") == 1}
+        dormant = sorted((u, last.get(u)) for u in members if inside(u) and (last.get(u) is None or last[u][:19] + "Z" < cutoff))
+        rows, t2 = cut([[u, l or "no success recorded since capture began"] for u, l in dormant])
+```
+
+### Block R11 — `local-development/tests/test_f7_review_edges.py`: T592-4, every window stops inclusively at the stamp (from the review of the implementation, PR #610, Codex F1)
+
+<!-- block: local-development/tests/test_f7_review_edges.py | create -->
+```python
+from datetime import timedelta
+
+from gsd import loginlog
+from gsd.reporting.snapshot import Snapshot
+from gsd.store import Store
+from reporting_seed import CLUSTER, NOW, _iso, write_snapshot
+from test_report_seal import _run
+
+
+def _block(report, title):
+    return next(b for s in report.sections for b in s.blocks if getattr(b, "title", None) == title)
+
+
+def test_windows_stop_inclusively_at_the_snapshot_stamp(tmp_path, monkeypatch):
+    """A real Store snapshot may contain a source timestamp ahead of the copy clock. The reports' windows end at
+    the stamp: the row at it is included, the row one second after it is not."""
+    import gsd.store
+    now = _iso(NOW)
+    monkeypatch.setattr(gsd.store, "now_iso", lambda: now)
+    store = Store(str(tmp_path / "writer.db"))
+    store.upsert_cluster(CLUSTER, "https://api.crc.testing:6443", True)
+    store.record_poll(CLUSTER, "ok", None)
+    boundary = NOW - timedelta(minutes=22)
+    store.replace_groupsync_state(CLUSTER, [
+        {"name": name, "namespace": "group-sync-operator", "schedule": "*/10 * * * *", "ldap_filter": "x",
+         "last_sync_at": _iso(boundary + timedelta(seconds=delta)), "generation": 1, "provider_keys": []}
+        for name, delta in (("before", -1), ("at", 0), ("after", 1))
+    ], now)
+    initial = ["window-before", "window-at", "window-after", "dormant-before", "dormant-at", "dormant-after"]
+    store.replace_group_state(CLUSTER, [{"name": "edge", "member_count": 9, "sync_provider": None,
+                                         "group_synced_at": now, "ldap_uid": None}], now)
+    members = list(initial)
+    store.sync_members(CLUSTER, {"edge": members}, {"edge": now}, _iso(NOW - timedelta(days=40)))
+    for name, delta in (("member-before", -1), ("member-at", 0), ("member-after", 1)):
+        members.append(name)
+        store.sync_members(CLUSTER, {"edge": members}, {"edge": now}, _iso(NOW + timedelta(seconds=delta)))
+    store.replace_users(CLUSTER, [
+        {"user_name": name, "full_name": None, "created_at": now, "providers": ["ldap"], "has_identity": True}
+        for name in initial
+    ], now)
+    store.record_login_read(CLUSTER, now)
+    events = []
+    for name, at in (("window-before", NOW - timedelta(seconds=1)), ("window-at", NOW),
+                     ("window-after", NOW + timedelta(seconds=1)),
+                     ("dormant-before", NOW - timedelta(days=1, seconds=1)),
+                     ("dormant-at", NOW - timedelta(days=1)),
+                     ("dormant-after", NOW - timedelta(days=1) + timedelta(seconds=1))):
+        events.append({"pod_name": "oauth-1", "user_name": name, "outcome": loginlog.OUTCOME_SUCCESS,
+                       "at": at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), "provider": "ldap", "ldap_result_code": None, "detail": None,
+                       "observed_at": now})
+    store.record_login_events(CLUSTER, events)
+    for delta in (-1, 0, 1):
+        at = _iso(NOW + timedelta(seconds=delta))
+        store.record_sync_event(CLUSTER, "at", "group-sync-operator", at, at, "*/10 * * * *", 1)
+    store.replace_bindings(CLUSTER, [], now)
+    store.replace_user_bindings(CLUSTER, [], now)
+    store.replace_operator_configs(CLUSTER, None, now)
+    directory = tmp_path / "snapshots"
+    directory.mkdir()
+    path = write_snapshot(store, directory)
+    store.close()
+
+    with Snapshot(path) as snap:
+        login = _run(snap, "login-activity", params={"window_days": 1})
+        users = {row[0] for row in _block(login, "Users").rows}
+        assert {"window-before", "window-at"} <= users and "window-after" not in users
+
+        groups = _run(snap, "groups", params={"window_days": 1})
+        changed = {row[3] for row in _block(groups, "Changes").rows}
+        assert {"member-before", "member-at"} <= changed and "member-after" not in changed
+
+        health = _run(snap, "groupsync-health", params={"window_days": 1})
+        crs = {row[0].rsplit("/", 1)[1]: row for row in _block(health, "CRs").rows}
+        assert crs["at"][5] == 2
+        assert {name: row[2] for name, row in crs.items()} == {"before": "overdue", "at": "late", "after": "late"}
+
+        compliance = _run(snap, "compliance-snapshot")
+        figures = dict(_block(compliance, "Directory and users").items)
+        pipeline = dict(_block(compliance, "Sync pipeline").items)
+        assert figures["Members added / removed, 30 d"] == "2 / 0"
+        assert pipeline["Overdue"] == 1
+
+        dormant = _run(snap, "dormant-access", params={"dormant_days": 1})
+        dormant_users = {row[0] for row in _block(dormant, "Members who have logged in before, not recently").rows}
+        assert dormant_users == {"dormant-before", "window-after"}
 ```
