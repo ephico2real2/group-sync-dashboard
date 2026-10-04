@@ -10,6 +10,11 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The Tech debt sweep (the "Tech debt" milestone; application 4.7.0, chart 0.70.0).** Fourteen issues found by
+  walks and reviews, each as small as its issue, one bullet each below: #577, #546, #548, #594, #555, #587, #588, #589,
+  #590, #585, #543, #591, #545, #535. No new feature. Scheduled reports now refuse PDF (#594): a values file that
+  schedules a PDF fails to render on upgrade.
+
 - **Tickets are signed with a key of their own (#392, Epic F #386, `docs/specs/SPEC_F6_ticket_signing_key.md`;
   application 4.6.0, chart 0.69.0).** A viewer's ticket was signed with the service token, which the schedule Jobs
   and the poller hold too, so whoever held the token could sign a ticket naming any person, and that name became the

@@ -364,7 +364,10 @@ type: application
 # report pod (with a rotation's `previous`), never in a schedule CronJob; the report pod's two env names and the
 # ConfigMap's reportingTicketKeyFile name it; appVersion moves to application 4.6.0 (below); #392, SPEC_F6. RBAC
 # REMOVED 0, ADDED 1 atom (get on the new Secret's name, for the hook's identity).
-version: 0.69.0
+# CHART 0.70.0 (2026-10-04), MINOR: scheduled reports refuse pdf at render time in reporting.formats.scheduled, a
+# schedule's formats and deliver.attach (#594); the recovery script waits on a wakeup pipe so a SIGTERM is not
+# missed (#555); appVersion moves to application 4.7.0 (below), the Tech debt sweep. No RBAC change.
+version: 0.70.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -507,7 +510,8 @@ version: 0.69.0
 # 4.4.0 (2026-10-04). Webhook delivery of scheduled reports: each finished run of a schedule's fan-out is POSTed as one CloudEvent to the URL in a mounted Secret, retried for 408, 429, 500, 502, 503, 504 and network errors, never printing the URL; a run not delivered fails the Job (#109). MINOR.
 # 4.5.0 (2026-10-04). A schedule that silently stops producing evidence raises an alert: the report service exports each schedule's state on the Reporting status page (ok, late, never, disabled) as gsd_report_schedule_status, computed by the page's own code (#140). MINOR.
 # 4.6.0 (2026-10-04). Tickets are signed with a ticket key of their own, never with the service token the schedule Jobs and the poller hold, so a token holder can no longer sign a ticket naming anybody; a ticket of the earlier format is answered 401 so an open page mints again; a rotation verifies with `previous` until it is closed (#392). MINOR.
-appVersion: "4.6.0"
+# 4.7.0 (2026-10-04). The Tech debt sweep: the Generate label, the KPI cards on a phone, no PDF on schedules, the recovery script's SIGTERM, the Reports description, report-diff order, access-certification's sealed stamp, two stale names, cron day and month names, the release note's schema line, the walk's interpreter, the README and the cosign version (#577 #546 #548 #594 #555 #587 #588 #589 #590 #585 #543 #591 #545 #535). MINOR.
+appVersion: "4.7.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
