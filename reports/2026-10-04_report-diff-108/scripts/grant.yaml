@@ -1,0 +1,28 @@
+# The walk's temporary grant (after reports/2026-10-03_csv-format-106/scripts/grant.yaml): `developer` passes the
+# cluster-admin tier (`update clusterrolebindings`), which the wide tier also consults, so the page shows the Report
+# history and mints the report ticket. Created and removed by run.sh around each page step, by the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gsd-walk-108-crb-update
+  labels:
+    walk.gsd.lab/run: report-diff-108-2026-10-04
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gsd-walk-108-crb-update-developer
+  labels:
+    walk.gsd.lab/run: report-diff-108-2026-10-04
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gsd-walk-108-crb-update
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: developer

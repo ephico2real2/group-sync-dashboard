@@ -1,0 +1,17 @@
+# The planted binding #108's walk diffs for (the issue's Definition of Done): the synced group
+# app-ocp-rbac-demo-ns-admin bound to `view` in demo-qa, where it held nothing before. Removed by run.sh, by the label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: walk-108-planted-view
+  namespace: demo-qa
+  labels:
+    walk.gsd.lab/run: report-diff-108-2026-10-04
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: app-ocp-rbac-demo-ns-admin

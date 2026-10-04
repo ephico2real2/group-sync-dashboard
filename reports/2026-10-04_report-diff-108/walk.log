@@ -1,0 +1,109 @@
+# SPEC_F3 §5 walk (#108), CRC lab; written by scripts/run.sh; started 2026-10-04T03:23:26Z
+
+## Wait for application 4.3.0  (2026-10-04T03:23:26Z)
+
+## Before  (2026-10-04T03:23:26Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"79c24a8e5af4c92762ec5e575488000f562b5510"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image' | grep -vE 'offsite-|verify-'
+NAME                                                 START                  IMAGE
+group-sync-dashboard-fc67c8f64-2xl76                 2026-10-04T02:16:43Z   quay.io/ephico2real/group-sync-dashboard:4.3.0
+group-sync-dashboard-report-6d6567448b-6pxx8         2026-10-04T02:16:44Z   quay.io/ephico2real/group-sync-dashboard-report:4.3.0
+$ oc get rolebindings.rbac.authorization.k8s.io -n demo-qa -o 'custom-columns=NAME:.metadata.name,ROLE:.roleRef.name,SUBJECTS:.subjects[*].name'
+NAME                    ROLE                   SUBJECTS
+demo-audit-rb           view                   app-ocp-rbac-demo-ns-audit
+demo-developer-rb       edit                   app-ocp-rbac-demo-ns-developer
+system:deployers        system:deployer        deployer
+system:image-builders   system:image-builder   builder
+system:image-pullers    system:image-puller    system:serviceaccounts:demo-qa
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run=report-diff-108-2026-10-04 -o name
+unmanaged bindings now: 58
+
+## Two runs of namespace-access on demo-qa, over the same data  (2026-10-04T03:23:29Z)
+{"id": "20261004T032332.324748Z-06ea", "report": "namespace-access", "cluster": "dashboard", "params": {"selectors": null, "mnemonics": null, "namespaces": ["demo-qa"], "include_members": false, "group_by": "mnemonic"}, "formats": ["html"], "generated_by": "dana.lee", "generated_by_note": "proxy-verified, ticket from the dashboard", "schedule": null, "requested_at": "2026-10-04T03:23:32Z", "status": "done", "started_at": "2026-10-04T03:23:32Z", "finished_at": "2026-10-04T03:23:32Z", "error": null, "sha256": "be5b69f705865a4b8e909c9ff6b0f7f24c65c9b0393b4489e422271b4b4809b8", "snapshot_stamp": "2026-10-04T03:20:16.192499Z", "bytes": {"json": 7444, "html": 7522}, "pdf_variant": null, "render_seconds": 0.417, "origin": "viewer", "expires_at": "2026-10-07T03:23:33Z", "retained_by": "manual:3d"}
+{"id": "20261004T032337.414306Z-8a16", "report": "namespace-access", "cluster": "dashboard", "params": {"selectors": null, "mnemonics": null, "namespaces": ["demo-qa"], "include_members": false, "group_by": "mnemonic"}, "formats": ["html"], "generated_by": "dana.lee", "generated_by_note": "proxy-verified, ticket from the dashboard", "schedule": null, "requested_at": "2026-10-04T03:23:37Z", "status": "done", "started_at": "2026-10-04T03:23:37Z", "finished_at": "2026-10-04T03:23:37Z", "error": null, "sha256": "be5b69f705865a4b8e909c9ff6b0f7f24c65c9b0393b4489e422271b4b4809b8", "snapshot_stamp": "2026-10-04T03:20:16.192499Z", "bytes": {"json": 7444, "html": 7522}, "pdf_variant": null, "render_seconds": 0.189, "origin": "viewer", "expires_at": "2026-10-07T03:23:38Z", "retained_by": "manual:3d"}
+A=20261004T032332.324748Z-06ea B=20261004T032337.414306Z-8a16
+
+## Phase 1: diff B against A through the page (expect No change)  (2026-10-04T03:23:39Z)
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-108/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-108-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-108-crb-update-developer created
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py 20261004T032337.414306Z-8a16 20261004T032332.324748Z-06ea phase1 none
+2026-10-04T03:24:57Z PASS the head's row offers Diff vs…                     : 20261004T032337.414306Z-8a16
+2026-10-04T03:24:57Z PASS the picker pre-selects the newest earlier run      : {"chosen": "20261004T032332.324748Z-06ea", "base": "20261004T032332.324748Z-06ea"}
+2026-10-04T03:25:02Z diff run                                                : 20261004T032457.350234Z-2c21
+2026-10-04T03:25:02Z diff params                                             : {"base": "20261004T032332.324748Z-06ea", "base_sha256": "be5b69f705865a4b8e909c9ff6b0f7f24c65c9b0393b4489e422271b4b4809b8", "head": "20261004T032337.414306Z-8a16", "head_sha256": "be5b69f705865a4b8e909c9ff6b0f7f24c65c9b0393b4489e422271b4b4809b8", "report": "namespace-access"}
+2026-10-04T03:25:02Z diff totals                                             : {"blocks_changed": 0, "rows_added": 0, "rows_removed": 0}
+2026-10-04T03:25:02Z changed blocks                                          : []
+2026-10-04T03:25:02Z PASS the diff names the head and base it compared       : {"base": "20261004T032332.324748Z-06ea", "head": "20261004T032337.414306Z-8a16"}
+2026-10-04T03:25:02Z PASS No change: no changed block, totals zero           : {"blocks_changed": 0, "rows_added": 0, "rows_removed": 0}
+2026-10-04T03:25:02Z PASS no page errors                                     : []
+2026-10-04T03:25:02Z result                                                  : {"failures": []}
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-108/scripts/grant.yaml' --ignore-not-found
+clusterrole.rbac.authorization.k8s.io "gsd-walk-108-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-108-crb-update-developer" deleted
+
+## Plant one RoleBinding  (2026-10-04T03:25:02Z)
+unmanaged bindings before the plant: 58
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-108/scripts/planted.yaml'
+rolebinding.rbac.authorization.k8s.io/walk-108-planted-view created
+
+## Wait for the binding refresh to count it (the unmanaged metric moves), then one snapshot interval  (2026-10-04T03:25:04Z)
+unmanaged bindings after the refresh: 59 at 2026-10-04T04:20:23Z
+
+## Phase 2: a third run, diffed against B through the page (expect the binding added)  (2026-10-04T04:25:53Z)
+{"id": "20261004T042556.027351Z-5f49", "report": "namespace-access", "cluster": "dashboard", "params": {"selectors": null, "mnemonics": null, "namespaces": ["demo-qa"], "include_members": false, "group_by": "mnemonic"}, "formats": ["html"], "generated_by": "dana.lee", "generated_by_note": "proxy-verified, ticket from the dashboard", "schedule": null, "requested_at": "2026-10-04T04:25:56Z", "status": "done", "started_at": "2026-10-04T04:25:56Z", "finished_at": "2026-10-04T04:25:56Z", "error": null, "sha256": "87f71f960f8d9b8344abbcac6b36934ed321282ff036caae1e6fe72f98c515b7", "snapshot_stamp": "2026-10-04T04:22:15.393035Z", "bytes": {"json": 7787, "html": 7766}, "pdf_variant": null, "render_seconds": 0.183, "origin": "viewer", "expires_at": "2026-10-07T04:25:57Z", "retained_by": "manual:3d"}
+C=20261004T042556.027351Z-5f49
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-108/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-108-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-108-crb-update-developer created
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py 20261004T042556.027351Z-5f49 20261004T032337.414306Z-8a16 phase2 planted
+2026-10-04T04:27:19Z PASS the head's row offers Diff vs…                     : 20261004T042556.027351Z-5f49
+2026-10-04T04:27:19Z PASS the picker pre-selects the newest earlier run      : {"chosen": "20261004T032337.414306Z-8a16", "base": "20261004T032337.414306Z-8a16"}
+2026-10-04T04:27:22Z diff run                                                : 20261004T042719.705865Z-d981
+2026-10-04T04:27:23Z diff params                                             : {"base": "20261004T032337.414306Z-8a16", "base_sha256": "be5b69f705865a4b8e909c9ff6b0f7f24c65c9b0393b4489e422271b4b4809b8", "head": "20261004T042556.027351Z-5f49", "head_sha256": "87f71f960f8d9b8344abbcac6b36934ed321282ff036caae1e6fe72f98c515b7", "report": "namespace-access"}
+2026-10-04T04:27:23Z diff totals                                             : {"blocks_changed": 2, "rows_added": 2, "rows_removed": 1}
+2026-10-04T04:27:23Z changed blocks                                          : [{"where": "demo \u00b7 Namespace: demo-qa \u2014 Namespace", "removed": [["Findings", "dangling: 0, unresolved: 0, unmanaged: 0, direct_user: 0"]], "added": [["Findings", "dangling: 0, unresolved: 0, unmanaged: 1, direct_user: 0"]]}, {"where": "demo \u00b7 Namespace: demo-qa \u2014 Group bindings", "removed": [], "added": [["UNMANAGED \u2014 synced group granted by hand, no policy operator source", "app-ocp-rbac-demo-ns-admin", "ClusterRole/view", "walk-108-planted-view", "RoleBinding", 2, 2, "hand-made", ""]]}]
+2026-10-04T04:27:23Z PASS the diff names the head and base it compared       : {"base": "20261004T032337.414306Z-8a16", "head": "20261004T042556.027351Z-5f49"}
+2026-10-04T04:27:23Z PASS every removed row is a value that moved under the same key: [["Findings", "dangling: 0, unresolved: 0, unmanaged: 0, direct_user: 0"]]
+2026-10-04T04:27:23Z PASS every other added row names the planted group      : [["UNMANAGED \u2014 synced group granted by hand, no policy operator source", "app-ocp-rbac-demo-ns-admin", "ClusterRole/view", "walk-108-planted-view", "RoleBinding", 2, 2, "hand-made", ""]]
+2026-10-04T04:27:23Z PASS no page errors                                     : []
+2026-10-04T04:27:23Z result                                                  : {"failures": []}
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-108/scripts/grant.yaml' --ignore-not-found
+clusterrole.rbac.authorization.k8s.io "gsd-walk-108-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-108-crb-update-developer" deleted
+
+## Remove the planted binding  (2026-10-04T04:27:23Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-108/scripts/planted.yaml' --ignore-not-found
+rolebinding.rbac.authorization.k8s.io "walk-108-planted-view" deleted from demo-qa namespace
+
+## After  (2026-10-04T04:27:23Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"b98164950ee5b90e7bab45b7c89f9462c55890ae"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image' | grep -vE 'offsite-|verify-'
+NAME                                                 START                  IMAGE
+group-sync-dashboard-fc67c8f64-2xl76                 2026-10-04T02:16:43Z   quay.io/ephico2real/group-sync-dashboard:4.3.0
+group-sync-dashboard-report-6d6567448b-6pxx8         2026-10-04T02:16:44Z   quay.io/ephico2real/group-sync-dashboard-report:4.3.0
+$ oc get rolebindings.rbac.authorization.k8s.io -n demo-qa -o 'custom-columns=NAME:.metadata.name,ROLE:.roleRef.name,SUBJECTS:.subjects[*].name'
+NAME                    ROLE                   SUBJECTS
+demo-audit-rb           view                   app-ocp-rbac-demo-ns-audit
+demo-developer-rb       edit                   app-ocp-rbac-demo-ns-developer
+system:deployers        system:deployer        deployer
+system:image-builders   system:image-builder   builder
+system:image-pullers    system:image-puller    system:serviceaccounts:demo-qa
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer 2>/dev/null || true
+no
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io,rolebindings.rbac.authorization.k8s.io -A -l walk.gsd.lab/run=report-diff-108-2026-10-04 -o name
+walk exit 0
