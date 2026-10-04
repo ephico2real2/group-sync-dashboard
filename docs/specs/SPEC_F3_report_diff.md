@@ -8,7 +8,7 @@
 | Version on release | app 4.3.0, chart 0.66.7 |
 | Version note | Image content (a new module, a branch in `create_run` and in the worker), so the next application MINOR, 4.3.0 (`docs/specs/README.md`, the version ladder). The chart takes the PATCH that moves `appVersion`, 0.66.7: its only other change is the README's reports paragraph; no value key, default, template or RBAC rule changes (the chart's rule, `charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`; 0.66.5 and 0.66.6 were the same kind of step). Read on `43b231b6` (application 4.2.0, chart 0.66.6); W1 is `specified` at chart 0.67.0, which stays above 0.66.7, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 12 to 15) fail their check; the implementing pull request corrects them here first |
 | Issue | [#108](https://github.com/ephico2real2/group-sync-dashboard/issues/108) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §1 and §3 re-measured against main after F1 (#270) and F2 (#106). Measured on main `43b231b6` with the repository's venv (Python 3.14): §2.3's probes built all eleven reports over the seeded snapshot of `tests/test_report_seal.py`. No lab read; §5 states the walk. §7's blocks (the page's included, written in a second pass the same day) were proved against a clean checkout of `43b231b6` (§4.3) |
 
 ## How to read this spec

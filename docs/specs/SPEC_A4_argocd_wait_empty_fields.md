@@ -7,7 +7,7 @@
 | Release | — (post-programme; its own pull request) |
 | Version on release | no version change (a repository tool and its test) |
 | Issue | [#534](https://github.com/ephico2real2/group-sync-dashboard/issues/534) |
-| Status | merged |
+| Status | released |
 | Source | Written by the orchestrator on 2026-10-03, from main `94f5ebbb`. The facts are measured on the CRC lab, in the walk logs on main, and in Argo CD's own source (§2). |
 
 ## How to read this spec

@@ -8,7 +8,7 @@
 | Version on release | app 4.1.0, chart 0.66.5 |
 | Version note | The change is image content (the report service's model and one catalogue line), so it takes the next application MINOR, 4.1.0, and the chart PATCH that moves `appVersion`, 0.66.5 (SPEC_E5's rule, `local-development/tests/test_specs_index.py#test_a_spec_the_changelog_has_not_begun_names_versions_the_tree_has_not_reached`). Read on `94f5ebbb` (application 4.0.0, chart 0.66.4); the one other `specified` row, W1, holds chart 0.67.0, a MINOR, which stays above 0.66.5. The version blocks (§7, blocks 8 to 11) are written against that tree: a release that lands first makes them fail their check, and the implementing pull request then corrects them here before applying (`docs/specs/README.md`, "Implementation blocks") |
 | Issue | [#270](https://github.com/ephico2real2/group-sync-dashboard/issues/270) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-03, written before any code from the issue (its body of 2026-09-26, settled), the epic (#386) and SPEC_C3's definition of the seal. Measured on main `94f5ebbb` on this machine with the repository's venv (Python 3.14): the probe in §2.3 built all eleven reports twice over one seeded snapshot. No lab read was needed; §5 states the walk. §7's blocks were proved against a clean checkout of `94f5ebbb` (§4.3) |
 
 ## How to read this spec
