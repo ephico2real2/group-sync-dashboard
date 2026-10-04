@@ -9519,7 +9519,8 @@ class TestReportsTab:
             assert "report-diff" in page.locator("#library-drawer").inner_text()
             page.goto(base + "#page=reporting&cluster=crc-local")
             page.wait_for_selector("#reporting-history tbody tr")
-            row = page.locator("#reporting-history tbody tr", has_text=diff.id)
+            # The history row shows the requested time, not the run id; the id is on its artefact buttons.
+            row = page.locator(f'#reporting-history tbody tr:has([data-artifact="{diff.id}"])')
             assert row.count() == 1 and "report-diff" in row.inner_text() and "access-matrix" in row.inner_text()
             assert not errors, f"diff Library/status page errors: {errors}"
         finally:
