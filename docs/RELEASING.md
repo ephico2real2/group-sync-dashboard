@@ -151,6 +151,71 @@ publisher's release-alias decision and `<appVersion>-<10-char sha>` tag scheme a
 
 ---
 
+## Promotion to the lab
+
+`main` stays the source. `.github/workflows/promote.yml` keeps a `release` branch that holds only what it read back
+from the registry (#598). **During the development phase the lab tracks `main`; `release` is optional** (the
+operator, 2026-10-04: "main by default; release optional"). On `main` the image race remains: a release merge moves
+`appVersion` before `publish.yml` has pushed the new image, and the lab's pods sit in `ErrImagePull` until it exists.
+It heals on its own, and was measured at 4.1.0, 4.4.0 and 5.1.0. `release-crc.sh --argocd release` removes it
+whenever it is chosen; `--argocd main` switches back.
+
+**At each epic release**, while the lab has no room for a second environment, the post-release walk runs on the
+promoted path: `release-crc.sh --argocd release`, the walk, then `release-crc.sh --argocd main` to return to `main`
+(`.claude/skills/epic/SKILL.md`, section 6).
+
+**The end state** (the operator, 2026-10-04, once the lab is a full OpenShift cluster): two namespaces.
+`group-sync-dashboard-dev` tracks `main`; `group-sync-dashboard` tracks `release`, with `promotion.yaml` as its last
+values file. The development phase is the same design with one namespace: it tracks `main`, and `--argocd release`
+is the opt-in. The second install needs its own Helm release name (`group-sync-dashboard-dev`), because the chart
+names its cluster-scoped objects by release (SPEC_P1 §2.3, "two-namespace readiness").
+
+`promote.yml` builds nothing. It runs after a green `publish.yml` on `main`, after a merge to
+`charts/group-sync-dashboard/` or `environments/`, or by hand (Run workflow, with `sha` and `rollback`). Each run:
+
+1. Takes `main`'s tip (or the `sha` given) and its `appVersion`.
+2. Finds the last first-parent commit that touched one of `publish.yml`'s image inputs. For an unpinned image it
+   reads `<appVersion>-<that commit's sha10>`, and requires `:<appVersion>` to resolve to the same digest. A push
+   promotes once those exact names are ready, even if it replaced a pending publish-completion run or follows a
+   rollback. While they are still being published it prints a notice and writes nothing.
+3. Reads both images back: the version label on every Linux image, as `helm.yaml` checks it, and a signature from
+   `publish.yml` on `main` (unless `SUPPLY_CHAIN_SIGNING` is `false`). A successful publish completion whose
+   immutable tag and version alias differ is a red run; it never crosses an older image with a newer main tree.
+4. Commits `charts/group-sync-dashboard/`, `environments/` and `promotion.yaml` to `release`, as a fast-forward.
+   `promotion.yaml` pins both images by digest, and the Application lists it last, so the digests win.
+5. When the lab tracks `release`, Argo CD syncs it.
+
+- **What `release` holds.** The chart and `environments/` at one `main` commit, and `promotion.yaml`. The commit's
+  subject is `promote: main <sha>`. Nothing on `release` has a workflow, so nothing runs or builds there.
+- **One writer.** The push uses a deploy key held in the `release` environment, which admits `main` only. The
+  branch's ruleset lets only deploy keys create, update or delete it, and blocks force pushes. The job's token is
+  `contents: read`.
+- **Rollback.** Actions → promote → Run workflow, with an older `main` commit as `sha` and `rollback` checked. The
+  same checks run. It holds until the next promotion; revert on `main` to keep it.
+- **Which branch the lab tracks.** `gitops/argocd-application-dashboard.yaml` tracks `main`, the default.
+  `local-development/release-crc.sh --argocd release` reads both pinned digests back again, refuses a `release`
+  without `promotion.yaml`, and points the Application at `release` with `promotion.yaml` as its last values file.
+  `--argocd main` points it back at `main`, unchanged; `--argocd <branch>` still deploys a branch for testing.
+  `release` is kept current either way, so it is ready whenever it is chosen.
+
+**The operator's one-time steps** (in this order, before the first promotion):
+
+1. Create the deploy key. `ssh-keygen -t ed25519 -N '' -C promote-release -f promote-release` on a laptop. Add
+   `promote-release.pub` under Settings → Deploy keys, with **Allow write access**.
+2. Create the environment. Settings → Environments → New environment `release`. Deployment branches and tags:
+   **Selected branches and tags**, rule `main`. Add the secret `RELEASE_DEPLOY_KEY` with the content of
+   `promote-release` (the private half). Delete both files from the laptop.
+3. Create the branch, empty: `git commit-tree "$(git hash-object -t tree /dev/null)" -m "release starts empty"`
+   prints a commit; `git push origin <that commit>:refs/heads/release`.
+4. Create the ruleset. Settings → Rules → Rulesets → New branch ruleset `release`: Enforcement **Active**; target
+   the branch `release`; rules **Restrict creations**, **Restrict updates**, **Restrict deletions**, **Block force
+   pushes**; Bypass list **Deploy keys**, mode Always.
+5. Run Actions → promote → Run workflow on `main`, with no inputs. `git ls-remote origin refs/heads/release` then
+   prints a commit whose subject is `promote: main <sha>`.
+6. Optional: point the lab at it with `local-development/release-crc.sh --argocd release`.
+
+---
+
 ## Four tags, and why there are four
 
 ```
@@ -355,6 +420,12 @@ uses it.
 | chart release run is red at "Label the image this chart version deploys" with `cannot tell whether <image>:<appVersion> exists` | the registry did not answer "manifest unknown": DNS, a 401, a 429, a timeout. Nothing was copied and no chart was published; the image may well exist | re-run the release once the registry answers. Do not run the `--release-tags` scripts for this: that route is for an image that was never published |
 | chart release run is red at "Label the image this chart version deploys" with `<image>:<appVersion> is application X, not <appVersion> (#410)` | the tag exists but names another build: `publish.yml` has not moved the alias yet on the release merge, or the tag is a chart-version label on an old image (`:0.39.0` was application 0.24.0). Nothing was copied and no chart was published | wait for `publish.yml` on the release merge to finish green, then re-run the release. Never retag or delete the old tag by hand: a cluster, a mirror or a Helm release may pin it |
 | chart release run is red at "Label the image this chart version deploys" with `<image>:<chartVersion> is application <chartVersion>'s own alias` | the chart's version equals an application version that already has its alias, and the copy would overwrite it. Nothing was copied | bump `version` in `charts/group-sync-dashboard/Chart.yaml`, in a pull request, to a version no application release has used |
+| promote run says `whose images publish.yml has not finished`, `immutable image … is not ready` or the version alias `does not yet name` it, and promotes nothing | main's exact image is still publishing | nothing to do: its green completion, or a later chart/environment push, promotes main. If publish is red, fix it; `release` stays on the last promotion |
+| promote run says a same-version image change reached `main` | two PRs chose the same next application version, so the immutable image and `:<appVersion>` alias differ | cut the next MINOR or MAJOR and let `publish.yml` finish green; never retag by hand |
+| promote run is red with `is application X, not <appVersion>` or `carries no signature from publish.yml on main` | the tag names another build, or the digest was not signed by `publish.yml` on `main`. Nothing was written to `release` | wait for `publish.yml` to finish green, then Run workflow on promote. Never edit `release` by hand |
+| promote run is red with `origin has no release branch` or `RELEASE_DEPLOY_KEY is not set` | the operator's one-time steps are not done | "Promotion to the lab", steps 1 to 5 |
+| promote run is red with `is not a later commit` | a Run workflow named a commit older than the one `release` holds | check `rollback` to deploy it on purpose |
+| `release-crc.sh --argocd release` says `origin/release has no promotion.yaml` | no promotion has run yet | run promote (step 5 above) |
 | `helm search repo` shows the old chart after a merge | `Chart.yaml` `version` was not bumped, so chart-releaser skipped it | bump it. `ci.yml`'s version-bump check exists to stop this reaching main |
 | a new pod runs different bits than its neighbour | somebody republished an alias between the two container creations | pin `image.tag` to the sha form |
 | `ImagePullBackOff` on a fresh install | the `:<appVersion>` alias does not exist for the chart's declared appVersion — for the dashboard image, or (report pod only) for the report image | the app release was never published, or half of it was. Check `publish.yml`, then use `--release-tags` on both scripts |

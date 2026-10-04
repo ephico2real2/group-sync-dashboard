@@ -60,7 +60,8 @@ no feature is removed or deprecated unless an issue says so and the operator agr
 - [ ] Released: `prepare-release.py` cut, with the epic as the first bullet under the new `docs/CHANGELOG.md`
       heading; the release PR merged; `.github/workflows/helm.yaml` published the chart;
       `.github/workflows/publish.yml` published the application image when `--app` was used.
-- [ ] The published release deployed to CRC through `release-crc.sh --argocd main`, walked, PVC UIDs unchanged.
+- [ ] The published release walked on CRC through `release-crc.sh --argocd release`, then the lab returned to `main` with
+      `release-crc.sh --argocd main`; PVC UIDs unchanged.
 - [ ] The branches this epic used are deleted, each proven merged first.
 - [ ] The session changelog records the epic.
 
@@ -138,15 +139,15 @@ deploy or redeploy every epic and cut a release note. So we are remaining true."
    prints each such heading and its line, up to the previous epic's MAJOR; when it prints nothing, write "No schema
    change". The tag is the **chart** version just cut, not the
    application version: `gh release edit group-sync-dashboard-<chart-version> --notes-file <file>`.
-3. **Deploy.** After those workflows are green, deploy the published release with
-   `local-development/release-crc.sh --argocd main`. That mode uses the chart on GitHub at `main` and the published
-   quay image (the mode table in the `release-crc.sh` header and in `local-development/README.md`). Bare
-   `--argocd` builds HEAD and pins that image, so it is not the published release. The branch path refuses to hand Argo an image whose
-   `org.opencontainers.image.version` label is not the chart's appVersion, or that is not in the registry (#410): a
-   refusal means publish.yml has not moved the `:<appVersion>` aliases yet, or a chart-version label already occupied
-   that tag. Wait for the publish run; never retag by hand. The lab's Application auto-syncs `main`, so it can deploy
-   before this script runs; #410 tracks that race. Walk it, and record the two PVC
-   UIDs before and after; they must be unchanged.
+3. **Deploy.** After those workflows and `promote.yml` are green, walk the release on the promoted path:
+   `local-development/release-crc.sh --argocd release` (the chart on `release` and the two digests `promote.yml`
+   pinned in `promotion.yaml`, read back before the Application is written), walk it, then
+   `local-development/release-crc.sh --argocd main` to return the lab to `main`, its day-to-day branch (#598;
+   `docs/RELEASING.md`, "Promotion to the lab"). Bare `--argocd` builds HEAD and pins that image, so it is not the
+   published release. Both modes refuse an image whose `org.opencontainers.image.version` label is not the release's
+   (#410): wait for `publish.yml` and `promote.yml`, then re-run; never retag or edit `release` by hand. Between
+   epics the lab tracks `main`, which can sync a release merge before its image is pushed (`ErrImagePull` until it
+   is). Record the two PVC UIDs before and after; they must be unchanged.
 
 Then:
 - Every Definition-of-Done box ticked.

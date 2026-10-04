@@ -10,6 +10,20 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The lab deploys only what `promote.yml` read back (#598, `docs/specs/SPEC_P1_promote_release_branch.md`;
+  application 5.2.0, chart 0.70.3).** A new workflow, `promote.yml`, runs after a green `publish.yml` on `main`, after
+  a merge to the chart or `environments/`, or by hand. It builds nothing. For each unpinned image it reads the
+  immutable `<appVersion>-<sha10>` of main's last image-input commit, requires `:<appVersion>` at the same digest,
+  checks every Linux image's version label and the signature from `publish.yml` on `main`, then pins the digest in
+  `promotion.yaml` and commits that file with the chart and `environments/` to the `release` branch as a
+  fast-forward. A merge whose exact image is still being published promotes nothing until it is ready. During development the lab's Application still tracks `main` (the operator,
+  2026-10-04: "main by default; release optional"), so the `ErrImagePull` race seen at 4.1.0, 4.4.0 and 5.1.0 remains
+  there and heals on its own. `release-crc.sh --argocd release` removes it: it reads the pinned digests back, then
+  points the Application at `release` with `promotion.yaml` as its last values file; `--argocd main` switches back.
+  The `release` branch, its ruleset and the deploy key are the operator's one-time steps (`docs/RELEASING.md`,
+  "Promotion to the lab"). The application moves because `local-development/README.md` and the publisher's exact-sha10
+  derivation are image inputs; no application code, template, value or RBAC change.
+
 - **The reports' clock is the snapshot's (#592, #607, #593, `docs/specs/SPEC_F7_snapshot_clock.md`; application 5.1.0,
   chart 0.70.2).** A report's windows, cutoffs and overdue states now end at the snapshot's stamp, not at the
   generation time: `login-activity`'s window (its `To` is the stamp), the change windows of `groups`,

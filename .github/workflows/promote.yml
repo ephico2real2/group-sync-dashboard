@@ -1,0 +1,270 @@
+# Promote main to the `release` branch (#598, docs/RELEASING.md "Promotion to the lab").
+#
+# BUILD ONCE, PROMOTE THE ARTEFACT. publish.yml builds and signs each image once; this workflow builds
+# nothing. It reads both images back (the version label on every Linux image, the signature when signing is
+# on), pins them by digest in `promotion.yaml`, and commits that file with the chart and environments/ at that
+# main commit to `release`. An Argo CD Application on `release` never sees a chart whose images are not
+# published yet; one on main can (4.1.0, 4.4.0, 5.1.0: ErrImagePull until publish.yml pushed the image). During
+# development the lab tracks main and `release-crc.sh --argocd release` is the opt-in, so `release` is kept
+# current on every green publish.
+#
+# THE ONLY WRITER. The push uses the deploy key in the `release` environment, the one bypass actor of the
+# branch's ruleset; the job holds `contents: read`. That environment admits `main` only.
+name: promote
+
+on:
+  # A publish run's completion: the images of the version it published now exist and are signed.
+  workflow_run:
+    workflows: [publish]
+    types: [completed]
+    branches: [main]
+  # A merge publish.yml skips (the chart or environments/ only) still reaches the lab.
+  push:
+    branches: [main]
+    paths:
+      - 'charts/group-sync-dashboard/**'
+      - 'environments/**'
+      - '.github/workflows/promote.yml'
+  # A re-run, the first promotion after `release` is created, or a rollback to an older commit on main.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The commit on main to promote (empty = main's tip)
+        required: false
+        default: ''
+      rollback:
+        description: Allow a commit older than the one release holds
+        type: boolean
+        default: false
+
+# One promotion at a time. A replaced pending run loses nothing: every run promotes main as it finds it.
+concurrency:
+  group: promote-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: >-
+      github.repository == 'ephico2real2/group-sync-dashboard'
+      && github.ref == 'refs/heads/main'
+      && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release    # RELEASE_DEPLOY_KEY lives here; its deployment branch policy admits main only
+    steps:
+      - name: Check the release deploy key is configured
+        shell: bash
+        env:
+          KEY_SET: ${{ secrets.RELEASE_DEPLOY_KEY != '' }}
+        run: |
+          if [ "${KEY_SET}" != true ]; then
+            echo "::error::RELEASE_DEPLOY_KEY is not set in the release environment, so nothing can be promoted."
+            echo "::error::The operator's one-time steps are in docs/RELEASING.md, \"Promotion to the lab\"."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: vars.SUPPLY_CHAIN_SIGNING != 'false'
+        with:
+          cosign-release: v3.1.3   # the cosign publish.yml signs with
+
+      - name: Read both images back and promote
+        shell: bash
+        env:
+          REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
+          REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ephico2real' }}
+          SIGNING: ${{ vars.SUPPLY_CHAIN_SIGNING }}
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          SHA: ${{ inputs.sha }}
+          ROLLBACK: ${{ inputs.rollback }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish.yml@refs/heads/main
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          CHART=charts/group-sync-dashboard/Chart.yaml
+          VALUES=charts/group-sync-dashboard/values.yaml
+          REPO="${REGISTRY}/${REGISTRY_NAMESPACE}/group-sync-dashboard"
+          # publish.yml's image-input allowlist. The first-parent path history identifies the merge commit whose
+          # immutable <appVersion>-<sha> images the target tree must run. A test holds this list equal to publish.yml.
+          IMAGE_INPUTS=(
+            'local-development/gsd/**' 'local-development/pyproject.toml' 'local-development/README.md'
+            'local-development/uninstall-lists.py' 'local-development/image-proof.py'
+            'local-development/Containerfile' 'local-development/.containerignore'
+            'local-development/build-and-push-external.sh' 'local-development/Containerfile.report'
+            'local-development/report-image-proof.py' 'local-development/build-and-push-report.sh'
+            '.github/workflows/publish.yml'
+          )
+          # helm.yaml's appVersion form, so the two read one Chart.yaml the same way.
+          app_version_at() {
+            git show "$1:${CHART}" 2>/dev/null | sed -n 's/^appVersion: "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' | head -1 || true
+          }
+          # helm.yaml's reader of the version label of every Linux image behind a reference, verbatim
+          # (tests/test_promote.py holds it equal).
+          image_versions() {
+            python3 - "$1" "$2" <<'PY'
+          import json, subprocess, sys
+          repo, reference = sys.argv[1], sys.argv[2]
+          def raw(*args):
+              done = subprocess.run(["skopeo", "inspect", "--raw", *args], capture_output=True, text=True)
+              if done.returncode != 0:
+                  sys.exit(done.stderr.strip() or "skopeo inspect --raw " + " ".join(args) + " failed")
+              return json.loads(done.stdout)
+          top = raw(f"docker://{repo}{reference}")
+          refs = ([f"docker://{repo}@{m['digest']}" for m in top["manifests"] if (m.get("platform") or {}).get("os") == "linux"]
+                  if "manifests" in top else [f"docker://{repo}{reference}"])
+          images = [{"config": raw("--config", ref)} for ref in refs]
+          print(", ".join(sorted({(i.get("config", {}).get("config", {}).get("Labels") or {}).get("org.opencontainers.image.version", "") for i in images})))
+          PY
+          }
+
+          git fetch -q origin "+refs/heads/main:refs/remotes/origin/main"
+          if ! git fetch -q origin "+refs/heads/release:refs/remotes/origin/release"; then
+            echo "::error::origin has no release branch, so nothing was promoted. The operator creates it once"
+            echo "::error::(docs/RELEASING.md, \"Promotion to the lab\"), then runs this workflow by hand."
+            exit 1
+          fi
+          target=$(git rev-parse --verify "${SHA:-origin/main}^{commit}")
+          if ! git merge-base --is-ancestor "${target}" origin/main; then
+            echo "::error::${target} is not on main; only a commit on main is promoted."
+            exit 1
+          fi
+          from=$(git log -1 --format=%s origin/release | sed -n 's/^promote: main \([0-9a-f]\{40\}\)$/\1/p')
+          if [ -n "${from}" ] && ! git merge-base --is-ancestor "${from}" "${target}" && [ "${ROLLBACK}" != true ]; then
+            echo "::error::release holds main ${from}, and ${target} is not a later commit. To deploy an older"
+            echo "::error::commit, run this workflow with its sha and rollback checked."
+            exit 1
+          fi
+
+          # A workflow_run may safely carry later chart/environment-only commits, but not a later application
+          # version. Push runs prove readiness below from the immutable build tag instead of assuming that release's
+          # current version is the only ready one: GitHub concurrency may replace a pending workflow_run with a later
+          # push, and a push must then be able to promote the already-published artefact.
+          app_version=$(app_version_at "${target}")
+          if [ -z "${app_version}" ]; then
+            echo "::error::cannot read appVersion from ${CHART} at ${target}."
+            exit 1
+          fi
+          if [ "${EVENT}" = workflow_run ] && [ "${app_version}" != "$(app_version_at "${RUN_SHA}")" ]; then
+            echo "::notice::main ${target:0:10} is application ${app_version}, whose images publish.yml has not finished;"
+            echo "::notice::its completion promotes main. Nothing was promoted by this run."
+            exit 0
+          fi
+          image_commit=$(git log --first-parent -1 --format=%H "${target}" -- "${IMAGE_INPUTS[@]}")
+          if [ -z "${image_commit}" ]; then
+            echo "::error::cannot find the last publish.yml image-input commit at ${target}."
+            exit 1
+          fi
+
+          values=$(mktemp)
+          git show "${target}:${VALUES}" > "${values}"
+          PINNED=$(sed -n 's/^  tag: "\(.*\)"[[:blank:]]*$/\1/p' "${values}" | head -1)
+          # helm.yaml's reporting.image.tag reader, verbatim but for the file it reads (tests/test_promote.py).
+          REPORT_PINNED=$(python3 -c '
+          import sys
+          in_reporting = in_image = False
+          for raw in sys.stdin.read().splitlines():
+              line = raw.split("#", 1)[0].rstrip()
+              if line == "reporting:":
+                  in_reporting, in_image = True, False
+                  continue
+              if in_reporting and line and not line.startswith(" "):
+                  in_reporting = in_image = False
+              if in_reporting and line == "  image:":
+                  in_image = True
+                  continue
+              if in_image and line.startswith("    tag:"):
+                  print(line.split(":", 1)[1].strip().strip("\"'\''"))
+                  break
+              if in_image and line.startswith("  ") and not line.startswith("    "):
+                  in_image = False
+          ' < "${values}")
+          promotion="# Written by .github/workflows/promote.yml for main ${target}: the images it read back, by digest."
+          for spec in "${REPO}|${PINNED}|image:" "${REPO}-report|${REPORT_PINNED}|reporting:"; do
+            IFS='|' read -r name this_pin key <<< "${spec}"
+            tag="${this_pin:-${app_version}-${image_commit:0:10}}"
+            if ! digest=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${name}:${tag}"); then
+              if [ -z "${this_pin}" ] && { [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; }; then
+                echo "::notice::main ${target:0:10}'s immutable image ${name}:${tag} is not ready;"
+                echo "::notice::its successful publish run promotes main. Nothing was promoted by this run."
+                exit 0
+              fi
+              echo "::error::cannot read ${name}:${tag} (skopeo's message is above), so nothing was promoted."
+              echo "::error::Re-run this workflow once the registry answers, or once publish.yml is green."
+              exit 1
+            fi
+            # A pinned tag is the operator's choice for that image and is not checked against appVersion, as in
+            # helm.yaml; its signature still is.
+            if [ -z "${this_pin}" ]; then
+              if ! version=$(image_versions "${name}" "@${digest}"); then
+                echo "::error::cannot read the labels of ${name}@${digest}, so nothing was promoted."
+                exit 1
+              fi
+              if [ "${version}" != "${app_version}" ]; then
+                echo "::error::${name}:${tag} is application ${version:-unknown}, not ${app_version} (#410), so nothing"
+                echo "::error::was promoted. Wait for publish.yml on the release merge, then re-run this workflow."
+                exit 1
+              fi
+              if ! alias_digest=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${name}:${app_version}"); then
+                if [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; then
+                  echo "::notice::${name}:${app_version} has not reached ${tag}; publish.yml is still running."
+                  echo "::notice::Nothing was promoted by this run."
+                  exit 0
+                fi
+                echo "::error::cannot read ${name}:${app_version} after its publish run succeeded, so nothing was promoted."
+                exit 1
+              fi
+              if [ "${alias_digest}" != "${digest}" ]; then
+                if [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; then
+                  echo "::notice::${name}:${app_version} does not yet name ${tag}; publish.yml is still running."
+                  echo "::notice::Nothing was promoted by this run."
+                  exit 0
+                fi
+                echo "::error::${name}:${app_version} resolves to ${alias_digest}, not ${digest}, the image built at"
+                echo "::error::${image_commit}. A same-version image change reached main; cut the next application version."
+                exit 1
+              fi
+            fi
+            if [ "${SIGNING}" != false ]; then
+              if ! cosign verify --certificate-identity "${IDENTITY}" --certificate-oidc-issuer "${ISSUER}" \
+                   "${name}@${digest}" > /dev/null; then
+                echo "::error::${name}@${digest} carries no signature from publish.yml on main, so nothing was promoted."
+                exit 1
+              fi
+            fi
+            echo "image   : ${name}:${tag} -> ${digest}"
+            if [ "${key}" = "image:" ]; then
+              promotion+=$'\n'"image:"$'\n'"  repository: ${name}"$'\n'"  digest: ${digest}"
+            else
+              promotion+=$'\n'"reporting:"$'\n'"  image:"$'\n'"    repository: ${name}"$'\n'"    digest: ${digest}"
+            fi
+          done
+
+          # The release tree: the chart and environments/ at that commit, and promotion.yaml. Built in a scratch
+          # index, so nothing in this checkout changes, and committed on top of release: a fast-forward.
+          export GIT_INDEX_FILE
+          GIT_INDEX_FILE="$(mktemp -d)/index"
+          git read-tree --empty
+          git read-tree --prefix=charts/group-sync-dashboard/ "${target}:charts/group-sync-dashboard"
+          git read-tree --prefix=environments/ "${target}:environments"
+          blob=$(printf '%s\n' "${promotion}" | git hash-object -w --stdin)
+          git update-index --add --cacheinfo "100644,${blob},promotion.yaml"
+          tree=$(git write-tree)
+          unset GIT_INDEX_FILE
+          if [ "${tree}" = "$(git rev-parse 'origin/release^{tree}')" ]; then
+            echo "release already holds this chart and these digests; nothing to promote."
+            exit 0
+          fi
+          commit=$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "${tree}" -p origin/release -m "promote: main ${target}" -m "Application ${app_version}, read back by promote.yml.")
+          git push origin "${commit}:refs/heads/release"
+          echo "promoted: main ${target} -> release ${commit}"

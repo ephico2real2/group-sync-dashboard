@@ -8,7 +8,7 @@
 | Version on release | app 5.2.0, chart 0.70.3 |
 | Version note | `local-development/README.md` and `local-development/build-and-push-external.sh` are image inputs (.github/workflows/publish.yml:84, :89), and this change edits both, so `check-app-version-bump.py` requires the next application MINOR after main's 5.1.0: 5.2.0 (`docs/RELEASING.md`, "MINOR per merged issue changing the image"). The script change makes its existing `<sha10>` contract exactly ten characters; no tag name changes unless Git would otherwise have lengthened an ambiguous abbreviation. No other image input changes. The chart moves only because `appVersion` moves: no template, value or RBAC change, so a PATCH, 0.70.2 to 0.70.3, as 0.70.2 was for 5.1.0. W1 stays `specified` at chart 0.71.0, above 0.70.3. Read on `6421cff7` (application 5.1.0, chart 0.70.2). A release that lands first makes the version blocks (17 to 21) fail their check; the implementing pull request corrects them here first. |
 | Issue | [#598](https://github.com/ephico2real2/group-sync-dashboard/issues/598) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-04 (implementer seat), from #598 and #410, the old SPEC_P1 and its two review rounds (`bb1f8b91`, `dc027eda`), the code read on `6421cff7`, read-only `gh` and `oc get` against GitHub and the lab, and the upstream documents in §2.1. No cluster, branch, ruleset or GitHub setting was changed. Revised the same day on the operator's decisions "main by default; release optional" and the two-namespace end state (Orchestrator's notes 10, 11), then on the confirmation review's exact-sha10 finding. §7's 22 blocks check against a clean copy of `6421cff7` with this spec in it (§4.3) |
 
 ## How to read this spec

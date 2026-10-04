@@ -62,7 +62,7 @@ def test_release_tags_cannot_inherit_the_dashboards_image_name(tmp_path):
     digest = "sha256:" + "a" * 64
     (bin_dir / "git").write_text("""#!/usr/bin/env bash
 case "$*" in
-  "rev-parse --short=10 HEAD") echo 0123456789 ;;
+  "rev-parse HEAD") echo 0123456789abcdef0123456789abcdef01234567 ;;
   "rev-parse --abbrev-ref HEAD") echo main ;;
   "status --porcelain") exit 0 ;;
   *) exit 1 ;;
