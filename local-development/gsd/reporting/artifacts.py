@@ -202,6 +202,10 @@ class ArtifactStore:
         except (FileNotFoundError, NotADirectoryError):
             return None
 
+    def exists(self, run_id: str, fmt: str) -> bool:
+        """Whether the run's artefact is on disk: a diff refuses a run whose .json is gone (#108)."""
+        return (self._dir(run_id) / f"report.{fmt}").is_file()
+
     def get(self, run_id: str) -> Run | None:
         with self._lock:
             return self._runs.get(run_id)

@@ -10,6 +10,15 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **What changed between two runs: `report-diff` (#108, Epic F #386, `docs/specs/SPEC_F3_report_diff.md`;
+  application 4.3.0, chart 0.66.7).** `POST /report/api/runs` with `report: "report-diff"` and `params: {base, head}`
+  compares two finished runs of one report on one cluster over their sealed data only (SPEC_F1): per table, list
+  and the notes of each section, the rows removed and the rows added (a changed cell is one of each). Two runs over
+  one snapshot diff to "No change" for the six reports that do not read the clock; for the five that do, the diff
+  shows exactly the blocks computed against it. The diff is a sealed manual run, rendered in every format; its
+  record names both runs and their sha256s. The catalogue stays eleven, the inputs are never rewritten, and no
+  route, permission, value key or migration is added.
+
 - **CSV as a fourth report format, off by default (#106, Epic F #386, `docs/specs/SPEC_F2_csv_format.md`;
   application 4.2.0, chart 0.66.6).** A run asked for `csv` stores one `report.csv` beside its `.json`: the
   report's title and the sha256 the run sealed, then every section in order, page one included and marked

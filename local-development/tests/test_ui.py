@@ -9402,6 +9402,50 @@ class TestReportsTab:
         finally:
             ctx.close()
 
+    def test_diff_vs_offers_earlier_runs_keeps_the_choice_and_downloads_the_diff(self, browser, reporting_server):
+        # #108 (SPEC_F3, T108-9): a finished history row offers "Diff vs…"; the picker lists the earlier finished runs
+        # of the same report and cluster, keeps the reader's base across a repaint, posts a report-diff, and the diff
+        # run downloads through the page's one artefact fetch. access-matrix, not groups: the module's Library tests
+        # assert the weekly groups section holds no manual run, and this fixture is shared.
+        from gsd.reporting.artifacts import Run
+        base, _, report_app = reporting_server
+        runs = []
+        for i in range(3):
+            run = report_app.state.runs.submit(Run(id=f"20260906T00000{i}.000000Z-df0{i}", report="access-matrix", cluster="crc-local",
+                                                   params={}, formats=["html"], generated_by="root", generated_by_note="proxy-verified",
+                                                   schedule=None, requested_at=f"2026-09-06T00:00:0{i}Z"))
+            runs.append(run.id)
+        deadline = time.monotonic() + 30
+        while any(report_app.state.store.get(r).status != "done" for r in runs):
+            assert time.monotonic() < deadline, [report_app.state.store.get(r).public() for r in runs]
+            time.sleep(0.1)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-origin", "person")
+            page.wait_for_selector(f'[data-diff="{runs[2]}"]')
+            page.click(f'[data-diff="{runs[2]}"]')
+            page.wait_for_selector("#history-diff-base")
+            offered = page.eval_on_selector_all("#history-diff-base option", "els => els.map((e) => e.value)")
+            assert runs[1] in offered and runs[0] in offered and runs[2] not in offered, offered
+            assert offered == sorted(offered, reverse=True) and page.input_value("#history-diff-base") == runs[1]
+            page.select_option("#history-diff-base", runs[0])
+            page.evaluate("render()")   # the history's poll repaints the page: the reader's base must survive it
+            assert page.input_value("#history-diff-base") == runs[0], "the repaint dropped the reader's base"
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#history-diff-go")
+            assert json.loads(info.value.post_data) == {"report": "report-diff", "cluster": "crc-local",
+                                                          "params": {"base": runs[0], "head": runs[2]}}
+            page.wait_for_selector("#history-diff [data-artifact][data-format='html']", timeout=30_000)
+            with page.expect_download() as download:
+                page.click("#history-diff [data-format='html']")
+            assert download.value.suggested_filename.endswith(".html") and "report-diff" in download.value.suggested_filename
+            assert "No change" in pathlib.Path(download.value.path()).read_text(encoding="utf-8")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
         # #149 R5/R6: the strip (service, window, retention, in flight), the schedules (cadence, retention,
         # enabled, last success, next, status), and the history with server-side filters and paging.
