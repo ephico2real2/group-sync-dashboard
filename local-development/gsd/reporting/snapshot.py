@@ -59,6 +59,11 @@ class SnapshotError(Exception):
     """No usable copy: absent directory, no file, or a schema newer than this build."""
 
 
+def stamp_instant(stamp: str) -> datetime:
+    """A snapshot stamp (ISO-8601 UTC with microseconds, from the filename) as an aware datetime."""
+    return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+
+
 @dataclass(frozen=True)
 class SnapshotInfo:
     path: str
@@ -67,7 +72,7 @@ class SnapshotInfo:
     bytes: int
 
     def age_seconds(self, now: datetime) -> float:
-        return (now - datetime.strptime(self.stamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)).total_seconds()
+        return (now - stamp_instant(self.stamp)).total_seconds()
 
 
 def newest_snapshot(directory: str) -> Path:

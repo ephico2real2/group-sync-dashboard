@@ -34,7 +34,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     if not ctx.settings.login_capture_enabled:
         raise ValidationError("login-activity needs login capture (loginCapture.enabled); nothing writes login_event without it")
     cid = ctx.cluster["id"]
-    since = window_start(ctx.now, params["window_days"])
+    since = window_start(ctx.snapshot_at, params["window_days"])
     # The subject scope: named users, and the members of named groups (#149 R7). The summary by outcome
     # and provider is the scope's too — a scoped pack whose totals counted the whole cluster's attempts
     # beside its own users misread (review of #222, Codex M1).
@@ -53,8 +53,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
                   if scoped else [])
     sections = scope_note + [
         Section("Summary", [
-            KeyValues("Window", [("From", since), ("To", ctx.now.strftime("%Y-%m-%dT%H:%M:%SZ")),
-                                 ("Watching since", status["started_at"] if status else "not yet"), ("Last log read", status["last_read_at"] if status else "never"),
+            # The window ends at the snapshot's stamp (#592). The last log read moves with every read, so it is on
+            # page one's login-capture note and not here: a diff of two snapshots must not show it (#607).
+            KeyValues("Window", [("From", since), ("To", ctx.snapshot_at.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                                 ("Watching since", status["started_at"] if status else "not yet"),
                                  ("Login gate", f"{gate['group_name']} ({gate['source']})" if gate and gate["group_name"] else "none known")]),
             Table("Attempts by outcome and provider", ["outcome", "provider", "attempts"], [[s["outcome"], s["provider"], s["n"]] for s in summary], empty_text="no attempts in the window"),
         ]),

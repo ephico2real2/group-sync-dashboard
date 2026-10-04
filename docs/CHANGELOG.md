@@ -8,6 +8,26 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
+## Unreleased
+
+- **The reports' clock is the snapshot's (#592, #607, #593, `docs/specs/SPEC_F7_snapshot_clock.md`; application 5.1.0,
+  chart 0.70.2).** A report's windows, cutoffs and overdue states now end at the snapshot's stamp, not at the
+  generation time: `login-activity`'s window (its `To` is the stamp), the change windows of `groups`,
+  `groupsync-health` and `compliance-snapshot`, the overdue state of `groupsync-health` and `compliance-snapshot`, and
+  the dormancy cutoff of `dormant-access`. Two runs over one snapshot now hash the same at any generation time. Page
+  one's "Generated at" is still the generation time. `compliance-snapshot`'s sealed sections no longer carry the last
+  poll's instant (Key figures, Sync pipeline: "Last poll status" now) or the login-capture read's instant (the
+  Coverage table's WHEN answer), and `login-activity`'s Window no longer carries "Last log read". Page one still shows
+  both instants, and the hash still covers them through `sealed_provenance` and the coverage, which a diff does not
+  compare. So a diff of two `compliance-snapshot` runs over snapshots that differ only in those instants reads "No
+  change". **The sha256 of `compliance-snapshot`, `login-activity` and `groupsync-health` changes once** over the same
+  data, because their sealed rows or words changed (`groupsync-health`'s caveat now says the state is computed at the
+  snapshot's stamp). `groups` and `dormant-access` hash as before unless a membership change or a last login falls
+  between the snapshot's stamp and the generation time, which the earlier window counted differently. The other six
+  reports' hashes do not change, and stored runs are not rewritten. The Reports form now starts with only HTML ticked
+  ("Generate HTML · JSON"); PDF and CSV start unticked, and the reader's choices still survive a repaint. No
+  permission, value or migration.
+
 ## Application 5.0.0 — chart 0.70.1 — 2026-10-04
 
 - **Epic F: reports, honest seals, more formats, diffs and delivery (#386).** Its children: F1 #270, a report's

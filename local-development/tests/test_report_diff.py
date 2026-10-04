@@ -17,18 +17,10 @@ from gsd.reporting.catalogue import REGISTRY
 from gsd.reporting.config import ReportSettings
 from gsd.reporting.snapshot import Snapshot
 from reporting_seed import CLUSTER, NOW, seed_store, write_snapshot
-from test_report_seal import CLOCK_DERIVED, _other_run, _run, snap  # noqa: F401 — `snap` is a fixture
+from test_report_seal import _other_run, _run, _page_one, snap  # noqa: F401 — `snap` is a fixture
 from test_reporting_server import SERVICE, _viewer, _wait_done, service  # noqa: F401 — `service` is a fixture
 
 DIFF = "report-diff"
-#: What the five clock-reading reports show when the clock moves two hours over one snapshot (measured, §2.3).
-CLOCK_MOVED = {
-    "login-activity": {("Summary", "Window")},
-    "groups": set(),
-    "dormant-access": set(),
-    "groupsync-health": {("GroupSync CRs", "CRs"), ("Summary", "Pipeline")},
-    "compliance-snapshot": {("Key figures", "Sync pipeline")},
-}
 
 
 def _build(base: dict, head: dict):
@@ -91,10 +83,11 @@ def test_diff_reports_stable_coverage_conclusions_without_read_cycle_noise(snap)
     assert added.rows == [["Attests absence", False], ["Namespace read", "forbidden"]]
 
 
-@pytest.mark.parametrize("name", sorted(set(REGISTRY) - CLOCK_DERIVED))
+@pytest.mark.parametrize("name", sorted(REGISTRY))
 def test_t108_2_two_runs_over_one_snapshot_diff_to_no_change(snap, name):  # noqa: F811
-    """The six clock-free reports: another viewer, run id and minute, one snapshot: nothing changed, because page
-    one (who and when) is not sealed data. Without SPEC_F3: ModuleNotFoundError."""
+    """Every report: another viewer, run id and minute, one snapshot: nothing changed, because page one (who and
+    when) is not sealed data and a report's data ends at the snapshot's stamp (#592). Without SPEC_F3:
+    ModuleNotFoundError; without #592, login-activity's Window `To` moves with the minute."""
     diff = _build(_doc(_run(snap, name)), _doc(_other_run(snap, name)))
     assert _changed(diff) == set(), name
 
@@ -105,7 +98,8 @@ def test_access_certification_diff_ignores_a_new_snapshot_of_the_same_data(tmp_p
     directory = tmp_path / "snapshots"
     directory.mkdir()
     try:
-        first, second = Snapshot(write_snapshot(store, directory)), Snapshot(write_snapshot(store, directory))
+        first = Snapshot(write_snapshot(store, directory))
+        second = Snapshot(write_snapshot(store, directory, at=NOW + timedelta(minutes=5)))
     finally:
         store.close()
     try:
@@ -118,13 +112,60 @@ def test_access_certification_diff_ignores_a_new_snapshot_of_the_same_data(tmp_p
     assert _changed(_build(base, head)) == set()
 
 
-@pytest.mark.parametrize("name", sorted(CLOCK_DERIVED))
-def test_t108_3_a_clock_reading_report_shows_what_the_clock_moved(snap, name):  # noqa: F811
-    """The five reports that read the generation clock: two hours apart over one snapshot, the diff shows exactly
-    the blocks computed against the clock (CLOCK_MOVED, measured), and nothing else. Without SPEC_F3:
-    ModuleNotFoundError."""
-    later = _run(snap, name, now=NOW + timedelta(hours=2), run_id="20260906T140000.000000Z-cd34")
-    assert _changed(_build(_doc(_run(snap, name)), _doc(later))) == CLOCK_MOVED[name], name
+def _a_later_poll_and_read(tmp_path: Path, monkeypatch) -> tuple[Snapshot, Snapshot, str]:
+    """Two snapshots of one seeded database that differ only in the poll and login-capture read instants (#607):
+    the first polled and stamped at the seed's NOW, the second five minutes later after one more successful poll
+    and one more read."""
+    import gsd.store
+    monkeypatch.setattr(gsd.store, "now_iso", lambda: NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    store = seed_store(str(tmp_path / "writer.db"))
+    directory = tmp_path / "snapshots"
+    directory.mkdir()
+    later = (NOW + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        first = Snapshot(write_snapshot(store, directory))
+        monkeypatch.setattr(gsd.store, "now_iso", lambda: later)
+        store.record_poll(CLUSTER, "ok", None)
+        store.record_login_read(CLUSTER, later)
+        second = Snapshot(write_snapshot(store, directory, at=NOW + timedelta(minutes=5)))
+    finally:
+        store.close()
+    return first, second, later
+
+
+def test_t607_1_compliance_snapshot_diffs_to_no_change_across_a_new_poll_and_read(tmp_path, monkeypatch):
+    """#607: the poll's and the read's instants are on page one, not in a sealed section, so two snapshots of the
+    same data diff to "No change"; page one still shows both instants. Without the change the diff shows
+    `Key figures — Sync pipeline` (Last poll) and `What this evidence attests — Coverage` (last read)."""
+    first, second, later = _a_later_poll_and_read(tmp_path, monkeypatch)
+    try:
+        base, head = _run(first, "compliance-snapshot"), _other_run(second, "compliance-snapshot")
+    finally:
+        first.close()
+        second.close()
+    assert (base.provenance["last_poll"], head.provenance["last_poll"]) == ("2026-09-06T12:00:00Z", later)
+    assert _changed(_build(_doc(base), _doc(head))) == set()
+    page_one = head.sections[0]
+    assert _page_one(head)["Last poll"] == f"{later} — ok"
+    assert any(b.kind == "note" and f"(last read {later})" in b.text for b in page_one.blocks)
+
+
+def test_t607_2_login_activity_shows_only_its_window_moving_across_a_new_poll_and_read(tmp_path, monkeypatch):
+    """#607 and #592 together: login-activity's window ends at each snapshot's stamp, so two snapshots five minutes
+    apart change its From and To and nothing else; the last log read is on page one only. Without the change the
+    Window block also removes and adds `Last log read`."""
+    first, second, later = _a_later_poll_and_read(tmp_path, monkeypatch)
+    try:
+        base, head = _run(first, "login-activity"), _other_run(second, "login-activity")
+    finally:
+        first.close()
+        second.close()
+    diff = _build(_doc(base), _doc(head))
+    assert _changed(diff) == {("Summary", "Window")}
+    removed, added = next(s for s in diff.sections if s.title == "Summary — Window").blocks
+    assert [row[0] for row in removed.rows] == [row[0] for row in added.rows] == ["From", "To"]
+    assert ["To", "2026-09-06T12:05:00Z"] in added.rows
+    assert any(b.kind == "note" and f"(last read {later})" in b.text for b in head.sections[0].blocks)
 
 
 def _done(client, report="groups", cluster=CLUSTER, headers=None, **body) -> dict:

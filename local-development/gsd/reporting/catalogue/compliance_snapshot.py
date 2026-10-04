@@ -28,9 +28,10 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     awl = snap.access_without_login(cid)
     gate = snap.access_group(cid)
     crs = snap.groupsyncs(cid)
-    overdue = sum(1 for cr in crs if st.compute_state(st.parse_time(cr["last_sync_at"]), cr["schedule"], ctx.now, GRACE) == st.OVERDUE)
-    changes = snap.membership_change_counts(cid, window_start(ctx.now, 30))
+    overdue = sum(1 for cr in crs if st.compute_state(st.parse_time(cr["last_sync_at"]), cr["schedule"], ctx.snapshot_at, GRACE) == st.OVERDUE)
+    changes = snap.membership_change_counts(cid, window_start(ctx.snapshot_at, 30))
     cov = coverage(snap, ctx)
+    capture = snap.login_capture_status(cid)
     sections = [
         Section("Key figures", [
             KeyValues("Directory and users", [("Synced groups", c["groups"]), ("Empty groups", c["empty_groups"]), ("Unattributed groups", c["unattributed_groups"]),
@@ -49,7 +50,9 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
             KeyValues("Access hygiene", [("Members who never logged in", len(never)),
                                          ("Access outside the login gate", len(awl) if gate and gate["group_name"] else "no gate known"),
                                          ("Login gate", f"{gate['group_name']}" if gate and gate["group_name"] else "none")]),
-            KeyValues("Sync pipeline", [("GroupSync CRs", c["groupsyncs"]), ("Overdue", overdue), ("Last poll", f"{ctx.cluster.get('last_poll')} — {ctx.cluster.get('status')}")]),
+            # The poll's instant is on page one; only its outcome is data here, so a diff of two snapshots
+            # does not show a new poll as a change (#607).
+            KeyValues("Sync pipeline", [("GroupSync CRs", c["groupsyncs"]), ("Overdue", overdue), ("Last poll status", str(ctx.cluster.get("status")))]),
         ]),
         Section("Privileged grants", [Table("cluster-admin anywhere; admin/edit cluster-wide", ["kind", "subject", "role", "scope", "binding"],
                                             sorted([["group", g["group_name"], g["role_name"], g["binding_namespace"] or "(cluster-scoped)", g["binding_name"]] for g in priv_g]
@@ -59,7 +62,9 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
             Table("Coverage", ["question", "answer"], [
                 ["Can it attest that a namespace has NO grants?", "yes" if cov["attests_absence"] else "no — " + cov["namespaces_note"]],
                 ["Can it say who has logged in?", "yes (User objects with identities)" if cov["users_read"] == "ok" else "no — " + cov["users_note"]],
-                ["Can it say WHEN somebody last logged in?", "yes — " + cov["login_capture_note"] if cov["login_capture"] == "ok" else "no — " + cov["login_capture_note"]],
+                # Since when, without the last read: that instant moves with every read and is on page one (#607).
+                ["Can it say WHEN somebody last logged in?", f"yes — Login attempts are recorded since {capture['started_at']}; nothing before that was ever observed."
+                 if cov["login_capture"] == "ok" else "no — " + cov["login_capture_note"]],
                 ["Does it evaluate effective permissions?", "no — " + cov["direct_bindings_caveat"]],
                 ["How far back does membership history go?", cov["history_retained_since"]["membership_event"] or "no rows"],
             ]),

@@ -8,7 +8,7 @@
 | Version on release | app 5.1.0, chart 0.70.2 |
 | Version note | Image content (`local-development/gsd/reporting/**` and `local-development/gsd/static/index.html`, both under `publish.yml`'s `local-development/gsd/**`), so the next application MINOR after main's 5.0.0, 5.1.0 (`docs/RELEASING.md`: "MINOR per merged issue changing the image"). The chart moves only because `appVersion` moves: no template, default, value or RBAC change, so a PATCH, 0.70.1 to 0.70.2, as 0.70.1 was for 5.0.0 and 0.66.5 to 0.66.7 were for 4.1.0 to 4.3.0 (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`). W1 stays `specified` at chart 0.71.0, above both 0.70.1 and 0.70.2, so it does not move. Read on `4e5a708d` (application 5.0.0, chart 0.70.1). A release that lands first makes the version blocks (36 to 40) fail their check; the implementing pull request corrects them here first |
 | Issue | [#592](https://github.com/ephico2real2/group-sync-dashboard/issues/592) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-04 (implementer seat), from the three issues and their decision comments (`gh issue view 592`, `607`, `593` with `--comments`), the code read on `4e5a708d`, and the repository's venv (Python 3.14). No cluster was touched: the operator held the lab. §7's 40 blocks were generated from a working copy and proved against a copy of `4e5a708d` with this spec in it (§4.3) |
 
 ## How to read this spec

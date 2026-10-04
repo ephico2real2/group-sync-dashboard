@@ -189,7 +189,7 @@ const STATES = {
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
-                reportWant: { pdf: true, html: true, csv: false },   // #106: the format boxes, kept across the form's repaints
+                reportWant: { pdf: false, html: true, csv: false },  // #106: the format boxes, kept across the form's repaints; #593: HTML only at first, PDF is heavy
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.

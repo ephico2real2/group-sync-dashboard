@@ -8787,6 +8787,7 @@ class TestReportsTab:
             page.click("details.report-advanced summary")
             page.fill("#report-lookup-namespace-access-namespaces", "prod-ns"); page.press("#report-lookup-namespace-access-namespaces", "Enter")
             page.wait_for_selector('.rp-tag[data-name="prod-ns"]')
+            page.check("#report-want-pdf")              # #593: the form starts with HTML only; this walk downloads the PDF
             gen = page.locator("#report-generate")
             gen.focus()
             gen.click()
@@ -11854,15 +11855,17 @@ class TestReportClusterControl:
             ctx.close()
 
     def test_generate_label_follows_the_format_boxes(self, browser, reporting_server):
-        # #577: defaults, each change, and a repaint all name the selected formats in box order.
+        # #577: defaults, each change, and a repaint all name the selected formats in box order; #593: HTML only at first.
         base, _, _ = reporting_server
         ctx, page, errors = _reports_page(browser, base, "root")
         try:
             page.goto(base + "#page=reports&cluster=crc-local&report=groups")
             page.wait_for_selector("#report-want-csv")
             label = page.locator("#report-generate span")
-            assert page.is_checked("#report-want-pdf") and page.is_checked("#report-want-html")
+            assert page.is_checked("#report-want-html") and not page.is_checked("#report-want-pdf")
             assert not page.is_checked("#report-want-csv")
+            assert label.inner_text() == "HTML · JSON"
+            page.check("#report-want-pdf")
             assert label.inner_text() == "PDF · HTML · JSON"
             page.uncheck("#report-want-pdf")
             assert label.inner_text() == "HTML · JSON"
@@ -11875,6 +11878,25 @@ class TestReportClusterControl:
             page.uncheck("#report-want-csv")
             assert label.inner_text() == "JSON"
             assert "json is always written" in page.locator(".report-actions").inner_text()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_form_opens_with_html_only_ticked(self, browser, reporting_server):
+        # #593, the operator's decision: the Reports form starts with only HTML ticked, so it opens reading
+        # "Generate HTML · JSON" and a Generate untouched asks for HTML alone (JSON is always written). Without the
+        # change it opens reading "Generate PDF · HTML · JSON" and posts ["html", "pdf"].
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-want-pdf")
+            assert " ".join(page.locator("#report-generate").inner_text().split()) == "Generate HTML · JSON"
+            assert [page.is_checked(f"#report-want-{f}") for f in ("pdf", "html", "csv")] == [False, True, False]
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            assert _json.loads(info.value.post_data)["formats"] == ["html"]
             assert not errors, errors
         finally:
             ctx.close()
@@ -11912,13 +11934,15 @@ class TestReportClusterControl:
             page.goto(base + "#page=reports&cluster=crc-local&report=groups")
             page.wait_for_selector("#report-want-csv")
             page.check("#report-want-csv")
-            page.uncheck("#report-want-pdf")
+            page.check("#report-want-pdf")              # #593: the reader flips every box from its default
+            page.uncheck("#report-want-html")
             page.click('[data-switch="include_members"]')
             page.wait_for_selector('[data-switch="include_members"][aria-checked="true"]')
-            assert page.is_checked("#report-want-csv") and not page.is_checked("#report-want-pdf"), "the repaint undid the reader's boxes"
+            assert [page.is_checked(f"#report-want-{f}") for f in ("pdf", "html", "csv")] == [True, False, True], \
+                "the repaint undid the reader's boxes"
             with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
                 page.click("#report-generate")
-            assert _json.loads(info.value.post_data)["formats"] == ["html", "csv"]
+            assert _json.loads(info.value.post_data)["formats"] == ["pdf", "csv"]
             assert not errors, errors
         finally:
             ctx.close()

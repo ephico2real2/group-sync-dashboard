@@ -49,7 +49,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     dormant_count = None
     if ctx.settings.login_capture_enabled:
         last = snap.last_successful_login(cid)
-        cutoff = window_start(ctx.now, params["dormant_days"])
+        cutoff = window_start(ctx.snapshot_at, params["dormant_days"])
         capture = snap.login_capture_status(cid)
         rosters = snap.group_rosters(cid, [g["name"] for g in snap.groups(cid)])
         members = {m["user_name"] for ms in rosters.values() for m in ms if m.get("logged_in") == 1}

@@ -21,7 +21,7 @@ GRACE = timedelta(seconds=120)   # values.yaml config.scheduleGraceSeconds' defa
 
 def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     cid = ctx.cluster["id"]
-    since = window_start(ctx.now, params["window_days"])
+    since = window_start(ctx.snapshot_at, params["window_days"])
     crs = snap.groupsyncs(cid)
     presence = snap.groupsync_presence(cid)
     syncs = {s["groupsync_name"]: s for s in snap.sync_counts(cid, since)}
@@ -29,7 +29,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     rows = []
     for cr in crs:
         last = st.parse_time(cr["last_sync_at"])
-        state = st.compute_state(last, cr["schedule"], ctx.now, GRACE)
+        state = st.compute_state(last, cr["schedule"], ctx.snapshot_at, GRACE)
         current = st.reconcile_error_is_current(st.parse_time(cr["error_at"]), last)
         s = syncs.get(cr["name"], {})
         rows.append([f"{cr['namespace']}/{cr['name']}", cr["schedule"] or "", state, cr["last_sync_at"] or "never",
@@ -48,7 +48,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
         ])]),
         Section("GroupSync CRs", [
             Table("CRs", ["cr", "schedule", "state", "last sync", "groups", f"syncs in {params['window_days']} d", "last sync in window", "reconcile error"], rows, empty_text="no GroupSync CR"),
-            Note("State is computed from the schedule and the last sync at generation time, with a 120 s grace — the Overview's rule (gsd/state.py compute_state). Error text is withheld: it can carry the directory bind DN.", "caveat"),
+            Note("State is computed from the schedule and the last sync at the snapshot's stamp, with a 120 s grace — the Overview's rule (gsd/state.py compute_state). Error text is withheld: it can carry the directory bind DN.", "caveat"),
         ], page_break=True),
         Section("Policy operator", [Table("NamespaceConfig and GroupConfig", ["kind", "name", "last success", "last error", "status", "message"], cfg_rows,
                                           empty_text="no CRs" if oc["present"] else "the namespace-configuration-operator is not installed")], page_break=True),
