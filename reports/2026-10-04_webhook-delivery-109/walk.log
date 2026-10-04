@@ -1,0 +1,149 @@
+# SPEC_F4 §5 walk (#109), CRC lab; written by scripts/run.sh; started 2026-10-04T05:25:29Z (01:25 EDT)
+
+## Wait for application 4.4.0 and the CronJob  (2026-10-04T05:25:29Z)
+
+## Before  (2026-10-04T05:27:31Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"OutOfSync","health":"Progressing","revision":"451ff688efe00a35099e08507da8374161b54122"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image' | grep -vE 'offsite-|verify-'
+NAME                                                      START                  IMAGE
+group-sync-dashboard-7bc67bf9c9-ndkqk                     2026-10-04T05:26:34Z   quay.io/ephico2real/group-sync-dashboard:4.4.0
+group-sync-dashboard-report-69946996b7-6bmbx              2026-10-04T05:26:35Z   quay.io/ephico2real/group-sync-dashboard-report:4.4.0
+group-sync-dashboard-secrets-mint-tvlwj                   2026-10-04T05:26:23Z   registry.redhat.io/openshift4/ose-cli-rhel9:v4.22
+$ oc get cronjobs.batch -n group-sync-dashboard group-sync-dashboard-report-delivery-walk -o 'custom-columns=NAME:.metadata.name,SUSPEND:.spec.suspend,SCHEDULE:.spec.schedule,TZ:.spec.timeZone'
+NAME                                        SUSPEND   SCHEDULE     TZ
+group-sync-dashboard-report-delivery-walk   true      0 23 * * 0   America/New_York
+$ oc get all,secret -n group-sync-dashboard -l app=gsd-delivery-walk -o name
+Warning: apps.openshift.io/v1 DeploymentConfig is deprecated in v4.14+, unavailable no sooner than v6.0+
+
+## Step 1: the receiver  (2026-10-04T05:27:31Z)
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-109/scripts/receiver.yaml'
+pod/gsd-delivery-walk created
+service/gsd-delivery-walk created
+$ oc wait --for=condition=Ready pod/gsd-delivery-walk -n group-sync-dashboard --timeout=180s
+pod/gsd-delivery-walk condition met
+
+## Step 2: the Secret (the URL's path holds a random marker; the command line is not recorded)  (2026-10-04T05:27:33Z)
+$ oc label secret gsd-delivery-walk -n group-sync-dashboard app=gsd-delivery-walk walk.gsd.lab/run=webhook-delivery-109-2026-10-04
+secret/gsd-delivery-walk labeled
+
+## Step 3: Job 1 from the CronJob  (2026-10-04T05:27:34Z)
+$ oc create job delivery-walk-1 --from=cronjob/group-sync-dashboard-report-delivery-walk -n group-sync-dashboard
+job.batch/delivery-walk-1 created
+$ oc wait --for=condition=complete job/delivery-walk-1 -n group-sync-dashboard --timeout=900s
+job.batch/delivery-walk-1 condition met
+$ cat '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-109/job1.log'
+{"submitted": ["20261004T052745.223645Z-1e00", "20261004T052745.223645Z-2dc7", "20261004T052745.223645Z-ddfb", "20261004T052745.223645Z-e286", "20261004T052745.223645Z-e55c", "20261004T052745.223645Z-fcbc"], "report": "groups", "clusters": ["dashboard", "mock-privateca", "mock-selfsigned", "mock-trusted", "shared-qa", "shared-rnd"]}
+{"id": "20261004T052745.223645Z-e286", "cluster": "dashboard", "status": "done", "sha256": "fc82af0de14e663ce5b22e2e252f23d325ac61de6c637912fb4761f2e4b7f027", "bytes": {"json": 41390, "csv": 17132, "html": 30547}, "error": null}
+{"delivered": "20261004T052745.223645Z-e286", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-fcbc", "cluster": "mock-privateca", "status": "done", "sha256": "176827d6309dcf20439c8922e4b3cf0379f60236ad9aadb7c15a030fa70e699c", "bytes": {"json": 10564, "csv": 3573, "html": 9513}, "error": null}
+{"delivered": "20261004T052745.223645Z-fcbc", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-e55c", "cluster": "mock-selfsigned", "status": "done", "sha256": "9be22a8859e11c111a6c80ccd9edf59607bf552b7429e3dbe397e268b05249a3", "bytes": {"json": 10568, "csv": 3575, "html": 9517}, "error": null}
+{"delivered": "20261004T052745.223645Z-e55c", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-2dc7", "cluster": "mock-trusted", "status": "done", "sha256": "9fbb79d0c5463df7f8eae32864727d96f600b4201a1be3e3d2a74bdfd8082b42", "bytes": {"json": 10556, "csv": 3569, "html": 9505}, "error": null}
+{"delivered": "20261004T052745.223645Z-2dc7", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-ddfb", "cluster": "shared-qa", "status": "done", "sha256": "bd8fc749334553dfb4fa08713a543d5019daf017294b0fa187b9a6c3e472b8cc", "bytes": {"json": 41386, "csv": 17130, "html": 30545}, "error": null}
+{"delivered": "20261004T052745.223645Z-ddfb", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-1e00", "cluster": "shared-rnd", "status": "done", "sha256": "25861ed5015a60dda7b09b8065ddec17f40eba300d3d5825ec3b13ada5d0c489", "bytes": {"json": 41388, "csv": 17131, "html": 30548}, "error": null}
+{"delivered": "20261004T052745.223645Z-1e00", "http_status": 200, "attempts": 1}
+
+## Step 4: the checks  (2026-10-04T05:27:51Z)
+PASS one delivered line per run: {"runs": ["20261004T052745.223645Z-1e00", "20261004T052745.223645Z-2dc7", "20261004T052745.223645Z-ddfb", "20261004T052745.223645Z-e286", "20261004T052745.223645Z-e55c", "20261004T052745.223645Z-fcbc"], "delivered": ["20261004T052745.223645Z-1e00", "20261004T052745.223645Z-2dc7", "20261004T052745.223645Z-ddfb", "20261004T052745.223645Z-e286", "20261004T052745.223645Z-e55c", "20261004T052745.223645Z-fcbc"]}
+PASS one event per run: ["20261004T052745.223645Z-e286", "20261004T052745.223645Z-fcbc", "20261004T052745.223645Z-e55c", "20261004T052745.223645Z-2dc7", "20261004T052745.223645Z-ddfb", "20261004T052745.223645Z-1e00"]
+PASS 20261004T052745.223645Z-e286 is a CloudEvent: {"specversion": "1.0", "content_type": "application/cloudevents+json; charset=utf-8", "type": "io.github.ephico2real2.gsd.report.run.finished"}
+PASS 20261004T052745.223645Z-e286 data matches the Job's line: {"cluster": "dashboard", "status": "done", "sha256": "fc82af0de14e"}
+PASS 20261004T052745.223645Z-e286 attachment is the stored html: {"attached_sha256": "6498d5a1140a", "stored_sha256": "6498d5a1140a"}
+PASS 20261004T052745.223645Z-fcbc is a CloudEvent: {"specversion": "1.0", "content_type": "application/cloudevents+json; charset=utf-8", "type": "io.github.ephico2real2.gsd.report.run.finished"}
+PASS 20261004T052745.223645Z-fcbc data matches the Job's line: {"cluster": "mock-privateca", "status": "done", "sha256": "176827d6309d"}
+PASS 20261004T052745.223645Z-fcbc attachment is the stored html: {"attached_sha256": "3e3e00a4983f", "stored_sha256": "3e3e00a4983f"}
+PASS 20261004T052745.223645Z-e55c is a CloudEvent: {"specversion": "1.0", "content_type": "application/cloudevents+json; charset=utf-8", "type": "io.github.ephico2real2.gsd.report.run.finished"}
+PASS 20261004T052745.223645Z-e55c data matches the Job's line: {"cluster": "mock-selfsigned", "status": "done", "sha256": "9be22a8859e1"}
+PASS 20261004T052745.223645Z-e55c attachment is the stored html: {"attached_sha256": "31bd525f7f93", "stored_sha256": "31bd525f7f93"}
+PASS 20261004T052745.223645Z-2dc7 is a CloudEvent: {"specversion": "1.0", "content_type": "application/cloudevents+json; charset=utf-8", "type": "io.github.ephico2real2.gsd.report.run.finished"}
+PASS 20261004T052745.223645Z-2dc7 data matches the Job's line: {"cluster": "mock-trusted", "status": "done", "sha256": "9fbb79d0c546"}
+PASS 20261004T052745.223645Z-2dc7 attachment is the stored html: {"attached_sha256": "2cac9ee375f6", "stored_sha256": "2cac9ee375f6"}
+PASS 20261004T052745.223645Z-ddfb is a CloudEvent: {"specversion": "1.0", "content_type": "application/cloudevents+json; charset=utf-8", "type": "io.github.ephico2real2.gsd.report.run.finished"}
+PASS 20261004T052745.223645Z-ddfb data matches the Job's line: {"cluster": "shared-qa", "status": "done", "sha256": "bd8fc7493345"}
+PASS 20261004T052745.223645Z-ddfb attachment is the stored html: {"attached_sha256": "5c6908ae7982", "stored_sha256": "5c6908ae7982"}
+PASS 20261004T052745.223645Z-1e00 is a CloudEvent: {"specversion": "1.0", "content_type": "application/cloudevents+json; charset=utf-8", "type": "io.github.ephico2real2.gsd.report.run.finished"}
+PASS 20261004T052745.223645Z-1e00 data matches the Job's line: {"cluster": "shared-rnd", "status": "done", "sha256": "25861ed5015a"}
+PASS 20261004T052745.223645Z-1e00 attachment is the stored html: {"attached_sha256": "127b0b165e53", "stored_sha256": "127b0b165e53"}
+result {'failures': []}
+marker in Job 1's log: 0
+receiver host in Job 1's log: 0
+'/hook/' in Job 1's log: 0
+marker in Job 1's YAML: 0
+marker in the receiver's cut log: 0
+
+## Step 5: the failure path (the receiver Pod deleted, the Service kept)  (2026-10-04T05:27:52Z)
+$ oc delete pod gsd-delivery-walk -n group-sync-dashboard --wait=true
+pod "gsd-delivery-walk" deleted from group-sync-dashboard namespace
+$ oc create job delivery-walk-2 --from=cronjob/group-sync-dashboard-report-delivery-walk -n group-sync-dashboard
+job.batch/delivery-walk-2 created
+$ oc wait --for=condition=failed job/delivery-walk-2 -n group-sync-dashboard --timeout=900s
+job.batch/delivery-walk-2 condition met
+$ cat '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/walk-109/job2.log'
+{"submitted": ["20261004T052833.192831Z-2fe8", "20261004T052833.192831Z-3d2a", "20261004T052833.192831Z-4d55", "20261004T052833.192831Z-4f60", "20261004T052833.192831Z-9235", "20261004T052833.192831Z-c0f5"], "report": "groups", "clusters": ["dashboard", "mock-privateca", "mock-selfsigned", "mock-trusted", "shared-qa", "shared-rnd"]}
+{"id": "20261004T052833.192831Z-c0f5", "cluster": "dashboard", "status": "done", "sha256": "fc82af0de14e663ce5b22e2e252f23d325ac61de6c637912fb4761f2e4b7f027", "bytes": {"json": 41390, "csv": 17132, "html": 30547}, "error": null}
+delivery of run 20261004T052833.192831Z-c0f5: ConnectError; retrying in 0.6s (1/4)
+delivery of run 20261004T052833.192831Z-c0f5: ConnectError; retrying in 1.1s (2/4)
+delivery of run 20261004T052833.192831Z-c0f5: ConnectError; retrying in 4.1s (3/4)
+delivery failed for run 20261004T052833.192831Z-c0f5: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-2fe8", "cluster": "mock-privateca", "status": "done", "sha256": "176827d6309dcf20439c8922e4b3cf0379f60236ad9aadb7c15a030fa70e699c", "bytes": {"json": 10564, "csv": 3573, "html": 9513}, "error": null}
+delivery of run 20261004T052833.192831Z-2fe8: ConnectError; retrying in 1.3s (1/4)
+delivery of run 20261004T052833.192831Z-2fe8: ConnectError; retrying in 1.9s (2/4)
+delivery of run 20261004T052833.192831Z-2fe8: ConnectError; retrying in 5.0s (3/4)
+delivery failed for run 20261004T052833.192831Z-2fe8: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-4d55", "cluster": "mock-selfsigned", "status": "done", "sha256": "9be22a8859e11c111a6c80ccd9edf59607bf552b7429e3dbe397e268b05249a3", "bytes": {"json": 10568, "csv": 3575, "html": 9517}, "error": null}
+delivery of run 20261004T052833.192831Z-4d55: ConnectError; retrying in 0.9s (1/4)
+delivery of run 20261004T052833.192831Z-4d55: ConnectError; retrying in 1.2s (2/4)
+delivery of run 20261004T052833.192831Z-4d55: ConnectError; retrying in 5.3s (3/4)
+delivery failed for run 20261004T052833.192831Z-4d55: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-3d2a", "cluster": "mock-trusted", "status": "done", "sha256": "9fbb79d0c5463df7f8eae32864727d96f600b4201a1be3e3d2a74bdfd8082b42", "bytes": {"json": 10556, "csv": 3569, "html": 9505}, "error": null}
+delivery of run 20261004T052833.192831Z-3d2a: ConnectError; retrying in 1.5s (1/4)
+delivery of run 20261004T052833.192831Z-3d2a: ConnectError; retrying in 3.4s (2/4)
+delivery of run 20261004T052833.192831Z-3d2a: ConnectError; retrying in 1.0s (3/4)
+delivery failed for run 20261004T052833.192831Z-3d2a: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-9235", "cluster": "shared-qa", "status": "done", "sha256": "bd8fc749334553dfb4fa08713a543d5019daf017294b0fa187b9a6c3e472b8cc", "bytes": {"json": 41386, "csv": 17130, "html": 30545}, "error": null}
+delivery of run 20261004T052833.192831Z-9235: ConnectError; retrying in 0.3s (1/4)
+delivery of run 20261004T052833.192831Z-9235: ConnectError; retrying in 1.4s (2/4)
+delivery of run 20261004T052833.192831Z-9235: ConnectError; retrying in 5.1s (3/4)
+delivery failed for run 20261004T052833.192831Z-9235: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-4f60", "cluster": "shared-rnd", "status": "done", "sha256": "25861ed5015a60dda7b09b8065ddec17f40eba300d3d5825ec3b13ada5d0c489", "bytes": {"json": 41388, "csv": 17131, "html": 30548}, "error": null}
+delivery of run 20261004T052833.192831Z-4f60: ConnectError; retrying in 0.0s (1/4)
+delivery of run 20261004T052833.192831Z-4f60: ConnectError; retrying in 1.5s (2/4)
+delivery of run 20261004T052833.192831Z-4f60: ConnectError; retrying in 6.8s (3/4)
+delivery failed for run 20261004T052833.192831Z-4f60: ConnectError after 4 attempt(s)
+marker in Job 2's log: 0
+receiver host in Job 2's log: 0
+'/hook/' in Job 2's log: 0
+delivery failures named in Job 2's log: 6
+runs done in Job 2's log: 6
+
+## Step 6: removal  (2026-10-04T05:29:20Z)
+$ oc get all,secret -n group-sync-dashboard -l app=gsd-delivery-walk -o name
+Warning: apps.openshift.io/v1 DeploymentConfig is deprecated in v4.14+, unavailable no sooner than v6.0+
+
+## After  (2026-10-04T05:29:21Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"451ff688efe00a35099e08507da8374161b54122"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image' | grep -vE 'offsite-|verify-'
+NAME                                                 START                  IMAGE
+group-sync-dashboard-7bc67bf9c9-ndkqk                2026-10-04T05:26:34Z   quay.io/ephico2real/group-sync-dashboard:4.4.0
+group-sync-dashboard-report-69946996b7-6bmbx         2026-10-04T05:26:35Z   quay.io/ephico2real/group-sync-dashboard-report:4.4.0
+$ oc get cronjobs.batch -n group-sync-dashboard group-sync-dashboard-report-delivery-walk -o 'custom-columns=NAME:.metadata.name,SUSPEND:.spec.suspend,SCHEDULE:.spec.schedule,TZ:.spec.timeZone'
+NAME                                        SUSPEND   SCHEDULE     TZ
+group-sync-dashboard-report-delivery-walk   true      0 23 * * 0   America/New_York
+$ oc get all,secret -n group-sync-dashboard -l app=gsd-delivery-walk -o name
+Warning: apps.openshift.io/v1 DeploymentConfig is deprecated in v4.14+, unavailable no sooner than v6.0+
+done 2026-10-04T05:29:21Z

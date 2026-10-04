@@ -1,0 +1,31 @@
+{"submitted": ["20261004T052833.192831Z-2fe8", "20261004T052833.192831Z-3d2a", "20261004T052833.192831Z-4d55", "20261004T052833.192831Z-4f60", "20261004T052833.192831Z-9235", "20261004T052833.192831Z-c0f5"], "report": "groups", "clusters": ["dashboard", "mock-privateca", "mock-selfsigned", "mock-trusted", "shared-qa", "shared-rnd"]}
+{"id": "20261004T052833.192831Z-c0f5", "cluster": "dashboard", "status": "done", "sha256": "fc82af0de14e663ce5b22e2e252f23d325ac61de6c637912fb4761f2e4b7f027", "bytes": {"json": 41390, "csv": 17132, "html": 30547}, "error": null}
+delivery of run 20261004T052833.192831Z-c0f5: ConnectError; retrying in 0.6s (1/4)
+delivery of run 20261004T052833.192831Z-c0f5: ConnectError; retrying in 1.1s (2/4)
+delivery of run 20261004T052833.192831Z-c0f5: ConnectError; retrying in 4.1s (3/4)
+delivery failed for run 20261004T052833.192831Z-c0f5: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-2fe8", "cluster": "mock-privateca", "status": "done", "sha256": "176827d6309dcf20439c8922e4b3cf0379f60236ad9aadb7c15a030fa70e699c", "bytes": {"json": 10564, "csv": 3573, "html": 9513}, "error": null}
+delivery of run 20261004T052833.192831Z-2fe8: ConnectError; retrying in 1.3s (1/4)
+delivery of run 20261004T052833.192831Z-2fe8: ConnectError; retrying in 1.9s (2/4)
+delivery of run 20261004T052833.192831Z-2fe8: ConnectError; retrying in 5.0s (3/4)
+delivery failed for run 20261004T052833.192831Z-2fe8: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-4d55", "cluster": "mock-selfsigned", "status": "done", "sha256": "9be22a8859e11c111a6c80ccd9edf59607bf552b7429e3dbe397e268b05249a3", "bytes": {"json": 10568, "csv": 3575, "html": 9517}, "error": null}
+delivery of run 20261004T052833.192831Z-4d55: ConnectError; retrying in 0.9s (1/4)
+delivery of run 20261004T052833.192831Z-4d55: ConnectError; retrying in 1.2s (2/4)
+delivery of run 20261004T052833.192831Z-4d55: ConnectError; retrying in 5.3s (3/4)
+delivery failed for run 20261004T052833.192831Z-4d55: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-3d2a", "cluster": "mock-trusted", "status": "done", "sha256": "9fbb79d0c5463df7f8eae32864727d96f600b4201a1be3e3d2a74bdfd8082b42", "bytes": {"json": 10556, "csv": 3569, "html": 9505}, "error": null}
+delivery of run 20261004T052833.192831Z-3d2a: ConnectError; retrying in 1.5s (1/4)
+delivery of run 20261004T052833.192831Z-3d2a: ConnectError; retrying in 3.4s (2/4)
+delivery of run 20261004T052833.192831Z-3d2a: ConnectError; retrying in 1.0s (3/4)
+delivery failed for run 20261004T052833.192831Z-3d2a: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-9235", "cluster": "shared-qa", "status": "done", "sha256": "bd8fc749334553dfb4fa08713a543d5019daf017294b0fa187b9a6c3e472b8cc", "bytes": {"json": 41386, "csv": 17130, "html": 30545}, "error": null}
+delivery of run 20261004T052833.192831Z-9235: ConnectError; retrying in 0.3s (1/4)
+delivery of run 20261004T052833.192831Z-9235: ConnectError; retrying in 1.4s (2/4)
+delivery of run 20261004T052833.192831Z-9235: ConnectError; retrying in 5.1s (3/4)
+delivery failed for run 20261004T052833.192831Z-9235: ConnectError after 4 attempt(s)
+{"id": "20261004T052833.192831Z-4f60", "cluster": "shared-rnd", "status": "done", "sha256": "25861ed5015a60dda7b09b8065ddec17f40eba300d3d5825ec3b13ada5d0c489", "bytes": {"json": 41388, "csv": 17131, "html": 30548}, "error": null}
+delivery of run 20261004T052833.192831Z-4f60: ConnectError; retrying in 0.0s (1/4)
+delivery of run 20261004T052833.192831Z-4f60: ConnectError; retrying in 1.5s (2/4)
+delivery of run 20261004T052833.192831Z-4f60: ConnectError; retrying in 6.8s (3/4)
+delivery failed for run 20261004T052833.192831Z-4f60: ConnectError after 4 attempt(s)

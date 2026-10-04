@@ -1,0 +1,13 @@
+{"submitted": ["20261004T052745.223645Z-1e00", "20261004T052745.223645Z-2dc7", "20261004T052745.223645Z-ddfb", "20261004T052745.223645Z-e286", "20261004T052745.223645Z-e55c", "20261004T052745.223645Z-fcbc"], "report": "groups", "clusters": ["dashboard", "mock-privateca", "mock-selfsigned", "mock-trusted", "shared-qa", "shared-rnd"]}
+{"id": "20261004T052745.223645Z-e286", "cluster": "dashboard", "status": "done", "sha256": "fc82af0de14e663ce5b22e2e252f23d325ac61de6c637912fb4761f2e4b7f027", "bytes": {"json": 41390, "csv": 17132, "html": 30547}, "error": null}
+{"delivered": "20261004T052745.223645Z-e286", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-fcbc", "cluster": "mock-privateca", "status": "done", "sha256": "176827d6309dcf20439c8922e4b3cf0379f60236ad9aadb7c15a030fa70e699c", "bytes": {"json": 10564, "csv": 3573, "html": 9513}, "error": null}
+{"delivered": "20261004T052745.223645Z-fcbc", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-e55c", "cluster": "mock-selfsigned", "status": "done", "sha256": "9be22a8859e11c111a6c80ccd9edf59607bf552b7429e3dbe397e268b05249a3", "bytes": {"json": 10568, "csv": 3575, "html": 9517}, "error": null}
+{"delivered": "20261004T052745.223645Z-e55c", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-2dc7", "cluster": "mock-trusted", "status": "done", "sha256": "9fbb79d0c5463df7f8eae32864727d96f600b4201a1be3e3d2a74bdfd8082b42", "bytes": {"json": 10556, "csv": 3569, "html": 9505}, "error": null}
+{"delivered": "20261004T052745.223645Z-2dc7", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-ddfb", "cluster": "shared-qa", "status": "done", "sha256": "bd8fc749334553dfb4fa08713a543d5019daf017294b0fa187b9a6c3e472b8cc", "bytes": {"json": 41386, "csv": 17130, "html": 30545}, "error": null}
+{"delivered": "20261004T052745.223645Z-ddfb", "http_status": 200, "attempts": 1}
+{"id": "20261004T052745.223645Z-1e00", "cluster": "shared-rnd", "status": "done", "sha256": "25861ed5015a60dda7b09b8065ddec17f40eba300d3d5825ec3b13ada5d0c489", "bytes": {"json": 41388, "csv": 17131, "html": 30548}, "error": null}
+{"delivered": "20261004T052745.223645Z-1e00", "http_status": 200, "attempts": 1}
