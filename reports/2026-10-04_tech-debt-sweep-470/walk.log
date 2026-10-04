@@ -1,0 +1,120 @@
+# The Tech debt sweep's lab walk (4.7.0); written by scripts/run.sh
+# started 2026-10-04T09:24:09Z; kube context crc-admin; chart from 1d0081766cd624bd8a3eabfc90ebf6b54d409c48
+
+## Before  (2026-10-04T09:24:09Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"1d0081766cd624bd8a3eabfc90ebf6b54d409c48"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image
+NAME                                                 START                  IMAGE
+group-sync-dashboard-678d9dcb45-ndzwk                2026-10-04T09:20:41Z   quay.io/ephico2real/group-sync-dashboard:4.7.0
+group-sync-dashboard-backup-offsite-29850855-6sfxd   2026-10-03T18:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.0.0
+group-sync-dashboard-backup-offsite-29851215-79fjw   2026-10-04T00:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.2.0
+group-sync-dashboard-backup-offsite-29851575-sc5f5   2026-10-04T06:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.4.0
+group-sync-dashboard-report-8657f5768f-4htw6         2026-10-04T09:20:42Z   quay.io/ephico2real/group-sync-dashboard-report:4.7.0
+verify-1790912616-km2gt                              2026-10-02T03:43:37Z   quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=tech-debt-sweep-470-2026-10-04 -o name
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- python3.14 -c 'import gsd; print(gsd.__version__)'
+4.7.0
+
+## #594: the chart refuses PDF on a schedule (three places) and keeps it for manual runs  (2026-10-04T09:24:10Z)
+$ helm template t charts/group-sync-dashboard --set reporting.formats.scheduled={html,json,pdf}
+exit 1
+reporting.formats.scheduled: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy
+$ helm template t charts/group-sync-dashboard --set reporting.schedules[0].name=weekly,reporting.schedules[0].report=groups,reporting.schedules[0].cluster=dashboard,reporting.schedules[0].schedule=0 22 * * 0,reporting.schedules[0].formats={pdf}
+exit 1
+reporting.schedules[weekly].formats: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy
+$ helm template t charts/group-sync-dashboard --set reporting.schedules[0].name=weekly,reporting.schedules[0].report=groups,reporting.schedules[0].cluster=dashboard,reporting.schedules[0].schedule=0 22 * * 0,reporting.schedules[0].deliver.kind=webhook,reporting.schedules[0].deliver.webhookUrlSecret.name=hook,reporting.schedules[0].deliver.webhookUrlSecret.key=url,reporting.schedules[0].deliver.attach=pdf
+exit 1
+reporting.schedules[weekly].deliver.attach: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy
+$ helm template t charts/group-sync-dashboard --set reporting.formats.manual={html,json,pdf}
+exit 0
+
+## #594: the lab names no pdf for schedules  (2026-10-04T09:24:10Z)
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-report -o json | jq -c '[.spec.template.spec.containers[0].env[] | select(.name | test("FORMATS"))]'
+[{"name":"GSD_REPORT_FORMATS_SCHEDULED","value":"html,json,csv"},{"name":"GSD_REPORT_FORMATS_MANUAL","value":"html,json,pdf"}]
+$ oc get cronjobs.batch -n group-sync-dashboard -o json | jq -c '[.items[] | {name: .metadata.name, formats: [.spec.jobTemplate.spec.template.spec.containers[0].command as $c | range(0; $c | length) | select($c[.] == "--format" or $c[.] == "--attach") | $c[.:.+2] | join(" ")], pdf: ([.spec.jobTemplate.spec.template.spec.containers[0].command[] | select(. == "pdf")] | length)}]'
+[{"name":"group-sync-dashboard-backup-offsite","formats":[],"pdf":0},{"name":"group-sync-dashboard-report-biweekly-groups","formats":[],"pdf":0},{"name":"group-sync-dashboard-report-delivery-walk","formats":["--attach html"],"pdf":0},{"name":"group-sync-dashboard-report-quarterly-compliance","formats":[],"pdf":0},{"name":"group-sync-dashboard-report-weekly-namespace-access","formats":[],"pdf":0}]
+
+## #555: the deployed recovery script waits on the signal wakeup pipe  (2026-10-04T09:24:11Z)
+$ oc get configmaps -n group-sync-dashboard group-sync-dashboard-recovery -o jsonpath='{.data.recovery_mode\.py}' | grep -nE 'set_wakeup_fd|select\.select|os\.pipe|set_blocking'
+179:        select.select([wakeup_fd], [], [], min(left, args.report_every))
+190:    read_fd, write_fd = os.pipe()
+191:    os.set_blocking(write_fd, False)
+192:    previous_wakeup_fd = signal.set_wakeup_fd(write_fd)
+200:        signal.set_wakeup_fd(previous_wakeup_fd)
+$ oc get deployments.apps -n group-sync-dashboard group-sync-dashboard-recovery -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas
+NAME                            REPLICAS   READY
+group-sync-dashboard-recovery   0          <none>
+
+## in_pod.py as dana.lee: #585, #588, #589  (2026-10-04T09:24:11Z)
+$ printf '<viewer>\n<ticket>\n' | oc exec -i deploy/group-sync-dashboard-report -c report -- python3.14 -c "$(cat scripts/in_pod.py)"
+{"check": "585 names read like numbers", "cron": "/install/lib/python3.14/site-packages/gsd/reporting/cron.py", "pairs": [{"named": "0 22 * * MON-FRI", "numeric": "0 22 * * 1-5", "equal": true}, {"named": "0 5 1 jan,Jul *", "numeric": "0 5 1 1,7 *", "equal": true}, {"named": "0 22 * * sun", "numeric": "0 22 * * 0", "equal": true}]}
+{"check": "585 a stepped weekday ends at SAT", "weekdays": {"0 22 * * MON/2": [1, 3, 5], "0 22 * * 1/2": [1, 3, 5]}}
+{"check": "585 an unknown name is refused", "refused": true, "error": "day-of-week: cannot read 'FUNDAY'"}
+{"check": "588 a reversed diff is refused", "base": "20261004T081750.891035Z-2e06", "head": "20261004T052833.192831Z-c0f5", "status": 422, "detail": "base 20261004T081750.891035Z-2e06 is newer than head 20261004T052833.192831Z-c0f5: a diff compares an earlier run with a later one", "runs_before": 40, "runs_after": 40}
+{"check": "589 access-certification run", "queued_status": 202, "id": "20261004T092414.302620Z-57eb", "status": "done", "sha256": "4c238cdfbc65ba3ec448e19933f21d0c0aac14ed68052d7a3f570aaf87c6ae87", "page_one": ["Provenance and coverage", false], "page_one_data_as_of": true, "campaign_sealed": true, "campaign_keys": ["Campaign", "Due", "Reviewer", "Scope", "Cluster"], "campaign_data_as_of": false}
+
+## walk.py as developer: the grant (labelled walk.gsd.lab/run=tech-debt-sweep-470-2026-10-04), then 70 s for the tier cache  (2026-10-04T09:24:16Z)
+$ oc apply -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-sweep-lab/reports/2026-10-04_tech-debt-sweep-470/scripts/grant.yaml'
+clusterrole.rbac.authorization.k8s.io/gsd-walk-sweep-470-crb-update created
+clusterrolebinding.rbac.authorization.k8s.io/gsd-walk-sweep-470-crb-update-developer created
+$ GSD_UI_PASSWORD=<from crc console --credentials> /Users/olasumbo/gitRepos/group-sync-dashboard/local-development/.venv/bin/python scripts/walk.py
+2026-10-04T09:25:31Z whoami                                                      : {"user": "developer", "visibility": {"scope": "all", "enabled": true, "clusters": {"dashboard": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "mock-privateca": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "mock-selfsigned": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "mock-trusted": {"policy": "inherit", "identity": "same-as-host", "scope": "all"}, "shared-qa": {"policy": "remote-sar", "identity": "same-as-host", "scope": "self"}, "shared-rnd": {"policy": "remote-sar", "identity": "same-as-host", "scope": "self"}}, "cluster_admin": true}}
+2026-10-04T09:25:31Z version                                                     : {"leader": true, "version": "4.7.0", "commit": "1d0081766c", "branch": "main", "dirty": false, "features": {"export": true, "reporting": true, "reporting_prefix": "/report", "housekeeping": true}, "timezone": {"name": "America/New_York", "abbrev": "EDT", "utc_offset": "-0400"}}
+2026-10-04T09:25:32Z PASS #587 the Reports description names CSV                 : Generated by the report service from a read-only copy of this dashboard's data (PDF pdf/a-2b, HTML, CSV, and JSON). Every document carries the sha256 of its data, the snapshot it was built from, and who generated it. Click a report — its form opens right below, already in view.
+2026-10-04T09:25:35Z format boxes on the form                                    : ["pdf", "html", "csv"]
+2026-10-04T09:25:35Z label, expected                                             : [["PDF \u00b7 HTML \u00b7 JSON", "PDF \u00b7 HTML \u00b7 JSON"], ["HTML \u00b7 JSON", "HTML \u00b7 JSON"], ["JSON", "JSON"], ["CSV \u00b7 JSON", "CSV \u00b7 JSON"], ["JSON", "JSON"]]
+2026-10-04T09:25:35Z PASS #577 the label follows every change                    : [["PDF \u00b7 HTML \u00b7 JSON", "PDF \u00b7 HTML \u00b7 JSON"], ["HTML \u00b7 JSON", "HTML \u00b7 JSON"], ["JSON", "JSON"], ["CSV \u00b7 JSON", "CSV \u00b7 JSON"], ["JSON", "JSON"]]
+2026-10-04T09:25:35Z PASS #577 every box off reads JSON                          : ["JSON", "JSON"]
+2026-10-04T09:25:39Z PASS #546 the Backups heading fits its card                 : {"text": "Backups\non-volume \u00b7 /data/backup \u00b7 every 6 h \u00b7 keep 4", "scroll": 333, "width": 333, "left": 39, "right": 336, "innerLeft": 39, "innerRight": 336}
+2026-10-04T09:25:39Z Database copies rows                                        : {"rows": 10, "delete": 8, "kept": 2}
+2026-10-04T09:25:39Z PASS #548 the card lists copies                             : {"rows": 10, "delete": 8, "kept": 2}
+2026-10-04T09:25:39Z PASS #548 row 1: its Delete or kept reason is in view       : {"left": 39, "right": 318.34375, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 2: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 3: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 4: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 5: its Delete or kept reason is in view       : {"left": 39, "right": 319.984375, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 6: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 7: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 8: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 9: its Delete or kept reason is in view       : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 row 10: its Delete or kept reason is in view      : {"left": 39, "right": 110.03125, "viewport": 375, "scroll": 333, "width": 333, "offset": 0}
+2026-10-04T09:25:39Z PASS #548 .hk-note sits inside the card's padding           : {"box": {"x": 39, "y": -765, "width": 297, "height": 36}, "padding": {"left": 39, "right": 336}}
+2026-10-04T09:25:39Z PASS #548 .filterbar-note sits inside the card's padding    : {"box": {"x": 39, "y": -729, "width": 297, "height": 144}, "padding": {"left": 39, "right": 336}}
+2026-10-04T09:25:39Z PASS #548 .hk-form sits inside the card's padding           : {"box": {"x": 39, "y": 1581.5, "width": 297, "height": 75}, "padding": {"left": 39, "right": 336}}
+2026-10-04T09:25:39Z PASS no sideways scroll on the KPI page at 375 px           : false
+2026-10-04T09:25:39Z PASS no page errors                                         : []
+2026-10-04T09:25:39Z result                                                      : {"failures": []}
+
+## The grant removed  (2026-10-04T09:25:39Z)
+$ oc delete -f '/private/tmp/claude-501/-Users-olasumbo-gitRepos-group-sync-dashboard/2a50a92d-2994-4c92-a78c-87e7648effc4/scratchpad/wt-sweep-lab/reports/2026-10-04_tech-debt-sweep-470/scripts/grant.yaml' --ignore-not-found
+clusterrole.rbac.authorization.k8s.io "gsd-walk-sweep-470-crb-update" deleted
+clusterrolebinding.rbac.authorization.k8s.io "gsd-walk-sweep-470-crb-update-developer" deleted
+$ oc auth can-i update clusterrolebindings.rbac.authorization.k8s.io --as=developer || true
+Warning: resource 'clusterrolebindings' is not namespace scoped in group 'rbac.authorization.k8s.io'
+
+no
+
+## After  (2026-10-04T09:25:39Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"1d0081766cd624bd8a3eabfc90ebf6b54d409c48"}
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image
+NAME                                                 START                  IMAGE
+group-sync-dashboard-678d9dcb45-ndzwk                2026-10-04T09:20:41Z   quay.io/ephico2real/group-sync-dashboard:4.7.0
+group-sync-dashboard-backup-offsite-29850855-6sfxd   2026-10-03T18:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.0.0
+group-sync-dashboard-backup-offsite-29851215-79fjw   2026-10-04T00:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.2.0
+group-sync-dashboard-backup-offsite-29851575-sc5f5   2026-10-04T06:15:00Z   quay.io/ephico2real/group-sync-dashboard:4.4.0
+group-sync-dashboard-report-8657f5768f-4htw6         2026-10-04T09:20:42Z   quay.io/ephico2real/group-sync-dashboard-report:4.7.0
+verify-1790912616-km2gt                              2026-10-02T03:43:37Z   quay.io/ephico2real/group-sync-dashboard:2.2.0
+$ oc get clusterroles.rbac.authorization.k8s.io,clusterrolebindings.rbac.authorization.k8s.io -l walk.gsd.lab/run=tech-debt-sweep-470-2026-10-04 -o name
+run.sh exit 0
