@@ -1,0 +1,18 @@
+# Epic F seal check; written by scripts/run.sh
+# started 2026-10-04T13:33:37Z; kube context crc-admin
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard -c dashboard -- curl -s http://127.0.0.1:8080/api/version | jq -c '{version, commit}'
+{"version":"5.0.0","commit":"704943a11c"}
+$ printf '<viewer>\n<ticket>\n20261004T020102.809069Z-3804\n' | oc exec -i deploy/group-sync-dashboard-report -c report -- python3.14 -c "$(cat scripts/in_pod.py)"
+{"check": "two runs, one after the other", "first": {"id": "20261004T133340.586020Z-09c0", "status": "done", "sha256": "161cba2fdc8ec166c3e7bfa4003f6f026672939bcd366684c6c8e278fd778767", "snapshot_stamp": "2026-10-04T13:33:32.084162Z", "generated_by": "dana.lee"}, "second": {"id": "20261004T133342.786159Z-f863", "status": "done", "sha256": "161cba2fdc8ec166c3e7bfa4003f6f026672939bcd366684c6c8e278fd778767", "snapshot_stamp": "2026-10-04T13:33:32.084162Z", "generated_by": "dana.lee"}, "same_sha256": true, "same_snapshot": true}
+{"check": "an earlier run over an older snapshot", "earlier": {"id": "20261004T020102.809069Z-3804", "status": "done", "sha256": "61b5b1c86bf9b3d7a899aeb5a73b6754a97138731025eef72b2764bb76d24509", "snapshot_stamp": "2026-10-04T01:59:23.203301Z", "generated_by": "schedule:quarterly-compliance"}, "new": {"id": "20261004T133340.586020Z-09c0", "status": "done", "sha256": "161cba2fdc8ec166c3e7bfa4003f6f026672939bcd366684c6c8e278fd778767", "snapshot_stamp": "2026-10-04T13:33:32.084162Z", "generated_by": "dana.lee"}, "different_snapshot": true, "different_sha256": true, "diff": {"id": "20261004T133345.124705Z-dd3e", "status": "done", "totals": {"blocks_changed": 3, "rows_added": 4, "rows_removed": 4}}}
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+finished 2026-10-04T13:33:45Z
