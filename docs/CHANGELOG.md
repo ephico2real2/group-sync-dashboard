@@ -30,6 +30,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   while it reads `late`: its last expected fire is more than 30 minutes past and no run of it has succeeded since.
   `never` and `disabled` do not fire. The existing gauges, the page's states and grace, and the other rules are
   unchanged; no RBAC change.
+- The Reports Generate label follows the selected formats and always includes JSON (#577).
+  The KPI Backups heading wraps long directory paths on phones (#546).
+  The KPI Database copies card pads its text and cleanup form and stacks copies on phones so Delete buttons and kept reasons stay visible (#548).
 
 - **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`

@@ -2934,7 +2934,8 @@ function reportFormCard(spec, cat) {
   const advanced = spec.params.filter((p) => !p.group && p.advanced);
   const advancedSet = advanced.some((p) => form[p.name] !== undefined && form[p.name] !== "" && String(form[p.name]) !== String(Array.isArray(p.default) ? p.default.join(",") : p.default))
     || !!(view.reportAdvancedOpen || {})[spec.name];   // opened by the reader: a repaint (the lookups' arrival) must not close it (review of #222, Grok)
-  const formats = [cat.pdf && cat.pdf.enabled ? "PDF" : "", "HTML", "JSON"].filter(Boolean).join(" · ");
+  const formats = [cat.pdf && cat.pdf.enabled && view.reportWant.pdf ? "PDF" : "",
+    view.reportWant.html ? "HTML" : "", view.reportWant.csv ? "CSV" : "", "JSON"].filter(Boolean).join(" · ");
   return `<section class="card report-panel r-${esc(kcat)}" id="report-form">
     <div class="panelbar"><button type="button" class="back" id="report-back">${backLabel()}</button>
       <span class="muted">${esc(spec.title)} · <span class="mono">${esc(spec.name)}</span></span></div>
@@ -3819,26 +3820,29 @@ function kpiCopiesCard() {
     const act = c.guarded
       ? `<span class="hk-kept">kept: ${esc(c.guarded)}</span>`
       : `<button type="button" class="btn" data-hk-copy="${esc(key)}" id="hk-del-${esc(key)}">${hk.armed === `copy:${key}` ? "Confirm delete" : "Delete"}</button>${hk.notes[`copy:${key}`] ? ` <span class="hk-note">${esc(hk.notes[`copy:${key}`])}</span>` : ""}`;
-    return `<tr data-hk-row="${esc(key)}"><td>${esc(c.kind)}</td><td class="mono cname">${esc(c.name)}${c.type === "directory" ? "/" : ""}</td>
-      <td>${fmtTime(c.at)}</td><td class="num">${esc(fmtBytes(c.bytes))}</td><td>${act}</td></tr>`;
+    return `<tr data-hk-row="${esc(key)}"><td data-label="Directory">${esc(c.kind)}</td><td data-label="Copy" class="mono cname">${esc(c.name)}${c.type === "directory" ? "/" : ""}</td>
+      <td data-label="Taken">${fmtTime(c.at)}</td><td data-label="Size" class="num">${esc(fmtBytes(c.bytes))}</td><td>${act}</td></tr>`;
   }).join("");
   const opt = (v, label) => `<option value="${esc(v)}"${f.kind === v ? " selected" : ""}>${esc(label)}</option>`;
   const dirs = Object.entries(d.directories).filter(([, v]) => v).map(([k, v]) => `${esc(k)} <span class="mono">${esc(v)}</span>`).join(" · ");
   return `<section class="card kpi-page" id="hk-copies">
     <h2>Database copies${d.pod ? ` <span class="asof">on ${esc(d.pod)}</span>` : ""}</h2>
+    <div class="card-body">
     <div class="hk-note">${dirs}</div>
     <div class="filterbar-note">For cluster administrators: delete a copy, or clean up a directory once. Nothing is saved, and
       <code>config.backup</code> stays the standing policy. The newest copy in each directory is always kept: the newest backup (a restore needs
       one), the newest pre-upgrade copy (the way back across the last upgrade) and the newest pre-restore set (the way back from the last restore).</div>
+    </div>
     ${d.copies.length ? `<div class="scroll-x"><table><thead><tr><th>Directory</th><th>Copy</th><th>Taken</th><th class="num">Size</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>` : `<div class="empty-note">No copies in these directories.</div>`}
-    <div class="hk-form">
+    <div class="card-body"><div class="hk-form">
       <label>Directory <select id="hk-copies-kind">${opt("", "all three")}${opt("backup", "backup")}${opt("pre-upgrade", "pre-upgrade")}${opt("pre-restore", "pre-restore")}</select></label>
       <label>Older than <input type="number" id="hk-copies-days" min="0" max="3650" value="${esc(String(f.days))}"> days</label>
       <button type="button" class="btn" id="hk-copies-preview">Preview</button>
     </div>
     ${f.note ? `<p class="hk-note" id="hk-copies-note" role="status">${esc(f.note)}</p>` : ""}
     ${hkPreviewHtml("copies", f.preview, "copy")}
+    </div>
   </section>`;
 }
 
@@ -4142,7 +4146,7 @@ function wireReports() {
   if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
   // The format boxes are the reader's, like Advanced's open state: a switch, a segment or a lookup pick repaints the
   // form, and a box rendered from a fixed default dropped a ticked CSV before Generate read it (review of #106, OB3).
-  ["pdf", "html", "csv"].forEach((f) => { const box = $(`report-want-${f}`); if (box) box.onchange = () => { view.reportWant[f] = box.checked; }; });
+  ["pdf", "html", "csv"].forEach((f) => { const box = $(`report-want-${f}`); if (box) box.onchange = () => { view.reportWant[f] = box.checked; render(); }; });
   // #149 R7: the ParamSpec shell's controls. Each writes the form state and repaints; the lookup's
   // typed text lives in view.reportLookupText so the repaint keeps it and the caret returns by id.
   const openSpec = view.report && data.reportCatalog && (data.reportCatalog.reports || []).find((r) => r.name === view.report);

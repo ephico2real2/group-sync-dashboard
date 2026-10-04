@@ -1791,6 +1791,28 @@ class TestKpiPage:
         check()
         dash.evaluate("() => { setDisplayZone(null); render(); }")
 
+    def test_backups_long_directory_heading_fits_375px(self, dash, tmp_path):
+        # #546: check the heading itself too, so clipping cannot hide an overflowing path.
+        directory = tmp_path / "scheduled-database-copies-with-a-long-directory-name"
+        directory.mkdir()
+        dash.set_viewport_size({"width": 375, "height": 740})
+        self._open(dash)
+        self._backups(dash, "healthy")
+        dash.evaluate("""(directory) => {
+            data.kpi.system.dashboard.data.backups.dir = directory; render();
+        }""", str(directory))
+        heading = self._card(dash).locator("h2")
+        assert str(directory) in heading.inner_text()
+        sizes = heading.evaluate("""(h) => {
+            const r = h.getBoundingClientRect(), path = h.querySelector('.asof').getBoundingClientRect();
+            return {scroll: h.scrollWidth, width: h.clientWidth, left: path.left, right: path.right,
+                    innerLeft: r.left + parseFloat(getComputedStyle(h).paddingLeft),
+                    innerRight: r.right - parseFloat(getComputedStyle(h).paddingRight)};
+        }""")
+        assert sizes["scroll"] <= sizes["width"], sizes
+        assert sizes["innerLeft"] <= sizes["left"] <= sizes["right"] <= sizes["innerRight"], sizes
+        assert dash.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+
     def test_t306_13_every_state_fits_375_768_and_1280_in_light_and_dark(self, dash):
         errors: list[str] = []
         dash.on("pageerror", lambda e: errors.append(str(e)))
@@ -11819,6 +11841,32 @@ class TestReportClusterControl:
         finally:
             ctx.close()
 
+    def test_generate_label_follows_the_format_boxes(self, browser, reporting_server):
+        # #577: defaults, each change, and a repaint all name the selected formats in box order.
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-want-csv")
+            label = page.locator("#report-generate span")
+            assert page.is_checked("#report-want-pdf") and page.is_checked("#report-want-html")
+            assert not page.is_checked("#report-want-csv")
+            assert label.inner_text() == "PDF · HTML · JSON"
+            page.uncheck("#report-want-pdf")
+            assert label.inner_text() == "HTML · JSON"
+            page.check("#report-want-csv")
+            assert label.inner_text() == "HTML · CSV · JSON"
+            page.click('[data-switch="include_members"]')
+            assert label.inner_text() == "HTML · CSV · JSON"
+            page.uncheck("#report-want-html")
+            assert label.inner_text() == "CSV · JSON"
+            page.uncheck("#report-want-csv")
+            assert label.inner_text() == "JSON"
+            assert "json is always written" in page.locator(".report-actions").inner_text()
+            assert not errors, errors
+        finally:
+            ctx.close()
+
     def test_csv_is_a_box_off_by_default_and_a_ticked_one_downloads_a_csv(self, browser, reporting_server):
         # #106 (SPEC_F2, T106-9): CSV is offered beside HTML and PDF, unticked; ticked, the run stores it and its
         # status offers it like the other formats, through the one artefact fetch.
@@ -12412,9 +12460,7 @@ class TestHousekeepingPage:
         ctx, page, errors = _reports_page(browser, base, "root")
         try:
             page.set_viewport_size({"width": 375, "height": 800})
-            # Each card's own elements, outside its table's scroll box, stay inside the viewport. The page as a whole is
-            # not measured on the KPI page: the Backups card's heading carries config.backup.dir, and this rig's
-            # temporary path is long enough to push it past 375 px with or without these cards (SPEC_H1 §4.4).
+            # Each card's own elements stay inside the viewport; copy rows are checked separately below.
             for where, card in (("#page=library&cluster=crc-local", "#lib-cleanup"), ("#page=kpi", "#hk-copies")):
                 page.goto(base + where)
                 page.wait_for_selector(card + (" table" if card == "#hk-copies" else ""))
@@ -12422,6 +12468,44 @@ class TestHousekeepingPage:
                   return [...document.querySelectorAll(card + ' *')].filter((e) => !e.closest('.scroll-x')
                     && e.getBoundingClientRect().right > vw + 1).map((e) => e.tagName + '.' + e.className); }""", card)
                 assert outside == [], f"{where}: {outside} reach past 375px"
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_database_copies_are_padded_and_actions_fit_375px(self, browser, housekeeping_server):
+        # #548: use the rig's actual copies, including guarded copies and ones that can be deleted.
+        base, _, _ = housekeeping_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.set_viewport_size({"width": 375, "height": 800})
+            page.goto(base + "#page=kpi")
+            page.wait_for_selector("#hk-copies tbody tr")
+            card = page.locator("#hk-copies")
+            assert card.locator("[data-hk-copy]").count() > 0
+            assert card.locator(".hk-kept").count() > 0
+            for row in card.locator("tbody tr").all():
+                action = row.locator("[data-hk-copy], .hk-kept")
+                assert action.count() == 1
+                assert action.is_visible()
+                bounds = action.evaluate("""(e) => {
+                    const r = e.getBoundingClientRect(), box = e.closest('.scroll-x');
+                    return {left: r.left, right: r.right, viewport: document.documentElement.clientWidth,
+                            scroll: box.scrollWidth, width: box.clientWidth, offset: box.scrollLeft};
+                }""")
+                assert 0 <= bounds["left"] <= bounds["right"] <= bounds["viewport"], bounds
+                assert bounds["scroll"] <= bounds["width"] and bounds["offset"] == 0, bounds
+                if row.locator(".hk-kept").count():
+                    assert row.locator("button").count() == 0
+            padding = card.evaluate("""(c) => {
+                const h = c.querySelector('h2'), r = h.getBoundingClientRect(), s = getComputedStyle(h);
+                return {left: r.left + parseFloat(s.paddingLeft), right: r.right - parseFloat(s.paddingRight)};
+            }""")
+            for selector in (".hk-note", ".filterbar-note", ".hk-form"):
+                bounds = card.locator(selector).first.bounding_box()
+                assert bounds is not None
+                assert bounds["x"] >= padding["left"], (selector, bounds, padding)
+                assert bounds["x"] + bounds["width"] <= padding["right"], (selector, bounds, padding)
+            assert page.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth")
             assert not errors, errors
         finally:
             ctx.close()
