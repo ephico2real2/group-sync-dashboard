@@ -175,6 +175,10 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
       `--short=10`. It failed on the 21-block tree and passes on this one.
     - **The version:** the publisher script is an image input, and this change already moves the application to
       5.2.0, so the version is unchanged.
+    - **Found by the orchestrator's full hermetic run** on a clean `6421cff7` with the 22 blocks applied:
+      `test_build_and_push_report.py::test_release_tags_cannot_inherit_the_dashboards_image_name` failed (1 failed,
+      7654 passed). Its fake `git` answered only `rev-parse --short=10 HEAD`. Block 23 makes it answer the full id;
+      the first ten characters, and so every expected tag, are unchanged.
 
 Open questions for the operator:
 
@@ -1865,4 +1869,20 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 COMMIT=$(git rev-parse HEAD)
 COMMIT="${COMMIT:0:10}"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
+```
+
+### Block 23 — `local-development/tests/test_build_and_push_report.py`: the fake `git` answers the full id (Block 22)
+
+Block 22 makes the script ask `git rev-parse HEAD` instead of `--short=10`. This test's fake `git` answered only the
+old call, so the script failed (found by the orchestrator's full hermetic run on the applied tree). The fake now answers
+a full forty-character id whose first ten characters are the same `0123456789`, so every tag the test expects is
+unchanged.
+
+<!-- block: local-development/tests/test_build_and_push_report.py | edit -->
+```python
+  "rev-parse --short=10 HEAD") echo 0123456789 ;;
+```
+
+```python
+  "rev-parse HEAD") echo 0123456789abcdef0123456789abcdef01234567 ;;
 ```
