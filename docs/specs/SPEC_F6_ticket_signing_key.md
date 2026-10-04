@@ -68,6 +68,11 @@ Questions settled by the orchestrator (2026-10-04, on "easy to manage, best prac
 3. **No key id in the ticket: SETTLED (§3.3).** Two keys at most are tried, nothing derived from a key travels in a
    ticket or a log, and the report pod's start line says whether a rotation is open.
 
+**Correction at implementation (orchestrator, 2026-10-04): the version blocks' Old texts.** Blocks 84 to 87 were
+written against main at application 4.4.0 / chart 0.67.0. F5 (#140, PR #596) merged first and took 4.5.0 / 0.68.0, as
+the index orders, so their Old texts now read 4.5.0 and 0.68.0. Their New texts (4.6.0 / 0.69.0) are unchanged, and
+the four block titles now name the versions they write.
+
 ## 1. The mandate, and what is out of scope
 
 The mandate (#392, "The change", "Must not change" and "Definition of Done"): sign tickets with a key that only the
@@ -2582,12 +2587,12 @@ every other refusal is a 403.
 ```
 
 
-### Block 84 — `local-development/pyproject.toml`: application 4.5.0
+### Block 84 — `local-development/pyproject.toml`: application 4.6.0
 
 <!-- block: local-development/pyproject.toml | edit -->
 
 ```toml
-version = "4.4.0"
+version = "4.5.0"
 ```
 
 
@@ -2596,12 +2601,12 @@ version = "4.6.0"
 ```
 
 
-### Block 85 — `local-development/gsd/__init__.py`: application 4.5.0
+### Block 85 — `local-development/gsd/__init__.py`: application 4.6.0
 
 <!-- block: local-development/gsd/__init__.py | edit -->
 
 ```python
-__version__ = "4.4.0"
+__version__ = "4.5.0"
 ```
 
 
@@ -2610,12 +2615,12 @@ __version__ = "4.6.0"
 ```
 
 
-### Block 86 — `charts/group-sync-dashboard/Chart.yaml` (1 of 2): chart 0.68.0 and application 4.5.0, with their history lines
+### Block 86 — `charts/group-sync-dashboard/Chart.yaml` (1 of 2): chart 0.69.0, with its history line
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 ```yaml
-version: 0.67.0
+version: 0.68.0
 ```
 
 
@@ -2629,12 +2634,12 @@ version: 0.69.0
 ```
 
 
-### Block 87 — `charts/group-sync-dashboard/Chart.yaml` (2 of 2): chart 0.68.0 and application 4.5.0, with their history lines
+### Block 87 — `charts/group-sync-dashboard/Chart.yaml` (2 of 2): application 4.6.0, with its history line
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 ```yaml
-appVersion: "4.4.0"
+appVersion: "4.5.0"
 ```
 
 
