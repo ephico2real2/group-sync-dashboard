@@ -78,6 +78,14 @@ Line citations into the code at `4e5a708d` are file:line in plain text inside ta
    repaint" became the default and proved nothing; it now flips every box from its default (Block 34).
 8. **Dates.** Blocks 36 and 37 date the chart's history lines 2026-10-04; the implementing pull request writes its
    own date.
+9. **The spec review (Codex, gpt-5.6-sol, xhigh, 2026-10-04).** C3 to C7 were confirmed, and C1 and C5 were plausible
+   (no sockets, no `.git` in its copy). The six unaffected reports' sha256 values were measured byte-identical, and
+   none of the other nine reports keeps a snapshot-clock instant in a sealed section. One finding, F1: `snapshot_at`
+   is parsed on every read, not once per context.
+   - **Rejected: the cache.** "Parsed once" was the orchestrator's brief, not this spec. Each parse returns the same
+     instant, and the review measured the same hashes. A cache would add a mutable private field to the run
+     context to save microseconds, and review fixes do not grow the code.
+   - **Accepted: the failure modes,** stated in §3.1. Nothing in the code changes.
 
 Open questions: none. The three issues are decided; §2a records the choices this spec made inside them.
 
@@ -234,8 +242,11 @@ suites pass on any date.
 
 `local-development/gsd/reporting/snapshot.py` gains `stamp_instant(stamp)`, the one reader of the stamp's format; the
 snapshot's age now calls it (no behaviour change). `RunContext` gains a read-only property, `snapshot_at`, the stamp as
-an aware datetime. Its docstring says why it exists. The `now` field gets a one-line comment: it is the generation
-time, for page one and the age, never a report's data.
+an aware datetime. Its docstring says why it exists. A stamp missing from a context built by hand raises
+`TypeError`; one without the file name's six fractional digits, or otherwise malformed, raises `ValueError`. A real
+run cannot hit either, because `Snapshot` accepts only the fixed-width file-name pattern in `snapshot.py`
+(Orchestrator's notes 9). The `now` field gets a one-line comment: it is the generation time, for page one and the
+age, never a report's data.
 
 Why the stamp is the right end: every window query reads `>= since` with no upper bound (§2.2), and a snapshot holds
 nothing later than its stamp. A window that ends at the stamp therefore counts exactly what the snapshot holds, and its
