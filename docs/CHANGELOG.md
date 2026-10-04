@@ -10,6 +10,41 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **The Tech debt sweep (the "Tech debt" milestone; application 4.7.0, chart 0.70.0).** Fourteen issues found by
+  walks and reviews, each as small as its issue, one bullet each below: #577, #546, #548, #594, #555, #587, #588, #589,
+  #590, #585, #543, #591, #545, #535. No new feature. Scheduled reports now refuse PDF (#594): a values file that
+  schedules a PDF fails to render on upgrade.
+- The Reports Generate label follows the selected formats and always includes JSON (#577).
+- The KPI Backups heading wraps long directory paths on phones (#546).
+- The KPI Database copies card pads its text and cleanup form and stacks copies on phones so Delete buttons and kept reasons stay visible (#548).
+- **Scheduled reports refuse PDF (#594):** a values file naming `pdf` in `reporting.formats.scheduled`, a schedule's `formats` or `deliver.attach` now fails to render; remove `pdf`, use HTML, JSON or CSV for storage and HTML or CSV for attachments, and print the HTML for a paper or PDF copy (manual runs keep PDF).
+- **Recovery mode handles SIGTERM arriving just before its wait (#555).** The chart's recovery script
+  waits on a signal wakeup pipe so it cannot miss a SIGTERM and wait out the reporting interval before stopping.
+- **Reports description names every stored format (#587).** It lists PDF with its variant when enabled,
+  HTML, CSV, and JSON.
+- **Report diffs refuse reversed runs (#588).** A base newer than the head receives 422 with a sentence
+  explaining that a diff compares an earlier run with a later one.
+- **Access-certification snapshot stamp stays on page one (#589).** Removed the duplicate “Data as of”
+  row from the sealed Campaign list; the stamp remains on page one and in `sealed_provenance`. The
+  access-certification report's sha256 changes once because the row left the sealed data. Two snapshots
+  of the same data no longer produce a changed Campaign block in a report diff.
+- **Report JSON names and note fixture corrected (#590).** The whole JSON is named `report_json`,
+  and the note fixture uses `level`. No behaviour changes.
+- **Named cron months and weekdays (#585).** Reporting accepts case-insensitive month and weekday names
+  in values, lists and ranges, with the same fire times as their numeric forms. A stepped single weekday
+  (`1/2`, `MON/2`) now ends at Saturday, as Kubernetes reads it, so the Reporting status page no longer
+  expects a Sunday fire that never comes.
+- **Release schema lines checked in CI (#543).** The hermetic release check requires exactly one matching
+  schema line for each application release that moves the schema after #300; earlier notes remain unchanged.
+- **Choose the walk interpreter (#591).** `GSD_WALK_PYTHON` overrides the e2e walk's checkout-local
+  interpreter search, so a worktree can use an existing environment outside the checkout.
+- **README refresh (#545).** Describe the current tabs and visibility tiers, persisted data,
+  namespace-scoped Lease and cluster-Secret writes, and report/database-copy deletions, with
+  source citations. A docs test compares the tab list with the rendered navigation.
+- **Cosign minimum version (#535).** The install guide names v3, quotes the publisher's v3.1.3
+  pin, and explains OCI-referrer bundles and v2's misleading “no signatures found”. A docs test
+  holds the minimum-version line and signing-version quote to the workflow.
+
 - **Tickets are signed with a key of their own (#392, Epic F #386, `docs/specs/SPEC_F6_ticket_signing_key.md`;
   application 4.6.0, chart 0.69.0).** A viewer's ticket was signed with the service token, which the schedule Jobs
   and the poller hold too, so whoever held the token could sign a ticket naming any person, and that name became the

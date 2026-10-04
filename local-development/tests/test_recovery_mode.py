@@ -19,6 +19,7 @@ import re
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 from datetime import datetime
 
@@ -125,6 +126,48 @@ def test_t303_11_sigterm_stops_it_at_once_through_its_own_handler(tmp_path):
     # handler's own exit proves the handler is installed, which is what a namespace's PID 1 needs.
     assert proc.returncode == 0 and took < 1.0, (proc.returncode, took)
     assert "SIGTERM: stopping (exit 0)" in out.splitlines()[-1]
+
+
+def test_sigterm_before_the_wait_leaves_a_wakeup_byte(tmp_path):
+    """#555: deliver a real SIGTERM before the first wait, deferring the Python exception until
+    after it. This models the pending-handler window deterministically; the C handler still writes
+    the wakeup byte. Without the pipe the child sleeps until the parent's timeout kills it."""
+    probe = textwrap.dedent("""\
+        import importlib.util
+        import signal
+        import sys
+
+        spec = importlib.util.spec_from_file_location("recovery_mode", sys.argv[1])
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        remaining = module.remaining
+        on_sigterm = module._on_sigterm
+        pending = False
+        calls = 0
+
+        def defer_sigterm(signum, frame):
+            global pending
+            pending = True
+
+        def before_wait(*args):
+            global calls
+            calls += 1
+            if pending:
+                on_sigterm(signal.SIGTERM, None)
+            left = remaining(*args)
+            if calls == 2:  # First loop check, after the banner's initial remaining() call.
+                signal.raise_signal(signal.SIGTERM)
+                assert pending
+            return left
+
+        module._on_sigterm = defer_sigterm
+        module.remaining = before_wait
+        sys.exit(module.main([]))
+    """)
+    done = subprocess.run([sys.executable, "-c", probe, str(SCRIPT)], env=_env(tmp_path, "1h"),
+                          capture_output=True, text=True, timeout=5)
+    assert done.returncode == 0, (done.stdout, done.stderr)
+    assert "SIGTERM: stopping (exit 0)" in done.stdout.splitlines()[-1]
 
 
 def test_t303_12_every_import_is_from_the_standard_library():

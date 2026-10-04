@@ -13,6 +13,7 @@ import importlib.util
 import itertools
 import os
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -44,6 +45,43 @@ def assert_schema_released(repo: pathlib.Path) -> None:
         "database HEAD has migrated. Release the application in this PR: "
         "`local-development/prepare-release.py --app <next> \"<reason>\" --no-commit`, then commit.")
 
+    assert_release_schema_notes(repo)
+
+
+def assert_release_schema_notes(repo: pathlib.Path) -> None:
+    """#543: inspect every release since #300; older notes remain historical evidence.
+
+    Read the highest migration target, as prepare-release.py does, at each first-parent version
+    change. Compare successive released images, not the immediately preceding development commit.
+    Require the line in that application's section, including when a hand bump omitted its heading.
+    """
+    chain = prep._git_in(repo, "rev-list", "--first-parent", "--reverse", "HEAD").split()
+    introduced = "2e7d33be3b06968cd4b12d06c846afe43f5bf27c"  # #300 / PR #528
+    baseline = introduced if introduced in chain else chain[0]  # isolated test repositories
+    assert prep._git_in(repo, "rev-parse", "--is-shallow-repository").strip() == "false", "fetch-depth: 0 required"
+    store = "local-development/gsd/store.py"
+    project = "local-development/pyproject.toml"
+    then = prep.highest_migration(prep._git_in(repo, "show", f"{baseline}:{store}"))
+    log = (repo / "docs/CHANGELOG.md").read_text()
+    sections = re.split(r"^## ", log, flags=re.M)[1:]
+    releases = prep._git_in(repo, "log", "--first-parent", "--reverse", "--format=%H",
+                            f"{baseline}..HEAD", "--", project).split()
+    for release in releases:
+        current = prep._git_in(repo, "show", f"{release}:{project}")
+        previous = prep._git_in(repo, "show", f"{release}^:{project}")
+        version = re.search(r'^version = "(.+?)"$', current, re.M).group(1)
+        if version == re.search(r'^version = "(.+?)"$', previous, re.M).group(1):
+            continue
+        now = prep.highest_migration(prep._git_in(repo, "show", f"{release}:{store}"))
+        if now > then:
+            notes = [section for section in sections if section.startswith(f"Application {version} —")]
+            expected = f"- **Schema {then} → {now}.**"
+            assert len(notes) == 1, f"application {version}: one release heading with {expected} required"
+            lines = [line for line in notes[0].splitlines() if line.startswith("- **Schema ")]
+            assert len(lines) == 1 and (lines[0] == expected or lines[0].startswith(expected + " ")), (
+                f"application {version}: exactly one {expected} required; found {lines}")
+        then = now
+
 
 # One second per git call, so commits made in the same second still sort newest-first.
 _CLOCK = itertools.count(1_700_000_000)
@@ -73,6 +111,9 @@ def released(tmp_path: pathlib.Path) -> pathlib.Path:
     commit(tmp_path, "0.0.9", [1])
     commit(tmp_path, "0.1.0", [1, 2])
     commit(tmp_path, "0.1.0", [1, 2], note="an ordinary change")
+    log = tmp_path / "docs/CHANGELOG.md"
+    log.parent.mkdir()
+    log.write_text("## Application 0.1.0 — chart 0.1.0 — 2026-10-04\n\n- **Schema 1 → 2.**\n")
     return tmp_path
 
 
@@ -85,6 +126,8 @@ def test_a_migration_without_a_version_bump_fails(released: pathlib.Path) -> Non
 def test_a_migration_with_a_version_bump_passes(released: pathlib.Path) -> None:
     commit(released, "0.1.0", [1, 2, 3])
     commit(released, "0.2.0", [1, 2, 3])
+    log = released / "docs/CHANGELOG.md"
+    log.write_text("## Application 0.2.0 — chart 0.2.0 — 2026-10-04\n\n- **Schema 2 → 3.**\n\n" + log.read_text())
     assert_schema_released(released)
 
 
@@ -101,6 +144,8 @@ def test_the_release_is_the_merge_that_moved_the_version(released: pathlib.Path)
     commit(released, "0.2.0", [1, 2, 3])
     git(released, "checkout", "-q", "main")
     git(released, "merge", "-q", "--no-ff", "topic", "-m", "merge topic")
+    log = released / "docs/CHANGELOG.md"
+    log.write_text("## Application 0.2.0 — chart 0.2.0 — 2026-10-04\n\n- **Schema 2 → 3.**\n\n" + log.read_text())
     assert_schema_released(released)
 
 
@@ -119,3 +164,21 @@ def test_the_parse_reads_what_the_store_declares() -> None:
 
 def test_this_repository_released_its_highest_migration() -> None:
     assert_schema_released(REPO)
+
+
+@pytest.mark.parametrize("bad_line", ["", "- **Schema 1 → 3.**", "- **Schema 1 → 2.**\n- **Schema 1 → 2.**"],
+                         ids=["missing", "wrong", "duplicate"])
+def test_release_schema_line_is_required_and_matches_migrations(released, bad_line):
+    log = released / "docs" / "CHANGELOG.md"
+    log.parent.mkdir(exist_ok=True)
+    heading = "## Application 0.1.0 — chart 0.1.0 — 2026-10-04\n\n"
+    good = heading + "- **Schema 1 → 2.**\n"
+    log.write_text(good)
+    assert_schema_released(released)
+    # An unchanged-schema release must not hide a broken older release note.
+    commit(released, "0.2.0", [1, 2])
+    log.write_text(heading + bad_line + "\n")
+    with pytest.raises(AssertionError, match="Schema 1 → 2"):
+        assert_schema_released(released)
+    log.write_text(good)
+    assert_schema_released(released)

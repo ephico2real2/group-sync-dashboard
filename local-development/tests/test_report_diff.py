@@ -15,7 +15,8 @@ from gsd.reporting import REPORT_PREFIX
 from gsd.reporting.artifacts import Run
 from gsd.reporting.catalogue import REGISTRY
 from gsd.reporting.config import ReportSettings
-from reporting_seed import CLUSTER, NOW
+from gsd.reporting.snapshot import Snapshot
+from reporting_seed import CLUSTER, NOW, seed_store, write_snapshot
 from test_report_seal import CLOCK_DERIVED, _other_run, _run, snap  # noqa: F401 — `snap` is a fixture
 from test_reporting_server import SERVICE, _viewer, _wait_done, service  # noqa: F401 — `service` is a fixture
 
@@ -98,6 +99,25 @@ def test_t108_2_two_runs_over_one_snapshot_diff_to_no_change(snap, name):  # noq
     assert _changed(diff) == set(), name
 
 
+def test_access_certification_diff_ignores_a_new_snapshot_of_the_same_data(tmp_path):
+    """#589: a new snapshot stamp is provenance, not a changed Campaign row."""
+    store = seed_store(str(tmp_path / "writer.db"))
+    directory = tmp_path / "snapshots"
+    directory.mkdir()
+    try:
+        first, second = Snapshot(write_snapshot(store, directory)), Snapshot(write_snapshot(store, directory))
+    finally:
+        store.close()
+    try:
+        base = _doc(_run(first, "access-certification"))
+        head = _doc(_other_run(second, "access-certification"))
+    finally:
+        first.close()
+        second.close()
+    assert base["sealed_provenance"]["snapshot_stamp"] != head["sealed_provenance"]["snapshot_stamp"]
+    assert _changed(_build(base, head)) == set()
+
+
 @pytest.mark.parametrize("name", sorted(CLOCK_DERIVED))
 def test_t108_3_a_clock_reading_report_shows_what_the_clock_moved(snap, name):  # noqa: F811
     """The five reports that read the generation clock: two hours apart over one snapshot, the diff shows exactly
@@ -154,6 +174,20 @@ def test_t108_4_a_stored_diff_seals_renders_and_leaves_its_inputs(service):  # n
     again = _wait_done(client, _diff(client, base["id"], head["id"], formats=["html"]).json()["id"], _viewer())
     assert again["sha256"] == run["sha256"], "two diffs of one pair are the same evidence"
     assert {r: _files(app, r) for r in (base["id"], head["id"])} == before, "a diff never rewrites its inputs"
+
+
+def test_diff_refuses_a_base_newer_than_the_head(service):  # noqa: F811
+    """#588: the API refuses a swapped pair before queuing the diff."""
+    client, _, clock = service
+    earlier = _done(client)
+    clock["now"] += timedelta(minutes=1)
+    later = _done(client)
+    response = _diff(client, later["id"], earlier["id"])
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == (
+        f"base {later['id']} is newer than head {earlier['id']}: "
+        "a diff compares an earlier run with a later one"
+    )
 
 
 def test_t108_5_refusals(service):  # noqa: F811

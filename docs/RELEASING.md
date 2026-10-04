@@ -277,6 +277,16 @@ application release is refused before any edit, and the message names `actions/c
 (`git fetch --unshallow` on a laptop). A version bumped by hand, without the script, gets no line: nothing else
 writes it.
 
+CI enforces the line for application releases after #300 merged (`2e7d33be`, PR #528), including hand
+bumps (#543). `tests/test_migration_needs_app_release.py` reads first-parent version changes and uses
+`prepare-release.py`'s highest-migration reader on each release's `store.py`. It compares successive
+released images and requires exactly one `**Schema N → M.**` bullet in that version's application
+section when the schema rises; a missing heading also fails. The existing hermetic CI job supplies full
+history. Notes before #300 are exempt and are not rewritten: that merge introduced the schema-line
+writer while the application was 2.3.0. Neither 3.0.0 nor 4.0.0 moved the schema from 20; those
+headings therefore need no schema line. Releases still collected under Unreleased must retain
+their own application heading when they move the schema.
+
 ### A chart-only release
 
 Change the templates or defaults, then:

@@ -105,3 +105,40 @@ def test_a_fire_in_the_spring_forward_gap_is_skipped_and_a_fire_in_the_fall_back
 ])
 def test_a_list_that_means_every_day_is_daily_and_a_long_list_is_the_expression(expr, cadence):
     assert cron.describe(expr) == cadence
+
+
+@pytest.mark.parametrize("named,numeric", [
+    ("0 22 * * SUN", "0 22 * * 0"),
+    ("0 5 1 JAN,APR *", "0 5 1 1,4 *"),
+    ("0 22 * * mon,WeD,FRI", "0 22 * * 1,3,5"),
+    ("0 5 1 jan-mAr *", "0 5 1 1-3 *"),
+    ("0 22 * * Mon-FRI", "0 22 * * 1-5"),
+    ("0 5 1 MAY-DEC/2 *", "0 5 1 5-12/2 *"),
+    ("0 22 * * TUE-SAT/2", "0 22 * * 2-6/2"),
+    ("0 5 1 FEB,JUN,JUL,AUG,SEP,OCT,NOV *", "0 5 1 2,6,7,8,9,10,11 *"),
+    ("0 22 * * THU", "0 22 * * 4"),
+])
+def test_named_fields_fire_like_numeric_twins_and_unknown_names_are_refused(named, numeric):
+    from dataclasses import replace
+
+    actual, expected = cron.parse(named), cron.parse(numeric)
+    assert replace(actual, text=numeric) == expected
+    for zone in (None, "America/New_York"):
+        assert cron.next_fire(actual, NOW, zone) == cron.next_fire(expected, NOW, zone)
+        assert cron.prev_fire(actual, NOW, zone) == cron.prev_fire(expected, NOW, zone)
+    for bad in ("0 22 * * FUNDAY", "0 5 1 JANY *", "0 22 * * MON-FUNDAY", "0 5 1 JAN,JANY *"):
+        with pytest.raises(cron.CronError):
+            cron.parse(bad)
+
+
+@pytest.mark.parametrize("expr, weekdays", [
+    ("0 22 * * 1/2", {1, 3, 5}),
+    ("0 22 * * MON/2", {1, 3, 5}),
+    ("0 22 * * 4/3", {4}),
+    ("0 22 * * 0/3", {0, 3, 6}),
+    ("0 22 * * */2", {0, 2, 4, 6}),
+])
+def test_a_stepped_weekday_ends_at_saturday_as_kubernetes_reads_it(expr, weekdays):
+    # robfig/cron v3.0.1 reads `N/step` as `N-max/step` with day-of-week's max 6 (parser.go 293-296,
+    # spec.go's dow bounds), so Kubernetes never fires `1/2` on a Sunday; 7 is only our alias for Sunday.
+    assert cron.parse(expr).weekdays == weekdays

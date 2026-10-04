@@ -50,6 +50,9 @@ def diff_params(store: ArtifactStore, params: dict, cluster: str | None) -> dict
             raise ValidationError(f"{side} run {run.id} no longer has its .json")
     if base.id == head.id:
         raise ValidationError("base and head are the same run")
+    if not base.id < head.id:
+        raise ValidationError(f"base {base.id} is newer than head {head.id}: "
+                              "a diff compares an earlier run with a later one")
     if base.report != head.report or base.cluster != head.cluster:
         raise ValidationError(f"base is {base.report} on {base.cluster} and head is {head.report} on {head.cluster}: "
                               "a diff compares one report on one cluster")

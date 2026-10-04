@@ -1409,7 +1409,7 @@ td.state-cell { min-width: 210px; }
 
 /* system strip */
 .kpi-page .sys { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; /* optical: the mosaic's hairline, the border showing through */ background: var(--border); }
-.kpi-page .comp { background: var(--surface-1); padding: var(--space-8) var(--space-9); }
+.kpi-page .comp, .kpi-page .card-body { background: var(--surface-1); padding: var(--space-8) var(--space-9); }
 .kpi-page .comp-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-7); }
 .kpi-page .comp-name { font-family: var(--font-mono); font-size: var(--text-md); font-weight: 600; }
 .kpi-page .meters { display: flex; flex-direction: column; gap: var(--space-5); }
@@ -1481,6 +1481,7 @@ td.state-cell { min-width: 210px; }
 /* #306: the Backups card, to docs/design/kpi-backups-mock.html. One state line (a badge, its word, one mono
    line of detail), five tiles on the band's hairline grid, and the rule. A disabled card keeps one tile, the
    pre-upgrade copy, which is taken whether or not backups are on. */
+.kpi-page[data-card="backups"] > h2 .asof { min-width: 0; overflow-wrap: anywhere; }
 .kpi-page .bk-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4) var(--space-5);
   padding: var(--space-7) var(--space-9); border-bottom: 1px solid var(--border); }
 .kpi-page .bk-state .badge { white-space: normal; max-width: 100%; }
@@ -1727,3 +1728,11 @@ h2 .cc-chips { display: inline-flex; vertical-align: middle; }
 .hk-preview { margin-top: var(--space-6); font-size: var(--text-sm); }
 .hk-list { list-style: none; margin: var(--space-4) 0; padding: 0; max-height: 320px; overflow: auto; overflow-wrap: anywhere; }
 .hk-preview .acts { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+#hk-copies .hk-form { margin-top: 0; }
+@media (max-width: 560px) {
+  #hk-copies table, #hk-copies tbody, #hk-copies tr, #hk-copies td { display: block; min-width: 0; }
+  #hk-copies thead { display: none; }
+  #hk-copies tr { padding: var(--space-8) var(--space-9); border-bottom: 1px solid var(--border); }
+  #hk-copies td { padding: var(--space-3) 0; border: 0; text-align: left; overflow-wrap: anywhere; }
+  #hk-copies td[data-label]::before { content: attr(data-label) ": "; color: var(--text-muted); font-family: var(--font-ui); font-weight: 400; }
+}

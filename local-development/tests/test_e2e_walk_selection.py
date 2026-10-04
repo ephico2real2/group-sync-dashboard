@@ -57,3 +57,43 @@ def test_every_page_call_in_the_walk_binds_to_the_installed_playwright_api():
                 problems.append(f"{script}:{node.lineno} page.{node.func.attr}(...): {e}")
     assert problems == [], "\n".join(problems)
 
+
+
+def test_walk_accepts_an_interpreter_outside_the_checkout(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    script = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "run_walk.sh"
+    python = tmp_path / "external python"
+    python.symlink_to(sys.executable)
+    # Stop at mkdir, immediately after the interpreter check, before any browser or socket use.
+    out = tmp_path / "not-a-directory"
+    out.write_text("")
+    done = subprocess.run(
+        ["bash", str(script), "--base", "unused", "--login-user", "unused", "--out", str(out)],
+        env={**os.environ, "GSD_WALK_PYTHON": str(python), "GSD_UI_PASSWORD": "unused"},
+        capture_output=True, text=True,
+    )
+    assert done.returncode != 0
+    assert "no venv interpreter" not in done.stderr, done.stderr
+    assert "mkdir:" in done.stderr and str(out) in done.stderr, done.stderr
+
+
+def test_walk_refuses_the_interpreter_the_variable_names(tmp_path):
+    """#591: GSD_WALK_PYTHON wins over a checkout-local venv, so a missing one is the interpreter refused.
+    The test above cannot tell: where the checkout has a venv, the old script also reaches mkdir."""
+    import os
+    import subprocess
+
+    script = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "run_walk.sh"
+    python = tmp_path / "missing" / "python"
+    out = tmp_path / "not-a-directory"   # a run that ignored the variable stops at mkdir, before any browser
+    out.write_text("")
+    done = subprocess.run(
+        ["bash", str(script), "--base", "unused", "--login-user", "unused", "--out", str(out)],
+        env={**os.environ, "GSD_WALK_PYTHON": str(python), "GSD_UI_PASSWORD": "unused"},
+        capture_output=True, text=True,
+    )
+    assert done.returncode == 2, done.stderr
+    assert f"no venv interpreter at {python}" in done.stderr, done.stderr

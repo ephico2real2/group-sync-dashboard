@@ -88,7 +88,7 @@ spec:
                 {{- end }}
                 {{- range $f := ($s.formats | default list) }}
                 {{- if ne (toString $f) "json" }}
-                # json is always written; the trigger's --format takes html, pdf and csv
+                # json is always written; the trigger's --format takes html and csv
                 - --format
                 - {{ $f | quote }}
                 {{- end }}

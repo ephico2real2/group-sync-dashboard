@@ -4,14 +4,17 @@ instants in a zone, and a short cadence for a person to read (#149 R5/R6).
 Written rather than depended on: the service needs three answers about a handful of schedules — when
 the next fire is, when the last one should have been, and what the cadence is called — and the
 standard semantics fit in a page: `*`, lists, ranges, steps, the @-shorthands, and the day-of-month /
-day-of-week rule (when BOTH are restricted a day matches if EITHER does). Sunday is 0 or 7. Names are
-not accepted (the chart's values use numbers; Kubernetes accepts names but every example here is
-numeric). Scanning is by day, then the hour and minute sets, so a `* * * * *` schedule still resolves
-in well under a second and a monthly one in microseconds.
+day-of-week rule (when BOTH are restricted a day matches if EITHER does). Sunday remains 0 or 7. Month and
+weekday names follow robfig/cron v3.0.1, the version Kubernetes pins (its go.mod): JAN–DEC and SUN–SAT
+(spec.go's `months` and `dow` tables), case-insensitive (parser.go's parseIntOrName lowercases the name),
+as values, list members and range endpoints, including stepped ranges (#585). Scanning is by day, then the hour and
+minute sets, so a `* * * * *` schedule still resolves in well under a second and a monthly one in
+microseconds.
 """
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
@@ -48,8 +51,8 @@ def _field(text: str, lo: int, hi: int, name: str) -> tuple[set[int], bool]:
             a, b = int(a_s), int(b_s)
         elif part.isdigit():
             a = b = int(part)
-            if step != 1:      # `5/10` means 5,15,25… up to the bound
-                b = hi
+            if step != 1:      # `5/10` means 5,15,25… up to the bound; robfig/cron's day-of-week bound
+                b = 6 if name == "day-of-week" else hi   # is SAT (6): 7 is only our alias for Sunday
         else:
             raise CronError(f"{name}: cannot read {text!r}")
         if a < lo or b > hi or a > b:
@@ -92,6 +95,12 @@ def parse(expr: str) -> CronSpec:
     sets = []
     stars = []
     for part, (lo, hi), name in zip(parts, _BOUNDS, _NAMES):
+        # Translate whole value/range tokens only; numeric fields and step text stay untouched.
+        if name in ("month", "day-of-week"):
+            names = _MONTHS if name == "month" else _DOW
+            aliases = {label.upper(): str(value) for value, label in enumerate(names) if label}
+            part = re.sub(r"(^|[,-])([A-Za-z]+)(?=$|[,/\-])",
+                          lambda m: m[1] + aliases.get(m[2].upper(), m[2]), part)
         values, star = _field(part, lo, hi, name)
         sets.append(values)
         stars.append(star)

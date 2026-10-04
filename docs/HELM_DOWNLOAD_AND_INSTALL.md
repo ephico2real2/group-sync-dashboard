@@ -301,7 +301,14 @@ With the two supply-chain switches at their defaults (`SUPPLY_CHAIN_SIGNING`, `S
 `workflow_dispatch` from another branch pushes its immutable tags unsigned — D9), and every chart
 `helm.yaml` publishes as a new version is attested, with GitHub's OIDC identity — no key to fetch, nothing to trust but the identity strings
 below (`.github/workflows/publish.yml#attest`, `.github/workflows/helm.yaml#Attest the provenance of the packaged chart`).
-The commands need `cosign` 3.x and `gh` 2.49 or newer; the outputs shown are the tools' own
+Minimum cosign version: **v3**. The publisher pins `cosign-release: v3.1.3` in
+`.github/workflows/publish.yml#cosign-release: v3.1.3` (`sigstore/cosign-installer` v4.1.2).
+Cosign v3 attaches a Sigstore bundle to the image digest using OCI referrers; cosign v2 cannot
+read that signature format (`DESIGN_supply_chain.md#D7`). With v2, `Error: no signatures found`
+can therefore mean an incompatible verifier, not an unsigned image. Repeat the command with
+cosign v3 before concluding the signature is missing.
+
+The chart-provenance command needs `gh` 2.49 or newer. The outputs shown are the tools' own
 wording, with the values that change per release elided as `…`.
 
 **Two images per push since application 0.18.0.** The report service runs on its own image,

@@ -955,12 +955,18 @@ false
 {{- /* Value-returning helpers validate as a side effect; assign their output so nothing prints. */ -}}
 {{- $_ := include "gsd.reportPdfVariant" . -}}
 {{- $enabled := splitList "," (include "gsd.reportEnabledReports" .) -}}
+{{- if has "pdf" (((.Values.reporting | default dict).formats | default dict).scheduled | default list) -}}
+{{- fail "reporting.formats.scheduled: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" -}}
+{{- end -}}
 {{- range $s := ((.Values.reporting | default dict).schedules | default list) -}}
 {{- if not (has $s.report $enabled) -}}
 {{- fail (printf "reporting.schedules[%s].report %q is not an enabled catalogue name (enabled: %s)" $s.name $s.report (join ", " $enabled)) -}}
 {{- end -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$" (toString $s.name)) -}}
 {{- fail (printf "reporting.schedules[].name %q must be a short DNS label (it names a CronJob)" (toString $s.name)) -}}
+{{- end -}}
+{{- if has "pdf" ($s.formats | default list) -}}
+{{- fail (printf "reporting.schedules[%s].formats: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" $s.name) -}}
 {{- end -}}
 {{- /* #109: deliver.kind none|webhook; attach only with a webhook, and only a format the schedule stores. */ -}}
 {{- $deliver := $s.deliver | default dict -}}
@@ -969,8 +975,11 @@ false
 {{- if not (has $kind (list "none" "webhook")) -}}
 {{- fail (printf "reporting.schedules[%s].deliver.kind %q is not one of none, webhook" $s.name $kind) -}}
 {{- end -}}
-{{- if not (has $attach (list "none" "html" "pdf" "csv")) -}}
-{{- fail (printf "reporting.schedules[%s].deliver.attach %q is not one of none, html, pdf, csv" $s.name $attach) -}}
+{{- if eq $attach "pdf" -}}
+{{- fail (printf "reporting.schedules[%s].deliver.attach: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" $s.name) -}}
+{{- end -}}
+{{- if not (has $attach (list "none" "html" "csv")) -}}
+{{- fail (printf "reporting.schedules[%s].deliver.attach %q is not one of none, html, csv" $s.name $attach) -}}
 {{- end -}}
 {{- if and (eq $kind "none") (ne $attach "none") -}}
 {{- fail (printf "reporting.schedules[%s].deliver.attach=%s needs deliver.kind=webhook: there is nothing to attach it to" $s.name $attach) -}}

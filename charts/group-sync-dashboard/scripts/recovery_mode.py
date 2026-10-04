@@ -30,6 +30,7 @@ import json
 import math
 import os
 import re
+import select
 import signal
 import sys
 import time
@@ -51,7 +52,7 @@ _IDLE = "the app is NOT running and no data is collected"
 
 
 class _Stop(Exception):
-    """SIGTERM arrived. Raised from the handler so a sleep ends at once."""
+    """SIGTERM arrived. Raised from the handler so a wait ends at once."""
 
 
 def _on_sigterm(signum: int, frame: object) -> None:
@@ -146,7 +147,7 @@ def _expired(ttl_text: str, ttl: float, release: str, db: str, rebooted: bool) -
         f" release's values file (lines above)")
 
 
-def run(args: argparse.Namespace) -> int:
+def run(args: argparse.Namespace, wakeup_fd: int) -> int:
     ttl_text = os.environ.get("GSD_RECOVERY_MODE_TTL", "")
     ttl = ttl_seconds(ttl_text)
     if not ttl:
@@ -174,7 +175,8 @@ def run(args: argparse.Namespace) -> int:
         if left <= 0:
             _expired(ttl_text, ttl, args.release, db, str(record["boot_id"]) != boot)
             return 1
-        time.sleep(min(left, args.report_every))
+        # #555: a signal arriving before the wait leaves a byte, so the wait cannot miss it.
+        select.select([wakeup_fd], [], [], min(left, args.report_every))
         left = remaining(record, ttl, time.monotonic(), boot)
         if left > 0:
             say(f"{span(left)} left; {_IDLE}")
@@ -185,12 +187,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--release", default="group-sync-dashboard", help="the release whose values file the TTL lines name")
     parser.add_argument("--report-every", type=float, default=REPORT_EVERY, help="seconds between two 'time left' lines")
     args = parser.parse_args(argv)
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+    previous_wakeup_fd = signal.set_wakeup_fd(write_fd)
     try:
         signal.signal(signal.SIGTERM, _on_sigterm)
-        return run(args)
+        return run(args, read_fd)
     except _Stop:
         say("SIGTERM: stopping (exit 0); the app was not running")
         return 0
+    finally:
+        signal.set_wakeup_fd(previous_wakeup_fd)
+        os.close(read_fd)
+        os.close(write_fd)
 
 
 if __name__ == "__main__":
