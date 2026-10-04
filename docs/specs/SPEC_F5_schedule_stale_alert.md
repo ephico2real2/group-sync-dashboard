@@ -8,7 +8,7 @@
 | Version on release | app 4.5.0, chart 0.68.0 |
 | Version note | Image content (`gsd/reporting/server.py` and `metrics.py` gain the gauge), so the next application MINOR, 4.5.0 (`docs/specs/README.md`, the version ladder). The chart takes a MINOR: a new alert is behaviour (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`) and it adds a value key, `monitoring.prometheusRule.for.reportScheduleLate`, as each of the chart's other rules has one (§3.4); the history agrees (0.67.0: "MINOR: `reporting.schedules[].deliver` …"; 0.66.5 to 0.66.7 were PATCHes because they moved only appVersion and docs). Read on `451ff688` (application 4.4.0, chart 0.67.0). W1 was `specified` at chart 0.68.0; by SPEC_E5's rule (a `specified` spec names a chart version above `Chart.yaml` and above every other `specified` claim) this spec takes 0.68.0 as the next to be built and W1 moves to 0.69.0, its index row and its header in this spec's own commit. A release that lands first makes the version blocks fail their check; the implementing pull request corrects them here first |
 | Issue | [#140](https://github.com/ephico2real2/group-sync-dashboard/issues/140) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-04, from the issue's refined body (2026-09-26, item 2) and the orchestrator's brief, re-measured against main `451ff688` (after F4). Measured with the repository's venv (Python 3.14, prometheus_client 0.26.0), `helm template`, promtool 3.15.0 from `quay.io/prometheus/prometheus` and read-only `oc get` on the lab. §7's 20 blocks were generated from a working copy and proved against a clean checkout of `451ff688` (§4.3) |
 
 ## How to read this spec

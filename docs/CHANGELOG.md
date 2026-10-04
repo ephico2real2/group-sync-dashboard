@@ -8,7 +8,9 @@ lives next to the code and in the design and review records linked here. Changes
 last release sit under `## Unreleased` until the release that carries them replaces that heading —
 which `local-development/prepare-release.py` does when the release is cut.
 
-## Unreleased
+## Application 5.0.0 — chart 0.70.1 — 2026-10-04
+
+- **Epic F: reports, honest seals, more formats, diffs and delivery (#386).**
 
 - **The Tech debt sweep (the "Tech debt" milestone; application 4.7.0, chart 0.70.0).** Fourteen issues found by
   walks and reviews, each as small as its issue, one bullet each below: #577, #546, #548, #594, #555, #587, #588, #589,

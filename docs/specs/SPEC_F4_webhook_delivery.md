@@ -8,7 +8,7 @@
 | Version on release | app 4.4.0, chart 0.67.0 |
 | Version note | Image content (`gsd/reporting/trigger.py` gains delivery), so the next application MINOR, 4.4.0 (`docs/specs/README.md`, the version ladder). The chart takes a MINOR because a value key is added (`reporting.schedules[].deliver`), by its own rule (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`) and its history (0.66.0: "MINOR: `platformUsers` …"; 0.66.5 to 0.66.7 were PATCHes because they added no key). Read on `0a4a366d` (application 4.3.0, chart 0.66.7). W1 was `specified` at chart 0.67.0; by SPEC_E5's rule (a `specified` spec names a chart version above `Chart.yaml` and above every other `specified` claim) this spec takes 0.67.0 as the next to be built and W1 moves to 0.68.0, its index row and its header in this spec's own commit. A release that lands first makes the version blocks fail their check; the implementing pull request corrects them here first |
 | Issue | [#109](https://github.com/ephico2real2/group-sync-dashboard/issues/109) |
-| Status | merged |
+| Status | released |
 | Source | OB1-lite's research and specification of 2026-10-04, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §1 and §4 re-measured against main `0a4a366d` (after #149's fan-out, F1, F2 and F3). Measured with the repository's venv (Python 3.14.7, httpx 0.28.1) and `helm template`. No lab read; §5 states the walk. §7's 27 blocks were generated from a working copy and proved against a clean checkout of `0a4a366d` (§4.3) |
 
 ## How to read this spec
