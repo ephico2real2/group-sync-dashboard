@@ -128,8 +128,8 @@ class TestTriggerClusterAgnosticAndFormats:
         body = _FakeClient.captured["json"]
         assert "cluster" not in body and "formats" not in body, body
         rc = trigger.main(["--url", "https://x", "--report", "groups", "--schedule", "weekly", "--token-file", self._tok(tmp_path),
-                           "--cluster", "prod-east", "--format", "pdf"])
-        assert rc == 0 and _FakeClient.captured["json"]["cluster"] == "prod-east" and _FakeClient.captured["json"]["formats"] == ["pdf"]
+                           "--cluster", "prod-east", "--format", "csv"])   # #594: a schedule never asks for pdf
+        assert rc == 0 and _FakeClient.captured["json"]["cluster"] == "prod-east" and _FakeClient.captured["json"]["formats"] == ["csv"]
 
     def test_a_fan_out_is_waited_for_whole_and_one_failure_fails_the_job(self, monkeypatch, tmp_path, capsys):
         class _Resp:
