@@ -81,6 +81,21 @@ suite on the applied tree: 4 failed, 8216 passed). Blocks 88 and 89 give that fi
 `test_kpi.py`: it builds the app through `test_reporting_server`'s builder, which holds the ticket key, and mints with
 `TICKET_KEY`.
 
+**Review of the implementation (2026-10-04): Codex (gpt-5.6-sol, xhigh) and OB2 (Fable 5.1, high; the auth seat in
+place of OB3, who wrote this spec).** OB2 accepted with no finding: it measured the forgery open on main and closed
+here, 26 malformed inputs and 8 raw-socket inputs each answered with §3.3's status (no 500), `json.loads` never called
+on unsigned input, no key or token byte in any repr, traceback or DEBUG log, the rotation window, the mounts (no
+schedule CronJob or Job), and RBAC REMOVED 0 / ADDED 1. Codex confirmed C1 and C3 to C8 and found one defect:
+- **Accepted: an authenticated payload that is not a JSON object escaped the refusal path (Codex F1).** A payload
+  whose MAC verifies but whose JSON is an array, a string, a number or `null` reached `claims.get(...)` and raised
+  `AttributeError`, which the server does not catch: a 500 instead of §3.3's 403. Only the ticket key's holder can
+  produce one, so it is not a forgery, but it breaks the refusal contract. `verify` now refuses a non-object claim set
+  as a `TicketError` (Blocks R1 and R2), and `test_an_authenticated_payload_must_be_a_json_object` holds the four
+  cases (4 failed before, 4 passed after).
+- **Observed, no change:** `any(...)` short-circuits, so timing can tell which of the two keys verified, which the
+  report pod's start line already states; the start line "ticket key loaded" is emitted only where the pod's logging
+  is configured, which the lab walk (§5) reads.
+
 ## 1. The mandate, and what is out of scope
 
 The mandate (#392, "The change", "Must not change" and "Definition of Done"): sign tickets with a key that only the
@@ -1273,6 +1288,16 @@ def test_a_ticket_has_exactly_one_spelling():
         with pytest.raises(TicketError):
             verify(KEYS, malformed, "root", now=1_100)
     assert verify(KEYS, ticket, "root", now=1_100)["viewer"] == "root"
+
+
+@pytest.mark.parametrize("payload", [b"[]", b'"text"', b"1", b"null"])
+def test_an_authenticated_payload_must_be_a_json_object(payload):
+    """A valid MAC authenticates bytes, not their JSON type; every malformed claim set is still a refusal."""
+    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+    digest = hmac.new(KEYS.current, payload, hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    with pytest.raises(TicketError, match="JSON object"):
+        verify(KEYS, f"v2.{encoded}.{signature}", "root", now=1_100)
 
 
 def test_tampering_always_changes_the_ticket_and_is_refused():
@@ -2679,4 +2704,32 @@ from test_reporting_server import TICKET_KEY, build_report_app
 
 ```python
             ticket = {TICKET_HEADER: mint(TICKET_KEY, "alice.person", "all", 300), USER_HEADER: "alice.person"}
+```
+
+### Block R1 — `local-development/gsd/reporting/ticket.py`: from the review of the implementation (PR, Codex F1)
+
+<!-- block: local-development/gsd/reporting/ticket.py | edit -->
+```python
+        raise TicketError("ticket payload is not JSON") from exc
+```
+
+```python
+        raise TicketError("ticket payload is not JSON") from exc
+    if not isinstance(claims, dict):
+        raise TicketError("ticket payload is not a JSON object")
+```
+
+### Block R2 — `local-development/tests/test_reporting_ticket.py`: from the review of the implementation (PR, Codex F1)
+
+<!-- block: local-development/tests/test_reporting_ticket.py | edit -->
+```python
+"""The ticket: signature, expiry, tier, and the binding to the proxy's identity header."""
+```
+
+```python
+"""The ticket: signature, expiry, tier, and the binding to the proxy's identity header."""
+import base64
+import hashlib
+import hmac
+
 ```
