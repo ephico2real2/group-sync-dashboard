@@ -1,0 +1,22 @@
+# #555 probe, NEVER merged: repeat test_t303_11's steps on GitHub's runners, where the flake was seen (2 of 35 main runs
+# since 2026-10-03), and dump the stuck child's stack with faulthandler on a timeout.
+name: probe-555
+on:
+  pull_request:
+    paths: [".github/workflows/probe-555.yml", "local-development/tests/probes/probe_555.py"]
+permissions: {contents: read}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: repeat the SIGTERM steps 600 times
+        run: python local-development/tests/probes/probe_555.py 600
