@@ -83,6 +83,7 @@ renderers, and the unchanged inputs, catalogue and retention. The decisions, wri
   first; it now pages until a hundred earlier runs are found or the list ends.
 - **Accepted: the Library counted diff runs it did not show (Codex, C7).** A diff is listed under the report it
   compares (`params.report`), as a manual run.
+- **Correction at implementation:** Codex's Library and status browser test (its sandbox could not launch Chromium) located the history row by `has_text=<run id>`, which the row never shows (it shows the requested time; the id is on the artefact buttons). It now locates the row by its `[data-artifact]` button.
 - **Observations kept as they are:** a swapped pair (base newer than head) is accepted, and the page never sends one;
   access-certification seals its snapshot stamp in a list row, so two of its runs over different snapshots always
   show that row changed.
@@ -1355,7 +1356,8 @@ function wireReporting() {
             assert "report-diff" in page.locator("#library-drawer").inner_text()
             page.goto(base + "#page=reporting&cluster=crc-local")
             page.wait_for_selector("#reporting-history tbody tr")
-            row = page.locator("#reporting-history tbody tr", has_text=diff.id)
+            # The history row shows the requested time, not the run id; the id is on its artefact buttons.
+            row = page.locator(f'#reporting-history tbody tr:has([data-artifact="{diff.id}"])')
             assert row.count() == 1 and "report-diff" in row.inner_text() and "access-matrix" in row.inner_text()
             assert not errors, f"diff Library/status page errors: {errors}"
         finally:
