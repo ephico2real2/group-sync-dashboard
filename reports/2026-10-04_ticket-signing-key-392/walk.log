@@ -1,0 +1,56 @@
+# SPEC_F6 §5 check (#392), CRC lab; written by scripts/run.sh; started 2026-10-04T08:14:22Z
+
+## The release  (2026-10-04T08:17:45Z)
+$ oc get pods -n group-sync-dashboard -l app.kubernetes.io/instance=group-sync-dashboard -o 'custom-columns=NAME:.metadata.name,START:.status.startTime,IMAGE:.spec.containers[0].image' | grep -vE 'offsite-|verify-'
+NAME                                                 START                  IMAGE
+group-sync-dashboard-79d6cf9468-dbcxf                2026-10-04T08:16:59Z   quay.io/ephico2real/group-sync-dashboard:4.6.0
+group-sync-dashboard-report-6ccdfdfb9b-27gn6         2026-10-04T08:16:59Z   quay.io/ephico2real/group-sync-dashboard-report:4.6.0
+$ oc get applications.argoproj.io -n openshift-gitops group-sync-dashboard -o json | jq -c '{sync: .status.sync.status, health: .status.health.status, revision: .status.sync.revision}'
+{"sync":"Synced","health":"Healthy","revision":"a92399d57589d8f1e22e86538ab6e78b305e1624"}
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+
+## The minted Secret, by name and key names only (no data)  (2026-10-04T08:17:45Z)
+$ oc get secret group-sync-dashboard-report-ticket-key -n group-sync-dashboard -o json | jq -c '{name: .metadata.name, created: .metadata.creationTimestamp, keys: (.data | keys)}'
+{"name":"group-sync-dashboard-report-ticket-key","created":"2026-10-04T08:16:48Z","keys":["key"]}
+
+## Where it is mounted (volume names and paths only)  (2026-10-04T08:17:45Z)
+$ oc get deploy -n group-sync-dashboard -o json | jq -c '.items[] | {name: .metadata.name, ticket_key_volumes: [.spec.template.spec.volumes[]? | select(.secret.secretName? == "group-sync-dashboard-report-ticket-key") | {name, items: .secret.items}], mounts: [.spec.template.spec.containers[].volumeMounts[]? | select(.mountPath | test("report-ticket")) | .mountPath]}'
+{"name":"grafana-openshift-grafana-deployment","ticket_key_volumes":[],"mounts":[]}
+{"name":"grafana-operator-controller-manager-v5","ticket_key_volumes":[],"mounts":[]}
+{"name":"group-sync-dashboard","ticket_key_volumes":[{"name":"report-ticket-key","items":[{"key":"key","path":"key"}]}],"mounts":["/etc/gsd/report-ticket"]}
+{"name":"group-sync-dashboard-recovery","ticket_key_volumes":[{"name":"report-ticket-key","items":[{"key":"key","path":"key"}]}],"mounts":["/etc/gsd/report-ticket"]}
+{"name":"group-sync-dashboard-report","ticket_key_volumes":[{"name":"report-ticket-key","items":null}],"mounts":["/etc/gsd/report-ticket"]}
+{"name":"mock-openshift","ticket_key_volumes":[],"mounts":[]}
+{"name":"mock-privateca","ticket_key_volumes":[],"mounts":[]}
+{"name":"mock-selfsigned","ticket_key_volumes":[],"mounts":[]}
+{"name":"mock-trusted","ticket_key_volumes":[],"mounts":[]}
+$ oc get cronjobs.batch -n group-sync-dashboard -o json | jq -c '[.items[] | {name: .metadata.name, mounts_ticket_key: ([.spec.jobTemplate.spec.template.spec.volumes[]? | select(.secret.secretName? == "group-sync-dashboard-report-ticket-key")] | length)}]'
+[{"name":"group-sync-dashboard-backup-offsite","mounts_ticket_key":0},{"name":"group-sync-dashboard-report-biweekly-groups","mounts_ticket_key":0},{"name":"group-sync-dashboard-report-delivery-walk","mounts_ticket_key":0},{"name":"group-sync-dashboard-report-quarterly-compliance","mounts_ticket_key":0},{"name":"group-sync-dashboard-report-weekly-namespace-access","mounts_ticket_key":0}]
+
+## The report pod's start line  (2026-10-04T08:17:45Z)
+$ oc logs -n group-sync-dashboard deploy/group-sync-dashboard-report -c report | grep -E 'ticket key loaded' | head -3
+2026-10-04 04:17:09,918 INFO    gsd.reporting.server ticket key loaded
+
+## A ticket forged with the service token (both formats), posted to the report service's loopback  (2026-10-04T08:17:46Z)
+$ oc exec deploy/group-sync-dashboard-report -- python3.14 -c <scripts/forge.py>
+{"v1_signed_with_token": {"status": 401, "detail": "ticket is from an earlier release; mint a new ticket"}, "v2_signed_with_token": {"status": 403, "detail": "For administrators only. This view reports the cluster's own RBAC binding surface and operator configuration rather than anything belonging to the reader."}}
+
+## No run is attributed to the forger  (2026-10-04T08:17:47Z)
+$ oc exec -n group-sync-dashboard deploy/group-sync-dashboard-report -c report -- python3.14 -c 'import json, pathlib; print(sum(1 for m in pathlib.Path("/artifacts").glob("*/run.json") if json.loads(m.read_text()).get("generated_by") == "walk-forger-392"))'
+0
+
+## A real ticket from the dashboard works: one viewer run as dana.lee  (2026-10-04T08:17:48Z)
+ticket format: prefix v2, parts 3
+real ticket POST: 202 20261004T081750.891035Z-2e06 dana.lee
+
+## After  (2026-10-04T08:17:51Z)
+$ oc get persistentvolumeclaims -n group-sync-dashboard -o custom-columns=NAME:.metadata.name,UID:.metadata.uid
+NAME                                    UID
+group-sync-dashboard-backup-offsite     7f505595-db2e-40be-a4ee-c6ed271c42b6
+group-sync-dashboard-data               f065b7a4-535c-4ef1-868c-58f5afee4953
+group-sync-dashboard-report-artifacts   08c7d45c-a3eb-47be-8506-f24ea7a3e0e3
+done 2026-10-04T08:17:51Z
