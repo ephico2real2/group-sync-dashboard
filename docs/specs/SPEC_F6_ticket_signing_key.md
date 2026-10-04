@@ -73,6 +73,14 @@ written against main at application 4.4.0 / chart 0.67.0. F5 (#140, PR #596) mer
 the index orders, so their Old texts now read 4.5.0 and 0.68.0. Their New texts (4.6.0 / 0.69.0) are unchanged, and
 the four block titles now name the versions they write.
 
+**Correction at implementation (orchestrator, 2026-10-04): F5's test file needs the ticket key too (Blocks 88, 89).**
+F5 (#140) merged first and added `local-development/tests/test_reporting_schedule_status.py`, which builds the report
+app with the service secret alone and mints T140-4's ticket with it. Applied after F5, this spec's report service
+requires the ticket key, so all four of that file's app tests failed with `FileNotFoundError` on the key file (the full
+suite on the applied tree: 4 failed, 8216 passed). Blocks 88 and 89 give that file the treatment Block 42 gives
+`test_kpi.py`: it builds the app through `test_reporting_server`'s builder, which holds the ticket key, and mints with
+`TICKET_KEY`.
+
 ## 1. The mandate, and what is out of scope
 
 The mandate (#392, "The change", "Must not change" and "Definition of Done"): sign tickets with a key that only the
@@ -2648,3 +2656,27 @@ appVersion: "4.5.0"
 appVersion: "4.6.0"
 ```
 
+### Block 88 — `local-development/tests/test_reporting_schedule_status.py`: the app with its two secrets apart
+
+<!-- block: local-development/tests/test_reporting_schedule_status.py | edit -->
+```python
+from gsd.reporting.server import build_report_app
+from gsd.reporting.ticket import mint
+```
+
+```python
+from gsd.reporting.ticket import mint
+# the report service with its two secrets apart (#392): test_reporting_server's builder holds the ticket key
+from test_reporting_server import TICKET_KEY, build_report_app
+```
+
+### Block 89 — `local-development/tests/test_reporting_schedule_status.py`: T140-4's ticket signed with the ticket key
+
+<!-- block: local-development/tests/test_reporting_schedule_status.py | edit -->
+```python
+            ticket = {TICKET_HEADER: mint(SECRET, "alice.person", "all", 300), USER_HEADER: "alice.person"}
+```
+
+```python
+            ticket = {TICKET_HEADER: mint(TICKET_KEY, "alice.person", "all", 300), USER_HEADER: "alice.person"}
+```
