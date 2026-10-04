@@ -69,6 +69,27 @@ def test_t108_1_rows_added_removed_and_no_change(snap):  # noqa: F811
     assert diff.totals == {"blocks_changed": 2, "rows_removed": 2, "rows_added": 3}
 
 
+def test_diff_reports_stable_coverage_conclusions_without_read_cycle_noise(snap):  # noqa: F811
+    """A loss of Namespace-read coverage is a material change even when every report row is equal;
+    timestamps embedded in coverage notes and retention watermarks are not."""
+    base = _doc(_run(snap, "groups"))
+    base["coverage"]["namespaces_read"] = "ok"
+    base["coverage"]["attests_absence"] = True
+    moving = copy.deepcopy(base)
+    moving["coverage"]["namespaces_note"] += " Read again at 2026-09-06T12:01:00Z."
+    moving["coverage"]["history_retained_since"]["membership_event"] = "2026-09-06T12:01:00Z"
+    assert _changed(_build(base, moving)) == set()
+
+    head = copy.deepcopy(moving)
+    head["coverage"]["namespaces_read"] = "forbidden"
+    head["coverage"]["attests_absence"] = False
+    diff = _build(base, head)
+    assert _changed(diff) == {("Evidence coverage", "Coverage")}
+    removed, added = next(s for s in diff.sections if s.title == "Evidence coverage — Coverage").blocks
+    assert removed.rows == [["Attests absence", True], ["Namespace read", "ok"]]
+    assert added.rows == [["Attests absence", False], ["Namespace read", "forbidden"]]
+
+
 @pytest.mark.parametrize("name", sorted(set(REGISTRY) - CLOCK_DERIVED))
 def test_t108_2_two_runs_over_one_snapshot_diff_to_no_change(snap, name):  # noqa: F811
     """The six clock-free reports: another viewer, run id and minute, one snapshot: nothing changed, because page
@@ -185,7 +206,16 @@ def test_t108_6_the_worker_refuses_an_input_that_changed_or_predates_the_seal(se
                       "base_sha256": "0" * 64, "head_sha256": head["sha256"]})
     with pytest.raises(ValidationError, match="sha256 recorded"):
         build_diff_run(store, run, ReportSettings(), NOW)
+
     old = json.loads(store.read(base["id"], "json"))
+    tampered = copy.deepcopy(old)
+    inventory = next(s for s in tampered["sections"] if s["title"] == "Inventory")["blocks"][0]
+    inventory["rows"][0][0] = "edited-in-place"
+    store.write(base["id"], "json", json.dumps(tampered).encode("utf-8"))
+    run.params["base_sha256"] = base["sha256"]
+    with pytest.raises(ValidationError, match="sha256 recorded"):
+        build_diff_run(store, run, ReportSettings(), NOW)
+
     del old["sealed_provenance"]
     with pytest.raises(ValidationError, match="before 4.1.0"):
         _build(old, json.loads(store.read(head["id"], "json")))

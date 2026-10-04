@@ -3342,9 +3342,17 @@ function wireHistoryDiff(refetch) {
       const d = { head, runs: null, base: "", note: "", submitting: false, run: null };
       view.historyDiff = d; render();
       try {
-        const q = new URLSearchParams({ report: head.report, cluster: head.cluster, status: "done", limit: "100" });
-        // Ids sort chronologically, so "earlier" is a smaller id; the newest earlier run is the default base.
-        d.runs = ((await reportGet(`/api/runs?${q}`)).runs || []).filter((r) => r.id < head.id);
+        // Ids sort chronologically, so "earlier" is a smaller id; the newest earlier run is the default base. The
+        // service lists newest first, so the earlier runs follow every later one: page past those (an hourly
+        // schedule keeps ~2 000 in 90 days) until a hundred earlier runs are found or the list ends.
+        const earlier = [];
+        for (let offset = 0; earlier.length < 100; offset += 1000) {
+          const q = new URLSearchParams({ report: head.report, cluster: head.cluster, status: "done", limit: "1000", offset: String(offset) });
+          const got = await reportGet(`/api/runs?${q}`);
+          earlier.push(...(got.runs || []).filter((r) => r.id < head.id));
+          if (!got.truncated) break;
+        }
+        d.runs = earlier.slice(0, 100);
         d.base = d.runs.length ? d.runs[0].id : "";
       } catch (e) { d.runs = []; d.note = `The earlier runs could not be listed: ${e.message}`; }
       if (view.historyDiff === d) render();
@@ -3541,7 +3549,10 @@ function librarySectionHtml(sec, allRuns) {
   const sid = sched ? `sec-${sched.name}` : `sec-${report.name}`;
   const title = sched ? librarySpokenHead(sched, report) : report.title;
   const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
-  const manuals = sec.manuals ? allRuns.filter((r) => r.report === report.name && !r.schedule) : [];
+  // A diff is not a catalogue entry, but it belongs beside the source report it compares; otherwise
+  // the Library's total counts a stored run for which it renders no card.
+  const manuals = sec.manuals ? allRuns.filter((r) => !r.schedule &&
+    (r.report === report.name || (r.report === "report-diff" && r.params && r.params.report === report.name))) : [];
   const paused = !!(sched && !sched.enabled);
   const empty = !scheduled.length && !manuals.length;
   const chips = [`<span class="rp-chip k-${esc(kcat)}">${esc(klabel)}</span>`];

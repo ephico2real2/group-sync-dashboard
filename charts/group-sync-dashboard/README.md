@@ -384,7 +384,8 @@ pack — as self-contained HTML and PDF/A, from a **read-only copy** of the dash
 the dashboard's leader writes under `/data/report`. Reached through the proxy under `/report/` with
 the same login; administrators (the wide tier) generate from the **Reports** tab. Every value is
 `reporting.*`; the refuse/derive column says what happens when switches meet. A `report-diff` run (#108) compares
-two finished runs of one report on one cluster, rows removed and added; it is not a twelfth report, needs no
+two finished runs of one report on one cluster, including stable coverage conclusions and rows removed and added;
+it is not a twelfth report, needs no
 value, and is kept like any manual run (`reporting.retention.manual`).
 
 | Value | Default | Meaning | Refuse / derive |
