@@ -51,8 +51,8 @@ def _field(text: str, lo: int, hi: int, name: str) -> tuple[set[int], bool]:
             a, b = int(a_s), int(b_s)
         elif part.isdigit():
             a = b = int(part)
-            if step != 1:      # `5/10` means 5,15,25… up to the bound
-                b = hi
+            if step != 1:      # `5/10` means 5,15,25… up to the bound; robfig/cron's day-of-week bound
+                b = 6 if name == "day-of-week" else hi   # is SAT (6): 7 is only our alias for Sunday
         else:
             raise CronError(f"{name}: cannot read {text!r}")
         if a < lo or b > hi or a > b:

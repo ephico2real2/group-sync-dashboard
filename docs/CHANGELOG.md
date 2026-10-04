@@ -31,7 +31,9 @@ which `local-development/prepare-release.py` does when the release is cut.
 - **Report JSON names and note fixture corrected (#590).** The whole JSON is named `report_json`,
   and the note fixture uses `level`. No behaviour changes.
 - **Named cron months and weekdays (#585).** Reporting accepts case-insensitive month and weekday names
-  in values, lists and ranges, with the same fire times as their numeric forms.
+  in values, lists and ranges, with the same fire times as their numeric forms. A stepped single weekday
+  (`1/2`, `MON/2`) now ends at Saturday, as Kubernetes reads it, so the Reporting status page no longer
+  expects a Sunday fire that never comes.
 - **Release schema lines checked in CI (#543).** The hermetic release check requires exactly one matching
   schema line for each application release that moves the schema after #300; earlier notes remain unchanged.
 - **Choose the walk interpreter (#591).** `GSD_WALK_PYTHON` overrides the e2e walk's checkout-local
