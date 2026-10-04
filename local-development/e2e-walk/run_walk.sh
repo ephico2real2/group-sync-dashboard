@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command for the whole walk: capture → second pass → integrity → env facts → document.
-# Run from anywhere; uses local-development/.venv. The password comes from the environment only
-# (GSD_UI_PASSWORD), never an argument — argv is visible to every process on the host.
+# Run from anywhere; uses GSD_WALK_PYTHON or local-development/.venv. The password comes from
+# the environment only (GSD_UI_PASSWORD), never an argument — argv is visible to every process on the host.
 #
 #   GSD_UI_PASSWORD=$(cat ~/.crc/machines/crc/kubeadmin-password) \
 #   KUBECONFIG=<the cluster's kubeconfig> \
@@ -19,6 +19,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(git -C "${here}" rev-parse --show-toplevel 2>/dev/null || printf '%s' "${here%/local-development/e2e-walk}")"
 py="${here}/../.venv/bin/python"
 [ -x "${py}" ] || py="${repo}/local-development/.venv/bin/python"
+py="${GSD_WALK_PYTHON:-${py}}"
 base=""; user=""; provider="developer"; out=""; ns="group-sync-dashboard"; rel="group-sync-dashboard"; namespaces=""; skip_env=0
 while [ $# -gt 0 ]; do
   case "$1" in

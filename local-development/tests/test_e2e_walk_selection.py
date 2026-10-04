@@ -57,3 +57,24 @@ def test_every_page_call_in_the_walk_binds_to_the_installed_playwright_api():
                 problems.append(f"{script}:{node.lineno} page.{node.func.attr}(...): {e}")
     assert problems == [], "\n".join(problems)
 
+
+
+def test_walk_accepts_an_interpreter_outside_the_checkout(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    script = pathlib.Path(__file__).resolve().parents[1] / "e2e-walk" / "run_walk.sh"
+    python = tmp_path / "external python"
+    python.symlink_to(sys.executable)
+    # Stop at mkdir, immediately after the interpreter check, before any browser or socket use.
+    out = tmp_path / "not-a-directory"
+    out.write_text("")
+    done = subprocess.run(
+        ["bash", str(script), "--base", "unused", "--login-user", "unused", "--out", str(out)],
+        env={**os.environ, "GSD_WALK_PYTHON": str(python), "GSD_UI_PASSWORD": "unused"},
+        capture_output=True, text=True,
+    )
+    assert done.returncode != 0
+    assert "no venv interpreter" not in done.stderr, done.stderr
+    assert "mkdir:" in done.stderr and str(out) in done.stderr, done.stderr

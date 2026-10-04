@@ -46,6 +46,14 @@ which `local-development/prepare-release.py` does when the release is cut.
   of the same data no longer produce a changed Campaign block in a report diff.
 - **Report JSON names and note fixture corrected (#590).** The whole JSON is named `report_json`,
   and the note fixture uses `level`. No behaviour changes.
+- **Named cron months and weekdays (#585).** Reporting accepts case-insensitive month and weekday names
+  in values, lists and ranges, with the same fire times as their numeric forms.
+
+- **Release schema lines checked in CI (#543).** The hermetic release check requires exactly one matching
+  schema line for each application release that moves the schema after #300; earlier notes remain unchanged.
+
+- **Choose the walk interpreter (#591).** `GSD_WALK_PYTHON` overrides the e2e walk's checkout-local
+  interpreter search, so a worktree can use an existing environment outside the checkout.
 
 - **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
