@@ -543,3 +543,10 @@ class TestScheduleDelivery:
                             "reporting.schedules[0].deliver.attach=pdf")
         assert "reporting.schedules[weekly].deliver.attach: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" in out
         assert "add pdf to its formats" not in out
+
+    def test_a_schedules_format_comment_names_only_what_the_trigger_takes(self):
+        """#594: the trigger's --format takes html and csv; the rendered CronJob must not offer it pdf."""
+        ok, out = _render_text(**dict(s.split("=", 1) for s in (*self.BASE, "reporting.schedules[0].formats[0]=csv")))
+        assert ok, out
+        assert "the trigger's --format takes html and csv" in out
+        assert "html, pdf and csv" not in out
