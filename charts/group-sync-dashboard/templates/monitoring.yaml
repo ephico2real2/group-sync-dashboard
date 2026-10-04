@@ -363,8 +363,8 @@ spec:
         # Reporting status page's own verdict per schedule, so the rule and the page cannot disagree:
         # `late` already holds the page's 30-minute grace after the expected fire. `never` (no success on
         # record) and `disabled` (paused) do not fire. A completed CronJob is not evidence: a run refused
-        # outside the reporting window exits 0. max by (schedule): one alert per schedule while a rollout
-        # briefly scrapes two report pods.
+        # outside the reporting window exits 0. max by (schedule): one alert per schedule, whatever the pod
+        # and instance labels; the report pod restarts with Recreate, so a restart leaves a gap and `for:` starts again.
         - alert: GroupSyncDashboardReportScheduleLate
           expr: max by (schedule) (gsd_report_schedule_status{status="late"}) == 1
           for: {{ .Values.monitoring.prometheusRule.for.reportScheduleLate }}

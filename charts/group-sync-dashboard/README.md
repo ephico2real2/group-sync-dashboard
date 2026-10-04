@@ -545,7 +545,7 @@ defaults). The TTL is the bound. The procedure is the runbook's
 | `monitoring.serviceMonitor.enabled` | `true` | needs the Prometheus Operator CRDs (OpenShift ships them; the install fails on the unknown kind where they are absent — set it `false` on a bare Kubernetes without them). On by default since 0.36.0: user-workload monitoring is on on the clusters this chart is for |
 | `monitoring.serviceMonitor.interval` / `.scrapeTimeout` | `30s` / `10s` | every series is recomputed from SQLite on scrape and each scrape takes a read snapshot. Faster buys no resolution — the data only changes once per poll |
 | `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
-| `monitoring.prometheusRule.enabled` | `true` | **nineteen** alerts — two of them render only with `reporting.enabled` (the default), two only where the offsite CronJob renders (the default, which steps aside where it cannot work); see below |
+| `monitoring.prometheusRule.enabled` | `true` | **twenty** alerts — three of them render only with `reporting.enabled` (the default), two only where the offsite CronJob renders (the default, which steps aside where it cannot work); see below |
 | `monitoring.prometheusRule.labels` | `{}` | as above, for rule selection |
 | `monitoring.prometheusRule.overdueSeconds` | `7200` | a GroupSync has not synced for this long |
 | `monitoring.prometheusRule.notPollingSeconds` | `600` | catches a dead poll loop, which the health endpoints cannot. **Must stay above ~2× `config.pollIntervalSeconds`** or it fires continuously on a healthy deployment |

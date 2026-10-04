@@ -2537,7 +2537,7 @@ monitoring:
       reportPull: 30m       # GroupSyncDashboardReportUsagePullFailing: no successful pull for this long
       reportSnapshot: 30m   # GroupSyncDashboardReportSnapshotStale: the newest VACUUM INTO copy is older than this
       # GroupSyncDashboardReportScheduleLate: the status page's `late` already waits 30 minutes past the
-      # expected fire, so this only needs to outlast a scrape gap or a report pod restart.
+      # expected fire. A report pod restart (Recreate) leaves a gap in the series and this timer starts again.
       reportScheduleLate: 15m
       # Long: this is a migration backlog, not an incident. It should be visible and
       # tracked, never paging anyone at 3am.

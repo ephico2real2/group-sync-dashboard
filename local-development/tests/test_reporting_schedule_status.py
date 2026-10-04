@@ -144,6 +144,18 @@ class TestTheRule:
         assert _rule(_render("monitoring.prometheusRule.enabled=false")) is None
         assert _rule(_render("reporting.enabled=false")) is None
 
+    def test_t140_5b_the_readme_values_row_counts_the_rendered_alerts(self):
+        """The README's `monitoring.prometheusRule.enabled` row restates the rule count, a second copy of it:
+        this rule is the third that renders only with reporting on, so the row must say so (#140)."""
+        def alerts(*sets):
+            return [r for d in _render(*sets) if d.get("kind") == "PrometheusRule" for g in d["spec"]["groups"]
+                    for r in g["rules"] if "alert" in r]
+        total = len(alerts())
+        assert (total, total - len(alerts("reporting.enabled=false"))) == (20, 3)
+        row = next(ln for ln in (CHART / "README.md").read_text().splitlines()
+                   if ln.startswith("| `monitoring.prometheusRule.enabled` |"))
+        assert "**twenty** alerts — three of them render only with `reporting.enabled`" in row, row
+
     def test_t140_6_promtool_fires_on_late_only_once_per_schedule_after_for(self, tmp_path):
         """Prometheus's own evaluator over the rendered rule. Skips locally without promtool; CI installs it
         (ci.yml, "Install promtool") and must run it, as the board's PromQL test does."""
