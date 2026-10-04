@@ -26,8 +26,11 @@ REPORTING = Path(__file__).resolve().parents[1] / "gsd" / "reporting"
 class _Lab:
     """The report service (a fan-out of two runs) and the receiver, behind one transport."""
 
-    def __init__(self, hook_answers=None, create_status=202, run_status=None):
+    def __init__(self, hook_answers=None, create_status=202, run_status=None, artifact_answers=None):
         self.hook_answers = list(hook_answers or [httpx.Response(200)])
+        self.artifact_answers = list(artifact_answers or [
+            httpx.Response(200, content=b"<html>report</html>",
+                           headers={"content-type": "text/html; charset=utf-8"})])
         self.create_status = create_status
         self.run_status = run_status or {"r-crc": "done", "r-east": "done"}
         self.events: list[dict] = []
@@ -49,7 +52,10 @@ class _Lab:
             return httpx.Response(202, json={"runs": [{"id": "r-crc", "cluster": "crc-local"},
                                                       {"id": "r-east", "cluster": "prod-east"}]})
         if path.endswith("/artifact"):
-            return httpx.Response(200, content=b"<html>report</html>", headers={"content-type": "text/html; charset=utf-8"})
+            answer = self.artifact_answers.pop(0) if len(self.artifact_answers) > 1 else self.artifact_answers[0]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
         run_id = path.rsplit("/", 1)[1]
         status = self.run_status[run_id]
         return httpx.Response(200, json={
@@ -116,6 +122,29 @@ def test_t109_2_attach_sends_the_artefact_base64_and_names_what_it_cannot_send(l
     assert state.events[0]["data"]["attachment"] == {"format": "pdf", "omitted": "this run stored no pdf"}
 
 
+def test_t109_2b_an_attachment_transport_failure_is_omitted_and_the_fan_out_continues(lab):
+    state = lab("--attach", "html", artifact_answers=[
+        httpx.ConnectError("service GET failed"),
+        httpx.Response(200, content=b"<html>report</html>",
+                       headers={"content-type": "text/html; charset=utf-8"}),
+    ])
+    assert state.rc == 0 and [event["id"] for event in state.events] == ["r-crc", "r-east"]
+    assert state.events[0]["data"]["attachment"] == {
+        "format": "html", "omitted": "the artefact read failed (ConnectError)"}
+    assert base64.b64decode(state.events[1]["data"]["attachment"]["content_base64"]) == b"<html>report</html>"
+
+
+def test_t109_2c_the_response_bytes_cannot_bypass_the_attachment_cap(lab):
+    too_large = b"x" * (trigger.ATTACH_MAX_BYTES + 1)
+    state = lab("--attach", "html", artifact_answers=[
+        httpx.Response(200, content=too_large, headers={"content-type": "text/html"})])
+    assert state.rc == 0
+    assert state.events[0]["data"]["attachment"] == {
+        "format": "html",
+        "omitted": f"{len(too_large)} bytes read is over the {trigger.ATTACH_MAX_BYTES}-byte cap",
+    }
+
+
 def test_t109_3_a_failed_post_retries_the_retryable_and_prints_the_status_never_the_url(lab, capsys):
     state = lab(hook_answers=[httpx.Response(503, headers={"Retry-After": "7"}), httpx.Response(200)])
     out = capsys.readouterr()
@@ -123,6 +152,36 @@ def test_t109_3_a_failed_post_retries_the_retryable_and_prints_the_status_never_
     assert state.sleeps.count(7.0) == 1, "the receiver's Retry-After is honoured (the other sleeps are the 2 s polls)"
     assert "HTTP 503" in out.err
     _no_url(out.out + out.err)
+
+
+def test_t109_3b_no_delivery_attempt_starts_at_or_after_the_deadline(monkeypatch):
+    now = [10.0]
+    starts = []
+
+    class Hook:
+        def post(self, *args, **kwargs):
+            starts.append(now[0])
+            return httpx.Response(503)
+
+    monkeypatch.setattr(trigger.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(trigger.random, "uniform", lambda low, high: 0.0)
+    monkeypatch.setattr(trigger.time, "sleep", lambda delay: now.__setitem__(0, 20.0))
+    assert trigger._deliver(Hook(), HOOK, {"id": "r"}, deadline=10.0) is False
+    assert starts == []
+
+    now[0] = 0.0
+    assert trigger._deliver(Hook(), HOOK, {"id": "r"}, deadline=11.0) is False
+    assert starts == [0.0], "an oversleep must not start the promised retry after the deadline"
+
+
+def test_t109_3c_docs_name_the_exact_retryable_statuses():
+    root = Path(__file__).resolve().parents[2]
+    exact = "408, 429, 500, 502, 503, 504"
+    for relative in ("charts/group-sync-dashboard/README.md", "charts/group-sync-dashboard/values.yaml",
+                     "charts/group-sync-dashboard/Chart.yaml", "docs/CHANGELOG.md", "docs/specs/README.md"):
+        text = (root / relative).read_text()
+        assert "408, 429, 5xx" not in text, relative
+        assert exact in text, relative
 
 
 def test_t109_4_an_undelivered_run_fails_the_job_and_a_4xx_is_not_retried(lab, capsys):
@@ -189,3 +248,53 @@ def test_t109_9_the_report_service_makes_no_outbound_call():
                      else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
             for name in names:
                 assert name not in clients and not name.endswith("trigger"), (path.name, name)
+
+
+# ── OB3 review of #109: a hostile Retry-After, the deadline, the URL file, the event's time, the docs ──
+
+
+def test_review_a_non_ascii_digit_retry_after_falls_back_to_backoff(lab, capsys):
+    # '²'.isdigit() is True and float('²') raises: httpx decodes the byte 0xB2 as latin-1 '²'.
+    state = lab(hook_answers=[httpx.Response(503, headers=[(b"Retry-After", b"\xb2")]), httpx.Response(200)])
+    out = capsys.readouterr()
+    assert state.rc == 0 and len(state.events) == 3, "r-crc retried once on jitter, r-east delivered"
+    _no_url(out.out + out.err)
+
+
+def test_review_no_attempt_starts_that_cannot_finish_before_the_deadline(capsys):
+    posts = []
+    with httpx.Client(transport=httpx.MockTransport(lambda r: posts.append(r) or httpx.Response(200))) as hook:
+        assert trigger._deliver(hook, HOOK, {"id": "r-late"}, trigger.time.monotonic() + 1) is False
+    assert posts == [], "the first attempt is held to the deadline like a retry"
+    err = capsys.readouterr().err
+    assert "delivery failed for run r-late" in err
+    _no_url(err)
+
+
+def test_review_a_url_file_that_is_not_utf8_is_refused_by_class(tmp_path, capsys):
+    bad = tmp_path / "url"
+    bad.write_bytes(HOOK.encode() + b"\xff")
+    assert trigger._webhook_url(str(bad)) is None
+    err = capsys.readouterr().err
+    assert "cannot be read (UnicodeDecodeError)" in err
+    _no_url(err)
+
+
+def test_review_a_run_without_finished_at_sends_no_null_time():
+    # artifacts.py: a run the service restarted under is `failed` with finished_at None.
+    event = trigger._event({"id": "r1", "status": "failed", "finished_at": None, "error": "restarted"}, "w", SERVICE, None)
+    assert "time" not in event and event["data"]["finished_at"] is None
+
+
+def test_review_the_docs_name_the_statuses_the_trigger_retries():
+    root = Path(__file__).resolve().parents[2]
+    texts = {
+        "README row": next(line for line in (root / "charts/group-sync-dashboard/README.md").read_text().splitlines()
+                           if line.startswith("| `reporting.schedules[].deliver`")),
+        "values comment": (root / "charts/group-sync-dashboard/values.yaml").read_text().split("# `deliver` (#109")[1][:900],
+        "CHANGELOG bullet": (root / "docs/CHANGELOG.md").read_text().split("**Webhook delivery of scheduled reports")[1][:900],
+    }
+    for where, text in texts.items():
+        assert "5xx" not in text, f"{where}: the trigger retries {sorted(trigger.RETRYABLE_STATUSES)}, not every 5xx"
+        assert all(str(code) in text for code in trigger.RETRYABLE_STATUSES), where
+        assert "four times" not in text and "4 times" not in text, f"{where}: 4 attempts are 3 retries"

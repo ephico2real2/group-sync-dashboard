@@ -14,8 +14,9 @@ which `local-development/prepare-release.py` does when the release is cut.
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
   POSTs each finished run of its fan-out as one CloudEvents 1.0 event (the run's facts; `id` is the run id) to the
   URL in that Secret, mounted read-only into the Job; `attach: html|pdf|csv` adds the artefact base64 up to 5 MiB.
-  408, 429, 5xx and network errors are retried four times with full-jitter backoff and `Retry-After`; a run not
-  delivered fails the Job. The URL is never printed: a failure names the HTTP status or the exception's class.
+  408, 429, 500, 502, 503, 504 and network errors get up to 4 attempts, with full-jitter backoff and `Retry-After`;
+  a run not delivered fails the Job. The URL is never printed: a failure names the HTTP status or the exception's
+  class.
   A schedule without `deliver` renders the same CronJob; the report service still makes no outbound call; a
   window skip (409) delivers nothing; no RBAC change.
 

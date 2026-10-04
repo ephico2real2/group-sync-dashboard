@@ -1443,8 +1443,8 @@ reporting:
   # report, cluster, run id, status, schedule, sha256, finished_at, sizes) to the URL held in a Secret you
   # create (`oc create secret generic team-hook --from-literal=url=https://...`), mounted read-only into the
   # Job and never printed. attach: none|html|pdf|csv adds that artefact, base64, up to 5 MiB; it must be a
-  # format the schedule stores. Retried 4 times with backoff for 408, 429, 5xx and network errors; a run
-  # not delivered fails the Job like a failed run. The Job's egress to the receiver: chart README.
+  # format the schedule stores. Up to 4 attempts, with backoff, for 408, 429, 500, 502, 503, 504 and network
+  # errors; a run not delivered fails the Job like a failed run. The Job's egress to the receiver: chart README.
   #   - name: weekly-groups
   #     schedule: "0 23 * * 0"
   #     report: groups

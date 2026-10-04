@@ -74,7 +74,7 @@ def _webhook_url(path: str) -> str | None:
     try:
         with open(path, encoding="utf-8") as fh:
             raw = fh.read().strip()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:     # ValueError: UnicodeDecodeError, a file that is not UTF-8
         print(f"--webhook-url-file cannot be read ({type(exc).__name__})", file=sys.stderr)
         return None
     try:
@@ -92,7 +92,7 @@ def _retry_after(r: httpx.Response) -> float | None:
     raw = r.headers.get("Retry-After", "").strip()
     if not raw:
         return None
-    if raw.isdigit():
+    if raw.isascii() and raw.isdigit():
         seconds = float(raw)
     else:
         try:
@@ -109,10 +109,16 @@ def _attachment(service: httpx.Client, run: dict, fmt: str) -> dict:
         return {"format": fmt, "omitted": f"this run stored no {fmt}"}
     if size > ATTACH_MAX_BYTES:
         return {"format": fmt, "omitted": f"{size} bytes is over the {ATTACH_MAX_BYTES}-byte cap"}
-    r = service.get(f"/report/api/runs/{run['id']}/artifact", params={"format": fmt})
+    try:
+        r = service.get(f"/report/api/runs/{run['id']}/artifact", params={"format": fmt})
+    except httpx.HTTPError as exc:
+        return {"format": fmt, "omitted": f"the artefact read failed ({type(exc).__name__})"}
     if r.status_code != 200:
         return {"format": fmt, "omitted": f"the artefact read answered {r.status_code}"}
-    return {"format": fmt, "media_type": r.headers.get("content-type"), "bytes": len(r.content),
+    actual_size = len(r.content)
+    if actual_size > ATTACH_MAX_BYTES:
+        return {"format": fmt, "omitted": f"{actual_size} bytes read is over the {ATTACH_MAX_BYTES}-byte cap"}
+    return {"format": fmt, "media_type": r.headers.get("content-type"), "bytes": actual_size,
             "content_base64": base64.b64encode(r.content).decode("ascii")}
 
 
@@ -123,8 +129,11 @@ def _event(run: dict, schedule: str, source: str, attachment: dict | None) -> di
             "finished_at": run.get("finished_at"), "bytes": run.get("bytes") or {}, "error": run.get("error")}
     if attachment is not None:
         data["attachment"] = attachment
-    return {"specversion": "1.0", "id": run["id"], "source": source, "type": EVENT_TYPE,
-            "time": run.get("finished_at"), "datacontenttype": "application/json", "data": data}
+    event = {"specversion": "1.0", "id": run["id"], "source": source, "type": EVENT_TYPE,
+             "datacontenttype": "application/json", "data": data}
+    if run.get("finished_at"):          # CloudEvents `time` is optional: absent, never null
+        event["time"] = run["finished_at"]
+    return event
 
 
 def _deliver(hook: httpx.Client, url: str, event: dict, deadline: float) -> bool:
@@ -135,6 +144,12 @@ def _deliver(hook: httpx.Client, url: str, event: dict, deadline: float) -> bool
     body = json.dumps(event).encode("utf-8")
     headers = {"Content-Type": "application/cloudevents+json; charset=utf-8"}
     for attempt in range(1, DELIVER_ATTEMPTS + 1):
+        # §3.3: an attempt starts only if it can finish before the wait's deadline, the first one included and
+        # after a sleep that overran (review of #109: OB3 F3, Codex F1).
+        if time.monotonic() + DELIVER_TIMEOUT_SECONDS > deadline:
+            print(f"delivery failed for run {run_id}: no attempt fits before the wait's deadline "
+                  f"(after {attempt - 1} attempt(s))", file=sys.stderr)
+            return False
         try:
             r = hook.post(url, content=body, headers=headers)
         except httpx.HTTPError as exc:
