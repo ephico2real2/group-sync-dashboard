@@ -9,7 +9,7 @@
 | Version note | Image content (a new module, a branch in `create_run` and in the worker), so the next application MINOR, 4.3.0 (`docs/specs/README.md`, the version ladder). The chart takes the PATCH that moves `appVersion`, 0.66.7: its only other change is the README's reports paragraph; no value key, default, template or RBAC rule changes (the chart's rule, `charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`; 0.66.5 and 0.66.6 were the same kind of step). Read on `43b231b6` (application 4.2.0, chart 0.66.6); W1 is `specified` at chart 0.67.0, which stays above 0.66.7, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 12 to 15) fail their check; the implementing pull request corrects them here first |
 | Issue | [#108](https://github.com/ephico2real2/group-sync-dashboard/issues/108) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §1 and §3 re-measured against main after F1 (#270) and F2 (#106). Measured on main `43b231b6` with the repository's venv (Python 3.14): §2.3's probes built all eleven reports over the seeded snapshot of `tests/test_report_seal.py`. No lab read; §5 states the walk. §7's blocks were proved against a clean checkout of `43b231b6` (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §1 and §3 re-measured against main after F1 (#270) and F2 (#106). Measured on main `43b231b6` with the repository's venv (Python 3.14): §2.3's probes built all eleven reports over the seeded snapshot of `tests/test_report_seal.py`. No lab read; §5 states the walk. §7's blocks (the page's included, written in a second pass the same day) were proved against a clean checkout of `43b231b6` (§4.3) |
 
 ## How to read this spec
 
@@ -31,12 +31,10 @@ cites `path#anchor`.
 
 ## Orchestrator's notes
 
-1. **The page's "Diff vs…" action is specified in §3.8 but has no blocks yet (out of this spec's budget).** The
-   service side (§7, Blocks 1 to 16) is complete and proved (§4.3). The page change — a "Diff vs…" button on the
-   Report history rows, its picker and its browser test (T108-9) — is described rule by rule in §3.8 and is
-   **not measured**: the implementing pull request writes its blocks into §7 first, under this note, and proves
-   T108-9 failing on main and passing after, before applying anything. Until then the API (`POST /report/api/runs`
-   with `report: "report-diff"`) is the only way to request a diff.
+1. **The page was written in a second pass (orchestrator, 2026-10-03).** The first draft of this spec carried the
+   service side only and left the "Diff vs…" action described without blocks. Blocks 17 to 23 now add it to the
+   Report history (§3.8) and its browser test, T108-9, which fails on a clean main and passes on the applied copy
+   (§4.2, §4.3). The Library is not changed (§3.8 says why).
 2. **The issue's "titles carry live counts" does not hold on main.** Measured (§2.3): none of the 44 tables of the
    eleven reports over the seed carries a digit in its title. What varies is a section title carrying a
    PARAMETER (`Membership changes, last {window_days} days`, groups.py:51; `Dormant: no successful login in
@@ -58,13 +56,13 @@ cites `path#anchor`.
    is a `POST /report/api/runs` like any run, so the contract test (`test_reporting_server.py`, class
    `TestItsOwnContract`) holds unchanged.
 
-Open questions only the operator can answer:
+Questions settled by the orchestrator (2026-10-03, on "easy to manage, best practice"):
 
-1. **Different parameters.** §3.4 allows a diff of two runs made with different parameters and prints a warning
-   in the diff. Should it refuse them (422) instead? Refusing is simpler to read; allowing keeps the
-   access-certification case ("this campaign against the last one", whose `campaign`/`due`/`reviewer` differ).
-2. **The manual cap.** A diff is a manual run, so it takes one of `reporting.retention.manual.maxRuns`' slots
-   (§3.6). Should diffs have their own cap instead? Not proposed: it would be a third tier.
+1. **Different parameters: SETTLED, allowed with the warning.** A diff of two runs made with different parameters
+   is accepted and its `Inputs` section carries the warning (§3.4), which keeps the access-certification case
+   ("this campaign against the last one", whose `campaign`/`due`/`reviewer` differ).
+2. **The manual cap: SETTLED, shared.** A diff is a manual run and takes one of
+   `reporting.retention.manual.maxRuns`' slots (§3.6); there is no third tier.
 
 ## 1. The mandate, and what is out of scope
 
@@ -230,7 +228,7 @@ can be known at the request; the worker belts what can change after it.
 
 A diff has no schedule, so `_retention` ranks it with the manual runs: `reporting.retention.manual.days` and
 `maxRuns`, no new rule (T108-4 reads `retained_by: manual:…`). A scheduled run's standing is unchanged by a diff
-(T108-8). A diff does take one manual slot, as any manual run does (open question 2). A diff outlives its inputs
+(T108-8). A diff does take one manual slot, as any manual run does (settled, Orchestrator's notes: shared cap). A diff outlives its inputs
 when they are pruned first: it carries their ids and sha256s, so it still says what it compared.
 
 ### 3.7 The audit trail
@@ -239,16 +237,29 @@ The record (`GET /report/api/runs/<id>`) carries `params.base`, `params.head` an
 sha256 covers them (they are `params`, sealed) and the `Inputs` table. Two diffs of one pair hash the same (T108-4),
 because the run facts are on page one. Reason: PROV-O's `wasDerivedFrom`, held by the seal.
 
-### 3.8 The page (no blocks yet: Orchestrator's notes 1)
+### 3.8 The page: "Diff vs…" on the Report history
 
-On the Report history (index.html `reportingHistoryCard`), a done run whose report is not `report-diff` gets a
-`Diff vs…` button beside its artefacts. Clicking it asks the service for `GET /report/api/runs?report=<r>&cluster=<c>
-&status=done`, keeps the runs older than this one, and shows a picker under the table (requested at, sha256's first
-twelve, by), with "No earlier finished run of <r> on <c>" when there is none. Generate posts the diff with the
-form's default formats and refreshes the history; the diff run is a row like any other, with its `.html`, `.pdf`,
-`.json` (and `.csv` when asked) buttons from `run.formats` (index.html:3284). The picker's state lives in `view`, so
-a history poll's repaint keeps it (F2's review lesson). The Library lists the catalogue's reports and does not list
-diffs (not measured: the implementing pull request checks its grouping with a diff run present).
+Where: the Report history on the Reporting status page (index.html `reportingHistoryCard`), not the Library. The
+history lists every run, any report, newest first, with the filters a reader narrows to one report and cluster; the
+Library is organised by the catalogue's reports and schedules (`librarySections` builds its sections from the
+enabled catalogue, and `librarySectionHtml` keeps a manual run only when its `report` is that section's name),
+so a `report-diff` run has no section there (read from the code; not driven in a browser).
+
+The rules, each in Blocks 17 to 22:
+
+- A done run whose report is not `report-diff` gets a `Diff vs…` button after its downloads. A diff's row names
+  the report it compared, `report-diff (groups)`, from its `params.report`.
+- Clicking it opens a picker above the table. The bases offered are asked of the service, `GET
+  /report/api/runs?report=<r>&cluster=<c>&status=done&limit=100`, and kept when their id is below the head's (ids
+  sort chronologically), newest first; the newest is chosen. None: "No earlier finished run of <r> on <c>."
+- The picker is `view.historyDiff` (head, offered runs, chosen base, the diff run): the history's poll repaints
+  the page, and a choice held only in the DOM would be dropped, the defect F2's review found in the format boxes.
+  T108-9 repaints the page between choosing and posting.
+- Generate diff posts `{report: "report-diff", cluster, params: {base, head}}` with no `formats`, so the
+  deployment's manual default applies (`reporting.formats.manual`), and polls the run as the report form does.
+  The diff run shows in the picker with its state and, once done, one button per format from `run.formats` plus
+  `json`, each through `downloadArtifact`, the page's one artefact fetch. A 422 shows its sentence. Close
+  clears the picker; the history is refetched when the run ends, so the diff appears as a row too.
 
 ### 3.9 What does not change, and the test that holds it
 
@@ -281,7 +292,7 @@ of its own. Zero existing artefacts rewritten.
 | T108-6 | `test_t108_6_the_worker_refuses_an_input_that_changed_or_predates_the_seal` | The worker's belt |
 | T108-7 | `test_t108_7_the_catalogue_stays_eleven` | The catalogue still lists 11 |
 | T108-8 | `test_t108_8_a_diff_leaves_scheduled_retention_alone` | Retention for existing runs |
-| T108-9 | the "Diff vs…" browser test | The page (Orchestrator's notes 1: not written) |
+| T108-9 | `test_ui.py::…::test_diff_vs_offers_earlier_runs_keeps_the_choice_and_downloads_the_diff` | The "Diff vs…" action: the earlier runs of one report and cluster, the choice kept across a repaint, the POST, the download |
 
 ### 4.2 Each test fails without the change, and why
 
@@ -291,6 +302,8 @@ Run on a clean `43b231b6` with only Block 7's file added (§4.3):
 - T108-4, T108-5: the diff request answers `404 unknown report 'report-diff'` (server.py:321-322).
 - T108-6: `ModuleNotFoundError` (it imports `build_diff_run`).
 - T108-7: passes on both trees: it guards the catalogue.
+- T108-9 (Block 23 alone on the clean tree): the history has no `[data-diff]` button; `wait_for_selector` times out
+  (§4.3).
 - T108-8: passes on both trees (on main its diff request is a 404 it does not assert): it guards the scheduled
   run's standing.
 
@@ -301,40 +314,56 @@ The blocks checked against a clean detached worktree of `43b231b6`, then applied
 Recorded:
 
 ```text
+$ git fetch origin; git rev-parse origin/main      -> 43b231b6b77ef8da58e105c28d70f6042aa2e3d3 (unmoved)
 $ python local-development/apply-spec-blocks.py docs/specs/SPEC_F3_report_diff.md <clean 43b231b6>
-16 blocks check out across 13 files
+23 blocks check out across 15 files
 
-before the blocks (Block 7's file alone added to the clean tree):
-  tests/test_report_diff.py: 15 failed, 2 passed in 6.15s
+before the blocks (Blocks 7 and 23 alone on the clean tree):
+  tests/test_report_diff.py: 15 failed, 2 passed in 3.96s
     T108-1, T108-2 (6), T108-3 (5), T108-6: ModuleNotFoundError: No module named 'gsd.reporting.diff'
     T108-4: AssertionError: {"detail":"unknown report 'report-diff'"}; assert 404 == 202
     T108-5: KeyError: 'id' (the diff it needs for the diff-of-a-diff case is a 404)
     T108-7, T108-8: passed (the guards)
+  tests/test_ui.py -k diff_vs_offers (T108-9):
+    playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 30000ms exceeded.
+      - waiting for locator("[data-diff=\"20260906T000002.000000Z-df02\"]") to be visible
 
 $ python local-development/apply-spec-blocks.py docs/specs/SPEC_F3_report_diff.md <clean 43b231b6> --apply
 $ git diff --stat        (diff.py and test_report_diff.py are new)
- charts/group-sync-dashboard/Chart.yaml       |  7 +++--
- charts/group-sync-dashboard/README.md        |  4 ++-
- docs/CHANGELOG.md                            |  9 +++++++
- docs/DESIGN_reporting_output_and_delivery.md |  4 ++-
- docs/specs/SPEC_C3_reporting_microservice.md |  3 +++
+ charts/group-sync-dashboard/Chart.yaml       |  7 ++-
+ charts/group-sync-dashboard/README.md        |  4 +-
+ docs/CHANGELOG.md                            |  9 ++++
+ docs/DESIGN_reporting_output_and_delivery.md |  4 +-
+ docs/specs/SPEC_C3_reporting_microservice.md |  3 ++
  local-development/API.md                     |  2 +-
  local-development/gsd/__init__.py            |  2 +-
- local-development/gsd/reporting/artifacts.py |  4 +++
- local-development/gsd/reporting/runs.py      | 40 ++++++++++++++++------------
- local-development/gsd/reporting/server.py    | 25 ++++++++++++-----
+ local-development/gsd/reporting/artifacts.py |  4 ++
+ local-development/gsd/reporting/runs.py      | 40 +++++++++------
+ local-development/gsd/reporting/server.py    | 25 ++++++---
+ local-development/gsd/static/index.html      | 77 +++++++++++++++++++++++++++-
  local-development/pyproject.toml             |  2 +-
- 11 files changed, 71 insertions(+), 31 deletions(-)
+ local-development/tests/test_ui.py           | 44 ++++++++++++++++
+ 13 files changed, 190 insertions(+), 33 deletions(-)
  (runs.py's 40 lines are the existing build re-indented under the `else`; no change to model.py or any renderer)
 
 after the blocks:
-  tests/test_report_diff.py: 17 passed in 3.91s
+  tests/test_report_diff.py: 17 passed in 3.92s
   tests/test_reporting_*.py tests/test_report_seal.py tests/test_report_csv.py tests/test_chart_versions.py
-  tests/test_kyverno.py: 359 passed in 37.41s
+  tests/test_kyverno.py: 359 passed in 37.47s
+  tests/test_ui.py -k "eport or ibrary or the_administrator_generates_a_report or categorises_and_click
+    or boolean_aria_selected or aged_ticket_is_reminted or diff_vs_offers": 81 passed, 606 deselected in 49.84s
+    (T108-9; the four 11-count tests, now at test_ui.py:8740, :9137, :9342 and :9910; every Reports, Reporting and
+    Library test)
   this spec's branch (the spec, its index row, the index test at 55):
-  tests/test_specs_index.py tests/test_docs_citations.py: 1939 passed, 18 skipped in 18.55s
-the browser suite: not run (no page blocks, Orchestrator's notes 1); the full hermetic suite: not run (the budget)
+  tests/test_specs_index.py tests/test_docs_citations.py: 1939 passed, 18 skipped in 18.78s
+the full hermetic suite and the whole browser suite: not run (the budget); the implementing pull request runs them
 ```
+
+A first run of the browser selection failed one Library test,
+`test_the_sections_are_the_catalogue_crossed_with_the_schedules_from_a_cold_url`: T108-9 first seeded `groups`
+runs, and the module-scoped `reporting_server` fixture is shared, so the Library's weekly `groups` section showed
+"Manual runs" where that test asserts none. T108-9 now seeds `access-matrix` (clock-free, asserted by no Library
+test), and the selection passes.
 
 ## 5. On the lab (the implementing pull request)
 
@@ -355,7 +384,7 @@ Evidence under `reports/<date>_<slug>/` and on #108, pinned to the full merge sh
 A `report-diff` row in the Report history, like any run, with its downloads; a document titled `Changes in <report>`
 whose `Inputs` names the two runs, whose `Summary` lists each changed block with its counts (or "No change"), and
 then a `Removed` and an `Added` table per changed block. A diff of a clock-reading report two hours apart shows the
-window or state that moved (§2.3). Cost: one module of about 150 lines, two branches, one store method; no RBAC,
+window or state that moved (§2.3). Cost: one module of about 150 lines, two branches, one store method, a picker on the history of about 75 lines; no RBAC,
 value key, migration, route or runtime cost for anyone who does not ask for a diff.
 
 ## 7. Implementation blocks
@@ -984,4 +1013,198 @@ renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/REVIEW_rep
 renderer or its `#` label rows (SPEC_F2 §2.4, §2a). §3 (diffs) is built by `docs/specs/SPEC_F3_report_diff.md`
 (#108), which compares the sealed sections only and keys blocks by section, kind, title and columns (SPEC_F3
 §2.4).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
+```
+
+### Block 17 — `local-development/gsd/static/index.html`: the picker is the reader's state, kept across repaints
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+                historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
+```
+
+```javascript
+                historyFilter: { report: "", origin: "", status: "", cluster: "" }, historyPage: 0, reportRun: null, reportSubmitting: false, reportPreview: "",
+                /* #108: the history's "Diff vs…" picker — the head run, the earlier runs offered, the chosen base, the
+                   diff run once posted. View state, so the history's poll repaints it as the reader left it. */
+                historyDiff: null,
+```
+
+### Block 18 — `local-development/gsd/static/index.html`: a diff row names the report it compared
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+<td class="mono">${esc(x.requested_at)}</td><td class="mono">${esc(x.report)}</td><td>${esc(x.cluster)}</td>
+```
+
+```javascript
+<td class="mono">${esc(x.requested_at)}</td><td class="mono">${esc(x.report)}${x.report === "report-diff" && x.params ? ` <span class="muted">(${esc(x.params.report)})</span>` : ""}</td><td>${esc(x.cluster)}</td>
+```
+
+### Block 19 — `local-development/gsd/static/index.html`: a finished run offers "Diff vs…"
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+<td>${stateBadge(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td><td>${artefacts(x)}</td>
+```
+
+```javascript
+<td>${stateBadge(x.status)}</td><td class="mono">${esc((x.sha256 || "").slice(0, 12))}</td><td>${artefacts(x)}${x.status === "done" && x.report !== "report-diff" ? ` <button type="button" class="linkish" data-diff="${esc(x.id)}">Diff vs…</button>` : ""}</td>
+```
+
+### Block 20 — `local-development/gsd/static/index.html`: the picker sits above the table
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+    ${total === 0 ? `<div class="empty-note">${Object.values(f).some(Boolean) ? "No run matches these filters." : "No report has been generated yet."}</div>` : `<div class="scroll-x"><table>
+```
+
+```javascript
+    ${historyDiffPicker(artefacts)}
+    ${total === 0 ? `<div class="empty-note">${Object.values(f).some(Boolean) ? "No run matches these filters." : "No report has been generated yet."}</div>` : `<div class="scroll-x"><table>
+```
+
+### Block 21 — `local-development/gsd/static/index.html`: the picker
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+function wireReporting() {
+```
+
+```javascript
+/* #108: "Diff vs…" on a history row. The head is the row's run; the bases offered are the earlier finished runs of
+   the same report on the same cluster, asked of the service; the diff run, once posted, shows here with its
+   downloads (the page's one artefact fetch) until the reader closes the picker. */
+function historyDiffPicker(artefacts) {
+  const d = view.historyDiff;
+  if (!d) return "";
+  const head = d.head;
+  let body;
+  if (d.run) {
+    body = `diff <span class="mono">${esc(d.run.id)}</span> ${stateBadge(d.run.status)} ${d.run.status === "done" ? artefacts(d.run) : d.run.error ? esc(d.run.error) : ""}`;
+  } else if (d.runs === null) {
+    body = `<span class="muted">Loading earlier runs…</span>`;
+  } else if (!d.runs.length) {
+    body = `<span class="muted">No earlier finished run of ${esc(head.report)} on ${esc(head.cluster)}.</span>`;
+  } else {
+    body = `<label class="filterbar-note">against <select id="history-diff-base">${d.runs.map((r) =>
+      `<option value="${esc(r.id)}"${r.id === d.base ? " selected" : ""}>${esc(r.requested_at)} · ${esc((r.sha256 || "").slice(0, 12))} · ${esc(r.generated_by)}</option>`).join("")}</select></label>
+      <button type="button" id="history-diff-go"${d.submitting ? " disabled" : ""}>Generate diff</button>`;
+  }
+  return `<div class="ns-controls" id="history-diff"><span class="filterbar-note">What changed in <span class="mono">${esc(head.report)}</span> on ${esc(head.cluster)} up to the run of ${esc(head.requested_at)}:</span>
+    ${body} <button type="button" class="linkish" id="history-diff-close">Close</button>
+    ${d.note ? `<div class="filterbar-note">${esc(d.note)}</div>` : ""}</div>`;
+}
+
+function wireHistoryDiff(refetch) {
+  document.querySelectorAll("[data-diff]").forEach((el) => {
+    el.onclick = async () => {
+      const head = ((data.reportHistory && data.reportHistory.runs) || []).find((r) => r.id === el.dataset.diff);
+      if (!head) return;
+      const d = { head, runs: null, base: "", note: "", submitting: false, run: null };
+      view.historyDiff = d; render();
+      try {
+        const q = new URLSearchParams({ report: head.report, cluster: head.cluster, status: "done", limit: "100" });
+        // Ids sort chronologically, so "earlier" is a smaller id; the newest earlier run is the default base.
+        d.runs = ((await reportGet(`/api/runs?${q}`)).runs || []).filter((r) => r.id < head.id);
+        d.base = d.runs.length ? d.runs[0].id : "";
+      } catch (e) { d.runs = []; d.note = `The earlier runs could not be listed: ${e.message}`; }
+      if (view.historyDiff === d) render();
+    };
+  });
+  const d = view.historyDiff;
+  const close = $("history-diff-close");
+  if (close) close.onclick = () => { view.historyDiff = null; render(); };
+  const base = $("history-diff-base");
+  if (base) base.onchange = () => { d.base = base.value; };
+  const go = $("history-diff-go");
+  if (go) go.onclick = async () => {
+    d.submitting = true; d.note = ""; render();
+    try {
+      const res = await reportFetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: "report-diff", cluster: d.head.cluster, params: { base: d.base, head: d.head.id } }) });
+      d.run = await res.json(); render();
+      // Poll the run, as the report form does: a diff renders in seconds and the page's repaint is the wrong clock.
+      while (view.historyDiff === d && (d.run.status === "queued" || d.run.status === "running")) {
+        await new Promise((r) => setTimeout(r, 1500));
+        d.run = await reportGet(`/api/runs/${encodeURIComponent(d.run.id)}`);
+        render();
+      }
+      refetch();
+    } catch (e) {
+      d.note = e.status === 422 ? `The diff was refused: ${e.detail || e.message}` : e.message;
+    } finally {
+      d.submitting = false;
+      if (view.historyDiff === d) render();
+    }
+  };
+}
+
+function wireReporting() {
+```
+
+### Block 22 — `local-development/gsd/static/index.html`: the history wires the picker
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  if (next) next.onclick = () => { view.historyPage += 1; refetch(); };
+```
+
+```javascript
+  if (next) next.onclick = () => { view.historyPage += 1; refetch(); };
+  wireHistoryDiff(refetch);
+```
+
+### Block 23 — `local-development/tests/test_ui.py`: T108-9, the action in the browser
+
+<!-- block: local-development/tests/test_ui.py | edit -->
+```python
+    def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
+```
+
+```python
+    def test_diff_vs_offers_earlier_runs_keeps_the_choice_and_downloads_the_diff(self, browser, reporting_server):
+        # #108 (SPEC_F3, T108-9): a finished history row offers "Diff vs…"; the picker lists the earlier finished runs
+        # of the same report and cluster, keeps the reader's base across a repaint, posts a report-diff, and the diff
+        # run downloads through the page's one artefact fetch. access-matrix, not groups: the module's Library tests
+        # assert the weekly groups section holds no manual run, and this fixture is shared.
+        from gsd.reporting.artifacts import Run
+        base, _, report_app = reporting_server
+        runs = []
+        for i in range(3):
+            run = report_app.state.runs.submit(Run(id=f"20260906T00000{i}.000000Z-df0{i}", report="access-matrix", cluster="crc-local",
+                                                   params={}, formats=["html"], generated_by="root", generated_by_note="proxy-verified",
+                                                   schedule=None, requested_at=f"2026-09-06T00:00:0{i}Z"))
+            runs.append(run.id)
+        deadline = time.monotonic() + 30
+        while any(report_app.state.store.get(r).status != "done" for r in runs):
+            assert time.monotonic() < deadline, [report_app.state.store.get(r).public() for r in runs]
+            time.sleep(0.1)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-origin", "person")
+            page.wait_for_selector(f'[data-diff="{runs[2]}"]')
+            page.click(f'[data-diff="{runs[2]}"]')
+            page.wait_for_selector("#history-diff-base")
+            offered = page.eval_on_selector_all("#history-diff-base option", "els => els.map((e) => e.value)")
+            assert runs[1] in offered and runs[0] in offered and runs[2] not in offered, offered
+            assert offered == sorted(offered, reverse=True) and page.input_value("#history-diff-base") == runs[1]
+            page.select_option("#history-diff-base", runs[0])
+            page.evaluate("render()")   # the history's poll repaints the page: the reader's base must survive it
+            assert page.input_value("#history-diff-base") == runs[0], "the repaint dropped the reader's base"
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#history-diff-go")
+            assert json.loads(info.value.post_data) == {"report": "report-diff", "cluster": "crc-local",
+                                                          "params": {"base": runs[0], "head": runs[2]}}
+            page.wait_for_selector("#history-diff [data-artifact][data-format='html']", timeout=30_000)
+            with page.expect_download() as download:
+                page.click("#history-diff [data-format='html']")
+            assert download.value.suggested_filename.endswith(".html") and "report-diff" in download.value.suggested_filename
+            assert "No change" in pathlib.Path(download.value.path()).read_text(encoding="utf-8")
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
 ```
