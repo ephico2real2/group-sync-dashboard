@@ -64,7 +64,7 @@ Questions settled by the orchestrator (2026-10-04, on "easy to manage, best prac
    (§3.4, §3.5).** A version-1 ticket was signed with the service token, so a real one and a forged one are the same
    bytes to any verifier: accepting either for any window after the upgrade is accepting the forgery for that window.
    The upgrade instead answers a version-1 ticket with 401, which the page answers by minting a fresh ticket once,
-   so an open page keeps working. **Open for the operator:** confirm this reading (§6, question 1).
+   so an open page keeps working. Settled in §6, question 1.
 3. **No key id in the ticket: SETTLED (§3.3).** Two keys at most are tried, nothing derived from a key travels in a
    ticket or a log, and the report pod's start line says whether a rotation is open.
 
@@ -427,20 +427,17 @@ it holds. A viewer sees nothing, except during the seconds of an upgrade in whic
 cost: one HMAC more per refused ticket during a rotation; three volume mounts; one RBAC atom (`get` on one more name,
 for the hook's identity); 36 files, 87 blocks.
 
-Questions for the operator:
+Questions settled by the orchestrator (2026-10-04, on "easy to manage, best practice" and the operator's rule of the
+same day, "Dont add new features"; the operator may reopen any):
 
-1. **"Existing tickets keep working through one rotation window."** This spec applies it to the rotation of the new
-   key (`previous`), and answers a version-1 ticket after the upgrade with 401, which the page turns into a fresh
-   ticket, because a version-1 ticket cannot be told from a forgery (§3.5). If the operator meant that version-1
-   tickets themselves must verify for a window after the upgrade, that window reopens the forgery for its length,
-   after every report-pod start unless it is anchored to a fixed instant the pod cannot learn from a mounted file.
-   Confirm the reading.
-2. **`secretsMint.enabled=false` installs.** They must create the Secret before upgrading or both pods stay in
-   `ContainerCreating`; the README and the CHANGELOG say so. A render-time refusal is impossible without `lookup`.
-   Is the documented step enough, or should such installs get a chart value naming an existing Secret?
-3. **F5 or F6 first?** The index orders F5 (#140, the schedule-late alert) first, and the version numbers follow it.
-   F6 closes an attribution forgery; if it should ship first, the implementing pull request swaps the two specs'
-   numbers (Orchestrator's notes 8).
+1. **The reading of "existing tickets keep working through one rotation window": SETTLED as written.** The window is
+   the new key's rotation (`previous`). A version-1 ticket after the upgrade is answered with 401 and the page mints a
+   fresh one (tickets live 300 s by default), because a version-1 ticket cannot be told from a forgery (§3.5).
+2. **`secretsMint.enabled=false` installs: SETTLED, the documented step.** The README and the CHANGELOG say to create
+   the Secret before upgrading. A value naming an existing Secret would be a new feature, which the operator's rule of
+   2026-10-04 excludes.
+3. **F5 or F6 first: SETTLED, F5 first.** It was already in review with its numbers assigned (PR #596); F6 takes
+   application 4.6.0 and chart 0.69.0 after it, as the index orders, so no spec's numbers move.
 
 ## 7. Implementation blocks
 
