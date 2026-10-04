@@ -64,13 +64,13 @@ cites `path#anchor`.
    #534), so F5 is excluded from the rising-number assert by its id and pinned to #140, as F1 to F4 were.
 7. **Dates.** Blocks 15 and 16 date the history lines 2026-10-04; the implementing pull request writes its own.
 
-Questions for the operator (each has a stated default; the operator may reopen any):
+Questions settled by the orchestrator (2026-10-04, on "easy to manage, best practice"; the operator may reopen any):
 
-1. **`never` does not alert (§3.3).** A schedule with no success on record reads `never` from its creation until
+1. **`never` does not alert (§3.3): SETTLED, the default.** A schedule with no success on record reads `never` from its creation until
    its first success, and the service holds no creation instant to tell "not due yet" from "missed". Default:
    no alert; the series is exported so an estate can write its own rule. Alternative: a second, `info`-severity
    rule on `never` with a long `for:` (it would fire on every new quarterly schedule for up to three months).
-2. **A cron expression `cron.py` cannot read** (a month or day name, `SUN`, which Kubernetes accepts and
+2. **A cron expression `cron.py` cannot read: SETTLED, filed as #585.** (a month or day name, `SUN`, which Kubernetes accepts and
    `cron.py` refuses, gsd/reporting/cron.py:8-9) gives the page no previous fire, so the schedule reads `ok`
    (after a success) or `never` for ever and the alert can never fire. Inherited from #221, not changed here
    (the page's states are "Must not change"). Default: a follow-up issue to refuse names at render or teach
