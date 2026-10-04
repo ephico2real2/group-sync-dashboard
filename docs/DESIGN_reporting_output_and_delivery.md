@@ -2,7 +2,9 @@
 
 **Status: proposed — round 1 reviewed, corrections folded in. §2 (CSV output) is built by
 `docs/specs/SPEC_F2_csv_format.md` (#106), which re-measured it against main and did not take its `csv.writer`
-renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
+renderer or its `#` label rows (SPEC_F2 §2.4, §2a). §3 (diffs) is built by `docs/specs/SPEC_F3_report_diff.md`
+(#108), which compares stable coverage conclusions and the sealed sections, and keys blocks by section, kind, title and columns (SPEC_F3
+§2.4).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
 features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
 together because they share the run/render/artefact machinery. Like the auditor/mnemonic work
 (`docs/DESIGN_reporting_auditors_and_ns_selector.md`), this **extends** the reporting design and defers to

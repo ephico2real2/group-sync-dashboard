@@ -8,7 +8,7 @@
 | Version on release | app 4.3.0, chart 0.66.7 |
 | Version note | Image content (a new module, a branch in `create_run` and in the worker), so the next application MINOR, 4.3.0 (`docs/specs/README.md`, the version ladder). The chart takes the PATCH that moves `appVersion`, 0.66.7: its only other change is the README's reports paragraph; no value key, default, template or RBAC rule changes (the chart's rule, `charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`; 0.66.5 and 0.66.6 were the same kind of step). Read on `43b231b6` (application 4.2.0, chart 0.66.6); W1 is `specified` at chart 0.67.0, which stays above 0.66.7, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 12 to 15) fail their check; the implementing pull request corrects them here first |
 | Issue | [#108](https://github.com/ephico2real2/group-sync-dashboard/issues/108) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §1 and §3 re-measured against main after F1 (#270) and F2 (#106). Measured on main `43b231b6` with the repository's venv (Python 3.14): §2.3's probes built all eleven reports over the seeded snapshot of `tests/test_report_seal.py`. No lab read; §5 states the walk. §7's blocks (the page's included, written in a second pass the same day) were proved against a clean checkout of `43b231b6` (§4.3) |
 
 ## How to read this spec
@@ -63,6 +63,30 @@ Questions settled by the orchestrator (2026-10-03, on "easy to manage, best prac
    ("this campaign against the last one", whose `campaign`/`due`/`reviewer` differ).
 2. **The manual cap: SETTLED, shared.** A diff is a manual run and takes one of
    `reporting.retention.manual.maxRuns`' slots (§3.6); there is no third tier.
+
+**Review of the implementation (PR #579, 2026-10-03): Codex (gpt-5.6-sol, xhigh) and OB3 (in Grok's seat).** Both
+confirmed "No change" for all eleven reports over one snapshot (OB3 also at +2 h, +31 d and +200 d, and against an
+independent whole-block comparison), a planted RoleBinding showing as exactly its rows, every refusal, the seal and
+renderers, and the unchanged inputs, catalogue and retention. The decisions, written here before the code (§8):
+- **Accepted: a diff trusted an input's `sha256` field, not its data (both, C8).** A `.json` edited in place that
+  kept its field was diffed as if the cluster had changed. The seal's recipe now lives once in `model.py`
+  (`CANONICAL_FIELDS`, `canonical_sha256`, and the stored-`.json` recompute), `Report.seal` uses it, the worker
+  requires the field AND the recomputed digest to match the request's record, and the e2e walk's
+  `integrity_check.py` imports the model's recipe instead of carrying its own copy (the copy F1 created). Codex's
+  version of the fix is applied; OB3's was equivalent.
+- **Accepted: a coverage regression read "No change" (both, C9).** Two runs whose rows agree but whose Namespace
+  read moved from `ok` to `forbidden` diffed to "No change". **Codex's fix is taken over OB3's:** the four stable
+  coverage conclusions (Namespace read, User read, Login capture, Attests absence) are compared as one block, so a
+  regression shows as a changed row and the diff cannot say "No change". OB3's fix kept "No change" and added a
+  warning, which leaves the summary wrong. The instant-bearing notes are not compared: they move on every read cycle.
+- **Accepted: the picker missed earlier runs past the newest hundred (OB3, C7).** It read one page of 100, newest
+  first; it now pages until a hundred earlier runs are found or the list ends.
+- **Accepted: the Library counted diff runs it did not show (Codex, C7).** A diff is listed under the report it
+  compares (`params.report`), as a manual run.
+- **Correction at implementation:** Codex's Library and status browser test (its sandbox could not launch Chromium) located the history row by `has_text=<run id>`, which the row never shows (it shows the requested time; the id is on the artefact buttons). It now locates the row by its `[data-artifact]` button.
+- **Observations kept as they are:** a swapped pair (base newer than head) is accepted, and the page never sends one;
+  access-certification seals its snapshot stamp in a list row, so two of its runs over different snapshots always
+  show that row changed.
 
 ## 1. The mandate, and what is out of scope
 
@@ -189,8 +213,10 @@ difference is shown; nothing is inferred (§2a).
 
 ### 3.2 The sealed data only
 
-`build_diff` reads each `.json`'s `sections` whose `sealed` is true, the same set `canonical()` hashes. Page one
-(who, when, run id, release, the snapshot's age) is never compared, so two runs over one snapshot diff to "No
+`build_diff` reads each `.json`'s stable coverage conclusions (`namespaces_read`, `users_read`, `login_capture`,
+`attests_absence`) and the `sections` whose `sealed` is true. Coverage notes and retention watermarks carry
+read-cycle instants, so they are not compared. Page one (who, when, run id, release, the snapshot's age) is never
+compared, so two runs over one snapshot diff to "No
 change" for the six clock-free reports (T108-2). A `.json` with no `sealed_provenance` was written before 4.1.0,
 when page one was inside the data: refused, the run failed with that sentence (T108-6). Reason: SPEC_F1; a diff
 that always reports page one cannot say "No change".
@@ -239,11 +265,11 @@ because the run facts are on page one. Reason: PROV-O's `wasDerivedFrom`, held b
 
 ### 3.8 The page: "Diff vs…" on the Report history
 
-Where: the Report history on the Reporting status page (index.html `reportingHistoryCard`), not the Library. The
-history lists every run, any report, newest first, with the filters a reader narrows to one report and cluster; the
+The action lives on the Report history on the Reporting status page (index.html `reportingHistoryCard`). The history
+lists every run, any report, newest first, with the filters a reader narrows to one report and cluster; the
 Library is organised by the catalogue's reports and schedules (`librarySections` builds its sections from the
-enabled catalogue, and `librarySectionHtml` keeps a manual run only when its `report` is that section's name),
-so a `report-diff` run has no section there (read from the code; not driven in a browser).
+enabled catalogue), so a `report-diff` run has no section of its own there. It is listed as a manual run under the catalogue report
+named by `params.report`, which keeps the Library's total and visible cards consistent; a deep link opens its drawer.
 
 The rules, each in Blocks 17 to 22:
 
@@ -412,9 +438,10 @@ value key, migration, route or runtime cost for anyone who does not ask for a di
 
 A diff reads two stored `.json` artefacts, never the snapshot, and compares their SEALED data only
 (SPEC_F1): page one states the run, so it is left out, and two runs over one snapshot diff to
-"No change" unless the report's own data reads the generation clock. Every table, key-value list
-and the notes of each sealed section are compared as a multiset of whole rows: a row present in
-the head and not the base is added, the reverse is removed, and a changed cell is one row removed
+"No change" unless the report's own data reads the generation clock. Stable coverage conclusions,
+every table, key-value list and the notes of each sealed section are compared as a multiset of whole
+rows: a row present in the head and not the base is added, the reverse is removed, and a changed cell
+is one row removed
 and one added (v1). The result is an ordinary `Report` named `report-diff`, sealed, stored and
 rendered like any other run, and kept out of the catalogue (`REGISTRY`).
 """
@@ -429,12 +456,16 @@ from .. import __version__
 from .artifacts import ArtifactStore, Run
 from .catalogue.common import ValidationError
 from .config import ReportSettings
-from .model import KeyValues, Note, Report, Section, Table, iso
+from .model import KeyValues, Note, Report, Section, Table, iso, recompute_sha256
 
 #: The run name a diff is requested and stored under. Not a catalogue entry, so the catalogue stays eleven.
 DIFF_REPORT = "report-diff"
 #: The wording of a diff with nothing to show; the page and the walk look for it.
 NO_CHANGE = "No change"
+#: Stable coverage conclusions. The omitted *_note and history-retained fields carry read-cycle
+#: instants, so comparing those would make an otherwise identical pair change on every poll.
+COVERAGE_FIELDS = (("Namespace read", "namespaces_read"), ("User read", "users_read"),
+                   ("Login capture", "login_capture"), ("Attests absence", "attests_absence"))
 
 
 def diff_params(store: ArtifactStore, params: dict, cluster: str | None) -> dict:
@@ -465,10 +496,15 @@ def diff_params(store: ArtifactStore, params: dict, cluster: str | None) -> dict
 
 
 def _blocks(doc: dict) -> dict[tuple, tuple[list, list]]:
-    """Every comparable block of the sealed sections, keyed by where it sits and what it holds:
+    """Stable coverage conclusions and every comparable block of the sealed sections, keyed by
+    where it sits and what it holds:
     (section title, kind, block title, columns, occurrence). The occurrence keeps two blocks with one
     key apart; a block's rows are its table rows, its key-value pairs, or the section's notes."""
+    coverage = doc.get("coverage", {})
+    coverage_rows = [[label, coverage[key]] for label, key in COVERAGE_FIELDS if key in coverage]
     out: dict[tuple, tuple[list, list]] = {}
+    if coverage_rows:
+        out[("Evidence coverage", "kv", "Coverage", ("key", "value"), 0)] = (["key", "value"], coverage_rows)
     for section in doc["sections"]:
         if not section["sealed"]:
             continue
@@ -530,7 +566,8 @@ def build_diff(base: dict, head: dict, *, run_id: str, now: datetime, generated_
         notes.append(Note("At least one run cut a table at its row limit; rows past the cut are not compared.", "warning"))
     overview = [Table("Changes per block", ["section", "block", "removed", "added"], summary, empty_text=NO_CHANGE)]
     if not summary:
-        overview.append(Note(f"{NO_CHANGE}: every table, list and note in the sealed data is the same in both runs.", "note"))
+        overview.append(Note(f"{NO_CHANGE}: stable coverage conclusions and every table, list and note in the sealed "
+                             "data are the same in both runs.", "note"))
     page_one = Section("Provenance and coverage", [KeyValues("Run", [
         ("Generated at (UTC)", iso(now)), ("Generated by", f"{generated_by} ({generated_by_note})"), ("Run id", run_id),
         ("Report service", f"{__version__} @ {settings.git_commit}")])], sealed=False)
@@ -557,8 +594,9 @@ def build_diff_run(store: ArtifactStore, run: Run, settings: ReportSettings, now
         if data is None:
             raise ValidationError(f"the {side} run {run.params[side]} was pruned before this diff rendered")
         doc = json.loads(data)
-        if doc.get("sha256") != run.params[f"{side}_sha256"]:
-            raise ValidationError(f"the {side} run's .json no longer carries the sha256 recorded at request time")
+        recorded = run.params[f"{side}_sha256"]
+        if doc.get("sha256") != recorded or recompute_sha256(doc) != recorded:
+            raise ValidationError(f"the {side} run's .json no longer matches the sha256 recorded at request time")
         docs.append(doc)
     return build_diff(*docs, run_id=run.id, now=now, generated_by=run.generated_by,
                       generated_by_note=run.generated_by_note, settings=settings)
@@ -750,6 +788,27 @@ def test_t108_1_rows_added_removed_and_no_change(snap):  # noqa: F811
     assert diff.totals == {"blocks_changed": 2, "rows_removed": 2, "rows_added": 3}
 
 
+def test_diff_reports_stable_coverage_conclusions_without_read_cycle_noise(snap):  # noqa: F811
+    """A loss of Namespace-read coverage is a material change even when every report row is equal;
+    timestamps embedded in coverage notes and retention watermarks are not."""
+    base = _doc(_run(snap, "groups"))
+    base["coverage"]["namespaces_read"] = "ok"
+    base["coverage"]["attests_absence"] = True
+    moving = copy.deepcopy(base)
+    moving["coverage"]["namespaces_note"] += " Read again at 2026-09-06T12:01:00Z."
+    moving["coverage"]["history_retained_since"]["membership_event"] = "2026-09-06T12:01:00Z"
+    assert _changed(_build(base, moving)) == set()
+
+    head = copy.deepcopy(moving)
+    head["coverage"]["namespaces_read"] = "forbidden"
+    head["coverage"]["attests_absence"] = False
+    diff = _build(base, head)
+    assert _changed(diff) == {("Evidence coverage", "Coverage")}
+    removed, added = next(s for s in diff.sections if s.title == "Evidence coverage — Coverage").blocks
+    assert removed.rows == [["Attests absence", True], ["Namespace read", "ok"]]
+    assert added.rows == [["Attests absence", False], ["Namespace read", "forbidden"]]
+
+
 @pytest.mark.parametrize("name", sorted(set(REGISTRY) - CLOCK_DERIVED))
 def test_t108_2_two_runs_over_one_snapshot_diff_to_no_change(snap, name):  # noqa: F811
     """The six clock-free reports: another viewer, run id and minute, one snapshot: nothing changed, because page
@@ -866,7 +925,16 @@ def test_t108_6_the_worker_refuses_an_input_that_changed_or_predates_the_seal(se
                       "base_sha256": "0" * 64, "head_sha256": head["sha256"]})
     with pytest.raises(ValidationError, match="sha256 recorded"):
         build_diff_run(store, run, ReportSettings(), NOW)
+
     old = json.loads(store.read(base["id"], "json"))
+    tampered = copy.deepcopy(old)
+    inventory = next(s for s in tampered["sections"] if s["title"] == "Inventory")["blocks"][0]
+    inventory["rows"][0][0] = "edited-in-place"
+    store.write(base["id"], "json", json.dumps(tampered).encode("utf-8"))
+    run.params["base_sha256"] = base["sha256"]
+    with pytest.raises(ValidationError, match="sha256 recorded"):
+        build_diff_run(store, run, ReportSettings(), NOW)
+
     del old["sealed_provenance"]
     with pytest.raises(ValidationError, match="before 4.1.0"):
         _build(old, json.loads(store.read(head["id"], "json")))
@@ -903,7 +971,7 @@ def test_t108_8_a_diff_leaves_scheduled_retention_alone(service):  # noqa: F811
 ```
 
 ```markdown
-| `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard**. `clusters: [...]` in place of `cluster` (#267) queues one run per cluster as one slot and answers `{"runs": [...]}`; a cluster the snapshot lacks fails its own run and no other. `report: "report-diff"` with `params: {base, head}` (#108, not a catalogue entry) compares two finished runs of one report on the named cluster: rows removed and added per table of their sealed data, stored as a sealed manual run whose `params` record both ids and both sha256s; 422 for an unknown, unfinished, pruned or mismatched base or head, a diff of a diff, or a schedule |
+| `POST /report/api/runs` | ticket or token | queue one run (`report`, `cluster`, `params`, `formats`); 202 with the run id — **the one write in either service's API, deliberately not on the dashboard**. `clusters: [...]` in place of `cluster` (#267) queues one run per cluster as one slot and answers `{"runs": [...]}`; a cluster the snapshot lacks fails its own run and no other. `report: "report-diff"` with `params: {base, head}` (#108, not a catalogue entry) compares two finished runs of one report on the named cluster: stable coverage conclusions plus rows removed and added per table, list and section notes of their sealed data, stored as a sealed manual run whose `params` record both ids and both sha256s; 422 for an unknown, unfinished, pruned or mismatched base or head, a diff of a diff, or a schedule |
 ```
 
 ### Block 9 — `docs/CHANGELOG.md`: the diff run
@@ -918,8 +986,8 @@ def test_t108_8_a_diff_leaves_scheduled_retention_alone(service):  # noqa: F811
 
 - **What changed between two runs: `report-diff` (#108, Epic F #386, `docs/specs/SPEC_F3_report_diff.md`;
   application 4.3.0, chart 0.66.7).** `POST /report/api/runs` with `report: "report-diff"` and `params: {base, head}`
-  compares two finished runs of one report on one cluster over their sealed data only (SPEC_F1): per table, list
-  and the notes of each section, the rows removed and the rows added (a changed cell is one of each). Two runs over
+  compares two finished runs of one report on one cluster over their sealed data only (SPEC_F1): stable coverage
+  conclusions plus, per table, list and the notes of each section, the rows removed and the rows added (a changed cell is one of each). Two runs over
   one snapshot diff to "No change" for the six reports that do not read the clock; for the five that do, the diff
   shows exactly the blocks computed against it. The diff is a sealed manual run, rendered in every format; its
   record names both runs and their sha256s. The catalogue stays eleven, the inputs are never rewritten, and no
@@ -984,7 +1052,8 @@ appVersion: "4.3.0"
 
 ```markdown
 `reporting.*`; the refuse/derive column says what happens when switches meet. A `report-diff` run (#108) compares
-two finished runs of one report on one cluster, rows removed and added; it is not a twelfth report, needs no
+two finished runs of one report on one cluster, including stable coverage conclusions and rows removed and added;
+it is not a twelfth report, needs no
 value, and is kept like any manual run (`reporting.retention.manual`).
 ```
 
@@ -1011,7 +1080,7 @@ renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/REVIEW_rep
 
 ```markdown
 renderer or its `#` label rows (SPEC_F2 §2.4, §2a). §3 (diffs) is built by `docs/specs/SPEC_F3_report_diff.md`
-(#108), which compares the sealed sections only and keys blocks by section, kind, title and columns (SPEC_F3
+(#108), which compares stable coverage conclusions and the sealed sections, and keys blocks by section, kind, title and columns (SPEC_F3
 §2.4).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
 ```
 
@@ -1103,9 +1172,17 @@ function wireHistoryDiff(refetch) {
       const d = { head, runs: null, base: "", note: "", submitting: false, run: null };
       view.historyDiff = d; render();
       try {
-        const q = new URLSearchParams({ report: head.report, cluster: head.cluster, status: "done", limit: "100" });
-        // Ids sort chronologically, so "earlier" is a smaller id; the newest earlier run is the default base.
-        d.runs = ((await reportGet(`/api/runs?${q}`)).runs || []).filter((r) => r.id < head.id);
+        // Ids sort chronologically, so "earlier" is a smaller id; the newest earlier run is the default base. The
+        // service lists newest first, so the earlier runs follow every later one: page past those (an hourly
+        // schedule keeps ~2 000 in 90 days) until a hundred earlier runs are found or the list ends.
+        const earlier = [];
+        for (let offset = 0; earlier.length < 100; offset += 1000) {
+          const q = new URLSearchParams({ report: head.report, cluster: head.cluster, status: "done", limit: "1000", offset: String(offset) });
+          const got = await reportGet(`/api/runs?${q}`);
+          earlier.push(...(got.runs || []).filter((r) => r.id < head.id));
+          if (!got.truncated) break;
+        }
+        d.runs = earlier.slice(0, 100);
         d.base = d.runs.length ? d.runs[0].id : "";
       } catch (e) { d.runs = []; d.note = `The earlier runs could not be listed: ${e.message}`; }
       if (view.historyDiff === d) render();
@@ -1162,6 +1239,41 @@ function wireReporting() {
 ```
 
 ```python
+    def test_diff_vs_reaches_earlier_runs_past_the_newest_hundred(self, browser, reporting_server):
+        # #108 review (OB3, C7): the picker asked for one page of 100 runs, newest first, and kept those older than the
+        # head, so a head with 100 later finished runs of its report and cluster read "No earlier finished run" while
+        # one existed (an hourly schedule keeps ~2 000 in reporting.retention.scheduled.days 90). The runs are records
+        # only, and removed at the end: this fixture is shared by the module.
+        from gsd.reporting.artifacts import Run
+        base, _, report_app = reporting_server
+        store = report_app.state.store
+        old = ["20260905T000000.000000Z-cc00", "20260905T000001.000000Z-cc01"]
+        later = [f"20260905T01{i // 60:02d}{i % 60:02d}.000000Z-dd{i:02d}" for i in range(100)]
+        for rid in (*old, *later):
+            run = store.create(Run(id=rid, report="privileged-access", cluster="crc-local", params={}, formats=[], generated_by="root",
+                                   generated_by_note="proxy-verified", schedule=None, requested_at="2026-09-05T00:00:00Z"))
+            # Finished now, so the worker's retention (manual: 3 days, from completion) keeps them through the test.
+            run.status, run.sha256, run.finished_at = "done", "f" * 64, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            store.update(run)
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            rows, _ = store.list(report="privileged-access", limit=1000)
+            at = [r.id for r in rows].index(old[1]) // 25
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            page.select_option("#history-report", "privileged-access")
+            for n in range(at):
+                page.wait_for_selector(f"text=Page {n + 1} of")
+                page.click("#history-next")
+            page.click(f'[data-diff="{old[1]}"]')
+            page.wait_for_selector("#history-diff-base", timeout=10_000)
+            assert page.eval_on_selector_all("#history-diff-base option", "els => els.map((e) => e.value)") == [old[0]]
+            assert not errors, errors
+        finally:
+            ctx.close()
+            for rid in (*old, *later):
+                store.delete(rid)
+
     def test_diff_vs_offers_earlier_runs_keeps_the_choice_and_downloads_the_diff(self, browser, reporting_server):
         # #108 (SPEC_F3, T108-9): a finished history row offers "Diff vs…"; the picker lists the earlier finished runs
         # of the same report and cluster, keeps the reader's base across a repaint, posts a report-diff, and the diff
@@ -1206,5 +1318,177 @@ function wireReporting() {
         finally:
             ctx.close()
 
+    def test_a_diff_is_reachable_in_the_library_and_reporting_status(self, browser, reporting_server):
+        """A diff counted by the Library has a card under its source report; its deep link and the status row render."""
+        from gsd.reporting.artifacts import Run
+        from gsd.reporting.diff import DIFF_REPORT
+        base, _, report_app = reporting_server
+        runs = []
+        for i in range(2):
+            run = report_app.state.runs.submit(Run(
+                id=f"20260906T00001{i}.000000Z-lb0{i}", report="access-matrix", cluster="crc-local",
+                params={}, formats=["html"], generated_by="root", generated_by_note="proxy-verified",
+                schedule=None, requested_at=f"2026-09-06T00:00:1{i}Z"))
+            runs.append(run.id)
+        deadline = time.monotonic() + 30
+        while any(report_app.state.store.get(r).status != "done" for r in runs):
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        inputs = [report_app.state.store.get(r) for r in runs]
+        diff = report_app.state.runs.submit(Run(
+            id="20260906T000012.000000Z-lb02", report=DIFF_REPORT, cluster="crc-local",
+            params={"report": "access-matrix", "base": runs[0], "head": runs[1],
+                    "base_sha256": inputs[0].sha256, "head_sha256": inputs[1].sha256},
+            formats=["html"], generated_by="root", generated_by_note="proxy-verified", schedule=None,
+            requested_at="2026-09-06T00:00:12Z"))
+        deadline = time.monotonic() + 30
+        while report_app.state.store.get(diff.id).status not in ("done", "failed"):
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        assert report_app.state.store.get(diff.id).status == "done"
+
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=library&cluster=crc-local")
+            page.wait_for_selector(f'#sec-access-matrix [data-run="{diff.id}"]')
+            page.goto(base + f"#page=library&cluster=crc-local&run={diff.id}")
+            page.wait_for_selector("#library-drawer")
+            assert "report-diff" in page.locator("#library-drawer").inner_text()
+            page.goto(base + "#page=reporting&cluster=crc-local")
+            page.wait_for_selector("#reporting-history tbody tr")
+            # The history row shows the requested time, not the run id; the id is on its artefact buttons.
+            row = page.locator(f'#reporting-history tbody tr:has([data-artifact="{diff.id}"])')
+            assert row.count() == 1 and "report-diff" in row.inner_text() and "access-matrix" in row.inner_text()
+            assert not errors, f"diff Library/status page errors: {errors}"
+        finally:
+            ctx.close()
+
     def test_the_reporting_status_page_renders_its_three_cards_from_live_data(self, browser, reporting_server):
+```
+
+## 8. Blocks from the review of the implementation (PR #579)
+
+### Block R1 — `local-development/gsd/static/index.html`: the Library lists a diff beside the report it compares (Codex, F3)
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
+  const manuals = sec.manuals ? allRuns.filter((r) => r.report === report.name && !r.schedule) : [];
+```
+
+```javascript
+  const scheduled = sched ? allRuns.filter((r) => r.schedule === sched.name) : [];
+  // A diff is not a catalogue entry, but it belongs beside the source report it compares; otherwise
+  // the Library's total counts a stored run for which it renders no card.
+  const manuals = sec.manuals ? allRuns.filter((r) => !r.schedule &&
+    (r.report === report.name || (r.report === "report-diff" && r.params && r.params.report === report.name))) : [];
+```
+
+### Block R2 — `local-development/gsd/reporting/model.py`: the seal's one recipe, `CANONICAL_FIELDS` and `canonical_sha256`, beside the model (F1)
+
+<!-- block: local-development/gsd/reporting/model.py | edit -->
+```python
+SEALED_PROVENANCE = ("snapshot_stamp", "snapshot_schema_version", "last_poll", "poll_status", "poll_message")
+```
+
+```python
+SEALED_PROVENANCE = ("snapshot_stamp", "snapshot_schema_version", "last_poll", "poll_status", "poll_message")
+#: The top-level fields in the canonical data. Kept here with the hashing recipe so every consumer
+#: verifies a stored .json exactly as Report.seal() wrote it.
+CANONICAL_FIELDS = ("name", "cluster", "api_url", "params", "coverage", "totals", "truncated",
+                    "include_members", "sealed_provenance")
+
+
+def canonical_sha256(canonical: dict) -> str:
+    """Hash canonical report data with the one serialization recipe used by the model."""
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def recompute_sha256(doc: dict) -> str | None:
+    """Recompute a stored .json's seal, or return None when it is not a post-SPEC_F1 document.
+
+    Page one must be the first and only unsealed section; otherwise unchecked data would sit beside
+    the seal. This is shared by the service, report-diff and the e2e integrity walk.
+    """
+    try:
+        flags = [section.get("sealed") for section in doc["sections"]]
+        if "sealed_provenance" not in doc or flags[:1] != [False] or not all(flags[1:]):
+            return None
+        canonical = {key: doc[key] for key in CANONICAL_FIELDS}
+        canonical["sections"] = doc["sections"][1:]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    return canonical_sha256(canonical)
+```
+
+### Block R3 — `local-development/gsd/reporting/model.py`: `Report.seal` uses `canonical_sha256`, the same expression (F1)
+
+<!-- block: local-development/gsd/reporting/model.py | edit -->
+```python
+    def seal(self) -> "Report":
+        self.sha256 = hashlib.sha256(
+            json.dumps(self.canonical(), sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+```
+
+```python
+    def seal(self) -> "Report":
+        self.sha256 = canonical_sha256(self.canonical())
+```
+
+### Block R4 — `local-development/e2e-walk/integrity_check.py`: the walk reads the model's recipe (F1)
+
+<!-- block: local-development/e2e-walk/integrity_check.py | edit -->
+```python
+
+import hashlib
+```
+
+```python
+
+```
+
+### Block R5 — `local-development/e2e-walk/integrity_check.py`: the walk's own copy of the recipe removed (F1)
+
+<!-- block: local-development/e2e-walk/integrity_check.py | edit -->
+```python
+
+#: The keys Report.canonical() seals. `sections` is added by recompute(), narrowed to the sealed ones: the
+#: .json carries page one too, which states the run and is left out of the hash (SPEC_F1, #270).
+CANONICAL = ("name", "cluster", "api_url", "params", "coverage", "totals", "truncated", "include_members",
+             "sealed_provenance")
+```
+
+```python
+
+# run_walk.sh invokes this file from any cwd without PYTHONPATH; import the model from this checkout,
+# never an editable install belonging to another one.
+LOCAL_DEVELOPMENT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LOCAL_DEVELOPMENT))
+
+from gsd.reporting.model import CANONICAL_FIELDS, recompute_sha256
+
+# Backwards-compatible name used by the walk-document contract test; the recipe itself lives in model.py.
+CANONICAL = CANONICAL_FIELDS
+```
+
+### Block R6 — `local-development/e2e-walk/integrity_check.py`: the walk's main() calls the model's `recompute` (F1)
+
+<!-- block: local-development/e2e-walk/integrity_check.py | edit -->
+```python
+    so any other unsealed section would ride beside the seal unchecked)."""
+    flags = [s.get("sealed") for s in d["sections"]]
+    if "sealed_provenance" not in d or flags[:1] != [False] or not all(flags[1:]):
+        return None
+    canon = {k: d[k] for k in CANONICAL}
+    canon["sections"] = d["sections"][1:]
+    return hashlib.sha256(
+        json.dumps(canon, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+```
+
+```python
+    so any other unsealed section would ride beside the seal unchecked)."""
+    return recompute_sha256(d)
 ```

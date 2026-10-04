@@ -92,6 +92,9 @@ Everything under "Design" is the design agent's text and complete code. It super
   facts on it are sealed through `api_url` and `sealed_provenance` (the snapshot's stamp, schema and last poll)
   beside the coverage, the parameters and the rosters switch (`docs/specs/SPEC_F1_data_only_seal.md` §3).
 
+**Amendment (#108, 2026-10-03):** a `report-diff` run compares two stored runs of one report on one cluster;
+it is not a catalogue entry. `docs/specs/SPEC_F3_report_diff.md`.
+
 ## Design
 
 ## 1. Goal
