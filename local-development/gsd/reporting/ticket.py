@@ -107,6 +107,8 @@ def verify(keys: TicketKeys, ticket: str, forwarded_user: str | None, now: float
         claims = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TicketError("ticket payload is not JSON") from exc
+    if not isinstance(claims, dict):
+        raise TicketError("ticket payload is not a JSON object")
     if claims.get("v") != TICKET_VERSION:
         raise TicketError("ticket version is not understood")
     issued = claims.get("iat")

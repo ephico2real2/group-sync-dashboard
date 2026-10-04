@@ -1,4 +1,8 @@
 """The ticket: signature, expiry, tier, and the binding to the proxy's identity header."""
+import base64
+import hashlib
+import hmac
+
 import pytest
 
 from gsd.reporting.ticket import TicketError, TicketKeys, mint, verify
@@ -76,6 +80,16 @@ def test_a_ticket_has_exactly_one_spelling():
         with pytest.raises(TicketError):
             verify(KEYS, malformed, "root", now=1_100)
     assert verify(KEYS, ticket, "root", now=1_100)["viewer"] == "root"
+
+
+@pytest.mark.parametrize("payload", [b"[]", b'"text"', b"1", b"null"])
+def test_an_authenticated_payload_must_be_a_json_object(payload):
+    """A valid MAC authenticates bytes, not their JSON type; every malformed claim set is still a refusal."""
+    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+    digest = hmac.new(KEYS.current, payload, hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    with pytest.raises(TicketError, match="JSON object"):
+        verify(KEYS, f"v2.{encoded}.{signature}", "root", now=1_100)
 
 
 def test_tampering_always_changes_the_ticket_and_is_refused():
