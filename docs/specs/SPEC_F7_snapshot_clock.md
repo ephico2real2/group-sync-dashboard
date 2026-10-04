@@ -78,6 +78,21 @@ Line citations into the code at `4e5a708d` are file:line in plain text inside ta
    repaint" became the default and proved nothing; it now flips every box from its default (Block 34).
 8. **Dates.** Blocks 36 and 37 date the chart's history lines 2026-10-04; the implementing pull request writes its
    own date.
+10. **The implementation's review (PR #610: OB2, Fable 5.1 high, and Codex, gpt-5.6-sol xhigh).** OB2 confirmed C1
+    to C7, with the stamp's edges measured row by row: inclusive lower edges, dormancy exclusive at the cutoff, and
+    overdue judged at the stamp. **Accepted: OB2 F1.**
+    - **The defect:** `_vacuum_into` took the copy's stamp before waiting for the writer's lock. A poll holding the
+      lock then committed rows into the copy under an earlier name. OB2 measured a membership row at `16:00:00Z` in
+      a copy stamped `15:59:59.637491Z`, counted by a `groups` window "to 15:59:59Z".
+    - **Why it matters here:** §2.2's premise, "nothing in a snapshot is later than its stamp", held only after this
+      fix, and #592's windows rely on it.
+    - **The fix (Block R1):** take the stamp under the lock. The lock is now also held for the `mkdir` and the
+      rename, which take microseconds.
+    - **The test (Block R2):** T592-3. OB2's test, with an Event the poll thread sets once it holds the lock, in
+      place of a 0.3 s sleep that could flake on a busy runner. It failed 3 of 3 runs before the fix and passed 5
+      of 5 after.
+    - **The backup:** `backup()` shares `_vacuum_into`, so its file name moves by the same microseconds. Nothing
+      reads a backup's name as a bound.
 9. **The spec review (Codex, gpt-5.6-sol, xhigh, 2026-10-04).** C3 to C7 were confirmed, and C1 and C5 were plausible
    (no sockets, no `.git` in its copy). The six unaffected reports' sha256 values were measured byte-identical, and
    none of the other nine reports keeps a snapshot-clock instant in a sealed section. One finding, F1: `snapshot_at`
@@ -136,7 +151,7 @@ snapshot's cadence.
 | `compute_state(last_sync, schedule, now, grace, ...)` | local-development/gsd/state.py:78 |
 | The five builders read `ctx.now` for data | login_activity.py:37, :56; groups.py:24; dormant_access.py:52; groupsync_health.py:24, :32; compliance_snapshot.py:31, :32 (all under local-development/gsd/reporting/catalogue/) |
 | groupsync-health's caveat says "at generation time" | local-development/gsd/reporting/catalogue/groupsync_health.py:51 |
-| Every window query has a lower bound only (`>= since`): nothing in a snapshot is later than its stamp, so a window that ends at the stamp counts everything the snapshot holds | local-development/gsd/reporting/snapshot.py:494, :500, :583, :597, :641 |
+| Every window query has a lower bound only (`>= since`): nothing in a snapshot is later than its stamp (true once the copy is stamped under the writer's lock, Block R1), so a window that ends at the stamp counts everything the snapshot holds | local-development/gsd/reporting/snapshot.py:494, :500, :583, :597, :641 |
 | Page one: "Generated at" from `ctx.now`; "Last poll" with its instant; the login-capture note with "(last read …)" | local-development/gsd/reporting/catalogue/common.py:353, :358, :291, :375 |
 | compliance-snapshot's sealed "Last poll" row and its WHEN answer built from the capture note | local-development/gsd/reporting/catalogue/compliance_snapshot.py:52, :62 |
 | login-activity's sealed Window: From, To (`ctx.now`), Watching since, Last log read, Login gate | local-development/gsd/reporting/catalogue/login_activity.py:56-58 |
@@ -249,7 +264,8 @@ run cannot hit either, because `Snapshot` accepts only the fixed-width file-name
 age, never a report's data.
 
 Why the stamp is the right end: every window query reads `>= since` with no upper bound (§2.2), and a snapshot holds
-nothing later than its stamp. A window that ends at the stamp therefore counts exactly what the snapshot holds, and its
+nothing later than its stamp, because the copy is stamped under the writer's lock (Block R1, Orchestrator's notes
+10). A window that ends at the stamp therefore counts exactly what the snapshot holds, and its
 `To` says so. A window that ends at the generation time claims minutes or hours the snapshot never saw, which is the
 operator's "not accurate".
 
@@ -1548,4 +1564,121 @@ which `local-development/prepare-release.py` does when the release is cut.
   permission, value or migration.
 
 ## Application 5.0.0 — chart 0.70.1 — 2026-10-04
+```
+
+### Block R1 — `local-development/gsd/store.py`: the copy is stamped under the writer's lock (from the review of the implementation, PR #610, OB2 F1)
+
+<!-- block: local-development/gsd/store.py | edit -->
+```python
+        target_dir = Path(directory)
+        # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+        # "output file already exists" — so two copies inside the same second collide and
+        # the second one fails. now_iso() is deliberately second-resolution because the
+        # store relies on its fixed width for lexicographic ordering; a filename has no
+        # such constraint and needs the extra digits.
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
+        tmp = target.with_name(target.name + ".tmp")
+        try:
+            # Inside the try: an unwritable or read-only directory must return None like every
+            # other failure here, not raise into the poll thread.
+            target_dir.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                # A bound parameter is not accepted for the VACUUM target, so the path is
+                # interpolated. It is built here from a timestamp and an operator-supplied
+                # directory, never from request input; the quote-doubling is belt to that
+                # brace rather than the only protection. Written to a .tmp name and renamed:
+                # a reader listing gsd-*.db never sees a file VACUUM INTO has not finished.
+                self._conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
+            os.replace(tmp, target)
+        except (sqlite3.Error, OSError):
+            log.exception("%s to %s failed; the history is still only on the PVC", what, target)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+```
+
+```python
+        target_dir = Path(directory)
+        with self._lock:
+            # Sub-second precision, unlike now_iso(). VACUUM INTO refuses to overwrite —
+            # "output file already exists" — so two copies inside the same second collide and
+            # the second one fails. now_iso() is deliberately second-resolution because the
+            # store relies on its fixed width for lexicographic ordering; a filename has no
+            # such constraint and needs the extra digits. Stamped UNDER the lock: a poll that
+            # held it has committed, so no row in the copy is later than the stamp a report's
+            # window ends at (#592). Stamped before the lock, the copy waited for the poll and
+            # carried its rows under an earlier name (measured: a row one second after the stamp).
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+            target = target_dir / (f"gsd-{stamp}.db" if owner is None else f"gsd-{stamp}-{owner}.db")
+            tmp = target.with_name(target.name + ".tmp")
+            try:
+                # Inside the try: an unwritable or read-only directory must return None like every
+                # other failure here, not raise into the poll thread.
+                target_dir.mkdir(parents=True, exist_ok=True)
+                # A bound parameter is not accepted for the VACUUM target, so the path is
+                # interpolated. It is built here from a timestamp and an operator-supplied
+                # directory, never from request input; the quote-doubling is belt to that
+                # brace rather than the only protection. Written to a .tmp name and renamed:
+                # a reader listing gsd-*.db never sees a file VACUUM INTO has not finished.
+                self._conn.execute(f"VACUUM INTO '{str(tmp).replace(chr(39), chr(39) * 2)}'")
+                os.replace(tmp, target)
+            except (sqlite3.Error, OSError):
+                log.exception("%s to %s failed; the history is still only on the PVC", what, target)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return None
+```
+
+### Block R2 — `local-development/tests/test_snapshot_stamp_bound.py`: T592-3, a copy holds no row later than its stamp (OB2 F1's test, with an Event instead of a fixed sleep)
+
+<!-- block: local-development/tests/test_snapshot_stamp_bound.py | create -->
+```python
+"""#592: a report's window ends at the snapshot's stamp, so a copy must hold nothing later than its stamp."""
+from __future__ import annotations
+
+import threading
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+
+from gsd.reporting.snapshot import Snapshot, stamp_instant
+from gsd.timeutil import now_iso
+from reporting_seed import CLUSTER, seed_store
+
+
+def test_t592_3_a_snapshot_holds_no_row_later_than_its_stamp(tmp_path):
+    """The stamp is taken under the store's lock, so a poll holding the lock when the copy is asked for commits
+    BEFORE the stamp. Stamped before the lock (the bug), the copy waits for the poll, carries its rows, and is named
+    over a second before them: a window that "ends at the stamp" counts a row after it."""
+    store = seed_store(str(tmp_path / "writer.db"))
+    holding = threading.Event()
+    written: dict[str, str] = {}
+
+    def a_poll_holding_the_lock():
+        with store.poll_snapshot():                 # one transaction, the lock held for the whole cycle
+            holding.set()                           # the copy is asked for only once the poll holds the lock
+            time.sleep(1.5)
+            written["at"] = now_iso()
+            store.sync_members(CLUSTER, {"team-b": ["carol", "zed"]}, {"team-b": written["at"]}, written["at"])
+
+    poll = threading.Thread(target=a_poll_holding_the_lock)
+    poll.start()
+    assert holding.wait(10), "the poll never took the lock"
+    try:
+        path = store.snapshot(str(tmp_path / "snapshots"), keep=2)
+    finally:
+        poll.join()
+        store.close()
+    assert path
+    with Snapshot(Path(path)) as snap:
+        committed = datetime.strptime(written["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        assert any(r["user_name"] == "zed" for r in snap.membership_changes(CLUSTER, written["at"])), \
+            "the copy holds the poll's row"
+        assert stamp_instant(snap.stamp) >= committed, \
+            f"the copy is stamped {snap.stamp}, before its own row at {written['at']}"
 ```
