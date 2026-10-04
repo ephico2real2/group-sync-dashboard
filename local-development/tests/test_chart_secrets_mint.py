@@ -88,7 +88,8 @@ class TestRender:
         assert "-shared-token Secret" in alert and "-report-token Secret" not in alert, "the usage-pull alert names the Secret an operator will find (Grok N3)"
         role = _one(docs, "Role", "-secrets-mint")
         assert role["rules"][0]["resourceNames"] == ["t-group-sync-dashboard-oauth-session", "t-group-sync-dashboard-oauth-cookie",
-                                                     "t-group-sync-dashboard-report-shared-token", "t-group-sync-dashboard-report-token"]
+                                                     "t-group-sync-dashboard-report-shared-token", "t-group-sync-dashboard-report-token",
+                                                     "t-group-sync-dashboard-report-ticket-key"]
         assert env["MINT_COOKIE"] == "true" and env["MINT_TOKEN"] == "true"
         assert job["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"] == "128Mi"
 
@@ -121,19 +122,22 @@ class TestTheScript:
         done, calls = _run(tmp_path, argv, env, f"""
   'get secret '*) echo 'Error from server (NotFound): secrets "x" not found' >&2; exit 1 ;;
   'create secret generic t-group-sync-dashboard-oauth-session '*) cp /tmp/session_secret {tmp_path}/session_secret; exit 0 ;;
-  'create secret generic t-group-sync-dashboard-report-shared-token '*) cp /tmp/token {tmp_path}/token; exit 0 ;;""")
+  'create secret generic t-group-sync-dashboard-report-shared-token '*) cp /tmp/token {tmp_path}/token; exit 0 ;;
+  'create secret generic t-group-sync-dashboard-report-ticket-key '*) cp /tmp/key {tmp_path}/key; exit 0 ;;""")
         assert done.returncode == 0, done.stdout + done.stderr
         creates = [c for c in calls if c.startswith("create secret generic")]
-        assert len(creates) == 2, calls
+        assert len(creates) == 3, calls
         assert "--from-file=session_secret=/tmp/session_secret" in next(c for c in creates if "-oauth-session" in c)
         assert "--from-file=token=/tmp/token" in next(c for c in creates if "-shared-token" in c)
-        assert done.stdout.count("(minted)") == 2
+        assert "--from-file=key=/tmp/key" in next(c for c in creates if "-ticket-key" in c)
+        assert done.stdout.count("(minted)") == 3
         assert re.fullmatch(rb"[A-Za-z0-9]{32}", (tmp_path / "session_secret").read_bytes()) and re.fullmatch(rb"[A-Za-z0-9]{48}", (tmp_path / "token").read_bytes())
+        assert re.fullmatch(rb"[A-Za-z0-9]{48}", (tmp_path / "key").read_bytes()) and (tmp_path / "key").read_bytes() != (tmp_path / "token").read_bytes()
 
     def test_existing_secrets_are_kept_and_nothing_is_created(self, tmp_path):
         _, argv, env = _job(_render())
         done, calls = _run(tmp_path, argv, env, "  'get secret '*) exit 0 ;;")
-        assert done.returncode == 0 and done.stdout.count("exists; kept") == 2
+        assert done.returncode == 0 and done.stdout.count("exists; kept") == 3
         assert not [c for c in calls if c.startswith("create")]
 
     def test_the_transition_carries_the_old_secrets_values_over(self, tmp_path):
@@ -148,11 +152,16 @@ class TestTheScript:
   'get secret t-group-sync-dashboard-oauth-cookie -n x -o jsonpath={{.data.session_secret}}') printf '{old_cookie}' ;;
   'get secret t-group-sync-dashboard-report-token -n x -o jsonpath={{.data.token}}') printf '{old_token}' ;;
   'create secret generic t-group-sync-dashboard-oauth-session '*) cp /tmp/session_secret {tmp_path}/cookie; exit 0 ;;
-  'create secret generic t-group-sync-dashboard-report-shared-token '*) cp /tmp/token {tmp_path}/token; exit 0 ;;""")
+  'create secret generic t-group-sync-dashboard-report-shared-token '*) cp /tmp/token {tmp_path}/token; exit 0 ;;
+  'get secret t-group-sync-dashboard-report-ticket-key '*) exit 1 ;;
+  'create secret generic t-group-sync-dashboard-report-ticket-key '*) cp /tmp/key {tmp_path}/key; exit 0 ;;""")
         assert done.returncode == 0, done.stdout + done.stderr
         assert (tmp_path / "cookie").read_bytes() == b"old-cookie-key-32-chars-long-!!!"
         assert (tmp_path / "token").read_bytes() == b"old-token"
         assert done.stdout.count("carried over from") == 2
+        # #392: the ticket key has no legacy name; it is minted, never a copy of the token
+        assert "t-group-sync-dashboard-report-ticket-key created (minted)" in done.stdout
+        assert re.fullmatch(rb"[A-Za-z0-9]{48}", (tmp_path / "key").read_bytes())
 
     def test_the_carried_value_survives_byte_for_byte_and_a_read_error_is_not_absent(self, tmp_path):
         """A command substitution strips a trailing newline; the copy goes through a file instead
@@ -186,7 +195,7 @@ class TestTheScript:
         done, _ = _run(tmp_path, argv, env, """
   'get secret '*) echo 'Error from server (NotFound): x' >&2; exit 1 ;;
   'create secret generic '*) echo 'Error from server (AlreadyExists): secrets "x" already exists' >&2; exit 1 ;;""")
-        assert done.returncode == 0 and done.stdout.count("appeared meanwhile; kept") == 2, done.stdout + done.stderr
+        assert done.returncode == 0 and done.stdout.count("appeared meanwhile; kept") == 3, done.stdout + done.stderr
         done, _ = _run(tmp_path, argv, env, """
   'get secret '*) echo 'Error from server (NotFound): x' >&2; exit 1 ;;
   'create secret generic '*) echo 'Error from server (Forbidden): secrets is forbidden' >&2; exit 1 ;;""")

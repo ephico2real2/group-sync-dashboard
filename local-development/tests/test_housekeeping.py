@@ -28,9 +28,12 @@ from gsd.reporting import REPORT_PREFIX
 from gsd.reporting.artifacts import Run
 from gsd.reporting.config import ReportSettings
 from gsd.reporting.server import build_report_app
+from gsd.reporting.ticket import TicketKeys
 from test_visibility import _MapResolver
 
 SECRET = b"h" * 48
+#: The ticket key (#392): viewers' tickets are signed with it; SECRET is the service token the dashboard deletes with.
+TICKET_KEY = b"j" * 48
 SENTENCE = "For cluster administrators only."
 ADMIN = "jane.admin"
 SCHEDULE = "nightly-namespace-access"
@@ -98,11 +101,13 @@ def _rig(tmp_path: Path, **over) -> tuple[TestClient, object, object, Path]:
     data, artifacts, snapshots = tmp_path / "data", tmp_path / "artifacts", tmp_path / "snapshots"
     for d in (data, artifacts, snapshots):
         d.mkdir()
-    token = tmp_path / "token"
+    token, key = tmp_path / "token", tmp_path / "ticket-key"
     token.write_bytes(SECRET)
+    key.write_bytes(TICKET_KEY)
     _layout(data)
     report_app = build_report_app(ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts),
-                                                 pdf_enabled=False, housekeeping_enabled=True), secret=SECRET)
+                                                 pdf_enabled=False, housekeeping_enabled=True), secret=SECRET,
+                                  ticket_keys=TicketKeys(TICKET_KEY))
     store = report_app.state.store
     for run in (_run("20260101T000000.000000Z-m0ld", days=10), _run("20260102T000000.000000Z-mnew", days=1),
                 *(_run(f"2026010{i}T000000.000000Z-s00{i}", days=5.5 - i, schedule=SCHEDULE) for i in range(1, 5)),
@@ -113,7 +118,8 @@ def _rig(tmp_path: Path, **over) -> tuple[TestClient, object, object, Path]:
             store.write(run.id, "html", b"<p>run</p>")
     settings = dict(clusters=[ClusterConfig("c1", "https://api.c1.example.com:6443", token_env="X")],
                     db_path=str(data / "gsd.db"), backup_dir=str(data / "backup"), oauth_proxy_enabled=True,
-                    housekeeping_enabled=True, reporting_url="http://report", reporting_token_file=str(token))
+                    housekeeping_enabled=True, reporting_url="http://report", reporting_token_file=str(token),
+                    reporting_ticket_key_file=str(key))
     settings.update(over)
     app = build_app(Settings(**settings), run_poller=False)
     app.state.tier_resolver = _MapResolver({ADMIN: "all", "auditor": "all"})
@@ -366,8 +372,8 @@ class TestT542_9_TheSwitchAndTheContract:
             return sorted((m, r.path) for r in app.routes if hasattr(r, "methods")
                           for m in r.methods - {"GET", "HEAD", "OPTIONS"})
         base = dict(snapshot_dir=str(tmp_path), artifact_dir=str(tmp_path / "a"), pdf_enabled=False)
-        off = build_report_app(ReportSettings(**base), secret=SECRET)
-        on = build_report_app(ReportSettings(**base, housekeeping_enabled=True), secret=SECRET)
+        off = build_report_app(ReportSettings(**base), secret=SECRET, ticket_keys=TicketKeys(TICKET_KEY))
+        on = build_report_app(ReportSettings(**base, housekeeping_enabled=True), secret=SECRET, ticket_keys=TicketKeys(TICKET_KEY))
         assert non_get(off) == [("POST", f"{REPORT_PREFIX}/api/preview"), ("POST", f"{REPORT_PREFIX}/api/runs")]
         assert non_get(on) == sorted(non_get(off) + [("DELETE", f"{REPORT_PREFIX}/api/runs/{{run_id}}"),
                                                      ("POST", f"{REPORT_PREFIX}/api/runs/cleanup")])
@@ -376,7 +382,7 @@ class TestT542_9_TheSwitchAndTheContract:
         from gsd.reporting import TICKET_HEADER
         from gsd.reporting.ticket import mint
         direct = TestClient(rig.report_app)
-        ticket = {TICKET_HEADER: mint(SECRET, ADMIN, "all", 300), "X-Forwarded-User": ADMIN}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, ADMIN, "all", 300), "X-Forwarded-User": ADMIN}
         r = direct.delete(f"{REPORT_PREFIX}/api/runs/20260101T000000.000000Z-m0ld", headers=ticket)
         assert r.status_code == 403 and "20260101T000000.000000Z-m0ld" in rig.runs
 

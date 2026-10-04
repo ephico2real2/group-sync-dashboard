@@ -22,7 +22,7 @@ import yaml
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CHARTS = {"group-sync-dashboard": REPO / "charts" / "group-sync-dashboard", "openshift-grafana": REPO / "charts" / "openshift-grafana"}
 GRAFANA_API = "grafana.integreatly.org/v1beta1"
-GENERATED = ("-oauth-session", "-oauth-cookie", "-report-token", "-shared-token", "-admin")
+GENERATED = ("-oauth-session", "-oauth-cookie", "-report-token", "-shared-token", "-ticket-key", "-admin")
 # The two `lookup`s that remain, both of which DEGRADE LOUDLY or SAFELY offline and say so in place:
 # the apps-domain read on the Ingress path fails the render with a message naming GitOps as case 1
 # (the 2026-09-03 finding), and the auditors' Group-collision guard only runs for createLocal groups

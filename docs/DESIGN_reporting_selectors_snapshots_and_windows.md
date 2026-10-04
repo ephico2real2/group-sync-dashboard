@@ -241,7 +241,8 @@ Lands FIRST so Features 1–3 validate against the mock cluster (#116/#118), not
   never weakens the ticket/tier gates on `create_run`. **v1 treats the window as an operational rail,
   non-adversarial to a service-token holder** — the same HMAC secret signs viewer tickets and
   authenticates the service token, so a token holder could mint a viewer ticket to bypass a kind-based
-  window; splitting the signing secret from the service bearer is a named follow-up.
+  window; splitting the signing secret from the service bearer is a named follow-up, done by #392
+  (`docs/specs/SPEC_F6_ticket_signing_key.md`): tickets now verify with a key the schedule Jobs never mount.
 - No new secrets, no new cluster-wide RBAC. The selector change reads only metadata already captured.
 - The storage seam holds: all SQL in `store.py` / `reporting/snapshot.py`; `server.py` never imports
   `sqlite3`.

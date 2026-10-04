@@ -8,7 +8,7 @@
 | Version on release | app 4.6.0, chart 0.69.0 |
 | Version note | Image content (`gsd/reporting/ticket.py`, `server.py`, `config.py`, `gsd/api.py`, `gsd/config.py`), so an application MINOR (`docs/specs/README.md`, the version ladder). The chart takes a MINOR because it mints and mounts a new Secret, by its own rule (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`) and its history (0.67.0: "MINOR: `reporting.schedules[].deliver` …"; the PATCHes 0.66.5 to 0.66.7 changed no template). Read on `8833eab5` (application 4.4.0, chart 0.67.0). F5 (#140, `specified`) claims app 4.5.0 and chart 0.68.0 and is built first by the ladder, so this spec takes app 4.6.0 and chart 0.69.0; W1 was `specified` at 0.69.0 and moves to 0.70.0 by SPEC_E5's rule (a `specified` spec names a chart version above `Chart.yaml` and above every other `specified` claim), its index row and its header in this spec's own commit. The version blocks (84 to 87) edit `8833eab5`'s text: when F5 lands first, their Old text becomes 4.5.0 and 0.68.0 and the implementing pull request corrects them here first |
 | Issue | [#392](https://github.com/ephico2real2/group-sync-dashboard/issues/392) |
-| Status | specified |
+| Status | merged |
 | Source | OB3's research and specification of 2026-10-04 (implementer seat), from the issue's body (2026-09-26) and #131's decision 4 (2026-09-16), the code read on `851ea909`, the five RFCs fetched from rfc-editor.org, the repository's venv (Python 3.14.7) and `helm template`, and read-only `oc get` on the lab (no Secret's data, no token). Begun on `851ea909`; F5's spec (#586, spec only) landed during the work and touches none of the 36 files this spec changes. §7's 87 blocks were generated from a working copy and proved against a clean detached checkout of `8833eab5` with this spec committed (§4.3) |
 
 ## How to read this spec
@@ -67,6 +67,34 @@ Questions settled by the orchestrator (2026-10-04, on "easy to manage, best prac
    so an open page keeps working. Settled in §6, question 1.
 3. **No key id in the ticket: SETTLED (§3.3).** Two keys at most are tried, nothing derived from a key travels in a
    ticket or a log, and the report pod's start line says whether a rotation is open.
+
+**Correction at implementation (orchestrator, 2026-10-04): the version blocks' Old texts.** Blocks 84 to 87 were
+written against main at application 4.4.0 / chart 0.67.0. F5 (#140, PR #596) merged first and took 4.5.0 / 0.68.0, as
+the index orders, so their Old texts now read 4.5.0 and 0.68.0. Their New texts (4.6.0 / 0.69.0) are unchanged, and
+the four block titles now name the versions they write.
+
+**Correction at implementation (orchestrator, 2026-10-04): F5's test file needs the ticket key too (Blocks 88, 89).**
+F5 (#140) merged first and added `local-development/tests/test_reporting_schedule_status.py`, which builds the report
+app with the service secret alone and mints T140-4's ticket with it. Applied after F5, this spec's report service
+requires the ticket key, so all four of that file's app tests failed with `FileNotFoundError` on the key file (the full
+suite on the applied tree: 4 failed, 8216 passed). Blocks 88 and 89 give that file the treatment Block 42 gives
+`test_kpi.py`: it builds the app through `test_reporting_server`'s builder, which holds the ticket key, and mints with
+`TICKET_KEY`.
+
+**Review of the implementation (2026-10-04): Codex (gpt-5.6-sol, xhigh) and OB2 (Fable 5.1, high; the auth seat in
+place of OB3, who wrote this spec).** OB2 accepted with no finding: it measured the forgery open on main and closed
+here, 26 malformed inputs and 8 raw-socket inputs each answered with §3.3's status (no 500), `json.loads` never called
+on unsigned input, no key or token byte in any repr, traceback or DEBUG log, the rotation window, the mounts (no
+schedule CronJob or Job), and RBAC REMOVED 0 / ADDED 1. Codex confirmed C1 and C3 to C8 and found one defect:
+- **Accepted: an authenticated payload that is not a JSON object escaped the refusal path (Codex F1).** A payload
+  whose MAC verifies but whose JSON is an array, a string, a number or `null` reached `claims.get(...)` and raised
+  `AttributeError`, which the server does not catch: a 500 instead of §3.3's 403. Only the ticket key's holder can
+  produce one, so it is not a forgery, but it breaks the refusal contract. `verify` now refuses a non-object claim set
+  as a `TicketError` (Blocks R1 and R2), and `test_an_authenticated_payload_must_be_a_json_object` holds the four
+  cases (4 failed before, 4 passed after).
+- **Observed, no change:** `any(...)` short-circuits, so timing can tell which of the two keys verified, which the
+  report pod's start line already states; the start line "ticket key loaded" is emitted only where the pod's logging
+  is configured, which the lab walk (§5) reads.
 
 ## 1. The mandate, and what is out of scope
 
@@ -1260,6 +1288,16 @@ def test_a_ticket_has_exactly_one_spelling():
         with pytest.raises(TicketError):
             verify(KEYS, malformed, "root", now=1_100)
     assert verify(KEYS, ticket, "root", now=1_100)["viewer"] == "root"
+
+
+@pytest.mark.parametrize("payload", [b"[]", b'"text"', b"1", b"null"])
+def test_an_authenticated_payload_must_be_a_json_object(payload):
+    """A valid MAC authenticates bytes, not their JSON type; every malformed claim set is still a refusal."""
+    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+    digest = hmac.new(KEYS.current, payload, hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    with pytest.raises(TicketError, match="JSON object"):
+        verify(KEYS, f"v2.{encoded}.{signature}", "root", now=1_100)
 
 
 def test_tampering_always_changes_the_ticket_and_is_refused():
@@ -2582,12 +2620,12 @@ every other refusal is a 403.
 ```
 
 
-### Block 84 — `local-development/pyproject.toml`: application 4.5.0
+### Block 84 — `local-development/pyproject.toml`: application 4.6.0
 
 <!-- block: local-development/pyproject.toml | edit -->
 
 ```toml
-version = "4.4.0"
+version = "4.5.0"
 ```
 
 
@@ -2596,12 +2634,12 @@ version = "4.6.0"
 ```
 
 
-### Block 85 — `local-development/gsd/__init__.py`: application 4.5.0
+### Block 85 — `local-development/gsd/__init__.py`: application 4.6.0
 
 <!-- block: local-development/gsd/__init__.py | edit -->
 
 ```python
-__version__ = "4.4.0"
+__version__ = "4.5.0"
 ```
 
 
@@ -2610,12 +2648,12 @@ __version__ = "4.6.0"
 ```
 
 
-### Block 86 — `charts/group-sync-dashboard/Chart.yaml` (1 of 2): chart 0.68.0 and application 4.5.0, with their history lines
+### Block 86 — `charts/group-sync-dashboard/Chart.yaml` (1 of 2): chart 0.69.0, with its history line
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 ```yaml
-version: 0.67.0
+version: 0.68.0
 ```
 
 
@@ -2629,12 +2667,12 @@ version: 0.69.0
 ```
 
 
-### Block 87 — `charts/group-sync-dashboard/Chart.yaml` (2 of 2): chart 0.68.0 and application 4.5.0, with their history lines
+### Block 87 — `charts/group-sync-dashboard/Chart.yaml` (2 of 2): application 4.6.0, with its history line
 
 <!-- block: charts/group-sync-dashboard/Chart.yaml | edit -->
 
 ```yaml
-appVersion: "4.4.0"
+appVersion: "4.5.0"
 ```
 
 
@@ -2643,3 +2681,55 @@ appVersion: "4.4.0"
 appVersion: "4.6.0"
 ```
 
+### Block 88 — `local-development/tests/test_reporting_schedule_status.py`: the app with its two secrets apart
+
+<!-- block: local-development/tests/test_reporting_schedule_status.py | edit -->
+```python
+from gsd.reporting.server import build_report_app
+from gsd.reporting.ticket import mint
+```
+
+```python
+from gsd.reporting.ticket import mint
+# the report service with its two secrets apart (#392): test_reporting_server's builder holds the ticket key
+from test_reporting_server import TICKET_KEY, build_report_app
+```
+
+### Block 89 — `local-development/tests/test_reporting_schedule_status.py`: T140-4's ticket signed with the ticket key
+
+<!-- block: local-development/tests/test_reporting_schedule_status.py | edit -->
+```python
+            ticket = {TICKET_HEADER: mint(SECRET, "alice.person", "all", 300), USER_HEADER: "alice.person"}
+```
+
+```python
+            ticket = {TICKET_HEADER: mint(TICKET_KEY, "alice.person", "all", 300), USER_HEADER: "alice.person"}
+```
+
+### Block R1 — `local-development/gsd/reporting/ticket.py`: from the review of the implementation (PR, Codex F1)
+
+<!-- block: local-development/gsd/reporting/ticket.py | edit -->
+```python
+        raise TicketError("ticket payload is not JSON") from exc
+```
+
+```python
+        raise TicketError("ticket payload is not JSON") from exc
+    if not isinstance(claims, dict):
+        raise TicketError("ticket payload is not a JSON object")
+```
+
+### Block R2 — `local-development/tests/test_reporting_ticket.py`: from the review of the implementation (PR, Codex F1)
+
+<!-- block: local-development/tests/test_reporting_ticket.py | edit -->
+```python
+"""The ticket: signature, expiry, tier, and the binding to the proxy's identity header."""
+```
+
+```python
+"""The ticket: signature, expiry, tier, and the binding to the proxy's identity header."""
+import base64
+import hashlib
+import hmac
+
+```

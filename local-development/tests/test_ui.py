@@ -5002,12 +5002,13 @@ def declared_server(tmp_path_factory):
     root = tmp_path_factory.mktemp("gsd-declared")
     db = str(root / "ui.db")
     _seed(db)
-    token = root / "report-token"
+    token, key = root / "report-token", root / "report-ticket-key"
     token.write_bytes(b"t" * 48 + b"\n")
+    key.write_bytes(b"k" * 48 + b"\n")
     settings = Settings(
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True, cluster_secrets_writes_enabled=True,
-        reporting_url="https://gsd-report.ns.svc:8443", reporting_token_file=str(token),
+        reporting_url="https://gsd-report.ns.svc:8443", reporting_token_file=str(token), reporting_ticket_key_file=str(key),
     )
     app = build_app(settings, run_poller=False)
     app.state.tier_resolver = _TierByName("auditor")
@@ -7058,6 +7059,9 @@ class TestIdleTimeout:
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 REPORT_SECRET = b"u" * 48
+#: The ticket key (#392): the dashboard under test signs with it and the report service verifies with it, never
+#: with the service token REPORT_SECRET.
+REPORT_TICKET_KEY = b"v" * 48
 
 
 @pytest.fixture(scope="module")
@@ -7065,13 +7069,14 @@ def reporting_server(tmp_path_factory):
     from datetime import UTC as _UTC, datetime as _dt
     from gsd.reporting.config import REPORT_NAMES, ReportSettings
     from gsd.reporting.server import build_report_app
+    from gsd.reporting.ticket import TicketKeys
     from gsd.store import Store as _Store
 
     root = tmp_path_factory.mktemp("gsd-report")
     db = str(root / "ui.db")
     _seed(db)
-    snapshots, artifacts, token = root / "snapshots", root / "artifacts", root / "token"
-    snapshots.mkdir(); artifacts.mkdir(); token.write_bytes(REPORT_SECRET)
+    snapshots, artifacts, token, key = root / "snapshots", root / "artifacts", root / "token", root / "ticket-key"
+    snapshots.mkdir(); artifacts.mkdir(); token.write_bytes(REPORT_SECRET); key.write_bytes(REPORT_TICKET_KEY)
     writer = _Store(db)
     assert writer.snapshot(str(snapshots), keep=2)
     writer.close()
@@ -7095,7 +7100,8 @@ def reporting_server(tmp_path_factory):
                                      namespace_selector_labels=("company.net/mnemonic", "company.net/app-environment"),
                                      namespace_group_label="company.net/oud-group",
                                      login_capture_enabled=False)
-    report_app = build_report_app(report_settings, secret=REPORT_SECRET, clock=lambda: clock["now"] or _dt.now(_UTC))
+    report_app = build_report_app(report_settings, secret=REPORT_SECRET, ticket_keys=TicketKeys(REPORT_TICKET_KEY),
+                                  clock=lambda: clock["now"] or _dt.now(_UTC))
     settings = Settings(
         # Two configured clusters, both in the snapshot the seed wrote (#267): the form's cluster control lists
         # what the nav lists, and a several-cluster run needs a second target the service can render.
@@ -7104,7 +7110,8 @@ def reporting_server(tmp_path_factory):
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
                   ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X", identity="none")],
         db_path=db, login_capture_enabled=True, oauth_proxy_enabled=True,
-        reporting_url="http://127.0.0.1:1/unused", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
+        reporting_url="http://127.0.0.1:1/unused", reporting_token_file=str(token), reporting_ticket_key_file=str(key),
+        reporting_ticket_ttl_seconds=120,
     )
     dash_app = build_app(settings, run_poller=False)
     dash_app.state.tier_resolver = _TierByName()
@@ -8692,7 +8699,7 @@ class TestReportsTab:
         import time as _time
         from gsd.reporting.ticket import mint as _mint
         base, _clock, _app = reporting_server
-        headers = {"X-Forwarded-User": "root", "X-GSD-Report-Ticket": _mint(REPORT_SECRET, "root", "all", 120)}
+        headers = {"X-Forwarded-User": "root", "X-GSD-Report-Ticket": _mint(REPORT_TICKET_KEY, "root", "all", 120)}
 
         def age() -> int:
             r = httpx.get(f"{base}/report/api/snapshot", headers=headers, timeout=5)
@@ -9984,7 +9991,7 @@ class TestReportsTab:
             # believes valid — exactly a tab left open past the TTL.
             from gsd.reporting.ticket import mint as _mint
             import time as _time
-            stale = _mint(REPORT_SECRET, "root", "all", 120, now=_time.time() - 300)
+            stale = _mint(REPORT_TICKET_KEY, "root", "all", 120, now=_time.time() - 300)
             page.evaluate("t => { data.reportTicket = { ticket: t, expiresAt: Date.now() + 100000, prefix: '/report' }; }", stale)
             statuses.clear()
             body = page.evaluate("reportGet('/api/reports')")
@@ -12261,13 +12268,14 @@ def housekeeping_server(tmp_path_factory):
     from gsd.reporting.artifacts import Run
     from gsd.reporting.config import REPORT_NAMES, ReportSettings
     from gsd.reporting.server import build_report_app
+    from gsd.reporting.ticket import TicketKeys
     from gsd.store import Store as _Store
 
     root = tmp_path_factory.mktemp("gsd-housekeeping")
     db = str(root / "ui.db")
     _seed(db)
-    snapshots, artifacts, token = root / "snapshots", root / "artifacts", root / "token"
-    snapshots.mkdir(); artifacts.mkdir(); token.write_bytes(REPORT_SECRET)
+    snapshots, artifacts, token, key = root / "snapshots", root / "artifacts", root / "token", root / "ticket-key"
+    snapshots.mkdir(); artifacts.mkdir(); token.write_bytes(REPORT_SECRET); key.write_bytes(REPORT_TICKET_KEY)
     writer = _Store(db)
     assert writer.snapshot(str(snapshots), keep=2)
     writer.close()
@@ -12281,7 +12289,8 @@ def housekeeping_server(tmp_path_factory):
         (kept / "gsd.db").write_bytes(b"SQLite format 3\x00")
     report_app = build_report_app(ReportSettings(snapshot_dir=str(snapshots), artifact_dir=str(artifacts), pdf_enabled=False,
                                                  enabled_reports=tuple(n for n in REPORT_NAMES if n != "login-activity"),
-                                                 housekeeping_enabled=True), secret=REPORT_SECRET)
+                                                 housekeeping_enabled=True), secret=REPORT_SECRET,
+                                  ticket_keys=TicketKeys(REPORT_TICKET_KEY))
     store = report_app.state.store
 
     def run(rid, days, schedule=None, status="done", report="groups"):
@@ -12301,8 +12310,8 @@ def housekeeping_server(tmp_path_factory):
         clusters=[ClusterConfig("crc-local", "https://api.crc.testing:6443", token_env="X"),
                   ClusterConfig("prod-east", "https://api.prod-east.example.com:6443", token_env="X", identity="none")],
         db_path=db, backup_dir=str(root / "backup"), login_capture_enabled=True, oauth_proxy_enabled=True,
-        reporting_url="http://report", reporting_token_file=str(token), reporting_ticket_ttl_seconds=120,
-        housekeeping_enabled=True,
+        reporting_url="http://report", reporting_token_file=str(token), reporting_ticket_key_file=str(key),
+        reporting_ticket_ttl_seconds=120, housekeeping_enabled=True,
     )
     dash_app = build_app(settings, run_poller=False)
     dash_app.state.tier_resolver = _TierByName("root", "auditor")

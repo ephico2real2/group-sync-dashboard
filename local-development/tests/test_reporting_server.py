@@ -18,11 +18,20 @@ from gsd.reporting import REPORT_PREFIX, TICKET_HEADER
 from gsd.reporting.artifacts import ArtifactStore, Run
 from gsd.reporting.config import ReportSettings
 from gsd.reporting.runs import QueueFull, RunManager
-from gsd.reporting.server import REFUSAL, UNAUTHENTICATED, build_report_app
-from gsd.reporting.ticket import mint
+from gsd.reporting import server as report_server
+from gsd.reporting.server import REFUSAL, UNAUTHENTICATED
+from gsd.reporting.ticket import TicketKeys, mint
 from reporting_seed import CLUSTER, seeded_dirs
 
 SECRET = b"s" * 48
+#: The ticket key (#392): every ticket below is minted with it; SECRET is the service token and nothing else.
+TICKET_KEY = b"k" * 48
+
+
+def build_report_app(settings, **kw):
+    """The report service under test, its two secrets apart as the chart mounts them (#392, SPEC_F6): `secret=` is
+    the service token, and the ticket key is TICKET_KEY."""
+    return report_server.build_report_app(settings, ticket_keys=TicketKeys(TICKET_KEY), **kw)
 VENDOR = Path(__file__).resolve().parents[1] / "gsd" / "static" / "vendor"
 FONTS = (str(VENDOR / "DejaVuSans.ttf"), str(VENDOR / "DejaVuSans-Bold.ttf"))
 # Tickets are minted at T0, and EVERY app under test runs on a clock frozen at T0 + 10 — the fixture's
@@ -50,7 +59,7 @@ def service(tmp_path):
 
 
 def _viewer(user="root"):
-    return {TICKET_HEADER: mint(SECRET, user, "all", 300, now=T0), USER_HEADER: user}
+    return {TICKET_HEADER: mint(TICKET_KEY, user, "all", 300, now=T0), USER_HEADER: user}
 
 
 SERVICE = {"Authorization": f"Bearer {SECRET.decode()}"}
@@ -103,7 +112,7 @@ class TestTheDoors:
     def test_ticket_bound_to_the_proxy_identity_and_the_service_token(self, service):
         client, _, _ = service
         assert client.get(f"{REPORT_PREFIX}/api/reports", headers=_viewer()).status_code == 200
-        wrong_user = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=T0), USER_HEADER: "alice"}
+        wrong_user = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=T0), USER_HEADER: "alice"}
         r = client.get(f"{REPORT_PREFIX}/api/reports", headers=wrong_user)
         assert r.status_code == 403 and r.json()["detail"] == REFUSAL
         bad_sig = {TICKET_HEADER: mint(b"z" * 48, "root", "all", 300, now=T0), USER_HEADER: "root"}
@@ -1035,7 +1044,7 @@ class TestReportingWindowGate:
             assert r.status_code == 409, "a service curl with no schedule is still automated (gate on origin, not body.schedule)"
 
     def test_a_viewer_is_never_gated(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(self.SAT_0300.timestamp())),
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(self.SAT_0300.timestamp())),
                   USER_HEADER: "root"}
         with TestClient(self._app(tmp_path, self.SAT_0300)) as client:
             r = client.post(f"{REPORT_PREFIX}/api/runs",
@@ -1252,14 +1261,14 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             assert r.status_code == 202 and r.json()["cluster"] == "prod-east" and "runs" not in r.json()
 
     def test_a_viewer_must_name_its_cluster(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         with self._client(tmp_path) as client:
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups"}, headers=ticket)
             assert r.status_code == 422 and "names its cluster" in r.json()["detail"]
 
     # #267: several clusters in one action — the form's multi-select. `cluster` stays a single string on the
     # sealed model (one artefact, one cluster, one hash), so N clusters is N runs, queued as one slot.
-    VIEWER = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+    VIEWER = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
 
     def test_a_viewer_names_several_clusters_and_gets_one_sealed_run_per_cluster(self, tmp_path):
         with self._two_cluster_client(tmp_path) as client:
@@ -1323,7 +1332,7 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             assert listed["queued"] == 1
 
     def test_formats_default_by_origin_and_json_is_implied(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         with self._client(tmp_path) as client:
             manual = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).json()
             scheduled = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE).json()
@@ -1333,14 +1342,14 @@ class TestClusterAgnosticSchedulesAndOriginFormats:
             assert explicit["formats"] == ["pdf"], "an explicit list overrides the origin default"
 
     def test_the_deployment_overrides_the_origin_defaults(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         with self._client(tmp_path, formats_scheduled=("html", "pdf"), formats_manual=("html",)) as client:
             manual = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).json()
             scheduled = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER, "schedule": "nightly"}, headers=SERVICE).json()
             assert manual["formats"] == ["html"] and scheduled["formats"] == ["html", "pdf"]
 
     def test_a_defaulted_pdf_is_dropped_where_pdf_is_off_but_an_explicit_one_is_refused(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         with self._client(tmp_path, pdf_enabled=False) as client:
             manual = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)
             assert manual.status_code == 202 and manual.json()["formats"] == ["html"]
@@ -1428,7 +1437,7 @@ class TestReportingStatus:
         assert s["schedules"] == []
 
     def test_the_history_filters_run_across_the_whole_history(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         snapshots, artifacts = seeded_dirs(tmp_path)
         app = build_report_app(_settings(snapshots, artifacts, max_queued_runs=100), secret=SECRET, clock=lambda: FROZEN)
         with TestClient(app) as client:
@@ -1577,7 +1586,7 @@ class TestPreviewAndNamespacePicker:
     """#143 phases 2 and 3: the totals a run would produce, from build() alone; the discovered namespaces."""
 
     def test_the_preview_answers_totals_without_a_run(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         snapshots, artifacts = seeded_dirs(tmp_path)
         with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
             r = client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER}, headers=ticket)   # not this
@@ -1596,7 +1605,7 @@ class TestPreviewAndNamespacePicker:
             assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}).status_code == 401
 
     def test_the_preview_is_503_without_a_snapshot_and_429_when_busy(self, tmp_path):
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         snapshots, artifacts = tmp_path / "s", tmp_path / "a"; snapshots.mkdir(); artifacts.mkdir()
         with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:
             assert client.post(f"{REPORT_PREFIX}/api/preview", json={"report": "groups", "cluster": CLUSTER}, headers=ticket).status_code == 503
@@ -1647,7 +1656,7 @@ class TestPreviewAndNamespacePicker:
         # Review of #224 (OB3): only newest_snapshot() was behind the 503; Snapshot() itself raises
         # SnapshotError for a copy the service cannot read — torn, or a schema newer than it knows (the
         # dashboard rolled first) — and that escaped the route as a 500 where readyz says 503.
-        ticket = {TICKET_HEADER: mint(SECRET, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
+        ticket = {TICKET_HEADER: mint(TICKET_KEY, "root", "all", 300, now=int(FROZEN.timestamp())), USER_HEADER: "root"}
         snapshots, artifacts = seeded_dirs(tmp_path)
         (snapshots / "gsd-20991231T235959.000000Z.db").write_bytes(b"not a database")     # newest by name, unreadable
         with TestClient(build_report_app(_settings(snapshots, artifacts), secret=SECRET, clock=lambda: FROZEN)) as client:

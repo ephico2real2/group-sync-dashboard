@@ -254,7 +254,7 @@ to guess.
 
 | path | served by | who is admitted |
 |---|---|---|
-| `/report/**` | the report service | a ticket from `/api/report/ticket` (a viewer) or the service token; a viewer without a ticket gets 401, a ticket for another identity 403 |
+| `/report/**` | the report service | a ticket from `/api/report/ticket` (a viewer), signed with the ticket key and never the service token (#392), or the service token; a viewer without a ticket gets 401, a ticket for another identity 403, a ticket of the earlier format 401 (the page mints again) |
 
 **Two deliberate asymmetries, both measured:**
 

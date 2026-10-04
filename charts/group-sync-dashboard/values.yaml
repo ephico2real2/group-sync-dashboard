@@ -847,12 +847,14 @@ clusters:
 #    on — turning every external cluster unreachable on a sync.
 # -----------------------------------------------------------------------------
 # The secrets-mint hook (templates/secrets-mint.yaml, #212)
-# The two generated-once Secrets — the oauth-proxy session key and the shared report token — are
+# The generated-once Secrets — the oauth-proxy session key, the report service token and, since
+# 0.69.0, the report ticket key (#392) — are
 # created on the cluster by a hook Job, only if absent, never rendered: Helm's `lookup`, which
 # used to reuse them, is empty under `helm template` (Argo CD, Kustomize), so every render minted
 # fresh values and every sync rotated them. On the first upgrade from a chart before 0.37.0 the
 # hook carries the existing values over into the new names (-oauth-session, -shared-token), so
-# nobody is signed out. Off = you create both Secrets under those names yourself.
+# nobody is signed out; the ticket key is always minted fresh. Off = you create the three Secrets
+# under those names yourself (README, "Upgrading to 0.69.0").
 # -----------------------------------------------------------------------------
 secretsMint:
   enabled: true

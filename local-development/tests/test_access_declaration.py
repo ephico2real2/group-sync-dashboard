@@ -159,10 +159,12 @@ def _app(root: pathlib.Path, *, writes: bool = True, housekeeping: bool = True):
     housekeeping switches."""
     db = str(root / "gsd.db")
     _seed(db)
-    token = root / "report-token"
+    token, key = root / "report-token", root / "report-ticket-key"
     token.write_bytes(b"t" * 48 + b"\n")
+    key.write_bytes(b"k" * 48 + b"\n")
     return build_app(_settings(db, cluster_secrets_writes_enabled=writes, housekeeping_enabled=housekeeping,
-                               reporting_url="https://gsd-report.ns.svc:8443", reporting_token_file=str(token)),
+                               reporting_url="https://gsd-report.ns.svc:8443", reporting_token_file=str(token),
+                               reporting_ticket_key_file=str(key)),
                      run_poller=False)
 
 

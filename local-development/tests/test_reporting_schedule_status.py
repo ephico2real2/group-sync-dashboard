@@ -20,8 +20,9 @@ from gsd.reporting import REPORT_PREFIX
 from gsd.reporting.artifacts import ArtifactStore, Run
 from gsd.reporting.config import ReportSettings
 from gsd.reporting.metrics import SCHEDULE_STATES
-from gsd.reporting.server import build_report_app
 from gsd.reporting.ticket import mint
+# the report service with its two secrets apart (#392): test_reporting_server's builder holds the ticket key
+from test_reporting_server import TICKET_KEY, build_report_app
 from gsd.activity import USER_HEADER
 from gsd.reporting import TICKET_HEADER
 from reporting_seed import CLUSTER, seeded_dirs
@@ -112,7 +113,7 @@ class TestMustNotChange:
     def test_t140_4_the_last_success_gauge_keeps_its_name_and_label_and_no_person_is_named(self, tmp_path):
         at = datetime.fromtimestamp(int(time.time()), UTC)            # a ticket is checked against the real clock
         with TestClient(_app(tmp_path, at, seed=SEED)) as client:
-            ticket = {TICKET_HEADER: mint(SECRET, "alice.person", "all", 300), USER_HEADER: "alice.person"}
+            ticket = {TICKET_HEADER: mint(TICKET_KEY, "alice.person", "all", 300), USER_HEADER: "alice.person"}
             assert client.post(f"{REPORT_PREFIX}/api/runs", json={"report": "groups", "cluster": CLUSTER},
                                headers=ticket).status_code == 202
             text = client.get(f"{REPORT_PREFIX}/metrics").text

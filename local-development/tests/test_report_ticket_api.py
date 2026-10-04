@@ -9,10 +9,12 @@ from fastapi.testclient import TestClient
 
 from gsd.api import build_app
 from gsd.config import ClusterConfig, Settings
-from gsd.reporting.ticket import TicketError, verify
+from gsd.reporting.ticket import TicketError, TicketKeys, verify
 from gsd.store import Store
 
 SECRET = b"t" * 48
+#: The ticket key (#392): the dashboard signs with it, never with the service token SECRET.
+TICKET_KEY = b"k" * 48
 ADMIN = {"X-Forwarded-User": "root"}
 ALICE = {"X-Forwarded-User": "alice"}
 
@@ -22,11 +24,12 @@ def _tier(viewer: str) -> str:
 
 
 def _client(tmp_path, *, reporting=True, proxy=True, usage=None) -> TestClient:
-    token = tmp_path / "token"
+    token, key = tmp_path / "token", tmp_path / "ticket-key"
     token.write_bytes(SECRET + b"\n")
+    key.write_bytes(TICKET_KEY + b"\n")
     settings = Settings(clusters=[ClusterConfig("c1", "https://x", token_env="T")], db_path=str(tmp_path / "t.db"),
                         oauth_proxy_enabled=proxy, reporting_url="https://gsd-report.ns.svc:8443" if reporting else "",
-                        reporting_token_file=str(token), reporting_ticket_ttl_seconds=120)
+                        reporting_token_file=str(token), reporting_ticket_key_file=str(key), reporting_ticket_ttl_seconds=120)
     return TestClient(build_app(settings, run_poller=False, tier_resolver=_tier, usage_tier_resolver=usage or _tier))
 
 
@@ -42,10 +45,12 @@ class TestTheTicket:
                                                              "housekeeping": False}   # #542: off in the code, on in the chart
         body = c.get("/api/report/ticket", headers=ADMIN).json()
         assert body["expires_in"] == 120 and body["prefix"] == "/report" and body["viewer"] == "root"
-        claims = verify(SECRET, body["ticket"], "root")
+        claims = verify(TicketKeys(TICKET_KEY), body["ticket"], "root")
         assert claims["tier"] == "all" and claims["viewer"] == "root"
         with pytest.raises(TicketError):
-            verify(SECRET, body["ticket"], "alice")
+            verify(TicketKeys(TICKET_KEY), body["ticket"], "alice")
+        with pytest.raises(TicketError, match="does not verify"):       # #392: never signed with the service token
+            verify(TicketKeys(SECRET), body["ticket"], "root")
 
     def test_below_the_wide_tier_the_gate_refuses_with_its_own_sentence(self, tmp_path):
         r = _client(tmp_path).get("/api/report/ticket", headers=ALICE)

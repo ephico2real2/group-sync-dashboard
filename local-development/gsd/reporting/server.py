@@ -38,7 +38,7 @@ from .diff import DIFF_REPORT, diff_params
 from .metrics import ReportSignals, build_report_registry
 from .runs import QueueFull, RunManager
 from .snapshot import Snapshot, SnapshotError, newest_snapshot
-from .ticket import TicketError, load_secret, verify
+from .ticket import EARLIER_FORMAT, TicketError, TicketKeys, load_secret, load_ticket_keys, verify
 
 log = logging.getLogger(__name__)
 
@@ -85,8 +85,14 @@ class RunRequest(BaseModel):
     schedule: str | None = Field(default=None, description="Service callers only: the schedule name this run is for.")
 
 
-def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, clock=None) -> FastAPI:
+def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, ticket_keys: TicketKeys | None = None,
+                     clock=None) -> FastAPI:
     secret = secret if secret is not None else load_secret(settings.token_file)
+    # #392: a ticket is verified with the ticket key, never with the service token above, so the schedule Jobs
+    # and the poller, which hold the token, cannot sign a ticket naming anybody (SPEC_F6 §3.1).
+    if ticket_keys is None:
+        ticket_keys = load_ticket_keys(settings.ticket_key_file, settings.ticket_previous_key_file, secret)
+    log.info("ticket key loaded%s", "; a previous key too: a rotation is open" if ticket_keys.previous else "")
     now = clock or (lambda: datetime.now(UTC))
     store = ArtifactStore(settings.artifact_dir)
     signals = ReportSignals()
@@ -192,15 +198,18 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         if not ticket:
             raise HTTPException(status_code=401, detail="a report ticket is required (X-GSD-Report-Ticket)")
         try:
-            claims = verify(secret, ticket, request.headers.get(USER_HEADER), now().timestamp())
+            claims = verify(ticket_keys, ticket, request.headers.get(USER_HEADER), now().timestamp())
         except TicketError as exc:
             # A refused ticket is a 403 with the gate's own sentence: the browser shows the reader
             # the same refusal the dashboard would, and the reason goes to the log, not the wire.
-            # The one exception is expiry: a 401, which reportFetch answers by minting a fresh
-            # ticket exactly once (§9.11), so a page left open past the TTL keeps working.
+            # The exceptions are expiry and a version-1 ticket (#392, a page open across the upgrade):
+            # a 401, which reportFetch answers by minting a fresh ticket exactly once (§9.11), so a
+            # page left open past the TTL, or across the upgrade, keeps working.
             log.info("ticket refused: %s", exc)
             if str(exc) == "ticket has expired":
                 raise HTTPException(status_code=401, detail="the report ticket expired; mint a new ticket") from exc
+            if str(exc) == EARLIER_FORMAT:
+                raise HTTPException(status_code=401, detail=EARLIER_FORMAT) from exc
             raise HTTPException(status_code=403, detail=REFUSAL) from exc
         return Principal(kind="viewer", name=claims["viewer"], note="proxy-verified, ticket from the dashboard")
 

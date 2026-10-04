@@ -1,9 +1,14 @@
 """The ticket: signature, expiry, tier, and the binding to the proxy's identity header."""
+import base64
+import hashlib
+import hmac
+
 import pytest
 
-from gsd.reporting.ticket import TicketError, mint, verify
+from gsd.reporting.ticket import TicketError, TicketKeys, mint, verify
 
 SECRET = b"x" * 48
+KEYS = TicketKeys(SECRET)
 
 
 def _tampered(ticket: str) -> str:
@@ -15,23 +20,23 @@ def _tampered(ticket: str) -> str:
 
 def test_round_trip_binds_viewer_and_tier():
     t = mint(SECRET, "root", "all", 300, now=1_000)
-    claims = verify(SECRET, t, "root", now=1_100)
+    claims = verify(KEYS, t, "root", now=1_100)
     assert claims["viewer"] == "root" and claims["tier"] == "all" and claims["exp"] == 1_300
 
 
 @pytest.mark.parametrize("bad", [
-    ("wrong secret", lambda t: (b"y" * 48, t, "root", 1_100)),
-    ("expired", lambda t: (SECRET, t, "root", 1_400)),
-    ("other viewer", lambda t: (SECRET, t, "alice", 1_100)),
-    ("no viewer header", lambda t: (SECRET, t, None, 1_100)),
-    ("tampered", lambda t: (SECRET, _tampered(t), "root", 1_100)),
-    ("malformed", lambda t: (SECRET, "nope", "root", 1_100)),
+    ("wrong secret", lambda t: (TicketKeys(b"y" * 48), t, "root", 1_100)),
+    ("expired", lambda t: (KEYS, t, "root", 1_400)),
+    ("other viewer", lambda t: (KEYS, t, "alice", 1_100)),
+    ("no viewer header", lambda t: (KEYS, t, None, 1_100)),
+    ("tampered", lambda t: (KEYS, _tampered(t), "root", 1_100)),
+    ("malformed", lambda t: (KEYS, "nope", "root", 1_100)),
 ])
 def test_every_refusal_is_a_ticket_error(bad):
     label, make = bad
-    secret, ticket, user, now = make(mint(SECRET, "root", "all", 300, now=1_000))
+    keys, ticket, user, now = make(mint(SECRET, "root", "all", 300, now=1_000))
     with pytest.raises(TicketError):
-        verify(secret, ticket, user, now=now)
+        verify(keys, ticket, user, now=now)
 
 
 def test_only_the_wide_tier_is_ever_minted():
@@ -52,14 +57,14 @@ def test_a_short_secret_is_refused(tmp_path):
 def test_ticket_issued_far_in_the_future_is_refused():
     ticket = mint(SECRET, "root", "all", 300, now=10_000)
     with pytest.raises(TicketError, match="issued too far in the future"):
-        verify(SECRET, ticket, "root", now=1_000)
+        verify(KEYS, ticket, "root", now=1_000)
 
 
 def test_small_clock_skew_is_tolerated_but_exact_expiry_is_not():
     ticket = mint(SECRET, "root", "all", 300, now=1_020)
-    assert verify(SECRET, ticket, "root", now=1_000)["iat"] == 1_020
+    assert verify(KEYS, ticket, "root", now=1_000)["iat"] == 1_020
     with pytest.raises(TicketError, match="expired"):
-        verify(SECRET, ticket, "root", now=1_320)
+        verify(KEYS, ticket, "root", now=1_320)
 
 
 def test_a_ticket_has_exactly_one_spelling():
@@ -67,12 +72,24 @@ def test_a_ticket_has_exactly_one_spelling():
     with `!!!!` spliced in still yielded the signed bytes and verified — one credential, many spellings.
     Strict alphabet, a producible length, and a canonical re-encoding, or it is malformed."""
     ticket = mint(SECRET, "root", "all", 300, now=1_000)
-    body, sig = ticket.split(".")
-    for malformed in (body[:4] + "!!!!" + body[4:] + "." + sig, body + "." + sig[:4] + "!!!!" + sig[4:],
-                      body + "=" + "." + sig, body[:-1] + ("A" if body[-1] != "A" else "B") + "." + sig):
+    version, body, sig = ticket.split(".")
+    assert version == "v2"
+    for malformed in (f"{version}.{body[:4]}!!!!{body[4:]}.{sig}", f"{version}.{body}.{sig[:4]}!!!!{sig[4:]}",
+                      f"{version}.{body}=.{sig}", f"{version}.{body[:-1]}{'A' if body[-1] != 'A' else 'B'}.{sig}",
+                      f"v3.{body}.{sig}", f"{version}.{body}.{sig}.{sig}"):
         with pytest.raises(TicketError):
-            verify(SECRET, malformed, "root", now=1_100)
-    assert verify(SECRET, ticket, "root", now=1_100)["viewer"] == "root"
+            verify(KEYS, malformed, "root", now=1_100)
+    assert verify(KEYS, ticket, "root", now=1_100)["viewer"] == "root"
+
+
+@pytest.mark.parametrize("payload", [b"[]", b'"text"', b"1", b"null"])
+def test_an_authenticated_payload_must_be_a_json_object(payload):
+    """A valid MAC authenticates bytes, not their JSON type; every malformed claim set is still a refusal."""
+    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+    digest = hmac.new(KEYS.current, payload, hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    with pytest.raises(TicketError, match="JSON object"):
+        verify(KEYS, f"v2.{encoded}.{signature}", "root", now=1_100)
 
 
 def test_tampering_always_changes_the_ticket_and_is_refused():
@@ -81,4 +98,4 @@ def test_tampering_always_changes_the_ticket_and_is_refused():
         bad = _tampered(ticket)
         assert bad != ticket
         with pytest.raises(TicketError):
-            verify(SECRET, bad, "root", now=1_100)
+            verify(KEYS, bad, "root", now=1_100)

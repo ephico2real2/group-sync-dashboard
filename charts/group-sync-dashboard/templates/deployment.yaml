@@ -320,10 +320,13 @@ spec:
               mountPath: /etc/curl
               readOnly: true
             {{- if eq (include "gsd.reportingEnabled" .) "true" }}
-            # The shared report token (signs tickets, authenticates the usage pull) and, with TLS,
-            # the service-ca bundle the poller verifies the report Service with.
+            # The service token (the usage pull, housekeeping), the ticket key that signs tickets
+            # (#392) and, with TLS, the service-ca bundle the poller verifies the report Service with.
             - name: report-token
               mountPath: /etc/gsd/report
+              readOnly: true
+            - name: report-ticket-key
+              mountPath: /etc/gsd/report-ticket
               readOnly: true
             {{- if .Values.reporting.tls.enabled }}
             - name: service-ca
@@ -619,6 +622,14 @@ spec:
           secret:
             secretName: {{ include "gsd.reportName" . }}-shared-token
             defaultMode: 288
+        # The dashboard signs with `key` alone; a rotation's `previous` is the report pod's to verify with.
+        - name: report-ticket-key
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-ticket-key
+            defaultMode: 288
+            items:
+              - key: key
+                path: key
         {{- if .Values.reporting.tls.enabled }}
         # The service-ca bundle every OpenShift namespace carries (the ServiceMonitor already trusts
         # it, templates/monitoring.yaml). Not optional: with TLS on, a pod without it cannot verify

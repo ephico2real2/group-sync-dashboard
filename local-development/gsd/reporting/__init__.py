@@ -6,8 +6,9 @@ docs/specs/SPEC_C3_reporting_microservice.md is the design. The seams, in one pl
 * DATA: never the live gsd.db. `snapshot.py` opens the newest `VACUUM INTO` copy the dashboard's
   leader writes under GSD_REPORT_SNAPSHOT_DIR, with `immutable=1&mode=ro` (§4).
 * AUTHZ: never decided here. The dashboard mints an HMAC ticket after its own wide-tier check;
-  `ticket.py` verifies it and binds it to the proxy's identity header (§5.2). The service token
-  (`Authorization: Bearer`) is the dashboard's poller and the schedule Jobs.
+  `ticket.py` verifies it and binds it to the proxy's identity header (§5.2). The ticket key is a
+  Secret of its own that the schedule Jobs never mount (#392, SPEC_F6). The service token
+  (`Authorization: Bearer`) is the dashboard's poller, its housekeeping calls and the schedule Jobs.
 * OUTPUT: one data model (`model.py`) rendered twice — `render_html.py`, `render_pdf.py` — so
   the sha256 printed on both is the sha256 of the same canonical JSON.
 

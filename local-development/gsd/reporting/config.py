@@ -178,6 +178,10 @@ class ReportSettings:
     snapshot_dir: str = "/data/report"
     artifact_dir: str = "/artifacts"
     token_file: str = "/etc/gsd/report/token"
+    #: The ticket key (#392, SPEC_F6): tickets are verified with it, never with the service token above. The
+    #: previous key's file exists only while a rotation is open; absent, nothing but the current key verifies.
+    ticket_key_file: str = "/etc/gsd/report-ticket/key"
+    ticket_previous_key_file: str = "/etc/gsd/report-ticket/previous"
     #: TLS for uvicorn. Both empty = plain HTTP (reporting.tls.enabled=false).
     tls_cert_file: str = ""
     tls_key_file: str = ""
@@ -253,6 +257,8 @@ def load_report_settings() -> ReportSettings:
         snapshot_dir=os.environ.get("GSD_REPORT_SNAPSHOT_DIR", "/data/report"),
         artifact_dir=os.environ.get("GSD_REPORT_ARTIFACT_DIR", "/artifacts"),
         token_file=os.environ.get("GSD_REPORT_TOKEN_FILE", "/etc/gsd/report/token"),
+        ticket_key_file=os.environ.get("GSD_REPORT_TICKET_KEY_FILE", "/etc/gsd/report-ticket/key"),
+        ticket_previous_key_file=os.environ.get("GSD_REPORT_TICKET_PREVIOUS_KEY_FILE", "/etc/gsd/report-ticket/previous"),
         tls_cert_file=cert, tls_key_file=key,
         pdf_enabled=pdf_enabled, pdf_variant=variant,
         font_regular=font_regular, font_bold=font_bold,
