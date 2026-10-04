@@ -1,6 +1,9 @@
 # Reporting extension — CSV, change diffs, delivery, and preview counts (design + technical spec)
 
-**Status: proposed — round 1 reviewed, corrections folded in.** Record: `docs/REVIEW_reporting_output_delivery.md`. Four features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
+**Status: proposed — round 1 reviewed, corrections folded in. §2 (CSV output) is built by
+`docs/specs/SPEC_F2_csv_format.md` (#106), which re-measured it against main and did not take its `csv.writer`
+renderer or its `#` label rows (SPEC_F2 §2.4, §2a).** Record: `docs/REVIEW_reporting_output_delivery.md`. Four
+features from `docs/REPORTING_ENHANCEMENTS.md`, taken forward
 together because they share the run/render/artefact machinery. Like the auditor/mnemonic work
 (`docs/DESIGN_reporting_auditors_and_ns_selector.md`), this **extends** the reporting design and defers to
 `docs/DESIGN_reporting_service.md`; it changes no tier, no ticket, no snapshot mechanism, no report gate.

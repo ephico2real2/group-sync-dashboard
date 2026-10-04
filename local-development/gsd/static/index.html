@@ -189,6 +189,7 @@ const STATES = {
 
 const view = { page: "home", homeShow: {}, cluster: null, groupsync: null, groupFilter: "all", bindingFilter: "review",
                 report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
+                reportWant: { pdf: true, html: true, csv: false },   // #106: the format boxes, kept across the form's repaints
                 kyvernoControlled: false, kyvernoPolicy: null, kyvernoKind: null,   // #170: the Kyverno page's filters (filters, not positions)
                 /* #230 S2: the Cluster Configurations form's state, so a poll's repaint never destroys what the
                    reader typed; the open rotate panel; the armed delete; the messages under the form and the cards.
@@ -2943,8 +2944,9 @@ function reportFormCard(spec, cat) {
       <div class="report-fields">${advanced.map(field).join("")}</div></details>` : ""}
     <div class="ns-controls mt-4 report-actions">
       <button type="button" class="btn" id="report-generate"${view.reportSubmitting || !targets.length ? " disabled" : ""}>Generate <span class="mono muted">${esc(formats)}</span></button>
-      ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
-      <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
+      ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf"${view.reportWant.pdf ? " checked" : ""}> PDF</label>` : ""}
+      <label class="filterbar-note"><input type="checkbox" id="report-want-html"${view.reportWant.html ? " checked" : ""}> HTML</label>
+      <label class="filterbar-note"><input type="checkbox" id="report-want-csv"${view.reportWant.csv ? " checked" : ""}> CSV</label>
       <span class="filterbar-note">json is always written · ${targets.length > 1 ? `${targets.length} clusters, one run each` : `cluster <span class="mono">${esc(view.cluster || "")}</span>`}</span>
       <span class="filterbar-note" id="report-totals" aria-live="polite">${esc(view.reportTotals && view.reportTotals.spec === spec.name && view.reportTotals.cluster === view.cluster ? view.reportTotals.text : "")}</span>
     </div>
@@ -4054,6 +4056,9 @@ function wireReports() {
   });
   const link = $("report-status-link");
   if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
+  // The format boxes are the reader's, like Advanced's open state: a switch, a segment or a lookup pick repaints the
+  // form, and a box rendered from a fixed default dropped a ticked CSV before Generate read it (review of #106, OB3).
+  ["pdf", "html", "csv"].forEach((f) => { const box = $(`report-want-${f}`); if (box) box.onchange = () => { view.reportWant[f] = box.checked; }; });
   // #149 R7: the ParamSpec shell's controls. Each writes the form state and repaints; the lookup's
   // typed text lives in view.reportLookupText so the repaint keeps it and the caret returns by id.
   const openSpec = view.report && data.reportCatalog && (data.reportCatalog.reports || []).find((r) => r.name === view.report);
@@ -4177,6 +4182,7 @@ async function generateReport(refocus = false) {
   const formats = [];
   if ($("report-want-html") && $("report-want-html").checked) formats.push("html");
   if ($("report-want-pdf") && $("report-want-pdf").checked) formats.push("pdf");
+  if ($("report-want-csv") && $("report-want-csv").checked) formats.push("csv");
   view.reportSubmitting = true; view.reportRun = null; view.reportBatch = null; render();
   const pending = (r) => r.status === "queued" || r.status === "running";
   const tick = () => new Promise((r) => setTimeout(r, 1500));

@@ -79,7 +79,7 @@ class RunRequest(BaseModel):
                     "`{\"runs\": [...]}` like a schedule's fan-out. Exclusive with `cluster`. A cluster the snapshot "
                     "lacks fails its own run and no other.")
     params: dict = Field(default_factory=dict, description="Parameters per the report's spec; unknown keys are refused.")
-    formats: list[str] | None = Field(default=None, description="Subset of html, pdf; json is always written. Omitted: "
+    formats: list[str] | None = Field(default=None, description="Subset of html, pdf, csv; json is always written. Omitted: "
                                                                  "the deployment's default for the run's origin (R3).")
     schedule: str | None = Field(default=None, description="Service callers only: the schedule name this run is for.")
 
@@ -344,7 +344,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
             formats = [f for f in (settings.formats_manual if p.kind == "viewer" else settings.formats_scheduled)
                        if f != "pdf" or settings.pdf_enabled]
         else:
-            bad = sorted(set(body.formats) - {"html", "pdf"})
+            bad = sorted(set(body.formats) - {"html", "pdf", "csv"})
             if bad:
                 raise HTTPException(status_code=422, detail=f"unknown format(s) {bad}; json is always written")
             if "pdf" in body.formats and not settings.pdf_enabled:
@@ -600,7 +600,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
 
     @app.get(f"{REPORT_PREFIX}/api/runs/{{run_id}}/artifact")
     def get_artifact(run_id: str, p: Principal = Depends(principal),
-                     format: str = Query(default="pdf", pattern="^(json|html|pdf)$", description="json, html or pdf."),
+                     format: str = Query(default="pdf", pattern="^(json|html|pdf|csv)$", description="json, html, pdf or csv."),
                      download: bool = Query(default=True, description="Send as an attachment (default) or inline.")) -> Response:
         """The artefact bytes; 404 until the run is done. Cache-Control: no-store — evidence is fetched, not cached."""
         run = store.get(run_id)
@@ -609,7 +609,9 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         data = store.read(run_id, format)
         if data is None:
             raise HTTPException(status_code=404, detail=f"this run has no {format} artefact")
-        media = {"json": "application/json", "html": "text/html; charset=utf-8", "pdf": "application/pdf"}[format]
+        # RFC 4180 §3: header=absent, because the first record is the report's title, not field names.
+        media = {"json": "application/json", "html": "text/html; charset=utf-8", "pdf": "application/pdf",
+                 "csv": "text/csv; charset=utf-8; header=absent"}[format]
         stamp = run.finished_at.replace("-", "").replace(":", "") if run.finished_at else run_id[:15]
         name = f"gsd_{run.cluster}_{run.report}_{stamp}.{format}"
         headers = {"Cache-Control": "no-store", "X-GSD-Report-SHA256": run.sha256 or ""}

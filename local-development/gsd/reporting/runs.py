@@ -19,6 +19,7 @@ from .. import TITLE
 from .artifacts import ArtifactStore, Run
 from .catalogue import REGISTRY, RunContext, ValidationError, validate_params
 from .config import ReportSettings, retention_overrides
+from .render_csv import render_csv
 from .render_html import render_html
 from .snapshot import Snapshot, SnapshotError, newest_snapshot
 
@@ -182,6 +183,9 @@ class RunManager:
             run.snapshot_stamp, run.sha256 = info.stamp, report.sha256
             canonical = report.to_json().encode("utf-8")
             run.bytes["json"] = self.store.write(run.id, "json", canonical)
+            if "csv" in run.formats:
+                # A rendering of the sealed report, like the HTML: it prints the sha256, never computes it (#106).
+                run.bytes["csv"] = self.store.write(run.id, "csv", render_csv(report).encode("utf-8"))
             if "html" in run.formats:
                 run.bytes["html"] = self.store.write(run.id, "html", render_html(report, TITLE).encode("utf-8"))
             if "pdf" in run.formats:

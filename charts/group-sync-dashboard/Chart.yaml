@@ -346,7 +346,10 @@ type: application
 # declared, platform identities configured (#387).
 # CHART 0.66.5 (2026-10-03), PATCH: appVersion moves to application 4.1.0 (below); #270, SPEC_F1. No
 # template, value or RBAC change.
-version: 0.66.5
+# CHART 0.66.6 (2026-10-03), PATCH: appVersion moves to application 4.2.0 (below); #106, SPEC_F2. The
+# values, CronJob and README comments name csv as an allowed report format, off by default; no key,
+# default, template logic or RBAC change.
+version: 0.66.6
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -484,7 +487,8 @@ version: 0.66.5
 # 3.3.0 (2026-10-03). A direct user grant whose binding carries the operator's config-source label or exception annotation leaves the Namespace audit worklist, its counts and the direct-user alert, and is counted and listed as acknowledged; group-sync-operator-helm is a chart's provenance in the Group gate (#503). MINOR.
 # 4.0.0 (2026-10-03). Epic G: access declared, platform identities configured (#387). MAJOR.
 # 4.1.0 (2026-10-03). A report's sha256 covers its data only: page one's run facts (when, by whom, the run id, the release, the snapshot's age, the marking and the binding interval) leave the hash; two runs over one snapshot with the same parameters hash the same while the values a report computes against the generation clock coincide; every artefact's hash changes once (#270). MINOR.
-appVersion: "4.1.0"
+# 4.2.0 (2026-10-03). CSV as a fourth report format, off by default: one file per run with the report's tables, its sha256 and page one, each cell written as the page's table export writes it (#106). MINOR.
+appVersion: "4.2.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

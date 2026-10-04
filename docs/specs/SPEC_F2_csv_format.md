@@ -8,7 +8,7 @@
 | Version on release | app 4.2.0, chart 0.66.6 |
 | Version note | The change is image content (a renderer, the service's allow-sets, the trigger, the page), so it takes the next application MINOR, 4.2.0 (`docs/specs/README.md`, the version ladder; SPEC_E5's rule). The chart takes the PATCH that moves `appVersion`, 0.66.6: no value key, default, template logic or RBAC rule changes, only comments and the README row that name `csv` as an allowed word (§3.9, with the measurement). Read on `fba80ff3` (application 4.1.0, chart 0.66.5); the one other `specified` row, W1, holds chart 0.67.0, which stays above 0.66.6, so W1 does not move. A release that lands first makes the version blocks (§7, Blocks 19 to 22) fail their check, and the implementing pull request corrects them here before applying |
 | Issue | [#106](https://github.com/ephico2real2/group-sync-dashboard/issues/106) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-03, from the issue's refined body (2026-09-26), `docs/DESIGN_reporting_output_and_delivery.md` §2 re-measured against main, and SPEC_C1's browser export. Measured on main `fba80ff3` with the repository's venv (Python 3.14.7) and node 26.9.0: §2.3's probe built all eleven reports over the seeded snapshot. No lab read; §5 states the walk. §7's blocks were proved against a clean checkout of `fba80ff3` (§4.3) |
 
 ## How to read this spec
@@ -50,6 +50,22 @@ and tables; prose cites `path#anchor`.
 7. **The form's boxes do not follow `reporting.formats.manual`.** The page posts an explicit list from its
    checkboxes (index.html:4177-4179), so the manual default applies only to an API caller that names no
    formats. The new CSV box follows the PDF and HTML boxes: a fixed default (unticked). Open question 2.
+
+**Review of the implementation (PR #575, 2026-10-03): Codex (gpt-5.6-sol, xhigh) and OB3 (in Grok's seat).** Both
+confirmed the formula guard (hostile names planted across all 11 reports: no unguarded cell), the RFC 4180 shape,
+the seal (the CSV's sha256 record equals the `.json`, the run record and `X-GSD-Report-SHA256`), the wiring, the
+unchanged bytes of json, html and pdf, and the chart (comments and version lines). The decisions:
+- **Accepted: floats were laid out the Python way (both reviewers).** `1e21` was `1000000000000000000000` against the
+  page's `1e+21`, and `1e-6` was `1e-06` against `0.000001`. No report emits a float today (OB3 counted 1,598 string
+  and 188 integer cells over all 11 reports), but the mandate is "the same rule" in both exports. OB3's `_js_number`
+  ports ECMA-262 Number::toString, and twelve cells in T106-2 hold it, cross-checked in node by T106-3.
+- **Rejected: Codex's version of that fix** converts every integer to a double first. That rounds an integer above
+  2**53, which the `.json` holds exactly; the CSV keeps it whole.
+- **Accepted: a repaint of the form undid the format boxes (OB3, C7).** Ticking CSV, then any switch, segment or
+  lookup pick, repainted the form from fixed defaults, and Generate posted `['html','pdf']`: the CSV was dropped.
+  The boxes now live in `view.reportWant`, like Advanced's open state. Codex had confirmed C7; OB3's reproduction is
+  the new browser test, which fails on the implementation's first head. The same repaint also undid an unticked
+  PDF; that is fixed by the same lines.
 
 Open questions only the operator can answer:
 
@@ -252,8 +268,10 @@ CSV exports treat a cell the same way"), and RFC 4180 §2.6-2.7.
 How parity is held: T106-3 compares `index.html`'s `CSV_BOM` and `csvField` source, verbatim, to a copy in the
 test, so a change to the page's function fails until the port follows; and where `node` is installed (it is on
 this machine, 26.9.0; CI's runner image is not asserted) it runs the page's function and the port over the same
-24 cells and compares the outputs. Measured on the applied copy (§4.3): equal. Not covered: a float JavaScript
-prints in exponent form (`1e-7` against Python's `1e-07`, or 1e21 and above), which no report emits (§2.3).
+24 cells and compares the outputs. Measured on the applied copy (§4.3): equal. Floats are laid out by ECMAScript's
+Number::toString (`_js_number`, from the review of the implementation): `1e+21`, `0.00001`, `1e-7`, as the page
+writes them. An integer beyond 2**53 is written whole, as the `.json` holds it, where the page's `JSON.parse` has
+already rounded it.
 
 ### 3.5 Generic over the model
 
@@ -329,6 +347,7 @@ the system: zero new permissions, zero rows rewritten, zero existing artefacts r
 | T106-7 | `test_t106_7_csv_is_off_unless_configured` | The default formats are unchanged when `csv` is not configured |
 | T106-8 | `test_t106_8_the_schedule_trigger_takes_csv` | The trigger's `--format` takes `csv` |
 | T106-9 | `test_ui.py::…::test_csv_is_a_box_off_by_default_and_a_ticked_one_downloads_a_csv` | The `report-want-csv` box, and a download button for the stored CSV |
+| T106-10 | `test_ui.py::…::test_a_ticked_csv_box_survives_a_repaint_of_the_form` | A ticked CSV and an unticked PDF survive a repaint of the form and reach the POST (the review, OB3) |
 
 ### 4.2 Each test fails without the change, and why
 
@@ -342,6 +361,7 @@ Run on a clean `fba80ff3` with only block 12's file added (§4.3):
 - T106-8: `argparse.ArgumentError: argument --format: invalid choice: 'csv' (choose from 'html', 'pdf')`,
   `SystemExit: 2`.
 - T106-9: on main the form has no `#report-want-csv`; `wait_for_selector` times out (by construction; not run, §4.3).
+- T106-10: on the implementation's first head (`51544845`), `AssertionError: the repaint undid the reader's boxes` (OB3's run).
 
 ### 4.3 The proof
 
@@ -455,7 +475,9 @@ the seal.
 from __future__ import annotations
 
 import json
+import math
 import re
+from decimal import Decimal
 
 from .model import Report
 
@@ -473,14 +495,37 @@ _LABEL = {"table": "Table", "kv": "List"}
 
 
 def _js_string(value) -> str:
-    """JavaScript's String(value) for the JSON scalars a report cell holds."""
+    """JavaScript's String(value) for the JSON scalars a report cell holds. An int is written whole: past
+    2**53 the page's JSON.parse has already rounded it, and the CSV keeps the value the .json holds."""
     if value is None:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))      # JavaScript has one number type: String(2.0) is "2"
+    if isinstance(value, float):
+        return _js_number(value)
     return str(value)
+
+
+def _js_number(value: float) -> str:
+    """ECMAScript's Number::toString of a float. repr() picks the same shortest round-trip digits; only the
+    layout differs: JavaScript writes 2 for 2.0, 0.00001 for 1e-05, 1e-7 for 1e-07, and 1e+21 where
+    str(int(1e21)) wrote all 22 digits (ECMA-262 Number::toString: exponent form below 1e-6 and from 1e21)."""
+    if not math.isfinite(value):
+        return "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")
+    if value == 0:
+        return "0"
+    sign, digits, exponent = Decimal(repr(value)).normalize().as_tuple()
+    s, k = "".join(map(str, digits)), len(digits)
+    n = exponent + k                                   # value = 0.<s> x 10**n, ECMA-262's n and k
+    if k <= n <= 21:
+        body = s + "0" * (n - k)
+    elif 0 < n <= 21:
+        body = s[:n] + "." + s[n:]
+    elif -6 < n <= 0:
+        body = "0." + "0" * -n + s
+    else:
+        body = s[0] + ("." + s[1:] if k > 1 else "") + ("e+" if n > 0 else "e-") + str(abs(n - 1))
+    return ("-" if sign else "") + body
 
 
 def csv_field(value) -> str:
@@ -638,16 +683,44 @@ from .render_html import render_html
     ap.add_argument("--format", action="append", default=[], choices=["html", "pdf", "csv"])
 ```
 
-### Block 10 — `local-development/gsd/static/index.html`: the CSV box, unticked
+### Block 10 — `local-development/gsd/static/index.html`: the format boxes, the CSV one unticked, drawn from `view.reportWant`
 
 <!-- block: local-development/gsd/static/index.html | edit -->
 ```html
+      ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf" checked> PDF</label>` : ""}
       <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
 ```
 
 ```html
-      <label class="filterbar-note"><input type="checkbox" id="report-want-html" checked> HTML</label>
-      <label class="filterbar-note"><input type="checkbox" id="report-want-csv"> CSV</label>
+      ${cat.pdf && cat.pdf.enabled ? `<label class="filterbar-note"><input type="checkbox" id="report-want-pdf"${view.reportWant.pdf ? " checked" : ""}> PDF</label>` : ""}
+      <label class="filterbar-note"><input type="checkbox" id="report-want-html"${view.reportWant.html ? " checked" : ""}> HTML</label>
+      <label class="filterbar-note"><input type="checkbox" id="report-want-csv"${view.reportWant.csv ? " checked" : ""}> CSV</label>
+```
+
+### Block 10a — `local-development/gsd/static/index.html`: the format boxes are the reader's state
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+                report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
+```
+
+```javascript
+                report: null, reportLanded: null, reportFocusRow: null, reportForm: {},
+                reportWant: { pdf: true, html: true, csv: false },   // #106: the format boxes, kept across the form's repaints
+```
+
+### Block 10b — `local-development/gsd/static/index.html`: a box's change is kept across the form's repaints
+
+<!-- block: local-development/gsd/static/index.html | edit -->
+```javascript
+  if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
+```
+
+```javascript
+  if (link) link.onclick = () => { navigate({ page: "reporting" }); render(); refresh(); };
+  // The format boxes are the reader's, like Advanced's open state: a switch, a segment or a lookup pick repaints the
+  // form, and a box rendered from a fixed default dropped a ticked CSV before Generate read it (review of #106, OB3).
+  ["pdf", "html", "csv"].forEach((f) => { const box = $(`report-want-${f}`); if (box) box.onchange = () => { view.reportWant[f] = box.checked; }; });
 ```
 
 ### Block 11 — `local-development/gsd/static/index.html`: a ticked box posts `csv`
@@ -715,6 +788,10 @@ CELLS = [
     (" lead", " lead"), ("a,b", '"a,b"'), ('say "hi"', '"say ""hi"""'), ("", ""), (None, ""), (-1, "-1"),
     (0, "0"), (True, "true"), (False, "false"), (2.0, "2"), (0.5, "0.5"), (["a", "=b"], "a; =b"),
     (["=a", None, 3, True], "'=a; ; 3; true"), ([], ""),
+    # JavaScript's number layout, not Python's (review of #106, OB3): measured against node 26.9.0
+    (1e21, "1e+21"), (-1e21, "-1e+21"), (1e-5, "0.00001"), (1.5e-5, "0.000015"), (1e-6, "0.000001"), (1e-7, "1e-7"),
+    (1.5e-7, "1.5e-7"), (1e300, "1e+300"), (2.0 ** 60, "1152921504606847000"), (123.456, "123.456"), (-0.0, "0"),
+    ([1e21, 1e-7], "1e+21; 1e-7"),
 ]
 PARAMS = {
     "namespace-access": {"namespaces": "prod-ns,dev-ns"},
@@ -899,6 +976,27 @@ def test_t106_8_the_schedule_trigger_takes_csv(monkeypatch, tmp_path):
             with page.expect_download() as download:
                 page.click("#report-status [data-format='csv']")
             assert download.value.suggested_filename.endswith(".csv"), download.value.suggested_filename
+            assert not errors, errors
+        finally:
+            ctx.close()
+
+    def test_a_ticked_csv_box_survives_a_repaint_of_the_form(self, browser, reporting_server):
+        # Review of #106 (OB3): a switch, a segment or a lookup pick repaints the form, and the format boxes were
+        # rendered from fixed defaults, so a ticked CSV (and an unticked PDF) was undone before Generate read it.
+        import json as _json
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.goto(base + "#page=reports&cluster=crc-local&report=groups")
+            page.wait_for_selector("#report-want-csv")
+            page.check("#report-want-csv")
+            page.uncheck("#report-want-pdf")
+            page.click('[data-switch="include_members"]')
+            page.wait_for_selector('[data-switch="include_members"][aria-checked="true"]')
+            assert page.is_checked("#report-want-csv") and not page.is_checked("#report-want-pdf"), "the repaint undid the reader's boxes"
+            with page.expect_request(lambda r: r.url.endswith("/api/runs") and r.method == "POST") as info:
+                page.click("#report-generate")
+            assert _json.loads(info.value.post_data)["formats"] == ["html", "csv"]
             assert not errors, errors
         finally:
             ctx.close()
