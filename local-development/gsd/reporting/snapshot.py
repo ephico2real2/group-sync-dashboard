@@ -496,13 +496,13 @@ class Snapshot:
     def membership_changes(self, cluster_id: str, since_iso: str) -> list[dict]:
         return self._rows(
             """SELECT group_name, user_name, change, observed_at, group_synced_at FROM membership_event
-                WHERE cluster_id = ? AND observed_at >= ? ORDER BY observed_at, group_name, user_name""",
-            (cluster_id, since_iso))
+                WHERE cluster_id = ? AND observed_at >= ? AND observed_at <= ? ORDER BY observed_at, group_name, user_name""",
+            (cluster_id, since_iso, self.stamp[:19] + "Z"))
 
     def membership_change_counts(self, cluster_id: str, since_iso: str) -> dict:
         r = self._row("""SELECT SUM(CASE WHEN change='added' THEN 1 ELSE 0 END) AS added,
                                 SUM(CASE WHEN change='removed' THEN 1 ELSE 0 END) AS removed
-                           FROM membership_event WHERE cluster_id = ? AND observed_at >= ?""", (cluster_id, since_iso))
+                           FROM membership_event WHERE cluster_id = ? AND observed_at >= ? AND observed_at <= ?""", (cluster_id, since_iso, self.stamp[:19] + "Z"))
         return {"added": int(r["added"] or 0), "removed": int(r["removed"] or 0)} if r else {"added": 0, "removed": 0}
 
     # -- users --------------------------------------------------------------------------------
@@ -577,7 +577,7 @@ class Snapshot:
 
     def last_successful_login(self, cluster_id: str) -> dict[str, str]:
         rows = self._rows("""SELECT user_name, MAX(at) AS last_login_at FROM login_event
-                              WHERE cluster_id = ? AND outcome = 'success' GROUP BY user_name""", (cluster_id,))
+                              WHERE cluster_id = ? AND outcome = 'success' AND julianday(at) <= julianday(?) GROUP BY user_name""", (cluster_id, self.stamp))
         return {r["user_name"]: r["last_login_at"] for r in rows}
 
     # -- login activity -----------------------------------------------------------------------
@@ -585,8 +585,8 @@ class Snapshot:
     def login_summary(self, cluster_id: str, since_iso: str, user_names: set[str] | None = None) -> list[dict]:
         """Attempts by outcome and provider in the window; `user_names` narrows them to the subject scope
         (an empty scope — named groups with no members — counts nothing), None counts the cluster."""
-        sql = "SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n FROM login_event WHERE cluster_id = ? AND at >= ?"
-        params: list = [cluster_id, since_iso]
+        sql = "SELECT outcome, COALESCE(provider, '') AS provider, COUNT(*) AS n FROM login_event WHERE cluster_id = ? AND julianday(at) BETWEEN julianday(?) AND julianday(?)"
+        params: list = [cluster_id, since_iso, self.stamp]
         if user_names is not None:
             if not user_names:
                 return []
@@ -599,8 +599,8 @@ class Snapshot:
         sql = """SELECT user_name, SUM(CASE WHEN outcome='success' THEN 1 ELSE 0 END) AS successes,
                         SUM(CASE WHEN outcome<>'success' THEN 1 ELSE 0 END) AS failures,
                         MAX(CASE WHEN outcome='success' THEN at END) AS last_success, MAX(at) AS last_attempt
-                   FROM login_event WHERE cluster_id = ? AND at >= ?"""
-        params: list = [cluster_id, since_iso]
+                   FROM login_event WHERE cluster_id = ? AND julianday(at) BETWEEN julianday(?) AND julianday(?)"""
+        params: list = [cluster_id, since_iso, self.stamp]
         if user_name:
             sql += " AND user_name = ?"
             params.append(user_name)
@@ -617,8 +617,8 @@ class Snapshot:
                            ELSE EXISTS(SELECT 1 FROM group_member g WHERE g.cluster_id=e.cluster_id AND g.group_name=? AND g.user_name=e.user_name) END AS in_access_group,
                       EXISTS(SELECT 1 FROM group_member g WHERE g.cluster_id=e.cluster_id AND g.user_name=e.user_name) AS known_user,
                       EXISTS(SELECT 1 FROM membership_event h WHERE h.cluster_id=e.cluster_id AND h.user_name=e.user_name) AS has_history
-                 FROM login_event e WHERE e.cluster_id = ? AND e.at >= ? AND e.outcome = 'rejected'
-                ORDER BY e.at DESC""", (gate, gate, cluster_id, since_iso))
+                 FROM login_event e WHERE e.cluster_id = ? AND julianday(e.at) BETWEEN julianday(?) AND julianday(?) AND e.outcome = 'rejected'
+                ORDER BY e.at DESC""", (gate, gate, cluster_id, since_iso, self.stamp))
 
     # -- the sync pipeline --------------------------------------------------------------------
 
@@ -643,8 +643,8 @@ class Snapshot:
         return self._rows(
             """SELECT groupsync_name, COUNT(*) AS syncs, MIN(synced_at) AS first_in_window, MAX(synced_at) AS last_in_window,
                       MAX(group_count) AS max_groups, MIN(group_count) AS min_groups
-                 FROM sync_event WHERE cluster_id = ? AND observed_at >= ? GROUP BY groupsync_name ORDER BY groupsync_name""",
-            (cluster_id, since_iso))
+                 FROM sync_event WHERE cluster_id = ? AND observed_at >= ? AND observed_at <= ? GROUP BY groupsync_name ORDER BY groupsync_name""",
+            (cluster_id, since_iso, self.stamp[:19] + "Z"))
 
     def operator_configs(self, cluster_id: str) -> dict:
         p = self._row("SELECT present FROM operator_config_presence WHERE cluster_id = ?", (cluster_id,))
