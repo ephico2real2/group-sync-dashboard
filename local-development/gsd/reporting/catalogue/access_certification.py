@@ -68,7 +68,7 @@ def build(snap: Snapshot, ctx: RunContext, params: dict) -> Built:
     resolved = _resolve_mnemonics(snap, ctx, cid, params["group_mnemonic"])
     header = Section("Campaign", [
         KeyValues("Certification", [("Campaign", params["campaign"]), ("Due", params["due"]), ("Reviewer", params["reviewer"]),
-                                    ("Scope", _scope_words(params, resolved)), ("Cluster", cid), ("Data as of", ctx.snapshot_stamp)]),
+                                    ("Scope", _scope_words(params, resolved)), ("Cluster", cid)]),
         Note("For each line: tick Approve to keep the access as it stands, Revoke to remove it, and write the reason in Comment. Sign the last page. This pack records the state the dashboard observed; it does not change anything.", "note"),
     ])
     sections = [header]

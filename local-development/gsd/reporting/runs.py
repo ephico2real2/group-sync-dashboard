@@ -187,8 +187,8 @@ class RunManager:
                     report = assemble(spec, snap, ctx, params, build(snap, ctx, params))
                 stamp = info.stamp
             run.snapshot_stamp, run.sha256 = stamp, report.sha256
-            canonical = report.to_json().encode("utf-8")
-            run.bytes["json"] = self.store.write(run.id, "json", canonical)
+            report_json = report.to_json().encode("utf-8")
+            run.bytes["json"] = self.store.write(run.id, "json", report_json)
             if "csv" in run.formats:
                 # A rendering of the sealed report, like the HTML: it prints the sha256, never computes it (#106).
                 run.bytes["csv"] = self.store.write(run.id, "csv", render_csv(report).encode("utf-8"))
@@ -198,7 +198,7 @@ class RunManager:
                 from .render_pdf import render_pdf
                 run.pdf_variant = self.settings.pdf_variant
                 run.bytes["pdf"] = self.store.write(run.id, "pdf", render_pdf(
-                    report, TITLE, self.settings.pdf_variant, self.settings.font_regular, self.settings.font_bold, canonical))
+                    report, TITLE, self.settings.pdf_variant, self.settings.font_regular, self.settings.font_bold, report_json))
             run.status = "done"
         except (ValidationError, SnapshotError) as exc:
             run.status, run.error = "failed", str(exc)

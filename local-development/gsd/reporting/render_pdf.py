@@ -7,7 +7,7 @@ the module-level import list to that).
 
 PDF/A, measured on fpdf2 2.8.8 (docs/specs/SPEC_C3_reporting_microservice.md §6.2): base fonts are refused
 under every PDF/A profile, so both faces of the vendored DejaVu Sans are registered; the table
-heading row uses the bold face, which is why the bold file is not optional. Under 3b/3u the canonical
+heading row uses the bold face, which is why the bold file is not optional. Under 3b/3u the whole report
 .json is embedded as an attachment — the one thing 3b exists for.
 """
 
@@ -69,8 +69,8 @@ def _pdf_class(variant: str):
 
 
 def render_pdf(report: Report, product_title: str, variant: str, font_regular: str, font_bold: str,
-               canonical_json: bytes | None = None) -> bytes:
-    """Bytes of the PDF. `variant` is "" or a key of _VARIANTS; `canonical_json` is embedded under
+               report_json: bytes | None = None) -> bytes:
+    """Bytes of the PDF. `variant` is "" or a key of _VARIANTS; `report_json` is embedded under
     3b/3u only (attachments are what those profiles permit and 2b forbids)."""
     if variant not in ("", *_VARIANTS):
         raise ValueError(f"unknown PDF variant {variant!r}")
@@ -101,8 +101,8 @@ def render_pdf(report: Report, product_title: str, variant: str, font_regular: s
         if section.page_break and i > 0:
             pdf.add_page()
         _section(pdf, section)
-    if compliance is not None and variant in ("pdf/a-3b", "pdf/a-3u") and canonical_json is not None:
-        pdf.embed_file(bytes=canonical_json, basename="report.json", desc="canonical report data (sha256 in the document subject)")
+    if compliance is not None and variant in ("pdf/a-3b", "pdf/a-3u") and report_json is not None:
+        pdf.embed_file(bytes=report_json, basename="report.json", desc="the report data, the .json artefact (its sealed sha256 in the document subject)")
     return bytes(pdf.output())
 
 

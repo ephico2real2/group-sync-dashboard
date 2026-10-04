@@ -155,15 +155,15 @@ class TestPdf:
         assert b"/FontFile2" in out and b"/OutputIntent" in out
         assert b"<pdfaid:part>2</pdfaid:part>" in out and b"<pdfaid:conformance>B</pdfaid:conformance>" in out
 
-    def test_a_plain_pdf_has_no_pdfa_id_and_3b_embeds_the_canonical_json(self):
+    def test_a_plain_pdf_has_no_pdfa_id_and_3b_embeds_the_report_json(self):
         _need_fonts()
         from gsd.reporting.render_pdf import render_pdf
         plain = render_pdf(_report(), "T", "", str(REGULAR), str(BOLD))
         assert plain.startswith(b"%PDF") and b"pdfaid" not in plain
-        canonical = _report().to_json().encode()
-        three_b = render_pdf(_report(), "T", "pdf/a-3b", str(REGULAR), str(BOLD), canonical)
+        report_json = _report().to_json().encode()
+        three_b = render_pdf(_report(), "T", "pdf/a-3b", str(REGULAR), str(BOLD), report_json)
         assert b"/EmbeddedFile" in three_b
-        two_b = render_pdf(_report(), "T", "pdf/a-2b", str(REGULAR), str(BOLD), canonical)
+        two_b = render_pdf(_report(), "T", "pdf/a-2b", str(REGULAR), str(BOLD), report_json)
         assert b"/EmbeddedFile" not in two_b, "2b forbids attachments; the renderer embeds only under 3b/3u"
 
     def test_a_giant_cell_is_cut_in_the_pdf_and_whole_in_the_html(self):

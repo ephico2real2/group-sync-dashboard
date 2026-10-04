@@ -8710,6 +8710,18 @@ class TestKyvernoPage:
 
 
 class TestReportsTab:
+    def test_the_reports_description_names_csv(self, browser, reporting_server):
+        """#587: the description names CSV among the formats a run can store."""
+        base, _, _ = reporting_server
+        ctx, page, errors = _reports_page(browser, base, "root")
+        try:
+            page.click('button.tab:text-is("Reports")')
+            page.wait_for_selector("#report-picker")
+            assert "CSV" in page.locator("#report-picker .filterbar-note").inner_text()
+            assert not errors
+        finally:
+            ctx.close()
+
     def test_the_fixtures_report_service_keeps_wall_time(self, reporting_server):
         """The service verifies every ticket against ITS clock while the dashboard mints with wall time; a
         fixture clock frozen at creation refused any ticket minted more than MAX_CLOCK_SKEW_SECONDS (30)

@@ -238,7 +238,7 @@ def test_t270_9_only_page_one_rides_outside_the_seal(snap):
     doc = json.loads(_run(snap, "groups").to_json())
     assert integrity.recompute(doc) == doc["sha256"]
     added = {**doc, "sections": [*doc["sections"], {"title": "Attestation", "page_break": False, "sealed": False,
-                                                    "blocks": [{"kind": "note", "text": "approved", "tone": "note"}]}]}
+                                                    "blocks": [{"kind": "note", "text": "approved", "level": "note"}]}]}
     assert integrity.recompute(added) is None
     page_one_sealed = {**doc, "sections": [{**doc["sections"][0], "sealed": True}, *doc["sections"][1:]]}
     assert integrity.recompute(page_one_sealed) is None

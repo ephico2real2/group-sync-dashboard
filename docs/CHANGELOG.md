@@ -36,6 +36,16 @@ which `local-development/prepare-release.py` does when the release is cut.
 - **Scheduled reports refuse PDF (#594):** a values file naming `pdf` in `reporting.formats.scheduled`, a schedule's `formats` or `deliver.attach` now fails to render; remove `pdf`, use HTML, JSON or CSV for storage and HTML or CSV for attachments, and print the HTML for a paper or PDF copy (manual runs keep PDF).
 - **Recovery mode handles SIGTERM arriving just before its wait (#555).** The chart's recovery script
   waits on a signal wakeup pipe so it cannot miss a SIGTERM and wait out the reporting interval before stopping.
+- **Reports description names every stored format (#587).** It lists PDF with its variant when enabled,
+  HTML, CSV, and JSON.
+- **Report diffs refuse reversed runs (#588).** A base newer than the head receives 422 with a sentence
+  explaining that a diff compares an earlier run with a later one.
+- **Access-certification snapshot stamp stays on page one (#589).** Removed the duplicate “Data as of”
+  row from the sealed Campaign list; the stamp remains on page one and in `sealed_provenance`. The
+  access-certification report's sha256 changes once because the row left the sealed data. Two snapshots
+  of the same data no longer produce a changed Campaign block in a report diff.
+- **Report JSON names and note fixture corrected (#590).** The whole JSON is named `report_json`,
+  and the note fixture uses `level`. No behaviour changes.
 
 - **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
