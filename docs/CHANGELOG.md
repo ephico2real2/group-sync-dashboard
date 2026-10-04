@@ -10,7 +10,14 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Application 5.0.0 — chart 0.70.1 — 2026-10-04
 
-- **Epic F: reports, honest seals, more formats, diffs and delivery (#386).**
+- **Epic F: reports, honest seals, more formats, diffs and delivery (#386).** Its children: F1 #270, a report's
+  sha256 covers its data only (application 4.1.0, PR #571); F2 #106, CSV as a fourth format (application 4.2.0, PR
+  #575); F3 #108, `report-diff` between two runs (application 4.3.0, PR #579); F4 #109, webhook delivery of scheduled
+  reports (application 4.4.0, PR #583); F5 #140, an alert when a schedule stops producing evidence (application
+  4.5.0, PR #596); F6 #392, tickets signed with a key of their own (application 4.6.0, PR #601); #594, scheduled
+  reports refuse PDF (application 4.7.0, PR #603). #149 closed with the operator's waiver, and #131 shipped earlier
+  (#139). Also in this release: the Tech debt sweep (application 4.7.0, PR #603) and the `release-crc.sh --argocd`
+  wait (#534, PR #567).
 
 - **The Tech debt sweep (the "Tech debt" milestone; application 4.7.0, chart 0.70.0).** Fourteen issues found by
   walks and reviews, each as small as its issue, one bullet each below: #577, #546, #548, #594, #555, #587, #588, #589,
