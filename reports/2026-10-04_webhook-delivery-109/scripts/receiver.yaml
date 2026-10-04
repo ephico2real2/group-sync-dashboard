@@ -1,0 +1,47 @@
+# SPEC_F4 §5 step 1: the walk's webhook receiver, on the report image already on the node. It answers 200 to a POST
+# and prints one line per request: the path's LENGTH (never the path, which holds the URL's secret part), the
+# content type, and the body. Removed by run.sh with `oc delete … -l app=gsd-delivery-walk`.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gsd-delivery-walk
+  namespace: group-sync-dashboard
+  labels: {app: gsd-delivery-walk, walk.gsd.lab/run: webhook-delivery-109-2026-10-04}
+spec:
+  restartPolicy: Never
+  securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: receiver
+      image: quay.io/ephico2real/group-sync-dashboard-report:4.4.0
+      imagePullPolicy: IfNotPresent
+      securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      ports: [{containerPort: 8080}]
+      command:
+        - python3.14
+        - -c
+        - |
+          import json, sys
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          class H(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                  try:
+                      parsed = json.loads(body)
+                  except ValueError:
+                      parsed = {"unparsed_bytes": len(body)}
+                  print(json.dumps({"path_len": len(self.path), "content_type": self.headers.get("Content-Type"),
+                                    "body": parsed}), flush=True)
+                  self.send_response(200); self.end_headers()
+              def log_message(self, *args):
+                  pass                      # the default access log would print the path
+          HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gsd-delivery-walk
+  namespace: group-sync-dashboard
+  labels: {app: gsd-delivery-walk, walk.gsd.lab/run: webhook-delivery-109-2026-10-04}
+spec:
+  selector: {app: gsd-delivery-walk}
+  ports: [{port: 8080, targetPort: 8080}]
