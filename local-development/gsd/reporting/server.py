@@ -112,13 +112,59 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         except (SnapshotError, OSError):
             return None
 
+    def schedule_rows(at: datetime) -> list[dict]:
+        """Each configured schedule as the Reporting status page shows it, its `status` one of ok, late,
+        never or disabled. The page (`/api/status`) and the gauge `gsd_report_schedule_status` (#140) both
+        call this one function, so the alert reads the page's own verdict and never a second copy of it."""
+        from . import cron
+        sig = signals.snapshot()
+        tz = settings.window.timezone if settings.window.enabled else None
+        overrides = retention_overrides(settings)         # what the prune applies — the same reading
+        schedules = []
+        for sch in settings.schedules:
+            enabled = sch.get("enabled", True) is not False
+            override = sch.get("retention") or {}
+            keep, days = overrides.get(sch["name"], (settings.scheduled_keep_per_schedule, settings.scheduled_retention_days))
+            try:
+                spec = cron.parse(sch["schedule"])
+                nxt = cron.next_fire(spec, at, tz) if enabled else None
+                prv = cron.prev_fire(spec, at, tz)
+                cadence = cron.describe(sch["schedule"])
+            except cron.CronError:
+                spec, nxt, prv, cadence = None, None, None, sch["schedule"]
+            last = sig["schedule_last_success"].get(sch["name"])
+            last_dt = datetime.fromtimestamp(last, UTC) if last else None
+            if not enabled:
+                state = "disabled"
+            elif last_dt is None:
+                state = "never"
+            elif prv is not None and last_dt < prv and at - prv > timedelta(minutes=30):
+                # the last expected fire is more than half an hour behind us (the grace for the queue
+                # and the render) and nothing has succeeded since it. The grace sits AFTER the fire:
+                # measured with it on the other side (`last < prv - 30 min`), every healthy schedule
+                # read `late` from the instant it fired until its run finished (review of #221, OB3).
+                state = "late"
+            else:
+                state = "ok"
+            schedules.append({
+                "name": sch["name"], "report": sch["report"], "schedule": sch["schedule"], "cadence": cadence,
+                "enabled": enabled, "retention": {"keepPerSchedule": keep, "days": days,
+                                                  "overridden": bool(override)},
+                "last_success": last_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if last_dt else None,
+                "next_fire": nxt.strftime("%Y-%m-%dT%H:%M:%SZ") if nxt else None,
+                "previous_fire": prv.strftime("%Y-%m-%dT%H:%M:%SZ") if prv else None,
+                "status": state,
+            })
+        return schedules
+
     # This process's self-report (#156): its own cgroup and the filesystem under the artefact volume,
     # exported on /metrics under component="report" and carried to the dashboard on the usage feed.
     from ..kpi.system import CgroupSampler, SystemMonitor, artifact_bytes
     system_monitor = SystemMonitor(CgroupSampler(), settings.artifact_dir,
                                    own=("artifacts", artifact_bytes(settings.artifact_dir)))
     registry = build_report_registry(signals, store, runs, settings.snapshot_dir, snapshot_age,
-                                     system=system_monitor.sampler, volume=system_monitor.volume)
+                                     system=system_monitor.sampler, volume=system_monitor.volume,
+                                     schedule_states=lambda: [(s["name"], s["status"]) for s in schedule_rows(now())])
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -535,7 +581,6 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         fire instants come from each schedule's cron expression, the suspend state from its `enabled`;
         kube-state-metrics would need Prometheus access and RBAC the service does not have, and would only
         restate what the expression already determines."""
-        from . import cron
         at = now()
         change, when = settings.window.next_change(at)
         sig = signals.snapshot()
@@ -544,43 +589,7 @@ def build_report_app(settings: ReportSettings, *, secret: bytes | None = None, c
         for r in rows:
             if r.status in counts:
                 counts[r.status] += 1
-        tz = settings.window.timezone if settings.window.enabled else None
-        overrides = retention_overrides(settings)         # what the prune applies — the same reading
-        schedules = []
-        for sch in settings.schedules:
-            enabled = sch.get("enabled", True) is not False
-            override = sch.get("retention") or {}
-            keep, days = overrides.get(sch["name"], (settings.scheduled_keep_per_schedule, settings.scheduled_retention_days))
-            try:
-                spec = cron.parse(sch["schedule"])
-                nxt = cron.next_fire(spec, at, tz) if enabled else None
-                prv = cron.prev_fire(spec, at, tz)
-                cadence = cron.describe(sch["schedule"])
-            except cron.CronError:
-                spec, nxt, prv, cadence = None, None, None, sch["schedule"]
-            last = sig["schedule_last_success"].get(sch["name"])
-            last_dt = datetime.fromtimestamp(last, UTC) if last else None
-            if not enabled:
-                state = "disabled"
-            elif last_dt is None:
-                state = "never"
-            elif prv is not None and last_dt < prv and at - prv > timedelta(minutes=30):
-                # the last expected fire is more than half an hour behind us (the grace for the queue
-                # and the render) and nothing has succeeded since it. The grace sits AFTER the fire:
-                # measured with it on the other side (`last < prv - 30 min`), every healthy schedule
-                # read `late` from the instant it fired until its run finished (review of #221, OB3).
-                state = "late"
-            else:
-                state = "ok"
-            schedules.append({
-                "name": sch["name"], "report": sch["report"], "schedule": sch["schedule"], "cadence": cadence,
-                "enabled": enabled, "retention": {"keepPerSchedule": keep, "days": days,
-                                                  "overridden": bool(override)},
-                "last_success": last_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if last_dt else None,
-                "next_fire": nxt.strftime("%Y-%m-%dT%H:%M:%SZ") if nxt else None,
-                "previous_fire": prv.strftime("%Y-%m-%dT%H:%M:%SZ") if prv else None,
-                "status": state,
-            })
+        schedules = schedule_rows(at)
         w = settings.window
         return {
             "service": {"version": __version__, "pdf": {"enabled": settings.pdf_enabled, "variant": settings.pdf_variant},

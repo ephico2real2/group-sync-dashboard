@@ -14,6 +14,10 @@ from .. import __version__
 from .artifacts import STATUSES
 from .config import REPORT_NAMES
 
+#: The Reporting status page's schedule states (server.py `schedule_rows`), each exported as its own series
+#: of `gsd_report_schedule_status` so a schedule's every state is present at 0 or 1, never missing (#140).
+SCHEDULE_STATES = ("ok", "late", "never", "disabled")
+
 
 class ReportSignals:
     def __init__(self) -> None:
@@ -57,10 +61,12 @@ class ReportSignals:
 
 class ReportCollector:
     def __init__(self, signals: ReportSignals, store, runs, snapshot_dir: str, snapshot_probe,
-                 system=None, volume: str | None = None):
+                 system=None, volume: str | None = None, schedule_states=None):
         self.signals, self.store, self.runs, self.snapshot_dir, self.snapshot_probe = signals, store, runs, snapshot_dir, snapshot_probe
         # The KPI module's sources (#156): this process's cgroup sampler and the artefact volume.
         self.system, self.volume = system, volume
+        #: () -> [(schedule name, state)], the status page's own verdicts (#140); None declares the family empty.
+        self.schedule_states = schedule_states
 
     def collect(self):
         snap = self.signals.snapshot()
@@ -91,6 +97,15 @@ class ReportCollector:
         for sched, ts in snap["schedule_last_success"].items():
             last_success.add_metric([sched], ts)
         yield last_success
+        status = GaugeMetricFamily("gsd_report_schedule_status",
+                                   "Each schedule's state on the Reporting status page, 1 for the current one and 0 "
+                                   "for the others: ok, late (its last expected fire is over 30 minutes past with no "
+                                   "success since), never (no success on record) or disabled (paused).",
+                                   labels=["schedule", "status"])
+        for sched, state in (self.schedule_states() if self.schedule_states else ()):
+            for s in SCHEDULE_STATES:
+                status.add_metric([sched, s], 1 if s == state else 0)
+        yield status
         queued = GaugeMetricFamily("gsd_report_queue_length", "Runs waiting for the worker.")
         queued.add_metric([], self.runs.queued())
         yield queued
@@ -115,7 +130,8 @@ class ReportCollector:
 
 
 def build_report_registry(signals: ReportSignals, store, runs, snapshot_dir: str, snapshot_probe,
-                          system=None, volume: str | None = None) -> CollectorRegistry:
+                          system=None, volume: str | None = None, schedule_states=None) -> CollectorRegistry:
     reg = CollectorRegistry()
-    reg.register(ReportCollector(signals, store, runs, snapshot_dir, snapshot_probe, system=system, volume=volume))
+    reg.register(ReportCollector(signals, store, runs, snapshot_dir, snapshot_probe, system=system, volume=volume,
+                                 schedule_states=schedule_states))
     return reg

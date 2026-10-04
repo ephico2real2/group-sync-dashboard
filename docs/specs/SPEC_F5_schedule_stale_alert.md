@@ -8,7 +8,7 @@
 | Version on release | app 4.5.0, chart 0.68.0 |
 | Version note | Image content (`gsd/reporting/server.py` and `metrics.py` gain the gauge), so the next application MINOR, 4.5.0 (`docs/specs/README.md`, the version ladder). The chart takes a MINOR: a new alert is behaviour (`charts/group-sync-dashboard/Chart.yaml#MAJOR and MINOR for behaviour`) and it adds a value key, `monitoring.prometheusRule.for.reportScheduleLate`, as each of the chart's other rules has one (§3.4); the history agrees (0.67.0: "MINOR: `reporting.schedules[].deliver` …"; 0.66.5 to 0.66.7 were PATCHes because they moved only appVersion and docs). Read on `451ff688` (application 4.4.0, chart 0.67.0). W1 was `specified` at chart 0.68.0; by SPEC_E5's rule (a `specified` spec names a chart version above `Chart.yaml` and above every other `specified` claim) this spec takes 0.68.0 as the next to be built and W1 moves to 0.69.0, its index row and its header in this spec's own commit. A release that lands first makes the version blocks fail their check; the implementing pull request corrects them here first |
 | Issue | [#140](https://github.com/ephico2real2/group-sync-dashboard/issues/140) |
-| Status | specified |
+| Status | merged |
 | Source | OB1-lite's research and specification of 2026-10-04, from the issue's refined body (2026-09-26, item 2) and the orchestrator's brief, re-measured against main `451ff688` (after F4). Measured with the repository's venv (Python 3.14, prometheus_client 0.26.0), `helm template`, promtool 3.15.0 from `quay.io/prometheus/prometheus` and read-only `oc get` on the lab. §7's 20 blocks were generated from a working copy and proved against a clean checkout of `451ff688` (§4.3) |
 
 ## How to read this spec
@@ -75,6 +75,20 @@ Questions settled by the orchestrator (2026-10-04, on "easy to manage, best prac
    (after a success) or `never` for ever and the alert can never fire. Inherited from #221, not changed here
    (the page's states are "Must not change"). Default: a follow-up issue to refuse names at render or teach
    `cron.py` names.
+
+**Review of the implementation (PR #596, 2026-10-04): Codex (gpt-5.6-sol, xhigh) passed C1 to C6 with no finding;
+OB3 (Opus 5.5, max) confirmed C1 to C6** and ran T140-6 under real promtool 3.15.0: the alert fires on `late` only and
+never on `ok`, `never` or `disabled`; a negative control (the expression on `never`) failed. The decisions:
+- **Accepted: a second copy of the alert count was stale (OB3 F1).** The chart README's
+  `monitoring.prometheusRule.enabled` row still said "nineteen alerts, two of them only with reporting"; the render is
+  twenty, three of them reporting-only (measured: 20 rendered, 17 with `reporting.enabled=false`). Block R1 fixes the
+  row and T140-5b holds it against the render.
+- **Accepted: two comments said what does not happen (OB3 O1, measured with promtool).** The report Deployment
+  restarts with `Recreate`, so a restart leaves a gap in the series and `for:` starts again; nothing "briefly scrapes
+  two report pods" and the timer does not "outlast" a restart. The comments in `values.yaml` and `monitoring.yaml` now
+  say what happens: after a restart the alert can come up to `for:` later; it is not lost.
+- **Observed, no change:** every malformed cron expression OB3 tried raises `CronError`, which `schedule_rows`
+  catches, so a bad schedule cannot take `/report/metrics` down.
 
 ## 1. The mandate, and what is out of scope
 
@@ -760,6 +774,18 @@ class TestTheRule:
         assert _rule(_render("monitoring.prometheusRule.enabled=false")) is None
         assert _rule(_render("reporting.enabled=false")) is None
 
+    def test_t140_5b_the_readme_values_row_counts_the_rendered_alerts(self):
+        """The README's `monitoring.prometheusRule.enabled` row restates the rule count, a second copy of it:
+        this rule is the third that renders only with reporting on, so the row must say so (#140)."""
+        def alerts(*sets):
+            return [r for d in _render(*sets) if d.get("kind") == "PrometheusRule" for g in d["spec"]["groups"]
+                    for r in g["rules"] if "alert" in r]
+        total = len(alerts())
+        assert (total, total - len(alerts("reporting.enabled=false"))) == (20, 3)
+        row = next(ln for ln in (CHART / "README.md").read_text().splitlines()
+                   if ln.startswith("| `monitoring.prometheusRule.enabled` |"))
+        assert "**twenty** alerts — three of them render only with `reporting.enabled`" in row, row
+
     def test_t140_6_promtool_fires_on_late_only_once_per_schedule_after_for(self, tmp_path):
         """Prometheus's own evaluator over the rendered rule. Skips locally without promtool; CI installs it
         (ci.yml, "Install promtool") and must run it, as the board's PromQL test does."""
@@ -831,8 +857,8 @@ PROMTOOL_TEST = {
         # Reporting status page's own verdict per schedule, so the rule and the page cannot disagree:
         # `late` already holds the page's 30-minute grace after the expected fire. `never` (no success on
         # record) and `disabled` (paused) do not fire. A completed CronJob is not evidence: a run refused
-        # outside the reporting window exits 0. max by (schedule): one alert per schedule while a rollout
-        # briefly scrapes two report pods.
+        # outside the reporting window exits 0. max by (schedule): one alert per schedule, whatever the pod
+        # and instance labels; the report pod restarts with Recreate, so a restart leaves a gap and `for:` starts again.
         - alert: GroupSyncDashboardReportScheduleLate
           expr: max by (schedule) (gsd_report_schedule_status{status="late"}) == 1
           for: {{ .Values.monitoring.prometheusRule.for.reportScheduleLate }}
@@ -859,7 +885,7 @@ PROMTOOL_TEST = {
 ```yaml
       reportSnapshot: 30m   # GroupSyncDashboardReportSnapshotStale: the newest VACUUM INTO copy is older than this
       # GroupSyncDashboardReportScheduleLate: the status page's `late` already waits 30 minutes past the
-      # expected fire, so this only needs to outlast a scrape gap or a report pod restart.
+      # expected fire. A report pod restart (Recreate) leaves a gap in the series and this timer starts again.
       reportScheduleLate: 15m
 ```
 
@@ -1022,4 +1048,17 @@ stop nightly evidence. A trigger-side pre-check is diagnostic only (same predica
 stop nightly evidence. (Built by #140, `docs/specs/SPEC_F5_schedule_stale_alert.md`: the report service exports
 the status page's per-schedule verdict as `gsd_report_schedule_status{schedule, status}`, and
 `GroupSyncDashboardReportScheduleLate` fires while a schedule reads `late`.) A trigger-side pre-check is diagnostic only (same predicate); the server is the
+```
+
+### Block R1 — `charts/group-sync-dashboard/README.md`: from the review of the implementation (PR #596)
+
+<!-- block: charts/group-sync-dashboard/README.md | edit -->
+```markdown
+| `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
+| `monitoring.prometheusRule.enabled` | `true` | **nineteen** alerts — two of them render only with `reporting.enabled` (the default), two only where the offsite CronJob renders (the default, which steps aside where it cannot work); see below |
+```
+
+```markdown
+| `monitoring.serviceMonitor.labels` | `{}` | extra metadata labels. Usually how a cluster's Prometheus selects which ServiceMonitors it owns |
+| `monitoring.prometheusRule.enabled` | `true` | **twenty** alerts — three of them render only with `reporting.enabled` (the default), two only where the offsite CronJob renders (the default, which steps aside where it cannot work); see below |
 ```
