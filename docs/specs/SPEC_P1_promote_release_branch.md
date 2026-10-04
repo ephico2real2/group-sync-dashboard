@@ -6,10 +6,10 @@
 | Batch | P — promotion |
 | Release | — (post-programme; its own PR and its own review) |
 | Version on release | app 5.2.0, chart 0.70.3 |
-| Version note | `local-development/README.md` is an image input (.github/workflows/publish.yml:84), and this change edits its `--argocd main` sentence, so `check-app-version-bump.py` requires the next application MINOR after main's 5.1.0: 5.2.0 (`docs/RELEASING.md`, "MINOR per merged issue changing the image"). No other image input changes. The chart moves only because `appVersion` moves: no template, value or RBAC change, so a PATCH, 0.70.2 to 0.70.3, as 0.70.2 was for 5.1.0. W1 stays `specified` at chart 0.71.0, above 0.70.3. Read on `6421cff7` (application 5.1.0, chart 0.70.2). A release that lands first makes the version blocks (17 to 21) fail their check; the implementing pull request corrects them here first. Without the `local-development/README.md` sentence (§3.6) nothing in this change is an image input or under `charts/`, and the ladder would require no version change at all (Orchestrator's notes 12) |
+| Version note | `local-development/README.md` and `local-development/build-and-push-external.sh` are image inputs (.github/workflows/publish.yml:84, :89), and this change edits both, so `check-app-version-bump.py` requires the next application MINOR after main's 5.1.0: 5.2.0 (`docs/RELEASING.md`, "MINOR per merged issue changing the image"). The script change makes its existing `<sha10>` contract exactly ten characters; no tag name changes unless Git would otherwise have lengthened an ambiguous abbreviation. No other image input changes. The chart moves only because `appVersion` moves: no template, value or RBAC change, so a PATCH, 0.70.2 to 0.70.3, as 0.70.2 was for 5.1.0. W1 stays `specified` at chart 0.71.0, above 0.70.3. Read on `6421cff7` (application 5.1.0, chart 0.70.2). A release that lands first makes the version blocks (17 to 21) fail their check; the implementing pull request corrects them here first. |
 | Issue | [#598](https://github.com/ephico2real2/group-sync-dashboard/issues/598) |
 | Status | specified |
-| Source | OB1-lite's research and specification of 2026-10-04 (implementer seat), from #598 and #410, the old SPEC_P1 and its two review rounds (`bb1f8b91`, `dc027eda`), the code read on `6421cff7`, read-only `gh` and `oc get` against GitHub and the lab, and the upstream documents in §2.1. No cluster, branch, ruleset or GitHub setting was changed. Revised the same day on the operator's decisions "main by default; release optional" and the two-namespace end state (Orchestrator's notes 10, 11). §7's 21 blocks were cut from a working copy and proved against a clean copy of `6421cff7` with this spec in it (§4.3) |
+| Source | OB1-lite's research and specification of 2026-10-04 (implementer seat), from #598 and #410, the old SPEC_P1 and its two review rounds (`bb1f8b91`, `dc027eda`), the code read on `6421cff7`, read-only `gh` and `oc get` against GitHub and the lab, and the upstream documents in §2.1. No cluster, branch, ruleset or GitHub setting was changed. Revised the same day on the operator's decisions "main by default; release optional" and the two-namespace end state (Orchestrator's notes 10, 11), then on the confirmation review's exact-sha10 finding. §7's 22 blocks check against a clean copy of `6421cff7` with this spec in it (§4.3) |
 
 ## How to read this spec
 
@@ -118,12 +118,11 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
     (`group-sync-dashboard-dev`); under the same release name, nine objects collide. Nothing in this change ties
     `release` to a namespace: `promote.yml` and `promotion.yaml` name no namespace, and `--argocd release` takes the
     destination from the Application file as every Argo mode does. The follow-ups the end state needs are in §2.3.
-12. **The version, rechecked after the revision.** `local-development/README.md` still changes (note 10), and it is
-    an image input (.github/workflows/publish.yml:84), so the next application MINOR is still required: 5.2.0, with
-    the chart PATCH 0.70.3 because `appVersion` moves. Every other file this change edits is outside
-    `publish.yml`'s paths and outside `charts/`. If the operator prefers no image rebuild, dropping that one
-    sentence makes the change "no version change (a workflow, a repository tool, tests and docs)" under the
-    ladder: Blocks 14 and 17 to 20 go, and Block 21 drops its versions.
+12. **The version, rechecked after the revision.** `local-development/README.md` still changes (note 10), and the
+    exact-sha10 fix changes `local-development/build-and-push-external.sh`; both are image inputs
+    (.github/workflows/publish.yml:84, :89), so the next application MINOR is still required: 5.2.0, with the chart
+    PATCH 0.70.3 because `appVersion` moves. Every other file this change edits is outside `publish.yml`'s paths and
+    outside `charts/`.
 13. **The epic-release routine (the operator, 2026-10-04: "Yes I love that your plan").** While the CRC has no room
     for a second environment, the lab follows `main` day to day, and at each epic release the post-release walk runs
     on the promoted path: `release-crc.sh --argocd release`, the walk, then `release-crc.sh --argocd main`. Written
@@ -160,6 +159,22 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
       on this spec's: `21 passed`.
     - **F3 (P1): the hermetic count was off by one.** The new fenced code in the docs adds a case to
       `test_docs_diagrams.py`. The counts in §4.3 are re-measured on this spec's final tree.
+15. **The confirmation pass (Codex, gpt-5.6-sol, xhigh, 2026-10-04): F1, F2 and F3 confirmed closed; one new
+    finding, F4 (P1), accepted.**
+    - **Confirmed closed:** the replaced-pending, post-rollback and overtaken-publish orders, and four more Codex
+      tried (a revert, a first-parent merge, an older `sha` without `rollback`, an image-only merge). Main by default
+      holds, and the two-namespace table re-renders as stated.
+    - **The defect:** the publisher names its immutable tag with `git rev-parse --short=10`, a unique abbreviation of
+      at least ten characters that Git lengthens when another object shares the prefix. The promoter asks for exactly
+      ten (`${image_commit:0:10}`), so in that case the published image could never be found, and the release
+      would stay stranded.
+    - **The fix (Block 22):** the publisher takes the full id and slices exactly ten characters. Today's tags are
+      unchanged unless a prefix collides. Matching the other way, `--short=10` in the promoter, is rejected: the
+      abbreviation depends on which objects each checkout holds.
+    - **The test:** the source-binding shape test holds both sides to the same rule and refuses a return to
+      `--short=10`. It failed on the 21-block tree and passes on this one.
+    - **The version:** the publisher script is an image input, and this change already moves the application to
+      5.2.0, so the version is unchanged.
 
 Open questions for the operator:
 
@@ -188,7 +203,8 @@ the Application (item 7's "`--argocd main` is refused" is withdrawn by the decis
 the lab's Application tracks `release` when chosen, its pods then run the pinned digests, and the PVC UIDs are
 unchanged; the release docs say what each gate refuses and what to do.
 
-**Out of scope:** `publish.yml` (its paths, tags, alias rule, signing, SBOM, `:latest`); every published tag;
+**Out of scope:** `publish.yml` (its paths, alias rule, signing, SBOM, `:latest`); every published tag except making
+the existing `<appVersion>-<sha10>` suffix exactly ten characters (Block 22);
 `helm.yaml` and part A's gate; the chart's templates, values and RBAC; the published Helm chart, which still resolves
 `:<appVersion>` for installs outside the lab; `release-crc.sh`'s Helm mode, its build path, and `--argocd <branch>`
 for a branch under test, and `--argocd main`; the committed Application file; the Grafana Application; the end
@@ -221,7 +237,7 @@ state's second namespace (Orchestrator's notes 11).
 | It signs each digest keyless and reads the signature back as `publish.yml@refs/heads/main`, with cosign v3.1.3 | .github/workflows/publish.yml:455-456, :458-462, :483-486 |
 | An image change must move the application to the next MINOR or MAJOR (required check) | local-development/check-app-version-bump.py:128-151; .github/workflows/ci.yml:169-186 |
 | Part A: `helm.yaml` reads the version label of every Linux image of both images before it copies anything; a pinned tag is not checked | .github/workflows/helm.yaml:145, :171-189 (the `reporting.image.tag` reader), :195-210 (`image_versions`), :251-279 |
-| Both images are labelled with the version and the 10-character commit they were built from | local-development/Containerfile:184-185; local-development/build-and-push-external.sh:132 |
+| Both images are labelled with the version and the exact first 10 characters of the commit they were built from | local-development/Containerfile:184-185; local-development/build-and-push-external.sh:132-133 after Block 22 |
 | The chart renders `repository@digest` when `image.digest` / `reporting.image.digest` is set, and the digest wins over the tag | charts/group-sync-dashboard/templates/_helpers.tpl:85-90, :753-758; charts/group-sync-dashboard/values.yaml:54, :1256 |
 | The chart reads no file outside its directory: no symlink under `charts/`, and `.Files.Get` names `scripts/` and `dashboards/` only | `find charts -type l` (empty); templates/backup-offsite.yaml:78, grafana-dashboard.yaml:32, recovery.yaml:14 |
 | `release-crc.sh`'s mode table; `--argocd <branch>` reads both `:<appVersion>` images back before it writes the Application; the Application is written once, merged locally | local-development/release-crc.sh:20-47, :218-278, :282-292, :171-191 |
@@ -456,7 +472,7 @@ resolves `:<appVersion>` (part A's gate guards it).
 
 | Unchanged | Held by |
 |---|---|
-| `publish.yml`, `helm.yaml`, every published tag | no block edits them; `test_nothing_in_it_builds_and_it_verifies_with_the_cosign_publish_signs_with` (no copy, no build in `promote.yml`) |
+| `publish.yml`, `helm.yaml`, aliases and signatures | no block edits the workflows; Block 22 only makes the immutable suffix's existing sha10 contract exact; `test_nothing_in_it_builds_and_it_verifies_with_the_cosign_publish_signs_with` (no copy, no build in `promote.yml`) |
 | the chart's templates, values and RBAC | RBAC rendered before and after with `crc.yaml`: 30 rule and binding lines each, REMOVED 0, ADDED 0 (§4.3) |
 | `--argocd main` and `--argocd <branch>`: the alias read-back, a pin honoured, the waiter, no `valueFiles` in the patch | the existing `test_release_crc.py` tests, unchanged; `test_argocd_main_after_release_returns_to_the_files_values_and_the_aliases` |
 | the committed Application | `test_the_lab_tracks_main_by_default_and_release_crc_names_the_file_promote_writes` |
@@ -479,7 +495,7 @@ resolves `:<appVersion>` (part A's gate guards it).
 | a pinned tag is promoted as pinned | `test_a_pinned_tag_is_promoted_as_pinned` |
 | nothing builds; the cosign publish.yml signs with | `test_nothing_in_it_builds_and_it_verifies_with_the_cosign_publish_signs_with` |
 | one label rule in three places | `test_the_label_readers_are_helm_yamls` |
-| the immutable image is the last image-input commit's, and its alias is the same digest | `test_the_image_input_list_is_publish_ymls_and_the_immutable_tag_is_source_bound` |
+| the immutable image is the last image-input commit's, its suffix is exactly that commit's first ten characters in publisher and promoter, and its alias is the same digest | `test_the_image_input_list_is_publish_ymls_and_the_immutable_tag_is_source_bound` |
 | 8 (amended): the lab tracks `main` by default; `release-crc.sh` names the file `promote.yml` writes | `test_the_lab_tracks_main_by_default_and_release_crc_names_the_file_promote_writes` |
 | 7: `--argocd release` re-reads the pinned digests, lists `promotion.yaml` last, refuses a missing pin and a wrong digest | `test_release_crc.py::test_argocd_release_reads_the_pinned_digests_back_and_lists_promotion_yaml_last`; `test_argocd_release_without_a_promotion_is_refused_before_anything_is_written`; `test_argocd_release_refuses_a_pinned_digest_that_is_not_the_release` |
 | 7 (amended): `--argocd main` switches back with the file's values and the aliases | `test_argocd_main_after_release_returns_to_the_files_values_and_the_aliases` (a regression guard: it passes on main too) |
@@ -492,8 +508,9 @@ resolves `:<appVersion>` (part A's gate guards it).
   (§4.3). On the reviewed workflow, the five tests of Orchestrator's notes 14 fail for the reasons given there.
 - Each check was switched off in a copy of the applied tree, one at a time, and the tests that name it failed
   (§4.3, the mutation row): the label check, the publish-completion version rule, the immutable-tag source binding,
-  the alias digest equality, the ancestry check, the signature check, carrying an extra directory into `release`,
-  and in `release-crc.sh` the digest read-back and `promotion.yaml` in the values.
+  the exact-ten-character publisher suffix, the alias digest equality, the ancestry check, the signature check,
+  carrying an extra directory into `release`, and in `release-crc.sh` the digest read-back and `promotion.yaml` in
+  the values.
 - `test_release_crc.py` with `6421cff7`'s script (`RELEASE_CRC_UNDER_TEST`): the three new `release` tests fail;
   the fourth new test, `--argocd main` after `release`, passes there too, because it guards today's behaviour (§4.3).
 
@@ -506,14 +523,14 @@ run here.
 
 | Check | Command | Result |
 |---|---|---|
-| the blocks | `python3 local-development/apply-spec-blocks.py docs/specs/SPEC_P1_promote_release_branch.md .`, then `--apply`, in a clean git copy | `21 blocks check out across 12 files`; the 12 files, and the untouched Application, byte-equal (`cmp`) to the working copy the blocks were cut from |
+| the blocks | `python3 local-development/apply-spec-blocks.py docs/specs/SPEC_P1_promote_release_branch.md .`, then `--apply`, in a clean git copy | `22 blocks check out across 13 files`; the untouched Application remains byte-equal (`cmp`) |
 | CI's hermetic selection, main | `pytest tests/ -q --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` (.github/workflows/ci.yml:238) | `7630 passed, 23 skipped, 698 deselected, 5 xfailed, 2 warnings in 423.12s` |
 | the same, applied | the same | `7655 passed, 23 skipped, 698 deselected, 5 xfailed, 2 warnings in 446.65s`: +25, the collection's difference (row below) |
 | the new tests on main's code | `test_promote.py` and `test_release_crc.py` copied onto `6421cff7` | `6 failed, 15 errors` (no `promote.yml`); `3 failed, 33 passed` (the three `release` tests) |
 | the new tests on the reviewed workflow | `test_promote.py` against `51e28a81`'s Block 1 | `6 failed, 15 passed` (Orchestrator's notes 14) |
 | the same, applied | `pytest tests/test_promote.py`, `pytest tests/test_release_crc.py` | `21 passed`; `36 passed` |
 | collection | `pytest tests/ -q --collect-only --deselect tests/test_ui.py --deselect tests/test_live_smoke.py` | main `7658/8356`, applied `7683/8381` (698 deselected each): +25, which is `test_promote.py`'s 21 and `test_release_crc.py`'s 32 → 36 (per-file diff of the collection) |
-| each check held (mutation) | one check switched off in a copy of the applied tree, then the test file | label check: 3 failed; publish-completion version rule: 1; immutable-tag source binding: 3; alias digest equality: 2; ancestry check: 1; signature check: 2; `local-development/` carried into `release`: 1; `--argocd release` not reading the pinned digests: 3; `promotion.yaml` left out of its `valueFiles`: 1 |
+| each check held (mutation) | one check switched off in a copy of the applied tree, then the test file | label check: 3 failed; publish-completion version rule: 1; immutable-tag source binding: 3; publisher still using minimum-length `--short=10`: 1; alias digest equality: 2; ancestry check: 1; signature check: 2; `local-development/` carried into `release`: 1; `--argocd release` not reading the pinned digests: 3; `promotion.yaml` left out of its `valueFiles`: 1 |
 | the workflows | actionlint v1.7.12 | nothing in `promote.yml`; the repository's other 2 findings are main's (2 before, 2 after) |
 | the scripts | `bash -n` and `shellcheck -S warning` on `release-crc.sh` and on the promotion step extracted from the YAML | clean |
 | RBAC | Roles, ClusterRoles and their bindings rendered with `environments/crc.yaml`, before and after, one line per rule or binding | 30 and 30; REMOVED 0, ADDED 0 |
@@ -565,12 +582,12 @@ operator's steps 1 to 4 (§3.5):
 
 ## 7. Implementation blocks
 
-Twenty-one blocks over twelve files, in apply order: the workflow, `release-crc.sh`, the tests, the docs, the versions,
-the CHANGELOG. `gitops/argocd-application-dashboard.yaml` is not edited (Orchestrator's notes 10). Lines added /
-removed per file (the proof tree): `promote.yml` +270, `test_promote.py` +366, `test_release_crc.py` +67,
+Twenty-two blocks over thirteen files, in apply order: the workflow, `release-crc.sh`, the tests, the docs, the versions,
+the CHANGELOG, and the publisher's exact sha10 derivation. `gitops/argocd-application-dashboard.yaml` is not edited (Orchestrator's notes 10). Lines added /
+removed per file (the proof tree): `promote.yml` +270, `test_promote.py` +371, `test_release_crc.py` +67,
 `release-crc.sh` +32 −10, `docs/RELEASING.md` +71, `docs/CHANGELOG.md` +14, `.claude/skills/epic/SKILL.md` +11 −10,
 `Chart.yaml` +5 −2, `local-development/README.md` +4 −1, `gitops/README.md` +1, `pyproject.toml` and
-`gsd/__init__.py` +1 −1 each.
+`gsd/__init__.py` +1 −1 each, `build-and-push-external.sh` +2 −1.
 
 ### Block 1 — `.github/workflows/promote.yml`: the workflow: three triggers, the source-bound ready rule, the read-back, the commit to `release`
 
@@ -1065,6 +1082,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 PROMOTE = REPO / ".github" / "workflows" / "promote.yml"
 APPLICATION = REPO / "gitops" / "argocd-application-dashboard.yaml"
 RELEASE_CRC = REPO / "local-development" / "release-crc.sh"
+PUBLISHER = REPO / "local-development" / "build-and-push-external.sh"
 STEP = "Read both images back and promote"
 IDENTITY = "https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main"
 
@@ -1396,6 +1414,10 @@ def test_the_image_input_list_is_publish_ymls_and_the_immutable_tag_is_source_bo
     assert 'git log --first-parent -1 --format=%H "${target}" -- "${IMAGE_INPUTS[@]}"' in run
     assert 'tag="${this_pin:-${app_version}-${image_commit:0:10}}"' in run
     assert 'if [ "${alias_digest}" != "${digest}" ]; then' in run
+    publisher = PUBLISHER.read_text()
+    assert "COMMIT=$(git rev-parse HEAD)" in publisher
+    assert 'COMMIT="${COMMIT:0:10}"' in publisher
+    assert "git rev-parse --short=10 HEAD" not in publisher
 
 
 def test_the_lab_tracks_main_by_default_and_release_crc_names_the_file_promote_writes() -> None:
@@ -1820,9 +1842,27 @@ __version__ = "5.2.0"
   there and heals on its own. `release-crc.sh --argocd release` removes it: it reads the pinned digests back, then
   points the Application at `release` with `promotion.yaml` as its last values file; `--argocd main` switches back.
   The `release` branch, its ruleset and the deploy key are the operator's one-time steps (`docs/RELEASING.md`,
-  "Promotion to the lab"). The application moves only because `local-development/README.md` is an image input; no
-  code, template, value or RBAC change.
+  "Promotion to the lab"). The application moves because `local-development/README.md` and the publisher's exact-sha10
+  derivation are image inputs; no application code, template, value or RBAC change.
 
 - **The reports' clock is the snapshot's (#592, #607, #593, `docs/specs/SPEC_F7_snapshot_clock.md`; application 5.1.0,
 ```
 
+### Block 22 — `local-development/build-and-push-external.sh`: make `<sha10>` exactly ten characters
+
+`git rev-parse --short=10` asks for a unique abbreviation of at least ten characters; Git may lengthen it when two
+objects share that prefix. Promotion names the immutable tag with the literal first ten characters, so the publisher
+must do the same. This changes no current tag and makes the documented tag contract stable as the object database grows.
+
+<!-- block: local-development/build-and-push-external.sh | edit -->
+
+```bash
+COMMIT=$(git rev-parse --short=10 HEAD)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+```
+
+```bash
+COMMIT=$(git rev-parse HEAD)
+COMMIT="${COMMIT:0:10}"
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+```
