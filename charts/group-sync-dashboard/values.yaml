@@ -1421,8 +1421,8 @@ reporting:
     manual: [html, json, pdf]
 
   # Unattended runs. Each entry is a CronJob on the report image that POSTs one run with the
-  # service token and waits for it (exit status = run status). Nothing is mailed; the artefact
-  # lands in the artefact store like any other. `report` must be an enabled catalogue name.
+  # service token and waits for it (exit status = run status). The artefact lands in the artefact
+  # store like any other; nothing is mailed. `report` must be an enabled catalogue name.
   # A schedule is CLUSTER-AGNOSTIC (#149 R1): the service resolves every enabled cluster from its
   # snapshot and produces one run per cluster, each tagged schedule:<name>; `cluster:` pins one.
   # `enabled: false` keeps the CronJob and suspends it (R4) — its definition, history and audit
@@ -1437,6 +1437,21 @@ reporting:
   #     report: namespace-access
   #     params: {}
   #     enabled: false
+  #
+  # `deliver` (#109, docs/specs/SPEC_F4_webhook_delivery.md): kind none (the default, today's CronJob) or
+  # webhook. With webhook, each finished run of the fan-out is POSTed as one CloudEvent (the run's facts:
+  # report, cluster, run id, status, schedule, sha256, finished_at, sizes) to the URL held in a Secret you
+  # create (`oc create secret generic team-hook --from-literal=url=https://...`), mounted read-only into the
+  # Job and never printed. attach: none|html|pdf|csv adds that artefact, base64, up to 5 MiB; it must be a
+  # format the schedule stores. Retried 4 times with backoff for 408, 429, 5xx and network errors; a run
+  # not delivered fails the Job like a failed run. The Job's egress to the receiver: chart README.
+  #   - name: weekly-groups
+  #     schedule: "0 23 * * 0"
+  #     report: groups
+  #     deliver:
+  #       kind: webhook
+  #       webhookUrlSecret: {name: team-hook, key: url}
+  #       attach: html
   schedules: []
 
   resources:

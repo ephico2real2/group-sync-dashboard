@@ -404,8 +404,18 @@ value, and is kept like any manual run (`reporting.retention.manual`).
 | `reporting.reports.<name>.enabled` | `true` for nine; `loginActivity` `""` | one switch per report; `loginActivity` **follows `loginCapture.enabled`** by default | `loginActivity=true` with capture off is refused; anything but `true`/`false` (or `""` for loginActivity) is refused |
 | `reporting.formats.scheduled` / `.manual` | `[html, json]` / `[html, json, pdf]` | what a run stores when the request names no formats, by origin: a schedule fires unattended and is printed from the HTML on demand, a person's manual run gets the PDF; `json` is always written; `csv` (#106) may be added to either, and is off by default | a defaulted `pdf` is dropped where `pdf.enabled` is false; an unknown name refuses startup (allowed: `html`, `pdf`, `csv`, `json`) |
 | `reporting.schedules` | `[]` | unattended runs: one CronJob per entry (`name`, `schedule`, `report`, optional `params`, `enabled`, `cluster`, `formats`) posting with the service token; nothing is mailed. **Cluster-agnostic**: the service resolves every enabled cluster from its snapshot and runs one per cluster, each tagged `schedule:<name>`; `cluster` pins one. `enabled: false` keeps the CronJob and **suspends** it (`spec.suspend`) — definition, history and audit stay; remove the entry to retire it | `report` must be an enabled catalogue name; `name` a DNS label |
+| `reporting.schedules[].deliver` | absent (`kind: none`) | **#109.** `kind: webhook` POSTs each finished run of the fan-out, as one CloudEvents 1.0 event (`application/cloudevents+json`; `id` is the run id, `data` the run's report, cluster, status, schedule, sha256, `finished_at`, sizes and error), to the URL in `webhookUrlSecret` (`name`, `key` default `url`), mounted read-only in the Job and never printed. `attach: html\|pdf\|csv` adds that artefact base64 up to 5 MiB, else names why it is omitted. 408, 429, 5xx and network errors are retried (4 attempts, full-jitter backoff, `Retry-After` honoured, inside the Job's deadline); a run not delivered fails the Job. The receiver must take generic JSON: a Slack incoming webhook or a Teams Workflows trigger needs its own adapter | `kind` none or webhook; webhook needs `webhookUrlSecret.name`; `attach` only with webhook, and only a format the schedule stores |
 | `reporting.podDisruptionBudget.enabled` / `.maxUnavailable` / `.minAvailable` | `true` / `1` / `""` | the report Deployment's own budget; same semantics as the dashboard's | selects the report pods only, never the schedule Jobs |
 | `reporting.resources` / `.nodeSelector` / `.tolerations` / `.affinity` | requests `50m`/`128Mi`, limits `500m`/`768Mi` / `{}` / `[]` / `{}` | the report pod's own scheduling; nothing is derived from the data claim's access mode | — |
+
+**Egress of the schedule Job (#109).** The chart renders no egress policy: the report pod's NetworkPolicy
+is `policyTypes: [Ingress]` and selects the report pod only, and nothing selects the schedule Job's pods
+(`app.kubernetes.io/component: report-schedule`). A delivering Job reaches DNS, the report Service on 8443 and
+the receiver. In a namespace whose own policy denies egress by default, allow those three for the Job's
+pods yourself: a NetworkPolicy matches CIDRs and ports, never a hostname, and the receiver's host sits in a
+Secret the chart cannot read; on OVN-Kubernetes an `EgressFirewall` can allow it by `dnsName`. An https
+receiver is verified with the dashboard's trust (`trustedCA.injected`, `trustedCA.existingConfigMap`); a
+receiver behind an HTTP proxy is not supported by the chart's values (the Job sets no proxy variables).
 
 **Pre-flight for TLS between the pods.** The shipped proxy must know `-upstream-ca`:
 

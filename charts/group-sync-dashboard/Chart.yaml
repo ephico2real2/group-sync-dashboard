@@ -351,7 +351,11 @@ type: application
 # default, template logic or RBAC change.
 # CHART 0.66.7 (2026-10-03), PATCH: appVersion moves to application 4.3.0 (below); #108, SPEC_F3. The
 # README's reports paragraph names report-diff; no key, default, template or RBAC change.
-version: 0.66.7
+# CHART 0.67.0 (2026-10-04), MINOR: `reporting.schedules[].deliver` {kind, webhookUrlSecret {name, key}, attach}
+# renders the trigger's delivery args, the URL Secret and the trust bundles into a schedule's CronJob, refused at
+# render when it cannot work; a schedule without it renders as before; `gsd.trustedCaFile` is the one CA list for
+# the dashboard and the Job; appVersion moves to application 4.4.0 (below); #109, SPEC_F4. No RBAC change.
+version: 0.67.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -491,7 +495,8 @@ version: 0.66.7
 # 4.1.0 (2026-10-03). A report's sha256 covers its data only: page one's run facts (when, by whom, the run id, the release, the snapshot's age, the marking and the binding interval) leave the hash; two runs over one snapshot with the same parameters hash the same while the values a report computes against the generation clock coincide; every artefact's hash changes once (#270). MINOR.
 # 4.2.0 (2026-10-03). CSV as a fourth report format, off by default: one file per run with the report's tables, its sha256 and page one, each cell written as the page's table export writes it (#106). MINOR.
 # 4.3.0 (2026-10-03). What changed between two runs: a report-diff run compares the sealed data of two finished runs of one report on one cluster, rows removed and added per table, stored as a sealed manual run naming both inputs and their sha256s (#108). MINOR.
-appVersion: "4.3.0"
+# 4.4.0 (2026-10-04). Webhook delivery of scheduled reports: each finished run of a schedule's fan-out is POSTed as one CloudEvent to the URL in a mounted Secret, retried for 408, 429, 5xx and network errors, never printing the URL; a run not delivered fails the Job (#109). MINOR.
+appVersion: "4.4.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard
