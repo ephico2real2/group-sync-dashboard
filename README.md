@@ -355,79 +355,128 @@ the secrets in a step rather than in a job `if:`: per
 
 ## What it shows
 
-Eight tabs.
+Up to 14 tabs, in the order drawn by
+`local-development/gsd/static/index.html#function renderFilters`.
+The server decides the reader's tier: the wide audit view, the self-scoped view, the separate
+Usage tier, and the cluster-admin tier. Cluster-data scope can differ by selected cluster;
+Reports and Library use the host's wide tier. These checks and the deployment overrides live
+in `local-development/gsd/api.py#build_app`; the page renders the returned scope.
 
-**Overview** — per cluster: reachable, CR count, group count, empty and unattributed groups,
-bindings needing review, oldest last sync, and the health of the
-namespace-configuration-operator's CRs. Alongside it, the computed alerts.
+**Home** — every reader's own identity, access and recent changes on the selected cluster
+(`local-development/gsd/static/index.html#function homePage`).
 
-Drill into a CR for its schedule, LDAP filter, last sync, next expected (from a real cron
-parser), the accumulated sync timeline, and the groups it owns.
+**Overview** — cluster health, GroupSync and policy CRs, and computed alerts. The wide tier
+sees the cluster audit; a self-scoped reader gets a named refusal
+(`local-development/gsd/static/index.html#function overviewPage`,
+`local-development/gsd/static/index.html#function render`).
 
-**Groups** — every group, filterable to `empty` and `unattributed`, and by name as you type.
-Drill in for members, when each was first seen, the membership change log, and the access the
-group grants; a Find member box narrows the members table by id or display name. From any
-member, the reverse lookup: every group that user belongs to and every binding that reaches
-them, each row naming the group that confers it. The cluster can only answer that by scanning
-every Group object by hand.
+**KPIs** — dashboard and report-service resource use, backup health, fleet access posture
+and activity trends. The tab is shown only to the cluster-admin tier
+(`local-development/gsd/static/index.html#function kpiPage`,
+`local-development/gsd/static/index.html#function clusterAdmin`).
 
-**Users** — everyone who has logged in: one row per OpenShift `User` object, with first login,
-identity provider, synced-group count, last captured login and display name where the provider
-supplies one. Synced members who have never logged in are reported as a count, not as rows.
-Filtered as you type on the id or the name, and by chips. A non-administrator sees their own row.
+**Groups** — groups, their members, membership history and grants. The wide tier sees all;
+self-scoped readers see only their own groups
+(`local-development/gsd/static/index.html#function groupsPage`,
+`local-development/gsd/static/index.html#const SCOPE_BANNER`).
 
-**Access granted** — every group-subject binding, classified `ok`, `dangling` (the group was
-operator-managed and has disappeared), `unresolved` (names a group that has never existed),
-`built_in` (Kubernetes virtual groups, expected), or `unmanaged` (a hand-made grant on a
-synced group, outside the policy system). Opens on what was granted with the faults on top;
-each granted row says who it reaches — the group's members, and how many have logged in — and the
-list filters as you type and sorts by column. Built-in bindings are one filter away.
+**Users** — OpenShift User objects, first login, identity provider, synced-group count and
+last captured login; synced members without a User object are counted separately.
+The wide tier sees everyone; self-scoped readers see their own row
+(`local-development/gsd/static/index.html#function usersPage`,
+`local-development/gsd/static/index.html#const SCOPE_BANNER`).
 
-**RBAC policy** — the namespace-configuration-operator's `NamespaceConfig` and `GroupConfig`
-CRs beside the provenance of the bindings they template. These CRs are the other half of the
-access pipeline: group-sync creates the groups, these grant them their access. A failing one
-means RBAC has silently stopped reconciling — new namespaces get nothing, drift stops being
-corrected, and nothing else on the cluster reports it. The tab shows nothing at all on a
-cluster without the operator, which is auto-detected and deliberately distinct from
-"installed with zero CRs".
+**Access granted** — group-subject bindings classified as healthy, dangling, unresolved,
+built-in or unmanaged for the wide tier; bindings reaching the reader through their groups
+for the self-scoped tier
+(`local-development/gsd/static/index.html#function bindingsPage`).
 
-**Namespace audit** — bindings that name a **person** rather than a group, ranked per
-namespace by the worst privilege granted there rather than by count: one forgotten
-`cluster-admin` outranks twenty `view` grants. Sortable columns, a namespace selector, and
-server-side paging — the filter is applied in SQL, not by trimming a full response in the
-browser. Platform identities and `kubeadmin` are excluded and the count of what was left out
-is always reported.
+**RBAC policy** — NamespaceConfig and GroupConfig CRs and binding provenance, for the wide
+tier; self-scoped readers get a named refusal
+(`local-development/gsd/static/index.html#function policyPage`).
 
-These are the governance violation in its purest form. They survive offboarding: removing
-someone from an LDAP group revokes their access everywhere at once, while a binding that
-names them keeps granting until somebody remembers it exists — and no group-based access
-review can see it.
+**Kyverno** — policy-report results and their changes, for the wide tier; self-scoped readers
+get a named refusal. The page distinguishes a disabled module from absent reports
+(`local-development/gsd/static/index.html#function kyvernoPage`).
 
-**Usage** — who used the dashboard, one row per user per UTC day. Self-scoped by default;
-requires the OAuth proxy, because without it there is no authenticated identity to attribute
-anything to.
+**Namespace audit** — direct user grants ranked by privilege and scope, plus namespaces.
+The wide tier sees the audit; self-scoped readers see their own grants and reachable namespaces
+(`local-development/gsd/static/index.html#function nsAuditPage`,
+`local-development/gsd/api.py#build_app`).
 
-Every binding view is **direct bindings only**. Role rules are never fetched or expanded, and
-the UI says so — an incomplete effective-permission calculation could show access as absent
-when it is not, and a false negative there gets an incident closed wrongly.
+**Logins** — captured login attempts and their outcomes. The wide tier sees all; self-scoped
+readers see attempts recorded under their own username
+(`local-development/gsd/static/index.html#function loginsPage`,
+`local-development/gsd/static/index.html#const SCOPE_BANNER`).
 
-## The one thing it writes
+**Usage** — dashboard use per user per UTC day and report-generation history. Requires an
+authenticated OAuth-proxy identity; readers see their own rows unless they pass the separate
+Usage or cluster-admin tier, or `config.userActivity.visibility` is `all`
+(`local-development/gsd/static/index.html#function usagePage`,
+`local-development/gsd/api.py#build_app`).
 
-`config.unmanagedAudit.mode` is `off` by default, and off means no write-path code executes
-at all. Turned on, it stamps bindings it has classified `unmanaged` so they can be found from
-the objects themselves rather than only in this UI:
+**Reports** — report catalogue, generation and a link to reporting status, schedules and
+history. Shown when reporting is enabled; requires the host's wide tier, with a named refusal
+for self-scoped readers (`local-development/gsd/static/index.html#function reportsPage`).
 
-```bash
-oc get rolebindings,clusterrolebindings -A -l rbac.ocp.io/unmanaged=true
-```
+**Library** — generated reports, grouped by schedule and report, with run details and downloads.
+Shown when reporting is enabled; requires the host's wide tier, with a named refusal for
+self-scoped readers (`local-development/gsd/static/index.html#function libraryPage`).
 
-`log` mode computes and logs the full plan with **zero write access** — run that first.
-`annotate` mode patches, and the chart renders the `patch` RBAC grant only in that mode.
-Nothing but three metadata keys is ever written: not subjects, not `roleRef`.
+**Cluster Configurations** — configured and discovered clusters, their credentials' status,
+trust settings and discovery findings, with management controls when writes are enabled.
+The tab is shown only to the cluster-admin tier
+(`local-development/gsd/static/index.html#function clusterConfigPage`,
+`local-development/gsd/static/index.html#function clusterAdmin`).
 
-Kubernetes caps it in a way more RBAC cannot fix, and `oc auth can-i` will not tell you.
-Design, invariants and the live-cluster evidence:
-[`docs/unmanaged-audit-design.md`](docs/unmanaged-audit-design.md).
+Binding views show direct bindings; role rules are not evaluated
+(`local-development/gsd/static/index.html#Direct bindings only`).
+
+## What it writes
+
+The dashboard remains read-only on the Groups, GroupSync CRs and bindings it observes.
+Unmanaged-grant auditing defaults to `log`; `off` silences it. The old `annotate` mode no
+longer patches bindings: Kubernetes privilege-escalation prevention refused that patch
+(`charts/group-sync-dashboard/values.yaml#unmanagedAudit:`,
+`charts/group-sync-dashboard/templates/rbac.yaml#privilege-escalation prevention`).
+Its own state is written in these places:
+
+- **Dashboard data volume.** SQLite stores observed cluster, group, user, binding and policy
+  state, accumulated sync, membership, binding and login history, capture cursors, dashboard
+  usage, report-run records and daily KPIs (`local-development/gsd/store.py`). Backups and
+  report snapshots are database copies (`local-development/gsd/store.py#Store.backup`,
+  `local-development/gsd/store.py#Store.snapshot`); schema upgrades keep a pre-upgrade copy
+  (`local-development/gsd/store.py#PRE_UPGRADE_DIR`). Fleet credential-gate and ping state also
+  has a file backstop beside the database (`local-development/gsd/fleetstate.py#FileBackstop`).
+  The chart mounts the data PVC here when persistence is enabled
+  (`charts/group-sync-dashboard/templates/deployment.yaml#mountPath: /data`,
+  `charts/group-sync-dashboard/templates/pvc.yaml`).
+- **Report artefact volume.** The report service writes each run's manifest and generated
+  JSON, HTML, PDF or optional CSV files, subject to retention
+  (`local-development/gsd/reporting/artifacts.py`). It reads dashboard snapshots through a
+  read-only data mount and writes to its separate artefact PVC when
+  `reporting.persistence.enabled` is on, or an ephemeral volume otherwise
+  (`charts/group-sync-dashboard/templates/report-deployment.yaml#mountPath: /artifacts`,
+  `charts/group-sync-dashboard/templates/report-pvc.yaml`).
+- **Leases in the release namespace.** Leader election creates and updates its Lease when
+  enabled (`local-development/gsd/leader.py#LeaderElector`); fleet authentication maintains
+  one Lease per fleet account for claims, credential gating and ping bookkeeping
+  (`local-development/gsd/fleetstate.py#FleetLease`). The chart grants those writes through
+  a namespace Role (`charts/group-sync-dashboard/templates/rbac.yaml#-leases`).
+- **Cluster Secrets behind the writes switch.** With `clusterConfig.secrets.enabled` and
+  `clusterConfig.secrets.writes.enabled`, the app creates, updates and deletes labelled
+  cluster Secrets in its own namespace: add, rotate and delete, plus credential lookup and
+  onboarding reconciliation (`local-development/gsd/clusterconfig/writer.py`). The API's
+  management routes require the cluster-admin tier (`local-development/gsd/api.py#build_app`).
+  The Kubernetes grant covers Secrets in that namespace; label checks are enforced by the app
+  (`charts/group-sync-dashboard/templates/cluster-secrets-rbac.yaml`).
+- **Deletions from the page.** With `housekeeping.enabled` (on by default), authenticated
+  cluster-admin readers can delete finished report runs and older backup, pre-upgrade and
+  pre-restore copies. The newest copy of each kind is protected; queued and running reports
+  cannot be deleted. Bulk cleanup previews the set before confirmation
+  (`charts/group-sync-dashboard/values.yaml#housekeeping:`,
+  `local-development/gsd/api.py#build_app`, `local-development/gsd/housekeeping.py`,
+  `local-development/gsd/reporting/artifacts.py#RunInFlight`).
 
 ## Two things to know before reading a screen
 

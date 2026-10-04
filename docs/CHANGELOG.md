@@ -54,6 +54,12 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 - **Choose the walk interpreter (#591).** `GSD_WALK_PYTHON` overrides the e2e walk's checkout-local
   interpreter search, so a worktree can use an existing environment outside the checkout.
+- **README refresh (#545).** Describe the current tabs and visibility tiers, persisted data,
+  namespace-scoped Lease and cluster-Secret writes, and report/database-copy deletions, with
+  source citations. A docs test compares the tab list with the rendered navigation.
+- **Cosign minimum version (#535).** The install guide names v3, quotes the publisher's v3.1.3
+  pin, and explains OCI-referrer bundles and v2's misleading “no signatures found”. A docs test
+  holds the minimum-version line and signing-version quote to the workflow.
 
 - **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
