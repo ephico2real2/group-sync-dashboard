@@ -359,6 +359,23 @@ spec:
           annotations:
             summary: "the report service's data copy is stale"
             description: "gsd_report_snapshot_age_seconds is above four snapshot intervals; reports would print stale data with an honest 'data as of' line."
+        # A schedule that silently stopped producing evidence (#140). The report service exports the
+        # Reporting status page's own verdict per schedule, so the rule and the page cannot disagree:
+        # `late` already holds the page's 30-minute grace after the expected fire. `never` (no success on
+        # record) and `disabled` (paused) do not fire. A completed CronJob is not evidence: a run refused
+        # outside the reporting window exits 0. max by (schedule): one alert per schedule while a rollout
+        # briefly scrapes two report pods.
+        - alert: GroupSyncDashboardReportScheduleLate
+          expr: max by (schedule) (gsd_report_schedule_status{status="late"}) == 1
+          for: {{ .Values.monitoring.prometheusRule.for.reportScheduleLate }}
+          labels: {severity: warning}
+          annotations:
+            summary: "report schedule {{ `{{ $labels.schedule }}` }} has produced no evidence since its last expected fire"
+            description: >-
+              The Reporting status page reads {{ `{{ $labels.schedule }}` }} as late: its last expected
+              fire is more than 30 minutes past and no run of it has succeeded since. Check its runs on
+              the Report history, the CronJob {{ include "gsd.reportName" . }}-{{ `{{ $labels.schedule }}` }}
+              (its spec.timeZone against reporting.window.timezone, its last Job's log), and the report pod's log.
         {{- end }}
         # The KPI module's self-report (#156), on the thresholds the KPI page draws (kpi.thresholds.*).
         # Throttling is the saturation signal, not CPU%: a pod at 30 % CPU that is being throttled is

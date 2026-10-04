@@ -656,7 +656,7 @@ evaluated. That is a statement of intent, not an isolation boundary — OpenShif
 `basic-user` to `system:authenticated`, which already grants `get`/`list` on clusterroles to
 every authenticated identity including this one.
 
-#### The seventeen alerts, and two more wherever the offsite CronJob renders (the default)
+#### The eighteen alerts, and two more wherever the offsite CronJob renders (the default)
 
 | Alert | Fires on | `for` |
 |---|---|---|
@@ -674,6 +674,7 @@ every authenticated identity including this one.
 | `GroupSyncDashboardBackupStale` | the newest file in `backupDir` is older than `backupStaleSeconds` — the only copy of the un-refetchable history has stopped being taken | `for.backupStale`, `30m` |
 | `GroupSyncDashboardReportUsagePullFailing` | the dashboard's poller could not pull the report service's usage feed (token mismatch, Service/TLS, or a shape change) and has not succeeded in the window — runs are not lost, the Usage tab's Reports table stops advancing. Rendered only with `reporting.enabled` | `for.reportPull`, `30m` |
 | `GroupSyncDashboardReportSnapshotStale` | `gsd_report_snapshot_age_seconds` above four snapshot intervals — the dashboard's leader is not writing copies, so a report would print stale data with an honest "data as of" line. Rendered only with `reporting.enabled` | `for.reportSnapshot`, `30m` |
+| `GroupSyncDashboardReportScheduleLate` | `gsd_report_schedule_status{status="late"} == 1` — the Reporting status page reads a schedule as late: its last expected fire is more than 30 minutes past and no run of it has succeeded since (a wrong timezone, a Job that never starts). `never` and `disabled` do not fire. Rendered only with `reporting.enabled` | `for.reportScheduleLate`, `15m` |
 | `GroupSyncDashboardOffsiteBackupStale` | *(only where the offsite CronJob renders)* the CronJob last succeeded more than `offsiteBackupStaleSeconds` ago — nothing newer is off the volume, or the newest pre-upgrade copy is refused (a run fails when either pass fails; the pod's log says which) | `for.offsiteBackupStale`, `30m` |
 | `GroupSyncDashboardOffsiteBackupUnobserved` | *(only where the offsite CronJob renders)* `kube_cronjob_status_last_successful_time` has no series for the CronJob: it has never succeeded, or kube-state-metrics is not scraped here — in which case the stale alert can never fire and this is the only signal | `for.offsiteBackupUnobserved`, `1h` |
 | `GroupSyncDashboardPodThrottled` | a pod's throttled share of scheduler periods above `kpi.thresholds.throttledPercent` (1 %) over 15m — the saturation signal the KPI page marks amber; raise its CPU limit | `for.podThrottled`, `15m` |

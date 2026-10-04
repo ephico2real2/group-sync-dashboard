@@ -10,6 +10,15 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
+- **An alert when a report schedule silently stops producing evidence (#140, Epic F #386,
+  `docs/specs/SPEC_F5_schedule_stale_alert.md`; application 4.5.0, chart 0.68.0).** The report service exports
+  `gsd_report_schedule_status{schedule, status}`: for each configured schedule one series per state (`ok`, `late`,
+  `never`, `disabled`), 1 for the state the Reporting status page shows and 0 for the others, computed by the page's
+  own function. `GroupSyncDashboardReportScheduleLate` (warning, `for.reportScheduleLate`, 15m) fires per schedule
+  while it reads `late`: its last expected fire is more than 30 minutes past and no run of it has succeeded since.
+  `never` and `disabled` do not fire. The existing gauges, the page's states and grace, and the other rules are
+  unchanged; no RBAC change.
+
 - **Webhook delivery of scheduled reports (#109, Epic F #386, `docs/specs/SPEC_F4_webhook_delivery.md`;
   application 4.4.0, chart 0.67.0).** A schedule with `deliver: {kind: webhook, webhookUrlSecret: {name, key}}`
   POSTs each finished run of its fan-out as one CloudEvents 1.0 event (the run's facts; `id` is the run id) to the

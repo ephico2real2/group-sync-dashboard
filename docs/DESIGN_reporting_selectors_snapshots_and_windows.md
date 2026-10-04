@@ -199,7 +199,9 @@ failed run with a reason). `trigger.py` maps 409 → **exit 0** ("skipped: outsi
 4xx/5xx → exit 1. An enabled **malformed** window **fails closed** (report-service startup failure), never
 log-and-disable. Add `gsd_report_runs_outside_window_total` (no names) + a WARNING log, and monitor "no
 successful schedule within its expected period" as an evidence gap — a wrong timezone must not silently
-stop nightly evidence. A trigger-side pre-check is diagnostic only (same predicate); the server is the
+stop nightly evidence. (Built by #140, `docs/specs/SPEC_F5_schedule_stale_alert.md`: the report service exports
+the status page's per-schedule verdict as `gsd_report_schedule_status{schedule, status}`, and
+`GroupSyncDashboardReportScheduleLate` fires while a schedule reads `late`.) A trigger-side pre-check is diagnostic only (same predicate); the server is the
 authority, and the window is evaluated **before** any snapshot refresh so a refused run wastes no VACUUM.
 
 ## 6. Feature 4 (enabler) — mock server namespaces with both labels
