@@ -428,10 +428,10 @@ class TestDerivations:
         env = {e["name"]: e.get("value") for d in _render() if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
         assert env["GSD_REPORT_FORMATS_SCHEDULED"] == "html,json" and env["GSD_REPORT_FORMATS_MANUAL"] == "html,json,pdf"
-        env = {e["name"]: e.get("value") for d in _render("reporting.formats.scheduled[0]=html", "reporting.formats.scheduled[1]=pdf")
+        env = {e["name"]: e.get("value") for d in _render("reporting.formats.scheduled[0]=html", "reporting.formats.scheduled[1]=csv")
                if d.get("kind") == "Deployment" and d["metadata"]["name"].endswith("-report")
                for e in d["spec"]["template"]["spec"]["containers"][0]["env"]}
-        assert env["GSD_REPORT_FORMATS_SCHEDULED"] == "html,pdf"
+        assert env["GSD_REPORT_FORMATS_SCHEDULED"] == "html,csv"
 
     def test_the_namespaces_grant_follows_its_switch(self):
         rules = [r for d in _render("rbac.namespaces=true") if d.get("kind") == "ClusterRole" and d["metadata"]["name"] == "t-group-sync-dashboard-reader" for r in d["rules"]]
@@ -518,13 +518,28 @@ class TestScheduleDelivery:
     def test_t109_11_a_deliver_block_that_cannot_work_is_refused_at_render(self):
         assert "needs deliver.webhookUrlSecret.name" in self._refused("reporting.schedules[0].deliver.kind=webhook")
         assert "is not one of none, webhook" in self._refused("reporting.schedules[0].deliver.kind=smtp")
-        assert "is not one of none, html, pdf, csv" in self._refused(
+        assert "is not one of none, html, csv" in self._refused(
             "reporting.schedules[0].deliver.kind=webhook", "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
             "reporting.schedules[0].deliver.attach=docx")
         assert "needs deliver.kind=webhook" in self._refused("reporting.schedules[0].deliver.attach=html")
-        # The scheduled default stores html and json: a pdf to attach must be stored first.
-        assert "add pdf to its formats" in self._refused(
+        # The scheduled default stores html and json: a csv to attach must be stored first.
+        assert "add csv to its formats" in self._refused(
             "reporting.schedules[0].deliver.kind=webhook", "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
-            "reporting.schedules[0].deliver.attach=pdf")
+            "reporting.schedules[0].deliver.attach=csv")
         self._pod("reporting.schedules[0].deliver.kind=webhook", "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
-                  "reporting.schedules[0].deliver.attach=pdf", "reporting.schedules[0].formats[0]=pdf")
+                  "reporting.schedules[0].deliver.attach=csv", "reporting.schedules[0].formats[0]=csv")
+
+    def test_scheduled_default_formats_refuse_pdf(self):
+        out = self._refused("reporting.formats.scheduled[0]=pdf")
+        assert "reporting.formats.scheduled: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" in out
+
+    def test_schedule_own_formats_refuse_pdf(self):
+        out = self._refused("reporting.schedules[0].formats[0]=pdf")
+        assert "reporting.schedules[weekly].formats: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" in out
+
+    def test_schedule_delivery_attachment_refuses_pdf(self):
+        out = self._refused("reporting.schedules[0].deliver.kind=webhook",
+                            "reporting.schedules[0].deliver.webhookUrlSecret.name=h",
+                            "reporting.schedules[0].deliver.attach=pdf")
+        assert "reporting.schedules[weekly].deliver.attach: scheduled reports store html, json or csv; PDF is for manual runs — print the HTML for a paper or PDF copy" in out
+        assert "add pdf to its formats" not in out

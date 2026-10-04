@@ -94,6 +94,14 @@ def _no_url(out: str) -> None:
         assert piece not in out, f"the webhook URL leaked ({piece!r})"
 
 
+@pytest.mark.parametrize("option", ["--format", "--attach"])
+def test_schedule_trigger_refuses_pdf(option, lab, capsys):
+    with pytest.raises(SystemExit) as exc:
+        lab(option, "pdf")
+    assert exc.value.code == 2
+    assert f"argument {option}: invalid choice: 'pdf'" in capsys.readouterr().err
+
+
 def test_t109_1_each_finished_run_of_the_fan_out_is_delivered_as_one_event(lab, capsys):
     state = lab()
     out = capsys.readouterr()
@@ -118,8 +126,8 @@ def test_t109_2_attach_sends_the_artefact_base64_and_names_what_it_cannot_send(l
     attachment = state.events[0]["data"]["attachment"]
     assert base64.b64decode(attachment["content_base64"]) == b"<html>report</html>"
     assert attachment["media_type"] == "text/html; charset=utf-8" and attachment["bytes"] == 19
-    state = lab("--attach", "pdf")
-    assert state.events[0]["data"]["attachment"] == {"format": "pdf", "omitted": "this run stored no pdf"}
+    state = lab("--attach", "csv")
+    assert state.events[0]["data"]["attachment"] == {"format": "csv", "omitted": "this run stored no csv"}
 
 
 def test_t109_2b_an_attachment_transport_failure_is_omitted_and_the_fan_out_continues(lab):

@@ -179,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--params-json", default="",
                     help="the params as a JSON object; required for structured params like `selectors` "
                          "that a k=v string cannot express (the chart renders schedules[].params this way)")
-    ap.add_argument("--format", action="append", default=[], choices=["html", "pdf", "csv"])
+    ap.add_argument("--format", action="append", default=[], choices=["html", "csv"])
     ap.add_argument("--schedule", required=True, help="the schedule's name, recorded as generated_by=schedule:<name>")
     ap.add_argument("--token-file", default=os.environ.get("GSD_REPORT_TOKEN_FILE", "/etc/gsd/report/token"))
     ap.add_argument("--ca-file", default=os.environ.get("GSD_REPORT_CA_FILE", ""), help="PEM bundle for the Service certificate; empty = system trust")
@@ -188,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--deliver", default="none", choices=["none", "webhook"],
                     help="send each finished run's facts to a webhook (needs --wait and --webhook-url-file)")
     ap.add_argument("--webhook-url-file", default="", help="a file holding the webhook URL (a mounted Secret)")
-    ap.add_argument("--attach", default="none", choices=["none", "html", "pdf", "csv"],
+    ap.add_argument("--attach", default="none", choices=["none", "html", "csv"],
                     help="send this artefact of a done run inside the event, base64, up to ATTACH_MAX_BYTES")
     a = ap.parse_args(argv)
     hook_url = None
