@@ -359,7 +359,12 @@ type: application
 # `monitoring.prometheusRule.for.reportScheduleLate` (15m), rendered with the rules and reporting on; it reads
 # `gsd_report_schedule_status{status="late"}`, the Reporting status page's own verdict; the README's alert table
 # and the board's alert panel name it; appVersion moves to application 4.5.0 (below); #140, SPEC_F5. No RBAC change.
-version: 0.68.0
+# CHART 0.69.0 (2026-10-04), MINOR: a third minted Secret, `<reportName>-ticket-key` (key `key`), created by the
+# secrets-mint hook only if absent and mounted at /etc/gsd/report-ticket in the dashboard (its `key` only) and the
+# report pod (with a rotation's `previous`), never in a schedule CronJob; the report pod's two env names and the
+# ConfigMap's reportingTicketKeyFile name it; appVersion moves to application 4.6.0 (below); #392, SPEC_F6. RBAC
+# REMOVED 0, ADDED 1 atom (get on the new Secret's name, for the hook's identity).
+version: 0.69.0
 # 0.8.0 (2026-09-03). A Users tab — every user with a synced membership, filtered as you type on
 # id or display name — and a Find member box on the group page. /users rows gain `full_name`,
 # nullable, the same field the members list already carried. Additive on the wire and in the UI,
@@ -501,7 +506,8 @@ version: 0.68.0
 # 4.3.0 (2026-10-03). What changed between two runs: a report-diff run compares the sealed data of two finished runs of one report on one cluster, rows removed and added per table, stored as a sealed manual run naming both inputs and their sha256s (#108). MINOR.
 # 4.4.0 (2026-10-04). Webhook delivery of scheduled reports: each finished run of a schedule's fan-out is POSTed as one CloudEvent to the URL in a mounted Secret, retried for 408, 429, 500, 502, 503, 504 and network errors, never printing the URL; a run not delivered fails the Job (#109). MINOR.
 # 4.5.0 (2026-10-04). A schedule that silently stops producing evidence raises an alert: the report service exports each schedule's state on the Reporting status page (ok, late, never, disabled) as gsd_report_schedule_status, computed by the page's own code (#140). MINOR.
-appVersion: "4.5.0"
+# 4.6.0 (2026-10-04). Tickets are signed with a ticket key of their own, never with the service token the schedule Jobs and the poller hold, so a token holder can no longer sign a ticket naming anybody; a ticket of the earlier format is answered 401 so an open page mints again; a rotation verifies with `previous` until it is closed (#392). MINOR.
+appVersion: "4.6.0"
 
 keywords: [openshift, ldap, rbac, groupsync, observability]
 home: https://github.com/ephico2real2/group-sync-dashboard

@@ -43,7 +43,7 @@ from .leader import LeaderElector, own_namespace
 from .metrics import RuntimeSignals, build_registry
 from .poller import Poller
 from .reporting import REPORT_PREFIX
-from .reporting.ticket import TicketError, load_secret, mint
+from .reporting.ticket import TicketError, load_secret, load_ticket_keys, mint
 from .storage import StorageBackend, open_backend
 from . import loginlog
 
@@ -361,16 +361,23 @@ def build_app(
                                        failures=lambda: signals.snapshot()["backup_failures"],
                                        replica_count=settings.replica_count)))
     poller = Poller(store, settings, elector, signals=signals, system_monitor=system_monitor)
-    # The report service (docs/specs/SPEC_C3_reporting_microservice.md). The token is read ONCE at
-    # startup: the same bytes the report pod verifies with, so a ticket minted here is accepted
-    # there. Missing or short when reporting is on is a startup failure — a module that is on and
-    # cannot work is the state this repository refuses to run in.
+    # The report service (docs/specs/SPEC_C3_reporting_microservice.md). Two secrets, each read ONCE at
+    # startup: the service token (`report_secret`), which the dashboard's own calls to the service
+    # present as a bearer, and the ticket key, the bytes the report pod verifies tickets with — never
+    # the token's (#392, SPEC_F6). Either one missing or short, or the two equal, when reporting is on
+    # is a startup failure — a module that is on and cannot work is the state this repository refuses
+    # to run in.
     report_secret: bytes | None = None
+    ticket_key: bytes | None = None
     if settings.reporting_url:
         try:
             report_secret = load_secret(settings.reporting_token_file)
         except (OSError, TicketError) as exc:
             raise RuntimeError(f"reporting is on (reportingUrl set) but the token is unusable: {exc}") from exc
+        try:
+            ticket_key = load_ticket_keys(settings.reporting_ticket_key_file, "", report_secret).current
+        except (OSError, TicketError) as exc:
+            raise RuntimeError(f"reporting is on (reportingUrl set) but the ticket key is unusable: {exc}") from exc
     grace = timedelta(seconds=settings.schedule_grace_seconds)
 
     # Both conditions, not either: the setting is the operator's choice, the proxy flag is
@@ -3286,18 +3293,18 @@ def build_app(
 
         The report service holds no cluster credential, so the tier is decided HERE
         (require_admin_tier, the same SubjectAccessReview every gated view uses) and carried to it
-        signed: HMAC-SHA256 with the token both pods mount, bound to the proxy's X-Forwarded-User
-        and to an expiry. A GET, and deliberately no work: nothing is stored, rendered or fetched —
+        signed: HMAC-SHA256 with the ticket key both pods mount, never the service token (#392), bound
+        to the proxy's X-Forwarded-User and to an expiry. A GET, and deliberately no work: nothing is stored, rendered or fetched —
         the ticket is a pure function of the request, like /api/whoami's tier. 404 when reporting is
         off; 403 with the gate's own sentence below the wide tier.
         """
-        if not settings.reporting_url or report_secret is None:
+        if not settings.reporting_url or ticket_key is None:
             raise HTTPException(status_code=404, detail="reporting is not enabled on this deployment")
         require_admin_tier(request)
         viewer = trusted_viewer(request)
         if not viewer:
             raise HTTPException(status_code=403, detail="a ticket needs an authenticated viewer, and there is none")
-        return {"ticket": mint(report_secret, viewer, TIER_ALL, settings.reporting_ticket_ttl_seconds),
+        return {"ticket": mint(ticket_key, viewer, TIER_ALL, settings.reporting_ticket_ttl_seconds),
                 "expires_in": settings.reporting_ticket_ttl_seconds, "prefix": REPORT_PREFIX, "viewer": viewer}
 
     @app.get("/api/dashboard/reports")

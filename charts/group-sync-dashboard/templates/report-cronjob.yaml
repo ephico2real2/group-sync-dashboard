@@ -119,6 +119,8 @@ spec:
                 {{- end }}
               securityContext: {{- toYaml $.Values.securityContext | nindent 16 }}
               volumeMounts:
+                # The service token only: a schedule Job never mounts the ticket key, so it cannot sign a
+                # ticket naming a person (#392).
                 - name: report-token
                   mountPath: /etc/gsd/report
                   readOnly: true

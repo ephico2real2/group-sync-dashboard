@@ -1155,7 +1155,7 @@ flowchart TB
     rdep["Deployment -report<br/>replicas 1, Recreate (default on)"]
     rsvc["Service -report :8443<br/>service-ca certificate"]
     rpvc["PVC -report-artifacts<br/>no keep annotation"]
-    rsec["Secret -shared-token<br/>minted on the cluster once, mounted in both pods"]
+    rsec["Secrets -shared-token and -ticket-key<br/>minted on the cluster once, mounted in both pods"]
     rnp["NetworkPolicy -report<br/>ingress: dashboard pod, schedule Jobs, monitoring"]
   end
   dep --> cm & tca & sec & tls & pvc & sa
@@ -1275,7 +1275,7 @@ cluster connection at all, deploy the chart with no per-cluster value.
 
 The generated-once authentication Secrets are created by `templates/secrets-mint.yaml`, never by
 the renderer: a pre-/post-install and -upgrade hook creates `<fullname>-oauth-session` (the oauth
-cookie key) and `<reportName>-shared-token` only when absent, and on the first upgrade to 0.37.0
+cookie key), `<reportName>-shared-token` and, since 0.69.0, `<reportName>-ticket-key` (#392) only when absent, and on the first upgrade to 0.37.0
 copies the values from the legacy `-oauth-cookie` and `-report-token` before Helm removes those
 objects. Until 0.37.0 the cookie was reused through Helm's `lookup`, which is empty under Argo CD's
 and Kustomize's `helm template`, so every render minted a new key and every sync signed everyone

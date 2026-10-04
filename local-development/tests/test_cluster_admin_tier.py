@@ -109,6 +109,7 @@ class TestTheHierarchy:
         pointed at checks the cluster-admin fails. Only clusterAdminSar admits root."""
         db = str(tmp_path / "gsd.db"); _seed(db)
         token = tmp_path / "token"; token.write_bytes(b"t" * 48 + b"\n")
+        key = tmp_path / "ticket-key"; key.write_bytes(b"k" * 48 + b"\n")
         settings = Settings(
             clusters=[ClusterConfig("c1", "https://api.c1.example.com:6443", token_env="X"),
                       ClusterConfig("c2", "https://api.c2.example.com:6443", token_env="Y", visibility="inherit"),
@@ -118,7 +119,7 @@ class TestTheHierarchy:
             # A report service configured, so /api/dashboard/reports reaches usage_scope rather than
             # answering its reporting-off `self` before any tier is asked.
             db_path=db, oauth_proxy_enabled=True, reporting_url="https://gsd-report.ns.svc:8443",
-            reporting_token_file=str(token))
+            reporting_token_file=str(token), reporting_ticket_key_file=str(key))
         app = build_app(settings, run_poller=False)
         wide, usage, far = _MapResolver({}), _MapResolver({}), _MapResolver({})
         app.state.tier_resolver = wide

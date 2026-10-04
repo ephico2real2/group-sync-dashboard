@@ -1299,13 +1299,14 @@ bound to the proxy's `X-Forwarded-User`. 404 when reporting is off; 403 with the
 below the wide tier. A GET that does no work: nothing is stored, rendered or fetched.
 
 ```json
-{"ticket": "eyJ2IjoxLCJ2aWV3ZXIiOiJyb290Ii4uLg.5kZ…", "expires_in": 300, "prefix": "/report", "viewer": "root"}
+{"ticket": "v2.eyJ2IjoyLCJ2aWV3ZXIiOiJyb290Ii4uLg.5kZ…", "expires_in": 300, "prefix": "/report", "viewer": "root"}
 ```
 
 The browser sends the ticket on every request to `/report/**` as `X-GSD-Report-Ticket`; the report
-service verifies the signature (HMAC-SHA256 with the token both pods mount), the expiry, the tier and
-that `viewer` equals the `X-Forwarded-User` the proxy stamped on that request. Expiry is a 401 (the
-page mints once more); every other refusal is a 403.
+service verifies the signature (HMAC-SHA256 with the ticket key both pods mount, never the service token,
+#392), the expiry, the tier and that `viewer` equals the `X-Forwarded-User` the proxy stamped on that request.
+Expiry and a ticket of the earlier format (`<payload>.<sig>`, before #392) are a 401 (the page mints once more);
+every other refusal is a 403.
 
 ### `GET /api/dashboard/reports`
 

@@ -46,7 +46,8 @@ extension stands on.
                                                   └──────────────────┬──────────────────────────┘
    PVC -data (RWX): /data/gsd.db (dashboard RW) ─── VACUUM INTO ────▶ /data/report/gsd-*.db (report RO)
    PVC -report (RWO): /artifacts/<run-id>/  ◀── the report writes the artefact, the browser downloads it
-   Secret -shared-token (was -report-token before 0.37.0): HMAC key, mounted in both pods (ticket sign/verify, usage-pull auth)
+   Secret -shared-token (was -report-token before 0.37.0): the service token, mounted in both pods and the schedule Jobs (usage-pull auth)
+   Secret -ticket-key (since 0.69.0, #392): the HMAC ticket key, mounted in both pods only (ticket sign/verify)
 ```
 
 **Authorization, as-is.** Running a report requires the **wide tier**, decided by one

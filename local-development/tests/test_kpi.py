@@ -770,9 +770,9 @@ class TestBackupsCard:
 
 class TestReportService:
     def test_the_usage_feed_carries_the_service_self_report_and_metrics_carry_component_report(self, tmp_path, monkeypatch):
-        from gsd.reporting.server import build_report_app
         from reporting_seed import seeded_dirs
-        from test_reporting_server import FROZEN, SECRET, SERVICE, _settings as report_settings
+        # the report service with its two secrets apart (#392): test_reporting_server's builder holds the ticket key
+        from test_reporting_server import FROZEN, SECRET, SERVICE, build_report_app, _settings as report_settings
 
         snapshots, artifacts = seeded_dirs(tmp_path)
         sampler = _sampler(tmp_path)

@@ -82,6 +82,12 @@ spec:
               value: /artifacts
             - name: GSD_REPORT_TOKEN_FILE
               value: /etc/gsd/report/token
+            # The ticket key (#392): tickets verify with it, never with the token above; `previous` exists only
+            # while a rotation is open (charts/group-sync-dashboard/README.md, "Rotating the report ticket key").
+            - name: GSD_REPORT_TICKET_KEY_FILE
+              value: /etc/gsd/report-ticket/key
+            - name: GSD_REPORT_TICKET_PREVIOUS_KEY_FILE
+              value: /etc/gsd/report-ticket/previous
             - name: GSD_REPORT_PDF_ENABLED
               value: {{ .Values.reporting.pdf.enabled | quote }}
             - name: GSD_REPORT_PDF_VARIANT
@@ -162,6 +168,9 @@ spec:
             - name: report-token
               mountPath: /etc/gsd/report
               readOnly: true
+            - name: report-ticket-key
+              mountPath: /etc/gsd/report-ticket
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             {{- if .Values.reporting.tls.enabled }}
@@ -207,6 +216,10 @@ spec:
         - name: report-token
           secret:
             secretName: {{ include "gsd.reportName" . }}-shared-token
+            defaultMode: 288
+        - name: report-ticket-key
+          secret:
+            secretName: {{ include "gsd.reportName" . }}-ticket-key
             defaultMode: 288
         - name: tmp
           emptyDir: {}

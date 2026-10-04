@@ -147,6 +147,7 @@ data:
     # dashboard mints tickets, writes snapshots under reportingSnapshotDir and pulls the usage feed.
     reportingUrl: {{ include "gsd.reportUrl" . | quote }}
     reportingTokenFile: /etc/gsd/report/token
+    reportingTicketKeyFile: /etc/gsd/report-ticket/key
     reportingCaFile: {{ ternary "/etc/gsd/service-ca/service-ca.crt" "" .Values.reporting.tls.enabled | quote }}
     reportingSnapshotDir: /data/report
     reportingSnapshotIntervalSeconds: {{ .Values.reporting.snapshot.intervalSeconds }}

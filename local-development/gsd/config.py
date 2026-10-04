@@ -939,8 +939,10 @@ class Settings:
     # The report service's Service URL inside the cluster, e.g. https://gsd-report.ns.svc:8443.
     # Empty means the module is off: no ticket endpoint, no snapshot, no usage pull, no tab.
     reporting_url: str = ""
-    # The shared token both pods mount: signs tickets here, authenticates the usage pull there.
+    # The service token: the poller presents it for the usage pull, and the schedule Jobs hold it too.
     reporting_token_file: str = "/etc/gsd/report/token"
+    # The ticket key (#392, SPEC_F6): signs tickets here, verifies them in the report pod; never the token above.
+    reporting_ticket_key_file: str = "/etc/gsd/report-ticket/key"
     # The CA the report Service's certificate chains to (openshift-service-ca.crt); "" = system trust.
     reporting_ca_file: str = ""
     # Where the leader writes VACUUM INTO copies for the report pod, and how often. Under /data so
@@ -1991,6 +1993,7 @@ def load_settings(path: str | Path) -> Settings:
         ),
         reporting_url=(os.environ.get("GSD_REPORTING_URL") or str(raw.get("reportingUrl", "") or "")).rstrip("/"),
         reporting_token_file=_path_setting(raw, "GSD_REPORTING_TOKEN_FILE", "reportingTokenFile", "/etc/gsd/report/token"),
+        reporting_ticket_key_file=_path_setting(raw, "GSD_REPORTING_TICKET_KEY_FILE", "reportingTicketKeyFile", "/etc/gsd/report-ticket/key"),
         reporting_ca_file=os.environ.get("GSD_REPORTING_CA_FILE") or str(raw.get("reportingCaFile", "") or ""),
         reporting_snapshot_dir=_path_setting(raw, "GSD_REPORTING_SNAPSHOT_DIR", "reportingSnapshotDir", "/data/report"),
         reporting_snapshot_interval_seconds=_num_setting(raw, "GSD_REPORTING_SNAPSHOT_INTERVAL_SECONDS", "reportingSnapshotIntervalSeconds", 300, int),
