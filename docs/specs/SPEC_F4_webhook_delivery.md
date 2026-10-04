@@ -50,14 +50,17 @@ cites `path#anchor`.
    is excluded from the rising-number assert by its id and pinned to #109, as F1, F2 and F3 were.
 6. **Dates.** Blocks 24 and 25 date the history lines 2026-10-04; the implementing pull request writes its own.
 
-Open questions only the operator can answer:
+Questions settled by the orchestrator (2026-10-03, on "easy to manage, best practice"; the operator may reopen any):
 
-1. **Per run, not per fan-out (§3.1).** A ten-cluster schedule sends ten events. If the operator wants one
-   message per fire, the alternative (§2a, B) is written out there; it costs the memory bound on attachments.
-2. **Slack and Teams need an adapter (§2.1).** The event is generic JSON. A `kind: slack` (Block Kit `text`) or
-   `kind: teams` (an Adaptive Card for a Workflows trigger) would be a later `deliver.kind`; neither is built here.
-3. **A proxy.** The Job sets no `HTTPS_PROXY`; an estate whose egress must go through a proxy cannot reach an
-   external receiver from the Job today. Adding `reporting.deliverProxy` is a follow-up if needed.
+1. **Per run, not per fan-out: SETTLED (§3.1).** A ten-cluster schedule sends ten events. One event per occurrence is
+   what CloudEvents describes, keeps the attachment's memory bounded, and does not wait on the slowest cluster. The
+   per-fire alternative (§2a, B) stays written out there.
+2. **Slack and Teams: SETTLED, a later `deliver.kind` (§2.1).** The event is generic JSON. A `kind: slack` (Block Kit
+   `text`) or `kind: teams` (an Adaptive Card for a Workflows trigger) is a follow-up; neither is built here.
+3. **A proxy: SETTLED, none (as for the dashboard).** The chart has no proxy setting for any workload (measured:
+   `grep -niE 'https?_proxy|no_proxy|proxy:'` over `values.yaml` and the templates finds only the oauth-proxy), so
+   the Job matches the rest of the chart. An estate whose egress must use a proxy needs a chart-wide setting, which
+   is its own issue.
 
 ## 1. The mandate, and what is out of scope
 
