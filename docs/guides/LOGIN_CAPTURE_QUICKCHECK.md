@@ -22,7 +22,8 @@ restore Normal using the chart README's **OAuth Debug migration** section before
    one stalled node can lag while the aggregate last-read timestamp advances.
 
 Audit deny records contain HTTP status and sometimes a message, but no LDAP result code or
-AD sub-code: a wrong password cannot be distinguished from a locked account. Existing pod-log
+AD sub-code. The stored `status_code` tells HTTP classes apart (a 500 from a 401 or 302), but no
+stored field proves the directory cause, so a locked account is not proven by a 500 alone. Existing pod-log
 rows and their causes remain visible and are subject to the configured retention. No migration
 removes them. Capture disabled stops reads but does not hide retained history.
 

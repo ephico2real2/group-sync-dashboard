@@ -5,7 +5,8 @@ The schema is published at **`/api`** (Swagger UI), `/api/docs` (redirects there
 an endpoint that does not exist — but it can happily describe one badly, and a generated
 document that nobody checks drifts into being decoration.
 
-`tests/test_api_contract.py` enforces every numbered rule below except R4. If you add an endpoint and
+`tests/test_api_contract.py` enforces every numbered rule below except R4, and R6 only with housekeeping
+off (its fixtures use the `Settings` default). If you add an endpoint and
 skip the documentation, the suite fails and names the endpoint. That is deliberate: this
 repository has already shipped an endpoint whose `(cluster-scoped)` namespace sentinel was
 undiscoverable, and a chart value nobody documented for six weeks. Documentation that
@@ -52,9 +53,9 @@ Otherwise its parts come from different snapshots and the response can contradic
 about taking one at all.
 
 **R6 — New endpoints are `GET`.**
-The API is read-only by design, with two opt-in exceptions: the six Cluster Configurations routes
-behind `clusterConfig.secrets.writes.enabled` and the housekeeping routes behind
-`housekeeping.enabled`. If a change needs another write, it needs the argument
+The API is read-only by design, with two switched exceptions: the six Cluster Configurations write
+routes behind `clusterConfig.secrets.writes.enabled` (default off) and the four housekeeping write
+routes behind `housekeeping.enabled` (default on in the chart). If a change needs another write, it needs the argument
 in `docs/design/unmanaged-audit-design.md` first. A write path was proposed there, built, measured
 against a live cluster and then removed, because Kubernetes privilege-escalation prevention
 caps what an RBAC reader can ever patch; that reasoning applies to any successor.

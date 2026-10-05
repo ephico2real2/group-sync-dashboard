@@ -76,10 +76,12 @@ namespace.
 A SubjectAccessReview **asks whether a subject could perform a verb**. It performs nothing. The
 dashboard never performs the `update` the usage and cluster-admin thresholds name. Its
 ServiceAccount's own writes are its Leases (the leader election's and a fleet account's), the
-SubjectAccessReviews these questions are (through `system:auth-delegator`), and, only with
+TokenReviews and SubjectAccessReviews `system:auth-delegator` allows (the oauth-proxy uses both; the
+application asks these questions as SubjectAccessReviews; neither stores an object), and, only with
 `clusterConfig.secrets.writes.enabled`, cluster Secrets in its own namespace.
 
-**Why two, and why the second one asks about a write verb.** Measured on both ClusterRoles:
+**Why three, and why two of them ask about a write verb.** Measured on the lab's two ClusterRoles
+(2026-10-05); a modified or aggregated ClusterRole elsewhere can answer differently:
 
 | check | `cluster-admin` | `cluster-reader` | separates them? |
 |---|---|---|---|
@@ -88,8 +90,8 @@ SubjectAccessReviews these questions are (through `system:auth-delegator`), and,
 | `update clusterrolebindings` | yes | **no** | **yes** |
 | `get secrets` | yes | **no** | **yes** |
 
-No *read* check on the objects these views show can distinguish them, because `cluster-reader` may
-read all of them. Only a write verb does, or a read `cluster-reader` excludes, such as `get secrets`.
+On the lab, no *read* check on the objects these views show distinguished them, because `cluster-reader`
+could read all of them. Only a write verb does, or a read `cluster-reader` excludes, such as `get secrets`.
 
 That matters for Usage. Everything else the wide tier serves, Logins aside (below), can be obtained
 outside the dashboard by anyone who passes the wide check:
@@ -97,11 +99,12 @@ outside the dashboard by anyone who passes the wide check:
 | view | reproducible with `oc`? |
 |---|---|
 | Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A`; Access granted's "Reaches" column (members, and members who have logged in) also needs `oc get users` |
-| Logins | **no**, since the pod-log reader was removed (chart 0.58.0, #321) — the records come from the oauth-server audit log, which `oc adm node-logs --path=oauth-server/audit.log` reads with `get nodes/proxy`, and `cluster-reader` does not hold that; the oauth-server pod log, which it can read, names no login at the default log level |
+| Logins | **no**, since the pod-log reader was removed (chart 0.58.0, #321) — the records come from the oauth-server audit log, which `oc adm node-logs --path=oauth-server/audit.log` reads with `get nodes/proxy`, and the lab's `cluster-reader` does not hold it; the oauth-server pod log, which it can read, names no login at the default log level |
 | **Usage** | **no** — it exists only in the dashboard's own `dashboard_user_activity` table |
 
 So `cluster-reader` seeing the audit views grants it nothing new, Logins aside, and that persona is
-deliberate: a security auditor is given `cluster-reader`, not `cluster-admin`. Usage is where the two
+deliberate: a security auditor is given `cluster-reader` or the chart's `rbacAuditors` report-auditor
+role (§1), not `cluster-admin`. Usage is where the two
 must diverge, so Usage gets the higher bar.
 
 ---
@@ -335,6 +338,8 @@ narrower tier, because a tier that hides the reader's own access path has nothin
     │
     ├─ gsd/api.py#usage_scope                          the SECOND, independent tier
     │     userActivity.visibility == all?       ──────────►  "all"   (blunt override, wins)
+    │     cluster-admin tier answers "all"?     ──────────►  "all"   (the top tier)
+    │     restrictions or proxy off?            ──────────►  "self"
     │     usage resolver answers "all"?         ──────────►  "all"
     │     anything else                         ──────────►  "self"
     │
@@ -363,8 +368,8 @@ cache entry.
     │     spec.groups = those groups + the virtual ones          ◄── LOAD-BEARING, see below
     │     spec.resourceAttributes = the configured threshold
     │
-    ├─ allowed == true   ──► TIER_ALL  ("all"),  cached for 60s
-    ├─ allowed == false  ──► TIER_SELF ("self"), cached for 60s
+    ├─ allowed == true   ──► TIER_ALL  ("all"),  cached for tierTtlSeconds
+    ├─ allowed == false  ──► TIER_SELF ("self"), cached for tierTtlSeconds
     └─ any error         ──► TIER_SELF ("self"), NOT cached
 ```
 
@@ -380,10 +385,10 @@ POST /apis/authorization.k8s.io/v1/subjectaccessreviews  -> 201
            of ClusterRole \"cluster-admin\" to Group \"app-ocp-rbac-demo-cluster-admin\""
 ```
 
-**A failure is never cached.** A decided answer is held 60s; an error is retried on the next
-request, so an API-server outage does not pin every reader to the narrow view until a TTL expires.
-The cost of the 60s cache is stated plainly: a revoked administrator keeps the wide view for at
-most one minute.
+**A failure is never cached.** A decided answer is held for `visibility.tierTtlSeconds` (60 by
+default); an error is retried on the next request, so an API-server outage does not pin every reader
+to the narrow view until a TTL expires. The cost of the cache is stated plainly: a revoked
+administrator keeps the wide view for at most that TTL (one minute at the default).
 
 ### Why the alert feed is an allow-list
 

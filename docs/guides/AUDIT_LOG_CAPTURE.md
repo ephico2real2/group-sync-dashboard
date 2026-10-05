@@ -127,8 +127,8 @@ alongside the nodes it reports — so the node-discovery step is exercised too.
 ## 5. How a read is bounded
 
 Per node, per cycle: list the `oauth-server/` directory, read each unread or partially read file from
-its **byte cursor** (rotated files ascending by stamp, then `audit.log`; once `audit.log` has a
-cursor it is read first, so its rotation is noticed before the rotated copy is read as a new file),
+its **byte cursor** (rotated files ascending by stamp, then `audit.log`; once `audit.log`'s cursor is
+past byte 0 it is read first, so its rotation is noticed before the rotated copy is read as a new file),
 parse whole lines only, and advance the cursor to the last newline consumed.
 
 So a steady cluster transfers almost nothing — the `audit.log read 0 byte(s) from offset 1559` line
