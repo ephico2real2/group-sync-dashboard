@@ -180,6 +180,63 @@ Line citations into the code at `6421cff7` are file:line in plain text inside ta
       7654 passed). Its fake `git` answered only `rev-parse --short=10 HEAD`. Block 23 makes it answer the full id;
       the first ten characters, and so every expected tag, are unchanged.
 
+16. **The review of the implementation (PR #614, head `06431584`: OB2, Fable 5.1 high, and Codex, gpt-5.6-sol xhigh,
+    2026-10-04).** Five changes, as Blocks R1 to R16.
+    - **Block 13 missing (OB2 F1, Codex F2): the orchestrator's commit error, not a spec defect.** The row was
+      applied in the tree and left out of the commit. No block changes. Test (R14):
+      `test_the_gitops_readme_names_the_dashboard_application_main_by_default_and_the_opt_in`, which fails on
+      `06431584` and passes.
+    - **Codex F1, accepted: the deploy key isolated (R1, R2, R5).**
+      - The defect: checkout took `ssh-key` with `persist-credentials` at its default, so the key sat in git's config
+        through the cosign installer and the registry read-back.
+      - The fix: checkout keeps no credential (`persist-credentials: false`, no key; the repository is public, so
+        fetches are anonymous). The read-back step prepares the commit under `refs/promote/release` and
+        `refs/promote/target`, clearing both first. A last step, `Push release`, alone takes the key. It turns xtrace
+        off, writes the key to a temporary file and pins GitHub's published Ed25519 host key (SHA256
+        `+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`, from docs.github.com "GitHub's SSH key fingerprints" and
+        `api.github.com/meta`, fingerprint checked with `ssh-keygen -lf`). It pushes without force and removes both
+        files on exit.
+      - One change from Codex's patch: the push is `git -c url.git@github.com:.pushInsteadOf=https://github.com/
+        push origin`, not a `PUSH_REMOTE` variable. Measured: it rewrites only the push URL (`git remote get-url
+        --push origin` gives `git@github.com:ephico2real2/group-sync-dashboard`; the fetch URL stays https). A test's
+        origin, a local path, is pushed to as it is, so the workflow carries no variable that only tests set.
+      - The tests: the harness now runs `Push release` after every green promotion (R11). The checkout test asserts
+        checkout's three inputs exactly, and `test_the_deploy_key_is_loaded_only_by_the_push_step` holds the key's
+        one step, the host key, no force, and the push-only rewrite (R13). Both fail on `06431584`.
+    - **The disagreement, and its decision.** OB2 (C2) judged the persisted key necessary: the push ran in a later
+      `run` step, which needs the key persisted. Codex (F1) required the key to exist for the push alone. The
+      orchestrator decided for Codex: a push step that loads the key itself removes the need to persist it. OB2's
+      premise held only for the single-step design.
+    - **OB2 F2, accepted: unreachable is not absent (R3, R4).** `probe` keeps skopeo's stderr, and `absent` greps it
+      for "manifest unknown", as helm.yaml's "Label the image" step does. Only an absent name gives the notice, on the
+      push and overtaken paths. Any other failure is red, with the first 400 bytes of skopeo's message.
+      `test_a_chart_push_during_a_registry_outage_is_red_not_a_green_notice` fails on the tree without `absent`
+      ("a registry outage was reported as a green notice") and passes now; a genuinely absent tag still gets the
+      notice.
+    - **OB2 F3, accepted: `--argocd release` honours a pin (R6).** The release refs carry `values.yaml`'s pins, so a
+      digest `promote.yml` pinned for a pinned tag deploys as pinned. Test (R15):
+      `test_argocd_release_deploys_a_pinned_tag_as_promote_yml_pinned_it`. Before:
+      `ERROR: …@sha256:aaaa… is application 0.24.0, not 5.2.0`, exit 1. After: passes, and the unpinned report image
+      is still read back.
+    - **OB2's other orders, kept as permanent tests (R12).** A `release` that moved after the fetch refuses the push;
+      a hand-run publish at a commit that changed no image input promotes nothing; a green publish that pushed nothing
+      is red; an identical chart at a new target writes a new commit. They pass before and after: they hold
+      behaviour. The hand-run order gets a troubleshooting row in `docs/RELEASING.md` (R16).
+    - **The version:** no R block touches an image input or `charts/`, so 5.2.0 and 0.70.3 stand.
+    - **Proofs** (the repository's venv, Python 3.14):
+      - the oracle: `git archive 51fbb781` + this spec + the index row, all 39 blocks applied, equals the worktree:
+        `diff -r` prints nothing (`__pycache__` excluded);
+      - the full suite, `pytest tests/` (browser tests included): `8357 passed, 27 skipped, 5 xfailed`;
+      - CI's hermetic selection: `7663 passed, 23 skipped, 698 deselected, 5 xfailed`, against `7655` on `06431584`.
+        The +8 are `test_promote.py`'s seven new tests and `test_release_crc.py`'s one;
+      - the new tests on `06431584`: `test_promote.py` 3 failed and 20 errors (no `Push release` step), and the
+        pinned-tag test fails;
+      - actionlint 1.7.12 (`GOFLAGS=-mod=mod go run …@v1.7.12`): exit 0 on `promote.yml`; the repository's other two
+        findings are main's (`ci.yml`, `mock-cluster.yml`);
+      - shellcheck `-S warning`: the three extracted `run` steps, `release-crc.sh`, `argocd-wait.sh` and
+        `build-and-push-external.sh` are clean;
+      - RBAC rendered with `environments/crc.yaml`: 30 rule and binding lines before and after; REMOVED 0, ADDED 0.
+
 Open questions for the operator:
 
 1. Step 4 of §3.5: confirm that "Deploy keys" is offered in the ruleset's bypass list (note 4).
@@ -224,7 +281,7 @@ state's second namespace (Orchestrator's notes 11).
 | GitHub, [Triggering a workflow](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow) | "events triggered by the `GITHUB_TOKEN` will not create a new workflow run", except `workflow_dispatch` and `repository_dispatch` | not relied on: the push is made with a deploy key, and `release` has no `.github/workflows/`, so no push to it runs a workflow (a push runs the workflows in the pushed commit) |
 | GitHub REST, [Create a repository ruleset](https://docs.github.com/en/rest/repos/rules?apiVersion=2022-11-28#create-a-repository-ruleset) | bypass `actor_type` is one of Integration, OrganizationAdmin, RepositoryRole, Team, DeployKey, User; rules `creation`, `update`, `deletion` "Only allow users with bypass permission"; `non_fast_forward` "Prevent users with push access from force pushing" | §3.5 step 4 |
 | GitHub, [Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments) | "Only branches and tags that match your specified name patterns can deploy to the environment"; environment secrets are "only available to workflow jobs that reference the environment"; deployment branches "are available for all public repositories" | §3.5 step 2: the key is usable only by a job on `main` |
-| `actions/checkout` README, `ssh-key` | "The SSH key is configured with the local git config, which enables your scripts to run authenticated git commands. The post-job step removes the SSH key." "The public key for github.com is always implicitly added." | §3.4: `git push` uses the key; no extra action |
+| `actions/checkout` README, `ssh-key` | "The SSH key is configured with the local git config, which enables your scripts to run authenticated git commands. The post-job step removes the SSH key." "The public key for github.com is always implicitly added." | superseded by the review of #614: checkout runs with `persist-credentials: false` and no key, so the key never sits in git's config (§3.4, Orchestrator's notes 16) |
 | Argo CD v3.5.3, docs/user-guide/tracking_strategies.md:46-48 | "Argo CD will continually compare live state against the resource manifests defined at the tip of the specified branch" | §3.7 |
 | Argo CD v3.5.3, docs/user-guide/helm.md:48, :64, :150-157 | "Order of precedence is `parameters > valuesObject > values > valueFiles > helm repository values.yaml`"; a values path is "relative to the root directory of the Helm chart"; "the relative order between entries is preserved … `final.yaml` # passed last, highest precedence" | §3.7: `promotion.yaml` last |
 | Kostis Kapelonis, [Stop using branches for deploying to different GitOps environments](https://octopus.com/blog/stop-using-branches-deploying-different-gitops-environments) | "Promotion is never a simple Git merge"; environments as folders or files, not branches | Orchestrator's notes 2: `release` is never merged into |
@@ -410,9 +467,12 @@ checkout is untouched. If the tree equals the one on `release`, nothing is pushe
 
 ### 3.4 One writer
 
-The job holds `contents: read`. The checkout is made with `ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}`, so the
-`git push` at the end uses the deploy key. The secret belongs to the `release` environment, which only `main` can
-deploy to. A first step fails, with the setup pointer, when the secret is missing.
+The job holds `contents: read`. The secret belongs to the `release` environment, which only `main` can deploy to. A
+first step fails, with the setup pointer, when the secret is missing. Since the review of #614 (Orchestrator's notes
+16, Blocks R1, R2, R5) the key exists in one step only: checkout runs with `persist-credentials: false` and no key
+(the repository is public, so every fetch is anonymous), the read-back step prepares the commit under
+`refs/promote/release` and `refs/promote/target`, and the last step, `Push release`, writes the key to a temporary
+file, pins GitHub's published Ed25519 host key, pushes over SSH without force, and removes both files on exit.
 
 ### 3.5 The operator's one-time steps
 
@@ -592,6 +652,9 @@ removed per file (the proof tree): `promote.yml` +270, `test_promote.py` +371, `
 `release-crc.sh` +32 −10, `docs/RELEASING.md` +71, `docs/CHANGELOG.md` +14, `.claude/skills/epic/SKILL.md` +11 −10,
 `Chart.yaml` +5 −2, `local-development/README.md` +4 −1, `gitops/README.md` +1, `pyproject.toml` and
 `gsd/__init__.py` +1 −1 each, `build-and-push-external.sh` +2 −1.
+
+The review of the implementation (PR #614) adds sixteen review blocks, R1 to R16, after Block 23
+(Orchestrator's notes 16).
 
 ### Block 1 — `.github/workflows/promote.yml`: the workflow: three triggers, the source-bound ready rule, the read-back, the commit to `release`
 
@@ -1886,3 +1949,582 @@ unchanged.
 ```python
   "rev-parse HEAD") echo 0123456789abcdef0123456789abcdef01234567 ;;
 ```
+
+### Block R1 — `.github/workflows/promote.yml` (1 of 5): checkout keeps no credential (`persist-credentials: false`, no key) (review of #614)
+
+<!-- block: .github/workflows/promote.yml | edit -->
+
+```yaml
+          ref: main
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+```
+
+```yaml
+          ref: main
+          fetch-depth: 0
+          # The repository is public: no credential stays in git's config. The deploy key exists only in "Push release".
+          persist-credentials: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+```
+
+
+### Block R2 — `.github/workflows/promote.yml` (2 of 5): each run clears the refs it prepares for the push step (review of #614)
+
+<!-- block: .github/workflows/promote.yml | edit -->
+
+```yaml
+        run: |
+          set -euo pipefail
+          CHART=charts/group-sync-dashboard/Chart.yaml
+          VALUES=charts/group-sync-dashboard/values.yaml
+```
+
+```yaml
+        run: |
+          set -euo pipefail
+          # "Push release" pushes only what this run prepares; a ref left by an earlier run on this checkout is not that.
+          git update-ref -d refs/promote/release 2>/dev/null || true
+          git update-ref -d refs/promote/target 2>/dev/null || true
+          CHART=charts/group-sync-dashboard/Chart.yaml
+          VALUES=charts/group-sync-dashboard/values.yaml
+```
+
+
+### Block R3 — `.github/workflows/promote.yml` (3 of 5): `probe` and `absent`: only "manifest unknown" is not published yet (OB2 F2) (review of #614)
+
+<!-- block: .github/workflows/promote.yml | edit -->
+
+```yaml
+          ' < "${values}")
+          promotion="# Written by .github/workflows/promote.yml for main ${target}: the images it read back, by digest."
+          for spec in "${REPO}|${PINNED}|image:" "${REPO}-report|${REPORT_PINNED}|reporting:"; do
+            IFS='|' read -r name this_pin key <<< "${spec}"
+            tag="${this_pin:-${app_version}-${image_commit:0:10}}"
+            if ! digest=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${name}:${tag}"); then
+              if [ -z "${this_pin}" ] && { [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; }; then
+                echo "::notice::main ${target:0:10}'s immutable image ${name}:${tag} is not ready;"
+                echo "::notice::its successful publish run promotes main. Nothing was promoted by this run."
+                exit 0
+              fi
+              echo "::error::cannot read ${name}:${tag} (skopeo's message is above), so nothing was promoted."
+              echo "::error::Re-run this workflow once the registry answers, or once publish.yml is green."
+              exit 1
+```
+
+```yaml
+          ' < "${values}")
+          promotion="# Written by .github/workflows/promote.yml for main ${target}: the images it read back, by digest."
+          # Unreachable is not absent (helm.yaml, "Label the image"): only the registry's "manifest unknown" means a
+          # name is not published yet. Any other failure is "cannot tell", a red run on every path, never a notice.
+          probe_err=$(mktemp)
+          trap 'rm -f "${probe_err}"' EXIT
+          probe() { skopeo inspect --no-tags --format '{{.Digest}}' "docker://$1" 2>"${probe_err}"; }
+          absent() { grep -qi 'manifest unknown' "${probe_err}"; }
+          for spec in "${REPO}|${PINNED}|image:" "${REPO}-report|${REPORT_PINNED}|reporting:"; do
+            IFS='|' read -r name this_pin key <<< "${spec}"
+            tag="${this_pin:-${app_version}-${image_commit:0:10}}"
+            if ! digest=$(probe "${name}:${tag}"); then
+              if absent && [ -z "${this_pin}" ] && { [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; }; then
+                echo "::notice::main ${target:0:10}'s immutable image ${name}:${tag} is not ready;"
+                echo "::notice::its successful publish run promotes main. Nothing was promoted by this run."
+                exit 0
+              fi
+              echo "::error::cannot read ${name}:${tag}, so nothing was promoted: $(head -c 400 "${probe_err}")"
+              echo "::error::Re-run this workflow once the registry answers, or once publish.yml is green."
+              exit 1
+```
+
+
+### Block R4 — `.github/workflows/promote.yml` (4 of 5): the alias probe: a notice only when absent; otherwise red with skopeo's message (review of #614)
+
+<!-- block: .github/workflows/promote.yml | edit -->
+
+```yaml
+                exit 1
+              fi
+              if ! alias_digest=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${name}:${app_version}"); then
+                if [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; then
+                  echo "::notice::${name}:${app_version} has not reached ${tag}; publish.yml is still running."
+                  echo "::notice::Nothing was promoted by this run."
+                  exit 0
+                fi
+                echo "::error::cannot read ${name}:${app_version} after its publish run succeeded, so nothing was promoted."
+                exit 1
+              fi
+```
+
+```yaml
+                exit 1
+              fi
+              if ! alias_digest=$(probe "${name}:${app_version}"); then
+                if absent && { [ "${EVENT}" = push ] || { [ "${EVENT}" = workflow_run ] && [ "${image_commit}" != "${RUN_SHA}" ]; }; }; then
+                  echo "::notice::${name}:${app_version} has not reached ${tag}; publish.yml is still running."
+                  echo "::notice::Nothing was promoted by this run."
+                  exit 0
+                fi
+                echo "::error::cannot read ${name}:${app_version}, so nothing was promoted: $(head -c 400 "${probe_err}")"
+                echo "::error::Re-run this workflow once the registry answers, or once publish.yml is green."
+                exit 1
+              fi
+```
+
+
+### Block R5 — `.github/workflows/promote.yml` (5 of 5): the commit is prepared under local refs; the `Push release` step alone loads the key (Codex F1) (review of #614)
+
+<!-- block: .github/workflows/promote.yml | edit -->
+
+```yaml
+          commit=$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "${tree}" -p origin/release -m "promote: main ${target}" -m "Application ${app_version}, read back by promote.yml.")
+          git push origin "${commit}:refs/heads/release"
+          echo "promoted: main ${target} -> release ${commit}"
+```
+
+```yaml
+          commit=$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "${tree}" -p origin/release -m "promote: main ${target}" -m "Application ${app_version}, read back by promote.yml.")
+          git update-ref refs/promote/release "${commit}"
+          git update-ref refs/promote/target "${target}"
+          echo "prepared: main ${target} -> release ${commit}"
+
+      # The deploy key bypasses the release ruleset, so it lives in this step alone (review of #614): not in checkout,
+      # the cosign installer or the registry read-back above.
+      - name: Push release
+        shell: bash
+        env:
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+        run: |
+          set +x
+          set -euo pipefail
+          if ! commit=$(git rev-parse --verify --quiet 'refs/promote/release^{commit}'); then
+            echo "nothing was prepared for release; no push is needed."
+            exit 0
+          fi
+          target=$(git rev-parse --verify 'refs/promote/target^{commit}')
+          key=$(mktemp)
+          known_hosts=$(mktemp)
+          trap 'rm -f "${key}" "${known_hosts}"' EXIT
+          printf '%s\n' "${RELEASE_DEPLOY_KEY}" > "${key}"
+          chmod 600 "${key}"
+          # GitHub's published Ed25519 host key (docs.github.com "GitHub's SSH key fingerprints", api.github.com/meta).
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "${known_hosts}"
+          export GIT_SSH_COMMAND="ssh -i ${key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o CheckHostIP=no -o UserKnownHostsFile=${known_hosts}"
+          # origin is checkout's https URL; only this push goes over SSH with the key. Never forced: a moved release refuses it.
+          git -c url.git@github.com:.pushInsteadOf=https://github.com/ push origin "${commit}:refs/heads/release"
+          echo "promoted: main ${target} -> release ${commit}"
+```
+
+
+### Block R6 — `local-development/release-crc.sh`: `--argocd release` deploys a pinned tag's digest as pinned (OB2 F3) (review of #614)
+
+<!-- block: local-development/release-crc.sh | edit -->
+
+```bash
+    fi
+    # promote.yml writes this file: image.* two spaces deep, reporting.image.* four.
+    refs=("$(printf '%s\n' "$promoted" | sed -n 's/^  repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^  digest: //p' | head -1)|"
+          "$(printf '%s\n' "$promoted" | sed -n 's/^    repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^    digest: //p' | head -1)|")
+  fi
+  for spec in "${refs[@]}"; do
+    ref="${spec%%|*}" this_pin="${spec#*|}"
+    if [ -n "$this_pin" ]; then
+      echo "image   : ${ref%:*}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      continue
+    fi
+```
+
+```bash
+    fi
+    # promote.yml writes this file: image.* two spaces deep, reporting.image.* four.
+    refs=("$(printf '%s\n' "$promoted" | sed -n 's/^  repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^  digest: //p' | head -1)|${pinned}"
+          "$(printf '%s\n' "$promoted" | sed -n 's/^    repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^    digest: //p' | head -1)|${report_pinned}")
+  fi
+  for spec in "${refs[@]}"; do
+    ref="${spec%%|*}" this_pin="${spec#*|}"
+    if [ -n "$this_pin" ]; then
+      # promote.yml pinned the digest of that tag without a label check (SPEC_P1 note 8); deploy it as pinned.
+      if [ -n "$promoted" ]; then
+        echo "image   : ${ref} (pinned in values.yaml as ${this_pin}; not checked against appVersion)"
+      else
+        echo "image   : ${ref%:*}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      fi
+      continue
+    fi
+```
+
+
+### Block R7 — `local-development/tests/test_promote.py` (1 of 8): the docstring: the push step is run too (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+"""promote.yml: the `release` branch holds only what was read back from the registry (#598, SPEC_P1).
+
+The promotion step is RUN, as GitHub runs `shell: bash`, in a real git repository with a bare `origin`, against
+test_supply_chain.py's stub skopeo and a stub cosign. Real git writes the `release` commit; only the registry and
+Sigstore are replaced. The workflow's shape (its triggers, its scopes, its one writer) is read from the YAML.
+"""
+
+```
+
+```python
+"""promote.yml: the `release` branch holds only what was read back from the registry (#598, SPEC_P1).
+
+The promotion step and the push step are RUN, as GitHub runs `shell: bash`, in a real git repository with a bare
+`origin`, against test_supply_chain.py's stub skopeo and a stub cosign. Real git writes and pushes the `release`
+commit; only the registry and Sigstore are replaced. The workflow's shape (its triggers, its scopes, its one writer)
+is read from the YAML.
+"""
+
+```
+
+
+### Block R8 — `local-development/tests/test_promote.py` (2 of 8): the imports (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+import re
+import shlex
+import subprocess
+
+```
+
+```python
+import re
+import shlex
+import shutil
+import subprocess
+
+```
+
+
+### Block R9 — `local-development/tests/test_promote.py` (3 of 8): the README path and the push step's name (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+RELEASE_CRC = REPO / "local-development" / "release-crc.sh"
+PUBLISHER = REPO / "local-development" / "build-and-push-external.sh"
+STEP = "Read both images back and promote"
+IDENTITY = "https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main"
+
+```
+
+```python
+RELEASE_CRC = REPO / "local-development" / "release-crc.sh"
+PUBLISHER = REPO / "local-development" / "build-and-push-external.sh"
+GITOPS_README = REPO / "gitops" / "README.md"
+STEP = "Read both images back and promote"
+PUSH_STEP = "Push release"
+IDENTITY = "https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main"
+
+```
+
+
+### Block R10 — `local-development/tests/test_promote.py` (4 of 8): the fixture extracts the push step (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+        (bindir / tool).chmod(0o755)
+    (tmp_path / "step.sh").write_text(_step(_jobs(PROMOTE)["promote"], STEP)["run"])
+    return {"repo": repo, "origin": origin, "tmp": tmp_path, "bin": bindir, "start": start}
+
+
+def promote(lab, registry: dict, *, event: str = "dispatch", run_sha: str = "", sha: str = "", rollback: bool = False,
+            signing: str = "", unsigned: str = "", mirror_immutable: bool = True) -> tuple[subprocess.CompletedProcess, str]:
+    state, log = lab["tmp"] / "registry.json", lab["tmp"] / "calls.log"
+    # publish.yml always writes <appVersion>-<10-char sha>. Most tests start from the release aliases, so mirror
+```
+
+```python
+        (bindir / tool).chmod(0o755)
+    (tmp_path / "step.sh").write_text(_step(_jobs(PROMOTE)["promote"], STEP)["run"])
+    (tmp_path / "push.sh").write_text(_step(_jobs(PROMOTE)["promote"], PUSH_STEP)["run"])
+    return {"repo": repo, "origin": origin, "tmp": tmp_path, "bin": bindir, "start": start}
+
+
+def promote(lab, registry: dict, *, event: str = "dispatch", run_sha: str = "", sha: str = "", rollback: bool = False,
+            signing: str = "", unsigned: str = "", mirror_immutable: bool = True, unreachable: str = "",
+            extra_path: str = "") -> tuple[subprocess.CompletedProcess, str]:
+    state, log = lab["tmp"] / "registry.json", lab["tmp"] / "calls.log"
+    # publish.yml always writes <appVersion>-<10-char sha>. Most tests start from the release aliases, so mirror
+```
+
+
+### Block R11 — `local-development/tests/test_promote.py` (5 of 8): the harness runs the push step after a green promotion, with an outage and a PATH shim when asked (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+    state.write_text(json.dumps(registry))
+    log.write_text("")
+    env = {**os.environ, "PATH": f"{lab['bin']}:{os.environ['PATH']}", "STUB_REGISTRY": str(state), "STUB_LOG": str(log),
+           "STUB_UNREACHABLE": "", "STUB_UNSIGNED": unsigned, "REGISTRY": "quay.io", "REGISTRY_NAMESPACE": "example",
+           "SIGNING": signing, "EVENT": event, "RUN_SHA": run_sha, "SHA": sha, "ROLLBACK": "true" if rollback else "false",
+           "IDENTITY": IDENTITY, "ISSUER": "https://token.actions.githubusercontent.com"}
+    done = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(lab["tmp"] / "step.sh")],
+                          cwd=lab["repo"], env=env, capture_output=True, text=True)
+    return done, log.read_text()
+
+```
+
+```python
+    state.write_text(json.dumps(registry))
+    log.write_text("")
+    path = f"{extra_path}:" if extra_path else ""
+    env = {**os.environ, "PATH": f"{path}{lab['bin']}:{os.environ['PATH']}", "STUB_REGISTRY": str(state), "STUB_LOG": str(log),
+           "STUB_UNREACHABLE": unreachable, "STUB_UNSIGNED": unsigned, "REGISTRY": "quay.io", "REGISTRY_NAMESPACE": "example",
+           "SIGNING": signing, "EVENT": event, "RUN_SHA": run_sha, "SHA": sha, "ROLLBACK": "true" if rollback else "false",
+           "IDENTITY": IDENTITY, "ISSUER": "https://token.actions.githubusercontent.com"}
+    done = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(lab["tmp"] / "step.sh")],
+                          cwd=lab["repo"], env=env, capture_output=True, text=True)
+    if done.returncode == 0:   # Actions runs "Push release" only after the step above succeeded
+        pushed = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(lab["tmp"] / "push.sh")],
+                                cwd=lab["repo"], env={**env, "RELEASE_DEPLOY_KEY": "test-only"},
+                                capture_output=True, text=True)
+        done = subprocess.CompletedProcess(done.args, pushed.returncode, done.stdout + pushed.stdout,
+                                           done.stderr + pushed.stderr)
+    return done, log.read_text()
+
+```
+
+
+### Block R12 — `local-development/tests/test_promote.py` (6 of 8): the orders the reviews tried, as permanent tests (OB2) (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+
+
+# ── The workflow's shape ──────────────────────────────────────────────────────────────────────
+
+```
+
+```python
+
+
+def _mirror(lab, registry: dict, target: str) -> str:
+    image_commit = _git(lab["repo"], "log", "--first-parent", "-1", "--format=%H", target, "--", "local-development/README.md")
+    for image in (DASHBOARD, REPORT):
+        registry["tags"][f"{image}:{APP}-{image_commit[:10]}"] = registry["tags"][f"{image}:{APP}"]
+    return image_commit
+
+
+def test_a_chart_push_during_a_registry_outage_is_red_not_a_green_notice(lab) -> None:
+    """Review of #614 (OB2 F2): a chart-only merge has no publish run coming, so unreachable must not read as absent."""
+    tip = _main_at(lab, APP)
+    registry = _released()
+    _mirror(lab, registry, tip)
+    assert promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False)[0].returncode == 0
+    promoted = release(lab)
+    chart_only = _commit(lab["repo"], "a template", {"charts/group-sync-dashboard/templates/x.yaml": "kind: Secret\n"})
+    image_commit = _git(lab["repo"], "log", "--first-parent", "-1", "--format=%H", chart_only, "--", "local-development/README.md")
+    for ref in (f"{DASHBOARD}:{APP}-{image_commit[:10]}", f"{DASHBOARD}:{APP}"):
+        done, _ = promote(lab, registry, event="push", unreachable=ref, mirror_immutable=False)
+        assert done.returncode == 1, f"{ref}: a registry outage was reported as a green notice:\n{done.stdout}{done.stderr}"
+        assert "cannot read" in done.stdout and "no such host" in done.stdout, done.stdout
+        assert "Nothing was promoted by this run" not in done.stdout
+        assert release(lab) == promoted
+    registry["tags"].pop(f"{DASHBOARD}:{APP}-{image_commit[:10]}")   # genuinely absent: still the notice
+    done, _ = promote(lab, registry, event="push", mirror_immutable=False)
+    assert done.returncode == 0 and "is not ready" in done.stdout, done.stdout + done.stderr
+
+
+def test_a_release_that_moved_after_the_fetch_refuses_the_push(lab) -> None:
+    """Review of #614 (OB2): the push is a plain fast-forward; a hand commit that landed meanwhile stands."""
+    tip = _main_at(lab, APP)
+    registry = _released()
+    _mirror(lab, registry, tip)
+    real_git = shutil.which("git")
+    stranger = _git(lab["repo"], "commit-tree", _git(lab["repo"], "hash-object", "-t", "tree", "-w", "/dev/null"),
+                    "-p", lab["start"], "-m", "a hand commit on release")
+    _git(lab["repo"], "push", "-q", "origin", f"{stranger}:refs/heads/by-hand")   # the object reaches origin
+    shim = lab["tmp"] / "shim"
+    shim.mkdir()
+    (shim / "git").write_text(f"""#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = push ]; then {real_git} --git-dir="{lab['origin']}" update-ref refs/heads/release {stranger}; break; fi
+done
+exec {real_git} "$@"
+""")
+    (shim / "git").chmod(0o755)
+    done, _ = promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False, extra_path=str(shim))
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "rejected" in done.stderr or "failed to update ref" in done.stderr, done.stderr
+    assert release(lab) == stranger, "the hand commit stands; nothing was forced over it"
+
+
+def test_a_dispatch_rebuild_at_a_commit_that_changed_no_image_input_promotes_nothing(lab) -> None:
+    """Review of #614 (OB2): publish.yml run by hand at such a tip tags that tip's sha; promote needs the
+    image-input commit's own tag (docs/RELEASING.md, its troubleshooting row)."""
+    image = _main_at(lab, APP)
+    tip = _commit(lab["repo"], "a template", {"charts/group-sync-dashboard/templates/x.yaml": "kind: Secret\n"})
+    registry = _released()
+    for name in (DASHBOARD, REPORT):   # the rebuild's tag, and no tag for the image-input commit
+        registry["tags"][f"{name}:{APP}-{tip[:10]}"] = registry["tags"][f"{name}:{APP}"]
+    done, _ = promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False)
+    assert done.returncode == 0 and "is not ready" in done.stdout, done.stdout + done.stderr
+    assert release(lab) == lab["start"] and image != tip
+
+
+def test_a_green_publish_that_pushed_nothing_is_a_red_promotion(lab) -> None:
+    """Review of #614 (OB2): publish.yml is green with REGISTRY_* unset; its completion reaches the strict path."""
+    tip = _main_at(lab, APP)
+    done, _ = promote(lab, {"tags": {}, "manifests": {}, "blobs": {}}, event="workflow_run", run_sha=tip,
+                      mirror_immutable=False)
+    assert done.returncode == 1 and "cannot read" in done.stdout, done.stdout + done.stderr
+    assert release(lab) == lab["start"]
+
+
+def test_an_identical_chart_at_a_new_target_writes_a_new_release_commit(lab) -> None:
+    """Review of #614 (OB2): promotion.yaml's first line names the target, so "nothing to promote" holds only for the
+    same commit; the new commit changes that one line."""
+    tip = _main_at(lab, APP)
+    registry = _released()
+    _mirror(lab, registry, tip)
+    assert promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False)[0].returncode == 0
+    first = release(lab)
+    workflow = _commit(lab["repo"], "promote.yml itself", {".github/workflows/promote.yml": "name: promote\n"})
+    done, _ = promote(lab, registry, event="push", mirror_immutable=False)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert release(lab) != first and _git(lab["origin"], "log", "-1", "--format=%s", "release") == f"promote: main {workflow}"
+    assert _git(lab["origin"], "diff", "--stat", first, "release").strip().endswith("1 file changed, 1 insertion(+), 1 deletion(-)")
+
+
+# ── The workflow's shape ──────────────────────────────────────────────────────────────────────
+
+```
+
+
+### Block R13 — `local-development/tests/test_promote.py` (7 of 8): checkout's inputs; only the push step holds the key; the pinned host key; only the push goes over SSH (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+    assert job["environment"] == "release"
+    checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@"))
+    assert checkout["with"]["ssh-key"] == "${{ secrets.RELEASE_DEPLOY_KEY }}"
+
+
+```
+
+```python
+    assert job["environment"] == "release"
+    checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@"))
+    assert checkout["with"] == {"ref": "main", "fetch-depth": 0, "persist-credentials": False}
+
+
+def test_the_deploy_key_is_loaded_only_by_the_push_step(tmp_path) -> None:
+    """Review of #614 (Codex F1): the key bypasses the release ruleset, so no other step may hold it."""
+    job = _workflow()["jobs"]["promote"]
+    push = _step(job, PUSH_STEP)
+    assert job["steps"][-1] is push
+    assert push["env"] == {"RELEASE_DEPLOY_KEY": "${{ secrets.RELEASE_DEPLOY_KEY }}"}
+    assert [s.get("name") or s.get("uses") for s in job["steps"] if "RELEASE_DEPLOY_KEY" in str(s.get("with", "")) + str(s.get("env", ""))] == [
+        "Check the release deploy key is configured", PUSH_STEP]   # the first only asks whether it is set
+    assert "git push" not in _step(job, STEP)["run"]
+    run = push["run"]
+    assert run.startswith("set +x\n") and "-o StrictHostKeyChecking=yes" in run and "--force" not in run and "+${commit}" not in run
+    # GitHub's published Ed25519 host key (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU)
+    assert "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" in run
+    # only the push goes over SSH: checkout's https origin keeps its fetch URL
+    option = re.search(r"git -c (url\.\S+) push origin", run).group(1)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", "https://github.com/ephico2real2/group-sync-dashboard"], check=True)
+    url = lambda *args: subprocess.run(["git", "-C", str(tmp_path), "-c", option, "remote", "get-url", *args, "origin"],  # noqa: E731
+                                       capture_output=True, text=True, check=True).stdout.strip()
+    assert url("--push") == "git@github.com:ephico2real2/group-sync-dashboard"
+    assert url() == "https://github.com/ephico2real2/group-sync-dashboard"
+
+
+```
+
+
+### Block R14 — `local-development/tests/test_promote.py` (8 of 8): the gitops README row (Block 13; OB2 F1, Codex F2) (review of #614)
+
+<!-- block: local-development/tests/test_promote.py | edit -->
+
+```python
+
+
+def test_the_lab_tracks_main_by_default_and_release_crc_names_the_file_promote_writes() -> None:
+    """The operator, 2026-10-04: "main by default; release optional". `--argocd release` is the opt-in."""
+```
+
+```python
+
+
+def test_the_gitops_readme_names_the_dashboard_application_main_by_default_and_the_opt_in() -> None:
+    """SPEC_P1 Block 13 (review of #614: OB2 F1, Codex F2, the row the first commit left out)."""
+    rows = [line for line in GITOPS_README.read_text().splitlines() if line.startswith("| `argocd-application-dashboard.yaml`")]
+    assert len(rows) == 1, "gitops/README.md has no row for the dashboard Application (SPEC_P1 Block 13)"
+    assert "`main`" in rows[0] and "--argocd release" in rows[0] and "promotion.yaml" in rows[0] and "--argocd main" in rows[0]
+
+
+def test_the_lab_tracks_main_by_default_and_release_crc_names_the_file_promote_writes() -> None:
+    """The operator, 2026-10-04: "main by default; release optional". `--argocd release` is the opt-in."""
+```
+
+
+### Block R15 — `local-development/tests/test_release_crc.py`: the pinned-tag test for `--argocd release` (OB2 F3) (review of #614)
+
+<!-- block: local-development/tests/test_release_crc.py | edit -->
+
+```python
+
+
+def _version() -> str:
+    import re
+```
+
+```python
+
+
+def test_argocd_release_deploys_a_pinned_tag_as_promote_yml_pinned_it(lab):
+    """Review of #614 (OB2 F3): promote.yml pins a values.yaml tag's digest without a label check (SPEC_P1 note 8), so
+    `--argocd release` must deploy that digest as pinned, and still read the unpinned report image back."""
+    values = lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml"
+    pinned = values.read_text().replace('\n  tag: ""\n', '\n  tag: "1.4.0"\n', 1)
+    assert 'tag: "1.4.0"' in pinned
+    values.write_text(pinned)
+    _release_branch(lab, PROMOTION)
+    r = run(lab, "--argocd", "release",
+            STUB_IMAGES=f"quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}=0.24.0 "
+                        f"quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST}={_version()}")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "pinned in values.yaml" in r.stdout and DASHBOARD_DIGEST in r.stdout, r.stdout
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}" not in log
+    assert f"oc image info quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST} {LINUX_IMAGES}" in log
+
+
+def _version() -> str:
+    import re
+```
+
+
+### Block R16 — `docs/RELEASING.md`: the dispatch-rebuild row; the notice row names both notices (review of #614)
+
+<!-- block: docs/RELEASING.md | edit -->
+
+```markdown
+| promote run says `whose images publish.yml has not finished`, `immutable image … is not ready` or the version alias `does not yet name` it, and promotes nothing | main's exact image is still publishing | nothing to do: its green completion, or a later chart/environment push, promotes main. If publish is red, fix it; `release` stays on the last promotion |
+| promote run says a same-version image change reached `main` | two PRs chose the same next application version, so the immutable image and `:<appVersion>` alias differ | cut the next MINOR or MAJOR and let `publish.yml` finish green; never retag by hand |
+| promote run is red with `is application X, not <appVersion>` or `carries no signature from publish.yml on main` | the tag names another build, or the digest was not signed by `publish.yml` on `main`. Nothing was written to `release` | wait for `publish.yml` to finish green, then Run workflow on promote. Never edit `release` by hand |
+| promote run is red with `origin has no release branch` or `RELEASE_DEPLOY_KEY is not set` | the operator's one-time steps are not done | "Promotion to the lab", steps 1 to 5 |
+```
+
+```markdown
+| promote run says `whose images publish.yml has not finished`, `immutable image … is not ready` or the version alias `does not yet name` it, and promotes nothing | main's exact image is still publishing | nothing to do: its green completion, or a later chart/environment push, promotes main. If publish is red, fix it; `release` stays on the last promotion |
+| promote run says a same-version image change reached `main` | two PRs chose the same next application version, so the immutable image and `:<appVersion>` alias differ | cut the next MINOR or MAJOR and let `publish.yml` finish green; never retag by hand |
+| promote run says `immutable image … is not ready` after a publish run started by hand (Run workflow), and nothing promotes `main` | the image-input commit's own publish run did not push its images, and the hand run built a later commit that changed no image input: that image is tagged with the later commit's sha, while promote reads the tag of the last image-input commit | re-run the failed publish run of the image-input commit (Re-run jobs), so its own `<appVersion>-<sha10>` exists; its green completion promotes `main` |
+| promote run is red with `is application X, not <appVersion>` or `carries no signature from publish.yml on main` | the tag names another build, or the digest was not signed by `publish.yml` on `main`. Nothing was written to `release` | wait for `publish.yml` to finish green, then Run workflow on promote. Never edit `release` by hand |
+| promote run is red with `origin has no release branch` or `RELEASE_DEPLOY_KEY is not set` | the operator's one-time steps are not done | "Promotion to the lab", steps 1 to 5 |
+```
+

@@ -263,13 +263,18 @@ for raw in sys.stdin.read().splitlines():   # read it all: an early exit would S
       return 1
     fi
     # promote.yml writes this file: image.* two spaces deep, reporting.image.* four.
-    refs=("$(printf '%s\n' "$promoted" | sed -n 's/^  repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^  digest: //p' | head -1)|"
-          "$(printf '%s\n' "$promoted" | sed -n 's/^    repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^    digest: //p' | head -1)|")
+    refs=("$(printf '%s\n' "$promoted" | sed -n 's/^  repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^  digest: //p' | head -1)|${pinned}"
+          "$(printf '%s\n' "$promoted" | sed -n 's/^    repository: //p' | head -1)@$(printf '%s\n' "$promoted" | sed -n 's/^    digest: //p' | head -1)|${report_pinned}")
   fi
   for spec in "${refs[@]}"; do
     ref="${spec%%|*}" this_pin="${spec#*|}"
     if [ -n "$this_pin" ]; then
-      echo "image   : ${ref%:*}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      # promote.yml pinned the digest of that tag without a label check (SPEC_P1 note 8); deploy it as pinned.
+      if [ -n "$promoted" ]; then
+        echo "image   : ${ref} (pinned in values.yaml as ${this_pin}; not checked against appVersion)"
+      else
+        echo "image   : ${ref%:*}:${this_pin} (pinned in values.yaml; not checked against appVersion)"
+      fi
       continue
     fi
     # oc answers one object for a single manifest and an array for a list; a mixed list prints both.

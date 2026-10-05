@@ -1,8 +1,9 @@
 """promote.yml: the `release` branch holds only what was read back from the registry (#598, SPEC_P1).
 
-The promotion step is RUN, as GitHub runs `shell: bash`, in a real git repository with a bare `origin`, against
-test_supply_chain.py's stub skopeo and a stub cosign. Real git writes the `release` commit; only the registry and
-Sigstore are replaced. The workflow's shape (its triggers, its scopes, its one writer) is read from the YAML.
+The promotion step and the push step are RUN, as GitHub runs `shell: bash`, in a real git repository with a bare
+`origin`, against test_supply_chain.py's stub skopeo and a stub cosign. Real git writes and pushes the `release`
+commit; only the registry and Sigstore are replaced. The workflow's shape (its triggers, its scopes, its one writer)
+is read from the YAML.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
 import subprocess
 
 import pytest
@@ -24,7 +26,9 @@ PROMOTE = REPO / ".github" / "workflows" / "promote.yml"
 APPLICATION = REPO / "gitops" / "argocd-application-dashboard.yaml"
 RELEASE_CRC = REPO / "local-development" / "release-crc.sh"
 PUBLISHER = REPO / "local-development" / "build-and-push-external.sh"
+GITOPS_README = REPO / "gitops" / "README.md"
 STEP = "Read both images back and promote"
+PUSH_STEP = "Push release"
 IDENTITY = "https://github.com/ephico2real2/group-sync-dashboard/.github/workflows/publish.yml@refs/heads/main"
 
 COSIGN_STUB = r'''#!/usr/bin/env bash
@@ -82,11 +86,13 @@ def lab(tmp_path: pathlib.Path):
         (bindir / tool).write_text(stub)
         (bindir / tool).chmod(0o755)
     (tmp_path / "step.sh").write_text(_step(_jobs(PROMOTE)["promote"], STEP)["run"])
+    (tmp_path / "push.sh").write_text(_step(_jobs(PROMOTE)["promote"], PUSH_STEP)["run"])
     return {"repo": repo, "origin": origin, "tmp": tmp_path, "bin": bindir, "start": start}
 
 
 def promote(lab, registry: dict, *, event: str = "dispatch", run_sha: str = "", sha: str = "", rollback: bool = False,
-            signing: str = "", unsigned: str = "", mirror_immutable: bool = True) -> tuple[subprocess.CompletedProcess, str]:
+            signing: str = "", unsigned: str = "", mirror_immutable: bool = True, unreachable: str = "",
+            extra_path: str = "") -> tuple[subprocess.CompletedProcess, str]:
     state, log = lab["tmp"] / "registry.json", lab["tmp"] / "calls.log"
     # publish.yml always writes <appVersion>-<10-char sha>. Most tests start from the release aliases, so mirror
     # those exact digests under the immutable names the workflow now resolves. A race test disables this to model
@@ -102,12 +108,19 @@ def promote(lab, registry: dict, *, event: str = "dispatch", run_sha: str = "", 
                 registry["tags"][f"{image}:{version}-{image_commit[:10]}"] = digest
     state.write_text(json.dumps(registry))
     log.write_text("")
-    env = {**os.environ, "PATH": f"{lab['bin']}:{os.environ['PATH']}", "STUB_REGISTRY": str(state), "STUB_LOG": str(log),
-           "STUB_UNREACHABLE": "", "STUB_UNSIGNED": unsigned, "REGISTRY": "quay.io", "REGISTRY_NAMESPACE": "example",
+    path = f"{extra_path}:" if extra_path else ""
+    env = {**os.environ, "PATH": f"{path}{lab['bin']}:{os.environ['PATH']}", "STUB_REGISTRY": str(state), "STUB_LOG": str(log),
+           "STUB_UNREACHABLE": unreachable, "STUB_UNSIGNED": unsigned, "REGISTRY": "quay.io", "REGISTRY_NAMESPACE": "example",
            "SIGNING": signing, "EVENT": event, "RUN_SHA": run_sha, "SHA": sha, "ROLLBACK": "true" if rollback else "false",
            "IDENTITY": IDENTITY, "ISSUER": "https://token.actions.githubusercontent.com"}
     done = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(lab["tmp"] / "step.sh")],
                           cwd=lab["repo"], env=env, capture_output=True, text=True)
+    if done.returncode == 0:   # Actions runs "Push release" only after the step above succeeded
+        pushed = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(lab["tmp"] / "push.sh")],
+                                cwd=lab["repo"], env={**env, "RELEASE_DEPLOY_KEY": "test-only"},
+                                capture_output=True, text=True)
+        done = subprocess.CompletedProcess(done.args, pushed.returncode, done.stdout + pushed.stdout,
+                                           done.stderr + pushed.stderr)
     return done, log.read_text()
 
 
@@ -301,6 +314,94 @@ def test_a_pinned_tag_is_promoted_as_pinned(lab) -> None:
     assert promotion(lab)["image"]["digest"] == pinned
 
 
+def _mirror(lab, registry: dict, target: str) -> str:
+    image_commit = _git(lab["repo"], "log", "--first-parent", "-1", "--format=%H", target, "--", "local-development/README.md")
+    for image in (DASHBOARD, REPORT):
+        registry["tags"][f"{image}:{APP}-{image_commit[:10]}"] = registry["tags"][f"{image}:{APP}"]
+    return image_commit
+
+
+def test_a_chart_push_during_a_registry_outage_is_red_not_a_green_notice(lab) -> None:
+    """Review of #614 (OB2 F2): a chart-only merge has no publish run coming, so unreachable must not read as absent."""
+    tip = _main_at(lab, APP)
+    registry = _released()
+    _mirror(lab, registry, tip)
+    assert promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False)[0].returncode == 0
+    promoted = release(lab)
+    chart_only = _commit(lab["repo"], "a template", {"charts/group-sync-dashboard/templates/x.yaml": "kind: Secret\n"})
+    image_commit = _git(lab["repo"], "log", "--first-parent", "-1", "--format=%H", chart_only, "--", "local-development/README.md")
+    for ref in (f"{DASHBOARD}:{APP}-{image_commit[:10]}", f"{DASHBOARD}:{APP}"):
+        done, _ = promote(lab, registry, event="push", unreachable=ref, mirror_immutable=False)
+        assert done.returncode == 1, f"{ref}: a registry outage was reported as a green notice:\n{done.stdout}{done.stderr}"
+        assert "cannot read" in done.stdout and "no such host" in done.stdout, done.stdout
+        assert "Nothing was promoted by this run" not in done.stdout
+        assert release(lab) == promoted
+    registry["tags"].pop(f"{DASHBOARD}:{APP}-{image_commit[:10]}")   # genuinely absent: still the notice
+    done, _ = promote(lab, registry, event="push", mirror_immutable=False)
+    assert done.returncode == 0 and "is not ready" in done.stdout, done.stdout + done.stderr
+
+
+def test_a_release_that_moved_after_the_fetch_refuses_the_push(lab) -> None:
+    """Review of #614 (OB2): the push is a plain fast-forward; a hand commit that landed meanwhile stands."""
+    tip = _main_at(lab, APP)
+    registry = _released()
+    _mirror(lab, registry, tip)
+    real_git = shutil.which("git")
+    stranger = _git(lab["repo"], "commit-tree", _git(lab["repo"], "hash-object", "-t", "tree", "-w", "/dev/null"),
+                    "-p", lab["start"], "-m", "a hand commit on release")
+    _git(lab["repo"], "push", "-q", "origin", f"{stranger}:refs/heads/by-hand")   # the object reaches origin
+    shim = lab["tmp"] / "shim"
+    shim.mkdir()
+    (shim / "git").write_text(f"""#!/usr/bin/env bash
+for arg in "$@"; do
+  if [ "$arg" = push ]; then {real_git} --git-dir="{lab['origin']}" update-ref refs/heads/release {stranger}; break; fi
+done
+exec {real_git} "$@"
+""")
+    (shim / "git").chmod(0o755)
+    done, _ = promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False, extra_path=str(shim))
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "rejected" in done.stderr or "failed to update ref" in done.stderr, done.stderr
+    assert release(lab) == stranger, "the hand commit stands; nothing was forced over it"
+
+
+def test_a_dispatch_rebuild_at_a_commit_that_changed_no_image_input_promotes_nothing(lab) -> None:
+    """Review of #614 (OB2): publish.yml run by hand at such a tip tags that tip's sha; promote needs the
+    image-input commit's own tag (docs/RELEASING.md, its troubleshooting row)."""
+    image = _main_at(lab, APP)
+    tip = _commit(lab["repo"], "a template", {"charts/group-sync-dashboard/templates/x.yaml": "kind: Secret\n"})
+    registry = _released()
+    for name in (DASHBOARD, REPORT):   # the rebuild's tag, and no tag for the image-input commit
+        registry["tags"][f"{name}:{APP}-{tip[:10]}"] = registry["tags"][f"{name}:{APP}"]
+    done, _ = promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False)
+    assert done.returncode == 0 and "is not ready" in done.stdout, done.stdout + done.stderr
+    assert release(lab) == lab["start"] and image != tip
+
+
+def test_a_green_publish_that_pushed_nothing_is_a_red_promotion(lab) -> None:
+    """Review of #614 (OB2): publish.yml is green with REGISTRY_* unset; its completion reaches the strict path."""
+    tip = _main_at(lab, APP)
+    done, _ = promote(lab, {"tags": {}, "manifests": {}, "blobs": {}}, event="workflow_run", run_sha=tip,
+                      mirror_immutable=False)
+    assert done.returncode == 1 and "cannot read" in done.stdout, done.stdout + done.stderr
+    assert release(lab) == lab["start"]
+
+
+def test_an_identical_chart_at_a_new_target_writes_a_new_release_commit(lab) -> None:
+    """Review of #614 (OB2): promotion.yaml's first line names the target, so "nothing to promote" holds only for the
+    same commit; the new commit changes that one line."""
+    tip = _main_at(lab, APP)
+    registry = _released()
+    _mirror(lab, registry, tip)
+    assert promote(lab, registry, event="workflow_run", run_sha=tip, mirror_immutable=False)[0].returncode == 0
+    first = release(lab)
+    workflow = _commit(lab["repo"], "promote.yml itself", {".github/workflows/promote.yml": "name: promote\n"})
+    done, _ = promote(lab, registry, event="push", mirror_immutable=False)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert release(lab) != first and _git(lab["origin"], "log", "-1", "--format=%s", "release") == f"promote: main {workflow}"
+    assert _git(lab["origin"], "diff", "--stat", first, "release").strip().endswith("1 file changed, 1 insertion(+), 1 deletion(-)")
+
+
 # ── The workflow's shape ──────────────────────────────────────────────────────────────────────
 
 
@@ -327,7 +428,30 @@ def test_one_promotion_at_a_time_read_only_token_and_the_deploy_key_from_the_rel
     assert wf["permissions"] == {"contents": "read"} and "permissions" not in job
     assert job["environment"] == "release"
     checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@"))
-    assert checkout["with"]["ssh-key"] == "${{ secrets.RELEASE_DEPLOY_KEY }}"
+    assert checkout["with"] == {"ref": "main", "fetch-depth": 0, "persist-credentials": False}
+
+
+def test_the_deploy_key_is_loaded_only_by_the_push_step(tmp_path) -> None:
+    """Review of #614 (Codex F1): the key bypasses the release ruleset, so no other step may hold it."""
+    job = _workflow()["jobs"]["promote"]
+    push = _step(job, PUSH_STEP)
+    assert job["steps"][-1] is push
+    assert push["env"] == {"RELEASE_DEPLOY_KEY": "${{ secrets.RELEASE_DEPLOY_KEY }}"}
+    assert [s.get("name") or s.get("uses") for s in job["steps"] if "RELEASE_DEPLOY_KEY" in str(s.get("with", "")) + str(s.get("env", ""))] == [
+        "Check the release deploy key is configured", PUSH_STEP]   # the first only asks whether it is set
+    assert "git push" not in _step(job, STEP)["run"]
+    run = push["run"]
+    assert run.startswith("set +x\n") and "-o StrictHostKeyChecking=yes" in run and "--force" not in run and "+${commit}" not in run
+    # GitHub's published Ed25519 host key (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU)
+    assert "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" in run
+    # only the push goes over SSH: checkout's https origin keeps its fetch URL
+    option = re.search(r"git -c (url\.\S+) push origin", run).group(1)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", "https://github.com/ephico2real2/group-sync-dashboard"], check=True)
+    url = lambda *args: subprocess.run(["git", "-C", str(tmp_path), "-c", option, "remote", "get-url", *args, "origin"],  # noqa: E731
+                                       capture_output=True, text=True, check=True).stdout.strip()
+    assert url("--push") == "git@github.com:ephico2real2/group-sync-dashboard"
+    assert url() == "https://github.com/ephico2real2/group-sync-dashboard"
 
 
 def test_nothing_in_it_builds_and_it_verifies_with_the_cosign_publish_signs_with() -> None:
@@ -359,6 +483,13 @@ def test_the_image_input_list_is_publish_ymls_and_the_immutable_tag_is_source_bo
     assert "COMMIT=$(git rev-parse HEAD)" in publisher
     assert 'COMMIT="${COMMIT:0:10}"' in publisher
     assert "git rev-parse --short=10 HEAD" not in publisher
+
+
+def test_the_gitops_readme_names_the_dashboard_application_main_by_default_and_the_opt_in() -> None:
+    """SPEC_P1 Block 13 (review of #614: OB2 F1, Codex F2, the row the first commit left out)."""
+    rows = [line for line in GITOPS_README.read_text().splitlines() if line.startswith("| `argocd-application-dashboard.yaml`")]
+    assert len(rows) == 1, "gitops/README.md has no row for the dashboard Application (SPEC_P1 Block 13)"
+    assert "`main`" in rows[0] and "--argocd release" in rows[0] and "promotion.yaml" in rows[0] and "--argocd main" in rows[0]
 
 
 def test_the_lab_tracks_main_by_default_and_release_crc_names_the_file_promote_writes() -> None:

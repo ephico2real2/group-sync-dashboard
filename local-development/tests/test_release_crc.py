@@ -570,6 +570,24 @@ def test_the_matrix_rows_match_the_script():
     assert header.index('if [ "$BUILD_ONLY" = true ]; then exit 0; fi') < header.index("podman login")
 
 
+def test_argocd_release_deploys_a_pinned_tag_as_promote_yml_pinned_it(lab):
+    """Review of #614 (OB2 F3): promote.yml pins a values.yaml tag's digest without a label check (SPEC_P1 note 8), so
+    `--argocd release` must deploy that digest as pinned, and still read the unpinned report image back."""
+    values = lab["repo"] / "charts" / "group-sync-dashboard" / "values.yaml"
+    pinned = values.read_text().replace('\n  tag: ""\n', '\n  tag: "1.4.0"\n', 1)
+    assert 'tag: "1.4.0"' in pinned
+    values.write_text(pinned)
+    _release_branch(lab, PROMOTION)
+    r = run(lab, "--argocd", "release",
+            STUB_IMAGES=f"quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}=0.24.0 "
+                        f"quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST}={_version()}")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "pinned in values.yaml" in r.stdout and DASHBOARD_DIGEST in r.stdout, r.stdout
+    log = calls(lab)
+    assert f"oc image info quay.io/example/group-sync-dashboard@{DASHBOARD_DIGEST}" not in log
+    assert f"oc image info quay.io/example/group-sync-dashboard-report@{REPORT_DIGEST} {LINUX_IMAGES}" in log
+
+
 def _version() -> str:
     import re
     return re.search(r'^version = "(.+?)"', (LOCAL_DEV / "pyproject.toml").read_text(), re.M).group(1)
