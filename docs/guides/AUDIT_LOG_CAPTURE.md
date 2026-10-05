@@ -43,7 +43,7 @@ nodes/proxy  get       read the log through the API server
 ```
 
 **These are already granted.** On the hosting cluster this repository's chart binds them to the
-dashboard's ServiceAccount (`<release>-login-capture-audit`,
+dashboard's ServiceAccount (`<fullname>-login-capture-audit`,
 `charts/group-sync-dashboard/templates/login-capture-rbac.yaml`). On every other observed cluster they
 ship in the **`group-sync-operator-helm`** chart, in the ClusterRole
 `group-sync-dashboard-cluster-poller`, which is installed on each cluster to be observed. That is the boundary: the operator chart decides what
@@ -127,8 +127,9 @@ alongside the nodes it reports — so the node-discovery step is exercised too.
 ## 5. How a read is bounded
 
 Per node, per cycle: list the `oauth-server/` directory, read each unread or partially read file from
-its **byte cursor** (rotated files ascending by stamp, then `audit.log`), parse whole lines only, and
-advance the cursor to the last newline consumed.
+its **byte cursor** (rotated files ascending by stamp, then `audit.log`; once `audit.log` has a
+cursor it is read first, so its rotation is noticed before the rotated copy is read as a new file),
+parse whole lines only, and advance the cursor to the last newline consumed.
 
 So a steady cluster transfers almost nothing — the `audit.log read 0 byte(s) from offset 1559` line
 means "nothing new since last time", not "nothing found". A first sight **backfills** through the

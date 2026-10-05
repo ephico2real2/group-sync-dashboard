@@ -5,7 +5,7 @@ The schema is published at **`/api`** (Swagger UI), `/api/docs` (redirects there
 an endpoint that does not exist — but it can happily describe one badly, and a generated
 document that nobody checks drifts into being decoration.
 
-`tests/test_api_contract.py` enforces every numbered rule below. If you add an endpoint and
+`tests/test_api_contract.py` enforces every numbered rule below except R4. If you add an endpoint and
 skip the documentation, the suite fails and names the endpoint. That is deliberate: this
 repository has already shipped an endpoint whose `(cluster-scoped)` namespace sentinel was
 undiscoverable, and a chart value nobody documented for six weeks. Documentation that
@@ -13,8 +13,9 @@ depends on remembering is documentation that lags.
 
 ## Why the docs sit under `/api` and not at FastAPI's `/docs`
 
-`oauthProxy.skipAuthRegex` admits `^/(healthz|readyz|metrics)$` and nothing else. Putting the
-schema under `/api` means the proxy authenticates it exactly like the data it describes.
+`oauthProxy.skipAuthRegex` admits `^/(healthz|readyz|metrics|signed-out|static/(app\.css|favicon\.svg))$`
+and nothing else. Putting the schema under `/api` means the proxy authenticates it exactly like the
+data it describes.
 
 That is not ceremony. The schema names every endpoint, parameter and field this dashboard
 exposes — which is a map of the cluster's RBAC surface, and of which namespaces and groups
@@ -51,15 +52,19 @@ Otherwise its parts come from different snapshots and the response can contradic
 about taking one at all.
 
 **R6 — New endpoints are `GET`.**
-The ServiceAccount is read-only by design. If a change needs a write, it needs the argument
+The API is read-only by design, with two opt-in exceptions: the six Cluster Configurations routes
+behind `clusterConfig.secrets.writes.enabled` and the housekeeping routes behind
+`housekeeping.enabled`. If a change needs another write, it needs the argument
 in `docs/design/unmanaged-audit-design.md` first. A write path was proposed there, built, measured
 against a live cluster and then removed, because Kubernetes privilege-escalation prevention
 caps what an RBAC reader can ever patch; that reasoning applies to any successor.
 
 **R7 — `include_in_schema=False` needs a comment saying why.**
-There is exactly one today: the `/api/docs` redirect, hidden because it is an alias rather
-than an endpoint. Anything else hidden from the schema is invisible to every reader who
-trusts it, so the exemption is deliberate and explained or it is not taken.
+There are five today: the `/api/docs` redirect, hidden because it is an alias rather than an
+endpoint; the schema pages `/api` and `/api/redoc`; and `/static/index.html` and
+`/static/signed-out.html`, which are the page rather than the API. Anything else hidden from the
+schema is invisible to every reader who trusts it, so the exemption is deliberate and explained or
+it is not taken.
 
 ## Citing code from a document
 

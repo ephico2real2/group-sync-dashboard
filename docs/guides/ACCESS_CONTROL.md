@@ -26,11 +26,13 @@ Two questions are answered separately and must not be confused:
         │                               annotated openshift.io/ldap.uid = cn=...,ou=Groups,...
         │  normal RBAC binds roles to those groups
         ▼
-  ClusterRoleBinding                    demo-cluster-admin-crb -> ClusterRole/cluster-admin
+  ClusterRoleBinding                    app-ocp-rbac-demo-cluster-admin-crb -> ClusterRole/admin
 ```
 
 So a person's cluster power comes from **group membership in the directory**, not from anything in
-this chart. The dashboard reads that arrangement; it never grants anything.
+this chart — with one exception: `rbacAuditors` (on by default) binds a read-only audit ClusterRole to
+the named auditor Groups, and that role passes the wide tier's question (§2, §9). The dashboard reads
+that arrangement; at runtime it grants nothing.
 
 **The login flow, and the one header that matters:**
 
@@ -44,7 +46,7 @@ this chart. The dashboard reads that arrangement; it never grants anything.
 
 The app believes `X-Forwarded-User` because the container listens on the pod's loopback and the
 Service targets the proxy, so the only writer of that header is the proxy. With the proxy switched
-off there is no trusted identity at all — see §7.
+off there is no trusted identity at all — see §8.
 
 ---
 
@@ -72,8 +74,10 @@ question as its own setting — a cluster-reader fails it, a cluster-admin passe
 namespace.
 
 A SubjectAccessReview **asks whether a subject could perform a verb**. It performs nothing. The
-dashboard holds no write grant on any resource, and the usage threshold naming a write verb does
-not change that.
+dashboard never performs the `update` the usage and cluster-admin thresholds name. Its
+ServiceAccount's own writes are its Leases (the leader election's and a fleet account's), the
+SubjectAccessReviews these questions are (through `system:auth-delegator`), and, only with
+`clusterConfig.secrets.writes.enabled`, cluster Secrets in its own namespace.
 
 **Why two, and why the second one asks about a write verb.** Measured on both ClusterRoles:
 
@@ -84,21 +88,21 @@ not change that.
 | `update clusterrolebindings` | yes | **no** | **yes** |
 | `get secrets` | yes | **no** | **yes** |
 
-No *read* check can distinguish them, because `cluster-reader` is by construction "may read
-everything". Only a write verb does.
+No *read* check on the objects these views show can distinguish them, because `cluster-reader` may
+read all of them. Only a write verb does, or a read `cluster-reader` excludes, such as `get secrets`.
 
-That matters for exactly one dataset. Everything else the wide tier serves can be obtained outside
-the dashboard by anyone who passes the wide check:
+That matters for Usage. Everything else the wide tier serves, Logins aside (below), can be obtained
+outside the dashboard by anyone who passes the wide check:
 
 | view | reproducible with `oc`? |
 |---|---|
 | Groups, Access granted, RBAC policy, Namespace audit | yes — `oc get groups`, `oc get clusterrolebindings`, `oc get rolebindings -A`; Access granted's "Reaches" column (members, and members who have logged in) also needs `oc get users` |
-| Logins | yes — `cluster-reader` holds `get,list,watch` on `pods/log` cluster-wide, so `oc logs` on the oauth-server pod yields the same records; with `loginCapture.source: audit-log`, `oc adm node-logs --path=oauth-server/audit.log`, which needs `get nodes/proxy` (cluster-admin / node-admin) — still nothing the wide tier's `cluster-reader` cannot read |
+| Logins | **no**, since the pod-log reader was removed (chart 0.58.0, #321) — the records come from the oauth-server audit log, which `oc adm node-logs --path=oauth-server/audit.log` reads with `get nodes/proxy`, and `cluster-reader` does not hold that; the oauth-server pod log, which it can read, names no login at the default log level |
 | **Usage** | **no** — it exists only in the dashboard's own `dashboard_user_activity` table |
 
-So `cluster-reader` seeing the audit views grants it nothing new, and that persona is deliberate: a
-security auditor is given `cluster-reader`, not `cluster-admin`. Usage is where the two must
-diverge, so Usage gets the higher bar.
+So `cluster-reader` seeing the audit views grants it nothing new, Logins aside, and that persona is
+deliberate: a security auditor is given `cluster-reader`, not `cluster-admin`. Usage is where the two
+must diverge, so Usage gets the higher bar.
 
 ---
 
@@ -194,8 +198,9 @@ the narrowest across them, so a `remote-sar` or `self-only` cluster that does no
 | admitted | past the gate: the write reaches its own checks, which its own tests hold |
 
 **gate** names the function in `local-development/gsd/api.py` the handler calls, or `none`, and the test checks that
-the handler calls it. **registered** is `always`, or `writes on` for the six routes that exist only with
-`clusterConfig.secrets.writes.enabled`. `scope` and `viewer` ride on every collection response, so a client never has
+the handler calls it. **registered** is `always`, `writes on` for the six routes that exist only with
+`clusterConfig.secrets.writes.enabled`, or `housekeeping on` for the five that exist only with `housekeeping.enabled`.
+`scope` and `viewer` ride on every collection response, so a client never has
 to guess.
 
 | method | path | registered | gate | no identity | self | auditor | usage | cluster-admin | notes |
@@ -341,20 +346,21 @@ fail-closed rule, in one sentence.
 
 ### The tier resolver
 
-`kube.py:1018 class TierResolver` — one instance per threshold, so the two questions never share a
+`gsd/kube.py#TierResolver` — one instance per threshold, so the three questions never share a
 cache entry.
 
 ```
   resolve(viewer)
     │
-    ├─ cache hit within TIER_TTL_SECONDS (60.0, kube.py:99)?  ──► return it
+    ├─ cache hit within visibility.tierTtlSeconds (60 by default)?  ──► return it
     │
-    ├─ fetch_groups_of_user(viewer)      the reader's synced Group memberships
-    │     + VIRTUAL_AUTH_GROUPS          system:authenticated, system:authenticated:oauth
+    ├─ fetch_groups_of_user(viewer)      the reader's synced Group memberships, listed now
+    │     + _virtual_groups_for(viewer)  system:authenticated, system:authenticated:oauth
+    │                                    (a ServiceAccount's own three for a ServiceAccount)
     │
-    ├─ POST SAR_API  (kube.py:79)        /apis/authorization.k8s.io/v1/subjectaccessreviews
+    ├─ POST SAR_API                      /apis/authorization.k8s.io/v1/subjectaccessreviews
     │     spec.user   = viewer
-    │     spec.groups = polled groups + the two virtual ones     ◄── LOAD-BEARING, see below
+    │     spec.groups = those groups + the virtual ones          ◄── LOAD-BEARING, see below
     │     spec.resourceAttributes = the configured threshold
     │
     ├─ allowed == true   ──► TIER_ALL  ("all"),  cached for 60s
@@ -364,7 +370,8 @@ cache entry.
 
 **`spec.groups` is load-bearing.** A reader granted cluster-admin through a Group rather than a
 direct binding is refused when `spec.groups` is absent — the review only sees the subject you
-describe. Omitting it would silently demote every group-granted administrator. Verified live:
+describe. Omitting it would silently demote every group-granted administrator. Verified live, on
+the lab as it was then (the binding it names is gone; §9 has today's personas):
 
 ```
 POST /apis/authorization.k8s.io/v1/subjectaccessreviews  -> 201
@@ -403,31 +410,35 @@ by `/api/alerts` in the same session. Both kinds are administrator-tier now.
   values.yaml                       visibility.enabled: true
       │                             visibility.adminSar.{apiGroup,resource,verb,namespace}
       │                             visibility.usageAdminSar.{...}
+      │                             visibility.clusterAdminSar.{...}
       │
       ├─ deployment.yaml    ──►  env GSD_ENABLE_VIEW_RESTRICTIONS = "true" | "false"
       │                          (rendered by the gsd.visibilityEnabled helper)
       │
-      ├─ configmap.yaml     ──►  visibilityAdminSar*      (4 keys)
-      │                          visibilityUsageAdminSar* (4 keys)
+      ├─ configmap.yaml     ──►  visibilityAdminSar*        (4 keys)
+      │                          visibilityUsageAdminSar*   (4 keys)
+      │                          visibilityClusterAdminSar* (4 keys)
       │
       └─ rbac.yaml          ──►  system:auth-delegator binding, which is what allows the pod
-                                 to POST a SubjectAccessReview at all. ONE grant serves BOTH
-                                 tiers. It renders whenever something needs it and disappears
-                                 when nothing does.
+                                 to POST a SubjectAccessReview at all. ONE grant serves all
+                                 three tiers. It renders whenever the proxy is on, because the
+                                 cluster-admin tier is asked even with visibility.enabled false.
       ▼
-  config.py                       view_restrictions_enabled            (config.py:301)
-                                  visibility_admin_sar_*               (config.py:307-314)
-                                  visibility_usage_admin_sar_*         (config.py:324-328)
-                                  visibility_tier_ttl_seconds          (config.py:338)
+  config.py                       Settings.view_restrictions_enabled
+                                  Settings.visibility_admin_sar_*
+                                  Settings.visibility_usage_admin_sar_*
+                                  Settings.visibility_cluster_admin_sar_*
+                                  Settings.visibility_tier_ttl_seconds
       ▼
-  api.py / kube.py                two TierResolver instances, published on app.state
+  api.py / kube.py                three TierResolver instances, published on app.state
+                                  (the wide and usage ones only with restrictions on)
       ▼
   index.html                      reads `scope` and `viewer` off the wire
 ```
 
 **Render-time guards, not runtime surprises.** RBAC matching is exact and lowercase, so a miscased
 threshold (`List` for `list`) would not error — it would answer `allowed=false` for every reader and
-silently demote every administrator. Both thresholds therefore **fail the `helm` render** on a
+silently demote every administrator. All three thresholds therefore **fail the `helm` render** on a
 miscased, versioned or malformed shape, with a message naming the key.
 
 The chart also refuses `visibility.enabled=true` together with `oauthProxy.enabled=false`, because
@@ -487,19 +498,19 @@ POD=$(oc get pods -n $NS -l app.kubernetes.io/name=group-sync-dashboard -o name 
 # what a given reader gets
 oc exec -n $NS "$POD" -c dashboard -- curl -s \
   -H 'X-Forwarded-User: lateef.o' \
-  localhost:8080/api/clusters/crc-local/groups
+  localhost:8080/api/clusters/dashboard/groups
 ```
 
 Ask the cluster the same question the app asks — note `spec.groups`, without which a group-granted
-admin is refused:
+reader is refused:
 
 ```bash
 oc create -f - -o jsonpath='{.status.allowed}{" "}{.status.reason}{"\n"}' <<EOF
 apiVersion: authorization.k8s.io/v1
 kind: SubjectAccessReview
 spec:
-  user: john.doe
-  groups: [system:authenticated, system:authenticated:oauth, app-ocp-rbac-demo-cluster-admin]
+  user: lateef.o
+  groups: [system:authenticated, system:authenticated:oauth, app-ocp-rbac-groupsync-ns-auditor]
   resourceAttributes: {group: rbac.authorization.k8s.io, resource: clusterrolebindings, verb: list}
 EOF
 ```
@@ -509,10 +520,13 @@ this document deliberately carries no passwords.
 
 | persona | tier | what makes them interesting |
 |---|---|---|
-| `john.doe` | wide + usage | cluster-admin **through a Group**, so the `spec.groups` path |
+| `john.doe` | self | in `app-ocp-rbac-demo-cluster-admin`, a group *named* cluster-admin whose binding grants ClusterRole `admin`, not `cluster-admin` — looks like an admin, passes none of the three questions |
 | `dana.lee` | wide only | standing `cluster-reader`: the auditor. Wide audit views, Usage refused |
-| `jane.smith` | self | in a group *named* `...-cluster-admin` with no binding behind it — looks like an admin, is not |
-| `lateef.o` | self | ordinary reader with real login history, so a narrowed Logins tab is non-empty |
+| `jane.smith` | wide only | in `app-ocp-rbac-alpha-cluster-admin`, also bound to `admin`; wide **through a Group**, the auditor Group `app-ocp-rbac-groupsync-ns-auditor` that `rbacAuditors` binds, so the `spec.groups` path |
+| `lateef.o` | wide only | ordinary reader with real login history, wide through the same auditor Group |
+
+Measured on 2026-10-05 from the lab's ClusterRoleBindings and ClusterRoles (`oc get`), not with a
+SubjectAccessReview. None of the four passes the usage or cluster-admin question there.
 
 ---
 

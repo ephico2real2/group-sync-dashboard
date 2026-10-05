@@ -80,9 +80,6 @@ application exactly as it does at the proxy. Before 0.19.0 only the user form re
 (recorded in `docs/reviews/REVIEW_chart_defaults.md`; the fix was routed to
 `docs/specs/SPEC_D2_per_cluster_authorization.md`, which owns the tier resolver).
 
-```bash
-```
-
 Verified after tightening: an identity that cannot list ClusterRoleBindings gets `403`, one
 that can gets `200`, and an unauthenticated request gets `403`.
 
