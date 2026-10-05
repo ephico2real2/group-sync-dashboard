@@ -324,6 +324,9 @@ def test_missing_gh_leaves_the_branch_and_says_so(sandbox: pathlib.Path) -> None
     )
     assert done.returncode == 1, done.stdout + done.stderr
     assert "Traceback" not in done.stderr
+    # The missing-gh refusal itself, not the push failure a sandbox without `origin` would also give.
+    assert "gh is not installed or not on PATH" in done.stderr
+    assert "git push failed" not in done.stderr
     assert "the branch and commit exist" in done.stderr
     assert git(sandbox, "rev-parse", "--abbrev-ref", "HEAD").strip() == "release/app-9.0.0"
     assert git(sandbox, "rev-list", "--count", "main..HEAD").strip() == "1"

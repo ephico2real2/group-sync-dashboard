@@ -265,7 +265,7 @@ def _credentials(cluster: ClusterConfig) -> tuple[str, ...]:
 STANDBY_RECHECK_SECONDS = 5
 
 
-def provider_keys_for(cr: GroupSyncView, groups: list[GroupView], cr_names: Iterable[str] = ()) -> list[str]:
+def provider_keys_for(cr: GroupSyncView, groups: list[GroupView], crs: Iterable[GroupSyncView] = ()) -> list[str]:
     """Every sync-provider label value belonging to this CR (PLAN §3).
 
     The operator writes ``<groupsync-name>_<provider>``, but the provider's name lives in
@@ -294,18 +294,24 @@ def provider_keys_for(cr: GroupSyncView, groups: list[GroupView], cr_names: Iter
     The prefix path remains for a CR whose spec declares no provider names, and it now
     yields a label to the LONGEST matching CR name: between ``corp`` and ``corp_extra``,
     ``corp_extra_ldap`` belongs to ``corp_extra``. That is a tie-break, not a fix — see
-    `ambiguous_attribution` for the case nothing can resolve. It needs the other CRs' names
-    (``cr_names``, every CR of the poll): one CR alone cannot know a longer name exists, and
-    without them both CRs claimed the label (#625).
+    `ambiguous_attribution` for the case nothing can resolve. It needs the poll's other CRs
+    (``crs``): one CR alone cannot know a longer name exists, and without them both CRs claimed
+    the label (#625). A longer CR yields only what it can itself claim — by its declared names,
+    or by its own prefix when it declares none — so a label it cannot claim stays with the
+    shorter CR rather than becoming nobody's.
     """
     observed = {g.sync_provider for g in groups if g.sync_provider}
     if cr.provider_names:
         return sorted(observed & {f"{cr.name}_{p}" for p in cr.provider_names})
 
     prefix = f"{cr.name}_"
-    longer = [f"{n}_" for n in cr_names if n.startswith(prefix)]
-    return sorted(label for label in observed
-                  if label.startswith(prefix) and not any(label.startswith(lp) for lp in longer))
+    longer = [c for c in crs if c.name.startswith(prefix)]
+
+    def claimed_by_longer(label: str) -> bool:
+        return any(label in {f"{c.name}_{p}" for p in c.provider_names} if c.provider_names
+                   else label.startswith(f"{c.name}_") for c in longer)
+
+    return sorted(label for label in observed if label.startswith(prefix) and not claimed_by_longer(label))
 
 
 def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:
@@ -447,9 +453,8 @@ def poll_once(
     # Steps 3-4: attribute groups to CRs, then record any sync we had not seen before.
     cr_rows = []
     new_events = 0
-    cr_names = [c.name for c in crs]
     for cr in crs:
-        keys = provider_keys_for(cr, groups, cr_names)
+        keys = provider_keys_for(cr, groups, crs)
         owned = set(keys)
         group_count = sum(1 for g in groups if g.sync_provider in owned)
 
