@@ -52,6 +52,7 @@ These install and operate guides ship inside the Helm chart.
 ## Reviews — `reviews/`
 
 - `REVIEW_*.md` — review findings and decisions, kept in `reviews/` at their cited paths.
+- [DOCS_AUDIT_2026-10-05_b1_chart_operate.md](reviews/DOCS_AUDIT_2026-10-05_b1_chart_operate.md) — docs content audit, batch 1: the chart's install and operate guides, claim by claim.
 
 ## Research — `research/`
 
