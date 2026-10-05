@@ -32,8 +32,8 @@ not: the reports row and the number of stanza refusals (below).
 
 | document | claims checked | fixed | not measured | code-suspect |
 |---|---|---|---|---|
-| `README.md` (chart) | 118 | 13 | 12 | 0 |
-| `RUNBOOK_backup_restore.md` | 57 | 6 | 7 | 0 |
+| `README.md` (chart) | 120 | 15 | 12 | 0 |
+| `RUNBOOK_backup_restore.md` | 58 | 8 | 7 | 0 |
 
 ## `charts/group-sync-dashboard/README.md`
 
@@ -157,6 +157,8 @@ not: the reports row and the number of stanza refusals (below).
 | an older chart's values without `recovery` still render | CORRECT | a copy of the chart with the `recovery:` block deleted from `values.yaml` renders, rc=0 (`templates/_helpers.tpl` line 332 reads `(.Values.recovery \| default dict)`) |
 | uninstall: "The PVC is **not** removed with the release" (the data claim only) | FIXED (added) | The render gives `helm.sh/resource-policy: keep` to three claims: `-data`, `-report-artifacts` and `-backup-offsite`. The page named only the data claim, so after `oc delete pvc …-data` two claims remained. Now it names the other two |
 | the minted Secrets and the hook's ServiceAccount, Role and RoleBinding survive an uninstall; their names | CORRECT | the hook objects carry `helm.sh/hook-delete-policy: before-hook-creation`; the names match the Role's `resourceNames` and the render |
+| "**The dashboard never writes**; a SubjectAccessReview only asks" (the `usageAdminSar` and `clusterAdminSar` rows) | FIXED | **Found by Codex's review.** The dashboard writes its Leases and, with writes on, cluster Secrets (the rows above). Now: it never performs the `update` those reviews ask about |
+| `config.unmanagedAudit.mode`: "the ServiceAccount stays read-only … its only binding verbs are `get` and `list`" | FIXED | **Found by Codex's review.** The rendered Role has `leases` `create`/`update`, the `-auth-delegator` ClusterRoleBinding grants `subjectaccessreviews` `create` (`templates/rbac.yaml` line 241), and `local-development/gsd/kube.py` posts the review (line 1379). Now: discovery uses `get`/`list`; the other verbs are the ones the unmanaged-grant section names, which now also names the SubjectAccessReviews |
 
 ## `charts/group-sync-dashboard/docs/RUNBOOK_backup_restore.md`
 
@@ -195,7 +197,7 @@ not: the reports row and the number of stanza refusals (below).
 | §4 "Undo a restore": the fold one-liner folds the `-wal` into `gsd.db` and removes the side files | CORRECT | measured here on a database whose writer exited without a checkpoint (500 rows only in `-wal`). Before: the copied `gsd.db` alone had `no such table`. After the one-liner: only `gsd.db` was left, and it held 500 rows. Measured with the local SQLite, not in the pod |
 | §4: the KPI page's Database copies card keeps the newest of each directory | CORRECT | README row on `housekeeping` (above); `docs/specs/SPEC_H1_gui_cleanup.md` |
 | §4: "The dashboard pod keeps its spec … runs the chart's recovery script" | FIXED | Since chart 0.65.0 (#532), recovery mode runs a separate pod, from the Deployment `<fullname>-recovery` (render with `recovery.enabled=true`: app replicas 0, recovery replicas 1, with the app's pod spec). Now: the recovery pod, with the app's pod spec and data volume |
-| §4 steps 1-5: the app goes to 0, `$REL-recovery` to 1, `-l app=$REL-recovery`, `2/2`, `/offsite` read-only, both Deployments available | CORRECT | the recovery render (README rows above); lab: `deployment.apps/group-sync-dashboard-recovery 0/0` |
+| §4 steps 1-5: the app goes to 0, `$REL-recovery` to 1, `-l app=$REL-recovery`, `2/2`, `/offsite` read-only, both Deployments available | CORRECT from chart 0.65.0; FIXED for 0.60.0 to 0.64.x | the recovery render (README rows above); lab: `deployment.apps/group-sync-dashboard-recovery 0/0` |
 | §4 step 2: the log starts with `RECOVERY MODE` and `the app is NOT running and no data is collected` | CORRECT | `charts/group-sync-dashboard/scripts/recovery_mode.py` lines 51 and 166 (each line is prefixed with the instant and `gsd-recovery`) |
 | §4 step 4: extending the TTL, the monotonic clock, a node restart | CORRECT | `charts/group-sync-dashboard/scripts/recovery_mode.py` lines 124-146 |
 | `GroupSyncDashboardReportSnapshotStale` after about 50 minutes | CORRECT | rendered rule (README row above) |
@@ -219,6 +221,8 @@ not: the reports row and the number of stanza refusals (below).
 | §6: the pre-upgrade name, where, once per upgrade, kept three, verified before the upgrade, the refusal line | CORRECT | `local-development/gsd/store.py` lines 1185, 1241-1315 and 1262-1264 (the message has the same shape as the example, `free space … MiB, database … MiB`, from line 1279) |
 | §6: a cluster administrator may delete an older copy from the KPI page | CORRECT | README `housekeeping` row (above) |
 | the example namespace `NS=group-sync` | CORRECT | an example value the commands read from `$NS`. The lab and the script's default are `group-sync-dashboard`, and §4 step 3 says to pass `--namespace` when they differ |
+| "two processes on one SQLite file corrupt rather than error" | FIXED | **Found by Codex's review.** Two WAL-mode writers with `busy_timeout` serialise: Codex measured `child_statuses=[0, 0] rows=1000 integrity_check=ok`. The real risk is the restore itself: SQLite's *How To Corrupt An SQLite Database File* §1.2 (backup or restore while a transaction is active), §1.4 (mispairing database files and hot journals), §2.5 (unlinking or renaming a database file while in use). Now cites those |
+| §4 steps 2 and 3 on charts 0.60.0 to 0.64.x | FIXED | **Found by Codex's review.** The section covers chart 0.60.0 and later, but steps 2 and 3 named only `$REL-recovery`. `Chart.yaml` history: 0.60.0 runs the recovery script in the app's container with a readiness probe that cannot pass; 0.65.0 adds the `-recovery` Deployment. `local-development/restore-db.sh` lines 7-8 find `app=<name>` before 0.65.0. Now both steps give the older names |
 
 ## Findings for the orchestrator (no change made)
 

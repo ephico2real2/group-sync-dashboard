@@ -339,8 +339,10 @@ of each directory is never deleted there: the newest backup (this section always
 pre-upgrade copy (§6) and the newest pre-restore set (the undo of the last restore). The page runs only while the
 app serves, so it plays no part in recovery mode and changes nothing in the steps above.
 
-The dashboard is the only writer and must be **stopped** first: two processes on one SQLite
-file corrupt rather than error (`gsd/store.py#Store.__init__`).
+The dashboard is the only writer and must be **stopped** first: copying or replacing `gsd.db` while a process
+has it open is one of SQLite's documented ways to corrupt a database — a backup or restore during a transaction,
+a database paired with the wrong `-wal`, a file replaced while in use (<https://www.sqlite.org/howtocorrupt.html>,
+§1.2, §1.4 and §2.5; `gsd/store.py#Store.__init__` opens it in WAL mode).
 
 **Recovery mode is the primary path (chart 0.60.0 and later, #303).** The recovery pod (`$REL-recovery` from chart
 0.65.0, #532) has the app's pod spec and data volume but runs the chart's recovery script instead of the app
@@ -357,7 +359,9 @@ in this release's values file and roll it out through the release's deployment p
    later, #532); the scheduler holds the recovery pod `Pending` until the app's pod is gone.
    `oc get pods -n $NS -l app=$REL-recovery` then shows `2/2` ready (`1/1` with the proxy off) and `Running`; no
    Service selects it. `oc logs -n $NS deploy/$REL-recovery -c dashboard` starts with `RECOVERY MODE`, `the app is
-   NOT running and no data is collected` and the TTL's end. With `backup.offsite` on its `pvc` destination, the
+   NOT running and no data is collected` and the TTL's end. On a chart from 0.60.0 to before 0.65.0 there is no
+   `$REL-recovery`: the app's own pod runs the recovery script and never becomes ready (the endless retry above,
+   which #532 ended), so read it with `-l app=$REL` and `deploy/$REL`. With `backup.offsite` on its `pvc` destination, the
    offsite claim is at `/offsite`, read-only. Both Deployments report available, so a pipeline step that waits for
    the rollout succeeds. A pipeline that rolls a failed rollout back on its own (Helm's `--rollback-on-failure`
    flag, `--atomic` in Helm 3, or an equivalent remediation) must still not carry this change: a rollout that
@@ -365,8 +369,9 @@ in this release's values file and roll it out through the release's deployment p
    that may be half restored.
 3. **Restore** with `local-development/restore-db.sh --list`, then `--from-version <ID>` (**The script, in recovery
    mode**, above), each with `--namespace $NS --release $REL` unless both are the script's defaults
-   (`group-sync-dashboard`); it refuses with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use
-   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL-recovery -c dashboard -- sh -c '…'` instead of `oc debug`
+   (`group-sync-dashboard`); it finds the pod by `app=$REL-recovery`, or `app=$REL` before chart 0.65.0, and refuses
+   with less than ten minutes of `recovery.ttl` left. By hand, the fallback, use
+   §4a or §4b, running their commands with `oc exec -n $NS deploy/$REL-recovery -c dashboard -- sh -c '…'` (`deploy/$REL` before chart 0.65.0) instead of `oc debug`
    or a helper pod. **Check the time left first** (the last `left` line of `oc logs`):
    at the TTL the script exits and every process in the container stops with it, a restore still running
    included, which leaves `gsd.db` half written. If the restore may not finish in time, extend first.
