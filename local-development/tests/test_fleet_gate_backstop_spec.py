@@ -180,11 +180,7 @@ def test_implementation_blocks_check_out_against_this_tree():
         elif b["kind"] == "edit":
             assert b["fences"][1] in text, f"block {b['n']}: {b['path']} lacks the New text"
         else:
-            inserted = b["fences"][0].strip("\n")
-            if b["path"] == "docs/CHANGELOG.md":
-                # Released history preserves its old paths; the spec names the runbook's current home.
-                inserted = inserted.replace("/docs/RUNBOOK.md", "/RUNBOOK.md")
-            assert inserted in text, f"block {b['n']}: {b['path']} lacks the inserted text"
+            assert b["fences"][0].strip("\n") in text, f"block {b['n']}: {b['path']} lacks the inserted text"
 
 
 def test_the_undone_clear_is_stated_as_the_spec_measures_it():

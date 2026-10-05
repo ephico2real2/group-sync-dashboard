@@ -10,7 +10,10 @@ which `local-development/prepare-release.py` does when the release is cut.
 
 ## Unreleased
 
-- **Application 5.3.0, chart 0.70.4:** Docs reorganised: guides, design, reviews, research and history folders; the chart's install and operate guides ship in the chart's docs/. No behaviour changed.
+- **Docs reorganised into guides, design, reviews, research and history folders; the chart's install and operate
+  guides ship in the chart's `docs/` (application 5.3.0, chart 0.70.4).** Only paths changed. The application
+  moves because comments and messages under `local-development/gsd/`, the Containerfiles and
+  `local-development/README.md` are image inputs; no behaviour changed.
 
 - **The lab deploys only what `promote.yml` read back (#598, `docs/specs/SPEC_P1_promote_release_branch.md`;
   application 5.2.0, chart 0.70.3).** A new workflow, `promote.yml`, runs after a green `publish.yml` on `main`, after

@@ -1853,7 +1853,7 @@ oc exec -n $NS deployment.apps/$REL -c dashboard -- mv /data/fleet-gate.json /da
   be stale, so above one replica a deletion can still allow +1 bind or ping. The Lease stays the authority whenever it
   exists, and a copy that
   cannot be read behind an absent Lease, or written at a reservation, binds nothing (`fleet-state-unavailable`).
-  SPEC_S4c §5 Q7's clear still re-arms the gate, and `charts/group-sync-dashboard/docs/RUNBOOK.md` section 7 now carries
+  SPEC_S4c §5 Q7's clear still re-arms the gate, and `charts/group-sync-dashboard/RUNBOOK.md` section 7 now carries
   it. Not covered, as the operator accepted: persistence off, an etcd restore, a reinstall into another namespace,
   and a clear followed by a `crc start` before any pod had read the cleared Lease (the entry comes back; clear it
   again). No RBAC or schema change.

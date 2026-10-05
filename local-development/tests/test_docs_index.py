@@ -9,28 +9,33 @@ import re
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
+CHART_DOCS = DOCS.parent / "charts" / "group-sync-dashboard" / "docs"
 DEVELOPMENT_PREFIXES = ("REVIEW_", "SPEC_", "DESIGN_", "BENCHMARK_", "VALIDATION_")
 
 
-def _targets() -> set[Path]:
-    index = DOCS / "README.md"
-    assert index.is_file(), "docs/README.md must index operator guides and development records"
+def _targets(index: Path = DOCS / "README.md") -> set[Path]:
+    assert index.is_file(), f"{index} must index the pages beside it"
     return {
-        (DOCS / target.split("#", 1)[0]).resolve()
+        (index.parent / target.split("#", 1)[0]).resolve()
         for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", index.read_text())
     }
 
 
+def _named(pages) -> list[Path]:
+    return [p for p in pages if p.name != "README.md" and not p.name.startswith(DEVELOPMENT_PREFIXES)]
+
+
 def test_every_page_outside_development_conventions_is_linked() -> None:
     targets = _targets()
-    pages = [
-        page for page in DOCS.glob("*.md")
-        if page.name != "README.md" and not page.name.startswith(DEVELOPMENT_PREFIXES)
-    ]
+    # The pages that sat at the top of docs/ before the regrouping keep their link from this index.
+    pages = _named([*DOCS.glob("*.md"), *DOCS.glob("research/*.md"), *DOCS.glob("history/*.md"),
+                    *CHART_DOCS.glob("*.md")])
     pages.extend((DOCS / "guides").rglob("*.md"))
-    missing = sorted(
-        str(page.relative_to(DOCS)) for page in pages if page.resolve() not in targets
-    )
+    # design/ has its own index, so a page there may be found from either.
+    in_either = targets | _targets(DOCS / "design" / "README.md")
+    missing = sorted(str(p.relative_to(DOCS.parent)) for p in pages if p.resolve() not in targets)
+    missing += sorted(str(p.relative_to(DOCS.parent)) for p in _named(DOCS.glob("design/*.md"))
+                      if p.resolve() not in in_either)
     assert not missing, f"pages with no link in docs/README.md: {missing}"
 
 
