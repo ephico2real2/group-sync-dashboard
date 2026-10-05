@@ -298,20 +298,23 @@ def provider_keys_for(cr: GroupSyncView, groups: list[GroupView], crs: Iterable[
     (``crs``): one CR alone cannot know a longer name exists, and without them both CRs claimed
     the label (#625). A longer CR yields only what it can itself claim — by its declared names,
     or by its own prefix when it declares none — so a label it cannot claim stays with the
-    shorter CR rather than becoming nobody's.
+    shorter CR rather than becoming nobody's. And exact still comes first across CRs: the
+    prefix path never takes a label another CR claims by its declared names, whatever the
+    lengths (a provider name may contain ``_``: CR ``a`` declaring ``b_ldap`` owns ``a_b_ldap``,
+    and a fallback CR ``a_b`` does not).
     """
     observed = {g.sync_provider for g in groups if g.sync_provider}
     if cr.provider_names:
         return sorted(observed & {f"{cr.name}_{p}" for p in cr.provider_names})
 
     prefix = f"{cr.name}_"
-    longer = [c for c in crs if c.name.startswith(prefix)]
+    others = [c for c in crs if (c.name, c.namespace) != (cr.name, cr.namespace)]
 
-    def claimed_by_longer(label: str) -> bool:
+    def claimed_elsewhere(label: str) -> bool:
         return any(label in {f"{c.name}_{p}" for p in c.provider_names} if c.provider_names
-                   else label.startswith(f"{c.name}_") for c in longer)
+                   else c.name.startswith(prefix) and label.startswith(f"{c.name}_") for c in others)
 
-    return sorted(label for label in observed if label.startswith(prefix) and not claimed_by_longer(label))
+    return sorted(label for label in observed if label.startswith(prefix) and not claimed_elsewhere(label))
 
 
 def ambiguous_attribution(groupsyncs: list[GroupSyncView]) -> list[str]:

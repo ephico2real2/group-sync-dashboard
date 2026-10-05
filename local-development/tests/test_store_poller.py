@@ -303,6 +303,14 @@ class TestAttributionAmbiguity:
         assert provider_keys_for(short, groups, [short, longer]) == ["corp_extra_ldap"]
         assert provider_keys_for(longer, groups, [short, longer]) == []
 
+    def test_a_declared_exact_claim_beats_a_longer_prefix_fallback(self):
+        """Codex's confirmation pass of #625: a provider name may contain `_`, so `a` declaring `b_ldap` and a
+        fallback `a_b` both owned `a_b_ldap`. Exact comes first: the declared claim keeps it."""
+        short, longer = self._cr("a", providers=("b_ldap",)), self._cr("a_b", providers=())
+        groups = [self._group("g", "a_b_ldap")]
+        assert provider_keys_for(short, groups, [short, longer]) == ["a_b_ldap"]
+        assert provider_keys_for(longer, groups, [short, longer]) == []
+
     def test_poll_counts_a_prefix_related_pair_s_group_once(self, tmp_path, monkeypatch):
         """The poll passes every CR's name, so the group is counted under one CR, not both."""
         from gsd import poller
